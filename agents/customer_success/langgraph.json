@@ -1,0 +1,8 @@
+{
+  "dependencies": ["../.."],
+  "graphs": {
+    "customer_success": "./graph.py:graph"
+  },
+  "env": "../../.env"
+}
+
