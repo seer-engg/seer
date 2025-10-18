@@ -205,7 +205,16 @@ async def judge_test_result(test_input: str, expected_behavior: str, success_cri
     response = await llm.ainvoke(prompt)
     result_json = extract_json(response.content)
     
-    return json.dumps(result_json)
+    # Include metadata so downstream can aggregate per-test results
+    enriched = {
+        **result_json,
+        "action": "TEST_RESULT",
+        "test_input": test_input,
+        "expected_behavior": expected_behavior,
+        "success_criteria": success_criteria,
+        "actual_output": actual_output
+    }
+    return json.dumps(enriched)
 
 
 @tool

@@ -246,6 +246,21 @@ Please generate a spec and test cases based on the user's expectations."""
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(eval_suite, f, indent=2)
         return str(file_path.resolve())
+
+    def _save_detailed_results_local(self, thread_id: str, eval_suite_id: str, results: list) -> str:
+        """Save per-test detailed results to a local JSON file and return absolute path"""
+        base_dir = Path(__file__).parent / "generated_evals"
+        base_dir.mkdir(parents=True, exist_ok=True)
+        suffix = eval_suite_id or thread_id
+        file_name = f"results_{suffix}.json"
+        file_path = base_dir / file_name
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "thread_id": thread_id,
+                "eval_suite_id": eval_suite_id,
+                "results": results
+            }, f, indent=2)
+        return str(file_path.resolve())
     
     async def handle_user_confirmation(self, event: EventMessage):
         """Handle UserConfirmation event"""
@@ -309,25 +324,49 @@ Please generate a spec and test cases based on the user's expectations."""
             
             # Track which actions we've already processed to avoid duplicates
             processed_actions = set()
+            # Collect detailed per-test results emitted by judge
+            detailed_results = []
             
             for tool_output in result["tool_outputs"]:
                 try:
                     data = json.loads(tool_output)
                     action = data.get("action")
                     
+                    # Capture individual test result details
+                    if action == "TEST_RESULT":
+                        detailed_results.append(data)
+                        continue
+                    
                     # Create unique key for deduplication
                     action_key = f"{action}:{thread_id}"
                     
                     if action == "TEST_RESULTS" and action_key not in processed_actions:
-                        # Publish TestResultsReady
-                        # Customer Success will relay this to the user
+                        # Publish TestResultsReady and attach detailed results
                         passed = data.get("passed", 0)
                         failed = data.get("failed", 0)
                         total = data.get("total", 0)
                         score = data.get("score", 0)
                         summary = data.get("summary", "")
                         
-                        details_message = f"📊 Evaluation Complete!\n\n**Results:** {summary}\n**Score:** {score:.0f}%\n"
+                        # Persist detailed results locally
+                        ctx = self.active_threads.get(thread_id, {})
+                        eval_suite_id = ctx.get("eval_suite_id")
+                        results_path = self._save_detailed_results_local(thread_id, eval_suite_id, detailed_results)
+                        
+                        # Build concise preview for user
+                        preview_lines = []
+                        for i, r in enumerate(detailed_results[:5], 1):
+                            status = "✅" if r.get("passed") else "❌"
+                            snippet = (r.get("test_input") or "")[:60]
+                            preview_lines.append(f"{i}. {status} {snippet}")
+                        if len(detailed_results) > 5:
+                            preview_lines.append(f"(+{len(detailed_results)-5} more) See: {results_path}")
+                        preview = "\n".join(preview_lines)
+                        
+                        details_message = (
+                            f"📊 Evaluation Complete!\n\n**Results:** {summary}\n**Score:** {score:.0f}%\n\n"
+                            f"Details preview:\n{preview}\n"
+                        )
                         if failed > 0:
                             details_message += f"\n⚠️ {failed} test(s) failed."
                         
@@ -341,7 +380,12 @@ Please generate a spec and test cases based on the user's expectations."""
                                 "failed": failed,
                                 "total": total,
                                 "overall_score": score,
-                                "details": {}
+                                "eval_suite_id": eval_suite_id,
+                                "total_tests": total,
+                                "details": {
+                                    "results_file": results_path,
+                                    "results": detailed_results
+                                }
                             }
                         ))
                         processed_actions.add(action_key)
