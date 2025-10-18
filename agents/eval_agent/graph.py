@@ -4,18 +4,29 @@ import os
 import json
 import hashlib
 import uuid
-from typing import Annotated, TypedDict, Optional
+from typing import Annotated, TypedDict, Optional, List
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph.message import add_messages
+from pydantic import BaseModel, Field
 
 
 # Simple state
 class AgentState(TypedDict):
     """State for Eval agent"""
     messages: Annotated[list[BaseMessage], add_messages]
+    agent_name: Optional[str]
+    agent_url: Optional[str]
+    expectations: Optional[str]
+    spec: Optional["AgentSpec"]
+    eval_suite: Optional["EvalSuite"]
+    current_test_index: int
+    passed: int
+    failed: int
+    total: int
+    test_results: List["TestResult"]
 
 
 # Import shared schemas (these don't depend on event bus)
@@ -37,74 +48,139 @@ import httpx
 import asyncio
 
 
-@tool
-async def generate_spec(agent_name: str, agent_url: str, expectations: str) -> str:
-    """
-    Generate an agent specification from user expectations.
-    
-    Args:
-        agent_name: Name of the agent
-        agent_url: URL where agent is hosted
-        expectations: User's natural language expectations
-    
-    Returns:
-        JSON string of the generated spec
-    """
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
-    
-    prompt = EVAL_AGENT_SPEC_PROMPT.format(
-        expectations=expectations,
-        agent_name=agent_name,
-        agent_url=agent_url
+# Structured output schemas for node LLM calls
+class EvalRequest(BaseModel):
+    agent_name: str = Field(description="Name/ID of the agent to evaluate")
+    agent_url: str = Field(description="Base URL where the agent is hosted")
+    expectations: str = Field(description="User's natural language expectations")
+
+
+class GeneratedTestCase(BaseModel):
+    expectation_ref: str
+    input_message: str
+    expected_behavior: str
+    success_criteria: str
+
+
+class GeneratedTests(BaseModel):
+    test_cases: List[GeneratedTestCase]
+
+
+class JudgeVerdict(BaseModel):
+    passed: bool
+    score: float = Field(ge=0.0, le=1.0)
+    reasoning: str
+
+
+def parse_request_node(state: AgentState):
+    """Extract agent_name, agent_url, expectations from latest user message using structured output."""
+    last_human = None
+    for m in reversed(state["messages"]):
+        if isinstance(m, HumanMessage):
+            last_human = m
+            break
+    user_text = last_human.content if last_human else ""
+
+    extractor = ChatOpenAI(
+        model="gpt-4o-mini",
+        temperature=0.0,
+        api_key=os.getenv("OPENAI_API_KEY")
+    ).with_structured_output(EvalRequest)
+
+    instruction = (
+        "Extract agent_name, agent_url, and expectations from the user's latest message. "
+        "If agent_name or agent_url are not explicitly provided, infer reasonable placeholders "
+        "(use any concise name for agent_name, and a URL if present; otherwise reuse any provided URL-like text). "
+        "Always include the original message as expectations."
     )
-    
-    response = await llm.ainvoke(prompt)
-    spec_json = extract_json(response.content)
-    
-    # Validate
-    spec = AgentSpec(**spec_json)
-    return spec.model_dump_json(indent=2)
+    request: EvalRequest = extractor.invoke(f"{instruction}\n\nUSER:\n{user_text}")
+
+    return {
+        "agent_name": request.agent_name,
+        "agent_url": request.agent_url,
+        "expectations": request.expectations,
+    }
 
 
-@tool
-async def generate_tests(spec_json: str) -> str:
-    """
-    Generate test cases from an agent specification.
-    
-    Args:
-        spec_json: JSON string of the AgentSpec
-    
-    Returns:
-        JSON string of the generated EvalSuite
-    """
-    llm = ChatOpenAI(model="gpt-4o", temperature=0.7)
-    spec = AgentSpec(**json.loads(spec_json))
-    
+def generate_spec_node(state: AgentState):
+    """Generate AgentSpec from state expectations using structured output."""
+    llm = ChatOpenAI(
+        model="gpt-4o-mini",
+        temperature=0.3,
+        api_key=os.getenv("OPENAI_API_KEY")
+    ).with_structured_output(AgentSpec)
+
+    prompt = EVAL_AGENT_SPEC_PROMPT.format(
+        expectations=state.get("expectations", ""),
+        agent_name=state.get("agent_name", ""),
+        agent_url=state.get("agent_url", ""),
+    )
+
+    spec: AgentSpec = llm.invoke(prompt)
+    return {"spec": spec}
+
+
+def generate_tests_node(state: AgentState):
+    """Generate EvalSuite test cases from AgentSpec using structured output."""
+    spec: AgentSpec = state.get("spec")  # type: ignore[assignment]
+    if spec is None:
+        return {}
+
+    llm = ChatOpenAI(
+        model="gpt-4o",
+        temperature=0.7,
+        api_key=os.getenv("OPENAI_API_KEY")
+    ).with_structured_output(GeneratedTests)
+
+    spec_json = spec.model_dump_json(indent=2)
     prompt = EVAL_AGENT_TEST_GEN_PROMPT.format(spec_json=spec_json)
-    response = await llm.ainvoke(prompt)
-    tests_json = extract_json(response.content)
-    
-    # Create TestCase objects with IDs
-    test_cases = []
-    for idx, tc_dict in enumerate(tests_json["test_cases"]):
+    generated: GeneratedTests = llm.invoke(prompt)
+
+    # Create TestCase objects with stable IDs
+    test_cases: List[TestCase] = []
+    for idx, tc in enumerate(generated.test_cases):
         content_hash = hashlib.md5(
-            f"{tc_dict['expectation_ref']}{tc_dict['input_message']}".encode()
+            f"{tc.expectation_ref}{tc.input_message}".encode()
         ).hexdigest()[:8]
-        
+
         test_case = TestCase(
             id=f"{spec.name}_{idx+1}_{content_hash}",
-            **tc_dict
+            expectation_ref=tc.expectation_ref,
+            input_message=tc.input_message,
+            expected_behavior=tc.expected_behavior,
+            success_criteria=tc.success_criteria,
         )
         test_cases.append(test_case)
-    
+
     eval_suite = EvalSuite(
         id=f"eval_{spec.name}_{uuid.uuid4().hex[:8]}",
         spec_name=spec.name,
         spec_version=spec.version,
-        test_cases=test_cases
+        test_cases=test_cases,
     )
-    
-    return eval_suite.model_dump_json(indent=2)
+
+    # Provide a concise context message for the agent node
+    test_inputs_preview = "\n".join(
+        [f"[{i}] {tc.input_message}" for i, tc in enumerate(test_cases)]
+    )
+    context_msg = (
+        "EVAL_CONTEXT\n"
+        f"agent_url: {state.get('agent_url','')}\n"
+        f"agent_id: {state.get('agent_name','')}\n"
+        f"test_count: {len(test_cases)}\n"
+        "test_inputs (indexed):\n"
+        f"{test_inputs_preview}"
+    )
+
+    return {
+        "eval_suite": eval_suite,
+        "total": len(test_cases),
+        "passed": 0,
+        "failed": 0,
+        "current_test_index": 0,
+        "test_results": [],
+        "messages": [SystemMessage(content=context_msg)],
+    }
 
 
 @tool
@@ -179,42 +255,78 @@ async def run_test(target_url: str, target_agent_id: str, test_input: str, threa
         return json.dumps({"success": False, "error": str(e)})
 
 
-@tool
-async def judge_test_result(test_input: str, expected_behavior: str, success_criteria: str, actual_output: str) -> str:
-    """
-    Judge whether a test result passes based on criteria.
-    
-    Args:
-        test_input: The input that was sent
-        expected_behavior: What the agent should do
-        success_criteria: Specific criteria for success
-        actual_output: What the agent actually returned
-    
-    Returns:
-        JSON string with pass/fail and reasoning
-    """
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
-    
+def judge_node(state: AgentState):
+    """Judge the last run_test result using structured output and update counters/results."""
+    eval_suite: EvalSuite = state.get("eval_suite")  # type: ignore[assignment]
+    idx = state.get("current_test_index", 0)
+    if eval_suite is None or idx >= len(eval_suite.test_cases):
+        return {}
+
+    # Find the most recent ToolMessage (run_test result)
+    last_tool_msg: Optional[ToolMessage] = None
+    for m in reversed(state["messages"]):
+        if isinstance(m, ToolMessage):
+            last_tool_msg = m
+            break
+
+    if last_tool_msg is None:
+        return {}
+
+    # Parse the tool content
+    actual_output = ""
+    try:
+        tool_payload = json.loads(last_tool_msg.content)
+        if tool_payload.get("success"):
+            actual_output = tool_payload.get("response", "")
+        else:
+            actual_output = tool_payload.get("error", "") or ""
+    except Exception:
+        actual_output = last_tool_msg.content
+
+    tc = eval_suite.test_cases[idx]
+
+    judge_llm = ChatOpenAI(
+        model="gpt-4o-mini",
+        temperature=0.3,
+        api_key=os.getenv("OPENAI_API_KEY")
+    ).with_structured_output(JudgeVerdict)
+
     prompt = EVAL_AGENT_JUDGE_PROMPT.format(
-        input_message=test_input,
-        expected_behavior=expected_behavior,
-        success_criteria=success_criteria,
-        actual_output=actual_output
+        input_message=tc.input_message,
+        expected_behavior=tc.expected_behavior,
+        success_criteria=tc.success_criteria,
+        actual_output=actual_output,
     )
-    
-    response = await llm.ainvoke(prompt)
-    result_json = extract_json(response.content)
-    
-    # Include metadata so downstream can aggregate per-test results
-    enriched = {
-        **result_json,
-        "action": "TEST_RESULT",
-        "test_input": test_input,
-        "expected_behavior": expected_behavior,
-        "success_criteria": success_criteria,
-        "actual_output": actual_output
+    verdict: JudgeVerdict = judge_llm.invoke(prompt)
+
+    result = TestResult(
+        test_case_id=tc.id,
+        input_sent=tc.input_message,
+        actual_output=actual_output,
+        expected_behavior=tc.expected_behavior,
+        passed=verdict.passed,
+        score=verdict.score,
+        judge_reasoning=verdict.reasoning,
+    )
+
+    passed = state.get("passed", 0) + (1 if verdict.passed else 0)
+    failed = state.get("failed", 0) + (0 if verdict.passed else 1)
+    next_idx = idx + 1
+
+    progress_msg = (
+        f"EVAL_PROGRESS\n"
+        f"completed: {next_idx}/{state.get('total', len(eval_suite.test_cases))}\n"
+        f"passed: {passed}\n"
+        f"failed: {failed}"
+    )
+
+    return {
+        "current_test_index": next_idx,
+        "passed": passed,
+        "failed": failed,
+        "test_results": state.get("test_results", []) + [result],
+        "messages": [SystemMessage(content=progress_msg)],
     }
-    return json.dumps(enriched)
 
 
 @tool
@@ -241,81 +353,89 @@ def summarize_results(passed: int, failed: int, total: int) -> str:
     })
 
 
-# Helper function
-def extract_json(text: str) -> dict:
-    """Extract JSON from LLM response"""
-    text = text.strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-    
-    if "```json" in text:
-        start = text.find("```json") + 7
-        end = text.find("```", start)
-        text = text[start:end].strip()
-    elif "```" in text:
-        start = text.find("```") + 3
-        end = text.find("```", start)
-        text = text[start:end].strip()
-    
-    return json.loads(text)
+# No longer needed: structured outputs replace JSON extraction
 
 
-TOOLS = [generate_spec, generate_tests, request_confirmation, run_test, judge_test_result, summarize_results]
+TOOLS = [request_confirmation, run_test, summarize_results]
 
 
 # System prompt
 SYSTEM_PROMPT = """You are an Evaluation Agent for Seer.
 
-Your role:
-1. Generate specifications from user expectations (use generate_spec)
-2. Create test cases from specs (use generate_tests)
-3. Request user confirmation before running tests (use request_confirmation)
-4. Run tests against target agent via A2A (use run_test)
-5. Judge test results (use judge_test_result)
-6. Summarize results (use summarize_results)
+The system will automatically generate the AgentSpec and test cases from the user's request and provide an EVAL_CONTEXT system message containing:
+- agent_url, agent_id
+- test_count and indexed test_inputs
 
-Workflow:
-- User provides agent URL and expectations
-- Generate spec → generate tests → request confirmation ONCE → run each test → judge results → summarize
+Your role now:
+1. Request user confirmation exactly once using request_confirmation(question, test_count)
+2. When the user confirms, sequentially call run_test(target_url, target_agent_id, test_input) for each test_input shown in EVAL_CONTEXT
+   - The system will judge each result automatically; do NOT judge yourself
+3. After all tests are run and judged, call summarize_results(passed, failed, total)
 
-IMPORTANT: 
-- Use request_confirmation only ONCE after generating tests
-- After calling tools and seeing results, don't call the same tools again
-- Be thorough but efficient"""
+IMPORTANT:
+- Do NOT attempt to call generate_spec, generate_tests, or any judging tool
+- Use only the tools provided: request_confirmation, run_test, summarize_results
+- Be concise and efficient"""
 
 
 def build_graph():
-    """Build the eval agent graph"""
-    
-    llm = ChatOpenAI(
+    """Build the eval agent graph with LLM nodes for spec/tests/judging and tool nodes for confirmation/run/summarize."""
+
+    llm_for_agent = ChatOpenAI(
         model="gpt-4o-mini",
         temperature=0.3,
         api_key=os.getenv("OPENAI_API_KEY")
     ).bind_tools(TOOLS)
-    
+
+    def route_entry(state: AgentState):
+        """No-op node used to route based on presence of an existing eval_suite in state."""
+        return {}
+
     def agent_node(state: AgentState):
-        """Main agent node"""
+        """Main conversational agent node (confirmation, running tests, summarizing)."""
+        # Prepend system prompt and any EVAL_CONTEXT/PROGRESS messages already in state
         messages = [SystemMessage(content=SYSTEM_PROMPT)] + state["messages"]
-        response = llm.invoke(messages)
+        response = llm_for_agent.invoke(messages)
         return {"messages": [response]}
-    
+
     def should_continue(state: AgentState):
-        """Check if we should continue to tools or end"""
+        """If the last agent message requested a tool, go to tools; otherwise end."""
         last_message = state["messages"][-1]
         if hasattr(last_message, "tool_calls") and last_message.tool_calls:
             return "tools"
         return END
-    
+
+    def route_from_entry(state: AgentState):
+        """If eval_suite already exists in state, skip generation and go directly to agent."""
+        if state.get("eval_suite") is not None:
+            return "agent"
+        return "parse_request"
+
+    def route_after_tool(state: AgentState):
+        """After a tool runs, if it was run_test then judge; otherwise return to agent."""
+        last_msg = state["messages"][-1]
+        if isinstance(last_msg, ToolMessage) and getattr(last_msg, "name", "") == "run_test":
+            return "judge"
+        return "agent"
+
     workflow = StateGraph(AgentState)
+    workflow.add_node("route", route_entry)
+    workflow.add_node("parse_request", parse_request_node)
+    workflow.add_node("generate_spec", generate_spec_node)
+    workflow.add_node("generate_tests", generate_tests_node)
     workflow.add_node("agent", agent_node)
     workflow.add_node("tools", ToolNode(TOOLS))
-    
-    workflow.set_entry_point("agent")
+    workflow.add_node("judge", judge_node)
+
+    workflow.set_entry_point("route")
+    workflow.add_conditional_edges("route", route_from_entry)
+    workflow.add_edge("parse_request", "generate_spec")
+    workflow.add_edge("generate_spec", "generate_tests")
+    workflow.add_edge("generate_tests", "agent")
     workflow.add_conditional_edges("agent", should_continue)
-    workflow.add_edge("tools", "agent")
-    
+    workflow.add_conditional_edges("tools", route_after_tool)
+    workflow.add_edge("judge", "agent")
+
     return workflow.compile()
 
 
