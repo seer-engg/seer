@@ -38,8 +38,61 @@ def acknowledge_confirmation(confirmed: bool, details: str = "") -> str:
     })
 
 
+@tool
+def get_test_cases(agent_url: str, agent_id: str) -> str:
+    """
+    Get test cases for a specific agent from the Event Bus.
+    Use this when the user asks about test cases/tests/evals.
+    
+    Args:
+        agent_url: URL of the target agent (e.g. "http://localhost:2024")
+        agent_id: ID of the target agent (e.g. "deep_researcher")
+    
+    Returns:
+        JSON string with test cases or error message
+    """
+    import httpx
+    import json
+    import os
+    
+    event_bus_url = os.getenv("EVENT_BUS_URL", "http://127.0.0.1:8000")
+    
+    try:
+        response = httpx.get(
+            f"{event_bus_url}/evals",
+            params={"agent_url": agent_url, "agent_id": agent_id},
+            timeout=5.0
+        )
+        response.raise_for_status()
+        data = response.json()
+        
+        eval_suites = data.get("eval_suites", [])
+        if not eval_suites:
+            return json.dumps({
+                "success": False,
+                "message": f"No test cases found for {agent_url}/{agent_id}"
+            })
+        
+        # Get the most recent eval suite
+        latest_suite = eval_suites[-1]
+        test_cases = latest_suite.get("test_cases", [])
+        
+        return json.dumps({
+            "success": True,
+            "eval_suite_id": latest_suite.get("id"),
+            "test_count": len(test_cases),
+            "test_cases": test_cases
+        }, indent=2)
+        
+    except Exception as e:
+        return json.dumps({
+            "success": False,
+            "error": str(e)
+        })
+
+
 # Get tools list
-TOOLS = [acknowledge_confirmation]
+TOOLS = [acknowledge_confirmation, get_test_cases]
 
 
 # System prompt
@@ -49,6 +102,7 @@ Your role:
 - Help users evaluate their AI agents
 - Acknowledge user requests warmly and professionally
 - Handle user confirmations and relay them to the evaluation team
+- Answer questions about test cases
 
 WORKFLOW:
 
@@ -75,10 +129,23 @@ WORKFLOW:
    → YOU MUST call: acknowledge_confirmation(confirmed=false, details="wait")
    → Then say: "No problem, I'll hold off on that."
 
+3. **When user asks about test cases:**
+   - Use get_test_cases tool to retrieve them
+   - Format and present them clearly
+   
+   Examples:
+   User: "What are those 12 cases?"
+   → YOU MUST call: get_test_cases(agent_url="http://localhost:2024", agent_id="deep_researcher")
+   → Then format the results nicely for the user
+   
+   User: "Show me the tests" or "What tests did you generate?"
+   → Same approach - use get_test_cases
+
 IMPORTANT NOTES:
 - The Event Bus broadcasts all user messages to all agents automatically
 - You don't need to "forward" or "relay" evaluation requests - the eval team already sees them
-- Your job is to provide excellent customer service and handle confirmations
+- Test cases are stored centrally in the Event Bus, accessible to all agents
+- Your job is to provide excellent customer service and answer questions
 - After using a tool and seeing its result, DO NOT call the same tool again. Just respond to the user."""
 
 

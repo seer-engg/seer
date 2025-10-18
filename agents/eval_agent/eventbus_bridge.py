@@ -126,6 +126,7 @@ Please generate a spec and test cases based on the user's expectations."""
         result = await self.invoke_agent(message, thread_id)
         
         # Process tool outputs
+        eval_suite_data = None
         if result["tool_outputs"]:
             print(f"🔧 Agent used {len(result['tool_outputs'])} tool(s)", flush=True)
             
@@ -135,12 +136,29 @@ Please generate a spec and test cases based on the user's expectations."""
             for tool_output in result["tool_outputs"]:
                 try:
                     data = json.loads(tool_output)
+                    
+                    # Check if this is a generated test suite (from generate_tests tool)
+                    if "test_cases" in data and "id" in data:
+                        eval_suite_data = data
+                        print(f"📋 Generated eval suite: {data.get('id')}", flush=True)
+                        continue
+                    
                     action = data.get("action")
                     
                     # Create unique key for deduplication
                     action_key = f"{action}:{thread_id}"
                     
                     if action == "CONFIRMATION_REQUEST" and action_key not in processed_actions:
+                        # Store eval suite in Event Bus before requesting confirmation
+                        if eval_suite_data:
+                            await self._store_eval_suite(
+                                target_url,
+                                target_id,
+                                eval_suite_data
+                            )
+                            # Store eval_suite_id in context for later reference
+                            self.active_threads[thread_id]["eval_suite_id"] = eval_suite_data.get("id")
+                        
                         # Publish UserConfirmationQuery
                         # Customer Success will relay this to the user
                         test_count = data.get("test_count", 0)
@@ -162,6 +180,22 @@ Please generate a spec and test cases based on the user's expectations."""
                 
                 except json.JSONDecodeError:
                     print(f"⚠️  Tool output is not JSON: {tool_output[:50]}...", flush=True)
+    
+    async def _store_eval_suite(self, target_url: str, target_id: str, eval_suite: dict):
+        """Store eval suite in Event Bus"""
+        try:
+            response = await self.http_client.post(
+                f"{self.event_bus_url}/evals",
+                json={
+                    "eval_suite": eval_suite,
+                    "target_agent_url": target_url,
+                    "target_agent_id": target_id
+                }
+            )
+            response.raise_for_status()
+            print(f"✅ Stored eval suite in Event Bus: {eval_suite.get('id')}", flush=True)
+        except Exception as e:
+            print(f"⚠️  Failed to store eval suite: {e}", flush=True)
     
     async def handle_user_confirmation(self, event: EventMessage):
         """Handle UserConfirmation event"""

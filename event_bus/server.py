@@ -83,6 +83,8 @@ class EventBusState:
         self.messages: list[EventMessage] = []  # All messages ever published
         self.subscribers: dict[str, dict] = {}  # agent_name -> {last_poll_time, filters}
         self.message_queues: dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
+        self.evals: dict[str, list[dict]] = {}  # agent_key -> [eval_suites]
+        # agent_key format: "url:port/agent_id" e.g. "http://localhost:2024/deep_researcher"
         
     def add_message(self, message: EventMessage):
         """Add a message to history and route to subscribers"""
@@ -168,6 +170,26 @@ class EventBusState:
                 })
         
         return suspicious_agents
+    
+    def store_eval_suite(self, agent_url: str, agent_id: str, eval_suite: dict):
+        """Store an eval suite for a target agent"""
+        agent_key = f"{agent_url}/{agent_id}"
+        if agent_key not in self.evals:
+            self.evals[agent_key] = []
+        self.evals[agent_key].append(eval_suite)
+    
+    def get_evals_by_agent(self, agent_url: str, agent_id: str) -> list[dict]:
+        """Get all eval suites for a specific agent"""
+        agent_key = f"{agent_url}/{agent_id}"
+        return self.evals.get(agent_key, [])
+    
+    def get_eval_by_id(self, eval_suite_id: str) -> Optional[dict]:
+        """Get a specific eval suite by ID"""
+        for agent_key, suites in self.evals.items():
+            for suite in suites:
+                if suite.get("id") == eval_suite_id:
+                    return suite
+        return None
 
 
 state = EventBusState()
@@ -434,6 +456,86 @@ async def detect_rogue_agents(api_key: str = Depends(verify_api_key)):
         "suspicious_agents": suspicious_agents,
         "count": len(suspicious_agents),
         "detection_time": datetime.now().isoformat()
+    }
+
+
+@app.post("/evals")
+async def store_eval_suite(payload: dict):
+    """
+    Store an eval suite for a target agent.
+    
+    Payload should include:
+    - eval_suite: The eval suite object with test cases
+    - target_agent_url: URL of the agent being evaluated
+    - target_agent_id: ID of the agent being evaluated
+    """
+    eval_suite = payload.get("eval_suite")
+    target_agent_url = payload.get("target_agent_url")
+    target_agent_id = payload.get("target_agent_id")
+    
+    if not eval_suite or not target_agent_url or not target_agent_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing required fields: eval_suite, target_agent_url, target_agent_id"
+        )
+    
+    state.store_eval_suite(target_agent_url, target_agent_id, eval_suite)
+    
+    event_bus_logger.info(
+        f"📋 EVAL_STORED | {target_agent_url}/{target_agent_id} | suite_id={eval_suite.get('id')}"
+    )
+    
+    return {
+        "status": "stored",
+        "eval_suite_id": eval_suite.get("id"),
+        "agent_key": f"{target_agent_url}/{target_agent_id}"
+    }
+
+
+@app.get("/evals")
+async def get_eval_suites(
+    agent_url: Optional[str] = Query(default=None, description="Target agent URL"),
+    agent_id: Optional[str] = Query(default=None, description="Target agent ID")
+):
+    """
+    Get eval suites for a specific agent.
+    If no agent specified, returns all evals.
+    """
+    if agent_url and agent_id:
+        evals = state.get_evals_by_agent(agent_url, agent_id)
+        return {
+            "agent_key": f"{agent_url}/{agent_id}",
+            "eval_suites": evals,
+            "count": len(evals)
+        }
+    else:
+        # Return all evals
+        all_evals = []
+        for agent_key, suites in state.evals.items():
+            for suite in suites:
+                all_evals.append({
+                    "agent_key": agent_key,
+                    "eval_suite": suite
+                })
+        return {
+            "eval_suites": all_evals,
+            "count": len(all_evals)
+        }
+
+
+@app.get("/evals/{eval_suite_id}")
+async def get_eval_suite_by_id(eval_suite_id: str):
+    """Get a specific eval suite by its ID"""
+    eval_suite = state.get_eval_by_id(eval_suite_id)
+    
+    if not eval_suite:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Eval suite '{eval_suite_id}' not found"
+        )
+    
+    return {
+        "eval_suite": eval_suite
     }
 
 

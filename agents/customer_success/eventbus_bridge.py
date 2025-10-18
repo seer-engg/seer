@@ -136,24 +136,34 @@ class CustomerSuccessBridge:
         question = event.payload.get("question", "")
         thread_id = event.thread_id or str(uuid.uuid4())
         
-        # Invoke CS agent so it becomes aware of this message
-        # This adds it to the agent's conversation history
-        print(f"🔄 Invoking CS agent to process relay...", flush=True)
-        result = await self.invoke_agent(question, thread_id)
+        # Add to CS agent's thread history for context (but don't generate a response)
+        # We use a special format to indicate this is an assistant message from another agent
+        url = f"{self.langgraph_url}/threads/{thread_id}/state"
+        try:
+            response = await self.http_client.get(url)
+            if response.status_code == 200:
+                # Thread exists, add message to history
+                update_url = f"{self.langgraph_url}/threads/{thread_id}/state"
+                await self.http_client.post(update_url, json={
+                    "values": {
+                        "messages": [{"role": "assistant", "content": f"[Eval Agent]: {question}"}]
+                    }
+                })
+                print(f"📝 Added to CS thread history", flush=True)
+        except Exception as e:
+            print(f"⚠️ Could not update thread history: {e}", flush=True)
         
-        # Send the agent's response (or the original question if no response)
-        response_content = result["ai_response"] if result["ai_response"] else question
-        
+        # Relay verbatim to user
         await self.event_bus.publish(EventMessage(
             event_type=EventType.MESSAGE_TO_USER,
             sender=self.agent_name,
             thread_id=thread_id,
             payload={
-                "content": response_content,
+                "content": question,
                 "message_type": "question"
             }
         ))
-        print(f"✉️  Relayed confirmation query to user", flush=True)
+        print(f"✉️  Relayed confirmation query verbatim to user", flush=True)
     
     async def relay_test_results(self, event: EventMessage):
         """Relay TestResultsReady from Eval Agent to user"""
@@ -162,24 +172,33 @@ class CustomerSuccessBridge:
         summary = event.payload.get("summary", "Test results ready")
         thread_id = event.thread_id or str(uuid.uuid4())
         
-        # Invoke CS agent so it becomes aware of the results
-        # This adds it to the agent's conversation history
-        print(f"🔄 Invoking CS agent to process results...", flush=True)
-        result = await self.invoke_agent(summary, thread_id)
+        # Add to CS agent's thread history for context (but don't generate a response)
+        url = f"{self.langgraph_url}/threads/{thread_id}/state"
+        try:
+            response = await self.http_client.get(url)
+            if response.status_code == 200:
+                # Thread exists, add message to history
+                update_url = f"{self.langgraph_url}/threads/{thread_id}/state"
+                await self.http_client.post(update_url, json={
+                    "values": {
+                        "messages": [{"role": "assistant", "content": f"[Eval Agent]: {summary}"}]
+                    }
+                })
+                print(f"📝 Added test results to CS thread history", flush=True)
+        except Exception as e:
+            print(f"⚠️ Could not update thread history: {e}", flush=True)
         
-        # Send the agent's response (or the original summary if no response)
-        response_content = result["ai_response"] if result["ai_response"] else summary
-        
+        # Relay verbatim to user
         await self.event_bus.publish(EventMessage(
             event_type=EventType.MESSAGE_TO_USER,
             sender=self.agent_name,
             thread_id=thread_id,
             payload={
-                "content": response_content,
+                "content": summary,
                 "message_type": "success"
             }
         ))
-        print(f"✉️  Relayed test results to user", flush=True)
+        print(f"✉️  Relayed test results verbatim to user", flush=True)
     
     async def start(self):
         """Start the bridge"""
