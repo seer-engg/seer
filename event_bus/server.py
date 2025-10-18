@@ -1,7 +1,7 @@
 """
 Event Bus Server - FastAPI-based message broker
 
-Simple in-memory pub/sub system for agent communication.
+Pub/sub system for agent communication with SQLite persistence.
 """
 
 from fastapi import FastAPI, HTTPException, Query, Depends, Header
@@ -15,8 +15,13 @@ import uvicorn
 import os
 import logging
 from pathlib import Path
+import sys
+
+# Add parent directory to path for shared imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from .schemas import EventMessage
+from shared.database import get_db, init_db
 
 # Setup event bus logger
 logs_dir = Path(__file__).parent.parent / "logs"
@@ -76,19 +81,46 @@ def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)
     return credentials.credentials
 
 
-# In-memory storage
+# Initialize database
+db = init_db()
+
+# In-memory storage (for real-time message queues)
 class EventBusState:
     """Global state for the event bus"""
     def __init__(self):
-        self.messages: list[EventMessage] = []  # All messages ever published
+        self.messages: list[EventMessage] = []  # Recent messages for queue routing
         self.subscribers: dict[str, dict] = {}  # agent_name -> {last_poll_time, filters}
         self.message_queues: dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
-        self.evals: dict[str, list[dict]] = {}  # agent_key -> [eval_suites]
-        # agent_key format: "url:port/agent_id" e.g. "http://localhost:2024/deep_researcher"
         
     def add_message(self, message: EventMessage):
         """Add a message to history and route to subscribers"""
         self.messages.append(message)
+        
+        # Persist to database
+        db.add_event(
+            event_id=message.message_id,
+            thread_id=message.thread_id,
+            timestamp=message.timestamp.isoformat() if isinstance(message.timestamp, datetime) else message.timestamp,
+            event_type=message.event_type,
+            sender=message.sender,
+            payload=message.payload
+        )
+        
+        # Also persist as message if it's a MessageFromUser or MessageToUser
+        if message.event_type in ["MessageFromUser", "MessageToUser"]:
+            content = message.payload.get("content", "")
+            role = "user" if message.event_type == "MessageFromUser" else "assistant"
+            db.add_message(
+                thread_id=message.thread_id,
+                message_id=message.message_id,
+                timestamp=message.timestamp.isoformat() if isinstance(message.timestamp, datetime) else message.timestamp,
+                role=role,
+                sender=message.sender,
+                content=content,
+                message_type=message.payload.get("message_type"),
+                metadata=message.payload
+            )
+        
         # Route to all non-blocked subscribers (they'll filter on their end)
         for agent_name, subscriber_info in self.subscribers.items():
             if not subscriber_info.get("blocked", False):
@@ -106,6 +138,9 @@ class EventBusState:
         }
         if agent_name not in self.message_queues:
             self.message_queues[agent_name] = asyncio.Queue()
+        
+        # Persist to database
+        db.register_subscriber(agent_name, filters)
     
     def get_history(
         self, 
@@ -113,34 +148,50 @@ class EventBusState:
         event_type: Optional[str] = None,
         thread_id: Optional[str] = None,
         limit: int = 100
-    ) -> list[EventMessage]:
-        """Get message history with optional filters"""
-        filtered = self.messages
+    ) -> list[dict]:
+        """Get message history with optional filters from database"""
+        # Get from database instead of in-memory
+        since_str = since.isoformat() if since else None
+        events = db.get_recent_events(limit=limit, event_type=event_type, since=since_str)
         
-        if since:
-            filtered = [m for m in filtered if m.timestamp > since]
-        if event_type:
-            filtered = [m for m in filtered if m.event_type == event_type]
+        # Filter by thread_id if provided
         if thread_id:
-            filtered = [m for m in filtered if m.thread_id == thread_id]
+            events = [e for e in events if e.get('thread_id') == thread_id]
         
-        return filtered[-limit:]
+        # Convert to EventMessage-like dict format
+        result = []
+        for event in events:
+            import json
+            result.append({
+                "message_id": event['event_id'],
+                "event_type": event['event_type'],
+                "sender": event['sender'],
+                "thread_id": event['thread_id'],
+                "timestamp": event['timestamp'],
+                "payload": json.loads(event['payload']) if isinstance(event['payload'], str) else event['payload']
+            })
+        
+        return list(reversed(result))  # Return in chronological order
     
     def detect_rogue_agents(self) -> list[dict]:
         """Detect potentially rogue agents based on behavior patterns"""
         suspicious_agents = []
         
-        for agent_name, info in self.subscribers.items():
+        # Get subscribers from database
+        subscribers = db.get_subscribers()
+        
+        for subscriber in subscribers:
+            agent_name = subscriber['agent_name']
             suspicious_score = 0
             reasons = []
             
             # Check message frequency (too many messages)
-            if info.get("message_count", 0) > 100:  # Threshold
+            if subscriber.get("message_count", 0) > 100:  # Threshold
                 suspicious_score += 30
                 reasons.append("High message volume")
             
             # Check publish frequency (too many publishes)
-            if info.get("publish_count", 0) > 50:  # Threshold
+            if subscriber.get("publish_count", 0) > 50:  # Threshold
                 suspicious_score += 40
                 reasons.append("High publish rate")
             
@@ -150,8 +201,8 @@ class EventBusState:
                 reasons.append("Suspicious agent name")
             
             # Check for agents that never poll (might be passive listeners)
-            last_poll = info.get("last_poll")
-            if last_poll and isinstance(last_poll, str):
+            last_poll = subscriber.get("last_poll")
+            if last_poll:
                 try:
                     last_poll_dt = datetime.fromisoformat(last_poll.replace('Z', '+00:00'))
                     time_since_poll = datetime.now() - last_poll_dt
@@ -166,30 +217,10 @@ class EventBusState:
                     "agent_name": agent_name,
                     "suspicious_score": suspicious_score,
                     "reasons": reasons,
-                    "info": info
+                    "info": subscriber
                 })
         
         return suspicious_agents
-    
-    def store_eval_suite(self, agent_url: str, agent_id: str, eval_suite: dict):
-        """Store an eval suite for a target agent"""
-        agent_key = f"{agent_url}/{agent_id}"
-        if agent_key not in self.evals:
-            self.evals[agent_key] = []
-        self.evals[agent_key].append(eval_suite)
-    
-    def get_evals_by_agent(self, agent_url: str, agent_id: str) -> list[dict]:
-        """Get all eval suites for a specific agent"""
-        agent_key = f"{agent_url}/{agent_id}"
-        return self.evals.get(agent_key, [])
-    
-    def get_eval_by_id(self, eval_suite_id: str) -> Optional[dict]:
-        """Get a specific eval suite by ID"""
-        for agent_key, suites in self.evals.items():
-            for suite in suites:
-                if suite.get("id") == eval_suite_id:
-                    return suite
-        return None
 
 
 state = EventBusState()
@@ -198,11 +229,13 @@ state = EventBusState()
 @app.get("/")
 async def root():
     """Health check and stats"""
+    subscribers = db.get_subscribers()
+    events = db.get_recent_events(limit=1)
     return {
         "status": "running",
-        "total_messages": len(state.messages),
-        "active_subscribers": len(state.subscribers),
-        "subscribers": list(state.subscribers.keys())
+        "total_messages": len(events) if events else 0,
+        "active_subscribers": len(subscribers),
+        "subscribers": [s['agent_name'] for s in subscribers]
     }
 
 
@@ -215,6 +248,9 @@ async def publish_message(message: EventMessage):
     # Track publish count for sender
     if message.sender in state.subscribers:
         state.subscribers[message.sender]["publish_count"] = state.subscribers[message.sender].get("publish_count", 0) + 1
+    
+    # Update in database
+    db.update_subscriber_publish(message.sender)
     
     state.add_message(message)
     
@@ -272,6 +308,10 @@ async def poll_messages(
     
     state.subscribers[agent_name]["last_poll"] = datetime.now()
     state.subscribers[agent_name]["message_count"] = state.subscribers[agent_name].get("message_count", 0) + 1
+    
+    # Update in database
+    db.update_subscriber_poll(agent_name)
+    
     queue = state.message_queues[agent_name]
     
     messages = []
@@ -327,33 +367,31 @@ async def get_history(
         limit=limit
     )
     
+    # Messages are already dicts from database, no need to call model_dump()
     return {
-        "messages": [m.model_dump() for m in messages],
+        "messages": messages,
         "count": len(messages),
-        "total_in_system": len(state.messages)
+        "total_in_system": len(db.get_recent_events(limit=1))
     }
 
 
 @app.get("/threads")
 async def get_threads():
     """Get all active conversation threads"""
-    threads = {}
-    for msg in state.messages:
-        if msg.thread_id:
-            if msg.thread_id not in threads:
-                threads[msg.thread_id] = {
-                    "thread_id": msg.thread_id,
-                    "message_count": 0,
-                    "first_message": msg.timestamp,
-                    "last_message": msg.timestamp
-                }
-            threads[msg.thread_id]["message_count"] += 1
-            threads[msg.thread_id]["last_message"] = max(
-                threads[msg.thread_id]["last_message"],
-                msg.timestamp
-            )
+    threads_list = db.list_threads(limit=100)
     
-    return {"threads": list(threads.values())}
+    # Enhance with statistics
+    result = []
+    for thread in threads_list:
+        stats = db.get_thread_statistics(thread['thread_id'])
+        result.append({
+            "thread_id": thread['thread_id'],
+            "message_count": stats['message_count'],
+            "first_message": thread['created_at'],
+            "last_message": thread['updated_at']
+        })
+    
+    return {"threads": result}
 
 
 @app.delete("/clear")
@@ -468,10 +506,12 @@ async def store_eval_suite(payload: dict):
     - eval_suite: The eval suite object with test cases
     - target_agent_url: URL of the agent being evaluated
     - target_agent_id: ID of the agent being evaluated
+    - thread_id: Optional thread ID
     """
     eval_suite = payload.get("eval_suite")
     target_agent_url = payload.get("target_agent_url")
     target_agent_id = payload.get("target_agent_id")
+    thread_id = payload.get("thread_id")
     
     if not eval_suite or not target_agent_url or not target_agent_id:
         raise HTTPException(
@@ -479,7 +519,16 @@ async def store_eval_suite(payload: dict):
             detail="Missing required fields: eval_suite, target_agent_url, target_agent_id"
         )
     
-    state.store_eval_suite(target_agent_url, target_agent_id, eval_suite)
+    # Save to database
+    db.save_eval_suite(
+        suite_id=eval_suite.get("id"),
+        spec_name=eval_suite.get("spec_name"),
+        spec_version=eval_suite.get("spec_version"),
+        test_cases=eval_suite.get("test_cases", []),
+        thread_id=thread_id,
+        target_agent_url=target_agent_url,
+        target_agent_id=target_agent_id
+    )
     
     event_bus_logger.info(
         f"📋 EVAL_STORED | {target_agent_url}/{target_agent_id} | suite_id={eval_suite.get('id')}"
@@ -501,22 +550,26 @@ async def get_eval_suites(
     Get eval suites for a specific agent.
     If no agent specified, returns all evals.
     """
+    evals = db.get_eval_suites(
+        target_agent_url=agent_url,
+        target_agent_id=agent_id
+    )
+    
     if agent_url and agent_id:
-        evals = state.get_evals_by_agent(agent_url, agent_id)
         return {
             "agent_key": f"{agent_url}/{agent_id}",
             "eval_suites": evals,
             "count": len(evals)
         }
     else:
-        # Return all evals
+        # Format for all evals
         all_evals = []
-        for agent_key, suites in state.evals.items():
-            for suite in suites:
-                all_evals.append({
-                    "agent_key": agent_key,
-                    "eval_suite": suite
-                })
+        for suite in evals:
+            agent_key = f"{suite.get('target_agent_url', '')}/{suite.get('target_agent_id', '')}"
+            all_evals.append({
+                "agent_key": agent_key,
+                "eval_suite": suite
+            })
         return {
             "eval_suites": all_evals,
             "count": len(all_evals)
@@ -526,7 +579,7 @@ async def get_eval_suites(
 @app.get("/evals/{eval_suite_id}")
 async def get_eval_suite_by_id(eval_suite_id: str):
     """Get a specific eval suite by its ID"""
-    eval_suite = state.get_eval_by_id(eval_suite_id)
+    eval_suite = db.get_eval_suite(eval_suite_id)
     
     if not eval_suite:
         raise HTTPException(
@@ -536,6 +589,66 @@ async def get_eval_suite_by_id(eval_suite_id: str):
     
     return {
         "eval_suite": eval_suite
+    }
+
+
+@app.post("/test_results")
+async def store_test_results(payload: dict):
+    """
+    Store test results for an eval suite.
+    
+    Payload should include:
+    - suite_id: The eval suite ID
+    - thread_id: The thread ID
+    - results: List of test results
+    """
+    suite_id = payload.get("suite_id")
+    thread_id = payload.get("thread_id")
+    results = payload.get("results", [])
+    
+    if not suite_id or not thread_id or not results:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing required fields: suite_id, thread_id, results"
+        )
+    
+    # Save each result
+    import uuid
+    for result in results:
+        result_id = str(uuid.uuid4())
+        db.save_test_result(
+            result_id=result_id,
+            suite_id=suite_id,
+            thread_id=thread_id,
+            test_case_id=result.get("test_case_id"),
+            input_sent=result.get("input_sent"),
+            actual_output=result.get("actual_output"),
+            expected_behavior=result.get("expected_behavior"),
+            passed=result.get("passed"),
+            score=result.get("score"),
+            judge_reasoning=result.get("judge_reasoning")
+        )
+    
+    event_bus_logger.info(
+        f"📊 TEST_RESULTS_STORED | suite_id={suite_id} | count={len(results)}"
+    )
+    
+    return {
+        "status": "stored",
+        "suite_id": suite_id,
+        "results_count": len(results)
+    }
+
+
+@app.get("/test_results/{suite_id}")
+async def get_test_results(suite_id: str):
+    """Get test results for a specific eval suite"""
+    results = db.get_test_results(suite_id=suite_id)
+    
+    return {
+        "suite_id": suite_id,
+        "results": results,
+        "count": len(results)
     }
 
 

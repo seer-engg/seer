@@ -241,11 +241,12 @@ Please generate a spec and test cases based on the user's expectations."""
             local_file_path = None
             evals_markdown = None
 
-            print("🛰️  Storing eval suite in Event Bus...", flush=True)
+            print("🛰️  Storing eval suite in database...", flush=True)
             await self._store_eval_suite(
                 parsed_agent_url,
                 parsed_agent_id,
-                eval_suite_plain
+                eval_suite_plain,
+                thread_id
             )
             # Store eval_suite_id in context for later reference
             self.active_threads[thread_id]["eval_suite_id"] = eval_suite_plain.get("id")
@@ -297,34 +298,54 @@ Please generate a spec and test cases based on the user's expectations."""
         else:
             print("⚠️  No eval_suite found in values; cannot request confirmation", flush=True)
     
-    async def _store_eval_suite(self, target_url: str, target_id: str, eval_suite: dict):
-        """Store eval suite in Event Bus"""
+    async def _store_eval_suite(self, target_url: str, target_id: str, eval_suite: dict, thread_id: str = None):
+        """Store eval suite in Event Bus (database)"""
         try:
             response = await self.http_client.post(
                 f"{self.event_bus_url}/evals",
                 json={
                     "eval_suite": eval_suite,
                     "target_agent_url": target_url,
-                    "target_agent_id": target_id
+                    "target_agent_id": target_id,
+                    "thread_id": thread_id
                 }
             )
             response.raise_for_status()
-            print(f"✅ Stored eval suite in Event Bus: {eval_suite.get('id')}", flush=True)
+            print(f"✅ Stored eval suite in database: {eval_suite.get('id')}", flush=True)
         except Exception as e:
             print(f"⚠️  Failed to store eval suite: {e}", flush=True)
+            traceback.print_exc()
+    
+    async def _store_test_results(self, suite_id: str, thread_id: str, results: list):
+        """Store test results in Event Bus (database)"""
+        try:
+            response = await self.http_client.post(
+                f"{self.event_bus_url}/test_results",
+                json={
+                    "suite_id": suite_id,
+                    "thread_id": thread_id,
+                    "results": results
+                }
+            )
+            response.raise_for_status()
+            print(f"✅ Stored {len(results)} test results in database", flush=True)
+        except Exception as e:
+            print(f"⚠️  Failed to store test results: {e}", flush=True)
+            traceback.print_exc()
 
     def _save_eval_suite_local(self, eval_suite: dict) -> str:
-        """Save eval suite to a local JSON file and return absolute file path"""
+        """Save eval suite to a local JSON file for backup/auditing"""
         base_dir = Path(__file__).parent / "generated_evals"
         base_dir.mkdir(parents=True, exist_ok=True)
         file_name = f"{eval_suite.get('id', 'eval_suite')}.json"
         file_path = base_dir / file_name
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(eval_suite, f, indent=2)
+        print(f"📦 Backup saved locally: {file_path}", flush=True)
         return str(file_path.resolve())
 
     def _save_detailed_results_local(self, thread_id: str, eval_suite_id: str, results: list) -> str:
-        """Save per-test detailed results to a local JSON file and return absolute path"""
+        """Save per-test detailed results to a local JSON file for backup/auditing"""
         base_dir = Path(__file__).parent / "generated_evals"
         base_dir.mkdir(parents=True, exist_ok=True)
         suffix = eval_suite_id or thread_id
@@ -336,6 +357,7 @@ Please generate a spec and test cases based on the user's expectations."""
                 "eval_suite_id": eval_suite_id,
                 "results": results
             }, f, indent=2)
+        print(f"📦 Backup results saved locally: {file_path}", flush=True)
         return str(file_path.resolve())
     
     async def handle_user_confirmation(self, event: EventMessage):
@@ -439,16 +461,23 @@ Please generate a spec and test cases based on the user's expectations."""
                 failed += 1
 
         # If verdicts weren't all surfaced, derive tallies from the written file
+        all_results = []
         try:
             with open(results_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 results = data.get('results', [])
+                all_results = results
                 if results:
                     passed = sum(1 for r in results if r.get('passed'))
                     failed = sum(1 for r in results if not r.get('passed'))
                     total = len(results)
         except Exception as e:
             print(f"⚠️  Failed to read results file for tally: {e}", flush=True)
+        
+        # Store results to database
+        if all_results:
+            print(f"💾 Storing {len(all_results)} test results to database...", flush=True)
+            await self._store_test_results(eval_suite_id, thread_id, all_results)
 
         score = (passed / total * 100) if total > 0 else 0
         summary = f"{passed}/{total} passed ({score:.0f}%)"

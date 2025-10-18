@@ -65,27 +65,39 @@ async def send_message_to_agent(message: str, thread_id: str):
 
 async def get_thread_messages(thread_id: str, since_timestamp: str = None) -> list:
     """Get all MessageToUser events for a thread"""
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=10.0) as client:
         params = {"thread_id": thread_id, "limit": 50}
         if since_timestamp:
             params["since"] = since_timestamp
         
-        response = await client.get(f"{EVENT_BUS_URL}/history", params=params)
-        messages = response.json()["messages"]
-        
-        # Filter for MessageToUser from agents
-        agent_messages = []
-        for msg in messages:
-            if (msg["event_type"] == "MessageToUser" and 
-                msg["thread_id"] == thread_id and
-                msg["sender"] != "user"):
-                agent_messages.append({
-                    "content": msg["payload"]["content"],
-                    "sender": msg["sender"],
-                    "timestamp": msg["timestamp"]
-                })
-        
-        return agent_messages
+        try:
+            response = await client.get(f"{EVENT_BUS_URL}/history", params=params)
+            response.raise_for_status()
+            
+            # Handle empty or invalid response
+            if not response.content:
+                return []
+            
+            data = response.json()
+            messages = data.get("messages", [])
+            
+            # Filter for MessageToUser from agents
+            agent_messages = []
+            for msg in messages:
+                if (msg.get("event_type") == "MessageToUser" and 
+                    msg.get("thread_id") == thread_id and
+                    msg.get("sender") != "user"):
+                    payload = msg.get("payload", {})
+                    agent_messages.append({
+                        "content": payload.get("content", ""),
+                        "sender": msg.get("sender", "unknown"),
+                        "timestamp": msg.get("timestamp", "")
+                    })
+            
+            return agent_messages
+        except Exception as e:
+            st.error(f"Failed to fetch messages: {e}")
+            return []
 
 
 async def get_event_history(limit: int = 50):
@@ -146,6 +158,71 @@ async def get_bus_status():
 def render_chat():
     """Render main chat interface"""
     st.title("💬 Chat")
+    
+    # Thread selector in sidebar
+    with st.sidebar:
+        st.markdown("### 💬 Conversations")
+        
+        # Get all threads
+        threads = asyncio.run(get_all_threads())
+        
+        if threads:
+            # Create thread options
+            thread_options = {}
+            for t in threads:
+                thread_id = t['thread_id']
+                msg_count = t.get('message_count', 0)
+                last_msg = t.get('last_message', '')[:19] if t.get('last_message') else 'N/A'
+                label = f"{thread_id[:8]}... ({msg_count} msgs)"
+                thread_options[label] = thread_id
+            
+            # Add "New Conversation" option
+            thread_options["➕ New Conversation"] = "new"
+            
+            # Thread selector
+            current_label = None
+            for label, tid in thread_options.items():
+                if tid == st.session_state.thread_id:
+                    current_label = label
+                    break
+            
+            selected_label = st.selectbox(
+                "Select conversation",
+                list(thread_options.keys()),
+                index=list(thread_options.keys()).index(current_label) if current_label else 0,
+                key="chat_thread_selector"
+            )
+            
+            selected_thread_id = thread_options[selected_label]
+            
+            # Switch thread if changed
+            if selected_thread_id == "new":
+                if selected_label == "➕ New Conversation":
+                    import uuid
+                    new_thread_id = str(uuid.uuid4())
+                    st.session_state.thread_id = new_thread_id
+                    st.session_state.messages = []
+                    st.session_state.seen_message_ids = set()
+                    st.rerun()
+            elif selected_thread_id != st.session_state.thread_id:
+                # Load selected thread
+                st.session_state.thread_id = selected_thread_id
+                st.session_state.messages = []
+                st.session_state.seen_message_ids = set()
+                
+                # Load thread history
+                all_messages = asyncio.run(get_thread_messages(selected_thread_id))
+                for msg in all_messages:
+                    msg_id = f"{msg['sender']}_{msg['timestamp']}"
+                    if msg_id not in st.session_state.seen_message_ids:
+                        st.session_state.messages.append({"role": "assistant", "content": msg["content"]})
+                        st.session_state.seen_message_ids.add(msg_id)
+                st.rerun()
+        else:
+            st.info("No conversations yet")
+        
+        st.markdown("---")
+        st.markdown(f"**Current Thread:**\n`{st.session_state.thread_id[:16]}...`")
     
     # Quick start guide
     if len(st.session_state.messages) == 0:

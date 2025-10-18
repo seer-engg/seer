@@ -32,6 +32,7 @@ Real LangGraph agents with proper structure, testable in isolation with `langgra
 ## 📚 Documentation
 
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture and design
+- **[DATABASE.md](DATABASE.md)** - Database schema and persistence layer
 - **[Simulation Flow](Simulation%20Evaluating%20Vertex%20wo%20debugging.txt)** - Example evaluation flow
 
 ---
@@ -53,6 +54,7 @@ Event Bus (FastAPI)
 - ✅ **Event-driven** - Event Bus enables agent coordination
 - ✅ **Blackbox A2A testing** - Test your agent without accessing code
 - ✅ **Full tracing** - See all events and agent threads in UI
+- ✅ **Persistent storage** - SQLite database stores all chat threads and eval data
 
 **Agent Files:**
 - Customer Success: `agents/customer_success/graph.py`
@@ -64,7 +66,7 @@ Event Bus (FastAPI)
 
 ```
 seer/
-├── event_bus/          # FastAPI event bus
+├── event_bus/          # FastAPI event bus with database persistence
 ├── agents/             # LangGraph agents with Event Bus bridges
 │   ├── customer_success/
 │   │   ├── eventbus_bridge.py   # Bridge to Event Bus
@@ -74,10 +76,12 @@ seer/
 │       ├── eventbus_bridge.py   # Bridge to Event Bus
 │       ├── graph.py             # LangGraph agent graph
 │       └── langgraph.json
-├── shared/             # Shared utilities (schemas, prompts)
+├── shared/             # Shared utilities (schemas, prompts, database)
+├── data/               # SQLite database storage
 ├── ui/                 # Streamlit UI
 │   └── streamlit_app.py
 ├── run.py              # Launcher (starts everything)
+├── init_db.py          # Database initialization and migration
 └── requirements.txt    # Dependencies
 ```
 
@@ -95,6 +99,30 @@ You: "Yes"
 
 Seer: 📊 Results: 5/6 passed (83%)
 ```
+
+---
+
+## 💾 Database & Persistence
+
+Seer uses SQLite to persist all data:
+- **Chat threads** - All conversations with complete history
+- **Messages** - Every message from users and agents
+- **Events** - All event bus activity
+- **Agent activities** - What each agent did in each thread
+- **Eval suites** - Generated test cases
+- **Test results** - Detailed test execution results
+
+**Initialize database:**
+```bash
+python init_db.py
+```
+
+**Migrate existing eval files:**
+```bash
+python init_db.py --migrate
+```
+
+**See [DATABASE.md](DATABASE.md) for complete documentation.**
 
 ---
 
