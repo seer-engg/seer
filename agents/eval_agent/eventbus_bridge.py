@@ -141,6 +141,12 @@ Please generate a spec and test cases based on the user's expectations."""
                     if "test_cases" in data and "id" in data:
                         eval_suite_data = data
                         print(f"📋 Generated eval suite: {data.get('id')}", flush=True)
+                        # Persist in thread context for post-confirmation execution
+                        try:
+                            if thread_id in self.active_threads:
+                                self.active_threads[thread_id]["eval_suite"] = data
+                        except Exception:
+                            pass
                         continue
                     
                     action = data.get("action")
@@ -149,7 +155,9 @@ Please generate a spec and test cases based on the user's expectations."""
                     action_key = f"{action}:{thread_id}"
                     
                     if action == "CONFIRMATION_REQUEST" and action_key not in processed_actions:
-                        # Store eval suite in Event Bus before requesting confirmation
+                        # Store eval suite in Event Bus and locally before requesting confirmation
+                        local_file_path = None
+                        evals_markdown = None
                         if eval_suite_data:
                             await self._store_eval_suite(
                                 target_url,
@@ -158,19 +166,51 @@ Please generate a spec and test cases based on the user's expectations."""
                             )
                             # Store eval_suite_id in context for later reference
                             self.active_threads[thread_id]["eval_suite_id"] = eval_suite_data.get("id")
+                            # Save locally for convenience/auditing
+                            try:
+                                local_file_path = self._save_eval_suite_local(eval_suite_data)
+                                print(f"📝 Saved eval suite locally: {local_file_path}", flush=True)
+                                # Keep path in context for fallback loading
+                                self.active_threads[thread_id]["local_file_path"] = local_file_path
+                            except Exception as e:
+                                print(f"⚠️  Failed to save eval suite locally: {e}", flush=True)
+                            
+                            # Build a human-readable list of all evals (full display)
+                            test_cases = eval_suite_data.get("test_cases", [])
+                            lines = []
+                            for idx, tc in enumerate(test_cases, 1):
+                                lines.append(f"{idx}. [{tc.get('id','')}] Expectation: {tc.get('expectation_ref','')}")
+                                lines.append(f"   - Input: {tc.get('input_message','')}")
+                                lines.append(f"   - Expected: {tc.get('expected_behavior','')}")
+                                lines.append(f"   - Criteria: {tc.get('success_criteria','')}")
+                            evals_markdown = "\n".join(lines)
                         
-                        # Publish UserConfirmationQuery
+                        # Publish UserConfirmationQuery (include full evals in question/context)
                         # Customer Success will relay this to the user
                         test_count = data.get("test_count", 0)
                         question = data.get("question", "Should I proceed?")
+                        
+                        if evals_markdown:
+                            question_text = (
+                                f"I've generated {len(eval_suite_data.get('test_cases', []))} test cases.\n\n"
+                                f"Here are the generated evals:\n{evals_markdown}\n\n"
+                                f"{question}"
+                            )
+                        else:
+                            question_text = f"I've generated {test_count} test cases. {question}"
                         
                         await self.event_bus.publish(EventMessage(
                             event_type=EventType.USER_CONFIRMATION_QUERY,
                             sender=self.agent_name,
                             thread_id=thread_id,
                             payload={
-                                "question": f"I've generated {test_count} test cases. {question}",
-                                "context": {"test_count": test_count}
+                                "question": question_text,
+                                "context": {
+                                    "test_count": test_count,
+                                    "eval_suite_id": (eval_suite_data or {}).get("id"),
+                                    "test_cases": (eval_suite_data or {}).get("test_cases", []),
+                                    "local_file_path": local_file_path
+                                }
                             }
                         ))
                         processed_actions.add(action_key)
@@ -196,6 +236,16 @@ Please generate a spec and test cases based on the user's expectations."""
             print(f"✅ Stored eval suite in Event Bus: {eval_suite.get('id')}", flush=True)
         except Exception as e:
             print(f"⚠️  Failed to store eval suite: {e}", flush=True)
+
+    def _save_eval_suite_local(self, eval_suite: dict) -> str:
+        """Save eval suite to a local JSON file and return absolute file path"""
+        base_dir = Path(__file__).parent / "generated_evals"
+        base_dir.mkdir(parents=True, exist_ok=True)
+        file_name = f"{eval_suite.get('id', 'eval_suite')}.json"
+        file_path = base_dir / file_name
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(eval_suite, f, indent=2)
+        return str(file_path.resolve())
     
     async def handle_user_confirmation(self, event: EventMessage):
         """Handle UserConfirmation event"""
@@ -219,8 +269,36 @@ Please generate a spec and test cases based on the user's expectations."""
         
         print(f"✅ User confirmed, running tests...", flush=True)
         
-        # Tell agent to proceed
-        message = "User confirmed. Please proceed with running the tests and summarizing results."
+        # Provide eval suite and target details back to the agent so it can run tests
+        ctx = self.active_threads.get(thread_id, {})
+        target_url = ctx.get("target_url", "http://localhost:2024")
+        target_id = ctx.get("target_id", "agent")
+        eval_suite = ctx.get("eval_suite")
+        if not eval_suite:
+            # Fallback: load from local file path saved earlier
+            local_path = ctx.get("local_file_path")
+            try:
+                if local_path and os.path.exists(local_path):
+                    with open(local_path, "r", encoding="utf-8") as f:
+                        eval_suite = json.load(f)
+            except Exception as e:
+                print(f"⚠️  Failed to load eval suite from local file: {e}", flush=True)
+        
+        if eval_suite:
+            message = (
+                "User confirmed. Use this eval suite to run tests and then summarize results.\n"
+                f"Target URL: {target_url}\n"
+                f"Target Agent ID: {target_id}\n"
+                "Instructions:\n"
+                "- For each test_case in eval_suite.test_cases:\n"
+                "  * Call run_test(target_url, target_agent_id, test_case.input_message, same thread_id).\n"
+                "  * Then call judge_test_result(test_input, expected_behavior, success_criteria, actual_output).\n"
+                "- After all tests, call summarize_results(passed, failed, total) to emit TEST_RESULTS.\n"
+                "EVAL_SUITE_JSON:\n" + json.dumps(eval_suite)
+            )
+        else:
+            # Fallback to simple proceed instruction (agent may regenerate tests if needed)
+            message = "User confirmed. Please proceed with running the tests and summarizing results."
         
         # Invoke agent
         result = await self.invoke_agent(message, thread_id)
