@@ -163,11 +163,23 @@ def render_chat():
     with st.sidebar:
         st.markdown("### 💬 Conversations")
         
+        # Button to start new conversation
+        if st.button("➕ New Conversation", use_container_width=True):
+            import uuid
+            new_thread_id = str(uuid.uuid4())
+            st.session_state.thread_id = new_thread_id
+            st.session_state.messages = []
+            st.session_state.seen_message_ids = set()
+            st.session_state.waiting_for_response = False
+            st.rerun()
+        
+        st.markdown("---")
+        
         # Get all threads
         threads = asyncio.run(get_all_threads())
         
         if threads:
-            # Create thread options
+            # Create thread options - only show existing threads
             thread_options = {}
             for t in threads:
                 thread_id = t['thread_id']
@@ -176,15 +188,18 @@ def render_chat():
                 label = f"{thread_id[:8]}... ({msg_count} msgs)"
                 thread_options[label] = thread_id
             
-            # Add "New Conversation" option
-            thread_options["➕ New Conversation"] = "new"
-            
-            # Thread selector
+            # Find current thread label
             current_label = None
             for label, tid in thread_options.items():
                 if tid == st.session_state.thread_id:
                     current_label = label
                     break
+            
+            # If current thread is not in the list (new thread), show it
+            if current_label is None:
+                current_thread_id = st.session_state.thread_id
+                current_label = f"{current_thread_id[:8]}... (new)"
+                thread_options[current_label] = current_thread_id
             
             selected_label = st.selectbox(
                 "Select conversation",
@@ -196,21 +211,14 @@ def render_chat():
             selected_thread_id = thread_options[selected_label]
             
             # Switch thread if changed
-            if selected_thread_id == "new":
-                if selected_label == "➕ New Conversation":
-                    import uuid
-                    new_thread_id = str(uuid.uuid4())
-                    st.session_state.thread_id = new_thread_id
-                    st.session_state.messages = []
-                    st.session_state.seen_message_ids = set()
-                    st.rerun()
-            elif selected_thread_id != st.session_state.thread_id:
+            if selected_thread_id != st.session_state.thread_id:
                 # Load selected thread
                 st.session_state.thread_id = selected_thread_id
                 st.session_state.messages = []
                 st.session_state.seen_message_ids = set()
+                st.session_state.waiting_for_response = False
                 
-                # Load thread history
+                # Load thread history from database
                 all_messages = asyncio.run(get_thread_messages(selected_thread_id))
                 for msg in all_messages:
                     msg_id = f"{msg['sender']}_{msg['timestamp']}"
