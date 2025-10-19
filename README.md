@@ -1,8 +1,8 @@
-# 🔮 Seer - Event-Driven Multi-Agent Evaluation Platform
+# 🔮 Seer - A2A Multi-Agent Evaluation Platform
 
 **Seer** is a Multi-Agent System (MAS) for evaluating AI agents through blackbox testing.
 
-Agents communicate via an event bus, enabling modular, scalable, and traceable interactions.
+Agents communicate via LangGraph's Agent-to-Agent (A2A) protocol with an orchestrator acting as a central hub, enabling modular, scalable, and traceable interactions.
 
 ---
 
@@ -20,7 +20,8 @@ python run.py
 
 # 4. Open UI
 # UI:                 http://localhost:8501
-# Use the "Agent Threads" tab to debug individual agent conversations
+# Use the "Orchestrator Monitor" tab to see message flow between all agents
+# LangGraph Studio:   https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:8001
 ```
 
 Real LangGraph agents with proper structure, testable in isolation with `langgraph dev`.
@@ -40,25 +41,32 @@ Real LangGraph agents with proper structure, testable in isolation with `langgra
 ## 🏗️ Architecture
 
 ```
-Event Bus (FastAPI)
-    ↓
-    ├─→ Bridge → LangGraph Customer Success Agent (port 8001)
-    └─→ Bridge → LangGraph Eval Agent (port 8002)
-         ↓
-    Your Agent (Blackbox A2A)
+Your Agent (Blackbox A2A)
+        ↓
+Customer Success Agent ←→ Orchestrator Agent ←→ Eval Agent
+    (port 8001)         (port 8000)         (port 8002)
+        ↑                      ↑                      ↑
+        └──────────────────────┴──────────────────────┘
+                     A2A Protocol (Hub & Spoke)
 ```
 
 **Why This Architecture:**
 - ✅ **Real agents** - Proper LangGraph structure with state, tools, workflows
+- ✅ **Central coordination** - Orchestrator agent acts as message router and data store
 - ✅ **Testable in isolation** - Use `langgraph dev` to test agents individually
-- ✅ **Event-driven** - Event Bus enables agent coordination
 - ✅ **Blackbox A2A testing** - Test your agent without accessing code
-- ✅ **Full tracing** - See all events and agent threads in UI
+- ✅ **Full tracing** - See all message flow through the Orchestrator Monitor
 - ✅ **Persistent storage** - SQLite database stores all chat threads and eval data
+- ✅ **Simplified deployment** - No bridge processes needed
 
 **Agent Files:**
+- Orchestrator: `agents/orchestrator/graph.py` (Central hub)
 - Customer Success: `agents/customer_success/graph.py`
 - Eval Agent: `agents/eval_agent/graph.py`
+
+**Configuration:**
+- `deployment-config.json` - Centralized agent UUIDs and ports
+- `shared/config.py` - Configuration management utilities
 
 ---
 
@@ -66,22 +74,22 @@ Event Bus (FastAPI)
 
 ```
 seer/
-├── event_bus/          # FastAPI event bus with database persistence
-├── agents/             # LangGraph agents with Event Bus bridges
+├── agents/             # LangGraph agents with A2A communication
+│   ├── orchestrator/           # Central coordinating agent (group chat hub)
+│   │   ├── graph.py             # Main orchestrator logic
+│   │   └── langgraph.json
 │   ├── customer_success/
-│   │   ├── eventbus_bridge.py   # Bridge to Event Bus
 │   │   ├── graph.py             # LangGraph agent graph
 │   │   └── langgraph.json
 │   └── eval_agent/
-│       ├── eventbus_bridge.py   # Bridge to Event Bus
 │       ├── graph.py             # LangGraph agent graph
 │       └── langgraph.json
-├── shared/             # Shared utilities (schemas, prompts, database)
+├── shared/             # Shared utilities (schemas, prompts, database, config)
 ├── data/               # SQLite database storage
 ├── ui/                 # Streamlit UI
 │   └── streamlit_app.py
+├── deployment-config.json  # Agent UUIDs and configuration
 ├── run.py              # Launcher (starts everything)
-├── init_db.py          # Database initialization and migration
 └── requirements.txt    # Dependencies
 ```
 
@@ -107,22 +115,9 @@ Seer: 📊 Results: 5/6 passed (83%)
 Seer uses SQLite to persist all data:
 - **Chat threads** - All conversations with complete history
 - **Messages** - Every message from users and agents
-- **Events** - All event bus activity
-- **Agent activities** - What each agent did in each thread
+- **Agent activities** - What each agent did in each thread (for debugging/tracing)
 - **Eval suites** - Generated test cases
 - **Test results** - Detailed test execution results
-
-**Initialize database:**
-```bash
-python init_db.py
-```
-
-**Migrate existing eval files:**
-```bash
-python init_db.py --migrate
-```
-
-**See [DATABASE.md](DATABASE.md) for complete documentation.**
 
 ---
 
@@ -138,30 +133,43 @@ Open http://localhost:8501 and use the tabs:
    - See tool calls and responses
    - Side-by-side comparison of CS and Eval agents
    - Filter by thread ID
-3. **📡 Event Bus** - Real-time event monitoring:
-   - Event type filtering
-   - Payload inspection
-   - Color-coded events
-   - Thread tracking
+3. **🎛️ Orchestrator Monitor** - Real-time message flow monitoring:
+   - See all messages between agents
+   - Track message broadcasting
+   - View agent registration status
+   - Monitor conversation threads
+
+### LangGraph Studio (Browser-based)
+
+Access LangGraph Studio for advanced debugging:
+- **Customer Success Agent**: https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:8001
+- **Eval Agent**: https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:8002
+
+Features:
+- Visual graph execution
+- Real-time conversation monitoring
+- Tool call inspection
+- State management debugging
+- A2A communication traces
 
 ### Via Log Files
 
 ```bash
-# Event bus activity
-tail -f logs/event_bus.log
+# Orchestrator agent (LangGraph)
+tail -f logs/orchestrator_langgraph.log
 
-# Customer Success agent
-tail -f logs/customer_success_agent.log
+# Customer Success agent (LangGraph)
+tail -f logs/customer_success_langgraph.log
 
-# Eval agent
-tail -f logs/eval_agent.log
+# Eval agent (LangGraph)
+tail -f logs/eval_agent_langgraph.log
 ```
 
 **What you'll see in logs:**
-- 🔌 `SUBSCRIBE` - When agents join the event bus
-- ✉️ `PUBLISH` - When agents send messages
-- 📥 `POLL` - When agents receive messages
-- 📨 Agent-specific activity with `[CS]` or `[EVAL]` prefixes
+- 🎛️ Orchestrator activity and message broadcasting
+- 🤖 A2A communication traces between all agents
+- 📨 Agent-specific activity with `[ORCHESTRATOR]`, `[CS]`, or `[EVAL]` prefixes
+- 🔄 Agent registration and status updates
 
 ---
 
@@ -170,23 +178,23 @@ tail -f logs/eval_agent.log
 **Add a new agent:**
 1. Copy `agents/eval_agent/` as template
 2. Define state, tools, and workflow
-3. Subscribe to event bus
+3. Register with Orchestrator agent (it will broadcast messages to you)
 4. Update `run.py` to launch it
 
-**Add a new event type:**
-1. Add to `EventType` in `event_bus/schemas.py`
-2. Create payload schema
-3. Publish and handle in agents
+**Add new data types:**
+1. Add schemas in `shared/schemas.py`
+2. Update Orchestrator agent to handle the new data types
+3. Update other agents to use Orchestrator for storage/retrieval
 
 ---
 
 ## 🙏 Built With
 
-- **FastAPI** - Event bus
-- **LangGraph** - Agents
+- **LangGraph** - All agents (Orchestrator, Customer Success, Eval)
 - **LangChain** - LLM orchestration
 - **Streamlit** - UI
 - **OpenAI** - LLM models
+- **SQLite** - Data persistence
 
 ---
 

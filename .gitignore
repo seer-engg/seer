@@ -35,6 +35,11 @@ logs/
 # LangGraph API cache/state
 .langgraph_api/
 
+# Agent thread databases (checkpointer storage)
+*_threads.db
+*_threads.db-shm
+*_threads.db-wal
+
 # IDE
 .vscode/
 .idea/
@@ -50,3 +55,7 @@ Thumbs.db
 *.log
 
 generated_evals/
+
+data/*
+data/seer.db
+*.db

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Seer Launcher
-Launches: Event Bus + LangGraph Dev Agents + Wrappers + UI
+Launches: LangGraph A2A Agents + UI
 """
 
 import subprocess
@@ -11,6 +11,10 @@ import sys
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
+from shared.config import get_seer_config
 
 load_dotenv()
 
@@ -60,14 +64,33 @@ class Launcher:
         # Open log file
         log_handle = open(log_file, "w")
         
+        # Start process with PIPE to capture output and strip ANSI codes
         process = subprocess.Popen(
             command,
             cwd=cwd or str(self.project_root),
             env=process_env,
-            stdout=log_handle,
+            stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             universal_newlines=True
         )
+        
+        # Start a thread to read output and strip ANSI codes
+        import threading
+        def strip_ansi_and_log():
+            import re
+            ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+            
+            while True:
+                line = process.stdout.readline()
+                if not line:
+                    break
+                # Strip ANSI escape codes
+                clean_line = ansi_escape.sub('', line)
+                log_handle.write(clean_line)
+                log_handle.flush()
+        
+        log_thread = threading.Thread(target=strip_ansi_and_log, daemon=True)
+        log_thread.start()
         
         self.processes.append((name, process, log_handle))
         print(f"✅ {name} started (PID: {process.pid})")
@@ -76,13 +99,18 @@ class Launcher:
     
     def check_port_available(self, port: int) -> bool:
         """Check if a port is available"""
-        import socket
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(('127.0.0.1', port))
-                return True
-        except OSError:
-            return False
+            config = get_seer_config()
+            return config._is_port_available(port)
+        except Exception:
+            # Fallback to original implementation
+            import socket
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.bind(('127.0.0.1', port))
+                    return True
+            except OSError:
+                return False
     
     def check_port_listening(self, port: int, timeout: int = 15) -> bool:
         """Check if a port is listening (health check)"""
@@ -103,34 +131,22 @@ class Launcher:
     def cleanup_existing_processes(self):
         """Kill any existing Seer processes"""
         print("🧹 Cleaning up any existing Seer processes...")
-        
-        # Kill uvicorn processes (Event Bus)
-        try:
-            subprocess.run(["pkill", "-f", "uvicorn.*event_bus"], check=False)
-        except:
-            pass
-        
+
         # Kill langgraph processes
         try:
             subprocess.run(["pkill", "-f", "langgraph.*dev"], check=False)
         except:
             pass
-        
+
         # Kill streamlit processes
         try:
             subprocess.run(["pkill", "-f", "streamlit.*ui"], check=False)
         except:
             pass
-        
-        # Kill bridge processes
-        try:
-            subprocess.run(["pkill", "-f", "eventbus_bridge\\.py"], check=False)
-        except:
-            pass
-        
+
         time.sleep(2)  # Give processes time to die
-    
-    def start_all(self):
+
+    async def start_all(self):
         """Start all components in order"""
         print("🔮 Starting Seer\n")
         print("=" * 60)
@@ -151,44 +167,43 @@ class Launcher:
         self.cleanup_existing_processes()
         
         try:
-            # 1. Start Event Bus
-            print("\n1️⃣  Event Bus")
+            # Get configuration
+            config = get_seer_config()
             
-            # Try to find an available port starting from 8000
-            event_bus_port = 8000
-            while not self.check_port_available(event_bus_port) and event_bus_port < 8010:
-                event_bus_port += 1
-            
-            if event_bus_port >= 8010:
-                print("❌ No available ports found in range 8000-8009!")
-                print("   Please stop any existing Seer processes:")
-                print("   - Kill any running uvicorn processes")
-                print("   - Or restart your terminal")
-                print("   - Or use: pkill -f uvicorn")
-                sys.exit(1)
-            
-            if event_bus_port != 8000:
-                print(f"⚠️  Port 8000 in use, using port {event_bus_port} instead")
-                print(f"   Update your UI to use: http://127.0.0.1:{event_bus_port}")
-            
+            # 1. Start Orchestrator Agent (langgraph dev)
+            print("\n1️⃣  Orchestrator Agent (LangGraph)")
+
+            # Try to find an available port starting from configured port
+            orchestrator_port = config.orchestrator_port
+            if not self.check_port_available(orchestrator_port):
+                orchestrator_port = config.get_available_port(config.orchestrator_port, config.orchestrator_port + 10)
+
+            if orchestrator_port != config.orchestrator_port:
+                print(f"⚠️  Port {config.orchestrator_port} in use, using port {orchestrator_port} instead")
+                print(f"   Update your UI to use: http://127.0.0.1:{orchestrator_port}")
+
             self.start_process(
-                "Event Bus",
-                [self.python_exe, "-m", "uvicorn", "event_bus.server:app", "--host", "127.0.0.1", "--port", str(event_bus_port)]
+                "Orchestrator (LangGraph)",
+                [self.langgraph_exe, "dev", "--port", str(orchestrator_port), "--host", "127.0.0.1"],
+                cwd=str(self.project_root / "agents" / "orchestrator")
             )
-            
-            # Wait for Event Bus to be ready
-            if not self.check_port_listening(event_bus_port, timeout=10):
-                print(f"❌ Event Bus failed to start on port {event_bus_port}")
-                print(f"   Check logs: {self.logs_dir}/event_bus.log")
+
+            # Wait for port to be listening
+            if not self.check_port_listening(orchestrator_port, timeout=15):
+                print(f"❌ Orchestrator agent failed to start on port {orchestrator_port}")
+                print(f"   Check logs: {self.logs_dir}/orchestrator_langgraph.log")
                 self.stop_all()
                 sys.exit(1)
             
             # 2. Start Customer Success Agent (langgraph dev)
             print("\n2️⃣  Customer Success Agent (LangGraph)")
-            cs_port = 8001 if event_bus_port != 8001 else 8002
+            cs_port = config.customer_success_port
+            if not self.check_port_available(cs_port) or cs_port == orchestrator_port:
+                cs_port = config.get_available_port(config.customer_success_port, config.customer_success_port + 10)
+            
             self.start_process(
                 "Customer Success (LangGraph)",
-                [self.langgraph_exe, "dev", "--port", str(cs_port), "--host", "127.0.0.1", "--no-browser"],
+                [self.langgraph_exe, "dev", "--port", str(cs_port), "--host", "127.0.0.1"],
                 cwd=str(self.project_root / "agents" / "customer_success")
             )
             
@@ -201,10 +216,13 @@ class Launcher:
             
             # 3. Start Eval Agent (langgraph dev)
             print("\n3️⃣  Eval Agent (LangGraph)")
-            eval_port = 8002 if event_bus_port != 8002 and cs_port != 8002 else 8003
+            eval_port = config.eval_agent_port
+            if not self.check_port_available(eval_port) or eval_port in [orchestrator_port, cs_port]:
+                eval_port = config.get_available_port(config.eval_agent_port, config.eval_agent_port + 10)
+            
             self.start_process(
                 "Eval Agent (LangGraph)",
-                [self.langgraph_exe, "dev", "--port", str(eval_port), "--host", "127.0.0.1", "--no-browser"],
+                [self.langgraph_exe, "dev", "--port", str(eval_port), "--host", "127.0.0.1"],
                 cwd=str(self.project_root / "agents" / "eval_agent")
             )
             
@@ -215,55 +233,34 @@ class Launcher:
                 self.stop_all()
                 sys.exit(1)
             
-            # 4. Start Customer Success Bridge
-            print("\n4️⃣  Customer Success Bridge")
-            bridge_env = {
-                "LANGGRAPH_URL": f"http://localhost:{cs_port}",
-                "EVENT_BUS_URL": f"http://127.0.0.1:{event_bus_port}"
-            }
-            self.start_process(
-                "CS Bridge",
-                [self.python_exe, "agents/customer_success/eventbus_bridge.py"],
-                env=bridge_env
-            )
-            time.sleep(2)
+            # Start Streamlit UI
+            print("\n4️⃣  Streamlit UI")
+            ui_port = config.ui_port
+            if not self.check_port_available(ui_port):
+                ui_port = config.get_available_port(config.ui_port, config.ui_port + 10)
             
-            # 5. Start Eval Agent Bridge
-            print("\n5️⃣  Eval Agent Bridge")
-            bridge_env = {
-                "LANGGRAPH_URL": f"http://localhost:{eval_port}",
-                "EVENT_BUS_URL": f"http://127.0.0.1:{event_bus_port}"
-            }
-            self.start_process(
-                "Eval Bridge",
-                [self.python_exe, "agents/eval_agent/eventbus_bridge.py"],
-                env=bridge_env
-            )
-            time.sleep(2)
-            
-            # 6. Start Streamlit UI
-            print("\n6️⃣  Streamlit UI")
             ui_env = {
-                "EVENT_BUS_URL": f"http://127.0.0.1:{event_bus_port}"
+                "ORCHESTRATOR_URL": f"http://127.0.0.1:{orchestrator_port}"
             }
             self.start_process(
                 "Streamlit UI",
-                ["streamlit", "run", "ui/streamlit_app.py", "--server.headless", "true"],
+                ["streamlit", "run", "ui/streamlit_app.py", "--server.headless", "true", "--server.port", str(ui_port)],
                 env=ui_env
             )
             time.sleep(3)
             
             print("\n" + "=" * 60)
             print("✅ All components started!\n")
-            print("🔮 Seer is running:")
-            print(f"   - UI:                http://localhost:8501")
-            print(f"   - Event Bus:         http://127.0.0.1:{event_bus_port}")
-            print(f"   - Bus API Docs:      http://127.0.0.1:{event_bus_port}/docs")
+            print("🔮 Seer is running (A2A Hub-and-Spoke Architecture):")
+            print(f"   - UI:                http://localhost:{ui_port}")
+            print(f"   - Orchestrator:      http://127.0.0.1:{orchestrator_port}")
+            print(f"   - Orchestrator API:  http://127.0.0.1:{orchestrator_port}/docs")
             print(f"   - CS Agent API:      http://127.0.0.1:{cs_port}")
             print(f"   - Eval Agent API:    http://127.0.0.1:{eval_port}")
             print("=" * 60)
-            print("\n💡 Open the UI to interact with agents and debug conversations")
-            print("   Use the 'Agent Threads' tab to see what each agent is doing\n")
+            print("\n💡 Agents communicate through the Orchestrator agent (hub-and-spoke)")
+            print("   All messages are routed through the central orchestrator")
+            print("   Use the 'Orchestrator Monitor' tab to see message flow\n")
             print("Press Ctrl+C to stop all components\n")
             
         except Exception as e:
@@ -330,7 +327,7 @@ class Launcher:
             self.stop_all()
 
 
-def main():
+async def main():
     """Main entry point"""
     launcher = Launcher()
     
@@ -342,10 +339,11 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
-    launcher.start_all()
+    await launcher.start_all()
     launcher.wait()
 
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
 

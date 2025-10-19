@@ -129,12 +129,20 @@ class Database:
                     spec_version TEXT NOT NULL,
                     target_agent_url TEXT,
                     target_agent_id TEXT,
+                    langgraph_thread_id TEXT,
                     test_cases TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     metadata TEXT,
                     FOREIGN KEY (thread_id) REFERENCES threads(thread_id)
                 )
             """)
+            
+            # Add langgraph_thread_id column if it doesn't exist (for existing databases)
+            try:
+                cursor.execute("ALTER TABLE eval_suites ADD COLUMN langgraph_thread_id TEXT")
+            except Exception:
+                # Column already exists, ignore
+                pass
             
             # Test results table
             cursor.execute("""
@@ -406,7 +414,7 @@ class Database:
     def save_eval_suite(self, suite_id: str, spec_name: str, spec_version: str,
                        test_cases: List[Dict[str, Any]], thread_id: str = None,
                        target_agent_url: str = None, target_agent_id: str = None,
-                       metadata: Dict[str, Any] = None):
+                       langgraph_thread_id: str = None, metadata: Dict[str, Any] = None):
         """Save an eval suite"""
         if thread_id:
             self.create_thread(thread_id)
@@ -416,10 +424,10 @@ class Database:
             cursor.execute("""
                 INSERT OR REPLACE INTO eval_suites
                 (suite_id, thread_id, spec_name, spec_version, target_agent_url,
-                 target_agent_id, test_cases, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 target_agent_id, langgraph_thread_id, test_cases, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (suite_id, thread_id, spec_name, spec_version, target_agent_url,
-                  target_agent_id, json.dumps(test_cases), 
+                  target_agent_id, langgraph_thread_id, json.dumps(test_cases), 
                   json.dumps(metadata) if metadata else None))
             conn.commit()
     

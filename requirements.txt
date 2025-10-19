@@ -5,16 +5,12 @@
 langchain-openai>=1.0.0
 langchain-core>=1.0.0
 langgraph>=1.0.0
-langgraph-cli[inmem]>=0.4.4
+langgraph-cli[inmem]>=0.4.9
 
 # Data validation
 pydantic>=2.12.3
 
-# Event Bus (FastAPI)
-fastapi>=0.119.0
-uvicorn>=0.37.0
-
-# HTTP client for A2A and event bus
+# HTTP client for A2A communication
 httpx>=0.28.1
 
 # UI

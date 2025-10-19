@@ -1,0 +1,7 @@
+{
+  "dependencies": ["../.."],
+  "graphs": {
+    "orchestrator": "./graph.py:graph"
+  },
+  "env": "../../.env"
+}

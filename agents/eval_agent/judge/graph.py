@@ -263,6 +263,8 @@ def build_graph():
     workflow.add_edge("run_test", "judge")
     workflow.add_edge("judge", "write")
     workflow.add_edge("write", END)
+    
+    # Note: langgraph dev provides automatic checkpointing - no need for custom checkpointer
     return workflow.compile()
 
 

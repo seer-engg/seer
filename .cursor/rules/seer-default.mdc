@@ -1,0 +1,33 @@
+---
+alwaysApply: true
+---
+
+# Project Instructions
+
+## General
+- Propose a plan first before writing any code.
+- Creative destruction is key. Code bloating is guaranteed - you'll often need to delete code you wrote.
+- Regularly check if a part of the code is aligned with rest of the code.
+- Don't generate .md files including summary of changes, improvements, etc. Summarize and present to user instead.
+
+## On Code Structure
+- Keep event bus, streamlit UI, and agents as separate as possible. Each should be in their own folder.
+
+## On LangChain Agents
+- Build agents using LangChain. 
+- Langchain 'graph' in 'graph.py' kinda files includes a custom checkpointer i.e. it saves the state of the agent. So, don't need to write your own checkpointer.
+- Langchain supports A2A protocol out of the box. Assistant and Thread IDs must be hexadecimal UUIDs, NOT string names!
+- Langchain documentation is outdated on the internet. Before using any online documentation, check if its the latest version.
+Good sources: https://docs.langchain.com/oss/python/langchain/overview, https://docs.langchain.com/oss/python/langchain/agents
+Bad sources: https://python.langchain.com/docs/introduction/
+
+
+## Seer Philosophy
+- Seer is a network of agents connected by an event bus.
+- Every agent has access to all context, but each needs to select / ignore on its own
+- Separation of concerns within agents is a great agentic AI design principle. 
+- Hence, multi agents systems (MAS) are inevitable - they offer modularization and greater abstraction than monolithic code.
+- If MAS are inevitable, tracing agent conversations, handoff, etc is required
+- Testing without software update is useful in some scenarios
+- Humans are bad at writing a comprehensive eval all at once i.e. it comes in bits and pieces
+- Self-eval OR self-code review is hard i.e. code generation and evaluation must be separate
