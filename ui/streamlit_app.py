@@ -15,6 +15,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from event_bus.schemas import EventMessage
+from shared.database import Database
 
 
 # Configure page
@@ -117,13 +118,35 @@ async def get_event_history(limit: int = 50):
 
 
 async def get_all_threads():
-    """Get all unique thread IDs from event bus"""
+    """Get all unique thread IDs from event bus with config from database"""
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(f"{EVENT_BUS_URL}/threads")
             response.raise_for_status()
             data = response.json()
-            return data["threads"]
+            threads = data["threads"]
+            
+            # Enrich threads with config from database
+            db = Database()
+            await db.init()
+            try:
+                for thread in threads:
+                    thread_id = thread['thread_id']
+                    config = await db.get_thread_config(thread_id)
+                    if config:
+                        thread['github_url'] = config.get('github_url')
+                        thread['agent_host'] = config.get('agent_host')
+                        thread['agent_port'] = config.get('agent_port')
+                        thread['agent_id'] = config.get('agent_id')
+                    else:
+                        thread['github_url'] = None
+                        thread['agent_host'] = None
+                        thread['agent_port'] = None
+                        thread['agent_id'] = None
+            finally:
+                await db.close()
+            
+            return threads
     except Exception as e:
         st.error(f"Failed to fetch threads: {e}")
         return []
@@ -185,7 +208,14 @@ def render_chat():
                 thread_id = t['thread_id']
                 msg_count = t.get('message_count', 0)
                 last_msg = t.get('last_message', '')[:19] if t.get('last_message') else 'N/A'
-                label = f"{thread_id[:8]}... ({msg_count} msgs)"
+                
+                # Add agent info to label if available
+                agent_id = t.get('agent_id')
+                if agent_id:
+                    label = f"🤖 {agent_id[:12]} ({msg_count} msgs)"
+                else:
+                    label = f"{thread_id[:8]}... ({msg_count} msgs)"
+                
                 thread_options[label] = thread_id
             
             # Find current thread label
@@ -231,6 +261,29 @@ def render_chat():
         
         st.markdown("---")
         st.markdown(f"**Current Thread:**\n`{st.session_state.thread_id[:16]}...`")
+        
+        # Display thread config if available
+        current_thread = next((t for t in threads if t['thread_id'] == st.session_state.thread_id), None)
+        if current_thread:
+            agent_id = current_thread.get('agent_id')
+            agent_host = current_thread.get('agent_host')
+            agent_port = current_thread.get('agent_port')
+            github_url = current_thread.get('github_url')
+            
+            if agent_id or agent_host or github_url:
+                st.markdown("### 🔧 Configuration")
+                
+                if agent_id:
+                    st.markdown(f"**Agent ID:** `{agent_id}`")
+                
+                if agent_host and agent_port:
+                    st.markdown(f"**Agent URL:** `{agent_host}:{agent_port}`")
+                elif agent_host:
+                    st.markdown(f"**Agent Host:** `{agent_host}`")
+                
+                if github_url:
+                    st.markdown(f"**GitHub:** [{github_url.split('/')[-1]}]({github_url})")
+                    st.caption(github_url)
     
     # Quick start guide
     if len(st.session_state.messages) == 0:
@@ -332,6 +385,39 @@ def render_agent_threads():
     with col2:
         if st.button("🔄 Refresh", use_container_width=True, key="refresh_threads"):
             st.rerun()
+    
+    # Display thread configuration
+    selected_thread = next((t for t in threads if t['thread_id'] == selected_thread_id), None)
+    if selected_thread:
+        agent_id = selected_thread.get('agent_id')
+        agent_host = selected_thread.get('agent_host')
+        agent_port = selected_thread.get('agent_port')
+        github_url = selected_thread.get('github_url')
+        
+        if agent_id or agent_host or github_url:
+            st.markdown("### 🔧 Thread Configuration")
+            
+            col_a, col_b, col_c = st.columns(3)
+            
+            with col_a:
+                if agent_id:
+                    st.metric("Agent ID", agent_id)
+                else:
+                    st.metric("Agent ID", "Not set", delta="⚠️")
+            
+            with col_b:
+                if agent_host and agent_port:
+                    st.metric("Agent URL", f"{agent_host}:{agent_port}")
+                else:
+                    st.metric("Agent URL", "Not set", delta="⚠️")
+            
+            with col_c:
+                if github_url:
+                    repo_name = github_url.split('/')[-1] if github_url else "Not set"
+                    st.metric("GitHub Repo", repo_name)
+                    st.caption(f"[View on GitHub]({github_url})")
+                else:
+                    st.metric("GitHub Repo", "Not set", delta="⚠️")
     
     st.markdown("---")
     

@@ -23,6 +23,12 @@ class Thread(Model):
     status = fields.CharField(max_length=50, default='active')
     metadata = fields.JSONField(null=True)
     
+    # Agent configuration fields (stored by customer success agent on first message)
+    github_url = fields.CharField(max_length=500, null=True)
+    agent_host = fields.CharField(max_length=255, null=True)
+    agent_port = fields.IntField(null=True)
+    agent_id = fields.CharField(max_length=255, null=True)
+    
     class Meta:
         table = "threads"
         ordering = ["-updated_at"]

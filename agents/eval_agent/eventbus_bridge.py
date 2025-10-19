@@ -13,12 +13,14 @@ import uuid
 import hashlib
 from pathlib import Path
 import traceback
+import re
 
 # Add parent directories to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from event_bus.client import EventBusClient
 from event_bus.schemas import EventMessage, EventType
+from shared.database import Database
 
 
 class EvalAgentBridge:
@@ -32,6 +34,7 @@ class EvalAgentBridge:
         self.event_bus = EventBusClient(self.agent_name, self.event_bus_url)
         self.http_client = httpx.AsyncClient(timeout=120.0)
         self.active_threads = {}  # thread_id -> context
+        self.db = Database()
         
     def _to_plain(self, obj):
         """Convert Pydantic objects or nested structures to plain dicts/lists for JSON."""
@@ -179,26 +182,42 @@ class EvalAgentBridge:
         
         print(f"🎯 Detected evaluation request", flush=True)
         
-        # Parse the message to extract agent URL, ID, and expectations
-        # Simple heuristic parsing (can be improved with NLP)
-        import re
+        # Retrieve agent config from database (stored by customer success agent)
+        config = await self.db.get_thread_config(thread_id)
         
-        # Try to find URL patterns
-        url_pattern = r'(?:localhost:|http://localhost:)(\d+)'
-        url_match = re.search(url_pattern, user_message)
-        target_url = f"http://localhost:{url_match.group(1)}" if url_match else "http://localhost:2024"
-        
-        # Try to find agent ID
-        id_pattern = r'\(ID:\s*([^\)]+)\)'
-        id_match = re.search(id_pattern, user_message, re.IGNORECASE)
-        target_id = id_match.group(1).strip() if id_match else "agent"
+        # If config exists in DB, use it
+        if config and config.get('agent_host') and config.get('agent_port'):
+            print(f"✅ Retrieved config from database", flush=True)
+            target_host = config['agent_host']
+            target_port = config['agent_port']
+            target_url = f"http://{target_host}:{target_port}"
+            target_id = config.get('agent_id') or "agent"
+            github_url = config.get('github_url')
+        else:
+            # Fallback: Parse the message to extract agent URL and ID (backward compatibility)
+            print(f"⚠️  No config in database, parsing from message...", flush=True)
+            
+            # Try to find URL patterns
+            url_pattern = r'(?:localhost:|http://localhost:)(\d+)'
+            url_match = re.search(url_pattern, user_message)
+            target_url = f"http://localhost:{url_match.group(1)}" if url_match else "http://localhost:2024"
+            
+            # Try to find agent ID
+            id_pattern = r'\(ID:\s*([^\)]+)\)'
+            id_match = re.search(id_pattern, user_message, re.IGNORECASE)
+            target_id = id_match.group(1).strip() if id_match else "agent"
+            
+            github_url = None
         
         # Store context
         self.active_threads[thread_id] = {
             "target_url": target_url,
             "target_id": target_id,
-            "expectations": user_message
+            "expectations": user_message,
+            "github_url": github_url
         }
+        
+        print(f"🔧 Using config: url={target_url}, id={target_id}, github={github_url}", flush=True)
         
         # Build message for agent
         message = f"""New evaluation request from user:
@@ -537,6 +556,10 @@ Please generate a spec and test cases based on the user's expectations."""
         print(f"   Event Bus: {self.event_bus_url}")
         print("=" * 60)
         
+        # Initialize database
+        await self.db.init()
+        print(f"✅ Database initialized", flush=True)
+        
         # Subscribe to Event Bus
         await self.event_bus.subscribe()
         self.event_bus.add_handler(self._handle_event)
@@ -564,6 +587,7 @@ Please generate a spec and test cases based on the user's expectations."""
         """Stop the bridge"""
         await self.http_client.aclose()
         await self.event_bus.close()
+        await self.db.close()
 
 
 async def main():

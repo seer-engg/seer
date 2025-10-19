@@ -79,7 +79,11 @@ class Database:
                 'updated_at': thread.updated_at.isoformat() if thread.updated_at else None,
                 'user_id': thread.user_id,
                 'status': thread.status,
-                'metadata': thread.metadata
+                'metadata': thread.metadata,
+                'github_url': thread.github_url,
+                'agent_host': thread.agent_host,
+                'agent_port': thread.agent_port,
+                'agent_id': thread.agent_id
             }
         return None
     
@@ -106,6 +110,39 @@ class Database:
     async def update_thread_timestamp(self, thread_id: str):
         """Update thread's updated_at timestamp"""
         await Thread.filter(thread_id=thread_id).update(updated_at=datetime.now())
+    
+    async def update_thread_config(self, thread_id: str, github_url: str = None,
+                                   agent_host: str = None, agent_port: int = None,
+                                   agent_id: str = None):
+        """Update thread configuration (GitHub URL and agent details)"""
+        # Ensure thread exists
+        await self.create_thread(thread_id)
+        
+        # Build update dict with only non-None values
+        update_data = {}
+        if github_url is not None:
+            update_data['github_url'] = github_url
+        if agent_host is not None:
+            update_data['agent_host'] = agent_host
+        if agent_port is not None:
+            update_data['agent_port'] = agent_port
+        if agent_id is not None:
+            update_data['agent_id'] = agent_id
+        
+        if update_data:
+            await Thread.filter(thread_id=thread_id).update(**update_data)
+    
+    async def get_thread_config(self, thread_id: str) -> Optional[Dict[str, Any]]:
+        """Get thread configuration (GitHub URL and agent details)"""
+        thread = await Thread.filter(thread_id=thread_id).first()
+        if thread:
+            return {
+                'github_url': thread.github_url,
+                'agent_host': thread.agent_host,
+                'agent_port': thread.agent_port,
+                'agent_id': thread.agent_id
+            }
+        return None
     
     # Message operations
     async def add_message(self, thread_id: str, message_id: str, timestamp: str, 

@@ -10,6 +10,7 @@ import os
 import sys
 import json
 import uuid
+import re
 from pathlib import Path
 
 # Add parent directories to path
@@ -17,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from event_bus.client import EventBusClient
 from event_bus.schemas import EventMessage, EventType
+from shared.database import Database
 
 
 class CustomerSuccessBridge:
@@ -29,6 +31,63 @@ class CustomerSuccessBridge:
         
         self.event_bus = EventBusClient(self.agent_name, self.event_bus_url)
         self.http_client = httpx.AsyncClient(timeout=60.0)
+        self.db = Database()
+    
+    def _extract_config_from_message(self, message: str) -> dict:
+        """Extract GitHub URL and agent config from user message"""
+        config = {
+            'github_url': None,
+            'agent_host': None,
+            'agent_port': None,
+            'agent_id': None
+        }
+        
+        # Extract GitHub URL
+        github_patterns = [
+            r'github\.com/([^\s\)]+)',
+            r'https?://github\.com/([^\s\)]+)',
+            r'git@github\.com:([^\s\)]+)',
+        ]
+        for pattern in github_patterns:
+            match = re.search(pattern, message, re.IGNORECASE)
+            if match:
+                github_path = match.group(1).rstrip('/')
+                config['github_url'] = f"https://github.com/{github_path}"
+                break
+        
+        # Extract agent host and port
+        # Try full URL patterns first
+        url_patterns = [
+            r'(?:http://)?localhost:(\d+)',
+            r'(?:http://)?127\.0\.0\.1:(\d+)',
+            r'(?:http://)?([\w\.-]+):(\d+)',
+        ]
+        for pattern in url_patterns:
+            match = re.search(pattern, message)
+            if match:
+                if len(match.groups()) == 1:
+                    # localhost:port or 127.0.0.1:port
+                    config['agent_host'] = 'localhost'
+                    config['agent_port'] = int(match.group(1))
+                else:
+                    # host:port
+                    config['agent_host'] = match.group(1)
+                    config['agent_port'] = int(match.group(2))
+                break
+        
+        # Extract agent ID
+        id_patterns = [
+            r'\(ID:\s*([^\)]+)\)',
+            r'agent[_ ]id[:\s]+([^\s,]+)',
+            r'id[:\s]+([a-zA-Z0-9_-]+)',
+        ]
+        for pattern in id_patterns:
+            match = re.search(pattern, message, re.IGNORECASE)
+            if match:
+                config['agent_id'] = match.group(1).strip()
+                break
+        
+        return config
         
     async def invoke_agent(self, message: str, thread_id: str) -> dict:
         """Invoke the LangGraph agent and return parsed response with tool outputs"""
@@ -74,6 +133,30 @@ class CustomerSuccessBridge:
         
         user_message = event.payload.get("content", "")
         thread_id = event.thread_id or str(uuid.uuid4())
+        
+        # Check if this is the first message in the thread by checking if config exists
+        existing_config = await self.db.get_thread_config(thread_id)
+        is_first_message = existing_config is None or all(v is None for v in existing_config.values())
+        
+        # If first message, extract and store GitHub URL and agent config
+        if is_first_message:
+            print(f"🔍 First message in thread, extracting config...", flush=True)
+            config = self._extract_config_from_message(user_message)
+            
+            # Store config if any values were extracted
+            if any(config.values()):
+                await self.db.update_thread_config(
+                    thread_id=thread_id,
+                    github_url=config['github_url'],
+                    agent_host=config['agent_host'],
+                    agent_port=config['agent_port'],
+                    agent_id=config['agent_id']
+                )
+                print(f"✅ Stored thread config: github={config['github_url']}, "
+                      f"agent={config['agent_host']}:{config['agent_port']}, "
+                      f"id={config['agent_id']}", flush=True)
+            else:
+                print(f"⚠️  No config found in message", flush=True)
         
         # Invoke agent (LangGraph dev server handles thread persistence automatically)
         result = await self.invoke_agent(user_message, thread_id)
@@ -208,6 +291,10 @@ class CustomerSuccessBridge:
         print(f"   Event Bus: {self.event_bus_url}")
         print("=" * 60)
         
+        # Initialize database
+        await self.db.init()
+        print(f"✅ Database initialized", flush=True)
+        
         # Subscribe to Event Bus
         await self.event_bus.subscribe()
         self.event_bus.add_handler(self._handle_event)
@@ -237,6 +324,7 @@ class CustomerSuccessBridge:
         """Stop the bridge"""
         await self.http_client.aclose()
         await self.event_bus.close()
+        await self.db.close()
 
 
 async def main():
