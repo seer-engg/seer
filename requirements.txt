@@ -10,6 +10,10 @@ langgraph-cli[inmem]>=0.4.4
 # Data validation
 pydantic>=2.12.3
 
+# Database ORM
+tortoise-orm>=0.21.0
+aerich>=0.7.2
+
 # Event Bus (FastAPI)
 fastapi>=0.119.0
 uvicorn>=0.37.0

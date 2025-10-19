@@ -21,7 +21,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from .schemas import EventMessage
-from shared.database import get_db, init_db
+from shared.database import get_db, init_db, close_db
 
 # Setup event bus logger
 logs_dir = Path(__file__).parent.parent / "logs"
@@ -81,8 +81,8 @@ def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)
     return credentials.credentials
 
 
-# Initialize database
-db = init_db()
+# Database will be initialized on startup
+db = get_db()
 
 # In-memory storage (for real-time message queues)
 class EventBusState:
@@ -92,12 +92,12 @@ class EventBusState:
         self.subscribers: dict[str, dict] = {}  # agent_name -> {last_poll_time, filters}
         self.message_queues: dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
         
-    def add_message(self, message: EventMessage):
+    async def add_message(self, message: EventMessage):
         """Add a message to history and route to subscribers"""
         self.messages.append(message)
         
         # Persist to database
-        db.add_event(
+        await db.add_event(
             event_id=message.message_id,
             thread_id=message.thread_id,
             timestamp=message.timestamp.isoformat() if isinstance(message.timestamp, datetime) else message.timestamp,
@@ -110,7 +110,7 @@ class EventBusState:
         if message.event_type in ["MessageFromUser", "MessageToUser"]:
             content = message.payload.get("content", "")
             role = "user" if message.event_type == "MessageFromUser" else "assistant"
-            db.add_message(
+            await db.add_message(
                 thread_id=message.thread_id,
                 message_id=message.message_id,
                 timestamp=message.timestamp.isoformat() if isinstance(message.timestamp, datetime) else message.timestamp,
@@ -126,7 +126,7 @@ class EventBusState:
             if not subscriber_info.get("blocked", False):
                 self.message_queues[agent_name].put_nowait(message)
     
-    def register_subscriber(self, agent_name: str, filters: Optional[dict] = None):
+    async def register_subscriber(self, agent_name: str, filters: Optional[dict] = None):
         """Register an agent as a subscriber"""
         self.subscribers[agent_name] = {
             "registered_at": datetime.now(),
@@ -140,9 +140,9 @@ class EventBusState:
             self.message_queues[agent_name] = asyncio.Queue()
         
         # Persist to database
-        db.register_subscriber(agent_name, filters)
+        await db.register_subscriber(agent_name, filters)
     
-    def get_history(
+    async def get_history(
         self, 
         since: Optional[datetime] = None,
         event_type: Optional[str] = None,
@@ -152,7 +152,7 @@ class EventBusState:
         """Get message history with optional filters from database"""
         # Get from database instead of in-memory
         since_str = since.isoformat() if since else None
-        events = db.get_recent_events(limit=limit, event_type=event_type, since=since_str)
+        events = await db.get_recent_events(limit=limit, event_type=event_type, since=since_str)
         
         # Filter by thread_id if provided
         if thread_id:
@@ -161,24 +161,23 @@ class EventBusState:
         # Convert to EventMessage-like dict format
         result = []
         for event in events:
-            import json
             result.append({
                 "message_id": event['event_id'],
                 "event_type": event['event_type'],
                 "sender": event['sender'],
                 "thread_id": event['thread_id'],
                 "timestamp": event['timestamp'],
-                "payload": json.loads(event['payload']) if isinstance(event['payload'], str) else event['payload']
+                "payload": event['payload']  # Already parsed by ORM
             })
         
         return list(reversed(result))  # Return in chronological order
     
-    def detect_rogue_agents(self) -> list[dict]:
+    async def detect_rogue_agents(self) -> list[dict]:
         """Detect potentially rogue agents based on behavior patterns"""
         suspicious_agents = []
         
         # Get subscribers from database
-        subscribers = db.get_subscribers()
+        subscribers = await db.get_subscribers()
         
         for subscriber in subscribers:
             agent_name = subscriber['agent_name']
@@ -226,11 +225,25 @@ class EventBusState:
 state = EventBusState()
 
 
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database on startup"""
+    await init_db()
+    event_bus_logger.info("🗄️  Database initialized")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Close database on shutdown"""
+    await close_db()
+    event_bus_logger.info("🗄️  Database closed")
+
+
 @app.get("/")
 async def root():
     """Health check and stats"""
-    subscribers = db.get_subscribers()
-    events = db.get_recent_events(limit=1)
+    subscribers = await db.get_subscribers()
+    events = await db.get_recent_events(limit=1)
     return {
         "status": "running",
         "total_messages": len(events) if events else 0,
@@ -250,9 +263,9 @@ async def publish_message(message: EventMessage):
         state.subscribers[message.sender]["publish_count"] = state.subscribers[message.sender].get("publish_count", 0) + 1
     
     # Update in database
-    db.update_subscriber_publish(message.sender)
+    await db.update_subscriber_publish(message.sender)
     
-    state.add_message(message)
+    await state.add_message(message)
     
     # Log the publish event
     event_bus_logger.info(f"✉️  PUBLISH | {message.sender} → [{message.event_type}] | thread={message.thread_id or 'None'}")
@@ -276,7 +289,7 @@ async def subscribe(
         agent_name: Unique identifier for the agent
         filters: Optional filters (not used in v1, agents filter themselves)
     """
-    state.register_subscriber(agent_name, filters)
+    await state.register_subscriber(agent_name, filters)
     
     # Log the subscription
     event_bus_logger.info(f"🔌 SUBSCRIBE | {agent_name} joined the event bus")
@@ -310,7 +323,7 @@ async def poll_messages(
     state.subscribers[agent_name]["message_count"] = state.subscribers[agent_name].get("message_count", 0) + 1
     
     # Update in database
-    db.update_subscriber_poll(agent_name)
+    await db.update_subscriber_poll(agent_name)
     
     queue = state.message_queues[agent_name]
     
@@ -360,7 +373,7 @@ async def get_history(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid ISO timestamp format")
     
-    messages = state.get_history(
+    messages = await state.get_history(
         since=since_dt,
         event_type=event_type,
         thread_id=thread_id,
@@ -368,22 +381,23 @@ async def get_history(
     )
     
     # Messages are already dicts from database, no need to call model_dump()
+    events = await db.get_recent_events(limit=1)
     return {
         "messages": messages,
         "count": len(messages),
-        "total_in_system": len(db.get_recent_events(limit=1))
+        "total_in_system": len(events)
     }
 
 
 @app.get("/threads")
 async def get_threads():
     """Get all active conversation threads"""
-    threads_list = db.list_threads(limit=100)
+    threads_list = await db.list_threads(limit=100)
     
     # Enhance with statistics
     result = []
     for thread in threads_list:
-        stats = db.get_thread_statistics(thread['thread_id'])
+        stats = await db.get_thread_statistics(thread['thread_id'])
         result.append({
             "thread_id": thread['thread_id'],
             "message_count": stats['message_count'],
@@ -489,7 +503,7 @@ async def unblock_subscriber(agent_name: str, api_key: str = Depends(verify_api_
 @app.get("/rogue-detection")
 async def detect_rogue_agents(api_key: str = Depends(verify_api_key)):
     """Detect potentially rogue agents"""
-    suspicious_agents = state.detect_rogue_agents()
+    suspicious_agents = await state.detect_rogue_agents()
     return {
         "suspicious_agents": suspicious_agents,
         "count": len(suspicious_agents),
@@ -520,7 +534,7 @@ async def store_eval_suite(payload: dict):
         )
     
     # Save to database
-    db.save_eval_suite(
+    await db.save_eval_suite(
         suite_id=eval_suite.get("id"),
         spec_name=eval_suite.get("spec_name"),
         spec_version=eval_suite.get("spec_version"),
@@ -550,7 +564,7 @@ async def get_eval_suites(
     Get eval suites for a specific agent.
     If no agent specified, returns all evals.
     """
-    evals = db.get_eval_suites(
+    evals = await db.get_eval_suites(
         target_agent_url=agent_url,
         target_agent_id=agent_id
     )
@@ -579,7 +593,7 @@ async def get_eval_suites(
 @app.get("/evals/{eval_suite_id}")
 async def get_eval_suite_by_id(eval_suite_id: str):
     """Get a specific eval suite by its ID"""
-    eval_suite = db.get_eval_suite(eval_suite_id)
+    eval_suite = await db.get_eval_suite(eval_suite_id)
     
     if not eval_suite:
         raise HTTPException(
@@ -616,7 +630,7 @@ async def store_test_results(payload: dict):
     import uuid
     for result in results:
         result_id = str(uuid.uuid4())
-        db.save_test_result(
+        await db.save_test_result(
             result_id=result_id,
             suite_id=suite_id,
             thread_id=thread_id,
@@ -643,7 +657,7 @@ async def store_test_results(payload: dict):
 @app.get("/test_results/{suite_id}")
 async def get_test_results(suite_id: str):
     """Get test results for a specific eval suite"""
-    results = db.get_test_results(suite_id=suite_id)
+    results = await db.get_test_results(suite_id=suite_id)
     
     return {
         "suite_id": suite_id,

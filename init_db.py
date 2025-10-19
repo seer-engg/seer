@@ -2,43 +2,65 @@
 """
 Database Initialization Script for Seer
 
-Initializes the SQLite database and optionally migrates existing data.
+Initializes the SQLite database with Tortoise ORM and optionally migrates existing data.
 """
 
 import sys
 import argparse
+import asyncio
 from pathlib import Path
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from shared.database import init_db, get_db
+from shared.database import init_db, get_db, close_db
+from shared.models import Thread, Message, Event, AgentActivity, EvalSuite, TestResult, Subscriber
 
 
-def init_database(db_path: str = None):
+async def init_database(db_path: str = None):
     """Initialize database with schema"""
-    print("🔧 Initializing Seer database...")
+    print("🔧 Initializing Seer database with Tortoise ORM...")
     
-    db = init_db(db_path)
+    db = await init_db(db_path)
     print(f"✅ Database initialized at: {db.db_path}")
     
-    # Test connection
-    with db.get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tables = cursor.fetchall()
-        
-        print(f"\n📊 Created {len(tables)} tables:")
-        for table in tables:
-            table_name = table['name']
-            cursor.execute(f"SELECT COUNT(*) as count FROM {table_name}")
-            count = cursor.fetchone()['count']
+    # Test connection and list tables
+    from tortoise import Tortoise
+    conn = Tortoise.get_connection("default")
+    
+    # Get table names
+    tables = [
+        "threads", "messages", "events", "agent_activities",
+        "eval_suites", "test_results", "subscribers"
+    ]
+    
+    print(f"\n📊 Created {len(tables)} tables:")
+    for table_name in tables:
+        try:
+            if table_name == "threads":
+                count = await Thread.all().count()
+            elif table_name == "messages":
+                count = await Message.all().count()
+            elif table_name == "events":
+                count = await Event.all().count()
+            elif table_name == "agent_activities":
+                count = await AgentActivity.all().count()
+            elif table_name == "eval_suites":
+                count = await EvalSuite.all().count()
+            elif table_name == "test_results":
+                count = await TestResult.all().count()
+            elif table_name == "subscribers":
+                count = await Subscriber.all().count()
+            else:
+                count = 0
             print(f"   - {table_name}: {count} rows")
+        except Exception as e:
+            print(f"   - {table_name}: error ({e})")
     
     print("\n✅ Database ready!")
 
 
-def migrate_eval_files():
+async def migrate_eval_files():
     """Migrate existing eval JSON files to database"""
     from pathlib import Path
     import json
@@ -72,13 +94,13 @@ def migrate_eval_files():
             test_cases = eval_data.get('test_cases', [])
             
             # Check if already exists
-            existing = db.get_eval_suite(suite_id)
+            existing = await db.get_eval_suite(suite_id)
             if existing:
                 print(f"   ⏭️  Skipping {suite_id} (already in database)")
                 continue
             
             # Save to database
-            db.save_eval_suite(
+            await db.save_eval_suite(
                 suite_id=suite_id,
                 spec_name=spec_name,
                 spec_version=spec_version,
@@ -107,7 +129,7 @@ def migrate_eval_files():
                 continue
             
             # Check if suite exists
-            suite = db.get_eval_suite(suite_id)
+            suite = await db.get_eval_suite(suite_id)
             if not suite:
                 print(f"   ⚠️  Skipping {result_file.name} (suite {suite_id} not found)")
                 continue
@@ -117,7 +139,7 @@ def migrate_eval_files():
             for result in results:
                 try:
                     result_id = str(uuid.uuid4())
-                    db.save_test_result(
+                    await db.save_test_result(
                         result_id=result_id,
                         suite_id=suite_id,
                         thread_id=thread_id or "migrated",
@@ -140,9 +162,62 @@ def migrate_eval_files():
     print("\n✅ Migration complete!")
 
 
+async def reset_database(db_path: str = None):
+    """Reset database by deleting all data"""
+    from tortoise import Tortoise
+    
+    print("🗑️  Resetting database...")
+    
+    # Initialize first
+    db = await init_db(db_path)
+    
+    # Delete all data from tables
+    await TestResult.all().delete()
+    await EvalSuite.all().delete()
+    await AgentActivity.all().delete()
+    await Event.all().delete()
+    await Message.all().delete()
+    await Subscriber.all().delete()
+    await Thread.all().delete()
+    
+    print("✅ Database reset complete!")
+
+
+async def main_async(args):
+    """Main async function"""
+    try:
+        # Handle reset
+        if args.reset:
+            if args.db_path:
+                db_file = Path(args.db_path)
+            else:
+                db_file = Path(__file__).parent / "data" / "seer.db"
+            
+            if db_file.exists():
+                print(f"🗑️  Deleting existing database: {db_file}")
+                db_file.unlink()
+        
+        # Initialize database
+        await init_database(args.db_path)
+        
+        # Migrate if requested
+        if args.migrate:
+            await migrate_eval_files()
+        
+        print("\n🎉 All done!")
+        print("\n💡 Usage:")
+        print("   - Database is automatically initialized when event bus starts")
+        print("   - All new data will be persisted to the database")
+        print("   - Use --migrate to import existing eval files")
+        
+    finally:
+        # Close database connections
+        await close_db()
+
+
 def main():
     """Main entry point"""
-    parser = argparse.ArgumentParser(description="Initialize Seer database")
+    parser = argparse.ArgumentParser(description="Initialize Seer database with Tortoise ORM")
     parser.add_argument(
         "--db-path",
         type=str,
@@ -162,31 +237,9 @@ def main():
     
     args = parser.parse_args()
     
-    # Handle reset
-    if args.reset:
-        if args.db_path:
-            db_file = Path(args.db_path)
-        else:
-            db_file = Path(__file__).parent / "data" / "seer.db"
-        
-        if db_file.exists():
-            print(f"🗑️  Deleting existing database: {db_file}")
-            db_file.unlink()
-    
-    # Initialize database
-    init_database(args.db_path)
-    
-    # Migrate if requested
-    if args.migrate:
-        migrate_eval_files()
-    
-    print("\n🎉 All done!")
-    print("\n💡 Usage:")
-    print("   - Database is automatically initialized when event bus starts")
-    print("   - All new data will be persisted to the database")
-    print("   - Use --migrate to import existing eval files")
+    # Run async main
+    asyncio.run(main_async(args))
 
 
 if __name__ == "__main__":
     main()
-
