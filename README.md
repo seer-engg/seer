@@ -9,16 +9,23 @@ Agents communicate via LangGraph's Agent-to-Agent (A2A) protocol with an orchest
 ## 🚀 Quick Start
 
 ```bash
-# 1. Setup
+# 1. Setup PostgreSQL (see POSTGRESQL_SETUP.md)
+# Quick: docker run --name seer-postgres -e POSTGRES_DB=seer_db -e POSTGRES_USER=seer_user -e POSTGRES_PASSWORD=seer_password -p 5432:5432 -d postgres:15
+
+# 2. Configure .env
+# Add: OPENAI_API_KEY=your_key
+#      POSTGRESQL_CONNECTION_STRING=postgresql://seer_user:seer_password@localhost:5432/seer_db
+
+# 3. Install dependencies
 ./setup.sh
 
-# 2. Start your agent (separate terminal)
+# 4. Start your agent (separate terminal)
 cd /path/to/your/agent && langgraph dev --port 2024
 
-# 3. Launch Seer 
+# 5. Launch Seer 
 python run.py
 
-# 4. Open UI
+# 6. Open UI
 # UI:                 http://localhost:8501
 # Chat directly with the orchestrator, which delegates to eval/coding agents
 # LangGraph Studio:   https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:8000
@@ -32,9 +39,10 @@ Real LangGraph agents with proper structure, testable in isolation with `langgra
 
 ## 📚 Documentation
 
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture and design
-- **[DATABASE.md](DATABASE.md)** - Database schema and persistence layer
-- **[Simulation Flow](Simulation%20Evaluating%20Vertex%20wo%20debugging.txt)** - Example evaluation flow
+- **[POSTGRESQL_SETUP.md](POSTGRESQL_SETUP.md)** - PostgreSQL setup guide
+- **[DATABASE_MIGRATION.md](DATABASE_MIGRATION.md)** - SQLite → PostgreSQL migration
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture and design (if exists)
+- **[DATABASE.md](DATABASE.md)** - Database schema reference (if exists)
 
 ---
 
@@ -114,12 +122,14 @@ Seer: 📊 Results: 5/6 passed (83%)
 
 ## 💾 Database & Persistence
 
-Seer uses SQLite to persist all data:
+Seer uses **PostgreSQL with Peewee ORM** for scalable, production-ready data persistence:
 - **Chat threads** - All conversations with complete history
 - **Messages** - Every message from users and agents
 - **Agent activities** - What each agent did in each thread (for debugging/tracing)
 - **Eval suites** - Generated test cases
 - **Test results** - Detailed test execution results
+
+**Migration**: See [DATABASE_MIGRATION.md](DATABASE_MIGRATION.md) for migrating from SQLite to PostgreSQL
 
 ---
 
@@ -190,11 +200,13 @@ tail -f logs/coding_agent_langgraph.log
 
 ## 🙏 Built With
 
-- **LangGraph** - All agents (Orchestrator, Customer Success, Eval)
+- **LangGraph** - All agents (Orchestrator, Eval, Coding)
 - **LangChain** - LLM orchestration
 - **Streamlit** - UI
+- **FastAPI** - Data service
+- **Peewee ORM** - Database ORM
+- **PostgreSQL** - Data persistence
 - **OpenAI** - LLM models
-- **SQLite** - Data persistence
 
 ---
 

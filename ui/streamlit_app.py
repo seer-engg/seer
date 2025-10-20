@@ -195,27 +195,54 @@ def render_chat():
             options = [t.get("thread_id") for t in threads if t.get("thread_id")]
             current = st.session_state.thread_id
             
-            # Display thread selector
+            # Build options list
+            # If we have a new thread (current=None or not in DB), add it to the list
+            if current and current not in options:
+                # Current thread exists but not in DB yet (new thread with messages)
+                options = [current] + options
+            elif not current and options:
+                # No current thread but we have history - add "New Thread" placeholder
+                options = ["__new__"] + options
+            elif not current and not options:
+                # Completely new, no history
+                options = ["__new__"]
+            
+            # Create display options
+            display_options = []
+            for opt in options:
+                if opt == "__new__":
+                    display_options.append("🆕 New Thread")
+                elif opt not in [t.get("thread_id") for t in threads]:
+                    # Thread has messages but not in DB list yet
+                    display_options.append(f"🆕 Current ({opt[:8]}...)")
+                else:
+                    # Existing thread from DB
+                    display_options.append(f"💬 {opt[:8]}...")
+            
+            # Determine default index
             if not current:
-                # New thread, not yet created
-                st.text("🆕 New Thread")
-            elif options:
-                # Existing threads available
-                # Add current thread to options if it's not there
-                if current not in options:
-                    options = [current] + options
-                
-                default_index = options.index(current) if current in options else 0
-                
-                # Create display names
-                display_options = [f"{opt[:8]}..." for opt in options]
+                default_index = 0  # "New Thread"
+            elif current in options:
+                default_index = options.index(current)
+            else:
+                default_index = 0
+            
+            # Show selector
+            if display_options:
                 selected_display = st.selectbox("Thread", display_options, index=default_index, key="thread_select")
-                
-                # Map back to actual thread_id
                 selected_idx = display_options.index(selected_display)
                 selected = options[selected_idx]
                 
-                if selected and selected != current:
+                # Handle selection
+                if selected == "__new__":
+                    # User selected "New Thread" - clear everything
+                    if current is not None or st.session_state.messages:
+                        st.session_state.thread_id = None
+                        st.session_state.langgraph_thread_id = None
+                        st.session_state.messages = []
+                        st.rerun()
+                elif selected != current:
+                    # User selected a different existing thread
                     st.session_state.thread_id = selected
                     st.session_state.langgraph_thread_id = selected
                     msgs = asyncio.run(get_conversation_messages(selected))
@@ -224,9 +251,6 @@ def render_chat():
                         for m in msgs
                     ]
                     st.rerun()
-            else:
-                # No threads in DB yet, show current
-                st.text(f"Thread: {current[:8]}..." if current else "🆕 New Thread")
 
         with col3:
             if st.button("↻ Refresh", key="refresh_threads"):
