@@ -209,29 +209,10 @@ class Launcher:
                 self.stop_all()
                 sys.exit(1)
             
-            # 2. Start Customer Success Agent (langgraph dev)
-            print("\n2️⃣  Customer Success Agent (LangGraph)")
-            cs_port = config.customer_success_port
-            if not self.check_port_available(cs_port) or cs_port == orchestrator_port:
-                cs_port = config.get_available_port(config.customer_success_port, config.customer_success_port + 10)
-            
-            self.start_process(
-                "Customer Success (LangGraph)",
-                [self.langgraph_exe, "dev", "--port", str(cs_port), "--host", "127.0.0.1"],
-                cwd=str(self.project_root / "agents" / "customer_success")
-            )
-            
-            # Wait for port to be listening
-            if not self.check_port_listening(cs_port, timeout=15):
-                print(f"❌ Customer Success agent failed to start on port {cs_port}")
-                print(f"   Check logs: {self.logs_dir}/customer_success_langgraph.log")
-                self.stop_all()
-                sys.exit(1)
-            
-            # 3. Start Eval Agent (langgraph dev)
-            print("\n3️⃣  Eval Agent (LangGraph)")
+            # 2. Start Eval Agent (langgraph dev)
+            print("\n2️⃣  Eval Agent (LangGraph)")
             eval_port = config.eval_agent_port
-            if not self.check_port_available(eval_port) or eval_port in [orchestrator_port, cs_port]:
+            if not self.check_port_available(eval_port) or eval_port == orchestrator_port:
                 eval_port = config.get_available_port(config.eval_agent_port, config.eval_agent_port + 10)
             
             self.start_process(
@@ -247,14 +228,58 @@ class Launcher:
                 self.stop_all()
                 sys.exit(1)
             
-            # Start Streamlit UI
-            print("\n4️⃣  Streamlit UI")
+            # 3. Start Coding Agent (langgraph dev)
+            print("\n3️⃣  Coding Agent (LangGraph)")
+            try:
+                from seer.shared.config import get_config as get_agent_config
+                agent_config = get_agent_config()
+                coding_port = agent_config.get_agent_config("coding_agent").get("port", 8003)
+            except Exception:
+                coding_port = 8003  # Fallback to default
+            if not self.check_port_available(coding_port) or coding_port in [orchestrator_port, eval_port]:
+                coding_port = config.get_available_port(coding_port, coding_port + 10)
+            
+            self.start_process(
+                "Coding Agent (LangGraph)",
+                [self.langgraph_exe, "dev", "--port", str(coding_port), "--host", "127.0.0.1"],
+                cwd=str(self.project_root / "agents" / "coding_agent")
+            )
+            
+            # Wait for port to be listening
+            if not self.check_port_listening(coding_port, timeout=15):
+                print(f"❌ Coding agent failed to start on port {coding_port}")
+                print(f"   Check logs: {self.logs_dir}/coding_agent_langgraph.log")
+                self.stop_all()
+                sys.exit(1)
+            
+            # 4. Start Data Service (FastAPI)
+            print("\n4️⃣  Data Service (FastAPI)")
+            data_service_port = int(os.getenv("DATA_SERVICE_PORT", "8500"))
+            if not self.check_port_available(data_service_port):
+                data_service_port = config.get_available_port(data_service_port, data_service_port + 10)
+            
+            self.start_process(
+                "Data Service (FastAPI)",
+                [self.python_exe, "-m", "uvicorn", "seer.shared.data_service:app", "--host", "127.0.0.1", "--port", str(data_service_port)],
+                cwd=str(self.project_root)
+            )
+            
+            # Wait for port to be listening
+            if not self.check_port_listening(data_service_port, timeout=10):
+                print(f"❌ Data service failed to start on port {data_service_port}")
+                print(f"   Check logs: {self.logs_dir}/data_service_fastapi.log")
+                self.stop_all()
+                sys.exit(1)
+            
+            # 5. Start Streamlit UI
+            print("\n5️⃣  Streamlit UI")
             ui_port = config.ui_port
             if not self.check_port_available(ui_port):
                 ui_port = config.get_available_port(config.ui_port, config.ui_port + 10)
             
             ui_env = {
-                "ORCHESTRATOR_URL": f"http://127.0.0.1:{orchestrator_port}"
+                "ORCHESTRATOR_URL": f"http://127.0.0.1:{orchestrator_port}",
+                "DATA_SERVICE_URL": f"http://127.0.0.1:{data_service_port}"
             }
             self.start_process(
                 "Streamlit UI",
@@ -265,15 +290,18 @@ class Launcher:
             
             print("\n" + "=" * 60)
             print("✅ All components started!\n")
-            print("🔮 Seer is running (A2A Hub-and-Spoke Architecture):")
+            print("🔮 Seer is running (A2A Orchestrator Architecture):")
             print(f"   - UI:                http://localhost:{ui_port}")
+            print(f"   - Data Service:      http://127.0.0.1:{data_service_port}")
             print(f"   - Orchestrator:      http://127.0.0.1:{orchestrator_port}")
-            print(f"   - CS Agent API:      http://127.0.0.1:{cs_port}")
             print(f"   - Eval Agent API:    http://127.0.0.1:{eval_port}")
+            print(f"   - Coding Agent API:  http://127.0.0.1:{coding_port}")
             print("=" * 60)
-            print("\n💡 Agents communicate through the Orchestrator agent (hub-and-spoke)")
-            print("   All messages are routed through the central orchestrator")
-            print("   Use the 'Orchestrator Monitor' tab to see message flow\n")
+            print("\n💡 Architecture:")
+            print("   - UI → Data Service (for database queries, no LLM)")
+            print("   - UI → Orchestrator (for conversations)")
+            print("   - Orchestrator → Eval/Coding agents (point-to-point A2A)")
+            print("   - No broadcast, no circular communication\n")
             print("Press Ctrl+C to stop all components\n")
             
         except Exception as e:

@@ -14,6 +14,8 @@ dependencies = [
   "streamlit>=1.50.0",
   "python-dotenv>=1.0.0",
   "pyyaml>=6.0.3",
+  "fastapi>=0.110.0",
+  "uvicorn[standard]>=0.27.0",
 ]
 
 [build-system]
@@ -27,9 +29,11 @@ packages = [
   "seer.shared",
   "seer.ui",
   "seer.agents",
-  "seer.agents.customer_success",
   "seer.agents.eval_agent",
   "seer.agents.eval_agent.judge",
+  "seer.agents.coding_agent",
+  "seer.agents.coding_agent.nodes",
+  "seer.agents.coding_agent.utils",
   "seer.agents.orchestrator",
   "seer.agents.orchestrator.modules",
 ]
