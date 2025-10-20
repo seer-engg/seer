@@ -13,8 +13,8 @@ class SeerConfig(BaseModel):
     
     # Agent ports with defaults
     orchestrator_port: int = Field(default=8000, description="Orchestrator agent port")
-    customer_success_port: int = Field(default=8001, description="Customer Success agent port")
     eval_agent_port: int = Field(default=8002, description="Eval agent port")
+    coding_agent_port: int = Field(default=8003, description="Coding agent port")
     
     # Base URLs
     orchestrator_url: str = Field(default="http://127.0.0.1:8000", description="Orchestrator base URL")
@@ -154,8 +154,8 @@ def get_seer_config() -> SeerConfig:
         config_data = {
             "openai_api_key": os.getenv("OPENAI_API_KEY", ""),
             "orchestrator_port": int(os.getenv("ORCHESTRATOR_PORT", "8000")),
-            "customer_success_port": int(os.getenv("CUSTOMER_SUCCESS_PORT", "8001")),
             "eval_agent_port": int(os.getenv("EVAL_AGENT_PORT", "8002")),
+            "coding_agent_port": int(os.getenv("CODING_AGENT_PORT", "8003")),
             "ui_port": int(os.getenv("UI_PORT", "8501")),
             "a2a_timeout": float(os.getenv("A2A_TIMEOUT", "30.0")),
             "test_timeout": float(os.getenv("TEST_TIMEOUT", "60.0")),

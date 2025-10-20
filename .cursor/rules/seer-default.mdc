@@ -12,7 +12,9 @@ alwaysApply: true
 - When you realize you're wrong, point your mistakes and nudge the user to update `.cursor/rules/seer-default.mdc` file.
 
 ## On Code Structure
-- Keep event bus, streamlit UI, and agents as separate as possible. Each should be in their own folder.
+- Keep orchestrator, streamlit UI, and specialized agents (eval, coding) as separate as possible. Each should be in their own folder.
+- Orchestrator is conversational and handles user interaction directly
+- Specialized agents (eval, coding) are invoked via point-to-point A2A communication
 
 ## On LangChain Agents
 - Build agents using LangChain. 
@@ -24,10 +26,11 @@ Bad sources: https://python.langchain.com/docs/introduction/
 
 
 ## Seer Philosophy
-- Seer is a network of agents connected by an event bus.
-- Every agent has access to all context, but each needs to select / ignore on its own
-- Separation of concerns within agents is a great agentic AI design principle. 
-- Hence, multi agents systems (MAS) are inevitable - they offer modularization and greater abstraction than monolithic code.
+- Seer is a network of agents using A2A point-to-point communication (not broadcast)
+- Orchestrator is the conversational hub that users interact with directly
+- Separation of concerns within agents is a great agentic AI design principle
+- Hence, multi agents systems (MAS) are inevitable - they offer modularization and greater abstraction than monolithic code
+- Point-to-point A2A delegation is preferred over broadcast for targeted agent communication
 - If MAS are inevitable, tracing agent conversations, handoff, etc is required
 - Testing without software update is useful in some scenarios
 - Humans are bad at writing a comprehensive eval all at once i.e. it comes in bits and pieces

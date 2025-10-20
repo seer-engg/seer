@@ -13,7 +13,7 @@ from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
 from seer.shared.base_agent import BaseAgent, BaseAgentState
-from seer.shared.agent_tools import request_confirmation, run_test, summarize_results, store_eval_suite, store_test_results
+from seer.shared.agent_tools import run_test
 from seer.shared.schemas import AgentSpec, TestCase, EvalSuite, TestResult
 from seer.agents.eval_agent.prompts import (
     EVAL_AGENT_PROMPT,
@@ -61,21 +61,19 @@ class JudgeVerdict(BaseModel):
     reasoning: str
 
 
-class EvalAgent(BaseAgent):
+class EvalAgent:
     """Evaluation agent with specialized workflow nodes"""
     
     def __init__(self):
-        super().__init__(
-            agent_name="eval_agent",
-            system_prompt=EVAL_AGENT_PROMPT,
-            tools=[request_confirmation, run_test, summarize_results, store_eval_suite, store_test_results]
-        )
+        self.agent_name = "eval_agent"
+        self.system_prompt = EVAL_AGENT_PROMPT
+        self.tools = [run_test]  # Only run_test - no callback tools!
     
     # Capabilities removed (unused)
     
     def build_graph(self):
         """Build eval agent with specialized nodes"""
-        llm_for_agent = get_llm().bind_tools(self.tools)
+        llm_for_agent = get_llm(temperature=0.3).bind_tools(self.tools)
 
         def route_entry(state: EvalAgentState):
             """Route based on presence of eval_suite in state"""
@@ -304,7 +302,3 @@ agent = EvalAgent()
 
 # Create the graph instance for langgraph dev
 graph = agent.build_graph()
-
-# Registration function for backward compatibility
-async def register_with_orchestrator():
-    await agent.register_with_orchestrator()

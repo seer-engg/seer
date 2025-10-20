@@ -19,6 +19,9 @@ sys.path.insert(0, str(project_root))
 from seer.shared.config import get_seer_config
 from seer.shared.a2a_utils import send_a2a_message
 
+# Data service URL (separate from orchestrator)
+DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://127.0.0.1:8500")
+
 # Configure page
 st.set_page_config(
     page_title="Seer - Agent Evaluation",
@@ -38,47 +41,59 @@ def init_session_state():
     if "messages" not in st.session_state:
         st.session_state.messages = []
     if "thread_id" not in st.session_state:
-        st.session_state.thread_id = str(uuid.uuid4())
+        st.session_state.thread_id = None  # Will be set after first message
+    if "langgraph_thread_id" not in st.session_state:
+        st.session_state.langgraph_thread_id = None
     if "threads_cache" not in st.session_state:
         st.session_state.threads_cache = []
 
 
-async def send_message_to_orchestrator(content: str, thread_id: str) -> str:
-    """Send message to Orchestrator agent"""
+async def send_message_to_orchestrator(content: str, thread_id: str = None) -> tuple[str, str]:
+    """
+    Send message to Orchestrator agent
+    Returns: (response_text, langgraph_thread_id)
+    """
     try:
         # Get orchestrator config
         config = get_seer_config()
         orchestrator_port = config.orchestrator_port
         
-        # Use shared A2A utility
-        response = await send_a2a_message(ORCHESTRATOR_ASSISTANT_ID, orchestrator_port, content, thread_id)
-        
-        # Parse response
-        data = json.loads(response)
-        if data.get("success") and data.get("response") and data.get("response") != "No response received":
-            return data.get("response", "Message sent")
-
-        # Fallback: call /runs/stream with graph id (dev-friendly)
+        # Use /runs/stream to get thread_id from LangGraph
         url = f"http://127.0.0.1:{orchestrator_port}/runs/stream"
         payload = {
             "assistant_id": ORCHESTRATOR_GRAPH_ID or "orchestrator",
             "input": {"messages": [{"role": "user", "content": content}]},
             "stream_mode": ["values"],
-            "config": {"configurable": {"thread_id": thread_id}},
         }
+        
+        # Only include thread_id if we have one from a previous message
+        if thread_id:
+            payload["config"] = {"configurable": {"thread_id": thread_id}}
+        
         async with httpx.AsyncClient(timeout=config.a2a_timeout) as client:
             resp = await client.post(url, json=payload)
             if resp.status_code >= 400:
-                # Surface minimal detail
-                return f"Error: HTTP {resp.status_code} {resp.text[:200]}"
+                return f"Error: HTTP {resp.status_code} {resp.text[:200]}", thread_id
+            
             final_response = ""
+            extracted_thread_id = thread_id  # Default to input thread_id
+            
             for line in resp.text.strip().split('\n'):
                 if line.startswith('data: '):
                     try:
                         obj = json.loads(line[6:])
                     except Exception:
                         continue
-                    # Common shapes for values
+                    
+                    # Extract thread_id from metadata
+                    if isinstance(obj, dict):
+                        metadata = obj.get("metadata", {})
+                        if isinstance(metadata, dict):
+                            tid = metadata.get("thread_id")
+                            if tid:
+                                extracted_thread_id = tid
+                    
+                    # Extract messages
                     msgs = None
                     if isinstance(obj, dict):
                         vals = obj.get("values", {}) if isinstance(obj.get("values"), dict) else {}
@@ -93,29 +108,24 @@ async def send_message_to_orchestrator(content: str, thread_id: str) -> str:
                                 text = msg.get("content") or msg.get("text") or ""
                                 if text:
                                     final_response = text
-            return final_response or "No response received"
+            
+            return final_response or "No response received", extracted_thread_id
             
     except Exception as e:
         st.error(f"Failed to send message: {e}")
         if st.checkbox("Show debug info", key="debug_send"):
             st.code(traceback.format_exc())
-        return f"Error: {str(e)}"
+        return f"Error: {str(e)}", thread_id
 
 
 async def get_conversation_messages(thread_id: str) -> list:
-    """Get conversation messages from Orchestrator"""
+    """Get conversation messages from Data Service"""
     try:
-        response = await send_message_to_orchestrator(
-            json.dumps({
-                "action": "get_conversation_history",
-                "payload": {"thread_id": thread_id}
-            }),
-            thread_id
-        )
-
-        data = json.loads(response)
-        messages = data.get("messages", [])
-        return messages
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{DATA_SERVICE_URL}/threads/{thread_id}/messages")
+            response.raise_for_status()
+            data = response.json()
+            return data.get("messages", [])
     except Exception as e:
         st.error(f"Failed to fetch messages: {e}")
         if st.checkbox("Show debug info", key="debug_messages"):
@@ -124,32 +134,26 @@ async def get_conversation_messages(thread_id: str) -> list:
 
 
 async def list_threads() -> list:
-    """List all conversation threads via orchestrator tool."""
+    """List all conversation threads via Data Service."""
     try:
-        response = await send_message_to_orchestrator(
-            json.dumps({"action": "get_all_threads"}),
-            "threads_index"
-        )
-        resp_str = (response or "").strip()
-        if not (resp_str.startswith("{") and resp_str.endswith("}")):
-            return []
-        data = json.loads(resp_str)
-        return data.get("threads", [])
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{DATA_SERVICE_URL}/threads")
+            response.raise_for_status()
+            data = response.json()
+            return data.get("threads", [])
     except Exception as e:
         st.error(f"Failed to list threads: {e}")
         return []
 
 
 async def get_eval_suites():
-    """Get all eval suites from Orchestrator"""
+    """Get all eval suites from Data Service"""
     try:
-        response = await send_message_to_orchestrator(
-            json.dumps({"action": "get_eval_suites"}),
-            "eval_suites"
-        )
-
-        data = json.loads(response)
-        return data.get("suites", [])
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{DATA_SERVICE_URL}/eval-suites")
+            response.raise_for_status()
+            data = response.json()
+            return data.get("suites", [])
     except Exception as e:
         st.error(f"Failed to fetch eval suites: {e}")
         if st.checkbox("Show debug info", key="debug_eval_suites"):
@@ -158,18 +162,13 @@ async def get_eval_suites():
 
 
 async def get_test_results(suite_id: str):
-    """Get test results for a specific eval suite"""
+    """Get test results for a specific eval suite from Data Service"""
     try:
-        response = await send_message_to_orchestrator(
-            json.dumps({
-                "action": "get_test_results",
-                "payload": {"suite_id": suite_id}
-            }),
-            f"test_results_{suite_id}"
-        )
-
-        data = json.loads(response)
-        return data.get("results", [])
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{DATA_SERVICE_URL}/test-results", params={"suite_id": suite_id})
+            response.raise_for_status()
+            data = response.json()
+            return data.get("results", [])
     except Exception as e:
         st.error(f"Failed to fetch test results: {e}")
         if st.checkbox("Show debug info", key="debug_test_results"):
@@ -185,7 +184,8 @@ def render_chat():
         col1, col2, col3 = st.columns([1, 3, 1])
         with col1:
             if st.button("➕ New Thread", key="new_thread_btn"):
-                st.session_state.thread_id = str(uuid.uuid4())
+                st.session_state.thread_id = None  # Will be set by LangGraph on first message
+                st.session_state.langgraph_thread_id = None
                 st.session_state.messages = []
                 st.rerun()
 
@@ -194,20 +194,39 @@ def render_chat():
             st.session_state.threads_cache = threads
             options = [t.get("thread_id") for t in threads if t.get("thread_id")]
             current = st.session_state.thread_id
-            default_index = 0
-            if current in options:
-                default_index = options.index(current)
-            elif not options:
-                default_index = 0
-            selected = st.selectbox("Thread", options, index=(default_index if options else None), key="thread_select")
-            if selected and selected != current:
-                st.session_state.thread_id = selected
-                msgs = asyncio.run(get_conversation_messages(selected))
-                st.session_state.messages = [
-                    {"role": (m.get("role") or "assistant"), "content": (m.get("content") or "")}
-                    for m in msgs
-                ]
-                st.rerun()
+            
+            # Display thread selector
+            if not current:
+                # New thread, not yet created
+                st.text("🆕 New Thread")
+            elif options:
+                # Existing threads available
+                # Add current thread to options if it's not there
+                if current not in options:
+                    options = [current] + options
+                
+                default_index = options.index(current) if current in options else 0
+                
+                # Create display names
+                display_options = [f"{opt[:8]}..." for opt in options]
+                selected_display = st.selectbox("Thread", display_options, index=default_index, key="thread_select")
+                
+                # Map back to actual thread_id
+                selected_idx = display_options.index(selected_display)
+                selected = options[selected_idx]
+                
+                if selected and selected != current:
+                    st.session_state.thread_id = selected
+                    st.session_state.langgraph_thread_id = selected
+                    msgs = asyncio.run(get_conversation_messages(selected))
+                    st.session_state.messages = [
+                        {"role": (m.get("role") or "assistant"), "content": (m.get("content") or "")}
+                        for m in msgs
+                    ]
+                    st.rerun()
+            else:
+                # No threads in DB yet, show current
+                st.text(f"Thread: {current[:8]}..." if current else "🆕 New Thread")
 
         with col3:
             if st.button("↻ Refresh", key="refresh_threads"):
@@ -233,8 +252,16 @@ def render_chat():
         # Add user message to UI
         st.session_state.messages.append({"role": "user", "content": prompt})
 
-        # Send to Orchestrator and append reply so users see responses
-        reply = asyncio.run(send_message_to_orchestrator(prompt, st.session_state.thread_id))
+        # Send to Orchestrator - use langgraph_thread_id if available, otherwise None (LangGraph will create one)
+        reply, langgraph_thread_id = asyncio.run(
+            send_message_to_orchestrator(prompt, st.session_state.langgraph_thread_id)
+        )
+        
+        # Update thread_id with LangGraph's thread_id (first message creates it)
+        if langgraph_thread_id and not st.session_state.langgraph_thread_id:
+            st.session_state.langgraph_thread_id = langgraph_thread_id
+            st.session_state.thread_id = langgraph_thread_id
+        
         st.session_state.messages.append({"role": "assistant", "content": reply})
 
         # Rerun to show new messages
