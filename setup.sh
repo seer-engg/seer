@@ -27,9 +27,9 @@ if [[ -z "$VIRTUAL_ENV" ]]; then
 fi
 
 echo ""
-echo "📥 Installing dependencies..."
+echo "📥 Installing dependencies (editable install via pyproject)..."
 pip install --upgrade pip -q
-pip install -r requirements.txt -q
+pip install -e . -q
 
 echo ""
 echo "📁 Creating directories..."

@@ -2,7 +2,7 @@
 
 import os
 import json
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import List, Dict, Any, TypedDict, Annotated
 from langchain_core.tools import tool
 from langchain_core.messages import BaseMessage, SystemMessage
@@ -117,39 +117,4 @@ class BaseAgent(ABC):
         
         return workflow.compile()
     
-    async def register_with_orchestrator(self):
-        """Register this agent with the orchestrator"""
-        try:
-            from .config import get_assistant_id, get_port
-            
-            assistant_id = get_assistant_id(self.agent_name)
-            port = get_port(self.agent_name)
-            
-            response = await send_a2a_message(
-                "orchestrator",
-                self.config.orchestrator_port,
-                json.dumps({
-                    "action": "register_agent",
-                    "payload": {
-                        "agent_name": self.agent_name,
-                        "port": port,
-                        "assistant_id": assistant_id,
-                        "capabilities": self.get_capabilities()
-                    }
-                }),
-                thread_id=self.config.agent_registration_thread
-            )
-            
-            result = json.loads(response)
-            if result.get("success"):
-                print(f"✅ {self.agent_name} agent registered with orchestrator: {assistant_id}")
-            else:
-                print(f"❌ Failed to register {self.agent_name}: {result.get('error')}")
-                
-        except Exception as e:
-            print(f"❌ Error registering {self.agent_name}: {e}")
-    
-    @abstractmethod
-    def get_capabilities(self) -> List[str]:
-        """Return list of agent capabilities"""
-        pass
+    # Registration removed; orchestrator seeds registry from deployment-config

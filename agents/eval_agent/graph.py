@@ -1,12 +1,8 @@
 """Eval Agent LangGraph - Simplified using BaseAgent"""
 
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
 # Import the simplified eval agent
-from simplified_graph import agent, graph, register_with_orchestrator
+from seer.agents.eval_agent.simplified_graph import agent, graph
 
 # Re-export for backward compatibility
-__all__ = ['agent', 'graph', 'register_with_orchestrator']
+__all__ = ['agent', 'graph']
 

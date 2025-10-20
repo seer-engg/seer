@@ -16,8 +16,8 @@ import sys
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from shared.config import get_seer_config
-from shared.a2a_utils import send_a2a_message
+from seer.shared.config import get_seer_config
+from seer.shared.a2a_utils import send_a2a_message
 
 # Configure page
 st.set_page_config(
@@ -28,7 +28,7 @@ st.set_page_config(
 
 # Constants
 # Configuration - will be loaded from centralized config
-from shared.config import get_assistant_id as _get_assistant_id, get_graph_name as _get_graph_name
+from seer.shared.config import get_assistant_id as _get_assistant_id, get_graph_name as _get_graph_name
 ORCHESTRATOR_ASSISTANT_ID = _get_assistant_id("orchestrator")
 ORCHESTRATOR_GRAPH_ID = _get_graph_name("orchestrator")
 
@@ -39,6 +39,8 @@ def init_session_state():
         st.session_state.messages = []
     if "thread_id" not in st.session_state:
         st.session_state.thread_id = str(uuid.uuid4())
+    if "threads_cache" not in st.session_state:
+        st.session_state.threads_cache = []
 
 
 async def send_message_to_orchestrator(content: str, thread_id: str) -> str:
@@ -121,6 +123,23 @@ async def get_conversation_messages(thread_id: str) -> list:
         return []
 
 
+async def list_threads() -> list:
+    """List all conversation threads via orchestrator tool."""
+    try:
+        response = await send_message_to_orchestrator(
+            json.dumps({"action": "get_all_threads"}),
+            "threads_index"
+        )
+        resp_str = (response or "").strip()
+        if not (resp_str.startswith("{") and resp_str.endswith("}")):
+            return []
+        data = json.loads(resp_str)
+        return data.get("threads", [])
+    except Exception as e:
+        st.error(f"Failed to list threads: {e}")
+        return []
+
+
 async def get_eval_suites():
     """Get all eval suites from Orchestrator"""
     try:
@@ -160,6 +179,39 @@ async def get_test_results(suite_id: str):
 def render_chat():
     """Render main chat interface"""
     st.title("💬 Chat with Seer")
+
+    # Thread controls in chat tab
+    with st.container():
+        col1, col2, col3 = st.columns([1, 3, 1])
+        with col1:
+            if st.button("➕ New Thread", key="new_thread_btn"):
+                st.session_state.thread_id = str(uuid.uuid4())
+                st.session_state.messages = []
+                st.rerun()
+
+        with col2:
+            threads = asyncio.run(list_threads())
+            st.session_state.threads_cache = threads
+            options = [t.get("thread_id") for t in threads if t.get("thread_id")]
+            current = st.session_state.thread_id
+            default_index = 0
+            if current in options:
+                default_index = options.index(current)
+            elif not options:
+                default_index = 0
+            selected = st.selectbox("Thread", options, index=(default_index if options else None), key="thread_select")
+            if selected and selected != current:
+                st.session_state.thread_id = selected
+                msgs = asyncio.run(get_conversation_messages(selected))
+                st.session_state.messages = [
+                    {"role": (m.get("role") or "assistant"), "content": (m.get("content") or "")}
+                    for m in msgs
+                ]
+                st.rerun()
+
+        with col3:
+            if st.button("↻ Refresh", key="refresh_threads"):
+                st.rerun()
 
     # Display chat history
     for message in st.session_state.messages:

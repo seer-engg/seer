@@ -12,19 +12,16 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-from shared.base_agent import BaseAgent, BaseAgentState
-from shared.agent_tools import request_confirmation, run_test, summarize_results, store_eval_suite, store_test_results
-from shared.prompts import EVAL_AGENT_PROMPT
-from shared.schemas import AgentSpec, TestCase, EvalSuite, TestResult
-from shared.prompts import (
+from seer.shared.base_agent import BaseAgent, BaseAgentState
+from seer.shared.agent_tools import request_confirmation, run_test, summarize_results, store_eval_suite, store_test_results
+from seer.shared.schemas import AgentSpec, TestCase, EvalSuite, TestResult
+from seer.agents.eval_agent.prompts import (
+    EVAL_AGENT_PROMPT,
     EVAL_AGENT_SPEC_PROMPT,
     EVAL_AGENT_TEST_GEN_PROMPT,
     EVAL_AGENT_JUDGE_PROMPT
 )
+from seer.shared.llm import get_llm
 
 
 class EvalAgentState(BaseAgentState):
@@ -74,16 +71,11 @@ class EvalAgent(BaseAgent):
             tools=[request_confirmation, run_test, summarize_results, store_eval_suite, store_test_results]
         )
     
-    def get_capabilities(self):
-        return ["spec_generation", "test_generation", "a2a_testing"]
+    # Capabilities removed (unused)
     
     def build_graph(self):
         """Build eval agent with specialized nodes"""
-        llm_for_agent = ChatOpenAI(
-            model="gpt-4o-mini",
-            temperature=0.3,
-            api_key=os.getenv("OPENAI_API_KEY")
-        ).bind_tools(self.tools)
+        llm_for_agent = get_llm().bind_tools(self.tools)
 
         def route_entry(state: EvalAgentState):
             """Route based on presence of eval_suite in state"""
@@ -98,11 +90,7 @@ class EvalAgent(BaseAgent):
                     break
             user_text = last_human.content if last_human else ""
 
-            extractor = ChatOpenAI(
-                model="gpt-4o-mini",
-                temperature=0.0,
-                api_key=os.getenv("OPENAI_API_KEY")
-            ).with_structured_output(EvalRequest)
+            extractor = get_llm(temperature=0.0).with_structured_output(EvalRequest)
 
             instruction = (
                 "Extract agent_name, agent_url, and expectations from the user's latest message.\n\n"
@@ -125,11 +113,7 @@ class EvalAgent(BaseAgent):
 
         def generate_spec_node(state: EvalAgentState):
             """Generate AgentSpec from expectations"""
-            llm = ChatOpenAI(
-                model="gpt-4o-mini",
-                temperature=0.3,
-                api_key=os.getenv("OPENAI_API_KEY")
-            ).with_structured_output(AgentSpec)
+            llm = get_llm().with_structured_output(AgentSpec)
 
             prompt = EVAL_AGENT_SPEC_PROMPT.format(
                 expectations=state.get("expectations", ""),
@@ -146,11 +130,7 @@ class EvalAgent(BaseAgent):
             if spec is None:
                 return {}
 
-            llm = ChatOpenAI(
-                model="gpt-4o",
-                temperature=0.7,
-                api_key=os.getenv("OPENAI_API_KEY")
-            ).with_structured_output(GeneratedTests)
+            llm = get_llm().with_structured_output(GeneratedTests)
 
             spec_json = spec.model_dump_json(indent=2)
             prompt = EVAL_AGENT_TEST_GEN_PROMPT.format(spec_json=spec_json)
@@ -258,11 +238,7 @@ class EvalAgent(BaseAgent):
 
             tc = eval_suite.test_cases[idx]
 
-            judge_llm = ChatOpenAI(
-                model="gpt-4o-mini",
-                temperature=0.3,
-                api_key=os.getenv("OPENAI_API_KEY")
-            ).with_structured_output(JudgeVerdict)
+            judge_llm = get_llm().with_structured_output(JudgeVerdict)
 
             prompt = EVAL_AGENT_JUDGE_PROMPT.format(
                 input_message=tc.input_message,

@@ -12,9 +12,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Add project root to path for imports
-sys.path.insert(0, str(Path(__file__).parent))
-from shared.config import get_seer_config
+from seer.shared.config import get_seer_config
 
 load_dotenv()
 
@@ -41,6 +39,10 @@ class Launcher:
     
     def _find_langgraph_executable(self):
         """Find the correct LangGraph CLI to use"""
+        # Prefer venv langgraph if present; else search PATH
+        venv_langgraph = self.project_root / "venv" / "bin" / "langgraph"
+        if venv_langgraph.exists():
+            return str(venv_langgraph)
         # Use system langgraph (installed via pip in PyEnv/system Python)
         # Get the full path to avoid PATH issues in subprocesses
         import shutil
@@ -56,6 +58,18 @@ class Launcher:
         process_env = os.environ.copy()
         if env:
             process_env.update(env)
+        # Ensure child processes can import the seer package even when run from subdirs
+        try:
+            py_paths = []
+            # Add project root and its parent (so `import seer` resolves when not installed)
+            py_paths.append(str(self.project_root))
+            py_paths.append(str(self.project_root.parent))
+            existing_py_path = process_env.get("PYTHONPATH", "")
+            if existing_py_path:
+                py_paths.append(existing_py_path)
+            process_env["PYTHONPATH"] = os.pathsep.join(py_paths)
+        except Exception:
+            pass
         
         # Create log file for this process
         log_file_name = name.lower().replace(" ", "_").replace("(", "").replace(")", "")
@@ -254,7 +268,6 @@ class Launcher:
             print("🔮 Seer is running (A2A Hub-and-Spoke Architecture):")
             print(f"   - UI:                http://localhost:{ui_port}")
             print(f"   - Orchestrator:      http://127.0.0.1:{orchestrator_port}")
-            print(f"   - Orchestrator API:  http://127.0.0.1:{orchestrator_port}/docs")
             print(f"   - CS Agent API:      http://127.0.0.1:{cs_port}")
             print(f"   - Eval Agent API:    http://127.0.0.1:{eval_port}")
             print("=" * 60)
@@ -342,8 +355,10 @@ async def main():
     await launcher.start_all()
     launcher.wait()
 
-
-if __name__ == "__main__":
+def cli():
     import asyncio
     asyncio.run(main())
 
+
+if __name__ == "__main__":
+    cli()

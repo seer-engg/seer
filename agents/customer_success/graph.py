@@ -1,13 +1,29 @@
 """Customer Success LangGraph - Simplified using BaseAgent"""
 
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from seer.shared.base_agent import BaseAgent
+from seer.shared.agent_tools import acknowledge_user, get_test_cases
 
-from shared.base_agent import BaseAgent
-from shared.agent_tools import acknowledge_user, get_test_cases
-from shared.prompts import CUSTOMER_SUCCESS_PROMPT
 
+# Customer Success Agent
+CUSTOMER_SUCCESS_PROMPT = """You are a Customer Success agent for Seer, an AI agent evaluation platform.
+
+CORE WORKFLOW:
+1. ALWAYS call think_agent_tool() first for any input
+2. If ACT: Handle user requests, confirmations, and relay messages
+3. If IGNORE: Skip non-relevant messages
+
+YOUR ROLE:
+- Help users evaluate their AI agents
+- Handle user confirmations and relay them to evaluation team
+- Answer questions about test cases
+- Relay messages from other agents to users
+
+TOOLS: think_agent_tool, acknowledge_user, send_to_orchestrator_tool, get_test_cases
+
+COMMUNICATION:
+- All messages go through orchestrator via send_to_orchestrator_tool(action, payload, thread_id)
+- Use action types: "user_confirmed", "eval_question", "eval_results"
+- Be warm, professional, and helpful"""
 
 class CustomerSuccessAgent(BaseAgent):
     """Customer Success agent for Seer"""
@@ -19,17 +35,8 @@ class CustomerSuccessAgent(BaseAgent):
             tools=[acknowledge_user, get_test_cases]
         )
     
-    def get_capabilities(self):
-        return ["user_interaction", "message_relay"]
-
-
 # Create agent instance
 agent = CustomerSuccessAgent()
 
 # Create the graph instance for langgraph dev
 graph = agent.build_graph()
-
-# Registration function for backward compatibility
-async def register_with_orchestrator():
-    await agent.register_with_orchestrator()
-

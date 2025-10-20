@@ -67,16 +67,17 @@ async def send_a2a_message(target_agent_id: str, target_port: int, message: str,
         # If mapping fails, proceed as-is; the server may still accept a graph id
         pass
 
+    import uuid as _uuid
     payload = {
         "jsonrpc": "2.0",
-        "id": "",
+        "id": str(_uuid.uuid4()),
         "method": "message/send",
         "params": {
             "message": {
                 "role": "user",
                 "parts": [{"kind": "text", "text": message}]
             },
-            "messageId": "",
+            "messageId": str(_uuid.uuid4()),
             "thread": {"threadId": thread_id or ""}
         }
     }
@@ -161,55 +162,57 @@ async def send_a2a_message(target_agent_id: str, target_port: int, message: str,
                     chosen = cand_id
                     break
 
-            if not chosen:
-                return create_error_response("Assistant not found or not registered on target port")
+            # Build list of candidates to try even if preflight fails
+            candidates_for_fallback = [chosen] if chosen else a2a_candidates
 
-            # Try A2A delivery
-            try:
-                url = f"http://127.0.0.1:{target_port}/a2a/{chosen}"
-                response = await client.post(url, json=payload, headers={"Accept": "application/json"})
-                if response.status_code < 400:
-                    data = response.json()
-                    text = _extract_a2a_text(data)
-                    if text:
-                        return create_success_response({"response": text})
-            except Exception:
-                pass
+            # 1) Try A2A JSON-RPC
+            for cand in candidates_for_fallback:
+                try:
+                    url = f"http://127.0.0.1:{target_port}/a2a/{cand}"
+                    response = await client.post(url, json=payload, headers={"Accept": "application/json"})
+                    if response.status_code < 400:
+                        data = response.json()
+                        text = _extract_a2a_text(data)
+                        if text:
+                            return create_success_response({"response": text})
+                except Exception:
+                    pass
 
-            # Stream fallback only (no /invoke, no /graphs)
-            if os.getenv("SEER_A2A_FALLBACK", "stream").lower() != "stream":
-                return create_success_response({"response": "No response received"})
+            # 2) Fallback to /runs/stream (SSE)
+            for cand in candidates_for_fallback:
+                try:
+                    s_payload = {
+                        "assistant_id": cand,
+                        "input": {"messages": [{"role": "user", "content": message}]},
+                        "stream_mode": ["values"],
+                        "config": {"configurable": {"thread_id": thread_id or ""}},
+                    }
+                    s_resp = await client.post(f"http://127.0.0.1:{target_port}/runs/stream", json=s_payload)
+                    if s_resp.status_code < 400:
+                        final_response = ""
+                        for line in s_resp.text.strip().split('\n'):
+                            if line.startswith('data: '):
+                                try:
+                                    obj = json.loads(line[6:])
+                                except Exception:
+                                    continue
+                                msgs = None
+                                if isinstance(obj, dict):
+                                    vals = obj.get("values", {}) if isinstance(obj.get("values"), dict) else {}
+                                    if not isinstance(vals, dict):
+                                        vals = obj.get("value", {}) if isinstance(obj.get("value"), dict) else {}
+                                    msgs = vals.get("messages") if isinstance(vals, dict) else obj.get("messages")
+                                if isinstance(msgs, list):
+                                    for msg in msgs:
+                                        if isinstance(msg, dict) and (msg.get("type") == "ai" or msg.get("role") == "assistant"):
+                                            text = msg.get("content") or msg.get("text") or ""
+                                            if text:
+                                                final_response = text
+                        if final_response:
+                            return create_success_response({"response": final_response})
+                except Exception:
+                    pass
 
-            s_payload = {
-                "assistant_id": chosen,
-                "input": {"messages": [{"role": "user", "content": message}]},
-                "stream_mode": ["values"],
-                "config": {"configurable": {"thread_id": thread_id or ""}},
-            }
-            s_resp = await client.post(f"http://127.0.0.1:{target_port}/runs/stream", json=s_payload)
-            if s_resp.status_code < 400:
-                final_response = ""
-                for line in s_resp.text.strip().split('\n'):
-                    if line.startswith('data: '):
-                        try:
-                            obj = json.loads(line[6:])
-                        except Exception:
-                            continue
-                        msgs = None
-                        if isinstance(obj, dict):
-                            vals = obj.get("values", {}) if isinstance(obj.get("values"), dict) else {}
-                            if not isinstance(vals, dict):
-                                vals = obj.get("value", {}) if isinstance(obj.get("value"), dict) else {}
-                            msgs = vals.get("messages") if isinstance(vals, dict) else obj.get("messages")
-                        if isinstance(msgs, list):
-                            for msg in msgs:
-                                if isinstance(msg, dict) and (msg.get("type") == "ai" or msg.get("role") == "assistant"):
-                                    text = msg.get("content") or msg.get("text") or ""
-                                    if text:
-                                        final_response = text
-                if final_response:
-                    return create_success_response({"response": final_response})
-
-            return create_success_response({"response": "No response received"})
+            return create_error_response("Assistant not found or not registered on target port")
     except Exception as e:
         return create_error_response(f"Failed to send message: {str(e)}", e)

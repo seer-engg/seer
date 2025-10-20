@@ -90,7 +90,6 @@ seer/
 │   └── streamlit_app.py
 ├── deployment-config.json  # Agent UUIDs and configuration
 ├── run.py              # Launcher (starts everything)
-└── requirements.txt    # Dependencies
 ```
 
 ---
