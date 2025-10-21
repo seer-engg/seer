@@ -71,8 +71,8 @@ User ←→ Streamlit UI ←→ Orchestrator Agent (Conversational)
 - ✅ **Simplified deployment** - No bridge or customer success agent needed
 
 **Agent Files:**
-- Orchestrator: `agents/orchestrator/simplified_graph.py` (Conversational hub with A2A routing)
-- Eval Agent: `agents/eval_agent/simplified_graph.py` (Test generation and execution)
+- Orchestrator: `agents/orchestrator/graph.py` (Conversational hub with A2A routing)
+- Eval Agent: `agents/eval_agent/graph.py` (Test generation and execution)
 - Coding Agent: `agents/coding_agent/graph.py` (Code analysis and review)
 
 **Configuration:**
@@ -87,10 +87,10 @@ User ←→ Streamlit UI ←→ Orchestrator Agent (Conversational)
 seer/
 ├── agents/             # LangGraph agents with A2A communication
 │   ├── orchestrator/           # Conversational orchestrator with A2A routing
-│   │   ├── simplified_graph.py  # Main orchestrator logic
+│   │   ├── graph.py  # Main orchestrator logic
 │   │   └── langgraph.json
 │   ├── eval_agent/
-│   │   ├── simplified_graph.py  # LangGraph agent graph
+│   │   ├── graph.py  # LangGraph agent graph
 │   │   └── langgraph.json
 │   └── coding_agent/
 │       ├── graph.py             # LangGraph agent graph

@@ -35,6 +35,7 @@ packages = [
   "seer.agents.eval_agent.judge",
   "seer.agents.orchestrator",
   "seer.agents.orchestrator.modules",
+  "seer.agents.coding_agent",
 ]
 
 [tool.setuptools.package-data]
