@@ -293,15 +293,7 @@ class Launcher:
             print("🔮 Seer is running (A2A Orchestrator Architecture):")
             print(f"   - UI:                http://localhost:{ui_port}")
             print(f"   - Data Service:      http://127.0.0.1:{data_service_port}")
-            print(f"   - Orchestrator:      http://127.0.0.1:{orchestrator_port}")
-            print(f"   - Eval Agent API:    http://127.0.0.1:{eval_port}")
-            print(f"   - Coding Agent API:  http://127.0.0.1:{coding_port}")
             print("=" * 60)
-            print("\n💡 Architecture:")
-            print("   - UI → Data Service (for database queries, no LLM)")
-            print("   - UI → Orchestrator (for conversations)")
-            print("   - Orchestrator → Eval/Coding agents (point-to-point A2A)")
-            print("   - No broadcast, no circular communication\n")
             print("Press Ctrl+C to stop all components\n")
             
         except Exception as e:

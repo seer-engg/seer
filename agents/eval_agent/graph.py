@@ -1,18 +1,15 @@
 """Simplified Eval Agent - Using BaseAgent with specialized nodes"""
 
-import os
 import json
 import hashlib
 import uuid
-from typing import Annotated, TypedDict, Optional, List
+from typing import Optional, List
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
-from langchain_openai import ChatOpenAI
-from langgraph.graph.message import add_messages
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from pydantic import BaseModel, Field
 
-from seer.shared.base_agent import BaseAgent, BaseAgentState
+from seer.shared.base_agent import BaseAgentState
 from seer.shared.agent_tools import run_test
 from seer.shared.schemas import AgentSpec, TestCase, EvalSuite, TestResult
 from seer.agents.eval_agent.prompts import (
