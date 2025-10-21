@@ -33,9 +33,6 @@ packages = [
   "seer.agents",
   "seer.agents.eval_agent",
   "seer.agents.eval_agent.judge",
-  "seer.agents.coding_agent",
-  "seer.agents.coding_agent.nodes",
-  "seer.agents.coding_agent.utils",
   "seer.agents.orchestrator",
   "seer.agents.orchestrator.modules",
 ]
