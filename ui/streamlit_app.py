@@ -50,66 +50,27 @@ def init_session_state():
 
 async def send_message_to_orchestrator(content: str, thread_id: str = None) -> tuple[str, str]:
     """
-    Send message to Orchestrator agent
-    Returns: (response_text, langgraph_thread_id)
+    Send message to Orchestrator via FastAPI backend (proxy pattern)
+    Returns: (response_text, thread_id)
     """
     try:
-        # Get orchestrator config
-        config = get_seer_config()
-        orchestrator_port = config.orchestrator_port
-        
-        # Use /runs/stream to get thread_id from LangGraph
-        url = f"http://127.0.0.1:{orchestrator_port}/runs/stream"
-        payload = {
-            "assistant_id": ORCHESTRATOR_GRAPH_ID or "orchestrator",
-            "input": {"messages": [{"role": "user", "content": content}]},
-            "stream_mode": ["values"],
-        }
-        
-        # Only include thread_id if we have one from a previous message
-        if thread_id:
-            payload["config"] = {"configurable": {"thread_id": thread_id}}
-        
-        async with httpx.AsyncClient(timeout=config.a2a_timeout) as client:
-            resp = await client.post(url, json=payload)
-            if resp.status_code >= 400:
-                return f"Error: HTTP {resp.status_code} {resp.text[:200]}", thread_id
+        # Send through FastAPI backend for proper persistence
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{DATA_SERVICE_URL}/messages/send",
+                json={
+                    "content": content,
+                    "thread_id": thread_id,
+                    "target_agent": "orchestrator"
+                }
+            )
             
-            final_response = ""
-            extracted_thread_id = thread_id  # Default to input thread_id
+            if response.status_code >= 400:
+                error_detail = response.json().get("detail", response.text[:200])
+                return f"Error: {error_detail}", thread_id
             
-            for line in resp.text.strip().split('\n'):
-                if line.startswith('data: '):
-                    try:
-                        obj = json.loads(line[6:])
-                    except Exception:
-                        continue
-                    
-                    # Extract thread_id from metadata
-                    if isinstance(obj, dict):
-                        metadata = obj.get("metadata", {})
-                        if isinstance(metadata, dict):
-                            tid = metadata.get("thread_id")
-                            if tid:
-                                extracted_thread_id = tid
-                    
-                    # Extract messages
-                    msgs = None
-                    if isinstance(obj, dict):
-                        vals = obj.get("values", {}) if isinstance(obj.get("values"), dict) else {}
-                        if not isinstance(vals, dict):
-                            vals = obj.get("value", {}) if isinstance(obj.get("value"), dict) else {}
-                        msgs = vals.get("messages") if isinstance(vals, dict) else None
-                        if msgs is None:
-                            msgs = obj.get("messages") if isinstance(obj.get("messages"), list) else None
-                    if isinstance(msgs, list):
-                        for msg in msgs:
-                            if isinstance(msg, dict) and (msg.get("type") == "ai" or msg.get("role") == "assistant"):
-                                text = msg.get("content") or msg.get("text") or ""
-                                if text:
-                                    final_response = text
-            
-            return final_response or "No response received", extracted_thread_id
+            data = response.json()
+            return data.get("response", "No response"), data.get("thread_id", thread_id)
             
     except Exception as e:
         st.error(f"Failed to send message: {e}")
@@ -276,15 +237,15 @@ def render_chat():
         # Add user message to UI
         st.session_state.messages.append({"role": "user", "content": prompt})
 
-        # Send to Orchestrator - use langgraph_thread_id if available, otherwise None (LangGraph will create one)
-        reply, langgraph_thread_id = asyncio.run(
-            send_message_to_orchestrator(prompt, st.session_state.langgraph_thread_id)
+        # Send via FastAPI backend (handles thread creation and persistence)
+        reply, thread_id = asyncio.run(
+            send_message_to_orchestrator(prompt, st.session_state.thread_id)
         )
         
-        # Update thread_id with LangGraph's thread_id (first message creates it)
-        if langgraph_thread_id and not st.session_state.langgraph_thread_id:
-            st.session_state.langgraph_thread_id = langgraph_thread_id
-            st.session_state.thread_id = langgraph_thread_id
+        # Update thread_id (FastAPI backend creates it if needed)
+        if thread_id:
+            st.session_state.thread_id = thread_id
+            st.session_state.langgraph_thread_id = thread_id
         
         st.session_state.messages.append({"role": "assistant", "content": reply})
 

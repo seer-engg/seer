@@ -4,14 +4,19 @@ Provides simple REST APIs for data operations without LLM overhead
 """
 
 import os
+import uuid
+import json
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import uvicorn
 import traceback
+from datetime import datetime
 
 from seer.agents.orchestrator.modules.data_manager import DataManager
+from seer.shared.config import get_seer_config
 
 app = FastAPI(title="Seer Data Service", version="1.0.0")
 
@@ -54,6 +59,13 @@ class StoreTestResultsRequest(BaseModel):
     suite_id: str
     thread_id: str
     results: List[Dict[str, Any]]
+
+
+class SendMessageRequest(BaseModel):
+    """Request to send a message to an agent"""
+    content: str
+    thread_id: Optional[str] = None
+    target_agent: str = "orchestrator"  # orchestrator, eval_agent, coding_agent
 
 
 # Health check
@@ -183,6 +195,135 @@ async def get_registered_agents():
             "agents": agents,
             "count": len(agents)
         }
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Message proxy operations (UI → Agents)
+@app.post("/messages/send")
+async def send_message_to_agent(request: SendMessageRequest):
+    """
+    Proxy endpoint: UI sends messages through this FastAPI backend
+    This ensures proper thread creation, message persistence, and data flow
+    """
+    try:
+        config = get_seer_config()
+        
+        # Get agent configuration
+        from seer.shared.config import get_config
+        agent_config = get_config()
+        
+        # Determine target agent port
+        if request.target_agent == "orchestrator":
+            target_port = config.orchestrator_port
+            assistant_id = agent_config.get_assistant_id("orchestrator")
+            graph_id = agent_config.get_graph_name("orchestrator")
+        elif request.target_agent == "eval_agent":
+            target_port = config.eval_agent_port
+            assistant_id = agent_config.get_assistant_id("eval_agent")
+            graph_id = agent_config.get_graph_name("eval_agent")
+        elif request.target_agent == "coding_agent":
+            target_port = config.coding_agent_port
+            assistant_id = agent_config.get_assistant_id("coding_agent")
+            graph_id = agent_config.get_graph_name("coding_agent")
+        else:
+            raise ValueError(f"Unknown target agent: {request.target_agent}")
+        
+        # 1. Create or update thread in database
+        thread_id = request.thread_id
+        if not thread_id:
+            # Generate new thread ID
+            thread_id = str(uuid.uuid4())
+        
+        # Ensure thread exists in database
+        from seer.shared.database import get_db
+        db = get_db()
+        db.create_thread(thread_id)
+        
+        # 2. Persist user message to database
+        message_id = str(uuid.uuid4())
+        db.add_message(
+            thread_id=thread_id,
+            message_id=message_id,
+            timestamp=datetime.now().isoformat(),
+            role="user",
+            sender="ui",
+            content=request.content,
+            message_type="conversation"
+        )
+        
+        # 3. Send to target agent via LangGraph API
+        url = f"http://127.0.0.1:{target_port}/runs/stream"
+        payload = {
+            "assistant_id": graph_id,
+            "input": {"messages": [{"role": "user", "content": request.content}]},
+            "stream_mode": ["values"],
+            "config": {"configurable": {"thread_id": thread_id}}
+        }
+        
+        async with httpx.AsyncClient(timeout=config.a2a_timeout) as client:
+            resp = await client.post(url, json=payload)
+            
+            if resp.status_code >= 400:
+                raise HTTPException(
+                    status_code=resp.status_code,
+                    detail=f"Agent returned error: {resp.text[:200]}"
+                )
+            
+            # 4. Parse response and extract assistant message
+            final_response = ""
+            
+            for line in resp.text.strip().split('\n'):
+                if line.startswith('data: '):
+                    try:
+                        obj = json.loads(line[6:])
+                    except Exception:
+                        continue
+                    
+                    # Extract messages
+                    msgs = None
+                    if isinstance(obj, dict):
+                        vals = obj.get("values", {})
+                        if isinstance(vals, dict):
+                            msgs = vals.get("messages")
+                        if msgs is None:
+                            vals = obj.get("value", {})
+                            if isinstance(vals, dict):
+                                msgs = vals.get("messages")
+                        if msgs is None:
+                            msgs = obj.get("messages")
+                    
+                    if isinstance(msgs, list):
+                        for msg in msgs:
+                            if isinstance(msg, dict) and (msg.get("type") == "ai" or msg.get("role") == "assistant"):
+                                text = msg.get("content") or msg.get("text") or ""
+                                if text:
+                                    final_response = text
+            
+            # 5. Persist assistant response to database
+            if final_response:
+                assistant_message_id = str(uuid.uuid4())
+                db.add_message(
+                    thread_id=thread_id,
+                    message_id=assistant_message_id,
+                    timestamp=datetime.now().isoformat(),
+                    role="assistant",
+                    sender=request.target_agent,
+                    content=final_response,
+                    message_type="conversation"
+                )
+            
+            # 6. Return response with thread_id
+            return {
+                "success": True,
+                "response": final_response or "No response received",
+                "thread_id": thread_id,
+                "message_id": message_id
+            }
+    
+    except HTTPException:
+        raise
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
