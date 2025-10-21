@@ -2,26 +2,21 @@
 
 import os
 import json
-import time
-import hashlib
-import httpx
-from typing import Annotated, TypedDict, Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
-from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage
 from langchain_openai import ChatOpenAI
-from langgraph.graph.message import add_messages
-from pydantic import BaseModel, Field
 from datetime import datetime
 
 from seer.shared.base_agent import BaseAgent, BaseAgentState
-from seer.shared.error_handling import create_error_response, create_success_response
+from seer.shared.error_handling import create_error_response
 from seer.shared.a2a_utils import send_a2a_message
 from seer.shared.config import get_config
 
 # Import orchestrator modules
-from seer.agents.orchestrator.modules.data_manager import DataManager
-from seer.agents.orchestrator.modules.agent_registry import AgentRegistry
+from seer.agents.orchestrator.data_manager import DataManager
+from seer.agents.orchestrator.agent_registry import AgentRegistry
 
 
 class OrchestratorState(BaseAgentState):
@@ -57,6 +52,9 @@ COMMUNICATION STYLE:
 - Acknowledge requests quickly ("Got it! I'll evaluate your agent...")
 - Keep users informed of progress
 - Use emojis sparingly for visual clarity (✅, 📊, 🔍)
+
+FIRST-TURN RULE:
+On the first user message about any task, ALWAYS reply with a brief acknowledgment and a clear next step. Do NOT call tools in this turn; wait for explicit user confirmation (e.g., "run tests", "go ahead") or a follow-up message before delegating to other agents.
 
 You are the main interface for users - make their experience smooth and delightful!"""
 

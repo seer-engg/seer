@@ -15,8 +15,9 @@ import uvicorn
 import traceback
 from datetime import datetime
 
-from seer.agents.orchestrator.modules.data_manager import DataManager
+from seer.agents.orchestrator.data_manager import DataManager
 from seer.shared.config import get_seer_config
+from seer.shared.a2a_utils import send_a2a_message
 
 app = FastAPI(title="Seer Data Service", version="1.0.0")
 
@@ -253,74 +254,83 @@ async def send_message_to_agent(request: SendMessageRequest):
             message_type="conversation"
         )
         
-        # 3. Send to target agent via LangGraph API
-        url = f"http://127.0.0.1:{target_port}/runs/stream"
-        payload = {
-            "assistant_id": graph_id,
-            "input": {"messages": [{"role": "user", "content": request.content}]},
-            "stream_mode": ["values"],
-            "config": {"configurable": {"thread_id": thread_id}}
-        }
-        
-        async with httpx.AsyncClient(timeout=config.a2a_timeout) as client:
-            resp = await client.post(url, json=payload)
-            
-            if resp.status_code >= 400:
-                raise HTTPException(
-                    status_code=resp.status_code,
-                    detail=f"Agent returned error: {resp.text[:200]}"
-                )
-            
-            # 4. Parse response and extract assistant message
-            final_response = ""
-            
-            for line in resp.text.strip().split('\n'):
-                if line.startswith('data: '):
-                    try:
-                        obj = json.loads(line[6:])
-                    except Exception:
-                        continue
-                    
-                    # Extract messages
-                    msgs = None
-                    if isinstance(obj, dict):
-                        vals = obj.get("values", {})
-                        if isinstance(vals, dict):
-                            msgs = vals.get("messages")
-                        if msgs is None:
-                            vals = obj.get("value", {})
+        final_response = ""
+
+        # 3. Send to target agent (A2A for orchestrator to get persistent threads)
+        if request.target_agent == "orchestrator":
+            a2a_resp = await send_a2a_message(
+                target_agent_id=assistant_id,
+                target_port=target_port,
+                message=request.content,
+                thread_id=thread_id
+            )
+            try:
+                a2a_data = json.loads(a2a_resp)
+            except Exception:
+                a2a_data = {"success": False, "error": "Invalid A2A response"}
+            if not a2a_data.get("success"):
+                raise HTTPException(status_code=502, detail=a2a_data.get("error", "A2A failed"))
+            final_response = a2a_data.get("response", "") or a2a_data.get("result", {}).get("response", "")
+        else:
+            # Keep existing /runs/stream behavior for non-orchestrator agents
+            url = f"http://127.0.0.1:{target_port}/runs/stream"
+            payload = {
+                "assistant_id": graph_id,
+                "input": {"messages": [{"role": "user", "content": request.content}]},
+                "stream_mode": ["values"],
+                "config": {"configurable": {"thread_id": thread_id}}
+            }
+            async with httpx.AsyncClient(timeout=config.a2a_timeout) as client:
+                resp = await client.post(url, json=payload)
+                if resp.status_code >= 400:
+                    raise HTTPException(
+                        status_code=resp.status_code,
+                        detail=f"Agent returned error: {resp.text[:200]}"
+                    )
+                for line in resp.text.strip().split('\n'):
+                    if line.startswith('data: '):
+                        try:
+                            obj = json.loads(line[6:])
+                        except Exception:
+                            continue
+                        msgs = None
+                        if isinstance(obj, dict):
+                            vals = obj.get("values", {})
                             if isinstance(vals, dict):
                                 msgs = vals.get("messages")
-                        if msgs is None:
-                            msgs = obj.get("messages")
-                    
-                    if isinstance(msgs, list):
-                        for msg in msgs:
-                            if isinstance(msg, dict) and (msg.get("type") == "ai" or msg.get("role") == "assistant"):
-                                text = msg.get("content") or msg.get("text") or ""
-                                if text:
-                                    final_response = text
-            
-            # 5. Persist assistant response to database
-            if final_response:
-                assistant_message_id = str(uuid.uuid4())
-                db.add_message(
-                    thread_id=thread_id,
-                    message_id=assistant_message_id,
-                    timestamp=datetime.now().isoformat(),
-                    role="assistant",
-                    sender=request.target_agent,
-                    content=final_response,
-                    message_type="conversation"
-                )
-            
-            # 6. Return response with thread_id
-            return {
-                "success": True,
-                "response": final_response or "No response received",
-                "thread_id": thread_id,
-                "message_id": message_id
-            }
+                            if msgs is None:
+                                vals = obj.get("value", {})
+                                if isinstance(vals, dict):
+                                    msgs = vals.get("messages")
+                            if msgs is None:
+                                msgs = obj.get("messages")
+                        if isinstance(msgs, list):
+                            for msg in msgs:
+                                if isinstance(msg, dict) and (msg.get("type") == "ai" or msg.get("role") == "assistant"):
+                                    text = msg.get("content") or msg.get("text") or ""
+                                    if text:
+                                        final_response = text
+
+        # 4. Persist assistant response to database
+        if final_response:
+            assistant_message_id = str(uuid.uuid4())
+            db.add_message(
+                thread_id=thread_id,
+                message_id=assistant_message_id,
+                timestamp=datetime.now().isoformat(),
+                role="assistant",
+                sender=request.target_agent,
+                content=final_response,
+                message_type="conversation"
+            )
+
+        # 5. Return response with thread_id
+        return {
+            "success": True,
+            "response": final_response or "No response received",
+            "thread_id": thread_id,
+            "message_id": message_id
+        }
     
     except HTTPException:
         raise

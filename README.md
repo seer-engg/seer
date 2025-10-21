@@ -9,7 +9,7 @@ Agents communicate via LangGraph's Agent-to-Agent (A2A) protocol with an orchest
 ## 🚀 Quick Start
 
 ```bash
-# 1. Setup PostgreSQL (see POSTGRESQL_SETUP.md)
+# 1. Setup PostgreSQL
 # Quick: docker run --name seer-postgres -e POSTGRES_DB=seer_db -e POSTGRES_USER=seer_user -e POSTGRES_PASSWORD=seer_password -p 5432:5432 -d postgres:15
 
 # 2. Configure .env
@@ -32,19 +32,6 @@ python run.py
 ```
 
 Real LangGraph agents with proper structure, testable in isolation with `langgraph dev`.
-
-**See [ARCHITECTURE_CHOICE.md](ARCHITECTURE_CHOICE.md) for detailed comparison.**
-
----
-
-## 📚 Documentation
-
-- **[POSTGRESQL_SETUP.md](POSTGRESQL_SETUP.md)** - PostgreSQL setup guide
-- **[DATABASE_MIGRATION.md](DATABASE_MIGRATION.md)** - SQLite → PostgreSQL migration
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture and design (if exists)
-- **[DATABASE.md](DATABASE.md)** - Database schema reference (if exists)
-
----
 
 ## 🏗️ Architecture
 
@@ -129,8 +116,6 @@ Seer uses **PostgreSQL with Peewee ORM** for scalable, production-ready data per
 - **Eval suites** - Generated test cases
 - **Test results** - Detailed test execution results
 
-**Migration**: See [DATABASE_MIGRATION.md](DATABASE_MIGRATION.md) for migrating from SQLite to PostgreSQL
-
 ---
 
 ## 📊 Monitoring & Debugging
@@ -179,36 +164,3 @@ tail -f logs/coding_agent_langgraph.log
 - 🤖 Point-to-point A2A communication traces
 - 📨 Agent-specific activity with tool calls and responses
 - 🔄 Agent registration and status updates
-
----
-
-## 🛠️ Development
-
-**Add a new agent:**
-1. Copy `agents/eval_agent/` as template
-2. Define state, tools, and workflow
-3. Add agent to `deployment-config.json` with UUID and port
-4. Add delegation tool in orchestrator for the new agent
-5. Update `run.py` to launch it
-
-**Add new data types:**
-1. Add schemas in `shared/schemas.py`
-2. Update Orchestrator's data_manager to handle the new data types
-3. Add tools in orchestrator for storing/retrieving the new data
-
----
-
-## 🙏 Built With
-
-- **LangGraph** - All agents (Orchestrator, Eval, Coding)
-- **LangChain** - LLM orchestration
-- **Streamlit** - UI
-- **FastAPI** - Data service
-- **Peewee ORM** - Database ORM
-- **PostgreSQL** - Data persistence
-- **OpenAI** - LLM models
-
----
-
-**Questions? Check [README_FULL.md](README_FULL.md)** 🔮
-

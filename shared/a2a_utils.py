@@ -39,7 +39,7 @@ async def send_a2a_message(target_agent_id: str, target_port: int, message: str,
     Send a message to another agent using LangGraph A2A protocol.
     
     Args:
-        target_agent_id: Assistant ID of target agent (e.g., "orchestrator", "customer_success", "eval_agent")
+        target_agent_id: Assistant ID of target agent
         target_port: Port where target agent is running
         message: Message content to send
         thread_id: Optional thread ID for context
