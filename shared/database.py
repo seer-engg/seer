@@ -12,7 +12,8 @@ from .models import (
     db, init_db, close_db,
     Thread, Message, Event, AgentActivity,
     EvalSuite, TestResult, Subscriber,
-    TargetAgentExpectation, TargetAgentConfig
+    TargetAgentExpectation, TargetAgentConfig,
+    RemoteThreadLink
 )
 
 
@@ -390,6 +391,55 @@ class Database:
         """Delete a subscriber"""
         Subscriber.delete().where(Subscriber.agent_name == agent_name).execute()
     
+    # Remote thread link operations
+    def get_remote_thread_link(self, user_thread_id: str, src_agent: str, dst_agent: str) -> Optional[Dict[str, Any]]:
+        """Get remote thread link for a given user thread id and agent pair"""
+        try:
+            link = RemoteThreadLink.get(
+                (RemoteThreadLink.user_thread == user_thread_id)
+                & (RemoteThreadLink.src_agent == src_agent)
+                & (RemoteThreadLink.dst_agent == dst_agent)
+            )
+            return {
+                'user_thread_id': link.user_thread.thread_id if link.user_thread else None,
+                'src_agent': link.src_agent,
+                'dst_agent': link.dst_agent,
+                'remote_base_url': link.remote_base_url,
+                'remote_thread_id': link.remote_thread_id,
+                'created_at': link.created_at.isoformat() if link.created_at else None,
+                'updated_at': link.updated_at.isoformat() if link.updated_at else None,
+            }
+        except RemoteThreadLink.DoesNotExist:
+            return None
+
+    def save_remote_thread_link(self, user_thread_id: str, src_agent: str, dst_agent: str,
+                                remote_base_url: str, remote_thread_id: str, update: bool = False):
+        """Create or update a remote thread link mapping"""
+        # Ensure thread exists
+        Thread.get_or_create(thread_id=user_thread_id)
+
+        if update:
+            RemoteThreadLink.update(
+                remote_base_url=remote_base_url,
+                remote_thread_id=remote_thread_id,
+                updated_at=datetime.now()
+            ).where(
+                (RemoteThreadLink.user_thread == user_thread_id)
+                & (RemoteThreadLink.src_agent == src_agent)
+                & (RemoteThreadLink.dst_agent == dst_agent)
+            ).execute()
+            return
+
+        RemoteThreadLink.get_or_create(
+            user_thread=user_thread_id,
+            src_agent=src_agent,
+            dst_agent=dst_agent,
+            defaults={
+                'remote_base_url': remote_base_url,
+                'remote_thread_id': remote_thread_id
+            }
+        )
+
     # Target agent expectation operations
     def save_target_agent_expectation(self, thread_id: str, expectations: List[str], 
                                      metadata: Dict[str, Any] = None):

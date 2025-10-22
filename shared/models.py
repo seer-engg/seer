@@ -4,12 +4,11 @@ Defines database schema using Peewee for PostgreSQL
 """
 
 import os
-import json
 from datetime import datetime
 from peewee import (
     Model, PostgresqlDatabase, CharField, TextField, 
     DateTimeField, IntegerField, BooleanField, FloatField,
-    ForeignKeyField, CompositeKey
+    ForeignKeyField
 )
 from playhouse.postgres_ext import JSONField
 from dotenv import load_dotenv
@@ -207,6 +206,22 @@ class TargetAgentConfig(BaseModel):
         table_name = 'target_agent_configs'
 
 
+class RemoteThreadLink(BaseModel):
+    """Persistent mapping from a local user thread to a remote agent thread per agent pair"""
+    user_thread = ForeignKeyField(Thread, backref='remote_threads', column_name='thread_id', field='thread_id')
+    src_agent = CharField(max_length=255)
+    dst_agent = CharField(max_length=255)
+    remote_base_url = CharField(max_length=500)
+    remote_thread_id = CharField(max_length=255)
+    created_at = DateTimeField(default=datetime.now)
+    updated_at = DateTimeField(default=datetime.now)
+
+    class Meta:
+        table_name = 'remote_thread_links'
+        indexes = (
+            (("user_thread", "src_agent", "dst_agent"), True),
+        )
+
 # List of all models for easy iteration
 ALL_MODELS = [
     Thread,
@@ -217,7 +232,8 @@ ALL_MODELS = [
     TestResult,
     Subscriber,
     TargetAgentExpectation,
-    TargetAgentConfig
+    TargetAgentConfig,
+    RemoteThreadLink
 ]
 
 

@@ -1,7 +1,7 @@
 [project]
 name = "seer"
 version = "0.1.0"
-description = "Seer - A2A Multi-Agent Evaluation Platform"
+description = "Seer - Multi-Agent System for Evaluating AI Agents"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

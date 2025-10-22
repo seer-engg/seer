@@ -1,14 +1,15 @@
 import json
+import os
 from typing import Annotated
 from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolNode, InjectedState
+from langgraph.prebuilt import ToolNode
 from langgraph.graph.message import add_messages
 from langchain_core.messages import SystemMessage, BaseMessage
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
 from seer.shared.error_handling import create_error_response
-from seer.shared.a2a_utils import send_a2a_message
+from seer.shared.messaging import messenger
 from seer.shared.config import get_config
 from seer.shared.llm import get_llm
 from seer.shared.logger import get_logger
@@ -30,6 +31,20 @@ _data_manager = DataManager()
 
 
 @tool
+def think(thought: str, config: RunnableConfig) -> str:
+    """
+    Think tool: logs an internal thought for this thread and returns an echo.
+    No external side effects beyond logging. Use before taking actions or after tool results.
+    """
+    try:
+        thread_id = config.get("configurable", {}).get("thread_id", "unknown")
+        logger.info(f"THINK[{thread_id}]: {thought}")
+        return json.dumps({"success": True, "thought": thought, "thread_id": thread_id})
+    except Exception as e:
+        return create_error_response(f"Failed to log thought: {str(e)}", e)
+
+
+@tool
 def save_target_expectations(
     expectations: str, 
     config: RunnableConfig
@@ -45,12 +60,8 @@ def save_target_expectations(
         # Extract thread_id from LangGraph config
         thread_id = config.get("configurable", {}).get("thread_id", "unknown")
         
-        # Parse expectations into list
-        if isinstance(expectations, str):
-            # Split by commas or newlines
-            expectations_list = [e.strip() for e in expectations.replace('\n', ',').split(',') if e.strip()]
-        else:
-            expectations_list = expectations
+        # Split by commas or newlines
+        expectations_list = [e.strip() for e in expectations.replace('\n', ',').split(',') if e.strip()]
         
         logger.info(f"Saving {len(expectations_list)} expectations for thread {thread_id}")
         result = _data_manager.save_target_agent_expectation(thread_id, expectations_list)
@@ -123,104 +134,31 @@ def check_delegation_readiness(config: RunnableConfig) -> str:
 
       
 @tool
-async def delegate_to_eval_agent(config: RunnableConfig) -> str:
+async def message_agent(to_agent: str, message: str, config: RunnableConfig) -> str:
     """
-    Delegate an evaluation request to the eval_agent.
-    Use this ONLY after expectations and config have been saved.
-    Automatically retrieves saved expectations and config from database.
-    Call this tool with no arguments - thread_id is automatically extracted.
+    Generic proxy: send any message to a target agent (eval_agent, coding_agent)
+    within the SAME user thread (persistent remote thread).
     """
     try:
-        # Extract thread_id from LangGraph config
         thread_id = config.get("configurable", {}).get("thread_id", "unknown")
-        
-        logger.info(f"Delegating to eval agent for thread {thread_id}")
-        
-        # Check readiness first
-        readiness = _data_manager.check_readiness_for_delegation(thread_id)
-        
-        if not readiness["ready"]:
-            logger.warning(f"Cannot delegate - missing data: expectations={readiness['has_expectations']}, config={readiness['has_config']}")
-            return json.dumps({
-                "success": False,
-                "error": "Cannot delegate yet - missing required data",
-                "has_expectations": readiness["has_expectations"],
-                "has_config": readiness["has_config"],
-                "message": "Please collect expectations and config first using save_target_expectations and save_target_config tools"
-            })
-        
-        # Get saved data
-        expectations_data = readiness["expectations"]
-        agent_config = readiness["config"]
-        
-        # Construct message for eval agent
-        message = (
-            f"Please evaluate the agent with the following details:\n"
-            f"- URL: {agent_config['target_agent_url']}\n"
-            f"- Port: {agent_config['target_agent_port']}\n"
-            f"- Assistant ID: {agent_config['target_agent_assistant_id']}\n"
-            f"- GitHub URL: {agent_config['target_agent_github_url']}\n\n"
-            f"User expectations:\n" + 
-            "\n".join(f"  {i+1}. {exp}" for i, exp in enumerate(expectations_data))
-        )
-        
-        # Send to eval agent
-        logger.info(f"Sending evaluation request to eval_agent on port 8002")
-        response = await send_a2a_message(
-            target_agent_id="eval_agent",
-            target_port=8002,
-            message=message,
-            thread_id=thread_id
-        )
-        
-        logger.info("Successfully delegated to eval agent")
-        return response
-        
-    except Exception as e:
-        logger.error(f"Failed to delegate to eval agent: {str(e)}")
-        return create_error_response(f"Failed to delegate to eval agent: {str(e)}", e)
-
-@tool
-async def delegate_to_coding_agent(request_data: str) -> str:
-    """
-    Delegate a code review request to the coding_agent.
-    Use this when user wants code analysis or review.
-    
-    Args:
-        request_data: JSON string with repo_url, repo_id, and optional test_results
-    """
-    try:
-        data = json.loads(request_data)
-        repo_url = data.get("repo_url")
-        repo_id = data.get("repo_id")
-        thread_id = data.get("thread_id", "")
-        test_results = data.get("test_results")
-        
-        if not all([repo_url, repo_id]):
-            return create_error_response("Missing required fields: repo_url, repo_id")
-        
-        # Construct message for coding agent
-        message_dict = {
-            "repo_url": repo_url,
-            "repo_id": repo_id
+        ports = {
+            "eval_agent": os.getenv("EVAL_AGENT_PORT", "8002"),
+            "coding_agent": os.getenv("CODING_AGENT_PORT", "8003"),
         }
-        if test_results:
-            message_dict["test_results"] = test_results
-        
-        message = json.dumps(message_dict)
-        
-        # Send to coding agent
-        response = await send_a2a_message(
-            target_agent_id="coding_agent",
-            target_port=8003,
-            message=message,
-            thread_id=thread_id
+        base_url = f"http://127.0.0.1:{ports.get(to_agent, '8002')}"
+        text, _ = await messenger.send(
+            user_thread_id=thread_id,
+            src_agent="orchestrator",
+            dst_agent=to_agent,
+            base_url=base_url,
+            assistant_id=to_agent,
+            content=message,
         )
-        
-        return response
-        
+        return json.dumps({"success": True, "response": text})
     except Exception as e:
-        return create_error_response(f"Failed to delegate to coding agent: {str(e)}", e)
+        return create_error_response(f"Failed to message {to_agent}: {str(e)}", e)
+
+# removed message_coding_agent in favor of generic message_agent
 
 
 # Orchestrator Agent - Now conversational with routing capabilities
@@ -234,11 +172,44 @@ YOUR ROLE:
 5. **Data Management**: Handle all database operations for storing and retrieving data
 6. **Response Relay**: Acknowledge requests quickly and relay responses from other agents to users
 
+USING THE THINK TOOL:
+Before taking any action or responding to the user after receiving tool results, use the think tool as a scratchpad to:
+- List the specific orchestration rules that apply (e.g., “save expectations first”, “validate all config fields”)
+- Check if all required information (expectations + config) has been collected
+- Verify that the planned action (e.g., delegation) complies with workflow and policies
+- Iterate over tool results for correctness (e.g., readiness checks)
+
+Here are examples of what to iterate over inside the think tool:
+<think_tool_example_1>
+User: "Evaluate my agent at http://localhost:2024 (ID: deep_researcher). It should remember preferences."
+- Rules:
+  * Collect expectations then config, never skip order
+  * Check readiness before delegation
+- Required info:
+  * Expectations list present? If not, request and save
+  * Config fields present? url, port, assistant_id, github_url
+- Plan:
+  1) Save expectations
+  2) Save config
+  3) Check readiness
+  4) Delegate to eval_agent
+</think_tool_example_1>
+
+<think_tool_example_2>
+User: "What tests were generated?"
+- Rules:
+  * If eval_agent already generated tests in this thread, we can fetch them
+- Required info:
+  * Thread ID must be consistent
+- Plan:
+  1) Call message_agent(to_agent="eval_agent", message="List tests from EVAL_CONTEXT as a numbered list of inputs only")
+  2) Return concise list
+
 CAPABILITIES:
 - Generate and run evaluation tests for AI agents
 - Analyze code repositories
 - Store and retrieve eval suites, test results, and conversation history
-- Coordinate with specialized agents through A2A protocol
+- Coordinate with specialized agents through LangGraph SDK
 
 WORKFLOW FOR EVALUATION REQUESTS (CRITICAL):
 When a user wants to evaluate their agent, you MUST follow this sequence:
@@ -266,9 +237,9 @@ When a user wants to evaluate their agent, you MUST follow this sequence:
    - Use `check_delegation_readiness()` to verify all data is collected
    - If not ready, ask for missing information
 
-5. **Delegate to Eval Agent** (FINAL STEP):
-   - Once both expectations and config are saved, use `delegate_to_eval_agent()`
-   - Inform user: "I'm now delegating this to the evaluation agent to create and run tests!"
+5. **Initiate Evaluation** (FINAL STEP):
+   - Once both expectations and config are saved, use `message_agent(to_agent="eval_agent", message="Generate tests for the above spec")`
+   - Inform user: "I'm now asking the evaluation agent to create tests!"
 
 IMPORTANT RULES:
 - NEVER skip collecting expectations and config
@@ -277,6 +248,16 @@ IMPORTANT RULES:
 - All tools automatically use the current thread_id from context
 - Be patient and guide users through each step
 - Validate that all required fields are provided before saving
+
+DECISION POLICY:
+- Inputs: (A) current user thread; (B) paired eval/coding thread for this user.
+- If expectations/config missing: collect via conversation, then continue.
+- If complete:
+  * “create/generate tests”: use message_agent(to_agent="eval_agent", message="Generate tests for the above spec")
+  * “what are the tests”: use message_agent(to_agent="eval_agent", message="List tests from EVAL_CONTEXT as a numbered list of inputs only")
+  * “run tests”: use message_agent(to_agent="eval_agent", message="Run tests now, sequentially, and report progress each test")
+  * “progress/status”: use message_agent(to_agent="eval_agent", message="STATE_SYNC: summarize current status as JSON")
+- NEVER re-delegate or regenerate if an eval thread exists; always use message_agent to the same eval thread.
 
 COMMUNICATION STYLE:
 - Be warm, professional, and encouraging
@@ -288,7 +269,7 @@ You are the main interface for users - make their experience smooth and delightf
 
 
 class OrchestratorAgent:
-    """Conversational Orchestrator agent with A2A routing"""
+    """Conversational Orchestrator agent"""
     
     def __init__(self):
         # Initialize modules
@@ -320,8 +301,8 @@ class OrchestratorAgent:
             save_target_expectations,
             save_target_config,
             check_delegation_readiness,
-            delegate_to_eval_agent,
-            delegate_to_coding_agent
+            message_agent,
+            think
         ])
 
         def orchestrator_node(state: OrchestratorState):
@@ -344,8 +325,8 @@ class OrchestratorAgent:
             save_target_expectations,
             save_target_config,
             check_delegation_readiness,
-            delegate_to_eval_agent,
-            delegate_to_coding_agent
+            message_agent,
+            think
         ]))
 
         workflow.set_entry_point("orchestrator")

@@ -1,8 +1,6 @@
-# 🔮 Seer - A2A Multi-Agent Evaluation Platform
+# 🔮 Seer - Multi-Agent System for Evaluating AI Agents
 
 **Seer** is a Multi-Agent System (MAS) for evaluating AI agents through blackbox testing.
-
-Agents communicate via LangGraph's Agent-to-Agent (A2A) protocol with an orchestrator acting as a central hub, enabling modular, scalable, and traceable interactions.
 
 ---
 
@@ -31,34 +29,8 @@ python run.py
 # LangGraph Studio:   https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:8000
 ```
 
-Real LangGraph agents with proper structure, testable in isolation with `langgraph dev`.
-
-## 🏗️ Architecture
-
-```
-User ←→ Streamlit UI ←→ Orchestrator Agent (Conversational)
-                              (port 8000)
-                                   ↓
-                         ┌─────────┴─────────┐
-                         ↓                   ↓
-                  Eval Agent          Coding Agent
-                  (port 8002)         (port 8003)
-                         
-              A2A Point-to-Point Communication
-```
-
-**Why This Architecture:**
-- ✅ **Conversational orchestrator** - Users interact directly with orchestrator
-- ✅ **Point-to-point A2A** - No broadcast, only targeted agent delegation
-- ✅ **Real agents** - Proper LangGraph structure with state, tools, workflows
-- ✅ **Quick acknowledgment** - Orchestrator acknowledges and relays agent responses
-- ✅ **Testable in isolation** - Use `langgraph dev` to test agents individually
-- ✅ **Blackbox A2A testing** - Test your agent without accessing code
-- ✅ **Persistent storage** - SQLite database stores all chat threads and eval data
-- ✅ **Simplified deployment** - No bridge or customer success agent needed
-
 **Agent Files:**
-- Orchestrator: `agents/orchestrator/graph.py` (Conversational hub with A2A routing)
+- Orchestrator: `agents/orchestrator/graph.py` (Conceirge)
 - Eval Agent: `agents/eval_agent/graph.py` (Test generation and execution)
 - Coding Agent: `agents/coding_agent/graph.py` (Code analysis and review)
 
@@ -72,8 +44,8 @@ User ←→ Streamlit UI ←→ Orchestrator Agent (Conversational)
 
 ```
 seer/
-├── agents/             # LangGraph agents with A2A communication
-│   ├── orchestrator/           # Conversational orchestrator with A2A routing
+├── agents/             # LangGraph agents with inter agent communication
+│   ├── orchestrator/           # Conversational orchestrator with inter agent communication
 │   │   ├── graph.py  # Main orchestrator logic
 │   │   └── langgraph.json
 │   ├── eval_agent/
@@ -144,7 +116,7 @@ Features:
 - Real-time conversation monitoring
 - Tool call inspection
 - State management debugging
-- A2A communication traces
+- Inter agent communication traces
 
 ### Via Log Files
 
@@ -158,9 +130,3 @@ tail -f logs/eval_agent_langgraph.log
 # Coding agent (LangGraph)
 tail -f logs/coding_agent_langgraph.log
 ```
-
-**What you'll see in logs:**
-- 🎛️ Orchestrator conversations and A2A delegation
-- 🤖 Point-to-point A2A communication traces
-- 📨 Agent-specific activity with tool calls and responses
-- 🔄 Agent registration and status updates

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Seer Launcher
-Launches: LangGraph A2A Agents + UI
+Launches: Agents + UI
 """
 
 import subprocess
@@ -295,7 +295,7 @@ class Launcher:
             
             logger.info("\n" + "=" * 60)
             logger.info("✅ All components started!\n")
-            logger.info("🔮 Seer is running (A2A Orchestrator Architecture):")
+            logger.info("🔮 Seer Agents are running:")
             logger.info(f"   - UI:                http://localhost:{ui_port}")
             logger.info(f"   - Data Service:      http://127.0.0.1:{data_service_port}")
             logger.info("=" * 60)
