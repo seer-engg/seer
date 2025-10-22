@@ -85,7 +85,8 @@ class Launcher:
             env=process_env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            universal_newlines=True
+            universal_newlines=True,
+            preexec_fn=os.setsid  # Start a new process group so we can terminate children
         )
         
         # Start a thread to read output and strip ANSI codes
@@ -311,10 +312,19 @@ class Launcher:
             
             try:
                 print(f"   Stopping {name}...")
-                process.terminate()
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
+                try:
+                    pgid = os.getpgid(process.pid)
+                    os.killpg(pgid, signal.SIGTERM)
+                except Exception:
+                    process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    try:
+                        pgid = os.getpgid(process.pid)
+                        os.killpg(pgid, signal.SIGKILL)
+                    except Exception:
+                        process.kill()
             except Exception as e:
                 print(f"   Error stopping {name}: {e}")
             finally:
