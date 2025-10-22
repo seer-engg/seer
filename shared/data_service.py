@@ -113,6 +113,55 @@ async def get_conversation_history(thread_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/threads/{thread_id}/config")
+async def get_thread_config(thread_id: str):
+    """Get target agent configuration for a specific thread"""
+    try:
+        config = data_manager.get_target_agent_config(thread_id)
+        return {
+            "success": True,
+            "thread_id": thread_id,
+            "config": config
+        }
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/threads/{thread_id}/expectations")
+async def get_thread_expectations(thread_id: str):
+    """Get target agent expectations for a specific thread"""
+    try:
+        expectations = data_manager.get_target_agent_expectation(thread_id)
+        return {
+            "success": True,
+            "thread_id": thread_id,
+            "expectations": expectations
+        }
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/threads/{thread_id}/eval-suites")
+async def get_thread_eval_suites(thread_id: str):
+    """Get evaluation suites linked to a specific thread"""
+    try:
+        # Query eval suites with thread_id filter
+        from seer.shared.models import EvalSuite, db
+        db.connect(reuse_if_open=True)
+        suites = list(EvalSuite.select().where(EvalSuite.thread == thread_id).dicts())
+        return {
+            "success": True,
+            "thread_id": thread_id,
+            "suites": suites,
+            "count": len(suites)
+        }
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Eval suite operations
 @app.get("/eval-suites")
 async def get_eval_suites(agent_url: Optional[str] = None, agent_id: Optional[str] = None):
