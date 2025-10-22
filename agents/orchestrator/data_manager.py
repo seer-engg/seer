@@ -93,4 +93,59 @@ class DataManager:
         """Get test results with optional filters"""
         return self.db.get_test_results(suite_id=suite_id, thread_id=thread_id)
 
+    def save_target_agent_expectation(self, thread_id: str, expectations: List[str]) -> Dict[str, Any]:
+        """Save target agent expectations for a thread"""
+        self.db.save_target_agent_expectation(
+            thread_id=thread_id,
+            expectations=expectations
+        )
+        return {"status": "saved", "thread_id": thread_id, "expectations_count": len(expectations)}
+
+    def get_target_agent_expectation(self, thread_id: str) -> Dict[str, Any]:
+        """Get target agent expectations for a thread"""
+        return self.db.get_target_agent_expectation(thread_id)
+
+    def save_target_agent_config(self, thread_id: str, 
+                                target_agent_port: int = None,
+                                target_agent_url: str = None,
+                                target_agent_github_url: str = None,
+                                target_agent_assistant_id: str = None) -> Dict[str, Any]:
+        """Save target agent configuration for a thread"""
+        self.db.save_target_agent_config(
+            thread_id=thread_id,
+            target_agent_port=target_agent_port,
+            target_agent_url=target_agent_url,
+            target_agent_github_url=target_agent_github_url,
+            target_agent_assistant_id=target_agent_assistant_id
+        )
+        return {
+            "status": "saved",
+            "thread_id": thread_id,
+            "config": {
+                "port": target_agent_port,
+                "url": target_agent_url,
+                "github_url": target_agent_github_url,
+                "assistant_id": target_agent_assistant_id
+            }
+        }
+
+    def get_target_agent_config(self, thread_id: str) -> Dict[str, Any]:
+        """Get target agent configuration for a thread"""
+        return self.db.get_target_agent_config(thread_id)
+
+    def check_readiness_for_delegation(self, thread_id: str) -> Dict[str, Any]:
+        """Check if thread has both expectations and config ready for delegation"""
+        expectation = self.db.get_target_agent_expectation(thread_id)
+        config = self.db.get_target_agent_config(thread_id)
+        
+        ready = expectation is not None and config is not None
+        
+        return {
+            "ready": ready,
+            "has_expectations": expectation is not None,
+            "has_config": config is not None,
+            "expectations": expectation.get("expectations") if expectation else None,
+            "config": config if config else None
+        }
+
 

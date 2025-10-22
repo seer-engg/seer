@@ -34,6 +34,8 @@ def init_session_state():
         st.session_state.langgraph_thread_id = None
     if "threads_cache" not in st.session_state:
         st.session_state.threads_cache = []
+    if "processing_message" not in st.session_state:
+        st.session_state.processing_message = False  # Lock during message processing
 
 
 async def send_message_to_orchestrator(content: str, thread_id: str = None) -> tuple[str, str]:
@@ -132,15 +134,20 @@ def render_chat():
     with st.container():
         col1, col2, col3 = st.columns([1, 3, 1])
         with col1:
-            if st.button("➕ New Thread", key="new_thread_btn"):
+            if st.button("➕ New Thread", key="new_thread_btn", disabled=st.session_state.processing_message):
                 st.session_state.thread_id = None  # Will be set by LangGraph on first message
                 st.session_state.langgraph_thread_id = None
                 st.session_state.messages = []
                 st.rerun()
 
         with col2:
-            threads = asyncio.run(list_threads())
-            st.session_state.threads_cache = threads
+            # Only update threads cache if not processing a message
+            if not st.session_state.processing_message:
+                threads = asyncio.run(list_threads())
+                st.session_state.threads_cache = threads
+            else:
+                threads = st.session_state.threads_cache
+            
             options = [t.get("thread_id") for t in threads if t.get("thread_id")]
             current = st.session_state.thread_id
             
@@ -176,30 +183,39 @@ def render_chat():
             else:
                 default_index = 0
             
-            # Show selector
+            # Show selector (disabled during message processing to preserve thread_id)
             if display_options:
-                selected_display = st.selectbox("Thread", display_options, index=default_index, key="thread_select")
-                selected_idx = display_options.index(selected_display)
-                selected = options[selected_idx]
+                selected_display = st.selectbox(
+                    "Thread", 
+                    display_options, 
+                    index=default_index, 
+                    key="thread_select",
+                    disabled=st.session_state.processing_message
+                )
                 
-                # Handle selection
-                if selected == "__new__":
-                    # User selected "New Thread" - clear everything
-                    if current is not None or st.session_state.messages:
-                        st.session_state.thread_id = None
-                        st.session_state.langgraph_thread_id = None
-                        st.session_state.messages = []
+                # Only handle selection changes if not processing
+                if not st.session_state.processing_message:
+                    selected_idx = display_options.index(selected_display)
+                    selected = options[selected_idx]
+                    
+                    # Handle selection
+                    if selected == "__new__":
+                        # User selected "New Thread" - clear everything
+                        if current is not None or st.session_state.messages:
+                            st.session_state.thread_id = None
+                            st.session_state.langgraph_thread_id = None
+                            st.session_state.messages = []
+                            st.rerun()
+                    elif selected != current:
+                        # User selected a different existing thread
+                        st.session_state.thread_id = selected
+                        st.session_state.langgraph_thread_id = selected
+                        msgs = asyncio.run(get_conversation_messages(selected))
+                        st.session_state.messages = [
+                            {"role": (m.get("role") or "assistant"), "content": (m.get("content") or "")}
+                            for m in msgs
+                        ]
                         st.rerun()
-                elif selected != current:
-                    # User selected a different existing thread
-                    st.session_state.thread_id = selected
-                    st.session_state.langgraph_thread_id = selected
-                    msgs = asyncio.run(get_conversation_messages(selected))
-                    st.session_state.messages = [
-                        {"role": (m.get("role") or "assistant"), "content": (m.get("content") or "")}
-                        for m in msgs
-                    ]
-                    st.rerun()
 
         with col3:
             if st.button("↻ Refresh", key="refresh_threads"):
@@ -208,7 +224,8 @@ def render_chat():
     # Display thread debug header
     with st.container():
         tid = st.session_state.thread_id or "(new)"
-        st.caption(f"Thread: {tid}")
+        status = "🔒 Processing..." if st.session_state.processing_message else "✅ Ready"
+        st.caption(f"Thread: {tid} | {status}")
 
     # Display chat history
     for message in st.session_state.messages:
@@ -226,21 +243,40 @@ def render_chat():
         """)
 
     # Chat input
-    if prompt := st.chat_input("Message Seer..."):
+    if prompt := st.chat_input("Message Seer...", disabled=st.session_state.processing_message):
+        # Lock to prevent thread switching
+        st.session_state.processing_message = True
+        
+        # Preserve current thread_id before sending
+        current_thread_id = st.session_state.thread_id
+        
         # Add user message to UI
         st.session_state.messages.append({"role": "user", "content": prompt})
 
-        # Send via FastAPI backend (handles thread creation and persistence)
-        reply, thread_id = asyncio.run(
-            send_message_to_orchestrator(prompt, st.session_state.thread_id)
-        )
+        try:
+            # Send via FastAPI backend (handles thread creation and persistence)
+            reply, returned_thread_id = asyncio.run(
+                send_message_to_orchestrator(prompt, current_thread_id)
+            )
+            
+            # Update thread_id ONLY if it was newly created (None -> UUID) or explicitly changed by backend
+            if returned_thread_id:
+                if current_thread_id is None:
+                    # First message in new thread - save the thread_id
+                    st.session_state.thread_id = returned_thread_id
+                    st.session_state.langgraph_thread_id = returned_thread_id
+                elif current_thread_id != returned_thread_id:
+                    # Backend returned different thread_id - log warning but use it
+                    st.warning(f"⚠️ Thread ID changed: {current_thread_id[:8]}... → {returned_thread_id[:8]}...")
+                    st.session_state.thread_id = returned_thread_id
+                    st.session_state.langgraph_thread_id = returned_thread_id
+                # else: same thread_id, no update needed
+            
+            st.session_state.messages.append({"role": "assistant", "content": reply})
         
-        # Update thread_id (FastAPI backend creates it if needed)
-        if thread_id:
-            st.session_state.thread_id = thread_id
-            st.session_state.langgraph_thread_id = thread_id
-        
-        st.session_state.messages.append({"role": "assistant", "content": reply})
+        finally:
+            # Unlock processing
+            st.session_state.processing_message = False
 
         # Rerun to show new messages
         st.rerun()

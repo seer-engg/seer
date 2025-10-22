@@ -176,6 +176,33 @@ class Subscriber(BaseModel):
         table_name = 'subscribers'
 
 
+class TargetAgentExpectation(BaseModel):
+    """Target agent expectations collected by orchestrator (one-to-one with Thread)"""
+    thread = ForeignKeyField(Thread, backref='target_expectation', unique=True, column_name='thread_id', field='thread_id')
+    expectations = JSONField()  # List of strings
+    created_at = DateTimeField(default=datetime.now)
+    updated_at = DateTimeField(default=datetime.now)
+    metadata = JSONField(null=True)
+    
+    class Meta:
+        table_name = 'target_agent_expectations'
+
+
+class TargetAgentConfig(BaseModel):
+    """Target agent configuration collected by orchestrator (one-to-one with Thread)"""
+    thread = ForeignKeyField(Thread, backref='target_config', unique=True, column_name='thread_id', field='thread_id')
+    target_agent_port = IntegerField(null=True)
+    target_agent_url = CharField(null=True, max_length=500)
+    target_agent_github_url = CharField(null=True, max_length=500)
+    target_agent_assistant_id = CharField(null=True, max_length=255)
+    created_at = DateTimeField(default=datetime.now)
+    updated_at = DateTimeField(default=datetime.now)
+    metadata = JSONField(null=True)
+    
+    class Meta:
+        table_name = 'target_agent_configs'
+
+
 # List of all models for easy iteration
 ALL_MODELS = [
     Thread,
@@ -184,7 +211,9 @@ ALL_MODELS = [
     AgentActivity,
     EvalSuite,
     TestResult,
-    Subscriber
+    Subscriber,
+    TargetAgentExpectation,
+    TargetAgentConfig
 ]
 
 
