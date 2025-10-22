@@ -20,7 +20,7 @@ class SeerConfig(BaseModel):
     orchestrator_url: str = Field(default="http://127.0.0.1:8000", description="Orchestrator base URL")
     
     # Timeouts
-    a2a_timeout: float = Field(default=30.0, description="A2A communication timeout in seconds")
+    a2a_timeout: float = Field(default=120.0, description="A2A communication timeout in seconds")
     test_timeout: float = Field(default=60.0, description="Test execution timeout in seconds")
     
     # API configuration
@@ -145,7 +145,7 @@ def get_seer_config() -> SeerConfig:
             "eval_agent_port": int(os.getenv("EVAL_AGENT_PORT", "8002")),
             "coding_agent_port": int(os.getenv("CODING_AGENT_PORT", "8003")),
             "ui_port": int(os.getenv("UI_PORT", "8501")),
-            "a2a_timeout": float(os.getenv("A2A_TIMEOUT", "30.0")),
+            "a2a_timeout": float(os.getenv("A2A_TIMEOUT", "120.0")),
             "test_timeout": float(os.getenv("TEST_TIMEOUT", "60.0")),
         }
         _seer_config_instance = SeerConfig(**config_data)
