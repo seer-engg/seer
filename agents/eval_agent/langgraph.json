@@ -1,8 +1,7 @@
 {
   "dependencies": ["../.."],
   "graphs": {
-    "eval_agent": "./graph.py:graph",
-    "judge_agent": "./judge/graph.py:graph"
+    "eval_agent": "./graph.py:graph"
   },
   "env": "../../.env"
 }

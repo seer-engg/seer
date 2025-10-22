@@ -1,58 +1,66 @@
 import json
 import hashlib
 import uuid
-from typing import Optional, List, Annotated
+from typing import Annotated
 from typing_extensions import TypedDict
-from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolNode
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
-from pydantic import BaseModel, Field
-from langgraph.graph.message import add_messages
-from langchain_core.messages import BaseMessage
-from langchain_core.tools import tool
-from langchain_core.runnables import RunnableConfig
 
-from seer.shared.agent_tools import run_test
-from seer.shared.schemas import AgentSpec, TestCase, EvalSuite, TestResult
+from langgraph.graph.message import add_messages
+from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage
+from langchain_core.tools import tool, InjectedToolCallId
+from langchain.tools import ToolRuntime
+from langgraph.types import Command
+from pydantic import BaseModel, Field
+from langchain.agents import create_agent
+from langchain.agents.middleware import dynamic_prompt, wrap_tool_call
+
+from langchain_core.runnables import RunnableConfig
+from seer.shared.schemas import AgentSpec, TestResult, Eval as EvalSchema, AgentExpectation, TargetConfig
 from seer.agents.eval_agent.prompts import (
     EVAL_AGENT_PROMPT,
     EVAL_AGENT_SPEC_PROMPT,
     EVAL_AGENT_TEST_GEN_PROMPT,
-    EVAL_AGENT_JUDGE_PROMPT
+    EVAL_AGENT_JUDGE_PROMPT,
 )
 from seer.shared.llm import get_llm
 from seer.shared.logger import get_logger
+from seer.shared.messaging import messenger
+from seer.shared.error_handling import create_success_response, create_error_response
+from urllib.parse import urlparse
+
 
 # Get logger for eval agent
 logger = get_logger('eval_agent')
 
 
-@tool
-def think(thought: str, config: RunnableConfig) -> str:
-    """
-    Think tool for eval_agent: log internal reflection tied to thread; no external side effects.
-    Use before running tests and after receiving tool results.
-    """
-    try:
-        thread_id = config.get("configurable", {}).get("thread_id", "unknown")
-        logger.info(f"THINK[{thread_id}]: {thought}")
-        return json.dumps({"success": True, "thought": thought, "thread_id": thread_id})
-    except Exception as e:
-        return json.dumps({"success": False, "error": str(e)})
+# Typed state DTOs for short-term memory (serialized Eval)
+class TargetConfigDTO(TypedDict, total=False):
+    url: str
+    port: int
+    assistant_id: str
+    github_url: str
+
+
+class AgentExpectationDTO(TypedDict, total=False):
+    if_condition: str
+    then_behavior: str
+    priority: str
+
+
+class EvalDTO(TypedDict, total=False):
+    id: str
+    target: TargetConfigDTO
+    expectations: list[AgentExpectationDTO]
+    status: str
+    spec_summary: str
+    suite_preview: list[str]
+    suite_id: str
+    created_at: str
+    metadata: dict
 
 
 class EvalAgentState(TypedDict, total=False):
     messages: Annotated[list[BaseMessage], add_messages]
-    agent_name: Optional[str]
-    agent_url: Optional[str]
-    expectations: Optional[str]
-    spec: Optional[AgentSpec]
-    eval_suite: Optional[EvalSuite]
-    current_test_index: int
-    passed: int
-    failed: int
-    total: int
-    test_results: List[TestResult]
+    current_eval: EvalDTO
 
 
 class EvalRequest(BaseModel):
@@ -69,7 +77,7 @@ class GeneratedTestCase(BaseModel):
 
 
 class GeneratedTests(BaseModel):
-    test_cases: List[GeneratedTestCase]
+    test_cases: list[GeneratedTestCase]
 
 
 class JudgeVerdict(BaseModel):
@@ -78,241 +86,439 @@ class JudgeVerdict(BaseModel):
     reasoning: str
 
 
-class EvalAgent:
-    """Evaluation agent with specialized workflow nodes"""
-    
-    def __init__(self):
-        self.agent_name = "eval_agent"
-        self.system_prompt = EVAL_AGENT_PROMPT
-        self.tools = [run_test, think]
-    
-    def build_graph(self):
-        """Build eval agent with specialized nodes"""
-        llm_for_agent = get_llm(temperature=0.3).bind_tools(self.tools)
+@tool
+def think(thought: str) -> str:
+    """
+    Think tool for eval_agent: log internal reflection; no external side effects.
+    """
+    logger.info(f"THINK: {thought}")
+    return json.dumps({"success": True, "thought": thought})
 
-        def parse_request_node(state: EvalAgentState):
-            """Extract agent info from user message"""
-            logger.info("Parsing evaluation request from user message")
-            last_human = None
-            for m in reversed(state["messages"]):
-                if isinstance(m, HumanMessage):
-                    last_human = m
-                    break
-            user_text = last_human.content if last_human else ""
 
-            extractor = get_llm(temperature=0.0).with_structured_output(EvalRequest)
+@tool
+def get_current_eval(runtime: ToolRuntime) -> str:
+    """
+    Return the latest Eval JSON stored in state (or empty string).
+    """
+    data = runtime.state.get("current_eval")
+    return json.dumps(data) if data else ""
 
-            instruction = (
-                "Extract agent_name, agent_url, and expectations from the user's latest message.\n\n"
-                "IMPORTANT - agent_name is the assistant_id used by LangGraph:\n"
-                "- If the message contains 'ID: <uuid>', use the graph name that corresponds to it\n"
-                "- If the message contains 'Name: X', use X as the agent_name\n"
-                "- If both are present like '(Name: Deep Researcher, ID: uuid)', prefer the Name\n"
-                "- LangGraph accepts either the UUID OR the registered graph name\n"
-                "- Common formats: 'Deep Researcher', 'my_agent', 'chat_agent', etc.\n\n"
-                "Extract the agent_url from patterns like 'localhost:2024' or 'http://localhost:2024'.\n"
-                "Always include the full original message as expectations."
-            )
-            request: EvalRequest = extractor.invoke(f"{instruction}\n\nUSER:\n{user_text}")
-            
-            logger.info(f"Extracted agent: {request.agent_name} at {request.agent_url}")
 
-            return {
-                "agent_name": request.agent_name,
-                "agent_url": request.agent_url,
-                "expectations": request.expectations,
-            }
+@tool
+def set_current_eval(eval_json: str, tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
+    """
+    Persist Eval JSON into state as current_eval and acknowledge via ToolMessage.
+    Validates against shared Eval schema before storing.
+    """
+    try:
+        eval_obj = EvalSchema.model_validate_json(eval_json)
+        payload = eval_obj.model_dump()
+    except Exception:
+        # Store raw payload to aid debugging if validation fails
+        try:
+            payload = json.loads(eval_json)
+        except Exception:
+            payload = {"raw": eval_json}
+    return Command(update={
+        "current_eval": payload,
+        "messages": [ToolMessage(content="Stored current_eval", tool_call_id=tool_call_id)]
+    })
 
-        def generate_spec_node(state: EvalAgentState):
-            """Generate AgentSpec from expectations"""
-            logger.info("Generating agent specification from expectations")
-            llm = get_llm().with_structured_output(AgentSpec)
 
-            prompt = EVAL_AGENT_SPEC_PROMPT.format(
-                expectations=state.get("expectations", ""),
-                agent_name=state.get("agent_name", ""),
-                agent_url=state.get("agent_url", ""),
-            )
+@tool
+def propose_eval(eval_input_json: str, max_preview: int = 5, tool_call_id: Annotated[str, InjectedToolCallId] = None) -> Command:
+    """
+    Propose an Eval (draft) from TargetConfig + AgentExpectation list.
+    Returns Eval JSON with status='draft', spec_summary, and suite_preview (no suite generated yet).
+    """
+    try:
+        data = json.loads(eval_input_json)
+    except Exception:
+        data = {}
 
-            spec: AgentSpec = llm.invoke(prompt)
-            logger.info(f"Generated spec: {spec.name} v{spec.version}")
-            return {"spec": spec}
-
-        def generate_tests_node(state: EvalAgentState):
-            """Generate test cases from AgentSpec"""
-            logger.info("Generating test cases from agent specification")
-            spec: AgentSpec = state.get("spec")
-            if spec is None:
-                return {}
-
-            llm = get_llm().with_structured_output(GeneratedTests)
-
-            spec_json = spec.model_dump_json(indent=2)
-            prompt = EVAL_AGENT_TEST_GEN_PROMPT.format(spec_json=spec_json)
-            generated: GeneratedTests = llm.invoke(prompt)
-            
-            logger.info(f"Generated {len(generated.test_cases)} test cases")
-
-            # Create TestCase objects with stable IDs
-            test_cases: List[TestCase] = []
-            for idx, tc in enumerate(generated.test_cases):
-                content_hash = hashlib.md5(
-                    f"{tc.expectation_ref}{tc.input_message}".encode()
-                ).hexdigest()[:8]
-
-                test_case = TestCase(
-                    id=f"{spec.name}_{idx+1}_{content_hash}",
-                    expectation_ref=tc.expectation_ref,
-                    input_message=tc.input_message,
-                    expected_behavior=tc.expected_behavior,
-                    success_criteria=tc.success_criteria,
-                )
-                test_cases.append(test_case)
-
-            eval_suite = EvalSuite(
-                id=f"eval_{spec.name}_{uuid.uuid4().hex[:8]}",
-                spec_name=spec.name,
-                spec_version=spec.version,
-                test_cases=test_cases,
-            )
-
-            # Provide context message for agent node
-            test_inputs_preview = "\n".join(
-                [f"[{i}] {tc.input_message}" for i, tc in enumerate(test_cases)]
-            )
-            context_msg = (
-                "EVAL_CONTEXT\n"
-                f"agent_url: {state.get('agent_url','')}\n"
-                f"agent_id: {state.get('agent_name','')}\n"
-                f"test_count: {len(test_cases)}\n"
-                "test_inputs (indexed):\n"
-                f"{test_inputs_preview}"
-            )
-
-            return {
-                "eval_suite": eval_suite,
-                "total": len(test_cases),
-                "passed": 0,
-                "failed": 0,
-                "current_test_index": 0,
-                "test_results": [],
-                "messages": [SystemMessage(content=context_msg)],
-            }
-
-        def agent_node(state: EvalAgentState):
-            """Main conversational agent node"""
-            messages = [SystemMessage(content=self.system_prompt)] + state["messages"]
-            response = llm_for_agent.invoke(messages)
-            return {"messages": [response]}
-
-        def should_continue(state: EvalAgentState):
-            """Check if we should continue to tools or end"""
-            last_message = state["messages"][-1]
-            if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-                return "tools"
-            return END
-
-        def route_after_tool(state: EvalAgentState):
-            """After run_test, go to judge; otherwise return to agent"""
-            last_msg = state["messages"][-1]
-            if isinstance(last_msg, ToolMessage) and getattr(last_msg, "name", "") == "run_test":
-                return "judge"
-            return "agent"
-
-        def judge_node(state: EvalAgentState):
-            """Judge the last run_test result"""
-            logger.info("Judging test result")
-            eval_suite: EvalSuite = state.get("eval_suite")
-            idx = state.get("current_test_index", 0)
-            if eval_suite is None or idx >= len(eval_suite.test_cases):
-                return {}
-
-            # Find the most recent ToolMessage (run_test result)
-            last_tool_msg: Optional[ToolMessage] = None
-            for m in reversed(state["messages"]):
-                if isinstance(m, ToolMessage):
-                    last_tool_msg = m
-                    break
-
-            if last_tool_msg is None:
-                return {}
-
-            # Parse the tool content
-            actual_output = ""
-            try:
-                tool_payload = json.loads(last_tool_msg.content)
-                if tool_payload.get("success"):
-                    actual_output = tool_payload.get("response", "")
+    # Normalize to EvalSchema fields
+    try:
+        # If already an Eval, validate; else construct
+        if all(k in data for k in ["target", "expectations"]):
+            eval_obj = EvalSchema.model_validate(data)
+        else:
+            target = TargetConfig.model_validate(data.get("target", {}))
+            expectations_list = data.get("expectations", [])
+            expectations: list[AgentExpectation] = []
+            for item in expectations_list:
+                if isinstance(item, dict):
+                    expectations.append(AgentExpectation.model_validate(item))
                 else:
-                    actual_output = tool_payload.get("error", "") or ""
-            except Exception:
-                actual_output = last_tool_msg.content
+                    # Fallback: treat strings as then_behavior only
+                    expectations.append(AgentExpectation(if_condition="", then_behavior=str(item)))
+            eval_obj = EvalSchema(target=target, expectations=expectations, status="draft")
 
-            tc = eval_suite.test_cases[idx]
+        # Build a compact expectations string for summary and preview
+        exp_lines = []
+        for e in eval_obj.expectations:
+            ic = (e.if_condition or "").strip()
+            tb = (e.then_behavior or "").strip()
+            exp_lines.append(f"IF {ic or '*'} THEN {tb}")
+        expectations_text = "\n".join(exp_lines)
 
-            judge_llm = get_llm().with_structured_output(JudgeVerdict)
+        # Create a concise spec summary via LLM
+        llm = get_llm(temperature=0.0)
+        summary_prompt = (
+            "Summarize the following target and expectations in 6-8 bullet points for evaluation planning.\n"
+            f"Target URL: {eval_obj.target.url}\n"
+            f"Assistant ID: {eval_obj.target.assistant_id or 'unknown'}\n"
+            f"Expectations (IF-THEN):\n{expectations_text}\n"
+            "Focus on capabilities, constraints, and key success signals."
+        )
+        spec_summary = llm.invoke(summary_prompt).content or ""
 
-            prompt = EVAL_AGENT_JUDGE_PROMPT.format(
-                input_message=tc.input_message,
-                expected_behavior=tc.expected_behavior,
-                success_criteria=tc.success_criteria,
-                actual_output=actual_output,
+        # Preview candidate test inputs using existing test-gen prompt with limited count
+        # Build a lightweight AgentSpec input
+        spec_llm = get_llm().with_structured_output(AgentSpec)
+        spec_input = {
+            "expectations": expectations_text,
+            "agent_name": eval_obj.target.assistant_id or "target_agent",
+            "agent_url": eval_obj.target.url,
+        }
+        spec_obj: AgentSpec = spec_llm.invoke(
+            EVAL_AGENT_SPEC_PROMPT.format(
+                expectations=spec_input["expectations"],
+                agent_name=spec_input["agent_name"],
+                agent_url=spec_input["agent_url"],
             )
-            verdict: JudgeVerdict = judge_llm.invoke(prompt)
+        )
 
-            result = TestResult(
-                test_case_id=tc.id,
-                input_sent=tc.input_message,
-                actual_output=actual_output,
-                expected_behavior=tc.expected_behavior,
-                passed=verdict.passed,
-                score=verdict.score,
-                judge_reasoning=verdict.reasoning,
+        # Generate a small set of tests for preview only
+        gen_llm = get_llm().with_structured_output(GeneratedTests)
+        generated: GeneratedTests = gen_llm.invoke(
+            EVAL_AGENT_TEST_GEN_PROMPT.format(spec_json=spec_obj.model_dump_json())
+        )
+        preview_cases = generated.test_cases[: max(1, int(max_preview))]
+        suite_preview = [tc.input_message for tc in preview_cases]
+
+        # Prepare draft Eval
+        eval_obj.spec_summary = spec_summary
+        eval_obj.suite_preview = suite_preview
+        eval_obj.status = "draft"
+        payload = eval_obj.model_dump()
+        return Command(update={
+            "current_eval": payload,
+            "messages": [ToolMessage(content=json.dumps(payload), tool_call_id=tool_call_id)]
+        })
+    except Exception as e:
+        # Return error as ToolMessage to keep tool call pairing valid
+        msg = create_error_response(f"Failed to propose eval: {str(e)}", e)
+        return Command(update={"messages": [ToolMessage(content=msg, tool_call_id=tool_call_id)]})
+
+
+@tool
+def approve_eval(eval_json: str, max_tests: int = 3, tool_call_id: Annotated[str, InjectedToolCallId] = None) -> Command:
+    """
+    Approve a draft Eval, generate tests and return updated Eval with suite_id and suite_preview.
+    """
+    try:
+        eval_obj = EvalSchema.model_validate_json(eval_json)
+        if eval_obj.status not in ("draft", "approved"):
+            raise ValueError("Eval status must be 'draft' or 'approved' to proceed")
+
+        # Build expectations text for spec generation
+        exp_lines = []
+        for e in eval_obj.expectations:
+            ic = (e.if_condition or "").strip()
+            tb = (e.then_behavior or "").strip()
+            exp_lines.append(f"IF {ic or '*'} THEN {tb}")
+        expectations_text = "\n".join(exp_lines)
+
+        # Generate AgentSpec
+        spec_llm = get_llm().with_structured_output(AgentSpec)
+        spec_obj: AgentSpec = spec_llm.invoke(
+            EVAL_AGENT_SPEC_PROMPT.format(
+                expectations=expectations_text,
+                agent_name=eval_obj.target.assistant_id or "target_agent",
+                agent_url=eval_obj.target.url,
             )
+        )
 
-            passed = state.get("passed", 0) + (1 if verdict.passed else 0)
-            failed = state.get("failed", 0) + (0 if verdict.passed else 1)
-            next_idx = idx + 1
-            
-            logger.info(f"Test {next_idx}/{state.get('total', len(eval_suite.test_cases))}: {'✅ PASS' if verdict.passed else '❌ FAIL'} (score: {verdict.score})")
+        # Generate tests and capture suite_id + preview
+        gen_llm = get_llm().with_structured_output(GeneratedTests)
+        generated: GeneratedTests = gen_llm.invoke(
+            EVAL_AGENT_TEST_GEN_PROMPT.format(spec_json=spec_obj.model_dump_json())
+        )
 
-            progress_msg = (
-                f"EVAL_PROGRESS\n"
-                f"completed: {next_idx}/{state.get('total', len(eval_suite.test_cases))}\n"
-                f"passed: {passed}\n"
-                f"failed: {failed}"
-            )
+        # Build preview and fake suite id by reusing our deterministic id builder
+        limited_cases = generated.test_cases[: max(1, int(max_tests))]
+        inputs_preview: list[str] = [tc.input_message for tc in limited_cases]
 
-            return {
-                "current_test_index": next_idx,
-                "passed": passed,
-                "failed": failed,
-                "test_results": state.get("test_results", []) + [result],
-                "messages": [SystemMessage(content=progress_msg)],
-            }
+        # Mirror generate_tests' naming for compatibility
+        spec_name = getattr(spec_obj, "name", None) or "target_agent"
+        suite_id = f"eval_{spec_name}_{uuid.uuid4().hex[:8]}"
 
-        # Create graph
-        workflow = StateGraph(EvalAgentState)
-        workflow.add_node("parse_request", parse_request_node)
-        workflow.add_node("generate_spec", generate_spec_node)
-        workflow.add_node("generate_tests", generate_tests_node)
-        workflow.add_node("agent", agent_node)
-        workflow.add_node("tools", ToolNode(self.tools))
-        workflow.add_node("judge", judge_node)
-
-        workflow.set_entry_point("parse_request")
-        workflow.add_edge("parse_request", "generate_spec")
-        workflow.add_edge("generate_spec", "generate_tests")
-        workflow.add_edge("generate_tests", "agent")
-        workflow.add_conditional_edges("agent", should_continue)
-        workflow.add_conditional_edges("tools", route_after_tool)
-        workflow.add_edge("judge", "agent")
-
-        return workflow.compile()
+        # Update eval
+        eval_obj.suite_preview = inputs_preview
+        eval_obj.suite_id = suite_id
+        eval_obj.status = "approved"
+        payload = eval_obj.model_dump()
+        return Command(update={
+            "current_eval": payload,
+            "messages": [ToolMessage(content=json.dumps(payload), tool_call_id=tool_call_id)]
+        })
+    except Exception as e:
+        msg = create_error_response(f"Failed to approve eval: {str(e)}", e)
+        return Command(update={"messages": [ToolMessage(content=msg, tool_call_id=tool_call_id)]})
 
 
-# Create agent instance
-agent = EvalAgent()
+@tool
+async def run_test(test_input: str, config: RunnableConfig, runtime: ToolRuntime) -> str:
+    """
+    Run a single test against the target LangGraph agent via LangGraph SDK.
+    ALWAYS reads TargetConfig (url/port/assistant_id) from short-term state (current_eval.target).
+    Any provided target_url/target_agent_id args are ignored.
+    """
+    try:
+        thread_id = config.get("configurable", {}).get("thread_id", "unknown")
+        # Load strictly from state
+        ce = runtime.state.get("current_eval") or {}
+        tgt = ce.get("target") or {}
+        url = (tgt.get("url") or "").strip()
+        agent_id = (tgt.get("assistant_id") or "").strip()
+        port = tgt.get("port")
 
-# Create the graph instance for langgraph dev
-graph = agent.build_graph()
+        def normalize_base_url(u: str, p: int | None) -> str:
+            if p:
+                return f"http://127.0.0.1:{p}"
+            if "://" in (u or ""):
+                parsed = urlparse(u)
+                scheme = parsed.scheme or "http"
+                host = parsed.hostname or "127.0.0.1"
+                pp = parsed.port or (443 if scheme == "https" else 80)
+                return f"{scheme}://{host}:{pp}"
+            if not u:
+                return "http://127.0.0.1:80"
+            if u.isdigit():
+                return f"http://127.0.0.1:{u}"
+            if ":" in u:
+                host, p2 = u.split(":", 1)
+                host = (host or "127.0.0.1").strip()
+                p2 = (p2 or "80").strip()
+                return f"http://{host}:{p2}"
+            return f"http://{u}:80"
+
+        base_url = normalize_base_url(url, port)
+
+        if not agent_id:
+            return create_error_response("Missing target_agent_id (assistant_id) in args or state")
+
+        text, remote_tid = await messenger.send(
+            user_thread_id=thread_id,
+            src_agent="eval_agent",
+            dst_agent=agent_id,
+            base_url=base_url,
+            assistant_id=agent_id,
+            content=test_input
+        )
+        return create_success_response({"response": text, "thread_id": remote_tid, "base_url": base_url, "assistant_id": agent_id})
+    except Exception as e:
+        return create_error_response(f"Failed to run test via SDK: {str(e)}", e)
+
+
+@tool
+def parse_eval_request(user_text: str) -> str:
+    """
+    Extract agent_name, agent_url, and expectations from the user's message.
+    Returns JSON string with these fields.
+    """
+    extractor = get_llm(temperature=0.0).with_structured_output(EvalRequest)
+    instruction = (
+        "Extract agent_name, agent_url, and expectations from the user's latest message.\n\n"
+        "IMPORTANT - agent_name is the assistant_id used by LangGraph."
+    )
+    req: EvalRequest = extractor.invoke(f"{instruction}\n\nUSER:\n{user_text}")
+    return json.dumps(req.model_dump())
+
+
+@tool
+def generate_spec(input_json: str) -> str:
+    """
+    Generate an AgentSpec from expectations, agent_name, and agent_url.
+    input_json must include: expectations, agent_name, agent_url.
+    Returns AgentSpec as JSON.
+    """
+    try:
+        data = json.loads(input_json)
+    except Exception:
+        data = {}
+    llm = get_llm().with_structured_output(AgentSpec)
+    prompt = EVAL_AGENT_SPEC_PROMPT.format(
+        expectations=data.get("expectations", ""),
+        agent_name=data.get("agent_name", ""),
+        agent_url=data.get("agent_url", ""),
+    )
+    spec: AgentSpec = llm.invoke(prompt)
+    return spec.model_dump_json()
+
+
+@tool
+def generate_tests(spec_json: str, max_tests: int = 3) -> str:
+    """
+    Generate test cases from AgentSpec JSON. Returns JSON with eval_suite and eval_context.
+    Defaults to generating up to `max_tests` unless the user explicitly asks for more.
+    """
+    llm = get_llm().with_structured_output(GeneratedTests)
+    generated: GeneratedTests = llm.invoke(EVAL_AGENT_TEST_GEN_PROMPT.format(spec_json=spec_json))
+
+    # Determine spec name if provided
+    try:
+        spec_obj = AgentSpec.model_validate_json(spec_json)
+        spec_name = spec_obj.name
+        spec_version = spec_obj.version
+    except Exception:
+        spec_name = "target_agent"
+        spec_version = "1.0.0"
+
+    # Build test case IDs deterministically
+    test_cases: list[dict] = []
+    inputs_preview: list[str] = []
+    limited_cases = generated.test_cases[: max(1, int(max_tests))]
+    for idx, tc in enumerate(limited_cases):
+        content_hash = hashlib.md5(f"{tc.expectation_ref}{tc.input_message}".encode()).hexdigest()[:8]
+        test_id = f"{spec_name}_{idx+1}_{content_hash}"
+        test_cases.append({
+            "id": test_id,
+            "expectation_ref": tc.expectation_ref,
+            "input_message": tc.input_message,
+            "expected_behavior": tc.expected_behavior,
+            "success_criteria": tc.success_criteria,
+        })
+        inputs_preview.append(f"[{idx}] {tc.input_message}")
+
+    eval_suite = {
+        "id": f"eval_{spec_name}_{uuid.uuid4().hex[:8]}",
+        "spec_name": spec_name,
+        "spec_version": spec_version,
+        "test_cases": test_cases,
+    }
+
+    eval_context = (
+        "EVAL_CONTEXT\n"
+        f"spec_name: {spec_name}\n"
+        f"test_count: {len(test_cases)}\n"
+        "test_inputs (indexed):\n"
+        + "\n".join(inputs_preview)
+    )
+
+    return json.dumps({"eval_suite": eval_suite, "eval_context": eval_context})
+
+
+@tool
+def judge_result(input_json: str) -> str:
+    """
+    Judge the latest run_test output against a provided test case.
+    Input JSON: {"input_message","expected_behavior","success_criteria","actual_output","test_case_id"}
+    Returns JSON TestResult fields and a concise verdict.
+    """
+    try:
+        data = json.loads(input_json)
+    except Exception:
+        data = {}
+    judge_llm = get_llm().with_structured_output(JudgeVerdict)
+    prompt = EVAL_AGENT_JUDGE_PROMPT.format(
+        input_message=data.get("input_message", ""),
+        expected_behavior=data.get("expected_behavior", ""),
+        success_criteria=data.get("success_criteria", ""),
+        actual_output=data.get("actual_output", ""),
+    )
+    verdict: JudgeVerdict = judge_llm.invoke(prompt)
+    result = TestResult(
+        test_case_id=data.get("test_case_id", ""),
+        input_sent=data.get("input_message", ""),
+        actual_output=data.get("actual_output", ""),
+        expected_behavior=data.get("expected_behavior", ""),
+        passed=verdict.passed,
+        score=verdict.score,
+        judge_reasoning=verdict.reasoning,
+    )
+    return json.dumps({
+        "passed": verdict.passed,
+        "score": verdict.score,
+        "reasoning": verdict.reasoning,
+        "test_result": result.model_dump(),
+    })
+
+
+# Middleware
+@dynamic_prompt
+def stage_gating_prompt(request) -> str:
+    """Inject dynamic instructions to avoid premature test execution and regeneration."""
+    msgs = request.state.get("messages", []) or []
+
+    def msg_content(m) -> str:
+        if hasattr(m, "content"):
+            return m.content or ""
+        if isinstance(m, dict):
+            return m.get("content", "") or ""
+        return ""
+
+    def is_human(m) -> bool:
+        try:
+            return isinstance(m, HumanMessage) or getattr(m, "type", "") == "human" or (isinstance(m, dict) and m.get("type") == "human")
+        except Exception:
+            return False
+
+    all_text_lower = "\n".join(msg_content(m) for m in msgs).lower()
+    has_eval_context = "eval_context" in all_text_lower
+
+    latest_human_text = ""
+    for m in reversed(msgs):
+        if is_human(m):
+            latest_human_text = msg_content(m).lower()
+            break
+
+    confirmed = any(phrase in latest_human_text for phrase in ["run tests", "go ahead", "yes, run", "start tests"])
+
+    rules = []
+    if has_eval_context and not confirmed:
+        rules.append("Do not call run_test until the user explicitly confirms.")
+        rules.append("If asked to show/list tests, enumerate from EVAL_CONTEXT without regenerating.")
+    if has_eval_context and confirmed:
+        rules.append("Proceed to run_test sequentially and call judge_result after each.")
+    if not has_eval_context:
+        rules.append("First call parse_eval_request then generate_spec then generate_tests.")
+
+    return "" if not rules else "Dynamic rules:\n- " + "\n- ".join(rules)
+
+
+@wrap_tool_call
+async def handle_tool_errors(request, handler):
+    try:
+        return await handler(request)
+    except Exception as e:
+        return ToolMessage(
+            content=f"Tool error: Please check your input and try again. ({str(e)})",
+            tool_call_id=request.tool_call["id"],
+        )
+
+
+def build_graph():
+    model = get_llm(temperature=0.0)
+    tools = [
+        propose_eval,
+        approve_eval,
+        get_current_eval,
+        set_current_eval,
+        parse_eval_request,
+        generate_spec,
+        generate_tests,
+        run_test,
+        judge_result,
+        think,
+    ]
+    return create_agent(
+        model=model,
+        tools=tools,
+        system_prompt=EVAL_AGENT_PROMPT,
+        middleware=[stage_gating_prompt, handle_tool_errors],
+        state_schema=EvalAgentState,
+    )
+
+
+graph = build_graph()

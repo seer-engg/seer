@@ -334,17 +334,6 @@ class Database:
             for r in query
         ]
     
-    # Subscriber (agent registry) operations
-    def register_subscriber(self, agent_name: str, filters: Dict[str, Any] = None):
-        """Register a new subscriber (agent)"""
-        Subscriber.get_or_create(
-            agent_name=agent_name,
-            defaults={
-                'filters': filters,
-                'status': 'active'
-            }
-        )
-    
     def update_subscriber(self, agent_name: str, **kwargs):
         """Update subscriber attributes"""
         Subscriber.update(**kwargs).where(Subscriber.agent_name == agent_name).execute()
