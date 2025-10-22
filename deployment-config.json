@@ -1,19 +1,16 @@
 {
   "agents": {
     "orchestrator": {
-      "assistant_id": "596b989d-e141-585a-bfe2-30f5c06d2e5c",
       "port": 8000,
       "graph_name": "orchestrator",
       "description": "Conversational orchestrator with A2A routing to specialized agents"
     },
     "eval_agent": {
-      "assistant_id": "823fee6d-5673-5998-aea4-130d374e381b",
       "port": 8002,
       "graph_name": "eval_agent",
       "description": "Test generation, execution, and evaluation"
     },
     "coding_agent": {
-      "assistant_id": "a1b2c3d4-e5f6-5678-9abc-def012345678",
       "port": 8003,
       "graph_name": "coding_agent",
       "description": "Code analysis and review"
@@ -28,11 +25,5 @@
       "port": 8501,
       "description": "Streamlit UI"
     }
-  },
-  "deployment": {
-    "environment": "development",
-    "created_at": "2025-01-19T06:00:00Z",
-    "version": "2.1.0",
-    "notes": "UUIDs are tied to LangSmith deployment. Added FastAPI data service for efficient database operations without LLM overhead"
   }
 }

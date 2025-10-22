@@ -13,11 +13,11 @@ class DataManager:
     def __init__(self):
         self.db = get_db()
 
-    def register_agent(self, agent_name: str, port: int, assistant_id: str, capabilities: List[str]):
+    def register_agent(self, agent_name: str, port: int, graph_name: str, capabilities: List[str]):
         """Register an agent in the database"""
         self.db.register_subscriber(
             agent_name=agent_name,
-            filters={"capabilities": capabilities, "port": port, "assistant_id": assistant_id}
+            filters={"capabilities": capabilities, "port": port, "graph_name": graph_name}
         )
         return {"status": "registered", "agent_name": agent_name}
 

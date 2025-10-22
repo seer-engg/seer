@@ -27,7 +27,6 @@ class SeerConfig(BaseModel):
     openai_api_key: str = Field(description="OpenAI API key")
     
     # Thread ID prefixes
-    agent_registration_thread: str = Field(default="agent_registration", description="Agent registration thread ID")
     eval_suite_storage_thread: str = Field(default="eval_suite_storage", description="Eval suite storage thread ID")
     test_results_storage_thread: str = Field(default="test_results_storage", description="Test results storage thread ID")
     
@@ -108,11 +107,6 @@ class AgentConfig:
         
         return agents[agent_name]
     
-    def get_assistant_id(self, agent_name: str) -> str:
-        """Get assistant ID for an agent"""
-        config = self.get_agent_config(agent_name)
-        return config["assistant_id"]
-    
     def get_port(self, agent_name: str) -> int:
         """Get port for an agent"""
         config = self.get_agent_config(agent_name)
@@ -128,12 +122,6 @@ class AgentConfig:
         if not self._config:
             return []
         return list(self._config.get("agents", {}).keys())
-    
-    def get_deployment_info(self) -> Dict[str, Any]:
-        """Get deployment information"""
-        if not self._config:
-            return {}
-        return self._config.get("deployment", {})
 
 # Global config instances
 _config_instance: Optional[AgentConfig] = None
@@ -162,10 +150,6 @@ def get_seer_config() -> SeerConfig:
         }
         _seer_config_instance = SeerConfig(**config_data)
     return _seer_config_instance
-
-def get_assistant_id(agent_name: str) -> str:
-    """Convenience function to get assistant ID"""
-    return get_config().get_assistant_id(agent_name)
 
 def get_port(agent_name: str) -> int:
     """Convenience function to get port"""

@@ -5,9 +5,7 @@ Seer - Simplified Agent Evaluation UI
 import streamlit as st
 import asyncio
 import httpx
-import json
 import os
-import uuid
 import traceback
 from pathlib import Path
 import sys
@@ -15,9 +13,6 @@ import sys
 # Add project root to path for imports BEFORE importing shared modules
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
-
-from seer.shared.config import get_seer_config
-from seer.shared.a2a_utils import send_a2a_message
 
 # Data service URL (separate from orchestrator)
 DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://127.0.0.1:8500")
@@ -28,13 +23,6 @@ st.set_page_config(
     page_icon="🔮",
     layout="wide"
 )
-
-# Constants
-# Configuration - will be loaded from centralized config
-from seer.shared.config import get_assistant_id as _get_assistant_id, get_graph_name as _get_graph_name
-ORCHESTRATOR_ASSISTANT_ID = _get_assistant_id("orchestrator")
-ORCHESTRATOR_GRAPH_ID = _get_graph_name("orchestrator")
-
 
 def init_session_state():
     """Initialize Streamlit session state"""
@@ -216,6 +204,11 @@ def render_chat():
         with col3:
             if st.button("↻ Refresh", key="refresh_threads"):
                 st.rerun()
+
+    # Display thread debug header
+    with st.container():
+        tid = st.session_state.thread_id or "(new)"
+        st.caption(f"Thread: {tid}")
 
     # Display chat history
     for message in st.session_state.messages:

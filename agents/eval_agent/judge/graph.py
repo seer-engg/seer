@@ -74,7 +74,7 @@ def parse_input_node(state: JudgeState):
 
 
 def run_test_node(state: JudgeState):
-    """Call the target agent via A2A first; fallback to /runs/stream SSE; capture final AI output."""
+    """Call the target agent via A2A and capture final AI output (persistent thread)."""
     target_url = state.get("target_url") or ""
     target_agent_id = state.get("target_agent_id") or ""
     tc: TestCase = state.get("test_case")  # type: ignore[assignment]
@@ -84,81 +84,40 @@ def run_test_node(state: JudgeState):
     actual_output = ""
     try:
         import httpx
-        import json as _json
+        from urllib.parse import urlparse
+        parsed = urlparse(target_url)
+        port = parsed.port or 2024
         with httpx.Client(timeout=60.0) as client:
             thread_id = str(uuid.uuid4())
 
-            # 1) Try A2A JSON-RPC
-            try:
-                url = f"{target_url}/a2a/{target_agent_id}"
-                import uuid as _uuid
-                payload = {
-                    "jsonrpc": "2.0",
-                    "id": str(_uuid.uuid4()),
-                    "method": "message/send",
-                    "params": {
-                        "message": {"role": "user", "parts": [{"kind": "text", "text": tc.input_message}]},
-                        "messageId": str(_uuid.uuid4()),
-                        "thread": {"threadId": thread_id}
-                    }
+            # A2A JSON-RPC to assistant id or resolve graph name on client side
+            url = f"http://127.0.0.1:{port}/a2a/{target_agent_id}"
+            import uuid as _uuid
+            payload = {
+                "jsonrpc": "2.0",
+                "id": str(_uuid.uuid4()),  # request id
+                "method": "message/send",
+                "params": {
+                    "message": {"role": "user", "parts": [{"kind": "text", "text": tc.input_message}]},
+                    "messageId": str(_uuid.uuid4()),
+                    "thread": {"threadId": thread_id}
                 }
-                resp = client.post(url, json=payload, headers={"Accept": "application/json"})
-                if resp.status_code < 400:
-                    try:
-                        data = resp.json()
-                    except Exception:
-                        data = None
-                    if isinstance(data, dict):
-                        result = data.get("result") if isinstance(data.get("result"), dict) else {}
-                        artifacts = result.get("artifacts") if isinstance(result.get("artifacts"), list) else []
-                        if artifacts and isinstance(artifacts[0], dict):
-                            parts = artifacts[0].get("parts", [])
-                            if parts and isinstance(parts[0], dict):
-                                content = parts[0].get("text") or parts[0].get("content") or ""
-                                if content:
-                                    actual_output = content
-                if actual_output:
-                    return {"actual_output": actual_output}
-            except Exception:
-                pass
-
-            # 2) Fallback to /runs/stream (SSE)
-            sse_payload = {
-                "assistant_id": target_agent_id,
-                "input": {
-                    "messages": [{"role": "user", "content": tc.input_message}]
-                },
-                "stream_mode": ["values"],
-                "config": {"configurable": {"thread_id": thread_id}}
             }
-            resp = client.post(f"{target_url}/runs/stream", json=sse_payload)
-            if resp.status_code >= 400:
-                return {"actual_output": f"ERROR: HTTP {resp.status_code} {resp.text[:200]}"}
-            resp.raise_for_status()
-            for line in resp.text.strip().split("\n"):
-                if not line.startswith("data: "):
-                    continue
+            resp = client.post(url, json=payload, headers={"Accept": "application/json"})
+            if resp.status_code < 400:
                 try:
-                    obj = _json.loads(line[6:])
-                    vals = obj.get("values", {}) if isinstance(obj, dict) else {}
-                    if not isinstance(vals, dict):
-                        vals = obj.get("value", {}) if isinstance(obj, dict) else {}
-                    data_field = obj.get("data", {}) if isinstance(obj.get("data"), dict) else {}
-                    msgs = None
-                    if isinstance(vals, dict):
-                        msgs = vals.get("messages")
-                    if msgs is None and isinstance(data_field, dict):
-                        msgs = data_field.get("messages")
-                    if msgs is None:
-                        msgs = obj.get("messages")
-                    if isinstance(msgs, list):
-                        for msg in msgs:
-                            if isinstance(msg, dict) and (msg.get("type") == "ai" or msg.get("role") == "assistant"):
-                                content = msg.get("content") or msg.get("text") or ""
-                                if content:
-                                    actual_output = content
+                    data = resp.json()
                 except Exception:
-                    continue
+                    data = None
+                if isinstance(data, dict):
+                    result = data.get("result") if isinstance(data.get("result"), dict) else {}
+                    artifacts = result.get("artifacts") if isinstance(result.get("artifacts"), list) else []
+                    if artifacts and isinstance(artifacts[0], dict):
+                        parts = artifacts[0].get("parts", [])
+                        if parts and isinstance(parts[0], dict):
+                            content = parts[0].get("text") or parts[0].get("content") or ""
+                            if content:
+                                actual_output = content
     except Exception as e:
         actual_output = f"ERROR: {str(e)}"
 

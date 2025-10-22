@@ -2,36 +2,53 @@
 
 import httpx
 import json
-import os
-from typing import Optional
+import uuid as _uuid
 from .config import get_seer_config
 from .error_handling import create_error_response, create_success_response
 
-# Simple in-process assistant validation cache: {(port, assistant_id, version): bool}
-_ASSISTANT_OK_CACHE: dict[tuple[int, str, str], bool] = {}
 
-
-async def _validate_assistant(client: httpx.AsyncClient, port: int, assistant_id: str) -> bool:
-    """Preflight assistant on official endpoints; optional version pin."""
+async def resolve_assistant_id(port: int, graph_name: str, timeout: float = 10.0) -> str | None:
+    """Resolve a graph name to its assistant UUID on a given server port using search API."""
+    base = f"http://127.0.0.1:{port}"
     try:
-        version = os.getenv("SEER_ASSISTANT_VERSION", "")
-        if version:
-            latest_url = f"http://127.0.0.1:{port}/assistants/{assistant_id}/latest"
-            # best-effort; ignore non-2xx
-            try:
-                await client.post(f"{latest_url}?version={version}")
-            except Exception:
-                pass
-
-        g = await client.get(f"http://127.0.0.1:{port}/assistants/{assistant_id}/graph?xray=false")
-        if g.status_code >= 400:
-            return False
-        s = await client.get(f"http://127.0.0.1:{port}/assistants/{assistant_id}/schemas")
-        if s.status_code >= 400:
-            return False
-        return True
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            payload = {
+                "metadata": {},
+                "graph_id": graph_name,
+                "limit": 10,
+                "offset": 0,
+                "sort_by": "assistant_id",
+                "sort_order": "asc",
+                "select": ["assistant_id"]
+            }
+            r = await client.post(f"{base}/assistants/search", json=payload)
+            if r.status_code >= 400:
+                return None
+            data = r.json()
+            if isinstance(data, list) and data:
+                first = data[0]
+                aid = first.get("assistant_id") or first.get("id")
+                if aid:
+                    return aid
     except Exception:
-        return False
+        pass
+    return None
+
+
+async def create_server_thread(port: int, timeout: float | None = None) -> str:
+    """Create a LangGraph server thread and return its thread_id."""
+    cfg = get_seer_config()
+    t = timeout or cfg.a2a_timeout
+    base = f"http://127.0.0.1:{port}"
+    async with httpx.AsyncClient(timeout=t) as client:
+        resp = await client.post(f"{base}/threads", json={"thread_id": ""})
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Failed to create server thread: HTTP {resp.status_code} {resp.text[:200]}")
+        data = resp.json() if resp.content else {}
+        tid = (data or {}).get("thread_id") or ""
+        if not tid:
+            raise RuntimeError("Server did not return a thread_id")
+        return tid
 
 
 async def send_a2a_message(target_agent_id: str, target_port: int, message: str, thread_id: str = None) -> str:
@@ -47,38 +64,15 @@ async def send_a2a_message(target_agent_id: str, target_port: int, message: str,
     Returns:
         JSON string with response from target agent
     """
-    # Normalize assistant id: allow callers to pass graph name (e.g., "orchestrator")
-    # and map to the configured UUID from deployment-config.json when needed.
-    # Keep original id for potential fallback
-    original_target_id = target_agent_id
+    thread_id = thread_id or str(_uuid.uuid4())
 
-    try:
-        from .config import get_assistant_id as _get_assistant_id
-        import uuid as _uuid
-        def _looks_like_uuid(value: str) -> bool:
-            try:
-                _uuid.UUID(value)
-                return True
-            except Exception:
-                return False
-        if not _looks_like_uuid(target_agent_id):
-            target_agent_id = _get_assistant_id(target_agent_id)
-    except Exception:
-        # If mapping fails, proceed as-is; the server may still accept a graph id
-        pass
-
-    import uuid as _uuid
     payload = {
         "jsonrpc": "2.0",
-        "id": str(_uuid.uuid4()),
+        "id": thread_id,
         "method": "message/send",
         "params": {
-            "message": {
-                "role": "user",
-                "parts": [{"kind": "text", "text": message}]
-            },
-            "messageId": str(_uuid.uuid4()),
-            "thread": {"threadId": thread_id or ""}
+            "message": {"role": "user", "parts": [{"kind": "text", "text": message}], "messageId": str(_uuid.uuid4())},
+            "thread": {"threadId": thread_id}
         }
     }
     
@@ -104,115 +98,64 @@ async def send_a2a_message(target_agent_id: str, target_port: int, message: str,
                     or ""
                 )
 
-            # Build A2A candidate identifiers (try multiple forms)
-            a2a_candidates: list[str] = []
-            try:
-                import uuid as _uuid
-                from .config import get_config as _get_config, get_graph_name as _get_graph_name
+            def _extract_thread_id(data: dict) -> str:
+                if not isinstance(data, dict):
+                    return ""
+                result_field = data.get("result", {}) if isinstance(data.get("result"), dict) else {}
+                tid = (
+                    result_field.get("thread_id")
+                    or result_field.get("threadId")
+                    or (result_field.get("thread") or {}).get("threadId")
+                    or (result_field.get("thread") or {}).get("id")
+                )
+                return tid or ""
 
-                def _looks_like_uuid(value: str) -> bool:
-                    try:
-                        _uuid.UUID(value)
-                        return True
-                    except Exception:
-                        return False
-
-                # Start with original and normalized
-                if original_target_id not in a2a_candidates:
-                    a2a_candidates.append(original_target_id)
-                if target_agent_id != original_target_id and target_agent_id not in a2a_candidates:
-                    a2a_candidates.append(target_agent_id)
-
-                cfg = _get_config()
-                # If original looks like UUID, reverse map to agent and graph name
-                if _looks_like_uuid(original_target_id):
-                    for agent_name in cfg.list_agents():
-                        if cfg.get_assistant_id(agent_name) == original_target_id:
-                            try:
-                                graph_name = _get_graph_name(agent_name)
-                                if graph_name and graph_name not in a2a_candidates:
-                                    a2a_candidates.append(graph_name)
-                            except Exception:
-                                pass
-                            if agent_name not in a2a_candidates:
-                                a2a_candidates.append(agent_name)
-                            break
-                else:
-                    # original is likely agent/graph name; also try mapped uuid if available
-                    try:
-                        mapped_uuid = cfg.get_assistant_id(original_target_id)
-                        if mapped_uuid and mapped_uuid not in a2a_candidates:
-                            a2a_candidates.append(mapped_uuid)
-                    except Exception:
-                        pass
-            except Exception:
-                # Best-effort candidates
-                a2a_candidates = [target_agent_id]
-
-            # Pre-validate assistant using official endpoints; choose first that passes
-            chosen: Optional[str] = None
-            version_pin = os.getenv("SEER_ASSISTANT_VERSION", "")
-            for cand_id in a2a_candidates:
-                cache_key = (target_port, cand_id, version_pin)
-                ok = _ASSISTANT_OK_CACHE.get(cache_key)
-                if ok is None:
-                    ok = await _validate_assistant(client, target_port, cand_id)
-                    _ASSISTANT_OK_CACHE[cache_key] = ok
-                if ok:
-                    chosen = cand_id
-                    break
-
-            # Build list of candidates to try even if preflight fails
-            candidates_for_fallback = [chosen] if chosen else a2a_candidates
-
-            # 1) Try A2A JSON-RPC
-            for cand in candidates_for_fallback:
+            # Resolve to UUID if needed
+            def _looks_like_uuid(value: str) -> bool:
                 try:
-                    url = f"http://127.0.0.1:{target_port}/a2a/{cand}"
-                    response = await client.post(url, json=payload, headers={"Accept": "application/json"})
-                    if response.status_code < 400:
-                        data = response.json()
-                        text = _extract_a2a_text(data)
-                        if text:
-                            return create_success_response({"response": text})
+                    _uuid.UUID(value)
+                    return True
                 except Exception:
-                    pass
+                    return False
 
-            # 2) Fallback to /runs/stream (SSE)
-            for cand in candidates_for_fallback:
-                try:
-                    s_payload = {
-                        "assistant_id": cand,
-                        "input": {"messages": [{"role": "user", "content": message}]},
-                        "stream_mode": ["values"],
-                        "config": {"configurable": {"thread_id": thread_id or ""}},
+            # Ensure we are using a valid server thread id
+            server_thread_id = thread_id if (isinstance(thread_id, str) and _looks_like_uuid(thread_id)) else None
+            if not server_thread_id:
+                server_thread_id = await create_server_thread(target_port, timeout=config.a2a_timeout)
+            # Bind using A2A spec: thread.threadId
+            payload["params"]["thread"]["threadId"] = server_thread_id
+
+            if _looks_like_uuid(target_agent_id):
+                target_uuid = target_agent_id
+            else:
+                target_uuid = await resolve_assistant_id(target_port, target_agent_id, timeout=config.a2a_timeout)
+                if not target_uuid:
+                    return create_error_response(f"Assistant '{target_agent_id}' not found on port {target_port}")
+
+            # Post to A2A using resolved UUID
+            url = f"http://127.0.0.1:{target_port}/a2a/{target_uuid}"
+            print(
+                "[A2A] sending",
+                json.dumps(
+                    {
+                        "graph_id": target_agent_id,
+                        "assistant_id": target_uuid,
+                        "port": target_port,
+                        "payload": payload,
                     }
-                    s_resp = await client.post(f"http://127.0.0.1:{target_port}/runs/stream", json=s_payload)
-                    if s_resp.status_code < 400:
-                        final_response = ""
-                        for line in s_resp.text.strip().split('\n'):
-                            if line.startswith('data: '):
-                                try:
-                                    obj = json.loads(line[6:])
-                                except Exception:
-                                    continue
-                                msgs = None
-                                if isinstance(obj, dict):
-                                    vals = obj.get("values", {}) if isinstance(obj.get("values"), dict) else {}
-                                    if not isinstance(vals, dict):
-                                        vals = obj.get("value", {}) if isinstance(obj.get("value"), dict) else {}
-                                    msgs = vals.get("messages") if isinstance(vals, dict) else obj.get("messages")
-                                if isinstance(msgs, list):
-                                    for msg in msgs:
-                                        if isinstance(msg, dict) and (msg.get("type") == "ai" or msg.get("role") == "assistant"):
-                                            text = msg.get("content") or msg.get("text") or ""
-                                            if text:
-                                                final_response = text
-                        if final_response:
-                            return create_success_response({"response": final_response})
-                except Exception:
-                    pass
-
-            return create_error_response("Assistant not found or not registered on target port")
+                ),
+            )
+            response = await client.post(url, json=payload, headers={"Accept": "application/json"})
+            if response.status_code >= 400:
+                return create_error_response(f"A2A error: HTTP {response.status_code} {response.text[:200]}")
+            data = response.json()
+            text = _extract_a2a_text(data)
+            tid = _extract_thread_id(data) or server_thread_id
+            if text:
+                out = {"response": text}
+                if tid:
+                    out["thread_id"] = tid
+                return create_success_response(out)
+            return create_error_response("A2A returned no assistant text")
     except Exception as e:
-        return create_error_response(f"Failed to send message: {str(e)}", e)
+        return create_error_response(f"Failed to send message via A2A: {str(e)}", e)

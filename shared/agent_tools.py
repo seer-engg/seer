@@ -123,54 +123,22 @@ async def get_test_cases(agent_url: str, agent_id: str) -> str:
 @tool
 async def run_test(target_url: str, target_agent_id: str, test_input: str, thread_id: str = None) -> str:
     """
-    Run a single test against the target LangGraph agent.
-    
-    Args:
-        target_url: URL of the target agent to test (e.g. http://localhost:2024)
-        target_agent_id: Graph/assistant ID for the target (e.g. 'my_agent')
-        test_input: Input message to send to the agent
-        thread_id: Optional thread ID for context
-    
-    Returns:
-        JSON string with the agent's response
+    Run a single test against the target LangGraph agent via A2A (persistent thread).
     """
-    if thread_id is None:
-        thread_id = str(uuid.uuid4())
-    
-    url = f"{target_url}/runs/stream"
-    payload = {
-        "assistant_id": target_agent_id,
-        "input": {
-            "messages": [{"role": "user", "content": test_input}]
-        },
-        "stream_mode": ["values"],
-        "config": {"configurable": {"thread_id": thread_id}}
-    }
-    
     try:
-        config = get_seer_config()
-        async with httpx.AsyncClient(timeout=config.test_timeout) as client:
-            response = await client.post(url, json=payload)
-            response.raise_for_status()
-            
-            # Parse streaming response to get final message
-            final_response = ""
-            for line in response.text.strip().split('\n'):
-                if line.startswith('data: '):
-                    data = json.loads(line[6:])  # Skip 'data: ' prefix
-                    if 'messages' in data:
-                        messages = data['messages']
-                        if messages and len(messages) > 0:
-                            last_msg = messages[-1]
-                            if isinstance(last_msg, dict) and last_msg.get('type') == 'ai':
-                                final_response = last_msg.get('content', '')
-            
-            if final_response:
-                return create_success_response({"response": final_response})
-            else:
-                return create_success_response({"response": "No response received"})
+        # Extract port and call A2A using graph name or UUID
+        from urllib.parse import urlparse
+        parsed = urlparse(target_url)
+        port = parsed.port or (2024 if parsed.scheme in ("http", "https") else 2024)
+        a2a_resp = await send_a2a_message(
+            target_agent_id=target_agent_id,
+            target_port=port,
+            message=test_input,
+            thread_id=thread_id or str(uuid.uuid4())
+        )
+        return a2a_resp
     except Exception as e:
-        return create_error_response(f"Failed to run test: {str(e)}", e)
+        return create_error_response(f"Failed to run test via A2A: {str(e)}", e)
 
 
 @tool

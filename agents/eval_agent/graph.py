@@ -1,15 +1,14 @@
-"""Simplified Eval Agent - Using BaseAgent with specialized nodes"""
-
 import json
 import hashlib
 import uuid
-from typing import Optional, List
+from typing import Optional, List, Annotated
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from pydantic import BaseModel, Field
+from langgraph.graph.message import add_messages
+from langchain_core.messages import BaseMessage
 
-from seer.shared.base_agent import BaseAgentState
 from seer.shared.agent_tools import run_test
 from seer.shared.schemas import AgentSpec, TestCase, EvalSuite, TestResult
 from seer.agents.eval_agent.prompts import (
@@ -21,8 +20,8 @@ from seer.agents.eval_agent.prompts import (
 from seer.shared.llm import get_llm
 
 
-class EvalAgentState(BaseAgentState):
-    """Extended state for eval agent with eval-specific fields"""
+class EvalAgentState:
+    messages: Annotated[list[BaseMessage], add_messages]
     agent_name: Optional[str] = None
     agent_url: Optional[str] = None
     expectations: Optional[str] = None
@@ -64,17 +63,11 @@ class EvalAgent:
     def __init__(self):
         self.agent_name = "eval_agent"
         self.system_prompt = EVAL_AGENT_PROMPT
-        self.tools = [run_test]  # Only run_test - no callback tools!
-    
-    # Capabilities removed (unused)
+        self.tools = [run_test]
     
     def build_graph(self):
         """Build eval agent with specialized nodes"""
         llm_for_agent = get_llm(temperature=0.3).bind_tools(self.tools)
-
-        def route_entry(state: EvalAgentState):
-            """Route based on presence of eval_suite in state"""
-            return {}
 
         def parse_request_node(state: EvalAgentState):
             """Extract agent info from user message"""
@@ -190,12 +183,6 @@ class EvalAgent:
                 return "tools"
             return END
 
-        def route_from_entry(state: EvalAgentState):
-            """If eval_suite already exists, skip generation and go to agent"""
-            if state.get("eval_suite") is not None:
-                return "agent"
-            return "parse_request"
-
         def route_after_tool(state: EvalAgentState):
             """After run_test, go to judge; otherwise return to agent"""
             last_msg = state["messages"][-1]
@@ -274,7 +261,6 @@ class EvalAgent:
 
         # Create graph
         workflow = StateGraph(EvalAgentState)
-        workflow.add_node("route", route_entry)
         workflow.add_node("parse_request", parse_request_node)
         workflow.add_node("generate_spec", generate_spec_node)
         workflow.add_node("generate_tests", generate_tests_node)
@@ -282,8 +268,7 @@ class EvalAgent:
         workflow.add_node("tools", ToolNode(self.tools))
         workflow.add_node("judge", judge_node)
 
-        workflow.set_entry_point("route")
-        workflow.add_conditional_edges("route", route_from_entry)
+        workflow.set_entry_point("parse_request")
         workflow.add_edge("parse_request", "generate_spec")
         workflow.add_edge("generate_spec", "generate_tests")
         workflow.add_edge("generate_tests", "agent")
