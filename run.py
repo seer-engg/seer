@@ -261,7 +261,7 @@ class Launcher:
             
             self.start_process(
                 "Data Service (FastAPI)",
-                [self.python_exe, "-m", "uvicorn", "seer.shared.data_service:app", "--host", "127.0.0.1", "--port", str(data_service_port)],
+                [self.python_exe, "-m", "uvicorn", "seer.shared.data_service:app","--reload", "--host", "127.0.0.1", "--port", str(data_service_port)],
                 cwd=str(self.project_root)
             )
             

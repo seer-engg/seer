@@ -11,7 +11,8 @@ from contextlib import contextmanager
 from .models import (
     db, init_db, close_db,
     Thread, Message, Event, AgentActivity,
-    EvalSuite, TestResult, Subscriber
+    EvalSuite, TestResult, Subscriber,
+    TargetAgentExpectation, TargetAgentConfig
 )
 
 
@@ -388,6 +389,111 @@ class Database:
     def delete_subscriber(self, agent_name: str):
         """Delete a subscriber"""
         Subscriber.delete().where(Subscriber.agent_name == agent_name).execute()
+    
+    # Target agent expectation operations
+    def save_target_agent_expectation(self, thread_id: str, expectations: List[str], 
+                                     metadata: Dict[str, Any] = None):
+        """Save target agent expectations for a thread (one-to-one mapping)"""
+        # Ensure database connection is open (thread-safe)
+        db.connect(reuse_if_open=True)
+        
+        # Ensure thread exists
+        Thread.get_or_create(thread_id=thread_id)
+        
+        # Update or create expectation
+        expectation, created = TargetAgentExpectation.get_or_create(
+            thread=thread_id,
+            defaults={
+                'expectations': expectations,
+                'metadata': metadata
+            }
+        )
+        
+        if not created:
+            # Update existing
+            expectation.expectations = expectations
+            expectation.updated_at = datetime.now()
+            if metadata:
+                expectation.metadata = metadata
+            expectation.save()
+    
+    def get_target_agent_expectation(self, thread_id: str) -> Optional[Dict[str, Any]]:
+        """Get target agent expectations for a thread"""
+        # Ensure database connection is open (thread-safe)
+        db.connect(reuse_if_open=True)
+        
+        try:
+            expectation = TargetAgentExpectation.get(TargetAgentExpectation.thread == thread_id)
+            return {
+                'thread_id': expectation.thread.thread_id,
+                'expectations': expectation.expectations,
+                'created_at': expectation.created_at.isoformat() if expectation.created_at else None,
+                'updated_at': expectation.updated_at.isoformat() if expectation.updated_at else None,
+                'metadata': expectation.metadata
+            }
+        except TargetAgentExpectation.DoesNotExist:
+            return None
+    
+    # Target agent config operations
+    def save_target_agent_config(self, thread_id: str, 
+                                 target_agent_port: int = None,
+                                 target_agent_url: str = None,
+                                 target_agent_github_url: str = None,
+                                 target_agent_assistant_id: str = None,
+                                 metadata: Dict[str, Any] = None):
+        """Save target agent configuration for a thread (one-to-one mapping)"""
+        # Ensure database connection is open (thread-safe)
+        db.connect(reuse_if_open=True)
+        
+        # Ensure thread exists
+        Thread.get_or_create(thread_id=thread_id)
+        
+        # Update or create config
+        config, created = TargetAgentConfig.get_or_create(
+            thread=thread_id,
+            defaults={
+                'target_agent_port': target_agent_port,
+                'target_agent_url': target_agent_url,
+                'target_agent_github_url': target_agent_github_url,
+                'target_agent_assistant_id': target_agent_assistant_id,
+                'metadata': metadata
+            }
+        )
+        
+        if not created:
+            # Update existing (only update fields that are provided)
+            if target_agent_port is not None:
+                config.target_agent_port = target_agent_port
+            if target_agent_url is not None:
+                config.target_agent_url = target_agent_url
+            if target_agent_github_url is not None:
+                config.target_agent_github_url = target_agent_github_url
+            if target_agent_assistant_id is not None:
+                config.target_agent_assistant_id = target_agent_assistant_id
+            if metadata:
+                config.metadata = metadata
+            config.updated_at = datetime.now()
+            config.save()
+    
+    def get_target_agent_config(self, thread_id: str) -> Optional[Dict[str, Any]]:
+        """Get target agent configuration for a thread"""
+        # Ensure database connection is open (thread-safe)
+        db.connect(reuse_if_open=True)
+        
+        try:
+            config = TargetAgentConfig.get(TargetAgentConfig.thread == thread_id)
+            return {
+                'thread_id': config.thread.thread_id,
+                'target_agent_port': config.target_agent_port,
+                'target_agent_url': config.target_agent_url,
+                'target_agent_github_url': config.target_agent_github_url,
+                'target_agent_assistant_id': config.target_agent_assistant_id,
+                'created_at': config.created_at.isoformat() if config.created_at else None,
+                'updated_at': config.updated_at.isoformat() if config.updated_at else None,
+                'metadata': config.metadata
+            }
+        except TargetAgentConfig.DoesNotExist:
+            return None
     
     # Cleanup and utility methods
     def close(self):

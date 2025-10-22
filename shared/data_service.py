@@ -16,8 +16,9 @@ from datetime import datetime
 
 from seer.agents.orchestrator.data_manager import DataManager
 from seer.shared.config import get_seer_config
-from seer.shared.a2a_utils import send_a2a_message, create_server_thread
+from seer.shared.a2a_utils import send_a2a_message
 import uuid as _uuid
+from langgraph_sdk import get_client
 
 app = FastAPI(title="Seer Data Service", version="1.0.0")
 
@@ -228,24 +229,70 @@ async def send_message_to_agent(request: SendMessageRequest):
         else:
             raise ValueError(f"Unknown target agent: {request.target_agent}")
         
-        # 1. Create or update thread in database (pre-create server thread if missing/non-UUID)
+        # 1. Get thread_id from request (None for new conversations)
         thread_id = request.thread_id
-        def _is_uuid(value: str) -> bool:
+        
+        # For orchestrator: Use LangGraph Client SDK (proper thread management)
+        # For eval/coding agents: Use A2A protocol (agent-to-agent communication)
+        
+        final_response = ""
+
+        # 2. Send to target agent
+        if request.target_agent == "orchestrator":
+            # Use LangGraph Client SDK for UI → Orchestrator (not A2A!)
+            client = get_client(url=f"http://127.0.0.1:{target_port}")
+            
+            # Create or get thread
+            if not thread_id:
+                # First message - create new thread
+                thread_response = await client.threads.create()
+                thread_id = thread_response["thread_id"]
+            
+            # Send message and stream response
+            final_response = ""
+            async for chunk in client.runs.stream(
+                thread_id=thread_id,
+                assistant_id=graph_id,
+                input={"messages": [{"role": "user", "content": request.content}]},
+                stream_mode="values"
+            ):
+                if chunk.event == "values":
+                    # Extract assistant message from last message in state
+                    messages = chunk.data.get("messages", [])
+                    # LangGraph messages use 'type' field: 'human' for user, 'ai' for assistant
+                    if messages and messages[-1].get("type") == "ai":
+                        final_response = messages[-1].get("content", "")
+        else:
+            # A2A for eval/coding by graph_name; pass thread_id (None for new, UUID for existing)
+            a2a_resp = await send_a2a_message(
+                target_agent_id=graph_id,
+                target_port=target_port,
+                message=request.content,
+                thread_id=thread_id  # Can be None for first message
+            )
             try:
-                _uuid.UUID(value)
-                return True
+                a2a_data = json.loads(a2a_resp)
             except Exception:
-                return False
-        if not (isinstance(thread_id, str) and _is_uuid(thread_id)):
-            # Create thread on the target server so Studio shows a single canonical thread
-            thread_id = await create_server_thread(target_port)
+                a2a_data = {"success": False, "error": "Invalid A2A response"}
+            if not a2a_data.get("success"):
+                raise HTTPException(status_code=502, detail=a2a_data.get("error", "A2A failed"))
+            final_response = a2a_data.get("response", "") or a2a_data.get("result", {}).get("response", "")
+            
+            # Get thread_id from A2A response (created on first message, same on subsequent)
+            server_tid = a2a_data.get("thread_id")
+            if server_tid:
+                thread_id = server_tid  # Use the thread_id from A2A
+        
+        # 3. NOW that we have the thread_id from A2A, persist messages to database
+        if not thread_id:
+            raise HTTPException(status_code=500, detail="No thread_id returned from agent")
         
         # Ensure thread exists in database
         from seer.shared.database import get_db
         db = get_db()
         db.create_thread(thread_id)
         
-        # 2. Persist user message to database
+        # Persist user message
         message_id = str(uuid.uuid4())
         db.add_message(
             thread_id=thread_id,
@@ -257,47 +304,7 @@ async def send_message_to_agent(request: SendMessageRequest):
             message_type="conversation"
         )
         
-        final_response = ""
-
-        # 3. Send to target agent (A2A for orchestrator to get persistent threads)
-        if request.target_agent == "orchestrator":
-            # Use A2A directly by graph name; include thread_id in payload
-            a2a_resp = await send_a2a_message(
-                target_agent_id=graph_id or "orchestrator",
-                target_port=target_port,
-                message=request.content,
-                thread_id=thread_id
-            )
-            try:
-                a2a_data = json.loads(a2a_resp)
-            except Exception:
-                a2a_data = {"success": False, "error": "Invalid A2A response"}
-            if not a2a_data.get("success"):
-                raise HTTPException(status_code=502, detail=a2a_data.get("error", "A2A failed"))
-            final_response = a2a_data.get("response", "") or a2a_data.get("result", {}).get("response", "")
-            server_tid = a2a_data.get("thread_id")
-            if server_tid and server_tid != thread_id:
-                thread_id = server_tid
-        else:
-            # A2A for eval/coding by graph_name; include thread_id
-            a2a_resp = await send_a2a_message(
-                target_agent_id=graph_id,
-                target_port=target_port,
-                message=request.content,
-                thread_id=thread_id
-            )
-            try:
-                a2a_data = json.loads(a2a_resp)
-            except Exception:
-                a2a_data = {"success": False, "error": "Invalid A2A response"}
-            if not a2a_data.get("success"):
-                raise HTTPException(status_code=502, detail=a2a_data.get("error", "A2A failed"))
-            final_response = a2a_data.get("response", "") or a2a_data.get("result", {}).get("response", "")
-            server_tid = a2a_data.get("thread_id")
-            if server_tid and server_tid != thread_id:
-                thread_id = server_tid
-
-        # 4. Persist assistant response to database
+        # Persist assistant response
         if final_response:
             assistant_message_id = str(uuid.uuid4())
             db.add_message(
@@ -310,7 +317,7 @@ async def send_message_to_agent(request: SendMessageRequest):
                 message_type="conversation"
             )
 
-        # 5. Return response with thread_id
+        # 4. Return response with thread_id
         return {
             "success": True,
             "response": final_response or "No response received",
