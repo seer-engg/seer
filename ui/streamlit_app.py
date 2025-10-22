@@ -36,6 +36,8 @@ def init_session_state():
         st.session_state.threads_cache = []
     if "processing_message" not in st.session_state:
         st.session_state.processing_message = False  # Lock during message processing
+    if "auto_refresh_interval" not in st.session_state:
+        st.session_state.auto_refresh_interval = 5  # Refresh thread info every 5 seconds
 
 
 async def send_message_to_orchestrator(content: str, thread_id: str = None) -> tuple[str, str]:
@@ -126,13 +128,156 @@ async def get_test_results(suite_id: str):
             st.code(traceback.format_exc())
         return []
 
+
+async def get_thread_config(thread_id: str):
+    """Get target agent configuration for a specific thread"""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{DATA_SERVICE_URL}/threads/{thread_id}/config")
+            response.raise_for_status()
+            data = response.json()
+            return data.get("config")
+    except Exception as e:
+        return None
+
+
+async def get_thread_expectations(thread_id: str):
+    """Get target agent expectations for a specific thread"""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{DATA_SERVICE_URL}/threads/{thread_id}/expectations")
+            response.raise_for_status()
+            data = response.json()
+            return data.get("expectations")
+    except Exception as e:
+        return None
+
+
+async def get_thread_eval_suites(thread_id: str):
+    """Get evaluation suites linked to a specific thread"""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{DATA_SERVICE_URL}/threads/{thread_id}/eval-suites")
+            response.raise_for_status()
+            data = response.json()
+            return data.get("suites", [])
+    except Exception as e:
+        return []
+
+
+async def get_thread_test_results(thread_id: str):
+    """Get test results for a specific thread"""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{DATA_SERVICE_URL}/test-results", params={"thread_id": thread_id})
+            response.raise_for_status()
+            data = response.json()
+            return data.get("results", [])
+    except Exception as e:
+        return []
+
+
+def render_thread_info_panel(thread_id: str):
+    """Render right panel with thread-specific information"""
+    if not thread_id:
+        st.info("💡 Start a conversation to see thread information")
+        return
+    
+    st.subheader("🔍 Thread Info")
+    st.caption(f"Thread: {thread_id[:16]}...")
+    
+    # Auto-refresh controls
+    col_a, col_b = st.columns([2, 1])
+    with col_a:
+        if st.button("↻ Refresh Now", key="refresh_thread_info", use_container_width=True):
+            st.rerun()
+    with col_b:
+        # Toggle auto-refresh
+        auto_refresh = st.checkbox("Auto", value=False, key="auto_refresh_toggle")
+    
+    # Auto-refresh implementation using st.rerun with delay
+    if auto_refresh:
+        import time
+        st.caption(f"🔄 Auto-refreshing every {st.session_state.auto_refresh_interval}s")
+        time.sleep(st.session_state.auto_refresh_interval)
+        st.rerun()
+    
+    st.markdown("---")
+    
+    # Target Agent Configuration
+    with st.expander("📋 Target Agent Config", expanded=True):
+        config = asyncio.run(get_thread_config(thread_id))
+        if config:
+            st.markdown(f"**URL:** `{config.get('target_agent_url', 'N/A')}`")
+            st.markdown(f"**Port:** `{config.get('target_agent_port', 'N/A')}`")
+            st.markdown(f"**Assistant ID:** `{config.get('target_agent_assistant_id', 'N/A')}`")
+            if config.get('target_agent_github_url'):
+                st.markdown(f"**GitHub:** {config.get('target_agent_github_url')}")
+        else:
+            st.caption("_No configuration yet_")
+    
+    # Target Agent Expectations
+    with st.expander("🎯 Expectations", expanded=True):
+        expectations = asyncio.run(get_thread_expectations(thread_id))
+        if expectations and expectations.get('expectations'):
+            exp_list = expectations.get('expectations', [])
+            if isinstance(exp_list, list):
+                for i, exp in enumerate(exp_list, 1):
+                    st.markdown(f"{i}. {exp}")
+            else:
+                st.json(exp_list)
+        else:
+            st.caption("_No expectations collected yet_")
+    
+    # Eval Suites
+    with st.expander("📊 Eval Suites", expanded=False):
+        suites = asyncio.run(get_thread_eval_suites(thread_id))
+        if suites:
+            for suite in suites:
+                st.markdown(f"**{suite.get('spec_name', 'N/A')}**")
+                st.caption(f"Suite ID: {suite.get('suite_id', 'N/A')[:16]}...")
+                st.caption(f"Tests: {len(suite.get('test_cases', []))}")
+                st.markdown("---")
+        else:
+            st.caption("_No eval suites yet_")
+    
+    # Test Results Summary
+    with st.expander("✅ Test Results", expanded=False):
+        results = asyncio.run(get_thread_test_results(thread_id))
+        if results:
+            total = len(results)
+            passed = sum(1 for r in results if r.get("passed"))
+            failed = total - passed
+            score = (passed / total * 100) if total > 0 else 0
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Passed", passed)
+            with col2:
+                st.metric("Failed", failed)
+            
+            st.metric("Score", f"{score:.0f}%")
+            
+            # Show latest results
+            st.caption("**Latest Results:**")
+            for r in results[-3:]:  # Show last 3 results
+                status = "✅" if r.get("passed") else "❌"
+                st.caption(f"{status} {r.get('test_case_id', 'N/A')[:30]}...")
+        else:
+            st.caption("_No test results yet_")
+
+
 def render_chat():
     """Render main chat interface"""
     st.title("💬 Chat with Seer")
-
-    # Thread controls in chat tab
-    with st.container():
-        col1, col2, col3 = st.columns([1, 3, 1])
+    
+    # Create 2-column layout: chat (70%) and thread info panel (30%)
+    chat_col, info_col = st.columns([7, 3])
+    
+    with chat_col:
+        # Thread controls in chat tab
+        with st.container():
+            col1, col2, col3 = st.columns([1, 3, 1])
         with col1:
             if st.button("➕ New Thread", key="new_thread_btn", disabled=st.session_state.processing_message):
                 st.session_state.thread_id = None  # Will be set by LangGraph on first message
@@ -217,69 +362,73 @@ def render_chat():
                         ]
                         st.rerun()
 
-        with col3:
-            if st.button("↻ Refresh", key="refresh_threads"):
-                st.rerun()
+            with col3:
+                if st.button("↻ Refresh", key="refresh_threads"):
+                    st.rerun()
 
-    # Display thread debug header
-    with st.container():
-        tid = st.session_state.thread_id or "(new)"
-        status = "🔒 Processing..." if st.session_state.processing_message else "✅ Ready"
-        st.caption(f"Thread: {tid} | {status}")
+        # Display thread debug header
+        with st.container():
+            tid = st.session_state.thread_id or "(new)"
+            status = "🔒 Processing..." if st.session_state.processing_message else "✅ Ready"
+            st.caption(f"Thread: {tid} | {status}")
 
-    # Display chat history
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+        # Display chat history
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
 
-    # Quick start guide
-    if len(st.session_state.messages) == 0:
-        st.info("""
-        ### 🚀 Quick Start
+        # Quick start guide
+        if len(st.session_state.messages) == 0:
+            st.info("""
+            ### 🚀 Quick Start
 
-        Tell me about the agent you want to evaluate. For example:
+            Tell me about the agent you want to evaluate. For example:
 
-        **"Evaluate my agent at localhost:2024 (ID: my_agent). It should remember user preferences and respond politely."**
-        """)
+            **"Evaluate my agent at localhost:2024 (ID: my_agent). It should remember user preferences and respond politely."**
+            """)
 
-    # Chat input
-    if prompt := st.chat_input("Message Seer...", disabled=st.session_state.processing_message):
-        # Lock to prevent thread switching
-        st.session_state.processing_message = True
-        
-        # Preserve current thread_id before sending
-        current_thread_id = st.session_state.thread_id
-        
-        # Add user message to UI
-        st.session_state.messages.append({"role": "user", "content": prompt})
-
-        try:
-            # Send via FastAPI backend (handles thread creation and persistence)
-            reply, returned_thread_id = asyncio.run(
-                send_message_to_orchestrator(prompt, current_thread_id)
-            )
+        # Chat input
+        if prompt := st.chat_input("Message Seer...", disabled=st.session_state.processing_message):
+            # Lock to prevent thread switching
+            st.session_state.processing_message = True
             
-            # Update thread_id ONLY if it was newly created (None -> UUID) or explicitly changed by backend
-            if returned_thread_id:
-                if current_thread_id is None:
-                    # First message in new thread - save the thread_id
-                    st.session_state.thread_id = returned_thread_id
-                    st.session_state.langgraph_thread_id = returned_thread_id
-                elif current_thread_id != returned_thread_id:
-                    # Backend returned different thread_id - log warning but use it
-                    st.warning(f"⚠️ Thread ID changed: {current_thread_id[:8]}... → {returned_thread_id[:8]}...")
-                    st.session_state.thread_id = returned_thread_id
-                    st.session_state.langgraph_thread_id = returned_thread_id
-                # else: same thread_id, no update needed
+            # Preserve current thread_id before sending
+            current_thread_id = st.session_state.thread_id
             
-            st.session_state.messages.append({"role": "assistant", "content": reply})
-        
-        finally:
-            # Unlock processing
-            st.session_state.processing_message = False
+            # Add user message to UI
+            st.session_state.messages.append({"role": "user", "content": prompt})
 
-        # Rerun to show new messages
-        st.rerun()
+            try:
+                # Send via FastAPI backend (handles thread creation and persistence)
+                reply, returned_thread_id = asyncio.run(
+                    send_message_to_orchestrator(prompt, current_thread_id)
+                )
+                
+                # Update thread_id ONLY if it was newly created (None -> UUID) or explicitly changed by backend
+                if returned_thread_id:
+                    if current_thread_id is None:
+                        # First message in new thread - save the thread_id
+                        st.session_state.thread_id = returned_thread_id
+                        st.session_state.langgraph_thread_id = returned_thread_id
+                    elif current_thread_id != returned_thread_id:
+                        # Backend returned different thread_id - log warning but use it
+                        st.warning(f"⚠️ Thread ID changed: {current_thread_id[:8]}... → {returned_thread_id[:8]}...")
+                        st.session_state.thread_id = returned_thread_id
+                        st.session_state.langgraph_thread_id = returned_thread_id
+                    # else: same thread_id, no update needed
+                
+                st.session_state.messages.append({"role": "assistant", "content": reply})
+            
+            finally:
+                # Unlock processing
+                st.session_state.processing_message = False
+
+            # Rerun to show new messages
+            st.rerun()
+    
+    # Right panel: Thread info
+    with info_col:
+        render_thread_info_panel(st.session_state.thread_id)
 
 
 def render_results():

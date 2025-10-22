@@ -11,9 +11,13 @@ from seer.shared.error_handling import create_error_response
 from seer.shared.a2a_utils import send_a2a_message
 from seer.shared.config import get_config
 from seer.shared.llm import get_llm
+from seer.shared.logger import get_logger
 
 # Import orchestrator modules
 from seer.agents.orchestrator.data_manager import DataManager
+
+# Get logger for orchestrator
+logger = get_logger('orchestrator')
 
 
 class OrchestratorState(TypedDict):
@@ -48,6 +52,7 @@ def save_target_expectations(
         else:
             expectations_list = expectations
         
+        logger.info(f"Saving {len(expectations_list)} expectations for thread {thread_id}")
         result = _data_manager.save_target_agent_expectation(thread_id, expectations_list)
         return json.dumps({
             "success": True,
@@ -55,6 +60,7 @@ def save_target_expectations(
             "data": result
         })
     except Exception as e:
+        logger.error(f"Failed to save expectations: {str(e)}")
         return create_error_response(f"Failed to save expectations: {str(e)}", e)
 
 
@@ -128,10 +134,13 @@ async def delegate_to_eval_agent(config: RunnableConfig) -> str:
         # Extract thread_id from LangGraph config
         thread_id = config.get("configurable", {}).get("thread_id", "unknown")
         
+        logger.info(f"Delegating to eval agent for thread {thread_id}")
+        
         # Check readiness first
         readiness = _data_manager.check_readiness_for_delegation(thread_id)
         
         if not readiness["ready"]:
+            logger.warning(f"Cannot delegate - missing data: expectations={readiness['has_expectations']}, config={readiness['has_config']}")
             return json.dumps({
                 "success": False,
                 "error": "Cannot delegate yet - missing required data",
@@ -156,6 +165,7 @@ async def delegate_to_eval_agent(config: RunnableConfig) -> str:
         )
         
         # Send to eval agent
+        logger.info(f"Sending evaluation request to eval_agent on port 8002")
         response = await send_a2a_message(
             target_agent_id="eval_agent",
             target_port=8002,
@@ -163,9 +173,11 @@ async def delegate_to_eval_agent(config: RunnableConfig) -> str:
             thread_id=thread_id
         )
         
+        logger.info("Successfully delegated to eval agent")
         return response
         
     except Exception as e:
+        logger.error(f"Failed to delegate to eval agent: {str(e)}")
         return create_error_response(f"Failed to delegate to eval agent: {str(e)}", e)
 
 @tool

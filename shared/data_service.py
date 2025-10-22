@@ -17,8 +17,12 @@ from datetime import datetime
 from seer.agents.orchestrator.data_manager import DataManager
 from seer.shared.config import get_seer_config
 from seer.shared.a2a_utils import send_a2a_message
+from seer.shared.logger import get_logger
 import uuid as _uuid
 from langgraph_sdk import get_client
+
+# Get logger for data service
+logger = get_logger('data_service')
 
 app = FastAPI(title="Seer Data Service", version="1.0.0")
 
@@ -103,6 +107,55 @@ async def get_conversation_history(thread_id: str):
             "thread_id": thread_id,
             "messages": messages,
             "count": len(messages)
+        }
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/threads/{thread_id}/config")
+async def get_thread_config(thread_id: str):
+    """Get target agent configuration for a specific thread"""
+    try:
+        config = data_manager.get_target_agent_config(thread_id)
+        return {
+            "success": True,
+            "thread_id": thread_id,
+            "config": config
+        }
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/threads/{thread_id}/expectations")
+async def get_thread_expectations(thread_id: str):
+    """Get target agent expectations for a specific thread"""
+    try:
+        expectations = data_manager.get_target_agent_expectation(thread_id)
+        return {
+            "success": True,
+            "thread_id": thread_id,
+            "expectations": expectations
+        }
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/threads/{thread_id}/eval-suites")
+async def get_thread_eval_suites(thread_id: str):
+    """Get evaluation suites linked to a specific thread"""
+    try:
+        # Query eval suites with thread_id filter
+        from seer.shared.models import EvalSuite, db
+        db.connect(reuse_if_open=True)
+        suites = list(EvalSuite.select().where(EvalSuite.thread == thread_id).dicts())
+        return {
+            "success": True,
+            "thread_id": thread_id,
+            "suites": suites,
+            "count": len(suites)
         }
     except Exception as e:
         traceback.print_exc()
@@ -342,5 +395,5 @@ if __name__ == "__main__":
     try:
         start_server(port)
     except Exception as e:
-        print(f"Error starting data service: {str(e)}")
-        traceback.print_exc()
+        logger.error(f"Error starting data service: {str(e)}")
+        logger.error(traceback.format_exc())

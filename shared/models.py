@@ -13,8 +13,12 @@ from peewee import (
 )
 from playhouse.postgres_ext import JSONField
 from dotenv import load_dotenv
+from seer.shared.logger import get_logger
 
 load_dotenv()
+
+# Get logger for database operations
+logger = get_logger('database')
 
 # Database connection
 DATABASE_URL = os.getenv("POSTGRESQL_CONNECTION_STRING")
@@ -39,8 +43,8 @@ try:
         port=parsed.port or 5432
     )
 except Exception as e:
-    print(f"Error parsing DATABASE_URL: {e}")
-    print(f"Expected format: postgresql://username:password@host:port/database")
+    logger.error(f"Error parsing DATABASE_URL: {e}")
+    logger.error(f"Expected format: postgresql://username:password@host:port/database")
     raise
 
 
@@ -221,7 +225,7 @@ def init_db():
     """Initialize database connection and create tables"""
     db.connect(reuse_if_open=True)
     db.create_tables(ALL_MODELS, safe=True)
-    print("✅ Database initialized with Peewee ORM")
+    logger.info("✅ Database initialized with Peewee ORM")
 
 
 def close_db():
