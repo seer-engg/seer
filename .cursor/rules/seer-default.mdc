@@ -5,6 +5,9 @@ alwaysApply: true
 # Project Instructions
 
 ## General
+- DO THINGS THAT DON'T SCALE.
+- KICKASS HALF-ASS IS BETTER THAN A HALF-ASS FULL.
+- THINK BEFORE YOU CODE.
 - Propose a plan first before writing any code.
 - Creative destruction is key. Code bloating is guaranteed - you'll often need to delete code you wrote.
 - Regularly check if a part of the code is aligned with rest of the code.
@@ -14,23 +17,22 @@ alwaysApply: true
 ## On Code Structure
 - Keep orchestrator, streamlit UI, and specialized agents (eval, coding) as separate as possible. Each should be in their own folder.
 - Orchestrator is conversational and handles user interaction directly
-- Specialized agents (eval, coding) are invoked via point-to-point A2A communication
+- Specialized agents (eval, coding) are invoked via inter agent communication
 
 ## On LangChain Agents
 - Build agents using LangChain. 
 - Langchain 'graph' in 'graph.py' kinda files includes a custom checkpointer i.e. it saves the state of the agent. So, don't need to write your own checkpointer.
-- Langchain supports A2A protocol out of the box. Assistant and Thread IDs must be hexadecimal UUIDs, NOT string names!
+- Langchain supports inter agent communication out of the box. Assistant and Thread IDs must be hexadecimal UUIDs, NOT string names!
 - Langchain documentation is outdated on the internet. Before using any online documentation, check if its the latest version.
 Good sources: https://docs.langchain.com/oss/python/langchain/overview, https://docs.langchain.com/oss/python/langchain/agents
 Bad sources: https://python.langchain.com/docs/introduction/
 
 
 ## Seer Philosophy
-- Seer is a network of agents using A2A point-to-point communication (not broadcast)
+- Seer is a network of agents using inter agent communication (not broadcast)
 - Orchestrator is the conversational hub that users interact with directly
 - Separation of concerns within agents is a great agentic AI design principle
 - Hence, multi agents systems (MAS) are inevitable - they offer modularization and greater abstraction than monolithic code
-- Point-to-point A2A delegation is preferred over broadcast for targeted agent communication
 - If MAS are inevitable, tracing agent conversations, handoff, etc is required
 - Testing without software update is useful in some scenarios
 - Humans are bad at writing a comprehensive eval all at once i.e. it comes in bits and pieces

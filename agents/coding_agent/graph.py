@@ -6,6 +6,20 @@ import json
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from langchain_core.tools import tool
+from seer.shared.logger import get_logger
+
+logger = get_logger('coding_agent')
+
+
+@tool
+def think(thought: str) -> str:
+    """
+    Think tool for coding_agent: logs internal reflection; no side effects.
+    Present but not yet invoked by this dummy agent node.
+    """
+    logger.info(f"THINK: {thought}")
+    return json.dumps({"success": True, "thought": thought})
 
 
 class CodingAgentState(TypedDict):

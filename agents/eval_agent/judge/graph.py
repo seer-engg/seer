@@ -1,8 +1,10 @@
 """Judge Agent - Runs a single test and writes result to a file"""
 
 import os
+import asyncio
 import json
 import uuid
+from urllib.parse import urlparse
 from typing import Annotated, TypedDict, Optional
 from pathlib import Path
 
@@ -14,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from seer.shared.schemas import TestCase, TestResult
 from seer.agents.eval_agent.prompts import EVAL_AGENT_JUDGE_PROMPT
+from seer.shared.messaging import messenger
 
 
 class JudgeState(TypedDict):
@@ -74,7 +77,7 @@ def parse_input_node(state: JudgeState):
 
 
 def run_test_node(state: JudgeState):
-    """Call the target agent via A2A and capture final AI output (persistent thread)."""
+    """Call the target agent via SDK and capture final AI output (persistent thread)."""
     target_url = state.get("target_url") or ""
     target_agent_id = state.get("target_agent_id") or ""
     tc: TestCase = state.get("test_case")  # type: ignore[assignment]
@@ -83,41 +86,21 @@ def run_test_node(state: JudgeState):
 
     actual_output = ""
     try:
-        import httpx
-        from urllib.parse import urlparse
         parsed = urlparse(target_url)
         port = parsed.port or 2024
-        with httpx.Client(timeout=60.0) as client:
-            thread_id = str(uuid.uuid4())
-
-            # A2A JSON-RPC to assistant id or resolve graph name on client side
-            url = f"http://127.0.0.1:{port}/a2a/{target_agent_id}"
-            import uuid as _uuid
-            payload = {
-                "jsonrpc": "2.0",
-                "id": str(_uuid.uuid4()),  # request id
-                "method": "message/send",
-                "params": {
-                    "message": {"role": "user", "parts": [{"kind": "text", "text": tc.input_message}]},
-                    "messageId": str(_uuid.uuid4()),
-                    "thread": {"threadId": thread_id}
-                }
-            }
-            resp = client.post(url, json=payload, headers={"Accept": "application/json"})
-            if resp.status_code < 400:
-                try:
-                    data = resp.json()
-                except Exception:
-                    data = None
-                if isinstance(data, dict):
-                    result = data.get("result") if isinstance(data.get("result"), dict) else {}
-                    artifacts = result.get("artifacts") if isinstance(result.get("artifacts"), list) else []
-                    if artifacts and isinstance(artifacts[0], dict):
-                        parts = artifacts[0].get("parts", [])
-                        if parts and isinstance(parts[0], dict):
-                            content = parts[0].get("text") or parts[0].get("content") or ""
-                            if content:
-                                actual_output = content
+        base_url = f"http://127.0.0.1:{port}"
+        # Use judge_agent as src for clarity; reuse user thread id if available in future state
+        text, _rtid = asyncio.get_event_loop().run_until_complete(
+            messenger.send(
+                user_thread_id=str(uuid.uuid4()),
+                src_agent="judge_agent",
+                dst_agent=target_agent_id,
+                base_url=base_url,
+                assistant_id=target_agent_id,
+                content=tc.input_message
+            )
+        )
+        actual_output = text or ""
     except Exception as e:
         actual_output = f"ERROR: {str(e)}"
 

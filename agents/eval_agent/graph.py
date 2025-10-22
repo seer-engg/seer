@@ -9,6 +9,8 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from pydantic import BaseModel, Field
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage
+from langchain_core.tools import tool
+from langchain_core.runnables import RunnableConfig
 
 from seer.shared.agent_tools import run_test
 from seer.shared.schemas import AgentSpec, TestCase, EvalSuite, TestResult
@@ -23,6 +25,20 @@ from seer.shared.logger import get_logger
 
 # Get logger for eval agent
 logger = get_logger('eval_agent')
+
+
+@tool
+def think(thought: str, config: RunnableConfig) -> str:
+    """
+    Think tool for eval_agent: log internal reflection tied to thread; no external side effects.
+    Use before running tests and after receiving tool results.
+    """
+    try:
+        thread_id = config.get("configurable", {}).get("thread_id", "unknown")
+        logger.info(f"THINK[{thread_id}]: {thought}")
+        return json.dumps({"success": True, "thought": thought, "thread_id": thread_id})
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)})
 
 
 class EvalAgentState(TypedDict, total=False):
@@ -68,7 +84,7 @@ class EvalAgent:
     def __init__(self):
         self.agent_name = "eval_agent"
         self.system_prompt = EVAL_AGENT_PROMPT
-        self.tools = [run_test]
+        self.tools = [run_test, think]
     
     def build_graph(self):
         """Build eval agent with specialized nodes"""

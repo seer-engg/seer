@@ -3,7 +3,7 @@
     "orchestrator": {
       "port": 8000,
       "graph_name": "orchestrator",
-      "description": "Conversational orchestrator with A2A routing to specialized agents"
+      "description": "Conversational orchestrator with"
     },
     "eval_agent": {
       "port": 8002,

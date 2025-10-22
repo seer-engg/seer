@@ -3,11 +3,10 @@
 import json
 import uuid
 import httpx
-from typing import Dict, Any
 from langchain_core.tools import tool
 from .error_handling import create_error_response, create_success_response
-from .config import get_seer_config
-from .a2a_utils import send_a2a_message
+from .messaging import messenger
+import os
 
 
 @tool
@@ -85,25 +84,12 @@ async def get_test_cases(agent_url: str, agent_id: str) -> str:
         JSON string with test cases or error message
     """
     try:
-        config = get_seer_config()
-        orchestrator_response = await send_a2a_message(
-            "orchestrator",
-            config.orchestrator_port,
-            json.dumps({
-                "action": "get_eval_suites",
-                "payload": {
-                    "agent_url": agent_url,
-                    "agent_id": agent_id
-                }
-            }),
-            thread_id=config.generate_thread_id("test_cases_request")
-        )
-
-        orchestrator_data = json.loads(orchestrator_response)
-        if not orchestrator_data.get("success"):
-            return create_error_response(f"Failed to get test cases: {orchestrator_data.get('error', 'Unknown error')}")
-
-        suites = orchestrator_data.get("suites", [])
+        base = f"http://127.0.0.1:{os.getenv('DATA_SERVICE_PORT', '8500')}"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(f"{base}/eval-suites", params={"agent_url": agent_url, "agent_id": agent_id})
+            resp.raise_for_status()
+            data = resp.json()
+        suites = data.get("suites", [])
         if not suites:
             return create_error_response(f"No test cases found for {agent_url}/{agent_id}")
 
@@ -123,22 +109,25 @@ async def get_test_cases(agent_url: str, agent_id: str) -> str:
 @tool
 async def run_test(target_url: str, target_agent_id: str, test_input: str, thread_id: str = None) -> str:
     """
-    Run a single test against the target LangGraph agent via A2A (persistent thread).
+    Run a single test against the target LangGraph agent via LangGraph SDK.
     """
     try:
-        # Extract port and call A2A using graph name or UUID
         from urllib.parse import urlparse
         parsed = urlparse(target_url)
-        port = parsed.port or (2024 if parsed.scheme in ("http", "https") else 2024)
-        a2a_resp = await send_a2a_message(
-            target_agent_id=target_agent_id,
-            target_port=port,
-            message=test_input,
-            thread_id=thread_id or str(uuid.uuid4())
+        port = parsed.port or 2024
+        base_url = f"http://127.0.0.1:{port}"
+        user_tid = thread_id or str(uuid.uuid4())
+        text, remote_tid = await messenger.send(
+            user_thread_id=user_tid,
+            src_agent="eval_agent",
+            dst_agent=target_agent_id,
+            base_url=base_url,
+            assistant_id=target_agent_id,
+            content=test_input
         )
-        return a2a_resp
+        return create_success_response({"response": text, "thread_id": remote_tid})
     except Exception as e:
-        return create_error_response(f"Failed to run test via A2A: {str(e)}", e)
+        return create_error_response(f"Failed to run test via SDK: {str(e)}", e)
 
 
 @tool
@@ -157,34 +146,22 @@ async def store_eval_suite(target_url: str, target_id: str, eval_suite: dict, th
         JSON string with store result
     """
     try:
-        config = get_seer_config()
-        orchestrator_response = await send_a2a_message(
-            "orchestrator",
-            config.orchestrator_port,
-            json.dumps({
-                "action": "store_eval_suite",
-                "payload": {
-                    "suite_id": eval_suite.get("id"),
-                    "spec_name": eval_suite.get("spec_name"),
-                    "spec_version": eval_suite.get("spec_version"),
-                    "test_cases": eval_suite.get("test_cases", []),
-                    "target_agent_url": target_url,
-                    "target_agent_id": target_id,
-                    "thread_id": thread_id,
-                    "langgraph_thread_id": langgraph_thread_id
-                }
-            }),
-            thread_id=thread_id or config.eval_suite_storage_thread
-        )
-
-        orchestrator_data = json.loads(orchestrator_response)
-        if not orchestrator_data.get("success"):
-            return create_error_response(f"Orchestrator error: {orchestrator_data.get('error')}")
-
-        return create_success_response({
-            "eval_suite_id": orchestrator_data.get("suite_id"),
-            "message": orchestrator_data.get("message")
-        })
+        base = f"http://127.0.0.1:{os.getenv('DATA_SERVICE_PORT', '8500')}"
+        payload = {
+            "suite_id": eval_suite.get("id"),
+            "spec_name": eval_suite.get("spec_name"),
+            "spec_version": eval_suite.get("spec_version"),
+            "test_cases": eval_suite.get("test_cases", []),
+            "target_agent_url": target_url,
+            "target_agent_id": target_id,
+            "thread_id": thread_id,
+            "langgraph_thread_id": langgraph_thread_id
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(f"{base}/eval-suites", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+        return create_success_response({"eval_suite_id": data.get("suite_id"), "message": data.get("message")})
     except Exception as e:
         return create_error_response(f"Failed to store eval suite: {str(e)}", e)
 
@@ -203,28 +180,11 @@ async def store_test_results(suite_id: str, thread_id: str, results: list) -> st
         JSON string with store result
     """
     try:
-        config = get_seer_config()
-        orchestrator_response = await send_a2a_message(
-            "orchestrator",
-            config.orchestrator_port,
-            json.dumps({
-                "action": "store_test_results",
-                "payload": {
-                    "suite_id": suite_id,
-                    "thread_id": thread_id,
-                    "results": results
-                }
-            }),
-            thread_id=thread_id or config.test_results_storage_thread
-        )
-
-        orchestrator_data = json.loads(orchestrator_response)
-        if not orchestrator_data.get("success"):
-            return create_error_response(f"Orchestrator error: {orchestrator_data.get('error')}")
-
-        return create_success_response({
-            "results_count": orchestrator_data.get("results_count"),
-            "message": orchestrator_data.get("message")
-        })
+        base = f"http://127.0.0.1:{os.getenv('DATA_SERVICE_PORT', '8500')}"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(f"{base}/test-results", json={"suite_id": suite_id, "thread_id": thread_id, "results": results})
+            resp.raise_for_status()
+            data = resp.json()
+        return create_success_response({"results_count": data.get("results_count"), "message": data.get("message")})
     except Exception as e:
         return create_error_response(f"Failed to store test results: {str(e)}", e)
