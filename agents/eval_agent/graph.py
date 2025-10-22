@@ -2,6 +2,7 @@ import json
 import hashlib
 import uuid
 from typing import Optional, List, Annotated
+from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
@@ -18,20 +19,24 @@ from seer.agents.eval_agent.prompts import (
     EVAL_AGENT_JUDGE_PROMPT
 )
 from seer.shared.llm import get_llm
+from seer.shared.logger import get_logger
+
+# Get logger for eval agent
+logger = get_logger('eval_agent')
 
 
-class EvalAgentState:
+class EvalAgentState(TypedDict, total=False):
     messages: Annotated[list[BaseMessage], add_messages]
-    agent_name: Optional[str] = None
-    agent_url: Optional[str] = None
-    expectations: Optional[str] = None
-    spec: Optional[AgentSpec] = None
-    eval_suite: Optional[EvalSuite] = None
-    current_test_index: int = 0
-    passed: int = 0
-    failed: int = 0
-    total: int = 0
-    test_results: List[TestResult] = []
+    agent_name: Optional[str]
+    agent_url: Optional[str]
+    expectations: Optional[str]
+    spec: Optional[AgentSpec]
+    eval_suite: Optional[EvalSuite]
+    current_test_index: int
+    passed: int
+    failed: int
+    total: int
+    test_results: List[TestResult]
 
 
 class EvalRequest(BaseModel):
@@ -71,6 +76,7 @@ class EvalAgent:
 
         def parse_request_node(state: EvalAgentState):
             """Extract agent info from user message"""
+            logger.info("Parsing evaluation request from user message")
             last_human = None
             for m in reversed(state["messages"]):
                 if isinstance(m, HumanMessage):
@@ -92,6 +98,8 @@ class EvalAgent:
                 "Always include the full original message as expectations."
             )
             request: EvalRequest = extractor.invoke(f"{instruction}\n\nUSER:\n{user_text}")
+            
+            logger.info(f"Extracted agent: {request.agent_name} at {request.agent_url}")
 
             return {
                 "agent_name": request.agent_name,
@@ -101,6 +109,7 @@ class EvalAgent:
 
         def generate_spec_node(state: EvalAgentState):
             """Generate AgentSpec from expectations"""
+            logger.info("Generating agent specification from expectations")
             llm = get_llm().with_structured_output(AgentSpec)
 
             prompt = EVAL_AGENT_SPEC_PROMPT.format(
@@ -110,10 +119,12 @@ class EvalAgent:
             )
 
             spec: AgentSpec = llm.invoke(prompt)
+            logger.info(f"Generated spec: {spec.name} v{spec.version}")
             return {"spec": spec}
 
         def generate_tests_node(state: EvalAgentState):
             """Generate test cases from AgentSpec"""
+            logger.info("Generating test cases from agent specification")
             spec: AgentSpec = state.get("spec")
             if spec is None:
                 return {}
@@ -123,6 +134,8 @@ class EvalAgent:
             spec_json = spec.model_dump_json(indent=2)
             prompt = EVAL_AGENT_TEST_GEN_PROMPT.format(spec_json=spec_json)
             generated: GeneratedTests = llm.invoke(prompt)
+            
+            logger.info(f"Generated {len(generated.test_cases)} test cases")
 
             # Create TestCase objects with stable IDs
             test_cases: List[TestCase] = []
@@ -192,6 +205,7 @@ class EvalAgent:
 
         def judge_node(state: EvalAgentState):
             """Judge the last run_test result"""
+            logger.info("Judging test result")
             eval_suite: EvalSuite = state.get("eval_suite")
             idx = state.get("current_test_index", 0)
             if eval_suite is None or idx >= len(eval_suite.test_cases):
@@ -243,6 +257,8 @@ class EvalAgent:
             passed = state.get("passed", 0) + (1 if verdict.passed else 0)
             failed = state.get("failed", 0) + (0 if verdict.passed else 1)
             next_idx = idx + 1
+            
+            logger.info(f"Test {next_idx}/{state.get('total', len(eval_suite.test_cases))}: {'✅ PASS' if verdict.passed else '❌ FAIL'} (score: {verdict.score})")
 
             progress_msg = (
                 f"EVAL_PROGRESS\n"

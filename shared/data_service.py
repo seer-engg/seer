@@ -17,8 +17,12 @@ from datetime import datetime
 from seer.agents.orchestrator.data_manager import DataManager
 from seer.shared.config import get_seer_config
 from seer.shared.a2a_utils import send_a2a_message
+from seer.shared.logger import get_logger
 import uuid as _uuid
 from langgraph_sdk import get_client
+
+# Get logger for data service
+logger = get_logger('data_service')
 
 app = FastAPI(title="Seer Data Service", version="1.0.0")
 
@@ -342,5 +346,5 @@ if __name__ == "__main__":
     try:
         start_server(port)
     except Exception as e:
-        print(f"Error starting data service: {str(e)}")
-        traceback.print_exc()
+        logger.error(f"Error starting data service: {str(e)}")
+        logger.error(traceback.format_exc())

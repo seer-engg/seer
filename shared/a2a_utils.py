@@ -5,6 +5,10 @@ import json
 import uuid as _uuid
 from .config import get_seer_config
 from .error_handling import create_error_response, create_success_response
+from .logger import get_logger
+
+# Get logger for A2A communication
+logger = get_logger('a2a_utils')
 
 
 async def resolve_assistant_id(port: int, graph_name: str, timeout: float = 10.0) -> str | None:
@@ -134,8 +138,8 @@ async def send_a2a_message(target_agent_id: str, target_port: int, message: str,
 
             # Post to A2A using resolved UUID
             url = f"http://127.0.0.1:{target_port}/a2a/{target_uuid}"
-            print(
-                "[A2A] sending",
+            logger.debug(
+                "[A2A] sending: %s",
                 json.dumps(
                     {
                         "graph_id": target_agent_id,
