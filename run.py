@@ -256,35 +256,14 @@ class Launcher:
                 logger.error(f"   Check logs: {self.logs_dir}/coding_agent_langgraph.log")
                 self.stop_all()
                 sys.exit(1)
-            
-            # 4. Start Data Service (FastAPI)
-            logger.info("\n4️⃣  Data Service (FastAPI)")
-            data_service_port = int(os.getenv("DATA_SERVICE_PORT", "8500"))
-            if not self.check_port_available(data_service_port):
-                data_service_port = config.get_available_port(data_service_port, data_service_port + 10)
-            
-            self.start_process(
-                "Data Service (FastAPI)",
-                [self.python_exe, "-m", "uvicorn", "seer.shared.data_service:app","--reload", "--host", "127.0.0.1", "--port", str(data_service_port)],
-                cwd=str(self.project_root)
-            )
-            
-            # Wait for port to be listening
-            if not self.check_port_listening(data_service_port, timeout=10):
-                logger.error(f"❌ Data service failed to start on port {data_service_port}")
-                logger.error(f"   Check logs: {self.logs_dir}/data_service_fastapi.log")
-                self.stop_all()
-                sys.exit(1)
-            
-            # 5. Start Streamlit UI
-            logger.info("\n5️⃣  Streamlit UI")
+            # 4. Start Streamlit UI
+            logger.info("\n4️⃣  Streamlit UI")
             ui_port = config.ui_port
             if not self.check_port_available(ui_port):
                 ui_port = config.get_available_port(config.ui_port, config.ui_port + 10)
             
             ui_env = {
-                "ORCHESTRATOR_URL": f"http://127.0.0.1:{orchestrator_port}",
-                "DATA_SERVICE_URL": f"http://127.0.0.1:{data_service_port}"
+                "ORCHESTRATOR_URL": f"http://127.0.0.1:{orchestrator_port}"
             }
             self.start_process(
                 "Streamlit UI",
@@ -297,7 +276,6 @@ class Launcher:
             logger.info("✅ All components started!\n")
             logger.info("🔮 Seer Agents are running:")
             logger.info(f"   - UI:                http://localhost:{ui_port}")
-            logger.info(f"   - Data Service:      http://127.0.0.1:{data_service_port}")
             logger.info("=" * 60)
             logger.info("Press Ctrl+C to stop all components\n")
             

@@ -1,5 +1,5 @@
 import json
-from typing import Annotated
+from typing import Annotated, List, Optional
 from typing_extensions import TypedDict
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage, ToolMessage
@@ -13,22 +13,42 @@ from seer.shared.error_handling import create_error_response
 from seer.shared.messaging import messenger
 from seer.shared.llm import get_llm
 from seer.shared.logger import get_logger
-
-# Import orchestrator modules
-from seer.agents.orchestrator.data_manager import DataManager
+from seer.shared.state_models import (
+    EvalSuite,
+    TestResult,
+    TargetAgentExpectation,
+    TargetAgentConfig,
+    RemoteThreadLink,
+    AgentActivity
+)
 
 # Get logger for orchestrator
 logger = get_logger('orchestrator')
 
 
 class OrchestratorState(TypedDict, total=False):
+    """
+    Orchestrator state with all data stored in LangGraph's persistence layer.
+    No external database needed - everything is in state!
+    """
     messages: Annotated[list[BaseMessage], add_messages]
-    thread_id: str  # Track current thread ID for data operations
-    eval_agent_thread_id: str  # Remote thread id for eval_agent (state-only)
-
-
-# Global data manager instance for tools
-_data_manager = DataManager()
+    
+    # Remote thread tracking
+    eval_agent_thread_id: str  # Remote thread id for eval_agent
+    
+    # Target agent information
+    target_expectations: Optional[TargetAgentExpectation]
+    target_config: Optional[TargetAgentConfig]
+    
+    # Evaluation data
+    eval_suites: List[EvalSuite]  # All eval suites for this thread
+    test_results: List[TestResult]  # All test results for this thread
+    
+    # Remote thread links for inter-agent communication
+    remote_thread_links: List[RemoteThreadLink]
+    
+    # Agent activity logs (optional, for debugging)
+    agent_activities: List[AgentActivity]
 
 
 @tool
@@ -53,16 +73,16 @@ def think(thought: str, config: RunnableConfig) -> str:
     try:
         thread_id = config.get("configurable", {}).get("thread_id", "unknown")
         logger.info(f"THINK[{thread_id}]: {thought}")
-        return json.dumps({"success": True, "thought": thought, "thread_id": thread_id})
+        return json.dumps({"success": True, "thought": thought})
     except Exception as e:
         return create_error_response(f"Failed to log thought: {str(e)}", e)
 
 
 @tool
 def save_target_expectations(
-    expectations: str, 
-    config: RunnableConfig
-) -> str:
+    expectations: str,
+    tool_call_id: Annotated[str, InjectedToolCallId]
+) -> Command:
     """
     Save target agent expectations collected from user.
     Expectations should be a comma-separated or newline-separated list of user expectations.
@@ -71,29 +91,41 @@ def save_target_expectations(
         expectations: String containing user's expectations (will be split into list)
     """
     try:
-        # Extract thread_id from LangGraph config
-        thread_id = config.get("configurable", {}).get("thread_id", "unknown")
-        
         # Split by commas or newlines
         expectations_list = [e.strip() for e in expectations.replace('\n', ',').split(',') if e.strip()]
         
-        logger.info(f"Saving {len(expectations_list)} expectations for thread {thread_id}")
-        result = _data_manager.save_target_agent_expectation(thread_id, expectations_list)
-        return json.dumps({
-            "success": True,
-            "message": f"Saved {len(expectations_list)} expectations for thread {thread_id}",
-            "data": result
+        logger.info(f"Saving {len(expectations_list)} expectations to state")
+        
+        expectation_obj = TargetAgentExpectation(
+            expectations=expectations_list
+        )
+        
+        return Command(update={
+            "target_expectations": expectation_obj.model_dump(),
+            "messages": [ToolMessage(
+                content=json.dumps({
+                    "success": True,
+                    "message": f"Saved {len(expectations_list)} expectations",
+                    "expectations": expectations_list
+                }),
+                tool_call_id=tool_call_id
+            )]
         })
     except Exception as e:
         logger.error(f"Failed to save expectations: {str(e)}")
-        return create_error_response(f"Failed to save expectations: {str(e)}", e)
+        return Command(update={
+            "messages": [ToolMessage(
+                content=create_error_response(f"Failed to save expectations: {str(e)}", e),
+                tool_call_id=tool_call_id
+            )]
+        })
 
 
 @tool
 def save_target_config(
-    config_data: str, 
-    config: RunnableConfig
-) -> str:
+    config_data: str,
+    tool_call_id: Annotated[str, InjectedToolCallId]
+) -> Command:
     """
     Save target agent configuration collected from user.
     
@@ -102,45 +134,56 @@ def save_target_config(
                     target_agent_github_url, target_agent_assistant_id
     """
     try:
-        # Extract thread_id from LangGraph config
-        thread_id = config.get("configurable", {}).get("thread_id", "unknown")
-        
         agent_config = json.loads(config_data)
-        result = _data_manager.save_target_agent_config(
-            thread_id=thread_id,
+        
+        config_obj = TargetAgentConfig(
             target_agent_port=agent_config.get("target_agent_port"),
             target_agent_url=agent_config.get("target_agent_url"),
             target_agent_github_url=agent_config.get("target_agent_github_url"),
             target_agent_assistant_id=agent_config.get("target_agent_assistant_id")
         )
-        return json.dumps({
-            "success": True,
-            "message": f"Saved agent configuration for thread {thread_id}",
-            "data": result
+        
+        return Command(update={
+            "target_config": config_obj.model_dump(),
+            "messages": [ToolMessage(
+                content=json.dumps({
+                    "success": True,
+                    "message": "Saved agent configuration",
+                    "config": config_obj.model_dump()
+                }),
+                tool_call_id=tool_call_id
+            )]
         })
     except Exception as e:
-        return create_error_response(f"Failed to save config: {str(e)}", e)
+        return Command(update={
+            "messages": [ToolMessage(
+                content=create_error_response(f"Failed to save config: {str(e)}", e),
+                tool_call_id=tool_call_id
+            )]
+        })
 
 
 @tool
-def check_delegation_readiness(config: RunnableConfig) -> str:
+def check_delegation_readiness(runtime: ToolRuntime) -> str:
     """
     Check if we have collected both expectations and config for delegation.
     Returns readiness status and what's missing if not ready.
-    Call this tool with no arguments - thread_id is automatically extracted.
     """
     try:
-        # Extract thread_id from LangGraph config
-        thread_id = config.get("configurable", {}).get("thread_id", "unknown")
+        state = runtime.state
+        expectations = state.get("target_expectations")
+        config = state.get("target_config")
         
-        result = _data_manager.check_readiness_for_delegation(thread_id)
+        ready = expectations is not None and config is not None
+        
         return json.dumps({
             "success": True,
-            "ready": result["ready"],
-            "has_expectations": result["has_expectations"],
-            "has_config": result["has_config"],
-            "message": "Ready to delegate!" if result["ready"] else "Missing data - need to collect more info",
-            "data": result
+            "ready": ready,
+            "has_expectations": expectations is not None,
+            "has_config": config is not None,
+            "message": "Ready to delegate!" if ready else "Missing data - need to collect more info",
+            "expectations": expectations,
+            "config": config
         })
     except Exception as e:
         return create_error_response(f"Failed to check readiness: {str(e)}", e)
@@ -289,11 +332,7 @@ You are the main interface for users - make their experience smooth and delightf
 
 
 class OrchestratorAgent:
-    """Conversational Orchestrator agent"""
-    
-    def __init__(self):
-        # Initialize modules
-        self.data_manager = DataManager()
+    """Conversational Orchestrator agent - all data stored in state"""
     
     def build_graph(self):
         """Build the orchestrator agent using create_agent runtime"""
