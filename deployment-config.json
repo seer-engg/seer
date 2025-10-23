@@ -17,10 +17,6 @@
     }
   },
   "services": {
-    "data_service": {
-      "port": 8500,
-      "description": "FastAPI service for database operations (no LLM)"
-    },
     "ui": {
       "port": 8501,
       "description": "Streamlit UI"

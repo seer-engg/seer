@@ -1,10 +1,10 @@
 """
 Seer - Simplified Agent Evaluation UI
+Now uses LangGraph SDK directly - no separate data service needed!
 """
 
 import streamlit as st
 import asyncio
-import httpx
 import os
 import traceback
 from pathlib import Path
@@ -14,8 +14,11 @@ import sys
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-# Data service URL (separate from orchestrator)
-DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://127.0.0.1:8500")
+from langgraph_sdk import get_client
+
+# Orchestrator URL
+ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://127.0.0.1:8001")
+ORCHESTRATOR_ASSISTANT_ID = "orchestrator"
 
 # Configure page
 st.set_page_config(
@@ -42,27 +45,38 @@ def init_session_state():
 
 async def send_message_to_orchestrator(content: str, thread_id: str = None) -> tuple[str, str]:
     """
-    Send message to Orchestrator via FastAPI backend (proxy pattern)
+    Send message to Orchestrator via LangGraph SDK
     Returns: (response_text, thread_id)
     """
     try:
-        # Send through FastAPI backend for proper persistence
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                f"{DATA_SERVICE_URL}/messages/send",
-                json={
-                    "content": content,
-                    "thread_id": thread_id,
-                    "target_agent": "orchestrator"
-                }
-            )
-            
-            if response.status_code >= 400:
-                error_detail = response.json().get("detail", response.text[:200])
-                return f"Error: {error_detail}", thread_id
-            
-            data = response.json()
-            return data.get("response", "No response"), data.get("thread_id", thread_id)
+        client = get_client(url=ORCHESTRATOR_URL)
+        
+        # Create or get thread
+        if not thread_id:
+            thread_response = await client.threads.create()
+            thread_id = thread_response["thread_id"]
+        
+        # Send message and stream response
+        final_response = ""
+        async for chunk in client.runs.stream(
+            thread_id=thread_id,
+            assistant_id=ORCHESTRATOR_ASSISTANT_ID,
+            input={"messages": [{"role": "user", "content": content}]},
+            stream_mode="values"
+        ):
+            if chunk.event == "values":
+                # Extract assistant message from last message in state
+                messages = chunk.data.get("messages", [])
+                if messages and hasattr(messages[-1], "type"):
+                    # LangChain message object
+                    if messages[-1].type == "ai":
+                        final_response = messages[-1].content
+                elif messages and isinstance(messages[-1], dict):
+                    # Dict format
+                    if messages[-1].get("type") == "ai":
+                        final_response = messages[-1].get("content", "")
+        
+        return final_response or "No response", thread_id
             
     except Exception as e:
         st.error(f"Failed to send message: {e}")
@@ -71,108 +85,134 @@ async def send_message_to_orchestrator(content: str, thread_id: str = None) -> t
         return f"Error: {str(e)}", thread_id
 
 
-async def get_conversation_messages(thread_id: str) -> list:
-    """Get conversation messages from Data Service"""
+async def get_thread_state(thread_id: str) -> dict:
+    """Get thread state from LangGraph - contains all data!"""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(f"{DATA_SERVICE_URL}/threads/{thread_id}/messages")
-            response.raise_for_status()
-            data = response.json()
-            return data.get("messages", [])
+        client = get_client(url=ORCHESTRATOR_URL)
+        state = await client.threads.get_state(thread_id=thread_id)
+        return state["values"] if state else {}
+    except Exception as e:
+        st.error(f"Failed to fetch thread state: {e}")
+        return {}
+
+
+async def get_conversation_messages(thread_id: str) -> list:
+    """Get conversation messages from thread state"""
+    try:
+        state = await get_thread_state(thread_id)
+        messages = state.get("messages", [])
+        
+        # Convert LangChain messages to dict format
+        result = []
+        for msg in messages:
+            if hasattr(msg, "type"):
+                # LangChain message object
+                role = "user" if msg.type == "human" else "assistant"
+                result.append({"role": role, "content": msg.content})
+            elif isinstance(msg, dict):
+                # Already dict format
+                msg_type = msg.get("type", "ai")
+                role = "user" if msg_type == "human" else "assistant"
+                result.append({"role": role, "content": msg.get("content", "")})
+        
+        return result
     except Exception as e:
         st.error(f"Failed to fetch messages: {e}")
-        if st.checkbox("Show debug info", key="debug_messages"):
-            st.code(traceback.format_exc())
         return []
 
 
 async def list_threads() -> list:
-    """List all conversation threads via Data Service."""
+    """List all conversation threads via LangGraph"""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(f"{DATA_SERVICE_URL}/threads")
-            response.raise_for_status()
-            data = response.json()
-            return data.get("threads", [])
+        client = get_client(url=ORCHESTRATOR_URL)
+        threads = await client.threads.search()
+        
+        # Convert to format expected by UI
+        return [
+            {
+                "thread_id": t["thread_id"],
+                "created_at": t.get("created_at"),
+                "updated_at": t.get("updated_at")
+            }
+            for t in threads
+        ]
     except Exception as e:
         st.error(f"Failed to list threads: {e}")
         return []
 
 
 async def get_eval_suites():
-    """Get all eval suites from Data Service"""
+    """Get all eval suites from all thread states"""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(f"{DATA_SERVICE_URL}/eval-suites")
-            response.raise_for_status()
-            data = response.json()
-            return data.get("suites", [])
+        # Get all threads
+        threads = await list_threads()
+        all_suites = []
+        
+        # Collect eval suites from each thread
+        for thread in threads:
+            state = await get_thread_state(thread["thread_id"])
+            suites = state.get("eval_suites", [])
+            all_suites.extend(suites)
+        
+        return all_suites
     except Exception as e:
         st.error(f"Failed to fetch eval suites: {e}")
-        if st.checkbox("Show debug info", key="debug_eval_suites"):
-            st.code(traceback.format_exc())
         return []
 
 
 async def get_test_results(suite_id: str):
-    """Get test results for a specific eval suite from Data Service"""
+    """Get test results for a specific eval suite from all threads"""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(f"{DATA_SERVICE_URL}/test-results", params={"suite_id": suite_id})
-            response.raise_for_status()
-            data = response.json()
-            return data.get("results", [])
+        # Get all threads
+        threads = await list_threads()
+        all_results = []
+        
+        # Collect test results from each thread
+        for thread in threads:
+            state = await get_thread_state(thread["thread_id"])
+            results = state.get("test_results", [])
+            # Filter by suite_id
+            suite_results = [r for r in results if r.get("suite_id") == suite_id]
+            all_results.extend(suite_results)
+        
+        return all_results
     except Exception as e:
         st.error(f"Failed to fetch test results: {e}")
-        if st.checkbox("Show debug info", key="debug_test_results"):
-            st.code(traceback.format_exc())
         return []
 
 
 async def get_thread_config(thread_id: str):
-    """Get target agent configuration for a specific thread"""
+    """Get target agent configuration from thread state"""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(f"{DATA_SERVICE_URL}/threads/{thread_id}/config")
-            response.raise_for_status()
-            data = response.json()
-            return data.get("config")
+        state = await get_thread_state(thread_id)
+        return state.get("target_config")
     except Exception as e:
         return None
 
 
 async def get_thread_expectations(thread_id: str):
-    """Get target agent expectations for a specific thread"""
+    """Get target agent expectations from thread state"""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(f"{DATA_SERVICE_URL}/threads/{thread_id}/expectations")
-            response.raise_for_status()
-            data = response.json()
-            return data.get("expectations")
+        state = await get_thread_state(thread_id)
+        return state.get("target_expectations")
     except Exception as e:
         return None
 
 
 async def get_thread_eval_suites(thread_id: str):
-    """Get evaluation suites linked to a specific thread"""
+    """Get evaluation suites from thread state"""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(f"{DATA_SERVICE_URL}/threads/{thread_id}/eval-suites")
-            response.raise_for_status()
-            data = response.json()
-            return data.get("suites", [])
+        state = await get_thread_state(thread_id)
+        return state.get("eval_suites", [])
     except Exception as e:
         return []
 
 
 async def get_thread_test_results(thread_id: str):
-    """Get test results for a specific thread"""
+    """Get test results from thread state"""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(f"{DATA_SERVICE_URL}/test-results", params={"thread_id": thread_id})
-            response.raise_for_status()
-            data = response.json()
-            return data.get("results", [])
+        state = await get_thread_state(thread_id)
+        return state.get("test_results", [])
     except Exception as e:
         return []
 

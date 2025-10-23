@@ -16,10 +16,6 @@ dependencies = [
   "streamlit>=1.50.0",
   "python-dotenv>=1.0.0",
   "pyyaml>=6.0.3",
-  "fastapi>=0.110.0",
-  "uvicorn[standard]>=0.27.0",
-  "peewee>=3.17.0",
-  "psycopg2-binary>=2.9.9",
 ]
 
 [build-system]
