@@ -39,19 +39,33 @@ class LangGraphMessenger:
                    base_url: str,
                    assistant_id: str,
                    content: str,
-                   remote_thread_id: Optional[str] = None) -> Tuple[str, str]:
-        """Send a message using SDK and return (assistant_text, remote_thread_id)."""
+                   remote_thread_id: Optional[str] = None,
+                   state_update: Optional[dict] = None) -> Tuple[str, str]:
+        """
+        Send a message using SDK and return (assistant_text, remote_thread_id).
+        
+        Args:
+            state_update: Optional dict with state fields to update on the remote agent.
+                         These will be merged into the remote agent's state directly.
+        """
         client = self._client(base_url)
         remote_tid = remote_thread_id or await self.ensure_remote_thread(user_thread_id, src_agent, dst_agent, base_url)
 
         final_text = ""
+        # Build input dict with messages and optional state updates
+        input_dict = {"messages": [{"role": "user", "content": content}]}
+        if state_update:
+            input_dict.update(state_update)
+            
+        stream_kwargs = {
+            "thread_id": remote_tid,
+            "assistant_id": assistant_id,
+            "input": input_dict,
+            "stream_mode": "values"
+        }
+            
         try:
-            async for chunk in client.runs.stream(
-                thread_id=remote_tid,
-                assistant_id=assistant_id,
-                input={"messages": [{"role": "user", "content": content}]},
-                stream_mode="values"
-            ):
+            async for chunk in client.runs.stream(**stream_kwargs):
                 if chunk.event == "values":
                     messages = chunk.data.get("messages", [])
                     if messages and messages[-1].get("type") == "ai":
@@ -61,12 +75,7 @@ class LangGraphMessenger:
         except Exception as e:
             logger.warning(f"Remote thread {remote_tid} failed, recreating: {e}")
             remote_tid = await self._create_remote_thread(base_url)
-            async for chunk in client.runs.stream(
-                thread_id=remote_tid,
-                assistant_id=assistant_id,
-                input={"messages": [{"role": "user", "content": content}]},
-                stream_mode="values"
-            ):
+            async for chunk in client.runs.stream(**stream_kwargs):
                 if chunk.event == "values":
                     messages = chunk.data.get("messages", [])
                     if messages and messages[-1].get("type") == "ai":

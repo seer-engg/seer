@@ -194,6 +194,8 @@ async def message_agent(to_agent: str, message: str, config: RunnableConfig, run
     """
     Generic proxy: send any message to a target agent (eval_agent, coding_agent)
     within the SAME user thread (persistent remote thread).
+    
+    If target_config exists in state, it will be passed as a state update to the target agent.
     """
     try:
         thread_id = config.get("configurable", {}).get("thread_id", "unknown")
@@ -204,10 +206,30 @@ async def message_agent(to_agent: str, message: str, config: RunnableConfig, run
         port = ports.get(to_agent)
         assert port is not None, f"Invalid agent name: {to_agent}"
         base_url = f"http://127.0.0.1:{port}"
+        
         # If targeting eval_agent, try to reuse stored remote thread id
         forced_remote_tid = None
         if to_agent == "eval_agent":
             forced_remote_tid = runtime.state.get("eval_agent_thread_id")
+
+        # Extract target_config from state and pass as state update
+        target_config_dict = runtime.state.get("target_config")
+        state_update = None
+        if target_config_dict:
+            # Map orchestrator's TargetAgentConfig to eval_agent's TargetConfigDTO format
+            # This will be merged into the eval_agent's state directly
+            target_dto = {
+                "url": target_config_dict.get("target_agent_url"),
+                "port": target_config_dict.get("target_agent_port"),
+                "assistant_id": target_config_dict.get("target_agent_assistant_id"),
+                "github_url": target_config_dict.get("target_agent_github_url"),
+            }
+            # For eval_agent, nest it in current_eval.target
+            state_update = {
+                "current_eval": {
+                    "target": target_dto
+                }
+            }
 
         text, remote_tid = await messenger.send(
             user_thread_id=thread_id,
@@ -217,6 +239,7 @@ async def message_agent(to_agent: str, message: str, config: RunnableConfig, run
             assistant_id=to_agent,
             content=message,
             remote_thread_id=forced_remote_tid,
+            state_update=state_update,
         )
         return json.dumps({"success": True, "response": text, "remote_thread_id": remote_tid})
     except Exception as e:
@@ -257,15 +280,6 @@ User: "Evaluate my agent at http://localhost:2024 (ID: deep_researcher). It shou
   4) Delegate to eval_agent
 </think_tool_example_1>
 
-<think_tool_example_2>
-User: "What tests were generated?"
-- Rules:
-  * If eval_agent already generated tests in this thread, we can fetch them
-- Required info:
-  * Thread ID must be consistent
-- Plan:
-  1) Call message_agent(to_agent="eval_agent", message="List tests from EVAL_CONTEXT as a numbered list of inputs only")
-  2) Return concise list
 
 CAPABILITIES:
 - Generate and run evaluation tests for AI agents
