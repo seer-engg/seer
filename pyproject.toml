@@ -23,19 +23,17 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-package-dir = { "seer" = "." }
 packages = [
-  "seer",
-  "seer.shared",
-  "seer.ui",
-  "seer.agents",
-  "seer.agents.eval_agent",
-  "seer.agents.orchestrator",
-  "seer.agents.coding_agent",
+  "shared",
+  "agents",
+  "agents.eval_agent",
+  "agents.orchestrator",
+  "agents.coding_agent",
+  "ui",
 ]
 
 [tool.setuptools.package-data]
-seer = ["**/*.json", "**/*.txt"]
+"*" = ["**/*.json", "**/*.txt"]
 
 [project.scripts]
-seer = "seer.run:cli"
+seer = "run:cli"

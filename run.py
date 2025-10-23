@@ -12,8 +12,8 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-from seer.shared.config import get_seer_config
-from seer.shared.logger import get_logger
+from shared.config import get_seer_config
+from shared.logger import get_logger
 
 load_dotenv()
 
@@ -236,7 +236,7 @@ class Launcher:
             # 3. Start Coding Agent (langgraph dev)
             logger.info("\n3️⃣  Coding Agent (LangGraph)")
             try:
-                from seer.shared.config import get_config as get_agent_config
+                from shared.config import get_config as get_agent_config
                 agent_config = get_agent_config()
                 coding_port = agent_config.get_agent_config("coding_agent").get("port", 8003)
             except Exception:

@@ -7,8 +7,8 @@ from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage
 from langchain_core.tools import tool
 from langchain.agents import create_agent
-from seer.shared.llm import get_llm
-from seer.shared.logger import get_logger
+from shared.llm import get_llm
+from shared.logger import get_logger
 
 logger = get_logger('coding_agent')
 

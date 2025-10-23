@@ -14,17 +14,17 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import dynamic_prompt, wrap_tool_call
 
 from langchain_core.runnables import RunnableConfig
-from seer.shared.schemas import AgentSpec, TestResult, Eval as EvalSchema, AgentExpectation, TargetConfig
-from seer.agents.eval_agent.prompts import (
+from shared.schemas import AgentSpec, TestResult, Eval as EvalSchema, AgentExpectation, TargetConfig
+from agents.eval_agent.prompts import (
     EVAL_AGENT_PROMPT,
     EVAL_AGENT_SPEC_PROMPT,
     EVAL_AGENT_TEST_GEN_PROMPT,
     EVAL_AGENT_JUDGE_PROMPT,
 )
-from seer.shared.llm import get_llm
-from seer.shared.logger import get_logger
-from seer.shared.messaging import messenger
-from seer.shared.error_handling import create_success_response, create_error_response
+from shared.llm import get_llm
+from shared.logger import get_logger
+from shared.messaging import messenger
+from shared.error_handling import create_success_response, create_error_response
 from urllib.parse import urlparse
 
 
