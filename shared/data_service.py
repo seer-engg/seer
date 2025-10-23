@@ -5,7 +5,6 @@ Provides simple REST APIs for data operations without LLM overhead
 
 import os
 import uuid
-import json
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -14,11 +13,10 @@ import uvicorn
 import traceback
 from datetime import datetime
 
+from seer.shared.config import get_config
 from seer.agents.orchestrator.data_manager import DataManager
 from seer.shared.config import get_seer_config
-from seer.shared.messaging import messenger
 from seer.shared.logger import get_logger
-import uuid as _uuid
 from langgraph_sdk import get_client
 
 # Get logger for data service
@@ -35,7 +33,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize data manager
 data_manager = DataManager()
 
 
@@ -237,50 +234,19 @@ async def store_test_results(request: StoreTestResultsRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Agent registry operations
-@app.get("/agents")
-async def get_registered_agents():
-    """Get all registered agents"""
-    try:
-        from seer.shared.database import get_db
-        db = get_db()
-        agents = db.get_subscribers()
-        return {
-            "success": True,
-            "agents": agents,
-            "count": len(agents)
-        }
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# Message proxy operations (UI → Agents)
 @app.post("/messages/send")
-async def send_message_to_agent(request: SendMessageRequest):
+async def talk_to_orchestrator(request: SendMessageRequest):
     """
-    Proxy endpoint: UI sends messages through this FastAPI backend
-    This ensures proper thread creation, message persistence, and data flow
+    Talk to Orchestrator via FastAPI backend
     """
     try:
         config = get_seer_config()
         
         # Get agent configuration
-        from seer.shared.config import get_config
         agent_config = get_config()
         
-        # Determine target agent port
-        if request.target_agent == "orchestrator":
-            target_port = config.orchestrator_port
-            graph_id = agent_config.get_graph_name("orchestrator")
-        elif request.target_agent == "eval_agent":
-            target_port = config.eval_agent_port
-            graph_id = agent_config.get_graph_name("eval_agent")
-        elif request.target_agent == "coding_agent":
-            target_port = config.coding_agent_port
-            graph_id = agent_config.get_graph_name("coding_agent")
-        else:
-            raise ValueError(f"Unknown target agent: {request.target_agent}")
+        target_port = config.orchestrator_port
+        graph_id = agent_config.get_graph_name("orchestrator")
         
         # 1. Get thread_id from request (None for new conversations)
         thread_id = request.thread_id
@@ -288,44 +254,30 @@ async def send_message_to_agent(request: SendMessageRequest):
         # For orchestrator: Use LangGraph Client SDK (proper thread management)
         final_response = ""
 
-        # 2. Send to target agent
-        if request.target_agent == "orchestrator":
-            # Use LangGraph Client SDK for UI → Orchestrator
-            client = get_client(url=f"http://127.0.0.1:{target_port}")
-            
-            # Create or get thread
-            if not thread_id:
-                # First message - create new thread
-                thread_response = await client.threads.create()
-                thread_id = thread_response["thread_id"]
-            
-            # Send message and stream response
-            final_response = ""
-            async for chunk in client.runs.stream(
-                thread_id=thread_id,
-                assistant_id=graph_id,
-                input={"messages": [{"role": "user", "content": request.content}]},
-                stream_mode="values"
-            ):
-                if chunk.event == "values":
-                    # Extract assistant message from last message in state
-                    messages = chunk.data.get("messages", [])
-                    # LangGraph messages use 'type' field: 'human' for user, 'ai' for assistant
-                    if messages and messages[-1].get("type") == "ai":
-                        final_response = messages[-1].get("content", "")
-        else:
-            # Direct SDK for eval/coding by graph_name; maintain per-user-thread remote threads internally
-            base_url = f"http://127.0.0.1:{target_port}"
-            text, _remote_tid = await messenger.send(
-                user_thread_id=thread_id or str(_uuid.uuid4()),
-                src_agent="ui",
-                dst_agent=graph_id,
-                base_url=base_url,
-                assistant_id=graph_id,
-                content=request.content
-            )
-            final_response = text or ""
+        # Use LangGraph Client SDK for UI → Orchestrator
+        client = get_client(url=f"http://127.0.0.1:{target_port}")
         
+        # Create or get thread
+        if not thread_id:
+            # First message - create new thread
+            thread_response = await client.threads.create()
+            thread_id = thread_response["thread_id"]
+        
+        # Send message and stream response
+        final_response = ""
+        async for chunk in client.runs.stream(
+            thread_id=thread_id,
+            assistant_id=graph_id,
+            input={"messages": [{"role": "user", "content": request.content}]},
+            stream_mode="values"
+        ):
+            if chunk.event == "values":
+                # Extract assistant message from last message in state
+                messages = chunk.data.get("messages", [])
+                # LangGraph messages use 'type' field: 'human' for user, 'ai' for assistant
+                if messages and messages[-1].get("type") == "ai":
+                    final_response = messages[-1].get("content", "")
+    
         # 3. NOW that we have the thread_id, persist messages to database
         if not thread_id:
             raise HTTPException(status_code=500, detail="No thread_id returned from agent")

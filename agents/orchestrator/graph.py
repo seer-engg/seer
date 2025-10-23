@@ -1,16 +1,16 @@
 import json
-import os
 from typing import Annotated
 from typing_extensions import TypedDict
-from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolNode
 from langgraph.graph.message import add_messages
-from langchain_core.messages import SystemMessage, BaseMessage
-from langchain_core.tools import tool
+from langchain_core.messages import BaseMessage, ToolMessage
+from langchain.tools import tool, ToolRuntime
+from langchain_core.tools import InjectedToolCallId
 from langchain_core.runnables import RunnableConfig
+from langchain.agents import create_agent
+from langgraph.types import Command
+
 from seer.shared.error_handling import create_error_response
 from seer.shared.messaging import messenger
-from seer.shared.config import get_config
 from seer.shared.llm import get_llm
 from seer.shared.logger import get_logger
 
@@ -21,14 +21,28 @@ from seer.agents.orchestrator.data_manager import DataManager
 logger = get_logger('orchestrator')
 
 
-class OrchestratorState(TypedDict):
+class OrchestratorState(TypedDict, total=False):
     messages: Annotated[list[BaseMessage], add_messages]
     thread_id: str  # Track current thread ID for data operations
+    eval_agent_thread_id: str  # Remote thread id for eval_agent (state-only)
 
 
 # Global data manager instance for tools
 _data_manager = DataManager()
 
+
+@tool
+def get_eval_thread_id(runtime: ToolRuntime) -> str:
+    """Get the persistent eval_agent remote thread id from orchestrator state."""
+    return runtime.state.get("eval_agent_thread_id", "") or ""
+
+@tool
+def set_eval_thread_id(thread_id: str, tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
+    """Set/update the eval_agent remote thread id in orchestrator state."""
+    return Command(update={
+        "eval_agent_thread_id": thread_id,
+        "messages": [ToolMessage(content=f"Set eval thread id to {thread_id}", tool_call_id=tool_call_id)]
+    })
 
 @tool
 def think(thought: str, config: RunnableConfig) -> str:
@@ -131,10 +145,9 @@ def check_delegation_readiness(config: RunnableConfig) -> str:
     except Exception as e:
         return create_error_response(f"Failed to check readiness: {str(e)}", e)
 
-
       
 @tool
-async def message_agent(to_agent: str, message: str, config: RunnableConfig) -> str:
+async def message_agent(to_agent: str, message: str, config: RunnableConfig, runtime: ToolRuntime) -> str:
     """
     Generic proxy: send any message to a target agent (eval_agent, coding_agent)
     within the SAME user thread (persistent remote thread).
@@ -142,23 +155,29 @@ async def message_agent(to_agent: str, message: str, config: RunnableConfig) -> 
     try:
         thread_id = config.get("configurable", {}).get("thread_id", "unknown")
         ports = {
-            "eval_agent": os.getenv("EVAL_AGENT_PORT", "8002"),
-            "coding_agent": os.getenv("CODING_AGENT_PORT", "8003"),
+            "eval_agent": 8002,
+            "coding_agent": 8003,
         }
-        base_url = f"http://127.0.0.1:{ports.get(to_agent, '8002')}"
-        text, _ = await messenger.send(
+        port = ports.get(to_agent)
+        assert port is not None, f"Invalid agent name: {to_agent}"
+        base_url = f"http://127.0.0.1:{port}"
+        # If targeting eval_agent, try to reuse stored remote thread id
+        forced_remote_tid = None
+        if to_agent == "eval_agent":
+            forced_remote_tid = runtime.state.get("eval_agent_thread_id")
+
+        text, remote_tid = await messenger.send(
             user_thread_id=thread_id,
             src_agent="orchestrator",
             dst_agent=to_agent,
             base_url=base_url,
             assistant_id=to_agent,
             content=message,
+            remote_thread_id=forced_remote_tid,
         )
-        return json.dumps({"success": True, "response": text})
+        return json.dumps({"success": True, "response": text, "remote_thread_id": remote_tid})
     except Exception as e:
         return create_error_response(f"Failed to message {to_agent}: {str(e)}", e)
-
-# removed message_coding_agent in favor of generic message_agent
 
 
 # Orchestrator Agent - Now conversational with routing capabilities
@@ -239,7 +258,8 @@ When a user wants to evaluate their agent, you MUST follow this sequence:
 
 5. **Initiate Evaluation** (FINAL STEP):
    - Once both expectations and config are saved, use `message_agent(to_agent="eval_agent", message="Generate tests for the above spec")`
-   - Inform user: "I'm now asking the evaluation agent to create tests!"
+   - If the response returns a `remote_thread_id`, immediately call `set_eval_thread_id(thread_id=...)` to persist it in state.
+   - For subsequent eval_agent calls (listing/running tests), always reuse the same eval thread by storing and passing it via state using `get_eval_thread_id` and `set_eval_thread_id`.
 
 IMPORTANT RULES:
 - NEVER skip collecting expectations and config
@@ -274,66 +294,25 @@ class OrchestratorAgent:
     def __init__(self):
         # Initialize modules
         self.data_manager = DataManager()
-        
-        # Seed registry from deployment-config
-        self._seed_registry_from_config()
-
-    def _seed_registry_from_config(self):
-        """Seed agent registry from deployment config"""
-        try:
-            cfg = get_config()
-            for name in cfg.list_agents():
-                info = cfg.get_agent_config(name)
-                port = info.get("port")
-                graph_name = info.get("graph_name")
-                if port and graph_name:
-                    # Store in DB + memory (use graph_name as stable identifier)
-                    self.data_manager.register_agent(name, port, graph_name, [])
-        except Exception:
-            pass
     
     def build_graph(self):
-        """Build the orchestrator graph with conversational pattern"""
-        llm = get_llm()
-        
-        # Bind tools to LLM
-        llm_with_tools = llm.bind_tools([
+        """Build the orchestrator agent using create_agent runtime"""
+        model = get_llm()
+        tools = [
             save_target_expectations,
             save_target_config,
             check_delegation_readiness,
             message_agent,
-            think
-        ])
-
-        def orchestrator_node(state: OrchestratorState):
-            """Main conversational orchestrator node"""
-            messages = [SystemMessage(content=ORCHESTRATOR_PROMPT)] + state["messages"]
-            response = llm_with_tools.invoke(messages)
-            return {"messages": [response]}
-
-        def should_continue(state: OrchestratorState):
-            """Check if we should continue to tools or end"""
-            last_message = state["messages"][-1]
-            if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-                return "tools"
-            return END
-
-        # Create graph
-        workflow = StateGraph(OrchestratorState)
-        workflow.add_node("orchestrator", orchestrator_node)
-        workflow.add_node("tools", ToolNode([
-            save_target_expectations,
-            save_target_config,
-            check_delegation_readiness,
-            message_agent,
-            think
-        ]))
-
-        workflow.set_entry_point("orchestrator")
-        workflow.add_conditional_edges("orchestrator", should_continue)
-        workflow.add_edge("tools", "orchestrator")
-
-        return workflow.compile()
+            think,
+            get_eval_thread_id,
+            set_eval_thread_id,
+        ]
+        return create_agent(
+            model=model,
+            tools=tools,
+            system_prompt=ORCHESTRATOR_PROMPT,
+            state_schema=OrchestratorState,
+        )
 
 # Create agent instance
 agent = OrchestratorAgent()

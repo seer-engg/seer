@@ -1,12 +1,13 @@
-"""Dummy Coding Agent for Seer - minimal LangGraph graph that just acknowledges requests."""
+"""Coding Agent for Seer - implemented via create_agent runtime."""
 
 from typing import Annotated, TypedDict, Optional
 import json
 
-from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from langchain_core.messages import BaseMessage
 from langchain_core.tools import tool
+from langchain.agents import create_agent
+from seer.shared.llm import get_llm
 from seer.shared.logger import get_logger
 
 logger = get_logger('coding_agent')
@@ -16,7 +17,6 @@ logger = get_logger('coding_agent')
 def think(thought: str) -> str:
     """
     Think tool for coding_agent: logs internal reflection; no side effects.
-    Present but not yet invoked by this dummy agent node.
     """
     logger.info(f"THINK: {thought}")
     return json.dumps({"success": True, "thought": thought})
@@ -26,38 +26,16 @@ class CodingAgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
 
-def respond_node(state: CodingAgentState):
-    last_human: Optional[HumanMessage] = None
-    for m in reversed(state["messages"]):
-        if isinstance(m, HumanMessage):
-            last_human = m
-            break
-
-    repo_url = None
-    repo_id = None
-    if last_human and isinstance(last_human.content, str):
-        try:
-            data = json.loads(last_human.content)
-            if isinstance(data, dict):
-                repo_url = data.get("repo_url")
-                repo_id = data.get("repo_id")
-        except Exception:
-            # Ignore non-JSON inputs; this dummy agent just acknowledges
-            pass
-
-    text = "Coding agent (dummy): received request. "
-    if repo_url or repo_id:
-        text += f"repo_url={repo_url or 'N/A'}, repo_id={repo_id or 'N/A'}. "
-    text += "Returning placeholder response for end-to-end testing."
-    return {"messages": [AIMessage(content=text)]}
+SYSTEM_PROMPT = (
+    "You are the Coding Agent. Acknowledge requests briefly and, when given a JSON payload, "
+    "echo any repo_url and repo_id you find. Keep responses concise."
+)
 
 
 def build_graph():
-    workflow = StateGraph(CodingAgentState)
-    workflow.add_node("respond", respond_node)
-    workflow.set_entry_point("respond")
-    workflow.add_edge("respond", END)
-    return workflow.compile()
+    model = get_llm(temperature=0.2)
+    tools = [think]
+    return create_agent(model=model, tools=tools, system_prompt=SYSTEM_PROMPT)
 
 
 graph = build_graph()
