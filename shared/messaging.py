@@ -6,7 +6,7 @@ from typing import Tuple, Optional
 
 from langgraph_sdk import get_client
 
-from seer.shared.logger import get_logger
+from shared.logger import get_logger
 
 
 logger = get_logger('messaging')

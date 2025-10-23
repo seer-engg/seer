@@ -9,11 +9,11 @@ from langchain_core.runnables import RunnableConfig
 from langchain.agents import create_agent
 from langgraph.types import Command
 
-from seer.shared.error_handling import create_error_response
-from seer.shared.messaging import messenger
-from seer.shared.llm import get_llm
-from seer.shared.logger import get_logger
-from seer.shared.state_models import (
+from shared.error_handling import create_error_response
+from shared.messaging import messenger
+from shared.llm import get_llm
+from shared.logger import get_logger
+from shared.state_models import (
     EvalSuite,
     TestResult,
     TargetAgentExpectation,
