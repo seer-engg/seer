@@ -16,6 +16,9 @@ dependencies = [
   "streamlit>=1.50.0",
   "python-dotenv>=1.0.0",
   "pyyaml>=6.0.3",
+
+  "e2b==2.4.0",
+  "e2b-code-interpreter==2.2.0"
 ]
 
 [build-system]
