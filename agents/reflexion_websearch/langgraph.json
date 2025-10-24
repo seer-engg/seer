@@ -1,0 +1,8 @@
+{
+    "dependencies": ["../.."],
+    "graphs": {
+      "reflexion_websearch": "./graph.py:_agent"
+    },
+    "env": "../../.env"
+  }
+  
