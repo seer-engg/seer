@@ -65,7 +65,7 @@ def reflection_node(state: ReflexionState, config: RunnableConfig) -> dict:
     actor_response = ""
     
     # Get the last human message (user query)
-    for msg in reversed(state.trajectory):
+    for msg in reversed(state.messages):
         if isinstance(msg, HumanMessage) or (hasattr(msg, 'type') and msg.type == 'human'):
             user_message = msg.content if hasattr(msg, 'content') else str(msg)
             break

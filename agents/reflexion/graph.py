@@ -5,7 +5,7 @@ from langchain_core.runnables import RunnableConfig
 
 # E2B Code Interpreter for sandbox execution
 from shared.logger import get_logger
-from agents.reflexion.models import ReflexionState, InputState, OutputState
+from agents.reflexion.models import ReflexionState, IOState
 from agents.reflexion.nodes.actor import actor_node
 from agents.reflexion.nodes.evaluator import evaluator_node
 from agents.reflexion.nodes.reflection import reflection_node
@@ -62,7 +62,7 @@ def build_graph():
                                     └─> if failed and attempts < max: reflection -> actor (loop)
     """
     # Create state graph
-    workflow = StateGraph(ReflexionState, input=InputState, output=OutputState)
+    workflow = StateGraph(ReflexionState, input=IOState, output=IOState)
     
     # Add nodes
     workflow.add_node("actor", actor_node)
