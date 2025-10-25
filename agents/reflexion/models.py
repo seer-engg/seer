@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
-from typing import Annotated, TypedDict
-from langchain_core.messages import BaseMessage
+from typing import Annotated
+from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 
 # Pydantic models for structured outputs
@@ -21,20 +21,23 @@ class Reflection(BaseModel):
     examples: list[str] = Field(default_factory=list, description="Concrete examples if helpful")
 
 
-class ReflexionState(TypedDict, total=False):
-    """State for the reflexion agent graph"""
-    messages: Annotated[list[BaseMessage], add_messages]
-    
+
+class InputState(BaseModel):
+    messages: Annotated[list[AnyMessage], add_messages]
+
+class OutputState(BaseModel):
     # Current attempt tracking
-    current_attempt: int
-    max_attempts: int
+    current_attempt: int = Field(default=0, description="Current attempt number")
+    max_attempts: int = Field(default=3, description="Maximum number of attempts to act with the environment")
     
     # Evaluator's verdict
-    evaluator_verdict: Verdict | None
+    evaluator_verdict: Verdict = Field(default=Verdict(passed=False, score=0.0, reasoning="", issues=[]), description="Evaluator's verdict on the Actor's response")
     
     # Final result status
-    success: bool
+    success: bool = Field(default=False, description="Whether the response passed evaluation")
     
     # Memory store key for this conversation (e.g., user_id or domain)
-    memory_key: str
+    memory_key: str = Field(default="", description="Memory store key for this conversation")
 
+class ReflexionState(InputState, OutputState):
+    pass

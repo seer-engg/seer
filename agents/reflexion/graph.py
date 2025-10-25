@@ -15,7 +15,7 @@ from langchain_core.tools import InjectedToolCallId
 # E2B Code Interpreter for sandbox execution
 from shared.llm import get_llm
 from shared.logger import get_logger
-from agents.reflexion.models import ReflexionState
+from agents.reflexion.models import ReflexionState, InputState, OutputState
 from agents.reflexion.nodes.actor import actor_node
 from agents.reflexion.nodes.evaluator import evaluator_node
 from agents.reflexion.nodes.reflection import reflection_node
@@ -31,20 +31,15 @@ def finalize_node(state: ReflexionState, config: RunnableConfig) -> dict:
     Finalize the result - either success or max attempts reached.
     No additional messages added - user sees natural conversation with actor only.
     """
-    current_attempt = state.get("current_attempt", 1)
-    max_attempts = state.get("max_attempts", 3)
-    verdict_dict = state.get("evaluator_verdict", {})
-    passed = verdict_dict.get("passed", False)
-    
-    if passed:
-        logger.info(f"✅ Success! Response passed evaluation on attempt {current_attempt}/{max_attempts}")
+    if state.evaluator_verdict.passed:
+        logger.info(f"✅ Success! Response passed evaluation on attempt {state.current_attempt}/{state.max_attempts}")
     else:
-        logger.info(f"⚠️ Max attempts ({max_attempts}) reached. Final Score: {verdict_dict.get('score', 0.0)}")
+        logger.info(f"⚠️ Max attempts ({state.max_attempts}) reached. Final Score: {state.evaluator_verdict.get('score', 0.0)}")
     
     # Just return success flag - no additional messages
     # User only sees the natural conversation with actor
     return {
-        "success": passed
+        "success": state.evaluator_verdict.passed
     }
 
 
@@ -58,20 +53,17 @@ def should_continue(state: ReflexionState) -> Literal["reflect", "finalize"]:
     - If max attempts reached -> finalize
     - Otherwise -> reflect and try again
     """
-    verdict_dict = state.get("evaluator_verdict", {})
-    passed = verdict_dict.get("passed", False)
-    current_attempt = state.get("current_attempt", 1)
-    max_attempts = state.get("max_attempts", 3)
+    passed = state.evaluator_verdict.passed
     
     if passed:
         logger.info("Routing to finalize - evaluation passed")
         return "finalize"
     
-    if current_attempt >= max_attempts:
-        logger.info(f"Routing to finalize - max attempts ({max_attempts}) reached")
+    if state.current_attempt >= state.max_attempts:
+        logger.info(f"Routing to finalize - max attempts ({state.max_attempts}) reached")
         return "finalize"
     
-    logger.info(f"Routing to reflect - attempt {current_attempt}/{max_attempts}, continuing loop")
+    logger.info(f"Routing to reflect - attempt {state.current_attempt}/{state.max_attempts}, continuing loop")
     return "reflect"
 
 
@@ -87,7 +79,7 @@ def build_graph():
                                     └─> if failed and attempts < max: reflection -> actor (loop)
     """
     # Create state graph
-    workflow = StateGraph(ReflexionState)
+    workflow = StateGraph(ReflexionState, input=InputState, output=OutputState)
     
     # Add nodes
     workflow.add_node("actor", actor_node)

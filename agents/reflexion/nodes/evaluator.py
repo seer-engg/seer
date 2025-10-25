@@ -1,7 +1,5 @@
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
-from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages
 from agents.reflexion.models import ReflexionState, Verdict
 from shared.logger import get_logger
 from shared.llm import get_llm
@@ -240,9 +238,6 @@ async def evaluator_node(state: ReflexionState, config: RunnableConfig) -> dict:
     3. Runs multiple tests using the same sandbox
     4. Kills sandbox at the end
     """
-    current_attempt = state.get("current_attempt", 1)
-    messages = state.get("messages", [])
-    
     logger.info("Evaluator node - Agent starting evaluation")
     
     # Extract user query and actor response from message history
@@ -250,13 +245,13 @@ async def evaluator_node(state: ReflexionState, config: RunnableConfig) -> dict:
     actor_response = ""
     
     # Get the last human message (user query)
-    for msg in reversed(messages):
+    for msg in reversed(state.messages):
         if isinstance(msg, HumanMessage) or (hasattr(msg, 'type') and msg.type == 'human'):
             user_message = msg.content if hasattr(msg, 'content') else str(msg)
             break
     
     # Get the last AI message (actor response)
-    for msg in reversed(messages):
+    for msg in reversed(state.messages):
         if isinstance(msg, AIMessage) or (hasattr(msg, 'type') and msg.type == 'ai'):
             actor_response = msg.content if hasattr(msg, 'content') else str(msg)
             break

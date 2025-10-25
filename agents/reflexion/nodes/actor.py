@@ -1,7 +1,5 @@
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
-from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages
 from agents.reflexion.models import ReflexionState
 from shared.logger import get_logger
 from shared.llm import get_llm
@@ -44,16 +42,11 @@ def actor_node(state: ReflexionState, config: RunnableConfig) -> dict:
     Actor generates a response to the user's message.
     Uses reflection memory from persistent store to improve responses.
     """
-    current_attempt = state.get("current_attempt", 1)
-    max_attempts = state.get("max_attempts", 3)
-    memory_key = state.get("memory_key", "default")
-    messages = state.get("messages", [])
-    
-    logger.info(f"Actor node - Attempt {current_attempt}/{max_attempts}")
+    logger.info(f"Actor node - Attempt {state.current_attempt}/{state.max_attempts}")
     
     # Extract user's latest message from message history
     user_message = ""
-    for msg in reversed(messages):
+    for msg in reversed(state.messages):
         if isinstance(msg, HumanMessage) or (hasattr(msg, 'type') and msg.type == 'human'):
             user_message = msg.content if hasattr(msg, 'content') else str(msg)
             break
@@ -66,7 +59,7 @@ def actor_node(state: ReflexionState, config: RunnableConfig) -> dict:
     try:
         store = config.get("configurable", {}).get("store")
         if store:
-            items = list(store.search(MEMORY_NAMESPACE, filter={"memory_key": memory_key}))
+            items = list(store.search(MEMORY_NAMESPACE, filter={"memory_key": state.memory_key}))
             reflection_memory = [item.value for item in items if item.value]
             logger.info(f"Retrieved {len(reflection_memory)} reflections from persistent memory")
         else:
