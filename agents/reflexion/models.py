@@ -37,5 +37,6 @@ class OutputState(BaseModel):
     # Memory store key for this conversation (e.g., user_id or domain)
     memory_key: str = Field(default="user_1234567890", description="Memory store key for this conversation")
 
+    
 class ReflexionState(InputState, OutputState):
     pass

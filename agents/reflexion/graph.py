@@ -19,11 +19,6 @@ def finalize_node(state: ReflexionState, config: RunnableConfig) -> dict:
     Finalize the result - either success or max attempts reached.
     No additional messages added - user sees natural conversation with actor only.
     """
-    if state.evaluator_verdict.passed:
-        logger.info(f"✅ Success! Response passed evaluation on attempt {state.current_attempt}/{state.max_attempts}")
-    else:
-        logger.info(f"⚠️ Max attempts ({state.max_attempts}) reached. Final Score: {state.evaluator_verdict.get('score', 0.0)}")
-    
     # Just return success flag - no additional messages
     # User only sees the natural conversation with actor
     return {

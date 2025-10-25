@@ -87,7 +87,7 @@ def pinecone_add_memory(
     try:
         index = _get_or_create_index()
         # Generate unique ID for this reflection
-        memory_id = f"reflection_{uuid.uuid4().hex}_{int(datetime.now().timestamp())}"
+        memory_id = str(uuid.uuid4())
         
         # Generate embedding for the reflection text
         embeddings = _get_embeddings()

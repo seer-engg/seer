@@ -59,3 +59,5 @@ generated_evals/
 data/*
 data/seer.db
 *.db
+
+notebooks/
