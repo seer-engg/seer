@@ -15,10 +15,8 @@ class Verdict(BaseModel):
 
 class Reflection(BaseModel):
     """Reflection agent's feedback for improvement"""
-    key_issues: list[str] = Field(description="Main problems identified")
-    suggestions: list[str] = Field(description="Specific, actionable improvements")
-    focus_areas: list[str] = Field(description="What to prioritize in next attempt")
-    examples: list[str] = Field(default_factory=list, description="Concrete examples if helpful")
+    coding_context: str = Field(description="Context of the coding task that failed the evaluation and this reflection is applicable for", example="Python code for merging intervals")
+    reflection: str = Field(description="Key reflection points to be considered to avoid the issues in the future")
 
 
 
@@ -28,7 +26,7 @@ class InputState(BaseModel):
 class OutputState(BaseModel):
     # Current attempt tracking
     current_attempt: int = Field(default=0, description="Current attempt number")
-    max_attempts: int = Field(default=3, description="Maximum number of attempts to act with the environment")
+    max_attempts: int = Field(default=2, description="Maximum number of attempts to act with the environment")
     
     # Evaluator's verdict
     evaluator_verdict: Verdict = Field(default=Verdict(passed=False, score=0.0, reasoning="", issues=[]), description="Evaluator's verdict on the Actor's response")
@@ -39,5 +37,7 @@ class OutputState(BaseModel):
     # Memory store key for this conversation (e.g., user_id or domain)
     memory_key: str = Field(default="user_1234567890", description="Memory store key for this conversation")
 
+
 class ReflexionState(InputState, OutputState):
+    trajectory: list[AnyMessage] = []
     pass
