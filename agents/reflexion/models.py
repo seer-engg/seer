@@ -15,7 +15,7 @@ class Verdict(BaseModel):
 
 class Reflection(BaseModel):
     """Reflection agent's feedback for improvement"""
-    coding_context: str = Field(description="Context of the coding task that failed the evaluation and this reflection is applicable for")
+    coding_context: str = Field(description="Context of the coding task that failed the evaluation and this reflection is applicable for", example="Python code for merging intervals")
     reflection: str = Field(description="Key reflection points to be considered to avoid the issues in the future")
 
 
@@ -37,6 +37,7 @@ class OutputState(BaseModel):
     # Memory store key for this conversation (e.g., user_id or domain)
     memory_key: str = Field(default="user_1234567890", description="Memory store key for this conversation")
 
-    
+
 class ReflexionState(InputState, OutputState):
+    trajectory: list[AnyMessage] = []
     pass

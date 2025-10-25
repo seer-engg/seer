@@ -22,7 +22,7 @@ def finalize_node(state: ReflexionState, config: RunnableConfig) -> dict:
     # Just return success flag - no additional messages
     # User only sees the natural conversation with actor
     return {
-        "success": state.evaluator_verdict.passed
+        "messages": state.trajectory
     }
 
 

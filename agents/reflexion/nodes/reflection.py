@@ -45,7 +45,7 @@ FEEDBACK GUIDELINES:
 
 YOUR FEEDBACK FORMAT:
 Return a  Reflection with following key information:
-- coding_context : context of the coding task that failed the evaluation and this reflection is applicable for
+- coding_context : description of the coding task that failed the evaluation and this reflection is applicable for, Only include the discription of the coding task, not errors or issues or feedback or anything else.
 - reflection : key reflection points to be considered to avoid the issues in the future
 
 Your feedback will be stored in the Actor's memory and help improve ALL future code!

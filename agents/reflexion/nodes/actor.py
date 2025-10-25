@@ -6,6 +6,7 @@ from shared.logger import get_logger
 from shared.llm import get_llm
 from agents.reflexion.pinecone_client import pinecone_search_memories
 from langchain.agents import create_agent
+from shared.tools import think
 
 logger = get_logger('reflexion_agent')
 
@@ -36,6 +37,7 @@ CODE QUALITY STANDARDS:
 
 AVAILABLE TOOLS:
 1. **get_reflection_memory(code_context)**: Get relevant reflection memories for the given code context
+2. **think(thought)**: Think about something, log your thoughts, Use this to plan and think about problems.
 
 #note : always use the tools to get the reflection memories that are relevant to the code context before writing the code
 
@@ -64,7 +66,7 @@ def actor_node(state: ReflexionState, config: RunnableConfig) -> dict:
 
     actor_agent = create_agent(
         model=get_llm(temperature=0),
-        tools=[get_reflection_memory],
+        tools=[get_reflection_memory, think],
         system_prompt=ACTOR_PROMPT,
     )
 
@@ -72,5 +74,5 @@ def actor_node(state: ReflexionState, config: RunnableConfig) -> dict:
     logger.info(f"Actor generated response: {actor_result.keys()}")
     
     return {
-        "messages": actor_result.get('messages', [])
+        "trajectory": actor_result.get('messages', [])
     }
