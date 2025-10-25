@@ -8,9 +8,6 @@ from agents.reflexion.mem0_client import mem0_search_memories
 
 logger = get_logger('reflexion_agent')
 
-MEMORY_NAMESPACE = ("reflexion", "feedback")
-
-
 ACTOR_PROMPT = """You are a Coding Agent in a reflexion system - an expert software engineer who writes high-quality, production-ready code.
 
 YOUR ROLE:

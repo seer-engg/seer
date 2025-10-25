@@ -8,8 +8,6 @@ from agents.reflexion.mem0_client import mem0_add_memory
 
 logger = get_logger('reflexion_agent')
 
-MEMORY_NAMESPACE = ("reflexion", "feedback")
-
 
 REFLECTION_PROMPT = """You are a Coding Reflection Agent in a reflexion system - a senior software architect who provides expert guidance on code improvements and best practices.
 
