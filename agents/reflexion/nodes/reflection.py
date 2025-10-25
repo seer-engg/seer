@@ -65,13 +65,13 @@ def reflection_node(state: ReflexionState, config: RunnableConfig) -> dict:
     actor_response = ""
     
     # Get the last human message (user query)
-    for msg in reversed(state.messages):
+    for msg in reversed(state.trajectory):
         if isinstance(msg, HumanMessage) or (hasattr(msg, 'type') and msg.type == 'human'):
             user_message = msg.content if hasattr(msg, 'content') else str(msg)
             break
     
     # Get the last AI message (actor response)
-    for msg in reversed(state.messages):
+    for msg in reversed(state.trajectory):
         if isinstance(msg, AIMessage) or (hasattr(msg, 'type') and msg.type == 'ai'):
             actor_response = msg.content if hasattr(msg, 'content') else str(msg)
             break
