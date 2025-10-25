@@ -20,11 +20,14 @@ class Reflection(BaseModel):
 
 
 
-class InputState(BaseModel):
+class IOState(BaseModel):
     messages: Annotated[list[AnyMessage], add_messages]
 
-class OutputState(BaseModel):
     # Current attempt tracking
+
+
+class ReflexionState(IOState):
+    trajectory: list[AnyMessage] = []
     current_attempt: int = Field(default=0, description="Current attempt number")
     max_attempts: int = Field(default=2, description="Maximum number of attempts to act with the environment")
     
@@ -36,8 +39,4 @@ class OutputState(BaseModel):
     
     # Memory store key for this conversation (e.g., user_id or domain)
     memory_key: str = Field(default="user_1234567890", description="Memory store key for this conversation")
-
-
-class ReflexionState(InputState, OutputState):
-    trajectory: list[AnyMessage] = []
     pass

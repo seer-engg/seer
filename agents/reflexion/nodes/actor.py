@@ -7,6 +7,7 @@ from shared.llm import get_llm
 from agents.reflexion.pinecone_client import pinecone_search_memories
 from langchain.agents import create_agent
 from shared.tools import think
+from langchain.agents.middleware import ToolCallLimitMiddleware
 
 logger = get_logger('reflexion_agent')
 
@@ -37,9 +38,9 @@ CODE QUALITY STANDARDS:
 
 AVAILABLE TOOLS:
 1. **get_reflection_memory(code_context)**: Get relevant reflection memories for the given code context
-2. **think(thought)**: Think about something, log your thoughts, Use this to plan and think about problems.
 
-#note : always use the tools to get the reflection memories that are relevant to the code context before writing the code
+#note 
+ - always use the get_reflection_memory tool  first to get the reflection memories that are relevant to the code context before writing the code
 
 """
 
@@ -63,11 +64,22 @@ def actor_node(state: ReflexionState, config: RunnableConfig) -> dict:
             reflection_memory.append(item.get('metadata', {}).get('reflection', ''))
         return reflection_memory
 
+    # Limit specific tool
+    # thinking_limiter = ToolCallLimitMiddleware(
+    #     tool_name="think",
+    #     thread_limit=1,
+    #     run_limit=2,
+    #     exit_behavior='end'
+    # )
+
 
     actor_agent = create_agent(
         model=get_llm(temperature=0),
-        tools=[get_reflection_memory, think],
+        tools=[get_reflection_memory, 
+        # think
+        ],
         system_prompt=ACTOR_PROMPT,
+        # middleware=[thinking_limiter],
     )
 
     actor_result = actor_agent.invoke({"messages": state.messages})

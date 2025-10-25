@@ -124,7 +124,7 @@ def create_execute_code_tool(sandbox: Sandbox):
             execution = sandbox.run_code(code)
             
             if execution.error:
-                logger.error(f"Code execution error: {execution.error}")
+                logger.warning(f"Code execution error: {execution.error}")
                 return json.dumps({
                     "success": False,
                     "error": str(execution.error),
@@ -245,7 +245,7 @@ async def evaluator_node(state: ReflexionState, config: RunnableConfig) -> dict:
     actor_response = ""
     
     # Get the last human message (user query)
-    for msg in reversed(state.trajectory):
+    for msg in reversed(state.messages):
         if isinstance(msg, HumanMessage) or (hasattr(msg, 'type') and msg.type == 'human'):
             user_message = msg.content if hasattr(msg, 'content') else str(msg)
             break
@@ -258,6 +258,10 @@ async def evaluator_node(state: ReflexionState, config: RunnableConfig) -> dict:
     
     if not user_message or not actor_response:
         logger.warning("Missing user message or actor response in history")
+        if not user_message:
+            logger.warning("Missing user message in history")
+        if not actor_response:
+            logger.warning("Missing actor response in history")
         # Return failed verdict if we can't evaluate
         return {
             "evaluator_verdict": Verdict(
