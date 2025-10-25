@@ -37,7 +37,7 @@ class OutputState(BaseModel):
     success: bool = Field(default=False, description="Whether the response passed evaluation")
     
     # Memory store key for this conversation (e.g., user_id or domain)
-    memory_key: str = Field(default="", description="Memory store key for this conversation")
+    memory_key: str = Field(default="user_1234567890", description="Memory store key for this conversation")
 
 class ReflexionState(InputState, OutputState):
     pass

@@ -1,8 +1,10 @@
+import traceback
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from agents.reflexion.models import ReflexionState, Reflection
 from shared.logger import get_logger
 from shared.llm import get_llm
+from agents.reflexion.mem0_client import mem0_add_memory
 
 logger = get_logger('reflexion_agent')
 
@@ -76,11 +78,6 @@ def reflection_node(state: ReflexionState, config: RunnableConfig) -> dict:
     Reflection agent provides feedback when evaluation fails.
     Stores actionable suggestions in persistent memory for the Actor.
     """
-    current_attempt = state.get("current_attempt", 1)
-    memory_key = state.get("memory_key", "default")
-    messages = state.get("messages", [])
-    verdict_dict = state.get("evaluator_verdict", {})
-    
     logger.info("Reflection node - Generating feedback")
     
     # Extract user query and actor response from message history
@@ -88,13 +85,13 @@ def reflection_node(state: ReflexionState, config: RunnableConfig) -> dict:
     actor_response = ""
     
     # Get the last human message (user query)
-    for msg in reversed(messages):
+    for msg in reversed(state.messages):
         if isinstance(msg, HumanMessage) or (hasattr(msg, 'type') and msg.type == 'human'):
             user_message = msg.content if hasattr(msg, 'content') else str(msg)
             break
     
     # Get the last AI message (actor response)
-    for msg in reversed(messages):
+    for msg in reversed(state.messages):
         if isinstance(msg, AIMessage) or (hasattr(msg, 'type') and msg.type == 'ai'):
             actor_response = msg.content if hasattr(msg, 'content') else str(msg)
             break
@@ -108,10 +105,10 @@ Actor's Response:
 {actor_response}
 
 Evaluator's Verdict:
-- Passed: {verdict_dict.get('passed', False)}
-- Score: {verdict_dict.get('score', 0.0)}
-- Reasoning: {verdict_dict.get('reasoning', '')}
-- Issues: {', '.join(verdict_dict.get('issues', []))}
+- Passed: {state.evaluator_verdict.passed}
+- Score: {state.evaluator_verdict.score}
+- Reasoning: {state.evaluator_verdict.reasoning}
+- Issues: {', '.join(state.evaluator_verdict.issues)}
 
 Analyze why the response failed and provide constructive feedback to help the Actor improve.
 Focus on specific, actionable suggestions for the next attempt.
@@ -128,33 +125,35 @@ Focus on specific, actionable suggestions for the next attempt.
     
     logger.info(f"Reflection generated - {len(reflection.key_issues)} issues, {len(reflection.suggestions)} suggestions")
     
-    # Store reflection in persistent memory
+    # Store reflection in Mem0 as a memory for this user (memory_key)
     try:
-        store = config.get("configurable", {}).get("store")
-        if store:
-            import time
-            reflection_id = f"{memory_key}_{int(time.time() * 1000)}"
-            reflection_data = reflection.model_dump()
-            reflection_data["memory_key"] = memory_key
-            reflection_data["attempt"] = current_attempt
-            
-            store.put(
-                MEMORY_NAMESPACE,
-                reflection_id,
-                reflection_data
-            )
-            logger.info(f"Stored reflection in persistent memory: {reflection_id}")
-        else:
-            logger.warning("No store available, reflection not persisted")
+        user_id = state.memory_key
+        # Represent reflection as assistant message text for semantic recall
+        reflection_text_parts = []
+        if reflection.key_issues:
+            reflection_text_parts.append("Key Issues: " + ", ".join(reflection.key_issues))
+        if reflection.suggestions:
+            reflection_text_parts.append("Suggestions: " + ", ".join(reflection.suggestions))
+        if reflection.focus_areas:
+            reflection_text_parts.append("Focus Areas: " + ", ".join(reflection.focus_areas))
+        if reflection.examples:
+            reflection_text_parts.append("Examples: " + "; ".join(reflection.examples))
+        reflection_text = "\n".join(reflection_text_parts) or "Reflection feedback"
+
+        messages_payload = [
+            {"role": "user", "content": user_message},
+            {"role": "assistant", "content": reflection_text},
+        ]
+
+        mem0_add_memory(messages=messages_payload, user_id=user_id)
+        logger.info("Stored reflection in Mem0 successfully")
     except Exception as e:
-        logger.error(f"Failed to store reflection: {e}")
-    
-    # Increment attempt counter
-    new_attempt = current_attempt + 1
+        logger.error(traceback.format_exc())
+        logger.error(f"Failed to store reflection in Mem0: {e}")
     
     # Don't add reflection to message history - it's stored in persistent memory
     # User only sees actor's responses, not internal reflections
     return {
-        "current_attempt": new_attempt
+        "current_attempt": state.current_attempt + 1
     }
 

@@ -1,8 +1,10 @@
+import traceback
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from agents.reflexion.models import ReflexionState
 from shared.logger import get_logger
 from shared.llm import get_llm
+from agents.reflexion.mem0_client import mem0_search_memories
 
 logger = get_logger('reflexion_agent')
 
@@ -55,33 +57,38 @@ def actor_node(state: ReflexionState, config: RunnableConfig) -> dict:
         logger.warning("No user message found in history")
         user_message = "Please provide a response."
     
-    # Retrieve reflection memory from persistent store
+    # Retrieve reflection memory from Mem0 using semantic search
     try:
-        store = config.get("configurable", {}).get("store")
-        if store:
-            items = list(store.search(MEMORY_NAMESPACE, filter={"memory_key": state.memory_key}))
-            reflection_memory = [item.value for item in items if item.value]
-            logger.info(f"Retrieved {len(reflection_memory)} reflections from persistent memory")
-        else:
-            reflection_memory = []
-            logger.warning("No store available in config")
+        # Use user message as the semantic query to recall relevant reflections
+        mem_results = mem0_search_memories(query=user_message, user_id=state.memory_key)
+        reflection_memory = []
+        for item in mem_results:
+            # Normalize to text
+            text = None
+            if isinstance(item, dict):
+                # common fields observed from mem0
+                text = item.get('content') or item.get('memory') or item.get('text')
+                if text is None:
+                    # sometimes nested under 'data' or similar
+                    data = item.get('data')
+                    if isinstance(data, dict):
+                        text = data.get('content') or data.get('text')
+            if not text:
+                text = str(item)
+            reflection_memory.append(text)
+        logger.info(f"Retrieved {len(reflection_memory)} reflections from Mem0 for user_id={state.memory_key}")
     except Exception as e:
-        logger.error(f"Error retrieving memory: {e}")
+        logger.error(f"Error retrieving memory from Mem0: {e}")
+        logger.error(traceback.format_exc())
         reflection_memory = []
     
     # Build memory context from reflection feedback
     memory_context = ""
     if reflection_memory:
         memory_context = "\n\n=== MEMORY_CONTEXT (Reflection Feedback from Previous Interactions) ===\n"
-        for idx, reflection in enumerate(reflection_memory, 1):
+        for idx, reflection_text in enumerate(reflection_memory, 1):
             memory_context += f"\n--- Reflection {idx} ---\n"
-            if isinstance(reflection, dict):
-                memory_context += f"Key Issues: {', '.join(reflection.get('key_issues', []))}\n"
-                memory_context += f"Suggestions: {', '.join(reflection.get('suggestions', []))}\n"
-                memory_context += f"Focus Areas: {', '.join(reflection.get('focus_areas', []))}\n"
-                examples = reflection.get('examples', [])
-                if examples:
-                    memory_context += f"Examples: {', '.join(examples)}\n"
+            memory_context += f"{reflection_text}\n"
         memory_context += "\n=== END MEMORY_CONTEXT ===\n"
     
     # Build prompt with memory
