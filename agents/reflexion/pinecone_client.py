@@ -67,8 +67,8 @@ def _get_or_create_index():
 
 def pinecone_add_memory(
     context: str,
-    user_id: Optional[str] = None, 
-    timeout: int = 30
+    user_id: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Add reflection memory to Pinecone.
@@ -86,23 +86,18 @@ def pinecone_add_memory(
     
     try:
         index = _get_or_create_index()
-        reflection_text = context
         # Generate unique ID for this reflection
         memory_id = f"reflection_{uuid.uuid4().hex}_{int(datetime.now().timestamp())}"
         
         # Generate embedding for the reflection text
         embeddings = _get_embeddings()
-        embedding_vector = embeddings.embed_query(reflection_text)
+        embedding_vector = embeddings.embed_query(context)
         
         # Prepare record for upsert
         record = {
             "id": memory_id,
             "values": embedding_vector,
-            "metadata": {
-                "text": reflection_text,
-                "timestamp": datetime.now().isoformat(),
-                "type": "reflection"
-            }
+            "metadata": metadata
         }
         
         # Upsert to Pinecone with user_id as namespace
@@ -156,6 +151,7 @@ def pinecone_search_memories(
         # Generate embedding for the query
         embeddings = _get_embeddings()
         query_vector = embeddings.embed_query(query)
+        logger.info(f"Searching for {query} in Pinecone")
         
         # Query Pinecone with the embedded vector
         results = index.query(
@@ -165,18 +161,8 @@ def pinecone_search_memories(
             include_metadata=True
         )
         logger.info(f"Pinecone search results: {results}")
-        # Extract and format results
-        memories = []
-        for match in results.get("matches", []):
-            metadata = match.get("metadata", {})
-            memories.append({
-                "content": metadata.get("text", ""),
-                "timestamp": metadata.get("timestamp", ""),
-                "score": match.get("score", 0.0),
-                "id": match.get("id", "")
-            })
-        
-        return memories
+        # Extract and format results        
+        return results.get('matches', [])
     
     except PineconeException as e:
         print(f"Pinecone search error: {e}")
@@ -212,4 +198,5 @@ def pinecone_delete_user_memories(user_id: str) -> Dict[str, Any]:
             "success": False,
             "error": str(e)
         }
+
 

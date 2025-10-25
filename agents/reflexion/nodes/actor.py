@@ -5,6 +5,7 @@ from agents.reflexion.models import ReflexionState
 from shared.logger import get_logger
 from shared.llm import get_llm
 from agents.reflexion.pinecone_client import pinecone_search_memories
+from langchain.agents import create_agent
 
 logger = get_logger('reflexion_agent')
 
@@ -33,8 +34,14 @@ CODE QUALITY STANDARDS:
 - Error handling and input validation
 - Efficient algorithms and data structures
 
+AVAILABLE TOOLS:
+1. **get_reflection_memory(code_context)**: Get relevant reflection memories for the given code context
+
+#note : always use the tools to get the reflection memories that are relevant to the code context before writing the code
+
 """
 
+from langchain.tools import tool
 
 def actor_node(state: ReflexionState, config: RunnableConfig) -> dict:
     """
@@ -42,61 +49,28 @@ def actor_node(state: ReflexionState, config: RunnableConfig) -> dict:
     Uses reflection memory from persistent store to improve responses.
     """
     logger.info(f"Actor node - Attempt {state.current_attempt}/{state.max_attempts}")
-    
-    # Extract user's latest message from message history
-    user_message = ""
-    for msg in reversed(state.messages):
-        if isinstance(msg, HumanMessage) or (hasattr(msg, 'type') and msg.type == 'human'):
-            user_message = msg.content if hasattr(msg, 'content') else str(msg)
-            break
-    
-    if not user_message:
-        logger.warning("No user message found in history")
-        user_message = "Please provide a response."
-    
-    # Retrieve reflection memory from Pinecone using semantic search
-    try:
-        # Use user message as the semantic query to recall relevant reflections
-        pinecone_results = pinecone_search_memories(query=user_message, user_id=state.memory_key)
+
+    @tool
+    def get_reflection_memory(code_context: str) -> str:
+        """
+        Get relevant reflection memories for the given code context
+        """
+        pinecone_results = pinecone_search_memories(query=code_context, user_id=state.memory_key)
         reflection_memory = []
         for item in pinecone_results:
-            # Pinecone results are normalized dicts with 'content' field
-            if isinstance(item, dict):
-                text = item.get('content', '')
-                if text:
-                    reflection_memory.append(text)
-        logger.info(f"Retrieved {len(reflection_memory)} reflections from Pinecone for user_id={state.memory_key}")
-    except Exception as e:
-        logger.error(f"Error retrieving memory from Pinecone: {e}")
-        logger.error(traceback.format_exc())
-        reflection_memory = []
-    
-    # Build memory context from reflection feedback
-    memory_context = ""
-    if reflection_memory:
-        memory_context = "\n\n=== MEMORY_CONTEXT (Reflection Feedback from Previous Interactions) ===\n"
-        for idx, reflection_text in enumerate(reflection_memory, 1):
-            memory_context += f"\n--- Reflection {idx} ---\n"
-            memory_context += f"{reflection_text}\n"
-        memory_context += "\n=== END MEMORY_CONTEXT ===\n"
-    
-    # Build prompt with memory
-    prompt_messages = [
-        SystemMessage(content=ACTOR_PROMPT),
-    ]
-    
-    if memory_context:
-        prompt_messages.append(SystemMessage(content=memory_context))
-    
-    prompt_messages.append(HumanMessage(content=f"User Query: {user_message}\n\nGenerate your response now, incorporating any feedback from memory."))
-    
-    # Generate response
-    llm = get_llm(temperature=0)
-    response = llm.invoke(prompt_messages)
-    actor_response = response.content
-    
-    logger.info(f"Actor generated response (length: {len(actor_response)})")
+            reflection_memory.append(item.get('metadata', {}).get('reflection', ''))
+        return reflection_memory
+
+
+    actor_agent = create_agent(
+        model=get_llm(temperature=0),
+        tools=[get_reflection_memory],
+        system_prompt=ACTOR_PROMPT,
+    )
+
+    actor_result = actor_agent.invoke({"messages": state.messages})
+    logger.info(f"Actor generated response: {actor_result.keys()}")
     
     return {
-        "messages": [AIMessage(content=actor_response)]
+        "messages": actor_result.get('messages', [])
     }

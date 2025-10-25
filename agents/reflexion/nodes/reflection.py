@@ -5,7 +5,7 @@ from agents.reflexion.models import ReflexionState, Reflection
 from shared.logger import get_logger
 from shared.llm import get_llm
 from agents.reflexion.pinecone_client import pinecone_add_memory
-
+from datetime import datetime
 logger = get_logger('reflexion_agent')
 
 
@@ -13,10 +13,9 @@ REFLECTION_PROMPT = """You are a Coding Reflection Agent in a reflexion system -
 
 YOUR ROLE:
 - Analyze why the Actor's code failed evaluation
-- Suggest coding paradigms, patterns, and best practices to fix issues
-- Provide constructive, actionable feedback with code examples
+- Suggest coding paradigms, patterns, and best practices to prevent the issues in the future
+- Provide constructive, actionable feedback.
 - Help the Actor learn and improve for future iterations
-- Generate insights that will be stored in the Actor's persistent memory
 
 REFLECTION PROCESS:
 1. **Review Requirements**: What was the user asking for?
@@ -24,7 +23,6 @@ REFLECTION PROCESS:
 3. **Study Test Failures**: Which test cases failed and why?
 4. **Identify Root Causes**: What coding mistakes or misconceptions led to failures?
 5. **Suggest Paradigms**: What coding patterns, principles, or approaches would fix this?
-6. **Provide Examples**: Give concrete code snippets or approaches
 
 CODING PARADIGMS & PATTERNS TO CONSIDER:
 - **Design Patterns**: Factory, Strategy, Observer, Decorator, etc.
@@ -42,29 +40,13 @@ FEEDBACK GUIDELINES:
 - Be specific and actionable with code-level suggestions
 - Focus on teaching coding principles, not just fixes
 - Prioritize critical bugs, then edge cases, then quality improvements
-- Provide concrete code examples or pseudocode
 - Explain WHY a paradigm/pattern solves the problem
 - Think about what the Actor should LEARN for future code
 
 YOUR FEEDBACK FORMAT:
-Return a structured Reflection with:
-- **key_issues**: List of main coding problems (bugs, missing edge cases, design flaws)
-- **suggestions**: Specific coding improvements with paradigm/pattern recommendations
-  * Example: "Use try-except with specific exceptions instead of bare except"
-  * Example: "Apply Strategy pattern to handle multiple algorithms"
-  * Example: "Add input validation at function entry point"
-- **focus_areas**: What to prioritize in next attempt
-  * Example: "Edge case handling", "Error recovery", "Input validation"
-- **examples**: Concrete code snippets or pseudocode showing the fix
-  * Example: "```python\nif not items: return []\n```"
-
-REFLECTION STRATEGIES:
-- If test failed: Explain what input/scenario broke it and how to fix
-- If edge case missed: Show how to handle it with code example
-- If design flaw: Suggest better architecture or pattern
-- If performance issue: Recommend algorithm or data structure change
-- If readability issue: Show cleaner code structure
-- If security issue: Explain vulnerability and secure alternative
+Return a  Reflection with following key information:
+- coding_context : context of the coding task that failed the evaluation and this reflection is applicable for
+- reflection : key reflection points to be considered to avoid the issues in the future
 
 Your feedback will be stored in the Actor's memory and help improve ALL future code!
 Focus on teaching reusable lessons and paradigms, not just quick fixes.
@@ -121,25 +103,18 @@ Focus on specific, actionable suggestions for the next attempt.
     llm = get_llm(temperature=0.3).with_structured_output(Reflection)
     reflection: Reflection = llm.invoke(prompt_messages)
     
-    logger.info(f"Reflection generated - {len(reflection.key_issues)} issues, {len(reflection.suggestions)} suggestions")
+    logger.info(f"Reflection generated - {reflection.coding_context} - {reflection.reflection}")
     
     # Store reflection in Pinecone as a memory for this user (memory_key)
     try:
         user_id = state.memory_key
-        # Represent reflection as assistant message text for semantic recall
-        reflection_text_parts = []
-        if reflection.key_issues:
-            reflection_text_parts.append("Key Issues: " + ", ".join(reflection.key_issues))
-        if reflection.suggestions:
-            reflection_text_parts.append("Suggestions: " + ", ".join(reflection.suggestions))
-        if reflection.focus_areas:
-            reflection_text_parts.append("Focus Areas: " + ", ".join(reflection.focus_areas))
-        if reflection.examples:
-            reflection_text_parts.append("Examples: " + "; ".join(reflection.examples))
-        reflection_text = "\n".join(reflection_text_parts) or "Reflection feedback"
-
         # Store reflection with context (simplified API)
-        result = pinecone_add_memory(context=reflection_text, user_id=user_id)
+        metadata = {
+            "coding_context": reflection.coding_context,
+            "reflection": reflection.reflection,
+            "timestamp": datetime.now().isoformat(),
+        }
+        result = pinecone_add_memory(context=reflection.coding_context, user_id=user_id, metadata=metadata)
         if result.get("success"):
             logger.info(f"Stored reflection in Pinecone successfully: {result.get('memory_id')}")
         else:

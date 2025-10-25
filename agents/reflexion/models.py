@@ -15,10 +15,8 @@ class Verdict(BaseModel):
 
 class Reflection(BaseModel):
     """Reflection agent's feedback for improvement"""
-    key_issues: list[str] = Field(description="Main problems identified")
-    suggestions: list[str] = Field(description="Specific, actionable improvements")
-    focus_areas: list[str] = Field(description="What to prioritize in next attempt")
-    examples: list[str] = Field(default_factory=list, description="Concrete examples if helpful")
+    coding_context: str = Field(description="Context of the coding task that failed the evaluation and this reflection is applicable for")
+    reflection: str = Field(description="Key reflection points to be considered to avoid the issues in the future")
 
 
 
