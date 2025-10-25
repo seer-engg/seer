@@ -9,6 +9,7 @@ import os
 import re
 from e2b_code_interpreter import Sandbox
 from langchain.agents import create_agent
+from langchain.agents.middleware import ToolCallLimitMiddleware
 
 logger = get_logger('reflexion_agent')
 
@@ -18,7 +19,6 @@ EVALUATOR_PROMPT = """You are a Code Evaluator Agent in a reflexion system - an 
 YOUR ROLE:
 - You have access to tools for code execution in E2B sandbox
 - Design and run executable unit tests against the Actor's code
-- Provide objective pass/fail verdict based on actual execution results
 - Identify bugs, errors, and quality issues from real test runs
 - Return a structured verdict with passed status, score, reasoning, issues, and execution results
 
@@ -40,15 +40,6 @@ EVALUATION PROCESS:
 5. **Analyze Results**: Review actual execution output and failures
 6. **Provide Structured Verdict**: Return verdict with all required fields filled
 
-CODE EVALUATION CRITERIA:
-1. **Correctness**: Does the code produce correct outputs for all test cases?
-2. **Completeness**: Does it handle all requirements from user query?
-3. **Edge Cases**: Does it handle boundary conditions and special cases?
-4. **Error Handling**: Does it gracefully handle invalid inputs/errors?
-5. **Code Quality**: Is it clean, readable, and well-structured?
-6. **Best Practices**: Does it follow coding standards and patterns?
-7. **Security**: Are there any security vulnerabilities?
-8. **Performance**: Is it reasonably efficient?
 
 # NOTE: The sandbox is PERSISTED throughout your execution. Once you load the actor's code,
 # it remains available in the sandbox for all subsequent test runs.
@@ -95,12 +86,13 @@ EVALUATION GUIDELINES:
 - Be thorough but realistic - tests should validate requirements
 - Write executable tests using the tools provided
 - Document specific failures when tests don't pass
-- Provide actionable feedback based on actual execution results
 - Pass only if code handles all critical test cases correctly
 - Make autonomous decisions about which tests to run
 
-IMPORTANT: You are a ReAct agent - think, use tools, observe results, and iterate as needed.
-Use the tools multiple times if necessary to thoroughly test the code.
+IMPORTANT: 
+- You are a ReAct agent - think, use tools, observe results, and iterate as needed.
+- Use the tools multiple times if necessary to thoroughly test the code.
+- Create at most 10 test cases to cover all test categories listed above
 """
 
 
@@ -300,13 +292,22 @@ async def evaluator_node(state: ReflexionState, config: RunnableConfig) -> dict:
             execute_code_tool,
             run_test_tool
         ]
+
+        test_running_limiter = ToolCallLimitMiddleware(
+            tool_name="run_test_tool",
+            thread_limit=10,
+            run_limit=12,
+            exit_behavior='end'
+        )
         
         # Create evaluator agent with sandbox-bound tools
         evaluator_agent = create_agent(
             model=get_llm(temperature=0.0),
             tools=evaluator_tools,
             system_prompt=EVALUATOR_PROMPT,
-            response_format=Verdict
+            response_format=Verdict,
+            middleware=[test_running_limiter]
+
         )
         
         # Build evaluation task for the agent
@@ -344,7 +345,7 @@ Use the available tools to execute real tests in E2B sandbox. Be thorough and te
         try:
             agent_result = await evaluator_agent.ainvoke(
                 {"messages": [HumanMessage(content=evaluation_task)]},
-                config=config
+                config={"recursion_limit": 100}
             )
             
             # Extract the structured Verdict from agent result
