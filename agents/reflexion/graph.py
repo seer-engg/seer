@@ -9,6 +9,8 @@ from agents.reflexion.models import ReflexionState, InputState, OutputState
 from agents.reflexion.nodes.actor import actor_node
 from agents.reflexion.nodes.evaluator import evaluator_node
 from agents.reflexion.nodes.reflection import reflection_node
+from agents.reflexion.memory_artifacts import Artifact, build_mem0_messages_for_artifact
+from agents.reflexion.mem0_client import mem0_add_memory
 
 # Get logger for reflexion agent
 logger = get_logger('reflexion_agent')
@@ -21,8 +23,24 @@ def finalize_node(state: ReflexionState, config: RunnableConfig) -> dict:
     """
     if state.evaluator_verdict.passed:
         logger.info(f"✅ Success! Response passed evaluation on attempt {state.current_attempt}/{state.max_attempts}")
+        # Store 1-2 success lessons to reinforce patterns
+        try:
+            lesson1 = Artifact(
+                type="Lesson",
+                rule="After implementing core logic, explicitly handle None/empty inputs up front.",
+                tags=["python", "edge"],
+            )
+            mem0_add_memory(messages=build_mem0_messages_for_artifact(lesson1, "Successful solution"), user_id=state.memory_key)
+            lesson2 = Artifact(
+                type="Lesson",
+                rule="Write small pure functions with clear contracts to ease testing.",
+                tags=["python", "testing"],
+            )
+            mem0_add_memory(messages=build_mem0_messages_for_artifact(lesson2, "Successful solution"), user_id=state.memory_key)
+        except Exception:
+            pass
     else:
-        logger.info(f"⚠️ Max attempts ({state.max_attempts}) reached. Final Score: {state.evaluator_verdict.get('score', 0.0)}")
+        logger.info(f"⚠️ Max attempts ({state.max_attempts}) reached. Final Score: {state.evaluator_verdict.score}")
     
     # Just return success flag - no additional messages
     # User only sees the natural conversation with actor

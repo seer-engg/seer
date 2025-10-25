@@ -5,6 +5,11 @@ from agents.reflexion.models import ReflexionState, Reflection
 from shared.logger import get_logger
 from shared.llm import get_llm
 from agents.reflexion.mem0_client import mem0_add_memory
+from agents.reflexion.memory_artifacts import (
+    Artifact,
+    ArtifactList,
+    build_mem0_messages_for_artifact,
+)
 
 logger = get_logger('reflexion_agent')
 
@@ -117,37 +122,55 @@ Focus on specific, actionable suggestions for the next attempt.
         HumanMessage(content=reflection_prompt)
     ]
     
-    # Get structured reflection
-    llm = get_llm(temperature=0.3).with_structured_output(Reflection)
-    reflection: Reflection = llm.invoke(prompt_messages)
-    
+    # Get structured reflection for local reasoning
+    reflection_llm = get_llm(temperature=0.2).with_structured_output(Reflection)
+    reflection: Reflection = reflection_llm.invoke(prompt_messages)
     logger.info(f"Reflection generated - {len(reflection.key_issues)} issues, {len(reflection.suggestions)} suggestions")
-    
-    # Store reflection in Mem0 as a memory for this user (memory_key)
+
+    # Distill into compact artifacts
+    artifact_prompt = f"""
+You are converting reflection feedback into compact memory artifacts for future recall.
+Return 3-7 artifacts prioritizing Lessons and AntiPatterns. Keep rule sentences <= 200 chars.
+Use short, lowercased tags like: python, edge-cases, input-validation, algorithms, data-structures, exceptions, testing.
+Include a short snippet only if absolutely necessary (<= 10 lines).
+
+Context for distillation:
+User Query:\n{user_message}
+
+Key Issues: {', '.join(reflection.key_issues)}
+Suggestions: {', '.join(reflection.suggestions)}
+Focus Areas: {', '.join(reflection.focus_areas)}
+Examples: {'; '.join(reflection.examples)}
+"""
+
     try:
-        user_id = state.memory_key
-        # Represent reflection as assistant message text for semantic recall
-        reflection_text_parts = []
-        if reflection.key_issues:
-            reflection_text_parts.append("Key Issues: " + ", ".join(reflection.key_issues))
-        if reflection.suggestions:
-            reflection_text_parts.append("Suggestions: " + ", ".join(reflection.suggestions))
-        if reflection.focus_areas:
-            reflection_text_parts.append("Focus Areas: " + ", ".join(reflection.focus_areas))
-        if reflection.examples:
-            reflection_text_parts.append("Examples: " + "; ".join(reflection.examples))
-        reflection_text = "\n".join(reflection_text_parts) or "Reflection feedback"
+        artifacts_llm = get_llm(temperature=0.2).with_structured_output(ArtifactList)
+        artifacts: ArtifactList = artifacts_llm.invoke([
+            SystemMessage(content="You produce compact, reusable coding artifacts."),
+            HumanMessage(content=artifact_prompt),
+        ])
+    except Exception:
+        # Fallback: synthesize at least one generic lesson if structured gen fails
+        artifacts = ArtifactList(artifacts=[
+            Artifact(
+                type="Lesson",
+                rule="Handle edge cases first (empty, None, single-item) before main logic.",
+                tags=["python", "edge-cases"],
+            )
+        ])
 
-        messages_payload = [
-            {"role": "user", "content": user_message},
-            {"role": "assistant", "content": reflection_text},
-        ]
-
-        mem0_add_memory(messages=messages_payload, user_id=user_id)
-        logger.info("Stored reflection in Mem0 successfully")
-    except Exception as e:
-        logger.error(traceback.format_exc())
-        logger.error(f"Failed to store reflection in Mem0: {e}")
+    # Store each artifact as its own memory entry
+    stored = 0
+    for art in artifacts.artifacts[:7]:
+        try:
+            messages_payload = build_mem0_messages_for_artifact(art, user_message=user_message)
+            mem0_add_memory(messages=messages_payload, user_id=state.memory_key)
+            stored += 1
+        except Exception:
+            logger.error(traceback.format_exc())
+            # continue storing others
+            continue
+    logger.info(f"Stored {stored}/{len(artifacts.artifacts)} artifacts in Mem0")
     
     # Don't add reflection to message history - it's stored in persistent memory
     # User only sees actor's responses, not internal reflections

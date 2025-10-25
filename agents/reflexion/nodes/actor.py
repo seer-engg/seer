@@ -5,6 +5,7 @@ from agents.reflexion.models import ReflexionState
 from shared.logger import get_logger
 from shared.llm import get_llm
 from agents.reflexion.mem0_client import mem0_search_memories
+from agents.reflexion.memory_artifacts import parse_artifact_from_content
 
 logger = get_logger('reflexion_agent')
 
@@ -54,39 +55,88 @@ def actor_node(state: ReflexionState, config: RunnableConfig) -> dict:
         logger.warning("No user message found in history")
         user_message = "Please provide a response."
     
-    # Retrieve reflection memory from Mem0 using semantic search
+    # Retrieve artifacts from Mem0 with simple query expansion and reranking
+    def _expand_queries(q: str) -> list[str]:
+        base = q.strip()
+        return [
+            base,
+            f"python {base}",
+            f"edge cases {base}",
+            f"errors {base}",
+            f"performance {base}",
+        ]
+
+    def _guess_tags(q: str) -> set[str]:
+        tokens = set(t.lower().strip(",.:;()[]{}") for t in q.split())
+        guesses = set()
+        for t in tokens:
+            if t in {"python", "py"}:
+                guesses.add("python")
+            if t in {"edge", "edges", "edge-cases", "cases"}:
+                guesses.add("edge")
+            if t in {"error", "errors", "exception"}:
+                guesses.add("error")
+            if t in {"performance", "perf", "optimize"}:
+                guesses.add("performance")
+            if t in {"type", "types", "typing"}:
+                guesses.add("type")
+            if t in {"test", "tests", "testing"}:
+                guesses.add("testing")
+        return guesses
+
+    lessons: list[dict] = []
     try:
-        # Use user message as the semantic query to recall relevant reflections
-        mem_results = mem0_search_memories(query=user_message, user_id=state.memory_key)
-        reflection_memory = []
-        for item in mem_results:
-            # Normalize to text
-            text = None
-            if isinstance(item, dict):
-                # common fields observed from mem0
-                text = item.get('content') or item.get('memory') or item.get('text')
-                if text is None:
-                    # sometimes nested under 'data' or similar
-                    data = item.get('data')
-                    if isinstance(data, dict):
-                        text = data.get('content') or data.get('text')
-            if not text:
-                text = str(item)
-            reflection_memory.append(text)
-        logger.info(f"Retrieved {len(reflection_memory)} reflections from Mem0 for user_id={state.memory_key}")
+        seen_rules: set[str] = set()
+        agg: list[dict] = []
+        for q in _expand_queries(user_message):
+            try:
+                results = mem0_search_memories(query=q, user_id=state.memory_key)
+            except Exception:
+                results = []
+            for item in results:
+                text = None
+                if isinstance(item, dict):
+                    text = item.get('content') or item.get('memory') or item.get('text')
+                    if text is None:
+                        data = item.get('data')
+                        if isinstance(data, dict):
+                            text = data.get('content') or data.get('text')
+                if not text:
+                    text = str(item)
+                parsed = parse_artifact_from_content(text)
+                rule = parsed.get('rule')
+                if not rule or rule in seen_rules:
+                    continue
+                seen_rules.add(rule)
+                agg.append(parsed)
+
+        # Rerank by tag overlap vs guessed tags
+        guessed = _guess_tags(user_message)
+        def _score(a: dict) -> int:
+            tags = set((a.get('tags') or []))
+            return len(tags & guessed)
+        agg.sort(key=_score, reverse=True)
+
+        lessons = agg[:8]
+        logger.info(f"Retrieved {len(lessons)} lessons from Mem0 after rerank")
     except Exception as e:
-        logger.error(f"Error retrieving memory from Mem0: {e}")
+        logger.error(f"Error retrieving lessons from Mem0: {e}")
         logger.error(traceback.format_exc())
-        reflection_memory = []
-    
-    # Build memory context from reflection feedback
+        lessons = []
+
+    # Build memory context as concise lessons
     memory_context = ""
-    if reflection_memory:
-        memory_context = "\n\n=== MEMORY_CONTEXT (Reflection Feedback from Previous Interactions) ===\n"
-        for idx, reflection_text in enumerate(reflection_memory, 1):
-            memory_context += f"\n--- Reflection {idx} ---\n"
-            memory_context += f"{reflection_text}\n"
-        memory_context += "\n=== END MEMORY_CONTEXT ===\n"
+    if lessons:
+        memory_context = "\n\n=== LESSONS (Prior Artifacts) ===\n"
+        for i, art in enumerate(lessons, 1):
+            rule = art.get('rule') or ''
+            tags = art.get('tags') or []
+            tag_str = ", ".join(tags)
+            memory_context += f"- {rule}"
+            if tag_str:
+                memory_context += f" [tags: {tag_str}]"
+            memory_context += "\n"
+        memory_context += "=== END LESSONS ===\n"
     
     # Build prompt with memory
     prompt_messages = [
