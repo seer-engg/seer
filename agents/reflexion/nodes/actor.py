@@ -4,7 +4,7 @@ from langchain_core.runnables import RunnableConfig
 from agents.reflexion.models import ReflexionState
 from shared.logger import get_logger
 from shared.llm import get_llm
-from agents.reflexion.mem0_client import mem0_search_memories
+from agents.reflexion.pinecone_client import pinecone_search_memories
 
 logger = get_logger('reflexion_agent')
 
@@ -54,28 +54,20 @@ def actor_node(state: ReflexionState, config: RunnableConfig) -> dict:
         logger.warning("No user message found in history")
         user_message = "Please provide a response."
     
-    # Retrieve reflection memory from Mem0 using semantic search
+    # Retrieve reflection memory from Pinecone using semantic search
     try:
         # Use user message as the semantic query to recall relevant reflections
-        mem_results = mem0_search_memories(query=user_message, user_id=state.memory_key)
+        pinecone_results = pinecone_search_memories(query=user_message, user_id=state.memory_key)
         reflection_memory = []
-        for item in mem_results:
-            # Normalize to text
-            text = None
+        for item in pinecone_results:
+            # Pinecone results are normalized dicts with 'content' field
             if isinstance(item, dict):
-                # common fields observed from mem0
-                text = item.get('content') or item.get('memory') or item.get('text')
-                if text is None:
-                    # sometimes nested under 'data' or similar
-                    data = item.get('data')
-                    if isinstance(data, dict):
-                        text = data.get('content') or data.get('text')
-            if not text:
-                text = str(item)
-            reflection_memory.append(text)
-        logger.info(f"Retrieved {len(reflection_memory)} reflections from Mem0 for user_id={state.memory_key}")
+                text = item.get('content', '')
+                if text:
+                    reflection_memory.append(text)
+        logger.info(f"Retrieved {len(reflection_memory)} reflections from Pinecone for user_id={state.memory_key}")
     except Exception as e:
-        logger.error(f"Error retrieving memory from Mem0: {e}")
+        logger.error(f"Error retrieving memory from Pinecone: {e}")
         logger.error(traceback.format_exc())
         reflection_memory = []
     

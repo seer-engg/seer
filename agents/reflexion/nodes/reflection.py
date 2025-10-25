@@ -4,7 +4,7 @@ from langchain_core.runnables import RunnableConfig
 from agents.reflexion.models import ReflexionState, Reflection
 from shared.logger import get_logger
 from shared.llm import get_llm
-from agents.reflexion.mem0_client import mem0_add_memory
+from agents.reflexion.pinecone_client import pinecone_add_memory
 
 logger = get_logger('reflexion_agent')
 
@@ -123,7 +123,7 @@ Focus on specific, actionable suggestions for the next attempt.
     
     logger.info(f"Reflection generated - {len(reflection.key_issues)} issues, {len(reflection.suggestions)} suggestions")
     
-    # Store reflection in Mem0 as a memory for this user (memory_key)
+    # Store reflection in Pinecone as a memory for this user (memory_key)
     try:
         user_id = state.memory_key
         # Represent reflection as assistant message text for semantic recall
@@ -138,16 +138,15 @@ Focus on specific, actionable suggestions for the next attempt.
             reflection_text_parts.append("Examples: " + "; ".join(reflection.examples))
         reflection_text = "\n".join(reflection_text_parts) or "Reflection feedback"
 
-        messages_payload = [
-            {"role": "user", "content": user_message},
-            {"role": "assistant", "content": reflection_text},
-        ]
-
-        mem0_add_memory(messages=messages_payload, user_id=user_id)
-        logger.info("Stored reflection in Mem0 successfully")
+        # Store reflection with context (simplified API)
+        result = pinecone_add_memory(context=reflection_text, user_id=user_id)
+        if result.get("success"):
+            logger.info(f"Stored reflection in Pinecone successfully: {result.get('memory_id')}")
+        else:
+            logger.error(f"Failed to store reflection in Pinecone: {result.get('error')}")
     except Exception as e:
         logger.error(traceback.format_exc())
-        logger.error(f"Failed to store reflection in Mem0: {e}")
+        logger.error(f"Failed to store reflection in Pinecone: {e}")
     
     # Don't add reflection to message history - it's stored in persistent memory
     # User only sees actor's responses, not internal reflections

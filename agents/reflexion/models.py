@@ -28,7 +28,7 @@ class InputState(BaseModel):
 class OutputState(BaseModel):
     # Current attempt tracking
     current_attempt: int = Field(default=0, description="Current attempt number")
-    max_attempts: int = Field(default=3, description="Maximum number of attempts to act with the environment")
+    max_attempts: int = Field(default=2, description="Maximum number of attempts to act with the environment")
     
     # Evaluator's verdict
     evaluator_verdict: Verdict = Field(default=Verdict(passed=False, score=0.0, reasoning="", issues=[]), description="Evaluator's verdict on the Actor's response")
