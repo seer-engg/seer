@@ -17,32 +17,27 @@ class TaskPlan(TypedDict, total=False):
     title: str
     items: List[TaskItem]
 
-
-class ManagerState(TypedDict, total=False):
+class BaseState(TypedDict, total=False):
     request: str
     repo_path: str
+    repo_url: str
+    branch_name: str
+    sandbox_session_id: str
     messages: List[Message]
     taskPlan: Optional[TaskPlan]
+
+
+class ManagerState(BaseState):
+    pass
+
+
+class PlannerState(BaseState):
     autoAcceptPlan: bool
 
 
-class PlannerState(TypedDict, total=False):
-    request: str
-    repo_path: str
-    messages: List[Message]
-    taskPlan: Optional[TaskPlan]
-    autoAcceptPlan: bool
+class ProgrammerState(BaseState):
+    pass
 
 
-class ProgrammerState(TypedDict, total=False):
-    request: str
-    repo_path: str
-    messages: List[Message]
-    taskPlan: Optional[TaskPlan]
-
-
-class ReviewerState(TypedDict, total=False):
-    request: str
-    repo_path: str
-    messages: List[Message]
-    taskPlan: Optional[TaskPlan]
+class ReviewerState(BaseState):
+    pass

@@ -35,6 +35,9 @@ def _start_planner(state: ManagerState) -> ManagerState:
         "repo_path": state.get("repo_path", ""),
         "messages": state.get("messages", []),
         "taskPlan": state.get("taskPlan"),
+        "repo_url": state.get("repo_url", ""),
+        "branch_name": state.get("branch_name", ""),
+        "sandbox_session_id": state.get("sandbox_session_id", ""),
         "autoAcceptPlan": bool(state.get("autoAcceptPlan", True)),
     }
     planner_output: PlannerState = planner_graph.invoke(planner_input)
