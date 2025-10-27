@@ -1,0 +1,19 @@
+[project]
+name = "buggy-coder"
+version = "0.1.0"
+description = "Buggy Coder - A tool for fixing buggy code"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "langchain>=1.0.2",
+  "langchain-openai>=1.0.0",
+  "langchain-core>=1.0.0",
+  "langgraph-api>=0.4.46",
+  "langgraph>=1.0.0",
+  "langgraph-cli[inmem]>=0.4.4",
+  "pydantic>=2.12.3",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
