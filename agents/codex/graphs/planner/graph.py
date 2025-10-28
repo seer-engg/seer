@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from agents.codex.common.state import PlannerState, TaskItem, TaskPlan
-from agents.codex.llm.model import get_chat_model, generate_plan_steps
-from agents.codex.graphs.shared.initialize_sandbox import ensure_sandbox_ready
+from agents.codex.common.state import PlannerState
+
+from shared.logger import get_logger
+
+from agents.codex.graphs.planner.nodes import initialize_project
+from agents.codex.graphs.planner.nodes import context_and_plan_agent
+
+logger = get_logger("codex.planner")
 
 
 def _prepare_graph_state(state: PlannerState) -> PlannerState:
@@ -13,22 +18,6 @@ def _prepare_graph_state(state: PlannerState) -> PlannerState:
     state.setdefault("autoAcceptPlan", True)
     return state
 
-
-def _initialize_sandbox(state: PlannerState) -> PlannerState:
-    ensure_sandbox_ready(state.get("repo_path", ""))
-    return state
-
-
-def _generate_plan(state: PlannerState) -> PlannerState:
-    model = get_chat_model()
-    request = state.get("request", "")
-    steps = generate_plan_steps(model, request, None)
-    plan_items: list[TaskItem] = [
-        {"description": s, "status": "todo"} for s in steps
-    ]
-    state = dict(state)
-    state["taskPlan"] = TaskPlan(title=f"Plan: {request[:50]}", items=plan_items)
-    return state
 
 
 def _notetaker(state: PlannerState) -> PlannerState:
@@ -51,15 +40,17 @@ def _interrupt_proposed_plan(state: PlannerState) -> PlannerState:
 def compile_planner_graph():
     workflow = StateGraph(PlannerState)
     workflow.add_node("prepare-graph-state", _prepare_graph_state)
-    workflow.add_node("initialize-sandbox", _initialize_sandbox)
-    workflow.add_node("generate-plan", _generate_plan)
+    workflow.add_node("initialize-project", initialize_project)
+    # Combined context + planning agent
+    workflow.add_node("context-plan-agent", context_and_plan_agent)
+    # Removed separate context agent; using combined agent instead
     workflow.add_node("notetaker", _notetaker)
     workflow.add_node("interrupt-proposed-plan", _interrupt_proposed_plan)
 
     workflow.add_edge(START, "prepare-graph-state")
-    workflow.add_edge("prepare-graph-state", "initialize-sandbox")
-    workflow.add_edge("initialize-sandbox", "generate-plan")
-    workflow.add_edge("generate-plan", "notetaker")
+    workflow.add_edge("prepare-graph-state", "initialize-project")
+    workflow.add_edge("initialize-project", "context-plan-agent")
+    workflow.add_edge("context-plan-agent", "notetaker")
     workflow.add_edge("notetaker", "interrupt-proposed-plan")
     workflow.add_edge("interrupt-proposed-plan", END)
 

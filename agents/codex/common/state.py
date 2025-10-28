@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from typing import List, Literal, Optional, TypedDict
+from typing import Annotated, List, Literal, Optional, TypedDict
+
+from langgraph.graph.message import add_messages
+from langchain_core.messages import BaseMessage
+from pydantic import BaseModel, Field
+
 
 
 class Message(TypedDict, total=False):
@@ -8,41 +13,34 @@ class Message(TypedDict, total=False):
     content: str
 
 
-class TaskItem(TypedDict, total=False):
-    description: str
-    status: Literal["todo", "done"]
+class TaskItem(BaseModel):
+    description: str = Field(..., description="Concise action to perform")
+    status: Literal["todo", "done"] = Field("todo", description="Item status")
 
 
-class TaskPlan(TypedDict, total=False):
-    title: str
-    items: List[TaskItem]
+class TaskPlan(BaseModel):
+    title: str = Field(..., description="Short plan title")
+    items: List[TaskItem] = Field(..., description="Ordered plan steps")
+
+class BaseState(BaseModel):
+    request: str = Field(..., description="The request to be fulfilled")
+    repo_path: Optional[str] = Field(None, description="The path to the repository")
+    repo_url: str = Field(..., description="The URL of the repository")
+    branch_name: Optional[str] = Field(None, description="The name of the branch")
+    sandbox_session_id: Optional[str] = Field(None, description="The ID of the sandbox session")
+    messages: Annotated[list[BaseMessage], add_messages] = Field(None, description="The messages in the conversation")
+    taskPlan: Optional[TaskPlan] = Field(None, description="The task plan")
 
 
-class ManagerState(TypedDict, total=False):
-    request: str
-    repo_path: str
-    messages: List[Message]
-    taskPlan: Optional[TaskPlan]
-    autoAcceptPlan: bool
+class PlannerState(BaseState):
+    autoAcceptPlan: bool = Field(True, description="Whether to automatically accept the plan")
+    structured_response: Optional[dict] = Field(None, description="The structured response")
+    setup_script: str = Field('pip install -r requirements.txt', description="The script to setup the project")
 
 
-class PlannerState(TypedDict, total=False):
-    request: str
-    repo_path: str
-    messages: List[Message]
-    taskPlan: Optional[TaskPlan]
-    autoAcceptPlan: bool
+class ProgrammerState(BaseState):
+    pass
 
 
-class ProgrammerState(TypedDict, total=False):
-    request: str
-    repo_path: str
-    messages: List[Message]
-    taskPlan: Optional[TaskPlan]
-
-
-class ReviewerState(TypedDict, total=False):
-    request: str
-    repo_path: str
-    messages: List[Message]
-    taskPlan: Optional[TaskPlan]
+class ReviewerState(BaseState):
+    pass
