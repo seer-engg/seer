@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from typing import List, Literal, Optional, TypedDict
+from typing import Annotated, List, Literal, Optional, TypedDict
+
+from langgraph.graph.message import add_messages
+from langchain_core.messages import BaseMessage
+from pydantic import BaseModel, Field
+
 
 
 class Message(TypedDict, total=False):
@@ -8,14 +13,14 @@ class Message(TypedDict, total=False):
     content: str
 
 
-class TaskItem(TypedDict, total=False):
-    description: str
-    status: Literal["todo", "done"]
+class TaskItem(BaseModel):
+    description: str = Field(..., description="Concise action to perform")
+    status: Literal["todo", "done"] = Field("todo", description="Item status")
 
 
-class TaskPlan(TypedDict, total=False):
-    title: str
-    items: List[TaskItem]
+class TaskPlan(BaseModel):
+    title: str = Field(..., description="Short plan title")
+    items: List[TaskItem] = Field(..., description="Ordered plan steps")
 
 class BaseState(TypedDict, total=False):
     request: str
@@ -23,7 +28,8 @@ class BaseState(TypedDict, total=False):
     repo_url: str
     branch_name: str
     sandbox_session_id: str
-    messages: List[Message]
+    messages: Annotated[list[BaseMessage], add_messages]
+
     taskPlan: Optional[TaskPlan]
 
 
@@ -33,6 +39,7 @@ class ManagerState(BaseState):
 
 class PlannerState(BaseState):
     autoAcceptPlan: bool
+    structured_response: dict
 
 
 class ProgrammerState(BaseState):
