@@ -1,13 +1,9 @@
-import traceback
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from agents.reflexion.models import ReflexionState
 from shared.logger import get_logger
 from shared.llm import get_llm
 from agents.reflexion.pinecone_client import pinecone_search_memories
 from langchain.agents import create_agent
-from shared.tools import think
-from langchain.agents.middleware import ToolCallLimitMiddleware
 
 logger = get_logger('reflexion_agent')
 
@@ -64,22 +60,10 @@ def actor_node(state: ReflexionState, config: RunnableConfig) -> dict:
             reflection_memory.append(item.get('metadata', {}).get('reflection', ''))
         return reflection_memory
 
-    # Limit specific tool
-    # thinking_limiter = ToolCallLimitMiddleware(
-    #     tool_name="think",
-    #     thread_limit=1,
-    #     run_limit=2,
-    #     exit_behavior='end'
-    # )
-
-
     actor_agent = create_agent(
         model=get_llm(temperature=0),
-        tools=[get_reflection_memory, 
-        # think
-        ],
+        tools=[get_reflection_memory],
         system_prompt=ACTOR_PROMPT,
-        # middleware=[thinking_limiter],
     )
 
     actor_result = actor_agent.invoke({"messages": state.messages})
