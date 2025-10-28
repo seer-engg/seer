@@ -2,17 +2,29 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from agents.codex.common.state import ProgrammerState
+from agents.codex.common.state import ProgrammerState, TaskPlan, TaskItem
+from langchain.agents import create_agent
+from sandbox.tools import run_command_in_sandbox
+from agents.codex.llm.model import get_chat_model
 from agents.codex.graphs.reviewer.graph import graph as reviewer_graph
+import time
+from sandbox import Sandbox
+from shared.logger import get_logger
 
+logger = get_logger("codex.programmer")
 
-def _initialize(state: ProgrammerState) -> ProgrammerState:
+async def _initialize(state: ProgrammerState) -> ProgrammerState:
+    sandbox_id = state.get("sandbox_session_id")
+    if not sandbox_id:
+        return state
+    sbx = await Sandbox.connect(sandbox_id)
+    logger.info("Sandbox ready")
     return state
 
 
-def _generate_action(state: ProgrammerState) -> ProgrammerState:
-    # Pass-through; the router will decide based on remaining tasks
-    return state
+async def _generate_action(state: ProgrammerState) -> ProgrammerState:
+    # pass through for now
+   return state
 
 
 def _route_after_generate_action(state: ProgrammerState):
@@ -22,22 +34,60 @@ def _route_after_generate_action(state: ProgrammerState):
     return "take-action" if has_todo else "reviewer-subgraph"
 
 
-def _take_action(state: ProgrammerState) -> ProgrammerState:
-    # Minimal MVP: mark first TODO item as done and append a message
-    plan = dict(state.get("taskPlan") or {"title": "", "items": []})
-    items = list(plan.get("items", []))
-    for it in items:
-        if it.get("status") != "done":
-            it["status"] = "done"
-            msg = f"Marked done: {it.get('description', '')}"
-            messages = list(state.get("messages", []))
-            messages.append({"role": "system", "content": msg})
-            new_state = dict(state)
-            plan["items"] = items
-            new_state["taskPlan"] = plan
-            new_state["messages"] = messages
-            return new_state
-    return state
+async def _take_action(state: ProgrammerState) -> ProgrammerState:
+    # Action ReAct agent: implement the chosen task using sandbox tools
+    plan: TaskPlan | None = state.get("taskPlan")
+    if not plan:
+        raise ValueError("No plan found")
+    
+    chosen = None
+
+    for idx, item in enumerate(plan.get("items", [])):
+        if item.get("status") != "done":
+            chosen = item.get("description")
+            break
+    
+    if chosen is None:
+        logger.info("All tasks are done")
+        return state
+
+
+    SYSTEM_PROMPT = (
+        "You are an action agent. Implement the assigned task using the sandbox.\n"
+        "Use run_command_in_sandbox to edit files (e.g., with sed/ed/node), run tests, and verify changes.\n"
+        "When done, return a brief status summary."
+    )
+
+    agent = create_agent(
+        model=get_chat_model(),
+        tools=[run_command_in_sandbox],
+        system_prompt=SYSTEM_PROMPT,
+        state_schema=ProgrammerState,
+    )
+
+    msgs = list(state.get("messages", []))
+    msgs.append({"role": "user", "content": f"Implement task: {chosen}"})
+    result = await agent.ainvoke({
+        "messages": msgs,
+        # Needed by tool runtime
+        "sandbox_session_id": state.get("sandbox_session_id"),
+        "repo_path": state.get("repo_path"),
+    })
+
+    summary = ""
+    for m in result.get("messages", []):
+        if getattr(m, "type", getattr(m, "role", "")) in ("ai", "assistant"):
+            summary = (getattr(m, "content", "") or "").strip()
+
+
+    messages = list(state.get("messages", []))
+    messages.append({"role": "system", "content": f"ActionSummary: {summary or 'Updated task.'}"})
+    plan.get("items", [])[idx]["status"] = "done"
+
+    new_state = dict(state)
+    new_state["taskPlan"] = plan
+    new_state["messages"] = messages
+    return new_state
 
 
 def _generate_conclusion(state: ProgrammerState) -> ProgrammerState:

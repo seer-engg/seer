@@ -11,6 +11,7 @@ import textwrap
 
 from e2b_code_interpreter import AsyncSandbox as E2BSandbox
 
+
 from shared.logger import get_logger
 
 
@@ -40,12 +41,12 @@ class Sandbox:
     def __init__(
         self,
         sandbox: E2BSandbox,
-        time_limit_seconds: Optional[int] = None,
+        timeout: Optional[int] = None,
     ) -> None:
         self._sbx = sandbox
-        self._time_limit_seconds = int(time_limit_seconds) if time_limit_seconds else None
+        self._timeout = int(timeout) if timeout else None
         self._deadline_ts: Optional[float] = (
-            (time.time() + self._time_limit_seconds) if self._time_limit_seconds else None
+            (time.time() + self._timeout) if self._timeout else None
         )
         self._killer_thread: Optional[threading.Thread] = None
         if self._deadline_ts:
@@ -56,21 +57,21 @@ class Sandbox:
     @classmethod
     async def create(
         cls,
-        time_limit_seconds: Optional[int] = None,
+        timeout: Optional[int] = 600,
         *,
         check_api_key: bool = True,
     ) -> "Sandbox":
         if check_api_key and not os.getenv("E2B_API_KEY"):
             raise RuntimeError("E2B_API_KEY not configured in environment")
-        sbx = await E2BSandbox.create()
+        sbx = await E2BSandbox.create(timeout=timeout)
         logger.info(f"E2B sandbox created: {getattr(sbx, 'sandbox_id', getattr(sbx, 'id', ''))}")
-        return cls(sbx, time_limit_seconds=time_limit_seconds)
+        return cls(sbx, timeout=timeout)
 
     @classmethod
     async def connect(
         cls,
         sandbox_id: str,
-        time_limit_seconds: Optional[int] = None,
+        timeout: Optional[int] = 600,
         *,
         check_api_key: bool = True,
     ) -> "Sandbox":
@@ -80,14 +81,14 @@ class Sandbox:
         # Fall back to creating a new sandbox if connect is not available.
         try:
             if hasattr(E2BSandbox, "connect"):
-                sbx = await E2BSandbox.connect(sandbox_id)  # type: ignore[attr-defined]
+                sbx = await E2BSandbox.connect(sandbox_id, timeout=timeout)  # type: ignore[attr-defined]
             else:
                 logger.warning("Sandbox.connect not available; creating a new sandbox instead.")
-                sbx = await E2BSandbox.create()
+                sbx = await E2BSandbox.create(timeout=timeout)
         except Exception:
             # Safety: if connect fails, create a fresh sandbox
-            sbx = await E2BSandbox.create()
-        return await cls(sbx, time_limit_seconds=time_limit_seconds)
+            sbx = await E2BSandbox.create(timeout=timeout)
+        return cls(sbx, timeout=timeout)
 
     # ---- Properties ----
     @property
@@ -106,6 +107,9 @@ class Sandbox:
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         await self.kill()
+
+    async def pause(self) -> None:
+        await self._sbx.beta_pause()
 
     # ---- Internals ----
     async def _auto_kill_loop(self) -> None:
@@ -220,20 +224,11 @@ class Sandbox:
         return res.stdout.strip()
 
 
-# ---- Registry & helpers moved from codex.shared.initialize_sandbox ----
-_SANDBOX_REGISTRY: dict[str, Sandbox] = {}
-
-
-async def _register_sandbox(sbx: Sandbox) -> str:
-    sid = sbx.id
-    if not sid:
-        raise RuntimeError("Unable to determine sandbox id")
-    _SANDBOX_REGISTRY[sid] = sbx
-    return sid
+# ---- helpers moved from codex.shared.initialize_sandbox ----
 
 
 async def get_sandbox(sandbox_id: str) -> Sandbox:
-    sbx = _SANDBOX_REGISTRY.get(str(sandbox_id) or "")
+    sbx = await Sandbox.connect(sandbox_id)
     if not sbx:
         raise RuntimeError("Sandbox instance not available in current process")
     return sbx
@@ -307,6 +302,7 @@ async def initialize_e2b_sandbox(
     branch_name: str = "main",
     github_token: Optional[str] = None,
     existing_sandbox_id: Optional[str] = None,
+
 ) -> tuple[str, str, str]:
     """
     Create (or resume) an E2B sandbox and ensure the GitHub repository is cloned
@@ -319,7 +315,7 @@ async def initialize_e2b_sandbox(
 
     logger.info("Creating E2B sandbox for codex...")
     sbx = await Sandbox.create()
-    sandbox_id = await _register_sandbox(sbx)
+    sandbox_id = sbx.id
     logger.info(f"Sandbox created: {sandbox_id}")
 
     shell_script = await _build_git_shell_script()

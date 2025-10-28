@@ -14,6 +14,7 @@ from shared.logger import get_logger
 from langchain.agents import create_agent
 
 from sandbox.tools import run_command_in_sandbox
+from sandbox import Sandbox
 
 logger = get_logger("codex.planner")
 
@@ -111,6 +112,9 @@ async def _context_and_plan_agent(state: PlannerState) -> PlannerState:
     logger.info(f"Result: {result.keys()}")
     logger.info(f"Result: {result.get('structured_response')}")
     taskPlan: TaskPlan = result.get("structured_response")
+    sbx = await Sandbox.connect(sandbox_id)
+    await sbx.pause()
+    logger.info("Sandbox paused")
 
     return {
         "messages": result.get("messages", []),
