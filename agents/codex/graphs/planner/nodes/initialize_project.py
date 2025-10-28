@@ -114,17 +114,29 @@ chmod +x "$TMP"; bash "$TMP"'"""
     return str(sandbox_id), repo_dir, branch_in_sandbox
 
 
+async def setup_project(sandbox_id: str, repo_dir: str, setup_script: str) -> str:
+
+    sbx = await Sandbox.connect(sandbox_id)
+    execution = await sbx.run_command(setup_script, cwd=repo_dir, login_shell=True)
+    exit_code = execution.exit_code
+    stdout = execution.stdout
+    stderr = execution.stderr
+    logger.info(f"Setup project: {stdout}")
+
+    if exit_code != 0:
+        logger.error(f"Failed to setup project: {stderr or stdout}")
+        raise RuntimeError("Failed to setup project")
 
 
 async def initialize_project(state: PlannerState) -> PlannerState:
     # If a remote repo URL is provided, initialize an E2B sandbox and clone/pull there.
-    repo_url = state.get("repo_url")
+    repo_url = state.repo_url
     logger.info(f"State: {state}")
     logger.info(f"Initializing sandbox for repo_url: {repo_url}")
     if repo_url:
-        branch_name = state.get("branch_name") or "main"
+        branch_name = state.branch_name or "main"
         github_token = os.getenv("GITHUB_TOKEN")
-        existing_id = state.get("sandbox_session_id")
+        existing_id = state.sandbox_session_id
 
         sandbox_id, repo_dir, branch_in_sandbox = await initialize_e2b_sandbox(
             repo_url=repo_url,
@@ -132,20 +144,19 @@ async def initialize_project(state: PlannerState) -> PlannerState:
             github_token=github_token,
             existing_sandbox_id=existing_id,
         )
+        await setup_project(sandbox_id, repo_dir, state.setup_script)
 
-        messages = list(state.get("messages", []))
+        messages = list(state.messages)
         messages.append({
             "role": "system",
             "content": f"E2B sandbox ready (id={sandbox_id}); repo cloned at {repo_dir} on branch {branch_in_sandbox}.",
         })
 
-        new_state = dict(state)
-        new_state["sandbox_session_id"] = sandbox_id
-        # Store repo_dir in repo_path so downstream context actions have a path
-        new_state["repo_path"] = repo_dir
-        new_state["messages"] = messages
-        return new_state
-    return state
+    return {
+        "sandbox_session_id": sandbox_id,
+        "repo_path": repo_dir,
+        "messages": messages,
+    }
 
 
 

@@ -22,21 +22,20 @@ class TaskPlan(BaseModel):
     title: str = Field(..., description="Short plan title")
     items: List[TaskItem] = Field(..., description="Ordered plan steps")
 
-class BaseState(TypedDict, total=False):
-    request: str
-    repo_path: str
-    repo_url: str
-    branch_name: str
-    sandbox_session_id: str
-    messages: Annotated[list[BaseMessage], add_messages]
-
-    taskPlan: Optional[TaskPlan]
+class BaseState(BaseModel):
+    request: str = Field(..., description="The request to be fulfilled")
+    repo_path: Optional[str] = Field(None, description="The path to the repository")
+    repo_url: str = Field(..., description="The URL of the repository")
+    branch_name: Optional[str] = Field(None, description="The name of the branch")
+    sandbox_session_id: Optional[str] = Field(None, description="The ID of the sandbox session")
+    messages: Annotated[list[BaseMessage], add_messages] = Field(None, description="The messages in the conversation")
+    taskPlan: Optional[TaskPlan] = Field(None, description="The task plan")
 
 
 class PlannerState(BaseState):
-    autoAcceptPlan: bool
-    structured_response: dict
-    setup_script: str = 'pip install -r requirements.txt'
+    autoAcceptPlan: bool = Field(True, description="Whether to automatically accept the plan")
+    structured_response: Optional[dict] = Field(None, description="The structured response")
+    setup_script: str = Field('pip install -r requirements.txt', description="The script to setup the project")
 
 
 class ProgrammerState(BaseState):
