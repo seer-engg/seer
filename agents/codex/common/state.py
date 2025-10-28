@@ -33,13 +33,10 @@ class BaseState(TypedDict, total=False):
     taskPlan: Optional[TaskPlan]
 
 
-class ManagerState(BaseState):
-    pass
-
-
 class PlannerState(BaseState):
     autoAcceptPlan: bool
     structured_response: dict
+    setup_script: str = 'pip install -r requirements.txt'
 
 
 class ProgrammerState(BaseState):
