@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""
-Seer Launcher
-Launches: Agents
-"""
-
 import subprocess
 import time
 import signal
@@ -115,23 +110,6 @@ class Launcher:
         logger.info(f"   📝 Logs: {log_file}")
         return process
     
-    def check_port_available(self, port: int) -> bool:
-        """Check if a port is available by attempting to bind."""
-        import socket
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(('127.0.0.1', port))
-                return True
-        except OSError:
-            return False
-
-    def get_available_port(self, start_port: int = 8000, max_port: int = 8010) -> int:
-        """Find an available port starting from start_port."""
-        for port in range(start_port, max_port + 1):
-            if self.check_port_available(port):
-                return port
-        raise RuntimeError(f"No available ports found in range {start_port}-{max_port}")
-    
     def check_port_listening(self, port: int, timeout: int = 15) -> bool:
         """Check if a port is listening (health check)"""
         import socket
@@ -183,64 +161,36 @@ class Launcher:
         try:
             # 1. Start Buggy Coder (LangGraph)
             logger.info("\n1️⃣  Buggy Coder (LangGraph)")
-            # Use a stable default then fall back to any available port
-            try:
-                buggy_port = 8004
-                if not self.check_port_available(buggy_port):
-                    buggy_port = self.get_available_port(8004, 8014)
-            except Exception:
-                buggy_port = 8004
-
+            buggy_port = 8004
             self.start_process(
                 "Buggy Coder (LangGraph)",
                 [self.langgraph_exe, "dev", "--port", str(buggy_port), "--host", "127.0.0.1"],
                 cwd=str(self.project_root / "agents" / "buggy-coder")
             )
-
-            # Wait for port to be listening
             if not self.check_port_listening(buggy_port, timeout=15):
-                logger.error(f"❌ Buggy Coder failed to start on port {buggy_port}")
-                logger.error(f"   Check logs: {self.logs_dir}/buggy_coder_langgraph.log")
-                self.stop_all()
-                sys.exit(1)
+                raise Exception(f"Buggy Coder failed to start on port {buggy_port}")
 
             # 2. Start Eval Agent (LangGraph)
             logger.info("\n2️⃣  Eval Agent (LangGraph)")
-            eval_port = int(os.getenv("EVAL_AGENT_PORT", "8002"))
-            if not self.check_port_available(eval_port):
-                eval_port = self.get_available_port(eval_port, eval_port + 10)
-
+            eval_port = 8002
             self.start_process(
                 "Eval Agent (LangGraph)",
                 [self.langgraph_exe, "dev", "--port", str(eval_port), "--host", "127.0.0.1"],
                 cwd=str(self.project_root / "agents" / "eval_agent")
             )
-
-            # Wait for port to be listening
             if not self.check_port_listening(eval_port, timeout=15):
-                logger.error(f"❌ Eval agent failed to start on port {eval_port}")
-                logger.error(f"   Check logs: {self.logs_dir}/eval_agent_langgraph.log")
-                self.stop_all()
-                sys.exit(1)
-
+                raise Exception(f"Eval agent failed to start on port {eval_port}")
+            
             # 3. Start Coding Agent (langgraph dev)
             logger.info("\n3️⃣  Coding Agent (LangGraph)")
-            coding_port = int(os.getenv("CODEX_PORT", os.getenv("codex_PORT", "8003")))
-            if not self.check_port_available(coding_port) or coding_port == eval_port:
-                coding_port = self.get_available_port(coding_port, coding_port + 10)
-            
+            coding_port = 8003
             self.start_process(
                 "Coding Agent (LangGraph)",
                 [self.langgraph_exe, "dev", "--port", str(coding_port), "--host", "127.0.0.1"],
                 cwd=str(self.project_root / "agents" / "codex")
             )
-            
-            # Wait for port to be listening
             if not self.check_port_listening(coding_port, timeout=15):
-                logger.error(f"❌ Coding agent failed to start on port {coding_port}")
-                logger.error(f"   Check logs: {self.logs_dir}/codex_langgraph.log")
-                self.stop_all()
-                sys.exit(1)
+                raise Exception(f"Coding agent failed to start on port {coding_port}")
             
             logger.info("\n" + "=" * 60)
             logger.info("✅ All components started!\n")
