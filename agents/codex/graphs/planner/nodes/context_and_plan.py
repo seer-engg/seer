@@ -4,7 +4,6 @@ from shared.logger import get_logger
 logger = get_logger("codex.planner.nodes.context_and_plan_agent")
 
 from sandbox.tools import run_command_in_sandbox
-from sandbox import Sandbox
 
 from langchain.agents import create_agent
 from agents.codex.llm.model import get_chat_model

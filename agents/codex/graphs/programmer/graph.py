@@ -8,7 +8,7 @@ from sandbox.tools import run_command_in_sandbox
 from agents.codex.llm.model import get_chat_model
 from agents.codex.graphs.reviewer.graph import graph as reviewer_graph
 import time
-from sandbox import Sandbox
+from e2b_code_interpreter import AsyncSandbox
 from shared.logger import get_logger
 
 logger = get_logger("codex.programmer")
@@ -17,7 +17,7 @@ async def _initialize(state: ProgrammerState) -> ProgrammerState:
     sandbox_id = state.get("sandbox_session_id")
     if not sandbox_id:
         return state
-    sbx = await Sandbox.connect(sandbox_id)
+    sbx: AsyncSandbox = await AsyncSandbox.connect(sandbox_id)
     logger.info("Sandbox ready")
     return state
 

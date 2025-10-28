@@ -10,8 +10,8 @@ import textwrap
 import base64
 import shlex
 from typing import Optional
-from sandbox import Sandbox
 
+from e2b_code_interpreter import AsyncSandbox, CommandResult
 async def _build_git_shell_script() -> str:
     # Real shell script to run inside sandbox. Uses http.extraHeader to avoid embedding tokens in remotes.
     script = """
@@ -72,8 +72,8 @@ async def initialize_e2b_sandbox(
         raise RuntimeError("E2B_API_KEY not configured in environment")
 
     logger.info("Creating E2B sandbox for codex...")
-    sbx = await Sandbox.create()
-    sandbox_id = sbx.id
+    sbx: AsyncSandbox = await AsyncSandbox.beta_create(auto_pause=True)
+    sandbox_id = sbx.sandbox_id
     logger.info(f"Sandbox created: {sandbox_id}")
 
     shell_script = await _build_git_shell_script()
@@ -92,7 +92,7 @@ async def initialize_e2b_sandbox(
 B64EOF
 chmod +x "$TMP"; bash "$TMP"'"""
 
-    execution = await sbx.run_command(cmd, login_shell=False)
+    execution: CommandResult = await sbx.commands.run(cmd, login_shell=False)
 
     exit_code = execution.exit_code
     stdout = execution.stdout
@@ -116,8 +116,8 @@ chmod +x "$TMP"; bash "$TMP"'"""
 
 async def setup_project(sandbox_id: str, repo_dir: str, setup_script: str) -> str:
 
-    sbx = await Sandbox.connect(sandbox_id)
-    execution = await sbx.run_command(setup_script, cwd=repo_dir, login_shell=True)
+    sbx: AsyncSandbox = await AsyncSandbox.connect(sandbox_id)
+    execution: CommandResult = await sbx.commands.run(setup_script, cwd=repo_dir)
     exit_code = execution.exit_code
     stdout = execution.stdout
     stderr = execution.stderr

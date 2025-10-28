@@ -1,9 +1,8 @@
 from langchain.tools import tool
 from langchain.tools import ToolRuntime
-from dataclasses import asdict
 
 from sandbox.base import get_sandbox
-from e2b_code_interpreter import CommandResult
+from e2b_code_interpreter import CommandResult, AsyncSandbox
 from shared.logger import get_logger
 
 logger = get_logger("sandbox.tools")
@@ -20,9 +19,9 @@ async def run_command_in_sandbox(command: str, runtime: ToolRuntime) -> str:
     if not repo_path:
         raise ValueError("Repository directory not found in runtime state")
 
-    sbx = await get_sandbox(sandbox_id)
+    sbx: AsyncSandbox = await get_sandbox(sandbox_id)
     try:
-        res: CommandResult = await sbx.run_command(command, cwd=repo_path, login_shell=True)
+        res: CommandResult = await sbx.commands.run(command, cwd=repo_path)
     except Exception as e:
         logger.error(f"Error running command in sandbox: {e}")
         return f"Error: {e}"
