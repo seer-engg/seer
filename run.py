@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Seer Launcher
-Launches: Agents + UI
+Launches: Agents
 """
 
 import subprocess
@@ -12,7 +12,6 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-from shared.config import get_seer_config
 from shared.logger import get_logger
 
 load_dotenv()
@@ -117,19 +116,21 @@ class Launcher:
         return process
     
     def check_port_available(self, port: int) -> bool:
-        """Check if a port is available"""
+        """Check if a port is available by attempting to bind."""
+        import socket
         try:
-            config = get_seer_config()
-            return config._is_port_available(port)
-        except Exception:
-            # Fallback to original implementation
-            import socket
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.bind(('127.0.0.1', port))
-                    return True
-            except OSError:
-                return False
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('127.0.0.1', port))
+                return True
+        except OSError:
+            return False
+
+    def get_available_port(self, start_port: int = 8000, max_port: int = 8010) -> int:
+        """Find an available port starting from start_port."""
+        for port in range(start_port, max_port + 1):
+            if self.check_port_available(port):
+                return port
+        raise RuntimeError(f"No available ports found in range {start_port}-{max_port}")
     
     def check_port_listening(self, port: int, timeout: int = 15) -> bool:
         """Check if a port is listening (health check)"""
@@ -157,12 +158,6 @@ class Launcher:
         except:
             pass
 
-        # Kill streamlit processes
-        try:
-            subprocess.run(["pkill", "-f", "streamlit.*ui"], check=False)
-        except:
-            pass
-
         time.sleep(2)  # Give processes time to die
 
     async def start_all(self):
@@ -186,96 +181,73 @@ class Launcher:
         self.cleanup_existing_processes()
         
         try:
-            # Get configuration
-            config = get_seer_config()
-            
-            # 1. Start Orchestrator Agent (langgraph dev)
-            logger.info("\n1️⃣  Orchestrator Agent (LangGraph)")
-
-            # Try to find an available port starting from configured port
-            orchestrator_port = config.orchestrator_port
-            if not self.check_port_available(orchestrator_port):
-                orchestrator_port = config.get_available_port(config.orchestrator_port, config.orchestrator_port + 10)
-
-            if orchestrator_port != config.orchestrator_port:
-                logger.warning(f"⚠️  Port {config.orchestrator_port} in use, using port {orchestrator_port} instead")
-                logger.warning(f"   Update your UI to use: http://127.0.0.1:{orchestrator_port}")
+            # 1. Start Buggy Coder (LangGraph)
+            logger.info("\n1️⃣  Buggy Coder (LangGraph)")
+            # Use a stable default then fall back to any available port
+            try:
+                buggy_port = 8004
+                if not self.check_port_available(buggy_port):
+                    buggy_port = self.get_available_port(8004, 8014)
+            except Exception:
+                buggy_port = 8004
 
             self.start_process(
-                "Orchestrator (LangGraph)",
-                [self.langgraph_exe, "dev", "--port", str(orchestrator_port), "--host", "127.0.0.1"],
-                cwd=str(self.project_root / "agents" / "orchestrator")
+                "Buggy Coder (LangGraph)",
+                [self.langgraph_exe, "dev", "--port", str(buggy_port), "--host", "127.0.0.1"],
+                cwd=str(self.project_root / "agents" / "buggy-coder")
             )
 
             # Wait for port to be listening
-            if not self.check_port_listening(orchestrator_port, timeout=15):
-                logger.error(f"❌ Orchestrator agent failed to start on port {orchestrator_port}")
-                logger.error(f"   Check logs: {self.logs_dir}/orchestrator_langgraph.log")
+            if not self.check_port_listening(buggy_port, timeout=15):
+                logger.error(f"❌ Buggy Coder failed to start on port {buggy_port}")
+                logger.error(f"   Check logs: {self.logs_dir}/buggy_coder_langgraph.log")
                 self.stop_all()
                 sys.exit(1)
-            
-            # 2. Start Eval Agent (langgraph dev)
+
+            # 2. Start Eval Agent (LangGraph)
             logger.info("\n2️⃣  Eval Agent (LangGraph)")
-            eval_port = config.eval_agent_port
-            if not self.check_port_available(eval_port) or eval_port == orchestrator_port:
-                eval_port = config.get_available_port(config.eval_agent_port, config.eval_agent_port + 10)
-            
+            eval_port = int(os.getenv("EVAL_AGENT_PORT", "8002"))
+            if not self.check_port_available(eval_port):
+                eval_port = self.get_available_port(eval_port, eval_port + 10)
+
             self.start_process(
                 "Eval Agent (LangGraph)",
                 [self.langgraph_exe, "dev", "--port", str(eval_port), "--host", "127.0.0.1"],
                 cwd=str(self.project_root / "agents" / "eval_agent")
             )
-            
+
             # Wait for port to be listening
             if not self.check_port_listening(eval_port, timeout=15):
                 logger.error(f"❌ Eval agent failed to start on port {eval_port}")
                 logger.error(f"   Check logs: {self.logs_dir}/eval_agent_langgraph.log")
                 self.stop_all()
                 sys.exit(1)
-            
+
             # 3. Start Coding Agent (langgraph dev)
             logger.info("\n3️⃣  Coding Agent (LangGraph)")
-            try:
-                from shared.config import get_config as get_agent_config
-                agent_config = get_agent_config()
-                coding_port = agent_config.get_agent_config("coding_agent").get("port", 8003)
-            except Exception:
-                coding_port = 8003  # Fallback to default
-            if not self.check_port_available(coding_port) or coding_port in [orchestrator_port, eval_port]:
-                coding_port = config.get_available_port(coding_port, coding_port + 10)
+            coding_port = int(os.getenv("CODEX_PORT", os.getenv("codex_PORT", "8003")))
+            if not self.check_port_available(coding_port) or coding_port == eval_port:
+                coding_port = self.get_available_port(coding_port, coding_port + 10)
             
             self.start_process(
                 "Coding Agent (LangGraph)",
                 [self.langgraph_exe, "dev", "--port", str(coding_port), "--host", "127.0.0.1"],
-                cwd=str(self.project_root / "agents" / "coding_agent")
+                cwd=str(self.project_root / "agents" / "codex")
             )
             
             # Wait for port to be listening
             if not self.check_port_listening(coding_port, timeout=15):
                 logger.error(f"❌ Coding agent failed to start on port {coding_port}")
-                logger.error(f"   Check logs: {self.logs_dir}/coding_agent_langgraph.log")
+                logger.error(f"   Check logs: {self.logs_dir}/codex_langgraph.log")
                 self.stop_all()
                 sys.exit(1)
-            # 4. Start Streamlit UI
-            logger.info("\n4️⃣  Streamlit UI")
-            ui_port = config.ui_port
-            if not self.check_port_available(ui_port):
-                ui_port = config.get_available_port(config.ui_port, config.ui_port + 10)
-            
-            ui_env = {
-                "ORCHESTRATOR_URL": f"http://127.0.0.1:{orchestrator_port}"
-            }
-            self.start_process(
-                "Streamlit UI",
-                ["streamlit", "run", "ui/streamlit_app.py", "--server.headless", "true", "--server.port", str(ui_port)],
-                env=ui_env
-            )
-            time.sleep(3)
             
             logger.info("\n" + "=" * 60)
             logger.info("✅ All components started!\n")
             logger.info("🔮 Seer Agents are running:")
-            logger.info(f"   - UI:                http://localhost:{ui_port}")
+            logger.info(f"   - Buggy Coder:       http://127.0.0.1:{buggy_port}")
+            logger.info(f"   - Eval Agent:        http://127.0.0.1:{eval_port}")
+            logger.info(f"   - Coding Agent:      http://127.0.0.1:{coding_port}")
             logger.info("=" * 60)
             logger.info("Press Ctrl+C to stop all components\n")
             

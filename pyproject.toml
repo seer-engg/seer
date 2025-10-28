@@ -13,7 +13,8 @@ dependencies = [
   "langgraph-cli[inmem]>=0.4.4",
   "pydantic>=2.12.3",
   "httpx>=0.28.1",
-  "streamlit>=1.50.0",
+  "langsmith>=0.1.77",
+  "openai>=1.40.0",
   "python-dotenv>=1.0.0",
   "pyyaml>=6.0.3",
   "e2b==2.4.0",
@@ -31,9 +32,9 @@ packages = [
   "shared",
   "agents",
   "agents.eval_agent",
-  "agents.orchestrator",
-  "agents.coding_agent",
-  "ui",
+  "agents.codex",
+  "agents.reflexion",
+  "agents.buggy-coder",
 ]
 
 [tool.setuptools.package-data]

@@ -33,7 +33,7 @@ class TestResult(BaseModel):
     judge_reasoning: str = Field(description="Why the judge scored this way")
 
 
-# Shared, state-only additions for orchestrator <> eval agent
+# Shared, state-only additions for cross-agent configuration
 class TargetConfig(BaseModel):
     """How to reach the target agent."""
     url: str = Field(description="e.g. http://127.0.0.1:2024")

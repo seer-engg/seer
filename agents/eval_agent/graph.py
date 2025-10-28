@@ -1,7 +1,7 @@
 import json
 import hashlib
 import uuid
-from typing import Annotated
+from typing import Annotated, Optional
 from typing_extensions import TypedDict
 
 from langgraph.graph.message import add_messages
@@ -11,7 +11,7 @@ from langchain.tools import ToolRuntime
 from langgraph.types import Command
 from pydantic import BaseModel, Field
 from langchain.agents import create_agent
-from langchain.agents.middleware import dynamic_prompt, wrap_tool_call
+from langchain.agents.middleware import wrap_tool_call
 
 from langchain_core.runnables import RunnableConfig
 from shared.schemas import AgentSpec, TestResult, Eval as EvalSchema, AgentExpectation, TargetConfig
@@ -26,6 +26,15 @@ from shared.logger import get_logger
 from shared.messaging import messenger
 from shared.error_handling import create_success_response, create_error_response
 from urllib.parse import urlparse
+from datetime import datetime
+import os
+
+# LangSmith / OpenAI
+from langsmith import Client as LangSmithClient
+from langsmith import wrappers as ls_wrappers
+import openai
+from langgraph.pregel.remote import RemoteGraph
+from langgraph_sdk import get_sync_client
 
 
 # Get logger for eval agent
@@ -61,6 +70,8 @@ class EvalDTO(TypedDict, total=False):
 class EvalAgentState(TypedDict, total=False):
     messages: Annotated[list[BaseMessage], add_messages]
     current_eval: EvalDTO
+    latest_eval_suite: dict  # cached suite with test_cases for LangSmith examples
+    langsmith_dataset_name: str
 
 
 class EvalRequest(BaseModel):
@@ -74,6 +85,7 @@ class GeneratedTestCase(BaseModel):
     input_message: str
     expected_behavior: str
     success_criteria: str
+    expected_output: Optional[str] = None
 
 
 class GeneratedTests(BaseModel):
@@ -143,6 +155,13 @@ def propose_eval(eval_input_json: str, max_preview: int = 5, tool_call_id: Annot
             eval_obj = EvalSchema.model_validate(data)
         else:
             target = TargetConfig.model_validate(data.get("target", {}))
+            # If assistant_id is missing but agent_name is provided at top-level, set it
+            maybe_agent_name = (data.get("agent_name") or "").strip()
+            if not getattr(target, "assistant_id", None) and maybe_agent_name:
+                try:
+                    target.assistant_id = maybe_agent_name
+                except Exception:
+                    pass
             expectations_list = data.get("expectations", [])
             expectations: list[AgentExpectation] = []
             for item in expectations_list:
@@ -308,15 +327,35 @@ async def run_test(test_input: str, config: RunnableConfig, runtime: ToolRuntime
         if not agent_id:
             return create_error_response("Missing target_agent_id (assistant_id) in args or state")
 
-        text, remote_tid = await messenger.send(
-            user_thread_id=thread_id,
-            src_agent="eval_agent",
-            dst_agent=agent_id,
-            base_url=base_url,
-            assistant_id=agent_id,
-            content=test_input
-        )
-        return create_success_response({"response": text, "thread_id": remote_tid, "base_url": base_url, "assistant_id": agent_id})
+        # Prefer RemoteGraph when available; fall back to SDK messenger
+        try:
+            remote_graph = RemoteGraph(agent_id, url=base_url)
+            result = await remote_graph.ainvoke({
+                "messages": [{"role": "user", "content": test_input}]
+            })
+            # Extract last AI message content if present
+            text = ""
+            try:
+                messages = result.get("messages", []) if isinstance(result, dict) else []
+                if messages and isinstance(messages, list):
+                    last = messages[-1]
+                    text = (last.get("content", "") if isinstance(last, dict) else "")
+            except Exception:
+                text = ""
+            if not text:
+                # Fallback to str(result) if structure unexpected
+                text = str(result)
+            return create_success_response({"response": text, "thread_id": thread_id, "base_url": base_url, "assistant_id": agent_id})
+        except Exception:
+            text, remote_tid = await messenger.send(
+                user_thread_id=thread_id,
+                src_agent="eval_agent",
+                dst_agent=agent_id,
+                base_url=base_url,
+                assistant_id=agent_id,
+                content=test_input
+            )
+            return create_success_response({"response": text, "thread_id": remote_tid, "base_url": base_url, "assistant_id": agent_id})
     except Exception as e:
         return create_error_response(f"Failed to run test via SDK: {str(e)}", e)
 
@@ -358,10 +397,11 @@ def generate_spec(input_json: str) -> str:
 
 
 @tool
-def generate_tests(spec_json: str, max_tests: int = 3) -> str:
+def generate_tests(spec_json: str, max_tests: int = 3, tool_call_id: Annotated[str, InjectedToolCallId] = None) -> Command:
     """
     Generate test cases from AgentSpec JSON. Returns JSON with eval_suite and eval_context.
-    Defaults to generating up to `max_tests` unless the user explicitly asks for more.
+    Also caches the latest suite in state for LangSmith dataset creation.
+    Defaults to generating up to `max_tests` unless the user explicitly asks for a different number.
     """
     llm = get_llm().with_structured_output(GeneratedTests)
     generated: GeneratedTests = llm.invoke(EVAL_AGENT_TEST_GEN_PROMPT.format(spec_json=spec_json))
@@ -388,6 +428,7 @@ def generate_tests(spec_json: str, max_tests: int = 3) -> str:
             "input_message": tc.input_message,
             "expected_behavior": tc.expected_behavior,
             "success_criteria": tc.success_criteria,
+            "expected_output": getattr(tc, "expected_output", None) or "",
         })
         inputs_preview.append(f"[{idx}] {tc.input_message}")
 
@@ -406,7 +447,11 @@ def generate_tests(spec_json: str, max_tests: int = 3) -> str:
         + "\n".join(inputs_preview)
     )
 
-    return json.dumps({"eval_suite": eval_suite, "eval_context": eval_context})
+    payload = json.dumps({"eval_suite": eval_suite, "eval_context": eval_context})
+    return Command(update={
+        "latest_eval_suite": eval_suite,
+        "messages": [ToolMessage(content=payload, tool_call_id=tool_call_id)]
+    })
 
 
 @tool
@@ -445,48 +490,6 @@ def judge_result(input_json: str) -> str:
     })
 
 
-# Middleware
-@dynamic_prompt
-def stage_gating_prompt(request) -> str:
-    """Inject dynamic instructions to avoid premature test execution and regeneration."""
-    msgs = request.state.get("messages", []) or []
-
-    def msg_content(m) -> str:
-        if hasattr(m, "content"):
-            return m.content or ""
-        if isinstance(m, dict):
-            return m.get("content", "") or ""
-        return ""
-
-    def is_human(m) -> bool:
-        try:
-            return isinstance(m, HumanMessage) or getattr(m, "type", "") == "human" or (isinstance(m, dict) and m.get("type") == "human")
-        except Exception:
-            return False
-
-    all_text_lower = "\n".join(msg_content(m) for m in msgs).lower()
-    has_eval_context = "eval_context" in all_text_lower
-
-    latest_human_text = ""
-    for m in reversed(msgs):
-        if is_human(m):
-            latest_human_text = msg_content(m).lower()
-            break
-
-    confirmed = any(phrase in latest_human_text for phrase in ["run tests", "go ahead", "yes, run", "start tests"])
-
-    rules = []
-    if has_eval_context and not confirmed:
-        rules.append("Do not call run_test until the user explicitly confirms.")
-        rules.append("If asked to show/list tests, enumerate from EVAL_CONTEXT without regenerating.")
-    if has_eval_context and confirmed:
-        rules.append("Proceed to run_test sequentially and call judge_result after each.")
-    if not has_eval_context:
-        rules.append("First call parse_eval_request then generate_spec then generate_tests.")
-
-    return "" if not rules else "Dynamic rules:\n- " + "\n- ".join(rules)
-
-
 @wrap_tool_call
 async def handle_tool_errors(request, handler):
     try:
@@ -497,6 +500,259 @@ async def handle_tool_errors(request, handler):
             tool_call_id=request.tool_call["id"],
         )
 
+# -----------------------
+# LangSmith integration
+# -----------------------
+
+@tool
+def create_langsmith_dataset(name: str | None = None, runtime: ToolRuntime = None) -> str:
+    """Create or read a LangSmith dataset and store its name in state for later use."""
+    try:
+        # Derive deterministic name from current_eval and suite if available
+        if not name:
+            ce = runtime.state.get("current_eval") or {}
+            tgt = ce.get("target") or {}
+            agent_id = (tgt.get("assistant_id") or "target_agent").replace("/", "_")
+            suite_id = (ce.get("suite_id") or (runtime.state.get("latest_eval_suite") or {}).get("id"))
+            if suite_id:
+                name = f"seer_eval_{agent_id}_{suite_id}"
+            else:
+                date_tag = datetime.utcnow().strftime("%Y%m%d")
+                name = f"seer_eval_{agent_id}_{date_tag}"
+
+        client = LangSmithClient()
+        try:
+            _ = client.read_dataset(dataset_name=name)
+        except Exception:
+            _ = client.create_dataset(name)
+
+        # Persist dataset name in state for reuse
+        return Command(update={
+            "langsmith_dataset_name": name
+        })
+    except Exception as e:
+        return create_error_response(f"Failed to create/read LangSmith dataset: {str(e)}", e)
+
+
+@tool
+def upsert_examples_from_suite(dataset_name: str | None = None, runtime: ToolRuntime = None) -> str:
+    """Upsert examples into LangSmith dataset from cached latest_eval_suite."""
+    try:
+        suite = runtime.state.get("latest_eval_suite") or {}
+        test_cases = suite.get("test_cases") or []
+        if not test_cases:
+            return create_error_response("No cached test cases found. Please run generate_tests first.")
+
+        ce = runtime.state.get("current_eval") or {}
+        tgt = ce.get("target") or {}
+        agent_id = (tgt.get("assistant_id") or "target_agent").replace("/", "_")
+        if not dataset_name:
+            dataset_name = runtime.state.get("langsmith_dataset_name")
+        if not dataset_name:
+            suite_id = (ce.get("suite_id") or suite.get("id"))
+            if suite_id:
+                dataset_name = f"seer_eval_{agent_id}_{suite_id}"
+            else:
+                date_tag = datetime.utcnow().strftime("%Y%m%d")
+                dataset_name = f"seer_eval_{agent_id}_{date_tag}"
+
+        client = LangSmithClient()
+        try:
+            dataset = client.read_dataset(dataset_name=dataset_name)
+        except Exception:
+            dataset = client.create_dataset(dataset_name)
+
+        examples = [
+            {
+                "inputs": {"question": tc.get("input_message", "")},
+                "outputs": {"answer": (tc.get("expected_output") or tc.get("expected_behavior", ""))},
+            }
+            for tc in test_cases
+        ]
+        if examples:
+            client.create_examples(dataset_id=dataset.id, examples=examples)
+        return create_success_response({"dataset_name": dataset_name, "examples": len(examples)})
+    except Exception as e:
+        return create_error_response(f"Failed to upsert examples: {str(e)}", e)
+
+
+@tool
+def run_langsmith_evaluation(dataset_name: str | None = None, experiment_prefix: str | None = None, runtime: ToolRuntime = None) -> str:
+    """Run LangSmith evaluation over the given dataset, calling the target agent for responses."""
+    try:
+        ce = runtime.state.get("current_eval") or {}
+        tgt = ce.get("target") or {}
+        url = (tgt.get("url") or "").strip()
+        agent_id = (tgt.get("assistant_id") or "").strip()
+        port = tgt.get("port")
+        if not agent_id:
+            return create_error_response("Missing target assistant_id in current_eval.target")
+
+        def normalize_base_url(u: str, p: int | None) -> str:
+            if p:
+                return f"http://127.0.0.1:{p}"
+            if "://" in (u or ""):
+                parsed = urlparse(u)
+                scheme = parsed.scheme or "http"
+                host = parsed.hostname or "127.0.0.1"
+                pp = parsed.port or (443 if scheme == "https" else 80)
+                return f"{scheme}://{host}:{pp}"
+            if not u:
+                return "http://127.0.0.1:80"
+            if u.isdigit():
+                return f"http://127.0.0.1:{u}"
+            if ":" in u:
+                host, p2 = u.split(":", 1)
+                host = (host or "127.0.0.1").strip()
+                p2 = (p2 or "80").strip()
+                return f"http://{host}:{p2}"
+            return f"http://{u}:80"
+
+        base_url = normalize_base_url(url, port)
+
+        # Default dataset name: prefer stored one, then deterministic
+        if not dataset_name:
+            dataset_name = runtime.state.get("langsmith_dataset_name")
+        if not dataset_name:
+            suite = runtime.state.get("latest_eval_suite") or {}
+            suite_id = (ce.get("suite_id") or suite.get("id"))
+            if suite_id:
+                dataset_name = f"seer_eval_{agent_id or 'target_agent'}_{suite_id}"
+            else:
+                date_tag = datetime.utcnow().strftime("%Y%m%d")
+                dataset_name = f"seer_eval_{agent_id or 'target_agent'}_{date_tag}"
+
+        client = LangSmithClient()
+        try:
+            dataset = client.read_dataset(dataset_name=dataset_name)
+        except Exception:
+            return create_error_response(f"Dataset '{dataset_name}' not found. Please create and upsert examples first.")
+
+        # Wrap OpenAI for LangSmith tracing
+        openai_client = ls_wrappers.wrap_openai(openai.OpenAI())
+
+        eval_instructions = (
+            "You are an expert professor specialized in grading answers for correctness against the reference answer."
+        )
+
+        def correctness(inputs: dict, outputs: dict, reference_outputs: dict) -> bool:
+            user_content = (
+                f"You are grading the following question:\n{inputs.get('question','')}\n"
+                f"Here is the real answer:\n{reference_outputs.get('answer','')}\n"
+                f"You are grading the following predicted answer:\n{outputs.get('response','')}\n"
+                "Respond with CORRECT or INCORRECT:\nGrade:"
+            )
+            response = openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                temperature=0,
+                messages=[
+                    {"role": "system", "content": eval_instructions},
+                    {"role": "user", "content": user_content},
+                ],
+            ).choices[0].message.content
+            return response == "CORRECT"
+
+        def concision(outputs: dict, reference_outputs: dict) -> bool:
+            ref = reference_outputs.get("answer", "")
+            pred = outputs.get("response", "")
+            try:
+                return int(len(pred.split()) <= 2 * max(1, len(ref.split())))
+            except Exception:
+                return True
+
+        # Target function to call the agent under test
+        async def call_target(question: str) -> str:
+            # Prefer RemoteGraph; fall back to SDK messenger
+            try:
+                remote_graph = RemoteGraph(agent_id, url=base_url)
+                result = await remote_graph.ainvoke({
+                    "messages": [{"role": "user", "content": question}]
+                })
+                msg = ""
+                try:
+                    messages = result.get("messages", []) if isinstance(result, dict) else []
+                    if messages and isinstance(messages, list):
+                        last = messages[-1]
+                        msg = (last.get("content", "") if isinstance(last, dict) else "")
+                except Exception:
+                    msg = ""
+                return msg or str(result)
+            except Exception:
+                text, _remote_tid = await messenger.send(
+                    user_thread_id=uuid.uuid4().hex,
+                    src_agent="eval_agent",
+                    dst_agent=agent_id,
+                    base_url=base_url,
+                    assistant_id=agent_id,
+                    content=question,
+                )
+                return text
+
+        def ls_target(inputs: dict) -> dict:
+            # Synchronous wrapper that runs the async call
+            import asyncio
+            loop = asyncio.new_event_loop()
+            try:
+                asyncio.set_event_loop(loop)
+                resp = loop.run_until_complete(call_target(inputs.get("question", "")))
+            finally:
+                loop.close()
+            return {"response": resp}
+
+        if not experiment_prefix:
+            experiment_prefix = f"{agent_id or 'target_agent'}-{datetime.utcnow().strftime('%Y%m%d')}"
+
+        results = client.evaluate(
+            ls_target,
+            data=dataset_name,
+            evaluators=[concision, correctness],
+            experiment_prefix=experiment_prefix,
+        )
+
+        return create_success_response({
+            "dataset_name": dataset_name,
+            "experiment_name": getattr(results, "experiment_name", experiment_prefix),
+        })
+    except Exception as e:
+        return create_error_response(f"Failed to run LangSmith evaluation: {str(e)}", e)
+
+
+@tool
+def index_conversation(namespace_prefix: str = "conversations", runtime: ToolRuntime = None) -> str:
+    """Index the eval agent conversation into the local LangGraph store for semantic search."""
+    try:
+        # Determine self URL from env (default 8002)
+        port = os.getenv("EVAL_AGENT_PORT", "8002").strip()
+        base_url = f"http://127.0.0.1:{port}"
+
+        # Collect conversation messages
+        messages = runtime.state.get("messages") or []
+        ce = runtime.state.get("current_eval") or {}
+        tgt = ce.get("target") or {}
+        agent_id = (tgt.get("assistant_id") or "unknown").replace("/", "_")
+        namespace = f"{namespace_prefix}/eval_agent/{agent_id}"
+
+        client = get_sync_client(url=base_url)
+
+        # Upsert each user/ai message individually
+        added = 0
+        for msg in messages:
+            try:
+                role = getattr(msg, "type", None) or getattr(msg, "role", "")
+                content = getattr(msg, "content", "")
+                if not content:
+                    continue
+                key = uuid.uuid4().hex
+                value = {"role": role, "content": content}
+                # Best-effort store put
+                client.store.put(namespace=namespace, key=key, value=value)
+                added += 1
+            except Exception:
+                continue
+
+        return create_success_response({"namespace": namespace, "messages_indexed": added})
+    except Exception as e:
+        return create_error_response(f"Failed to index conversation: {str(e)}", e)
 
 def build_graph():
     model = get_llm(temperature=0.0)
@@ -508,6 +764,12 @@ def build_graph():
         parse_eval_request,
         generate_spec,
         generate_tests,
+        # LangSmith path
+        create_langsmith_dataset,
+        upsert_examples_from_suite,
+        run_langsmith_evaluation,
+        index_conversation,
+        # Ad-hoc tools
         run_test,
         judge_result,
         think,
@@ -516,9 +778,11 @@ def build_graph():
         model=model,
         tools=tools,
         system_prompt=EVAL_AGENT_PROMPT,
-        middleware=[stage_gating_prompt, handle_tool_errors],
+        middleware=[handle_tool_errors],
         state_schema=EvalAgentState,
     )
 
 
+
+# NOTE: graph is created after all tools are defined
 graph = build_graph()
