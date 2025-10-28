@@ -5,14 +5,13 @@ from langgraph.graph import END, START, StateGraph
 import os
 import json
 from agents.codex.common.state import PlannerState, TaskItem, TaskPlan
-from agents.codex.llm.model import get_chat_model, generate_plan_steps
+from agents.codex.llm.model import get_chat_model
 from sandbox.base import (
     ensure_sandbox_ready,
     initialize_e2b_sandbox,
 )
 from shared.logger import get_logger
 from langchain.agents import create_agent
-from langchain.tools import tool
 
 from sandbox.tools import run_command_in_sandbox
 
@@ -87,8 +86,8 @@ async def _context_and_plan_agent(state: PlannerState) -> PlannerState:
     agent = create_agent(
         model=get_chat_model(),
         tools=[
-            # run_command_in_sandbox
-            ],
+            run_command_in_sandbox
+        ],
         system_prompt=SYSTEM_PROMPT,
         state_schema=PlannerState,
         response_format=TaskPlan,
