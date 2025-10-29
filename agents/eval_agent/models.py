@@ -60,3 +60,32 @@ class EvalAgentState(BaseModel):
     target_agent_config: TargetAgentConfig
     test_cases: list[GeneratedTestCase]
     dataset_name: str
+    experiment_name: str = ""
+    score: float = 0.0
+
+
+# ----- Eval V2 Models -----
+class EvalReflection(BaseModel):
+    """A meta-evaluation insight to improve future eval generation only."""
+    agent_name: str = Field(description="Target agent/graph this reflection applies to, e.g., buggy-coder")
+    expectation_ref: Optional[str] = Field(default=None, description="Expectation/test reference this reflection relates to")
+    summary: str = Field(description="Concise reflection focused on improving test quality/coverage")
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class EvalV2State(BaseModel):
+    """State for eval-agent v2 reflexion loop (Plan → Run → Reflect)."""
+    messages: Annotated[list[BaseMessage], add_messages]
+    target_agent_config: Optional[TargetAgentConfig] = Field(default=None, description="Configuration for the target agent to evaluate")
+    # Planning
+    test_cases: list[GeneratedTestCase] = Field(default_factory=list)
+    previous_inputs: list[str] = Field(default_factory=list, description="History of prior test input messages to avoid repetition")
+    # Execution
+    dataset_name: str = ""
+    experiment_name: str = ""
+    score: float = 0.0
+    score_history: list[float] = Field(default_factory=list)
+    # Loop control
+    attempts: int = 0
+    # Reflections for future test generation
+    reflections: list[EvalReflection] = Field(default_factory=list)
