@@ -124,6 +124,83 @@ async def write_file(file_path: str, content: str, runtime: ToolRuntime) -> str:
 
 
 @tool
+async def patch_file(
+    file_path: str,
+    old_string: str,
+    new_string: str,
+    runtime: ToolRuntime,
+    replace_all: bool = False
+) -> str:
+    """
+    Edit a specific portion of a file by replacing old_string with new_string.
+    This is useful for making targeted edits without rewriting the entire file.
+    
+    Args:
+        file_path: Path to the file relative to the repository root
+        old_string: The exact text to find and replace (must match exactly including whitespace)
+        new_string: The text to replace it with
+        replace_all: If True, replace all occurrences. If False (default), replace only the first occurrence.
+
+    Returns:
+        A success message if the patch was applied, or an error message if:
+        - The file does not exist
+        - The old_string was not found in the file
+        - The old_string appears multiple times and replace_all is False
+        - There was an error writing the file
+    
+    Important:
+        - The old_string must match EXACTLY including all whitespace and indentation
+        - For safety, if old_string appears multiple times, the operation will fail unless replace_all=True
+        - Provide enough context in old_string to make it unique within the file
+    """
+    sandbox_id, repo_path = vaildate_sandbox_tool_call(runtime)
+    
+    sbx: AsyncSandbox = await get_sandbox(sandbox_id)
+    try:
+        # Construct full path
+        full_path = f"{repo_path}/{file_path}" if not file_path.startswith("/") else file_path
+        
+        # Read the current file content
+        try:
+            content = await sbx.files.read(full_path)
+        except Exception as e:
+            return f"Error: Could not read file {file_path}. File may not exist. Error: {e}"
+        
+        # Check if old_string exists in the file
+        if old_string not in content:
+            return f"Error: The old_string was not found in {file_path}. Make sure it matches exactly including whitespace."
+        
+        # Count occurrences
+        occurrence_count = content.count(old_string)
+        
+        if occurrence_count > 1 and not replace_all:
+            return (
+                f"Error: The old_string appears {occurrence_count} times in {file_path}. "
+                f"To avoid ambiguity, either:\n"
+                f"1. Provide more context in old_string to make it unique, or\n"
+                f"2. Set replace_all=True to replace all occurrences"
+            )
+        
+        # Perform the replacement
+        if replace_all:
+            new_content = content.replace(old_string, new_string)
+            replaced_count = occurrence_count
+        else:
+            # Replace only the first occurrence
+            new_content = content.replace(old_string, new_string, 1)
+            replaced_count = 1
+        
+        # Write the modified content back
+        await sbx.files.write(full_path, new_content)
+        
+        return f"Successfully patched {file_path}: replaced {replaced_count} occurrence(s)"
+        
+    except Exception as e:
+        logger.error(f"Error patching file in sandbox: {e}")
+        return f"Error patching file: {e}"
+
+
+@tool
 async def apply_patch(diff_content: str, runtime: ToolRuntime) -> str:
     """
     Apply a git-style unified diff to files in the repository.

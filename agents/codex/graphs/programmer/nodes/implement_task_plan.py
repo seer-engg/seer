@@ -12,6 +12,7 @@ from sandbox.tools import (
     create_directory,
     apply_patch,
     write_file,
+    patch_file,
 )
 from agents.codex.common.tools import think
 from langchain_core.messages import AIMessage
@@ -46,10 +47,12 @@ SYSTEM_PROMPT = """
     - create_directory: Create a directory in the repository.
         - Parameters:
             - directory_path: The path to the directory to create.
-    
-    - apply_patch: Use this tool to edit the files in the repository.
+    - patch_file: Use this tool to edit a specific portion of a file by replacing old_string with new_string.
         - Parameters:
-            - diff_content: The diff content to apply. This is a git-style unified diff string in standard git format.
+            - file_path: The path to the file to edit.
+            - old_string: The old string to replace.
+            - new_string: The new string to replace with.
+            - replace_all: If True, replace all occurrences. If False (default), replace only the first occurrence.
     
     - write_file: Use this tool to write a file to the repository.
         - Parameters:
@@ -89,8 +92,8 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
             create_file,
             create_directory,
             think,
-            apply_patch,
             write_file,
+            patch_file,
         ],
         system_prompt=SYSTEM_PROMPT,
         state_schema=ProgrammerState,
