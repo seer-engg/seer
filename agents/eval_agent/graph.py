@@ -259,16 +259,12 @@ def run_langsmith_evaluation(runtime: ToolRuntime = None) -> str:
 def index_conversation(namespace_prefix: str = "conversations", runtime: ToolRuntime = None) -> str:
     """Index the eval agent conversation into the local LangGraph store for semantic search."""
     try:
-        # Determine self URL from env (default 8002)
-        port = os.getenv("EVAL_AGENT_PORT", "8002").strip()
-        base_url = f"http://127.0.0.1:{port}"
-
         # Collect conversation messages
         messages = runtime.state.get("messages") or []
         graph_name = runtime.state.get("target_agent_config").graph_name
         namespace = f"{namespace_prefix}/eval_agent/{graph_name}"
 
-        client = get_sync_client(url=base_url)
+        client = get_sync_client(url="http://127.0.0.1:8002")
 
         # Upsert each user/ai message individually
         added = 0
@@ -281,7 +277,7 @@ def index_conversation(namespace_prefix: str = "conversations", runtime: ToolRun
                 key = uuid.uuid4().hex
                 value = {"role": role, "content": content}
                 # Best-effort store put
-                client.store.put(namespace=namespace, key=key, value=value)
+                client.store.put_item(namespace=["eval_agent", "conversations", graph_name], key=key, value=value)
                 added += 1
             except Exception:
                 continue

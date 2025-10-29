@@ -51,7 +51,17 @@ Generate comprehensive test cases that:
 
 Return a structured list of test cases that can be used to evaluate the agent's performance. 
 
-<IMPORTANT>
-ONLY GENERATE 3 TEST CASES.
-</IMPORTANT>
+<PAST_EVAL_REFLECTIONS>
+{reflections_text}
+</PAST_EVAL_REFLECTIONS>
+
+<PREVIOUS_TEST_INPUTS>
+{prev_inputs_text}
+</PREVIOUS_TEST_INPUTS>
+
+<CONSTRAINTS>
+- ONLY GENERATE 3 TEST CASES.
+- Do not repeat any input_message from PREVIOUS_TEST_INPUTS.
+- Prefer new edge cases guided by PAST_EVAL_REFLECTIONS.
+</CONSTRAINTS>
 """
