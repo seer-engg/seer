@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 
 from langgraph.graph import StateGraph, START, END
-from langchain_core.messages import ToolMessage, HumanMessage
+from langchain_core.messages import ToolMessage, HumanMessage, AIMessage
 from langgraph.pregel.remote import RemoteGraph
 from langgraph_sdk import get_sync_client
 
@@ -43,8 +43,8 @@ _LANGGRAPH_CLIENT = get_client(url="http://127.0.0.1:8002")
 _LANGGRAPH_SYNC_CLIENT = get_sync_client(url="http://127.0.0.1:8002")
 _LANGSMITH_CLIENT = Client(api_key=os.getenv("LANGSMITH_API_KEY"))
 PASS_THRESHOLD = 0.90
-MAX_ATTEMPTS = 10
-MIN_ATTEMPTS = 3
+MAX_ATTEMPTS = 4
+MIN_ATTEMPTS = 2
 
 # Use a slightly higher temperature for test generation to encourage diversity
 _LLM = get_llm(temperature=0.2)
@@ -132,9 +132,9 @@ def plan_node(state: EvalV2State) -> dict:
     prev_inputs = state.previous_inputs or []
     prev_inputs_text = "\n- ".join(prev_inputs) if prev_inputs else "(none)"
 
-    print('XXX', reflections_text, flush=True)
-    print('XXX', prev_inputs_text, flush=True)
-    print('XXX', spec_obj, flush=True)
+    logger.debug(reflections_text)
+    logger.debug(prev_inputs_text)
+    logger.debug(spec_obj)
 
     # Generate tests with reflection context and anti-duplication hints
     augmented_prompt = EVAL_AGENT_TEST_GEN_PROMPT.format(
@@ -144,7 +144,7 @@ def plan_node(state: EvalV2State) -> dict:
     )
 
     generated: GeneratedTests = _LLM.with_structured_output(GeneratedTests).invoke(augmented_prompt)
-    assert len(generated.test_cases) == 3, f"Generated {len(generated.test_cases)} test cases, expected 3"
+    assert len(generated.test_cases) == 5, f"Generated {len(generated.test_cases)} test cases, expected 5"
 
     test_cases: list[GeneratedTestCase] = []
     for idx, tc in enumerate(generated.test_cases):
@@ -233,11 +233,14 @@ def run_node(state: EvalV2State) -> dict:
     mean_score = sum(scores) / max(len(scores), 1)
     logger.info(f"run_node: mean_score={mean_score:.3f} (cases={len(scores)})")
 
+    experiment_name = f"seer-local-eval-{target_graph_name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+
     # Emit a ToolMessage for traceability
-    msg = ToolMessage(content=json.dumps({"dataset": dataset_name, "mean_score": mean_score}), tool_call_id="run_node")
+    msg = ToolMessage(content=json.dumps({"dataset": dataset_name, "mean_score": mean_score, "experiment_name": experiment_name}), tool_call_id="run_node")
 
     return {
         "dataset_name": dataset_name,
+        "experiment_name": experiment_name,
         "score": float(mean_score),
         "messages": [msg],
     }
@@ -318,7 +321,9 @@ def finalize_node(state: EvalV2State) -> dict:
         "experiment_name": state.experiment_name,
     }
     logger.info(f"finalize_node: {payload}")
-    return {}
+
+    user_summary = f"Final evaluation complete: score={state.score:.2f} (0–1 scale). Dataset=`{state.dataset_name}`, Experiment=`{state.experiment_name}`."
+    return {"messages": [AIMessage(content=user_summary)]}
 
 
 def build_graph():
@@ -334,7 +339,7 @@ def build_graph():
     workflow.add_edge("reflect", "plan")
     workflow.add_edge("finalize", END)
 
-    graph = workflow.compile()
+    graph = workflow.compile(debug=True)
     logger.info("Eval Agent V2 graph compiled successfully")
     return graph
 

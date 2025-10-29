@@ -60,6 +60,8 @@ class EvalAgentState(BaseModel):
     target_agent_config: TargetAgentConfig
     test_cases: list[GeneratedTestCase]
     dataset_name: str
+    experiment_name: str = ""
+    score: float = 0.0
 
 
 # ----- Eval V2 Models -----
