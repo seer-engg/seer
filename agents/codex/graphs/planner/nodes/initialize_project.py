@@ -13,9 +13,14 @@ from typing import Optional
 
 from e2b_code_interpreter import AsyncSandbox, CommandResult
 async def _build_git_shell_script() -> str:
-    # Real shell script to run inside sandbox. Uses http.extraHeader to avoid embedding tokens in remotes.
+    # Sandbox shell script: try unauthenticated Git first (public repos), then fallback to Basic auth header if needed.
+    # Disable interactive prompts to avoid hangs in headless sandbox.
     script = """
 set -euo pipefail
+export GIT_TERMINAL_PROMPT=0
+
+git config --global user.email 'lokeshdanu9@gmail.com'
+git config --global user.name 'lokesh-danu'
 
 : "${REPO_URL:?REPO_URL is required}"
 BRANCH="${BRANCH:-main}"
@@ -24,19 +29,35 @@ TOKEN="${TOKEN:-}"
 REPO_DIR="$(basename "$REPO_URL")"
 REPO_DIR="${REPO_DIR%.git}"
 
-AUTH_CFG=()
+# Build Basic auth header if token present (username: x-access-token, password: token)
+AUTH_HEADER=""
 if [ -n "$TOKEN" ]; then
-  AUTH_CFG=(-c "http.extraHeader=Authorization: bearer $TOKEN")
+  AUTH_B64=$(printf "x-access-token:%s" "$TOKEN" | base64 -w 0 2>/dev/null || printf "x-access-token:%s" "$TOKEN" | base64)
+  AUTH_HEADER="Authorization: Basic $AUTH_B64"
 fi
 
+# Clone unauthenticated first; fallback to header if it fails
 if [ ! -d "$REPO_DIR/.git" ]; then
-  git "${AUTH_CFG[@]}" clone "$REPO_URL"
+  if ! git clone "$REPO_URL"; then
+    if [ -n "$AUTH_HEADER" ]; then
+      git -c "http.extraHeader=$AUTH_HEADER" clone "$REPO_URL"
+    else
+      echo "Clone failed and no token available" >&2
+      exit 1
+    fi
+  fi
 fi
 
 cd "$REPO_DIR"
 
-# Fetch branch; ignore failure if branch doesn't exist yet
-git "${AUTH_CFG[@]}" fetch origin "$BRANCH" || true
+# Fetch branch; ignore failure if branch doesn't exist yet. Fallback with header if needed.
+git fetch origin "$BRANCH" || {
+  if [ -n "$AUTH_HEADER" ]; then
+    git -c "http.extraHeader=$AUTH_HEADER" fetch origin "$BRANCH" || true
+  else
+    true
+  fi
+}
 
 if git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
   git checkout "$BRANCH"
@@ -46,8 +67,14 @@ else
   git checkout -b "$BRANCH"
 fi
 
-# Pull latest; ignore if nothing to pull
-git "${AUTH_CFG[@]}" pull --ff-only origin "$BRANCH" || true
+# Pull latest; ignore if nothing to pull. Fallback with header if needed.
+git pull --ff-only origin "$BRANCH" || {
+  if [ -n "$AUTH_HEADER" ]; then
+    git -c "http.extraHeader=$AUTH_HEADER" pull --ff-only origin "$BRANCH" || true
+  else
+    true
+  fi
+}
 
 echo "SANDBOX_REPO_DIR=$(pwd)"
 echo "SANDBOX_BRANCH=$BRANCH"
@@ -92,7 +119,7 @@ async def initialize_e2b_sandbox(
 B64EOF
 chmod +x "$TMP"; bash "$TMP"'"""
 
-    execution: CommandResult = await sbx.commands.run(cmd, login_shell=False)
+    execution: CommandResult = await sbx.commands.run(cmd)
 
     exit_code = execution.exit_code
     stdout = execution.stdout
@@ -101,6 +128,11 @@ chmod +x "$TMP"; bash "$TMP"'"""
     if exit_code != 0:
         logger.error(_masked(f"Sandbox git setup error: {stderr or stdout}"))
         raise RuntimeError("Failed to prepare repository in sandbox")
+
+    res = await sbx.commands.run("sudo apt install -y tree")
+    if res.exit_code != 0:
+        logger.error(f"Failed to install tree: {res.stderr or res.stdout}")
+        raise RuntimeError("Failed to install tree")
 
     # Parse stdout lines to find our markers
     repo_dir = ""

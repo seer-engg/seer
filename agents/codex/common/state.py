@@ -30,6 +30,9 @@ class BaseState(BaseModel):
     sandbox_session_id: Optional[str] = Field(None, description="The ID of the sandbox session")
     messages: Annotated[list[BaseMessage], add_messages] = Field(None, description="The messages in the conversation")
     taskPlan: Optional[TaskPlan] = Field(None, description="The task plan")
+    attempt_number: int = Field(0, description="The number of attempts")
+    success: bool = Field(False, description="Whether the request was successful")
+    max_attempts: int = Field(2, description="The maximum number of attempts")
 
 
 class PlannerState(BaseState):
