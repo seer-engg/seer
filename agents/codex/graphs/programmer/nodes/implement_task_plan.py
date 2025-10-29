@@ -4,42 +4,43 @@ logger = get_logger("programmer.execute_task_item")
 from langchain.agents import create_agent
 from agents.codex.llm.model import get_chat_model
 from sandbox.tools import (
-    run_command_in_sandbox,
-    read_file_in_sandbox,
-    grep_in_sandbox,
-    list_files_in_sandbox,
-    create_file_in_sandbox,
-    create_directory_in_sandbox,
+    run_command,
+    read_file,
+    grep,
+    inspect_directory,
+    create_file,
+    create_directory,
 )
 from agents.codex.common.tools import think
 from langchain_core.messages import AIMessage
 
 SYSTEM_PROMPT = """
     You are a junior software engineer.You have been given a task to implement. Implement the assigned task to the codebase in the sandbox.
-    Use run_command_in_sandbox to access the terminal of the sandbox and execute commands to implement the task.
+    Use run_command to access the terminal of the sandbox and execute commands to implement the task.
     When done, return a brief status summary.
 
     Available tools:
-    - run_command_in_sandbox: Run a command in the sandbox in working directory of the repo.
+    - run_command: Run a command in the working directory of the repository.
         - Parameters:
             - command: The command to run.
     - think: Think about something.
         - Parameters:
             - thought: The thought to think about.
-    - read_file_in_sandbox: Read a file in the sandbox.
+    - read_file: Read a file in the repository.
         - Parameters:
             - file_path: The path to the file to read.
-    - grep_in_sandbox: Grep in the sandbox.
+    - grep: Grep in the repository.
         - Parameters:
             - pattern: The pattern to grep.
-    - list_files_in_sandbox: List files in the sandbox.
+    - inspect_directory: To understand the directory structure and files in the repository.
         - Parameters:
             - directory_path: The path to the directory to list files from.
-    - create_file_in_sandbox: Create a file in the sandbox.
+            - depth: The depth of the directory tree to inspect.
+    - create_file: Create a file in the repository.
         - Parameters:
             - file_path: The path to the file to create.
             - content: The content of the file to create.
-    - create_directory_in_sandbox: Create a directory in the sandbox.
+    - create_directory: Create a directory in the repository.
         - Parameters:
             - directory_path: The path to the directory to create.
 
@@ -69,12 +70,12 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
     agent = create_agent(
         model=get_chat_model(),
         tools=[
-            run_command_in_sandbox,
-            read_file_in_sandbox,
-            grep_in_sandbox,
-            list_files_in_sandbox,
-            create_file_in_sandbox,
-            create_directory_in_sandbox,
+            run_command,
+            read_file,
+            grep,
+            inspect_directory,
+            create_file,
+            create_directory,
             think,
         ],
         system_prompt=SYSTEM_PROMPT,

@@ -3,7 +3,7 @@ from __future__ import annotations
 from shared.logger import get_logger
 logger = get_logger("codex.planner.nodes.context_and_plan_agent")
 
-from sandbox.tools import run_command_in_sandbox
+from sandbox.tools import run_command
 
 from langchain.agents import create_agent
 from agents.codex.llm.model import get_chat_model
@@ -23,19 +23,19 @@ async def context_and_plan_agent(state: PlannerState) -> PlannerState:
         Create a plan with 3-7 concrete steps to fulfill the request.
 
         Available tools:
-        - run_command_in_sandbox: Run a command in the sandbox in working directory of the repo.
+        - run_command: Run a command in the working directory of the repository.
             - Parameters:
                 - command: The command to run.
         
         ## Notes:
-        - You should always use the run_command_in_sandbox tool to run commands in the sandbox.
+        - You should always use the run_command tool to run commands in the repository.
         - you can execute any commands to inspect the codebase and gather context.
     """
 
     agent = create_agent(
         model=get_chat_model(),
         tools=[
-            run_command_in_sandbox
+            run_command
         ],
         system_prompt=SYSTEM_PROMPT,
         state_schema=PlannerState,

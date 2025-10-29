@@ -7,17 +7,27 @@ from shared.logger import get_logger
 
 logger = get_logger("sandbox.tools")
 
-@tool
-async def run_command_in_sandbox(command: str, runtime: ToolRuntime) -> str:
-    """
-    Run a command in the sandbox.
-    """
+def vaildate_sandbox_tool_call(runtime: ToolRuntime) -> None:
     sandbox_id = runtime.state.get("sandbox_session_id")
     if not sandbox_id:
         raise ValueError("Sandbox session ID not found in runtime state")
     repo_path = runtime.state.get("repo_path")
     if not repo_path:
         raise ValueError("Repository directory not found in runtime state")
+    return sandbox_id, repo_path
+
+@tool
+async def run_command(command: str, runtime: ToolRuntime) -> str:
+    """
+    Run a shell command in working directory of the repository.
+    
+    Args:
+        command: The command to run
+    
+    Returns:
+        The output of the command including exit code, stdout, and stderr
+    """
+    sandbox_id, repo_path = vaildate_sandbox_tool_call(runtime)
 
     sbx: AsyncSandbox = await get_sandbox(sandbox_id)
     try:
@@ -33,19 +43,17 @@ async def run_command_in_sandbox(command: str, runtime: ToolRuntime) -> str:
 
 
 @tool
-async def read_file_in_sandbox(file_path: str, runtime: ToolRuntime) -> str:
+async def read_file(file_path: str, runtime: ToolRuntime) -> str:
     """
-    Read a file from the sandbox.
-    
+    Read a file from the repository.
+
     Args:
         file_path: Path to the file relative to the repository root
+
+    Returns:
+        The content of the file, or an error message if the file does not exist
     """
-    sandbox_id = runtime.state.get("sandbox_session_id")
-    if not sandbox_id:
-        raise ValueError("Sandbox session ID not found in runtime state")
-    repo_path = runtime.state.get("repo_path")
-    if not repo_path:
-        raise ValueError("Repository directory not found in runtime state")
+    sandbox_id, repo_path = vaildate_sandbox_tool_call(runtime)
     
     sbx: AsyncSandbox = await get_sandbox(sandbox_id)
     try:
@@ -59,20 +67,19 @@ async def read_file_in_sandbox(file_path: str, runtime: ToolRuntime) -> str:
 
 
 @tool
-async def grep_in_sandbox(pattern: str, file_path: str, runtime: ToolRuntime) -> str:
+async def grep(pattern: str, file_path: str, runtime: ToolRuntime) -> str:
     """
-    Search for a pattern in files using grep in the sandbox.
-    
+    Search for a pattern in files using grep in the repository.
+
     Args:
         pattern: The pattern to search for
         file_path: Path to file or directory to search in (relative to repo root). Use '.' for entire repo.
+
+    Returns:
+        The output of the grep command, or an error message if the pattern is not found
+    
     """
-    sandbox_id = runtime.state.get("sandbox_session_id")
-    if not sandbox_id:
-        raise ValueError("Sandbox session ID not found in runtime state")
-    repo_path = runtime.state.get("repo_path")
-    if not repo_path:
-        raise ValueError("Repository directory not found in runtime state")
+    sandbox_id, repo_path = vaildate_sandbox_tool_call(runtime)
     
     sbx: AsyncSandbox = await get_sandbox(sandbox_id)
     try:
@@ -92,20 +99,18 @@ async def grep_in_sandbox(pattern: str, file_path: str, runtime: ToolRuntime) ->
 
 
 @tool
-async def write_file_in_sandbox(file_path: str, content: str, runtime: ToolRuntime) -> str:
+async def write_file(file_path: str, content: str, runtime: ToolRuntime) -> str:
     """
-    Write or overwrite a file in the sandbox.
+    Write or overwrite a file in the repository.
     
     Args:
         file_path: Path to the file relative to the repository root
         content: The content to write to the file
+
+    Returns:
+        A success message if the file was written, or an error message if the file could not be written
     """
-    sandbox_id = runtime.state.get("sandbox_session_id")
-    if not sandbox_id:
-        raise ValueError("Sandbox session ID not found in runtime state")
-    repo_path = runtime.state.get("repo_path")
-    if not repo_path:
-        raise ValueError("Repository directory not found in runtime state")
+    sandbox_id, repo_path = vaildate_sandbox_tool_call(runtime)
     
     sbx: AsyncSandbox = await get_sandbox(sandbox_id)
     try:
@@ -119,24 +124,23 @@ async def write_file_in_sandbox(file_path: str, content: str, runtime: ToolRunti
 
 
 @tool
-async def list_files_in_sandbox(directory_path: str, runtime: ToolRuntime) -> str:
+async def inspect_directory(directory_path: str, runtime: ToolRuntime, depth: int = 2) -> str:
     """
-    List files and directories in the sandbox.
+    List files and directories in the repository.
     
     Args:
         directory_path: Path to the directory relative to the repository root. Use '.' for repo root.
+        depth: Depth of the directory tree to inspect.
+
+    Returns:
+        A tree of the directory structure including files and directories, or an error message if the directory could not be inspected
     """
-    sandbox_id = runtime.state.get("sandbox_session_id")
-    if not sandbox_id:
-        raise ValueError("Sandbox session ID not found in runtime state")
-    repo_path = runtime.state.get("repo_path")
-    if not repo_path:
-        raise ValueError("Repository directory not found in runtime state")
+    sandbox_id, repo_path = vaildate_sandbox_tool_call(runtime)
     
     sbx: AsyncSandbox = await get_sandbox(sandbox_id)
     try:
         # Use ls -la for detailed listing
-        command = f"ls -la {directory_path}"
+        command = f"tree -a -L {depth} -I 'node_modules|.git|.venv|dist|build|__pycache__' -F {directory_path} "
         res: CommandResult = await sbx.commands.run(command, cwd=repo_path)
         
         if res.exit_code == 0:
@@ -149,20 +153,18 @@ async def list_files_in_sandbox(directory_path: str, runtime: ToolRuntime) -> st
 
 
 @tool
-async def create_file_in_sandbox(file_path: str, content: str = "", runtime: ToolRuntime = None) -> str:
+async def create_file(file_path: str, content: str = "", runtime: ToolRuntime = None) -> str:
     """
-    Create a new file in the sandbox. Fails if file already exists.
+    Create a new file in the repository. Fails if file already exists.
     
     Args:
         file_path: Path to the file relative to the repository root
         content: The initial content to write to the file (optional, defaults to empty)
+
+    Returns:
+        A success message if the file was created, or an error message if the file could not be created
     """
-    sandbox_id = runtime.state.get("sandbox_session_id")
-    if not sandbox_id:
-        raise ValueError("Sandbox session ID not found in runtime state")
-    repo_path = runtime.state.get("repo_path")
-    if not repo_path:
-        raise ValueError("Repository directory not found in runtime state")
+    sandbox_id, repo_path = vaildate_sandbox_tool_call(runtime)
     
     sbx: AsyncSandbox = await get_sandbox(sandbox_id)
     try:
@@ -185,19 +187,17 @@ async def create_file_in_sandbox(file_path: str, content: str = "", runtime: Too
 
 
 @tool
-async def create_directory_in_sandbox(directory_path: str, runtime: ToolRuntime) -> str:
+async def create_directory(directory_path: str, runtime: ToolRuntime) -> str:
     """
-    Create a new directory in the sandbox. Creates parent directories as needed.
+    Create a new directory in the repository. Creates parent directories as needed.
     
     Args:
         directory_path: Path to the directory relative to the repository root
+
+    Returns:
+        A success message if the directory was created, or an error message if the directory could not be created
     """
-    sandbox_id = runtime.state.get("sandbox_session_id")
-    if not sandbox_id:
-        raise ValueError("Sandbox session ID not found in runtime state")
-    repo_path = runtime.state.get("repo_path")
-    if not repo_path:
-        raise ValueError("Repository directory not found in runtime state")
+    sandbox_id, repo_path = vaildate_sandbox_tool_call(runtime)
     
     sbx: AsyncSandbox = await get_sandbox(sandbox_id)
     try:

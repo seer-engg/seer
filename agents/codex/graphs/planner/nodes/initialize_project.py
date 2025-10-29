@@ -102,6 +102,11 @@ chmod +x "$TMP"; bash "$TMP"'"""
         logger.error(_masked(f"Sandbox git setup error: {stderr or stdout}"))
         raise RuntimeError("Failed to prepare repository in sandbox")
 
+    res = await sbx.commands.run("sudo apt install -y tree")
+    if res.exit_code != 0:
+        logger.error(f"Failed to install tree: {res.stderr or res.stdout}")
+        raise RuntimeError("Failed to install tree")
+
     # Parse stdout lines to find our markers
     repo_dir = ""
     branch_in_sandbox = branch_name
