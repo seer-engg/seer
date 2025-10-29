@@ -231,17 +231,37 @@ def run_node(state: EvalV2State) -> dict:
         scores.append(score)
 
     mean_score = sum(scores) / max(len(scores), 1)
-    logger.info(f"run_node: mean_score={mean_score:.3f} (cases={len(scores)})")
+
+    score_history = list(state.score_history or [])
+    score_history.append(float(mean_score))
+    aggregate_score = sum(score_history) / len(score_history)
+
+    logger.info(
+        "run_node: latest_score=%.3f aggregate_score=%.3f attempts=%d",
+        mean_score,
+        aggregate_score,
+        len(score_history),
+    )
 
     experiment_name = f"seer-local-eval-{target_graph_name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
     # Emit a ToolMessage for traceability
-    msg = ToolMessage(content=json.dumps({"dataset": dataset_name, "mean_score": mean_score, "experiment_name": experiment_name}), tool_call_id="run_node")
+    msg = ToolMessage(
+        content=json.dumps({
+            "dataset": dataset_name,
+            "latest_score": mean_score,
+            "average_score": aggregate_score,
+            "experiment_name": experiment_name,
+            "attempts": len(score_history),
+        }),
+        tool_call_id="run_node",
+    )
 
     return {
         "dataset_name": dataset_name,
         "experiment_name": experiment_name,
         "score": float(mean_score),
+        "score_history": score_history,
         "messages": [msg],
     }
 
@@ -268,13 +288,15 @@ def reflect_node(state: EvalV2State) -> dict:
     expectations = cfg.expectations
 
     # Build a concise reflection focused on test quality/coverage
+    latest_score = (state.score_history[-1] if getattr(state, "score_history", None) else state.score)
+
     summary_prompt = (
         "You are a QA lead improving E2E eval tests. "
         "Given the agent name and the user's expectations, produce a short summary of improvements to future tests. "
         "Focus on edge cases, negative cases, and clarity of expected outputs.\n\n"
         f"Agent: {agent_name}\n"
         f"Expectations: {expectations}\n"
-        f"Latest score: {state.score:.3f} (attempt {state.attempts + 1})\n"
+        f"Latest score: {latest_score:.3f} (attempt {state.attempts + 1})\n"
     )
 
     reflection_llm = _LLM.with_structured_output(EvalReflection)
@@ -320,9 +342,24 @@ def finalize_node(state: EvalV2State) -> dict:
         "dataset_name": state.dataset_name,
         "experiment_name": state.experiment_name,
     }
-    logger.info(f"finalize_node: {payload}")
+    score_history = list(getattr(state, "score_history", []) or [])
+    attempts = len(score_history)
+    average_score = (sum(score_history) / attempts) if attempts else state.score
+    latest_score = score_history[-1] if attempts else state.score
 
-    user_summary = f"Final evaluation complete: score={state.score:.2f} (0–1 scale). Dataset=`{state.dataset_name}`, Experiment=`{state.experiment_name}`."
+    logger.info(
+        "finalize_node: attempts=%d latest_score=%.3f average_score=%.3f payload=%s",
+        attempts,
+        latest_score,
+        average_score,
+        payload,
+    )
+
+    user_summary = (
+        f"Final evaluation complete: attempts={max(attempts, state.attempts)}; "
+        f"average score={average_score:.2f} (0–1), latest={latest_score:.2f}. "
+        f"Dataset=`{state.dataset_name}`, Experiment=`{state.experiment_name}`."
+    )
     return {"messages": [AIMessage(content=user_summary)]}
 
 

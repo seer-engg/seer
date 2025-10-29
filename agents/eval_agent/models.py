@@ -84,6 +84,7 @@ class EvalV2State(BaseModel):
     dataset_name: str = ""
     experiment_name: str = ""
     score: float = 0.0
+    score_history: list[float] = Field(default_factory=list)
     # Loop control
     attempts: int = 0
     # Reflections for future test generation
