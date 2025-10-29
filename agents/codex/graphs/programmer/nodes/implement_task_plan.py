@@ -10,9 +10,12 @@ from sandbox.tools import (
     inspect_directory,
     create_file,
     create_directory,
+    apply_patch,
+    write_file,
 )
 from agents.codex.common.tools import think
 from langchain_core.messages import AIMessage
+from langchain_core.runnables import RunnableConfig
 
 SYSTEM_PROMPT = """
     You are a junior software engineer.You have been given a task to implement. Implement the assigned task to the codebase in the sandbox.
@@ -43,6 +46,15 @@ SYSTEM_PROMPT = """
     - create_directory: Create a directory in the repository.
         - Parameters:
             - directory_path: The path to the directory to create.
+    
+    - apply_patch: Use this tool to edit the files in the repository.
+        - Parameters:
+            - diff_content: The diff content to apply. This is a git-style unified diff string in standard git format.
+    
+    - write_file: Use this tool to write a file to the repository.
+        - Parameters:
+            - file_path: The path to the file to write.
+            - content: The content to write to the file.
 
     # Important Notes:
     - Always use the think tool to think about the task before implementing it.
@@ -77,6 +89,8 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
             create_file,
             create_directory,
             think,
+            apply_patch,
+            write_file,
         ],
         system_prompt=SYSTEM_PROMPT,
         state_schema=ProgrammerState,
@@ -90,7 +104,7 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
         # Needed by tool runtime
         "sandbox_session_id": state.sandbox_session_id,
         "repo_path": state.repo_path,
-    })
+    }, config = RunnableConfig(recursion_limit=100))
     return {
         "taskPlan": plan,
         "messages": result.get("messages", []),
