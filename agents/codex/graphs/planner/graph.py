@@ -22,7 +22,7 @@ def _prepare_graph_state(state: PlannerState) -> PlannerState:
 
 def _notetaker(state: PlannerState) -> PlannerState:
     # Minimal note taking: append a message summarizing the plan was generated
-    messages = list(state.get("messages", []))
+    messages = list(state.messages)
     messages.append({
         "role": "system",
         "content": "Generated initial task plan.",
