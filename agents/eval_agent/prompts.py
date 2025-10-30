@@ -13,12 +13,9 @@ STAGE 1 - Evals Generation (upon evaluation request):
 1. Call generate_evals with the user's latest message (default 3). Show ONLY a compact 3-4 column table: input, expected_output, criteria, expectation_ref.
 2. Respond concisely: "✅ Generated [N] evals for [agent_name]. Reply 'run tests' when ready." No intermediate spec.
 
-STAGE 2 - Evaluation via LangSmith (when user says "run tests", "yes", "go ahead", etc.):
-IMPORTANT - EACH TOOL CALL IN THIS STAGE DEPENDS ON THE PREVIOUS ONE. RUN SEQUENTIALLY, DO NOT PARALLELIZE OR SKIP ANY STEPS.
-1. First create a LangSmith dataset
-2. Then upsert the generated tests into the dataset
-3. Then run a LangSmith evaluation. Note that it may take a while to complete.
-4. Finally, return a brief summary with dataset and experiment names. Do not paste all results.
+STAGE 2 - Evaluation upload (when user says "run tests", "yes", "go ahead", etc.):
+1. Run `compute_local_evaluation` to execute tests, score them, and upload the LangSmith experiment via REST API.
+2. Finally, return a brief summary with dataset and experiment names. Do not paste all results.
 """
 
 # Eval Agent Specialized Prompts

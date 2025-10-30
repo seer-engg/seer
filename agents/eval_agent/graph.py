@@ -1,21 +1,23 @@
+import requests
 import json
 import hashlib
 import uuid
 import traceback
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from langchain_core.messages import ToolMessage, AIMessage
 from langchain_core.tools import tool
 from langchain.tools import ToolRuntime
 from langgraph.types import Command
 from langchain.agents import create_agent
-from langsmith import Client, evaluate
+from langsmith import Client
 from langgraph.pregel.remote import RemoteGraph
 from langgraph_sdk import get_sync_client
 from langchain.agents.middleware import TodoListMiddleware
 from openevals.llm import create_llm_as_judge
 from openevals.prompts import CORRECTNESS_PROMPT
+from openevals.types import EvaluatorResult
 
 from agents.eval_agent.prompts import (
     EVAL_AGENT_PROMPT,
@@ -32,7 +34,11 @@ from shared.error_handling import create_success_response, create_error_response
 logger = get_logger('eval_agent')
 _LLM = get_llm(temperature=0.0)
 _LANGSMITH_CLIENT = Client(api_key=os.getenv("LANGSMITH_API_KEY"))
-
+_CORRECTNESS_EVALUATOR = create_llm_as_judge(
+    prompt=CORRECTNESS_PROMPT,
+    model="openai:gpt-4.1-mini",
+    feedback_key="correctness",
+)
 
 @tool
 def think(thought: str) -> str:
@@ -119,135 +125,6 @@ def parse_eval_request(runtime: ToolRuntime) -> Command:
         "target_agent_config": target_agent_config,
     })
 
-
-@tool
-def create_langsmith_dataset(runtime: ToolRuntime) -> Command:
-    """Create or read a LangSmith dataset and store its name in state for later use."""
-    # If we've already created/selected a dataset for this run, reuse it
-    existing = runtime.state.get("dataset_name")
-    if existing:
-        payload = json.dumps({"dataset_name": existing, "reused": True})
-        return Command(update={
-            "dataset_name": existing,
-            "messages": [ToolMessage(content=payload, tool_call_id=tool_call_id)]
-        })
-
-    agent_id = runtime.state.get("target_agent_config").graph_name.replace("/", "_")
-    date_tag = datetime.now().strftime("%Y%m%d-%H%M%S")
-    name = f"seer_eval_{agent_id}_{date_tag}"
-
-    try:
-        _ = _LANGSMITH_CLIENT.create_dataset(name)
-    except Exception:
-        raise Exception(f"Failed to create dataset: {name}\n{traceback.format_exc()}")
-
-    # Persist dataset name in state for reuse and acknowledge with ToolMessage
-    payload = json.dumps({"dataset_name": name})
-    return Command(update={
-        "dataset_name": name,
-        "messages": [ToolMessage(content=payload, tool_call_id=runtime.tool_call_id)]
-    })
-
-
-@tool
-def test_cases_to_langsmith_dataset(runtime: ToolRuntime = None) -> str:
-    """Upsert examples into LangSmith dataset from EvalAgentState's test_cases."""
-    try:
-        test_cases = runtime.state.get("test_cases")
-        assert test_cases, f"No cached test cases found in state: {runtime.state}"
-
-        dataset_name = runtime.state.get("dataset_name")
-        assert dataset_name, f"No dataset name found in state: {runtime.state}"
-
-        dataset = _LANGSMITH_CLIENT.read_dataset(dataset_name=dataset_name)
-
-        examples = [
-            {
-                "inputs": {"question": tc.get("input_message", "")},
-                "outputs": {"answer": (tc.get("expected_output") or tc.get("expected_behavior", ""))},
-            }
-            for tc in test_cases
-        ]
-        if examples:
-            _LANGSMITH_CLIENT.create_examples(dataset_id=dataset.id, examples=examples)
-        return create_success_response({"dataset_name": dataset_name, "examples": len(examples)})
-    except Exception as e:
-        return create_error_response(f"Failed to upsert examples: {str(e)}\n{traceback.format_exc()}", e)
-
-
-# Define an LLM-as-a-judge evaluator to evaluate correctness of the output
-def correctness_evaluator(inputs: dict, outputs: dict, reference_outputs: dict):
-    evaluator = create_llm_as_judge(
-        prompt=CORRECTNESS_PROMPT,
-        model="openai:o3-mini",
-        feedback_key="correctness",
-    )
-    eval_result = evaluator(
-        inputs=inputs, outputs=outputs, reference_outputs=reference_outputs
-    )
-    logger.info(f"evaluator result: {eval_result}")
-    return eval_result
-
-
-@tool
-def run_langsmith_evaluation(runtime: ToolRuntime = None) -> str:
-    """Run LangSmith evaluation over the given dataset, calling the target agent for responses.
-    Note: For direct feedback and scores, prefer using `compute_local_evaluation`.
-    """
-    try:
-        target_agent_config = runtime.state.get("target_agent_config")
-        target_graph_name = target_agent_config.graph_name
-        target_url = target_agent_config.url
-        dataset_name = runtime.state.get("dataset_name")
-
-        # graph runs (for example, calls made with .invoke() or .stream()) are stateless
-        # create a thread for persistence
-        sync_client = get_sync_client(url=target_url)
-        thread = sync_client.threads.create()
-        thread_cfg = {"configurable": {"thread_id": thread["thread_id"]}}
-
-        # define the remote graph
-        remote_graph = RemoteGraph(target_graph_name, url=target_url, client=_LANGSMITH_CLIENT, sync_client=sync_client, distributed_tracing=True)
-
-        # define a runnable function that will be used to evaluate the remote graph
-        def persistent_runnable(input_dict: dict) -> dict:
-            """
-            input will be dict with 'question' key
-            output should be dict with 'answer' key
-            """
-            # logger.info(f"target agent input: {input_dict}")
-            question = input_dict.get('question', '')
-            result = remote_graph.invoke({"messages": [{"role": "user", "content": question}]}, config=thread_cfg)
-            # logger.info(f"target agent response: {result}")
-            answer = result.get("messages", [{}])[-1].get("content", "")
-            logger.info(f"evaluator input: {question}, answer: {answer}")
-            return {"answer": answer}
-
-        # generate a unique experiment prefix which makes it easy to find the experiment in LangSmith
-        experiment_prefix = f"seer-{target_graph_name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-
-        results = evaluate(
-            persistent_runnable,
-            data=dataset_name,
-            evaluators=[correctness_evaluator],
-            experiment_prefix=experiment_prefix,
-            client=_LANGSMITH_CLIENT,
-            upload_results=True,
-        )
-
-        # Block until the evaluation is complete
-        results.wait()
-
-        logger.info(f"evaluation results: {results.to_pandas()}")
-
-        return create_success_response({
-            "dataset_name": dataset_name,
-            "experiment_name": getattr(results, "experiment_name", experiment_prefix),
-        })
-    except Exception as e:
-        return create_error_response(f"Failed to run LangSmith evaluation: {str(e)}\n{traceback.format_exc()}", e)
-
-
 @tool
 def index_conversation(namespace_prefix: str = "conversations", runtime: ToolRuntime = None) -> str:
     """Index the eval agent conversation into the local LangGraph store for semantic search."""
@@ -282,7 +159,7 @@ def index_conversation(namespace_prefix: str = "conversations", runtime: ToolRun
 
 @tool
 def compute_local_evaluation(runtime: ToolRuntime) -> Command:
-    """Perform local evaluation of the target agent and report the score."""
+    """Perform local evaluation of the target agent and uploads the experiment to LangSmith"""
     try:
         target_agent_config = runtime.state.get("target_agent_config")
         test_cases = runtime.state.get("test_cases")
@@ -292,69 +169,156 @@ def compute_local_evaluation(runtime: ToolRuntime) -> Command:
 
         target_graph_name = target_agent_config.graph_name
         target_url = target_agent_config.url
-
-        # Ensure dataset name and experiment name
-        dataset_name = runtime.state.get("dataset_name")
-        if not dataset_name:
-            agent_id = target_graph_name.replace("/", "_")
-            date_tag = datetime.now().strftime("%Y%m%d-%H%M%S")
-            dataset_name = f"seer_eval_{agent_id}_{date_tag}"
-            # Try creating dataset, but don't fail if it exists
-            try:
-                _LANGSMITH_CLIENT.create_dataset(dataset_name)
-            except Exception:
-                logger.warning(f"Failed to create dataset {dataset_name}, it might already exist.")
-
+        agent_id = target_graph_name.replace("/", "_")
+        date_tag = datetime.now().strftime("%Y%m%d-%H%M%S")
+        dataset_name = f"seer_eval_{agent_id}_{date_tag}"
         experiment_name = f"seer-local-eval-{target_graph_name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
         sync_client = get_sync_client(url=target_url)
         thread = sync_client.threads.create()
         thread_cfg = {"configurable": {"thread_id": thread["thread_id"]}}
-        remote_graph = RemoteGraph(target_graph_name, url=target_url, client=_LANGSMITH_CLIENT, sync_client=sync_client, distributed_tracing=True)
+        remote_graph = RemoteGraph(
+            target_graph_name,
+            url=target_url,
+            client=_LANGSMITH_CLIENT,
+            sync_client=sync_client,
+            distributed_tracing=True,
+        )
 
-        scores = []
+        experiment_start_time = datetime.now(timezone.utc)
+        scores: list[float] = []
+        results_payload: list[dict] = []
+        earliest_start = experiment_start_time
+        latest_end = experiment_start_time
+
         for tc_dict in test_cases:
-            tc = GeneratedTestCase(**tc_dict) # Re-parse into object for type safety
+            tc = GeneratedTestCase(**tc_dict)  # Re-parse into object for type safety
             question = tc.input_message
             expected = tc.expected_output or tc.expected_behavior
+
+            row_id = uuid.uuid4().hex
+            run_start = datetime.now(timezone.utc)
             try:
                 result = remote_graph.invoke({"messages": [{"role": "user", "content": question}]}, config=thread_cfg)
                 answer = result.get("messages", [{}])[-1].get("content", "")
             except Exception as e:
                 logger.error(f"Error invoking remote graph: {e}")
                 answer = ""
+            run_end = datetime.now(timezone.utc)
 
-            try:
-                eval_result = correctness_evaluator(
-                    inputs={"question": question},
-                    outputs={"answer": answer},
-                    reference_outputs={"answer": expected},
-                )
-                score = eval_result.get("score", 0.0) # Extract score directly
-            except Exception as e:
-                logger.error(f"Error running correctness evaluator: {e}")
-                score = 0.0
+            eval_result: EvaluatorResult = _CORRECTNESS_EVALUATOR(
+                inputs={"question": question},
+                outputs={"answer": answer},
+                reference_outputs={"answer": expected},
+            )
+            score = eval_result["score"]
             scores.append(score)
+            evaluator_comment = eval_result.get('comment', '')
+
+            results_payload.append({
+                "row_id": row_id,
+                "inputs": {"question": question},
+                "expected_outputs": {"answer": expected},
+                "actual_outputs": {"answer": answer},
+                "evaluation_scores": [
+                    {
+                        "key": "correctness",
+                        "score": score,
+                        "comment": evaluator_comment,
+                    }
+                ],
+                "start_time": run_start.isoformat(),
+                "end_time": run_end.isoformat(),
+                "run_name": target_graph_name,
+                "run_metadata": {
+                    "expectation_ref": tc.expectation_ref,
+                    "success_criteria": tc.success_criteria,
+                },
+            })
+
+            if run_start < earliest_start:
+                earliest_start = run_start
+            if run_end > latest_end:
+                latest_end = run_end
 
         mean_score = sum(scores) / max(len(scores), 1)
+        experiment_end_time = max(latest_end, datetime.now(timezone.utc))
+
+        api_key = os.getenv("LANGSMITH_API_KEY")
+        if not api_key:
+            raise ValueError("LANGSMITH_API_KEY environment variable is required for experiment upload.")
+
+        api_base = os.getenv("LANGSMITH_API_URL", "https://api.smith.langchain.com")
+        endpoint = f"{api_base.rstrip('/')}/api/v1/datasets/upload-experiment"
+
+        experiment_description = (
+            "Evaluation uploaded by Seer eval_agent via compute_local_evaluation."
+        )
+
+        upload_body = {
+            "experiment_name": experiment_name,
+            "experiment_description": experiment_description,
+            "dataset_name": dataset_name,
+            "experiment_start_time": earliest_start.isoformat(),
+            "experiment_end_time": experiment_end_time.isoformat(),
+            "experiment_metadata": {
+                "target_graph_name": target_graph_name,
+                "target_url": target_url,
+            },
+            "summary_experiment_scores": [
+                {
+                    "key": "mean_correctness",
+                    "score": mean_score,
+                    "comment": "Average correctness score across generated tests.",
+                }
+            ],
+            "results": results_payload,
+        }
+
+        try:
+            response = requests.post(
+                endpoint,
+                json=upload_body,
+                headers={"x-api-key": api_key},
+                timeout=60,
+            )
+        except Exception as request_error:
+            raise RuntimeError(f"Failed to upload experiment to LangSmith: {request_error}") from request_error
+
+        if not response.ok:
+            raise RuntimeError(
+                f"LangSmith upload failed with status {response.status_code}: {response.text}"
+            )
+
+        response_data = response.json()
+        dataset_info = response_data.get("dataset", {})
+        experiment_info = response_data.get("experiment", {})
+
+        uploaded_dataset_name = dataset_info.get("name", dataset_name)
+        uploaded_experiment_name = experiment_info.get("name", experiment_name)
 
         # ToolMessage for internal state/traceability
         tool_msg_content = json.dumps({
-            "dataset_name": dataset_name,
-            "experiment_name": experiment_name,
-            "score": mean_score
+            "dataset_name": uploaded_dataset_name,
+            "experiment_name": uploaded_experiment_name,
+            "score": mean_score,
+            "rows": len(results_payload),
         })
         tool_message = ToolMessage(content=tool_msg_content, tool_call_id=runtime.tool_call_id)
 
         # AIMessage for user-facing summary
-        user_summary = f"Final evaluation complete: score={mean_score:.2f} (0–1 scale). Dataset=`{dataset_name}`, Experiment=`{experiment_name}`."
+        user_summary = (
+            "Final evaluation uploaded: score="
+            f"{mean_score:.2f} (0–1 scale). Dataset=`{uploaded_dataset_name}`, "
+            f"Experiment=`{uploaded_experiment_name}`."
+        )
         ai_message = AIMessage(content=user_summary)
 
         return Command(update={
-            "dataset_name": dataset_name,
-            "experiment_name": experiment_name,
+            "dataset_name": uploaded_dataset_name,
+            "experiment_name": uploaded_experiment_name,
             "score": float(mean_score),
-            "messages": [tool_message, ai_message]
+            "messages": [tool_message, ai_message],
         })
 
     except Exception as e:
@@ -366,9 +330,6 @@ def build_graph():
     tools = [
         generate_evals,
         parse_eval_request,
-        create_langsmith_dataset,
-        test_cases_to_langsmith_dataset,
-        run_langsmith_evaluation,
         index_conversation,
         think,
         compute_local_evaluation,

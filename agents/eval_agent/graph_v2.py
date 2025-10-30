@@ -1,38 +1,34 @@
-import os
 import json
-from datetime import datetime
-from typing import Literal
+import os
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Literal
+
+import requests
 
 from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import ToolMessage, HumanMessage, AIMessage
 from langgraph.pregel.remote import RemoteGraph
-from langgraph_sdk import get_sync_client
+from langgraph_sdk import get_client, get_sync_client
+from langsmith import Client
 
 from agents.eval_agent.models import (
-    EvalV2State,
-    EvalReflection,
     AgentSpec,
-    GeneratedTests,
+    EvalReflection,
+    EvalV2State,
     GeneratedTestCase,
+    GeneratedTests,
     TargetAgentConfig,
 )
 from agents.eval_agent.prompts import (
     EVAL_AGENT_SPEC_PROMPT,
     EVAL_AGENT_TEST_GEN_PROMPT,
 )
-from agents.eval_agent.graph import (
-    correctness_evaluator,
-)
+from openevals.llm import create_llm_as_judge
+from openevals.prompts import CORRECTNESS_PROMPT
+from openevals.types import EvaluatorResult
 from shared.logger import get_logger
 from shared.llm import get_llm
-import uuid
-from typing import Any, Dict, List
-
-
-from agents.eval_agent.models import EvalReflection
-from shared.logger import get_logger
-from langgraph_sdk import get_client
-from langsmith import Client
 
 
 
@@ -48,6 +44,11 @@ MIN_ATTEMPTS = 2
 
 # Use a slightly higher temperature for test generation to encourage diversity
 _LLM = get_llm(temperature=0.2)
+_CORRECTNESS_EVALUATOR = create_llm_as_judge(
+    prompt=CORRECTNESS_PROMPT,
+    model="openai:gpt-4.1-mini",
+    feedback_key="correctness",
+)
 
 
 async def search_eval_reflections(agent_name: str, query: str, limit: int = 5) -> List[Dict[str, Any]]:
@@ -171,116 +172,188 @@ def plan_node(state: EvalV2State) -> dict:
     }
 
 
-def _ensure_dataset(state: EvalV2State) -> str:
-    if state.dataset_name:
-        return state.dataset_name
-    agent_id = state.target_agent_config.graph_name.replace("/", "_")
-    date_tag = datetime.now().strftime("%Y%m%d-%H%M%S")
-    name = f"seer_eval_v2_{agent_id}_{date_tag}"
-    _LANGSMITH_CLIENT.create_dataset(name)
-    return name
-
-
 def run_node(state: EvalV2State) -> dict:
-    """Create dataset, upsert tests, evaluate target, compute mean score locally."""
+    """Execute tests, score them locally, and upload results to LangSmith via REST."""
     cfg = state.target_agent_config
+    if cfg is None:
+        raise ValueError("run_node requires target_agent_config to be set")
+
     target_graph_name = cfg.graph_name
     target_url = cfg.url
 
-    # Dataset + examples
-    dataset_name = _ensure_dataset(state)
-    dataset = _LANGSMITH_CLIENT.read_dataset(dataset_name=dataset_name)
-    examples = [
-        {
-            "inputs": {"question": tc.input_message},
-            "outputs": {"answer": (tc.expected_output or tc.expected_behavior)},
-        }
-        for tc in state.test_cases
-    ]
-    if examples:
-        _LANGSMITH_CLIENT.create_examples(dataset_id=dataset.id, examples=examples)
+    dataset_name = state.dataset_name
+    experiment_name = state.experiment_name
 
-    # Evaluate locally (compute score) using RemoteGraph
+    if not dataset_name:
+        agent_id = target_graph_name.replace("/", "_")
+        date_tag = datetime.now().strftime("%Y%m%d")
+        dataset_name = f"seer_eval_v2_{agent_id}_{date_tag}"
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    experiment_name = experiment_name or f"seer-local-eval-{target_graph_name}-{timestamp}"
+
     sync_client = get_sync_client(url=target_url)
     thread = sync_client.threads.create()
     thread_cfg = {"configurable": {"thread_id": thread["thread_id"]}}
-    remote_graph = RemoteGraph(target_graph_name, url=target_url, client=_LANGSMITH_CLIENT, sync_client=sync_client, distributed_tracing=True)
+    remote_graph = RemoteGraph(
+        target_graph_name,
+        url=target_url,
+        client=_LANGSMITH_CLIENT,
+        sync_client=sync_client,
+        distributed_tracing=True,
+    )
 
-    scores = []
+    experiment_start_time = datetime.now(timezone.utc)
+    earliest_start = experiment_start_time
+    latest_end = experiment_start_time
+    scores: list[float] = []
+    results_payload: list[dict] = []
 
-    tc: GeneratedTestCase = None
     for tc in state.test_cases:
         question = tc.input_message
         expected = tc.expected_output or tc.expected_behavior
+
+        row_id = uuid.uuid4().hex
+        run_start = datetime.now(timezone.utc)
         try:
-            result = remote_graph.invoke({"messages": [{"role": "user", "content": question}]}, config=thread_cfg)
+            result = remote_graph.invoke(
+                {"messages": [{"role": "user", "content": question}]},
+                config=thread_cfg,
+            )
             answer = result.get("messages", [{}])[-1].get("content", "")
-        except Exception:
+        except Exception as invoke_error:
+            logger.error("run_node: error invoking remote graph: %s", invoke_error)
             answer = ""
+        run_end = datetime.now(timezone.utc)
 
         try:
-            eval_result = correctness_evaluator(
+            eval_result: EvaluatorResult = _CORRECTNESS_EVALUATOR(
                 inputs={"question": question},
                 outputs={"answer": answer},
                 reference_outputs={"answer": expected},
             )
-            score = _extract_score(eval_result)
-        except Exception:
+            score = float(eval_result.get("score", 0.0))
+            evaluator_comment = eval_result.get("comment", "")
+        except Exception as eval_error:
+            logger.error("run_node: error running correctness evaluator: %s", eval_error)
             score = 0.0
+            evaluator_comment = f"Evaluation error: {eval_error}"
 
         scores.append(score)
 
-    mean_score = sum(scores) / max(len(scores), 1)
+        results_payload.append({
+            "row_id": row_id,
+            "inputs": {"question": question},
+            "expected_outputs": {"answer": expected},
+            "actual_outputs": {"answer": answer},
+            "evaluation_scores": [
+                {
+                    "key": "correctness",
+                    "score": score,
+                    "comment": evaluator_comment,
+                }
+            ],
+            "start_time": run_start.isoformat(),
+            "end_time": run_end.isoformat(),
+            "run_name": target_graph_name,
+            "run_metadata": {
+                "expectation_ref": tc.expectation_ref,
+                "success_criteria": tc.success_criteria,
+            },
+        })
+
+        if run_start < earliest_start:
+            earliest_start = run_start
+        if run_end > latest_end:
+            latest_end = run_end
+
+    mean_score = round(sum(scores) / max(len(scores), 1), 4)
+    experiment_end_time = max(latest_end, datetime.now(timezone.utc))
 
     score_history = list(state.score_history or [])
     score_history.append(float(mean_score))
-    aggregate_score = sum(score_history) / len(score_history)
+    aggregate_score = round(sum(score_history) / len(score_history), 4)
+
+    api_key = os.getenv("LANGSMITH_API_KEY")
+    if not api_key:
+        raise ValueError("LANGSMITH_API_KEY environment variable is required for experiment upload.")
+
+    api_base = os.getenv("LANGSMITH_API_URL", "https://api.smith.langchain.com")
+    endpoint = f"{api_base.rstrip('/')}/api/v1/datasets/upload-experiment"
+
+    upload_body = {
+        "experiment_name": experiment_name,
+        "experiment_description": "Evaluation uploaded by Seer eval_agent v2 run_node.",
+        "dataset_name": dataset_name,
+        "experiment_start_time": earliest_start.isoformat(),
+        "experiment_end_time": experiment_end_time.isoformat(),
+        "experiment_metadata": {
+            "target_graph_name": target_graph_name,
+            "target_url": target_url,
+            "attempt": len(score_history),
+        },
+        "summary_experiment_scores": [
+            {
+                "key": "mean_correctness",
+                "score": mean_score,
+                "comment": "Average correctness score across generated tests.",
+            },
+            {
+                "key": "aggregate_correctness",
+                "score": aggregate_score,
+                "comment": "Rolling average correctness score across eval attempts.",
+            },
+        ],
+        "results": results_payload,
+    }
+
+    try:
+        response = requests.post(
+            endpoint,
+            json=upload_body,
+            headers={"x-api-key": api_key},
+            timeout=60,
+        )
+    except Exception as request_error:
+        raise RuntimeError(f"Failed to upload experiment to LangSmith: {request_error}") from request_error
+
+    if not response.ok:
+        raise RuntimeError(
+            f"LangSmith upload failed with status {response.status_code}: {response.text}"
+        )
+
+    response_data = response.json()
+    dataset_info = response_data.get("dataset", {})
+    experiment_info = response_data.get("experiment", {})
+
+    uploaded_dataset_name = dataset_info.get("name", dataset_name)
+    uploaded_experiment_name = experiment_info.get("name", experiment_name)
+
+    tool_payload = {
+        "dataset_name": uploaded_dataset_name,
+        "experiment_name": uploaded_experiment_name,
+        "latest_score": mean_score,
+        "average_score": aggregate_score,
+        "rows": len(results_payload),
+    }
+    tool_message = ToolMessage(content=json.dumps(tool_payload), tool_call_id="run_node")
 
     logger.info(
-        "run_node: latest_score=%.3f aggregate_score=%.3f attempts=%d",
+        "run_node: uploaded experiment=%s dataset=%s latest=%.3f aggregate=%.3f rows=%d",
+        uploaded_experiment_name,
+        uploaded_dataset_name,
         mean_score,
         aggregate_score,
-        len(score_history),
-    )
-
-    experiment_name = f"seer-local-eval-{target_graph_name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-
-    # Emit a ToolMessage for traceability
-    msg = ToolMessage(
-        content=json.dumps({
-            "dataset": dataset_name,
-            "latest_score": mean_score,
-            "average_score": aggregate_score,
-            "experiment_name": experiment_name,
-            "attempts": len(score_history),
-        }),
-        tool_call_id="run_node",
+        len(results_payload),
     )
 
     return {
-        "dataset_name": dataset_name,
-        "experiment_name": experiment_name,
+        "dataset_name": uploaded_dataset_name,
+        "experiment_name": uploaded_experiment_name,
         "score": float(mean_score),
         "score_history": score_history,
-        "messages": [msg],
+        "messages": [tool_message],
     }
-
-
-def _extract_score(eval_result) -> float:
-    try:
-        if isinstance(eval_result, (int, float)):
-            return float(eval_result)
-        if isinstance(eval_result, dict):
-            if "score" in eval_result:
-                return float(eval_result.get("score", 0.0))
-            inner = eval_result.get("correctness") or {}
-            if isinstance(inner, dict) and "score" in inner:
-                return float(inner.get("score", 0.0))
-        return 0.0
-    except Exception:
-        return 0.0
-
-
 def reflect_node(state: EvalV2State) -> dict:
     """Summarize how tests should be improved and persist as EvalReflection."""
     cfg = state.target_agent_config
