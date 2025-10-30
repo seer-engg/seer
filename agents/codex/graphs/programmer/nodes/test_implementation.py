@@ -22,16 +22,16 @@ SYSTEM_PROMPT = f"""
     You are a software engineer in testing. another software engineer has implemented a task and you are to test the implementation, by creating and running unit tests for the implementation.
     Available tools:
 
-    {read_file.__doc__}
-    {grep.__doc__}
-    {inspect_directory.__doc__}
-    {create_file.__doc__}
-    {create_directory.__doc__}
-    {apply_patch.__doc__}
-    {write_file.__doc__}
-    {patch_file.__doc__}
-    {web_search.__doc__}
-    {think.__doc__}
+    {read_file.description}
+    {grep.description}
+    {inspect_directory.description}
+    {create_file.description}
+    {create_directory.description}
+    {apply_patch.description}
+    {write_file.description}
+    {patch_file.description}
+    {web_search.description}
+    {think.description}
 """
 
 USER_PROMPT = """

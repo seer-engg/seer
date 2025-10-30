@@ -22,12 +22,12 @@ SYSTEM_PROMPT = f"""
     Create a plan with 3-7 concrete steps to fulfill the request.
 
     Available tools:
-    {run_command.__doc__}
-    {inspect_directory.__doc__}
-    {read_file.__doc__}
-    {grep.__doc__}
-    {web_search.__doc__}
-    {think.__doc__}
+    {run_command.description}
+    {inspect_directory.description}
+    {read_file.description}
+    {grep.description}
+    {web_search.description}
+    {think.description}
     
     ## Notes:
     - use respective tools to gather context and plan the task.

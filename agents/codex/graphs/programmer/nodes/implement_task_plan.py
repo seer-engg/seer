@@ -55,17 +55,17 @@ SYSTEM_PROMPT = f"""
     You have been provided with following tools to do necessary operation in root directory of the codebase repository.
 
     Available tools:
-    {read_file.__doc__}
-    {grep.__doc__}
-    {inspect_directory.__doc__}
-    {create_file.__doc__}
-    {create_directory.__doc__}
-    {apply_patch.__doc__}
-    {write_file.__doc__}
-    {patch_file.__doc__}
-    {web_search.__doc__}
-    {think.__doc__}
-    {mark_task_item_as_done.__doc__}
+    {read_file.description}
+    {grep.description}
+    {inspect_directory.description}
+    {create_file.description}
+    {create_directory.description}
+    {apply_patch.description}
+    {write_file.description}
+    {patch_file.description}
+    {web_search.description}
+    {think.description}
+    {mark_task_item_as_done.description}
 
     # Important Notes:
     - Always use the think tool to think about the task before implementing it.

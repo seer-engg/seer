@@ -1,6 +1,7 @@
 from langchain.tools import tool
 from shared.logger import get_logger
 import os
+import asyncio
 from tavily import TavilyClient
 
 logger = get_logger("shared.tools")
@@ -28,12 +29,12 @@ async def web_search(query: str, max_results: int = 5) -> str:
     
     Note:
         Requires TAVILY_API_KEY environment variable to be set.
-        If not set, will attempt to use duckduckgo-search as fallback.
     """
     try:
         # Try Tavily first (preferred for production)
         
-        response = client.search(query, max_results=max_results)
+        # Offload the blocking Tavily client call to a thread to avoid blocking the event loop
+        response = await asyncio.to_thread(client.search, query, max_results=max_results)
         results = response.get("results", [])
         
         if not results:
