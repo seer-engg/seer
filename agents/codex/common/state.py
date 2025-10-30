@@ -16,6 +16,7 @@ class Message(TypedDict, total=False):
 class TaskItem(BaseModel):
     id:int = Field(..., description="The id of the task item")
     description: str = Field(..., description="Concise action to perform")
+    context: str = Field(..., description="additional Context from codebase regarding the task item")
     status: Literal["todo", "done"] = Field("todo", description="Item status")
 
 

@@ -3,11 +3,35 @@ from __future__ import annotations
 from shared.logger import get_logger
 logger = get_logger("codex.planner.nodes.context_and_plan_agent")
 
-from sandbox.tools import run_command
+from sandbox.tools import (
+    run_command,
+    inspect_directory,
+    read_file,
+    grep,
+)
+from shared.tools import web_search, think
 
 from langchain.agents import create_agent
 from agents.codex.llm.model import get_chat_model
 from agents.codex.common.state import PlannerState, TaskPlan
+from langchain_core.runnables import RunnableConfig
+
+
+SYSTEM_PROMPT = f"""
+    You are an agent specializing in planning by gathering context about a codebase . Gather only what's needed for high-level planning: 
+    Create a plan with 3-7 concrete steps to fulfill the request.
+
+    Available tools:
+    {run_command.__doc__}
+    {inspect_directory.__doc__}
+    {read_file.__doc__}
+    {grep.__doc__}
+    {web_search.__doc__}
+    {think.__doc__}
+    
+    ## Notes:
+    - use respective tools to gather context and plan the task.
+"""
 
 async def context_and_plan_agent(state: PlannerState) -> PlannerState:
     """Single ReAct agent that gathers repo context and returns a concrete plan."""
@@ -18,24 +42,17 @@ async def context_and_plan_agent(state: PlannerState) -> PlannerState:
     repo_dir = state.repo_path
     request = state.request
 
-    SYSTEM_PROMPT = """
-        You are an agent specializing in planning by gathering context about a codebase . Gather only what's needed for high-level planning: 
-        Create a plan with 3-7 concrete steps to fulfill the request.
-
-        Available tools:
-        - run_command: Run a command in the working directory of the repository.
-            - Parameters:
-                - command: The command to run.
-        
-        ## Notes:
-        - You should always use the run_command tool to run commands in the repository.
-        - you can execute any commands to inspect the codebase and gather context.
-    """
+    
 
     agent = create_agent(
         model=get_chat_model(),
         tools=[
-            run_command
+            run_command,
+            inspect_directory,
+            read_file,
+            grep,
+            web_search,
+            think,
         ],
         system_prompt=SYSTEM_PROMPT,
         state_schema=PlannerState,
@@ -56,7 +73,7 @@ async def context_and_plan_agent(state: PlannerState) -> PlannerState:
         "messages": msgs,
         "sandbox_session_id": sandbox_id,
         "repo_path": repo_dir,
-    })
+    }, config = RunnableConfig(recursion_limit=100))
     logger.info(f"Result: {result.keys()}")
     logger.info(f"Result: {result.get('structured_response')}")
     taskPlan: TaskPlan = result.get("structured_response")
