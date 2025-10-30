@@ -2,7 +2,6 @@
     "dependencies": ["../.."],
     "graphs": {
       "programmer": "./graphs/programmer/graph.py:graph",
-      "reviewer": "./graphs/reviewer/graph.py:graph",
       "planner": "./graphs/planner/graph.py:graph"
     },
     "env": "../../.env",

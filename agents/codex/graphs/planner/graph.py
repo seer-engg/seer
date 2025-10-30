@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from agents.codex.common.state import PlannerState
+from agents.codex.common.state import PlannerState,PlannerIOState
 
 from shared.logger import get_logger
 
@@ -11,7 +11,6 @@ from agents.codex.graphs.planner.nodes import context_and_plan_agent
 from agents.codex.graphs.planner.nodes.raise_pr import raise_pr
 
 from agents.codex.graphs.programmer.graph import graph as programmer_graph
-from agents.codex.graphs.reviewer.graph import graph as reviewer_graph
 
 logger = get_logger("codex.planner")
 
@@ -34,7 +33,6 @@ async def _run_programmer(state: PlannerState) -> PlannerState:
         "request": state.request,
         "repo_url": state.repo_url,
         "repo_path": state.repo_path,
-        "messages": state.messages,
         "taskPlan": state.taskPlan,
         "sandbox_session_id": state.sandbox_session_id,
     }
@@ -55,7 +53,7 @@ async def _run_reviewer(state: PlannerState) -> PlannerState:
 #TODO: add reflexion mechanism here
 
 def compile_planner_graph():
-    workflow = StateGraph(PlannerState)
+    workflow = StateGraph(state_schema=PlannerState, input=PlannerIOState, output=PlannerIOState)
     workflow.add_node("prepare-graph-state", _prepare_graph_state)
     workflow.add_node("initialize-project", initialize_project)
     # Combined context + planning agent

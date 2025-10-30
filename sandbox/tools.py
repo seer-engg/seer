@@ -4,6 +4,7 @@ from langchain.tools import ToolRuntime
 from sandbox.base import get_sandbox
 from e2b_code_interpreter import CommandResult, AsyncSandbox
 from shared.logger import get_logger
+from e2b import CommandExitException
 
 logger = get_logger("sandbox.tools")
 
@@ -32,9 +33,9 @@ async def run_command(command: str, runtime: ToolRuntime) -> str:
     sbx: AsyncSandbox = await get_sandbox(sandbox_id)
     try:
         res: CommandResult = await sbx.commands.run(command, cwd=repo_path)
-    except Exception as e:
+    except CommandExitException as e:
         logger.error(f"Error running command in sandbox: {e}")
-        return f"Error: {e}"
+        return f"Error: {e.stderr} \n {e.error} {e.stdout}"
 
     result = f"Exit code: {res.exit_code}\nStdout: {res.stdout}\nStderr: {res.stderr}"
     if hasattr(res, "error"):
@@ -80,10 +81,10 @@ async def grep(pattern: str, file_path: str, runtime: ToolRuntime) -> str:
     
     """
     sandbox_id, repo_path = vaildate_sandbox_tool_call(runtime)
-    
-    sbx: AsyncSandbox = await get_sandbox(sandbox_id)
-    try:
-        # Use grep with recursive search, line numbers, and ignore case option
+
+    try:   
+        sbx: AsyncSandbox = await get_sandbox(sandbox_id)
+            # Use grep with recursive search, line numbers, and ignore case option
         command = f"grep -rn '{pattern}' {file_path}"
         res: CommandResult = await sbx.commands.run(command, cwd=repo_path)
         
@@ -93,9 +94,12 @@ async def grep(pattern: str, file_path: str, runtime: ToolRuntime) -> str:
             return "No matches found"
         else:
             return f"Error (exit code {res.exit_code}):\n{res.stderr}"
-    except Exception as e:
-        logger.error(f"Error running grep in sandbox: {e}")
-        return f"Error: {e}"
+    except CommandExitException as e:
+        if e.exit_code == 1:
+            return f"No matches found for pattern: {pattern} in file: {file_path}"
+        else:
+            return f"Error (exit code {e.exit_code}):\n{e.stderr}"
+    
 
 
 @tool
