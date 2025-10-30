@@ -4,7 +4,7 @@ from typing import Annotated, List, Literal, Optional, TypedDict
 
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 
@@ -14,13 +14,15 @@ class Message(TypedDict, total=False):
 
 
 class TaskItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     id:int = Field(..., description="The id of the task item")
     description: str = Field(..., description="Concise action to perform")
     context: str = Field(..., description="additional Context from codebase regarding the task item")
-    status: Literal["todo", "done"] = Field("todo", description="Item status")
+    status: Literal["todo", "done"] = Field(..., description="Item status")
 
 
 class TaskPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     title: str = Field(..., description="Short plan title")
     items: List[TaskItem] = Field(..., description="Ordered plan steps")
 
@@ -45,13 +47,15 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 
 class Failure(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     test_intention: str = Field(..., description="The intention of the test")
     failure_reason: str = Field(..., description="The reason for the failure")
-    optinal_refrence: Optional[str] = Field(None, description="An optional refrence to the code that failed the test")
+    optional_reference: str = Field(... , description="An optional refrence to the code that failed the test")
 
 class TestResults(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     success: bool = Field(..., description="Whether the tests passed for the requested implementations")
-    failures: Optional[List[Failure]] = Field(None, description="The failures of the tests")
+    failures: List[Failure] = Field(..., description="The failures of the tests")
 
 
 class ProgrammerState(BaseModel):

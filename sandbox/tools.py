@@ -133,7 +133,7 @@ async def patch_file(
     old_string: str,
     new_string: str,
     runtime: ToolRuntime,
-    replace_all: bool = False
+    replace_all: bool 
 ) -> str:
     """
     Edit a specific portion of a file by replacing old_string with new_string.
@@ -278,7 +278,7 @@ async def apply_patch(diff_content: str, runtime: ToolRuntime) -> str:
 
 
 @tool
-async def inspect_directory(directory_path: str, runtime: ToolRuntime, depth: int = 2) -> str:
+async def inspect_directory(directory_path: str, runtime: ToolRuntime, depth: int ) -> str:
     """
     List files and directories in the repository.
     
@@ -290,6 +290,9 @@ async def inspect_directory(directory_path: str, runtime: ToolRuntime, depth: in
         A tree of the directory structure including files and directories, or an error message if the directory could not be inspected
     """
     sandbox_id, repo_path = vaildate_sandbox_tool_call(runtime)
+
+    if depth is None:
+        depth = 2
     
     sbx: AsyncSandbox = await get_sandbox(sandbox_id)
     try:
@@ -307,13 +310,13 @@ async def inspect_directory(directory_path: str, runtime: ToolRuntime, depth: in
 
 
 @tool
-async def create_file(file_path: str, content: str = "", runtime: ToolRuntime = None) -> str:
+async def create_file(file_path: str, content: str , runtime: ToolRuntime) -> str:
     """
     Create a new file in the repository. Fails if file already exists.
     
     Args:
         file_path: Path to the file relative to the repository root
-        content: The initial content to write to the file (optional, defaults to empty)
+        content: The initial content to write to the file
 
     Returns:
         A success message if the file was created, or an error message if the file could not be created

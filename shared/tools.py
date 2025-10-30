@@ -12,7 +12,7 @@ client = TavilyClient(api_key=tavily_api_key)
 
 
 @tool
-async def web_search(query: str, max_results: int = 5) -> str:
+async def web_search(query: str, max_results: int ) -> str:
     """
     Search the web for information using Tavily API.
     Use this when you need to find current information, documentation, or answers to questions.
@@ -30,6 +30,8 @@ async def web_search(query: str, max_results: int = 5) -> str:
     Note:
         Requires TAVILY_API_KEY environment variable to be set.
     """
+    if max_results is None:
+        max_results = 5
     try:
         # Try Tavily first (preferred for production)
         

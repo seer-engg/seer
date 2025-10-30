@@ -8,6 +8,12 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 
 def get_chat_model(model: str | None = None, temperature: float = 0.2) -> ChatOpenAI:
-    model_name = model or os.getenv("OPENAI_MODEL", "gpt-4o")
-    return ChatOpenAI(model=model_name, temperature=temperature)
+    llm = ChatOpenAI(
+        model="gpt-5-codex",
+        use_responses_api=True,             # <— key change
+        output_version="responses/v1",      # nicer content blocks from Responses
+        reasoning={"effort": "medium"},     # optional; supported by Responses models
+    )
+    # llm = ChatOpenAI(model='gpt-4o')
+    return llm
 
