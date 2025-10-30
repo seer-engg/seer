@@ -3,32 +3,47 @@ from __future__ import annotations
 from langgraph.graph import END, START, StateGraph
 
 from agents.codex.common.state import ProgrammerState, TaskPlan, TaskItem
-from agents.codex.graphs.reviewer.graph import graph as reviewer_graph
 import time
 from e2b_code_interpreter import AsyncSandbox
 from shared.logger import get_logger
-from agents.codex.graphs.programmer.nodes import implement_task_plan
+from agents.codex.graphs.programmer.nodes import (
+    implement_task_plan,
+    test_implementation,
+    reflect,
+    initialize,
+    finalize,
+)
 
 logger = get_logger("codex.programmer")
 
-async def _initialize(state: ProgrammerState) -> ProgrammerState:
-    sandbox_id = state.sandbox_session_id
-    if not sandbox_id:
-        return state
-    sbx: AsyncSandbox = await AsyncSandbox.connect(sandbox_id)
-    logger.info("Sandbox ready")
-    return state
+
+def reflection_router(state: ProgrammerState) -> ProgrammerState:
+    if state.testResults.success or state.attempt_number >= state.max_attempts:
+        return "finalize"
+    else:
+        return "reflect"
 
 ## to do add liniting check and resolve
 
 def compile_programmer_graph():
     workflow = StateGraph(ProgrammerState)
-    workflow.add_node("initialize", _initialize)
+    workflow.add_node("initialize", initialize)
     workflow.add_node("implement-task-plan", implement_task_plan)
+    workflow.add_node("test-implementation", test_implementation)
+    workflow.add_node("reflect", reflect)
+    workflow.add_node("finalize", finalize)
 
     workflow.add_edge(START, "initialize")
     workflow.add_edge("initialize", "implement-task-plan")
-    workflow.add_edge("implement-task-plan", END)
+    workflow.add_edge("implement-task-plan", "test-implementation")
+    workflow.add_conditional_edges("test-implementation", reflection_router
+    , {
+        "finalize": "finalize",
+        "reflect": "reflect"
+    })
+    workflow.add_edge("reflect", "implement-task-plan")
+
+    workflow.add_edge("finalize", END)
 
     return workflow.compile()
 

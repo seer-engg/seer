@@ -1,3 +1,6 @@
+from langchain_core.messages.base import BaseMessage
+
+
 from shared.logger import get_logger
 from agents.codex.common.state import ProgrammerState, TaskPlan
 logger = get_logger("programmer.execute_task_item")
@@ -14,73 +17,69 @@ from sandbox.tools import (
     write_file,
     patch_file,
 )
-from agents.codex.common.tools import think
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
+from shared.tools import web_search, think
+from langgraph.types import Command
+from langchain.tools import tool,ToolRuntime
 
-SYSTEM_PROMPT = """
-    You are a junior software engineer.You have been given a task to implement. Implement the assigned task to the codebase in the sandbox.
-    Use run_command to access the terminal of the sandbox and execute commands to implement the task.
-    When done, return a brief status summary.
+@tool
+def mark_task_item_as_done(task_item_id: int, runtime: ToolRuntime) -> str:
+    """
+    Mark a task item as done.
+    Args:
+        task_item_id: The id of the task item to mark as done
+    Returns:
+        A command to update the task plan
+    """
+    taskplan: TaskPlan = runtime.state.get('taskPlan')  
+    if not taskplan:
+        raise ValueError("No task plan found")
+    for item in taskplan.items:
+        if item.id == task_item_id:
+            item.status = "done"
+            logger.info(f"Marked task item as done: {item.description}")
+            break
+    else:
+        raise ValueError(f"Task item with id {task_item_id} not found")
+    return Command(
+        update={
+            "taskPlan": taskplan,
+        }
+    )
+
+
+SYSTEM_PROMPT = f"""
+    You are a junior software engineer. You have been given a task to implement. Implement the assigned task to the codebase in the sandbox.
+    When done, return a brief status summary. You just need to implement the task, you don't need to generate or run any test the implementation.
+    You have been provided with following tools to do necessary operation in root directory of the codebase repository.
 
     Available tools:
-    - run_command: Run a command in the working directory of the repository.
-        - Parameters:
-            - command: The command to run.
-    - think: Think about something.
-        - Parameters:
-            - thought: The thought to think about.
-    - read_file: Read a file in the repository.
-        - Parameters:
-            - file_path: The path to the file to read.
-    - grep: Grep in the repository.
-        - Parameters:
-            - pattern: The pattern to grep.
-    - inspect_directory: To understand the directory structure and files in the repository.
-        - Parameters:
-            - directory_path: The path to the directory to list files from.
-            - depth: The depth of the directory tree to inspect.
-    - create_file: Create a file in the repository.
-        - Parameters:
-            - file_path: The path to the file to create.
-            - content: The content of the file to create.
-    - create_directory: Create a directory in the repository.
-        - Parameters:
-            - directory_path: The path to the directory to create.
-    - patch_file: Use this tool to edit a specific portion of a file by replacing old_string with new_string.
-        - Parameters:
-            - file_path: The path to the file to edit.
-            - old_string: The old string to replace.
-            - new_string: The new string to replace with.
-            - replace_all: If True, replace all occurrences. If False (default), replace only the first occurrence.
-    
-    - write_file: Use this tool to write a file to the repository.
-        - Parameters:
-            - file_path: The path to the file to write.
-            - content: The content to write to the file.
+    {read_file.__doc__}
+    {grep.__doc__}
+    {inspect_directory.__doc__}
+    {create_file.__doc__}
+    {create_directory.__doc__}
+    {apply_patch.__doc__}
+    {write_file.__doc__}
+    {patch_file.__doc__}
+    {web_search.__doc__}
+    {think.__doc__}
+    {mark_task_item_as_done.__doc__}
 
     # Important Notes:
     - Always use the think tool to think about the task before implementing it.
     - use desired tools to implement the task.
+    - for searching of packages, use the web_search tool, do not use pip search.
 """
 
-USER_PROMPT = """
-    based on the request 
-    <request>
-    {request}
-    </request>
-
-    Implement the following task plan:
-    <task_plan>
-    {task_plan}
-    </task_plan>
-"""
 
 async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
     # Action ReAct agent: implement the chosen task using sandbox tools
     plan: TaskPlan | None = state.taskPlan
     if not plan:
         raise ValueError("No plan found")
+
 
     agent = create_agent(
         model=get_chat_model(),
@@ -94,16 +93,14 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
             think,
             write_file,
             patch_file,
+            web_search,
         ],
         system_prompt=SYSTEM_PROMPT,
         state_schema=ProgrammerState,
     )
 
-    user_prompt = USER_PROMPT.format(request=state.request, task_plan=plan)
-    msgs = []
-    msgs.append({"role": "user", "content": user_prompt})
     result = await agent.ainvoke({
-        "messages": msgs,
+        "messages": state.messages,
         # Needed by tool runtime
         "sandbox_session_id": state.sandbox_session_id,
         "repo_path": state.repo_path,
