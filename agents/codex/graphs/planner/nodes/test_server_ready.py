@@ -3,9 +3,8 @@ from shared.logger import get_logger
 logger = get_logger("planner.test_server_ready")
 from e2b import AsyncSandbox
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from agents.codex.common.constants import TARGET_AGENT_PORT, TARGET_AGENT_COMMAND
 
-from agents.codex.graphs.planner.deploy_server import deploy_server_and_confirm_ready
+from sandbox import deploy_server_and_confirm_ready, TARGET_AGENT_COMMAND
 
 
 async def test_server_ready(state: ProgrammerState) -> ProgrammerState:

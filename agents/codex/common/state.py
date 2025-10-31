@@ -33,13 +33,12 @@ class PlannerIOState(BaseModel):
     repo_url: str = Field(..., description="The URL of the repository")
     branch_name: Optional[str] = Field(None, description="The name of the branch")
     messages: Annotated[list[BaseMessage], add_messages] = Field(None, description="The messages in the conversation")
-    setup_script: str = Field('pip install -r requirements.txt', description="The script to setup the project")
+    sandbox_session_id: str = Field(..., description="The ID of the sandbox session")
 
 class PlannerState(PlannerIOState):
     autoAcceptPlan: bool = Field(True, description="Whether to automatically accept the plan")
     structured_response: Optional[dict] = Field(None, description="The structured response")
     repo_path: Optional[str] = Field(None, description="The path to the repository")
-    sandbox_session_id: Optional[str] = Field(None, description="The ID of the sandbox session")
     taskPlan: Optional[TaskPlan] = Field(None, description="The task plan")
     # Deployment metadata (filled by deploy node)
     deployment_url: Optional[str] = Field(None, description="Public URL of the deployed LangGraph service")
