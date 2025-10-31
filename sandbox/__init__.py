@@ -16,6 +16,7 @@ __all__ = [
     "setup_project",
     "TARGET_AGENT_COMMAND",
     "TARGET_AGENT_PORT",
+    "prepare_target_agent",
 ]
 
 

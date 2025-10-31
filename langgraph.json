@@ -1,0 +1,10 @@
+{
+    "dependencies": ["../.."],
+    "graphs": {
+      "planner": "./agents/codex/graphs/planner/graph.py:graph",
+      "programmer": "./agents/codex/graphs/programmer/graph.py:graph"
+    },
+    "env": "./.env"
+  }
+  
+  
