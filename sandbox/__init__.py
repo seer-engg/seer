@@ -3,10 +3,43 @@ from .base import (
     get_sandbox,
 
 )
+from .deploy import deploy_server_and_confirm_ready
+from .initialize import initialize_e2b_sandbox, setup_project
+from .constants import TARGET_AGENT_COMMAND, TARGET_AGENT_PORT
+from e2b import AsyncSandbox
 
 __all__ = [
     "cd_and_run_in_sandbox",
     "get_sandbox",
+    "deploy_server_and_confirm_ready",
+    "initialize_e2b_sandbox",
+    "setup_project",
+    "TARGET_AGENT_COMMAND",
+    "TARGET_AGENT_PORT",
 ]
 
 
+async def prepare_target_agent(repo_url: str, setup_script: str, timeout: int = 900) -> tuple[AsyncSandbox, str]:
+    """
+    Prepare the target agent by initializing the sandbox, setting up the project, and deploying the server.
+    Args:
+        repo_url: The URL of the repository to prepare.
+        setup_script: The script to run to setup the project.
+        timeout: The timeout in seconds to wait for the server to be ready.
+    Returns:
+        A tuple containing the sandbox and the deployed URL.
+    """
+    sbx, repo_dir, branch_in_sandbox = await initialize_e2b_sandbox(
+        repo_url=repo_url,
+    )
+    await setup_project(sbx.sandbox_id, repo_dir, setup_script)
+
+    sbx, handle = await deploy_server_and_confirm_ready(
+        cmd=TARGET_AGENT_COMMAND,
+        sb=sbx,
+        cwd=repo_dir,
+        timeout_s=60
+    )
+
+    deployed_url = sbx.get_host(TARGET_AGENT_PORT)
+    return sbx, deployed_url

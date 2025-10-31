@@ -3,7 +3,7 @@ import asyncio
 from e2b import AsyncSandbox, AsyncCommandHandle
 from shared.logger import get_logger
 logger = get_logger("codex.planner.deploy_server")
-from agents.codex.common.constants import SUCCESS_PAT, FAIL_PATTERNS, TARGET_AGENT_PORT
+from .constants import SUCCESS_PAT, FAIL_PATTERNS, TARGET_AGENT_PORT
 
 
 
@@ -11,29 +11,33 @@ async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, 
     ready_evt = asyncio.Event()
     failed_evt = asyncio.Event()
     last_err = []
-    stderr_buffer = []  # Accumulate stderr for multi-chunk pattern matching
+    # Accumulate all output (stdout + stderr) for pattern matching
+    # This handles cases where patterns span multiple chunks
+    stderr_buffer = []
 
     on_stdout_count = [0]  # Use list to allow modification in closure
     on_stderr_count = [0]
     
     def on_stdout(chunk: str):
         on_stdout_count[0] += 1
-        print(f"[STDOUT #{on_stdout_count[0]}] Length: {len(chunk)}")
-        print(f"  Content: {repr(chunk[:200])}")  # Show first 200 chars with escape sequences
+        logger.info(f"[STDOUT #{on_stdout_count[0]}] Length: {len(chunk)}")
+        logger.info(f"  Content: {repr(chunk[:200])}")  # Show first 200 chars with escape sequences
         
         # Also check stdout for error patterns (sometimes stderr goes to stdout)
         last_err.append(f"STDOUT: {chunk}")
         stderr_buffer.append(chunk)
         
-        if SUCCESS_PAT.search(chunk):
-            print("✓ SUCCESS PATTERN FOUND!")
+        # Check the accumulated buffer for success pattern (could span chunks)
+        full_buffer = ''.join(stderr_buffer)
+        if SUCCESS_PAT.search(full_buffer):
+            logger.info("✓ SUCCESS PATTERN FOUND!")
             ready_evt.set()
+            return  # No need to check for failures if success found
             
         # Check for failures in stdout too
-        full_buffer = ''.join(stderr_buffer)
         for i, pattern in enumerate(FAIL_PATTERNS):
             if pattern.search(full_buffer):
-                print(f"✗ FAILURE PATTERN #{i} DETECTED IN STDOUT: {pattern.pattern}")
+                logger.info(f"✗ FAILURE PATTERN #{i} DETECTED IN STDOUT: {pattern.pattern}")
                 failed_evt.set()
                 return
 
@@ -45,18 +49,25 @@ async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, 
         last_err.append(f"STDERR: {chunk}")
         stderr_buffer.append(chunk)
         
-        # Check the accumulated buffer for any failure pattern
-        full_stderr = ''.join(stderr_buffer)
-        logger.info(f"  Buffer size: {len(full_stderr)} chars")
+        # Check the accumulated buffer for both success and failure patterns
+        full_buffer = ''.join(stderr_buffer)
+        logger.info(f"  Buffer size: {len(full_buffer)} chars")
         
+        # Check for success pattern first (sometimes goes to stderr)
+        if SUCCESS_PAT.search(full_buffer):
+            logger.info("✓ SUCCESS PATTERN FOUND IN STDERR!")
+            ready_evt.set()
+            return
+        
+        # Check for failure patterns
         for i, pattern in enumerate(FAIL_PATTERNS):
-            if pattern.search(full_stderr):
+            if pattern.search(full_buffer):
                 logger.info(f"✗ FAILURE PATTERN #{i} DETECTED: {pattern.pattern}")
-                logger.info(f"  Matched in: {full_stderr[-200:]}")
+                logger.info(f"  Matched in: {full_buffer[-200:]}")
                 failed_evt.set()
                 return
         
-        logger.info(f"  No failure patterns matched yet (checked {len(FAIL_PATTERNS)} patterns)")
+        logger.info(f"  No patterns matched yet (checked 1 success + {len(FAIL_PATTERNS)} failure patterns)")
 
     # 1) start server in background and stream logs
     handle = await sb.commands.run(
