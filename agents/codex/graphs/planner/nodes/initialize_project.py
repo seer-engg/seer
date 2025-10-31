@@ -99,7 +99,12 @@ async def initialize_e2b_sandbox(
         raise RuntimeError("E2B_API_KEY not configured in environment")
 
     logger.info("Creating E2B sandbox for codex...")
-    sbx: AsyncSandbox = await AsyncSandbox.beta_create(auto_pause=True)
+    sbx: AsyncSandbox = await AsyncSandbox.beta_create(
+      auto_pause=True,
+      envs={
+        'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY'),
+      },
+    )
     sandbox_id = sbx.sandbox_id
     logger.info(f"Sandbox created: {sandbox_id}")
 
