@@ -9,7 +9,8 @@ from shared.logger import get_logger
 from agents.codex.graphs.planner.nodes import initialize_project
 from agents.codex.graphs.planner.nodes import context_and_plan_agent
 from agents.codex.graphs.planner.nodes.raise_pr import raise_pr
-
+from agents.codex.graphs.planner.nodes.deploy import deploy_service
+from agents.codex.graphs.planner.nodes.test_server_ready import test_server_ready
 from agents.codex.graphs.programmer.graph import graph as programmer_graph
 
 logger = get_logger("codex.planner")
@@ -50,6 +51,13 @@ async def _run_reviewer(state: PlannerState) -> PlannerState:
     # reviewer_output = reviewer_graph.invoke(reviewer_input)
     return state
 
+def is_server_ready(state: PlannerState) -> PlannerState:
+    if state.server_running:
+        return "context-plan-agent"
+    else:
+        return "end"
+
+
 #TODO: add reflexion mechanism here
 
 def compile_planner_graph():
@@ -63,15 +71,24 @@ def compile_planner_graph():
     workflow.add_node("programmer", _run_programmer)
     workflow.add_node("reviewer", _run_reviewer)
     workflow.add_node("raise-pr", raise_pr)
+    workflow.add_node("deploy-service", deploy_service)
+    workflow.add_node("test-server-ready", test_server_ready)
 
     workflow.add_edge(START, "prepare-graph-state")
     workflow.add_edge("prepare-graph-state", "initialize-project")
-    workflow.add_edge("initialize-project", "context-plan-agent")
+    workflow.add_edge("initialize-project", "test-server-ready")
+
+    workflow.add_conditional_edges("test-server-ready", is_server_ready, {
+        "context-plan-agent": "context-plan-agent",
+        "end": END
+    })
+
     workflow.add_edge("context-plan-agent", "interrupt-proposed-plan")
     workflow.add_edge("interrupt-proposed-plan", "programmer")
     workflow.add_edge("programmer", "reviewer")
     workflow.add_edge("reviewer", "raise-pr")
-    workflow.add_edge("raise-pr", END)
+    workflow.add_edge("raise-pr", "deploy-service")
+    workflow.add_edge("deploy-service", END)
 
     return workflow.compile()
 

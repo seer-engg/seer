@@ -41,6 +41,9 @@ class PlannerState(PlannerIOState):
     repo_path: Optional[str] = Field(None, description="The path to the repository")
     sandbox_session_id: Optional[str] = Field(None, description="The ID of the sandbox session")
     taskPlan: Optional[TaskPlan] = Field(None, description="The task plan")
+    # Deployment metadata (filled by deploy node)
+    deployment_url: Optional[str] = Field(None, description="Public URL of the deployed LangGraph service")
+    server_running: bool = Field(False, description="Whether the server is running")
     
 
 from pydantic import BaseModel, Field
@@ -69,3 +72,4 @@ class ProgrammerState(BaseModel):
     max_attempts: int = Field(2, description="The maximum number of attempts")
     taskPlan: Optional[TaskPlan] = Field(None, description="The task plan")
     testResults: Optional[TestResults] = Field(None, description="The test results")
+    server_running: bool = Field(False, description="Whether the server is running")
