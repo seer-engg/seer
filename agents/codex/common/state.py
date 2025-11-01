@@ -6,12 +6,11 @@ from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field, ConfigDict
 
-
+from shared.schema import CodexInput, CodexOutput
 
 class Message(TypedDict, total=False):
     role: Literal["user", "assistant", "system"]
     content: str
-
 
 class TaskItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -26,17 +25,8 @@ class TaskPlan(BaseModel):
     title: str = Field(..., description="Short plan title")
     items: List[TaskItem] = Field(..., description="Ordered plan steps")
 
-
-
-class PlannerIOState(BaseModel):
-    request: str = Field(..., description="The request to be fulfilled")
-    repo_url: str = Field(..., description="The URL of the repository")
-    repo_path: Optional[str] = Field(None, description="The path to the repository")
-    branch_name: Optional[str] = Field(None, description="The name of the branch")
+class PlannerState(CodexInput,CodexOutput):
     messages: Annotated[list[BaseMessage], add_messages] = Field(None, description="The messages in the conversation")
-    sandbox_session_id: str = Field(..., description="The ID of the sandbox session")
-
-class PlannerState(PlannerIOState):
     autoAcceptPlan: bool = Field(True, description="Whether to automatically accept the plan")
     structured_response: Optional[dict] = Field(None, description="The structured response")
     taskPlan: Optional[TaskPlan] = Field(None, description="The task plan")
@@ -44,9 +34,6 @@ class PlannerState(PlannerIOState):
     deployment_url: Optional[str] = Field(None, description="Public URL of the deployed LangGraph service")
     server_running: bool = Field(False, description="Whether the server is running")
     
-
-from pydantic import BaseModel, Field
-from typing import Optional, List
 
 class Failure(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -60,15 +47,11 @@ class TestResults(BaseModel):
     failures: List[Failure] = Field(..., description="The failures of the tests")
 
 
-class ProgrammerState(BaseModel):
-    request: str = Field(..., description="The request to be fulfilled")
+class ProgrammerState(CodexInput):
     taskPlan: TaskPlan = Field(..., description="The task plan")
-    repo_path: str = Field(..., description="The path to the repository")
-    sandbox_session_id: Optional[str] = Field(None, description="The ID of the sandbox session")
     messages: Annotated[list[BaseMessage], add_messages] = Field(None, description="The messages in the conversation")
     attempt_number: int = Field(0, description="The number of attempts")
     success: bool = Field(False, description="Whether the request was successful")
     max_attempts: int = Field(2, description="The maximum number of attempts")
-    taskPlan: Optional[TaskPlan] = Field(None, description="The task plan")
     testResults: Optional[TestResults] = Field(None, description="The test results")
     server_running: bool = Field(False, description="Whether the server is running")

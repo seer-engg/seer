@@ -5,20 +5,39 @@ from sandbox.base import get_sandbox
 from e2b_code_interpreter import CommandResult, AsyncSandbox
 from shared.logger import get_logger
 from e2b import CommandExitException
+from dataclasses import dataclass
+from shared.schema import SandboxContext
 
 logger = get_logger("sandbox.tools")
 
-def vaildate_sandbox_tool_call(runtime: ToolRuntime) -> None:
-    sandbox_id = runtime.state.get("sandbox_session_id")
+@dataclass
+class SandboxToolContext:
+    """Context for sandbox tools containing sandbox configuration."""
+    sandbox_context: SandboxContext
+
+def vaildate_sandbox_tool_call(runtime: ToolRuntime[SandboxToolContext]) -> tuple[str, str]:
+    """
+    Validate and extract sandbox context from runtime.
+    
+    Returns:
+        tuple[str, str]: (sandbox_id, repo_path)
+    """
+    if not runtime.context:
+        raise ValueError("Runtime context not found. Make sure context is passed when invoking the agent.")
+    
+    sandbox_context = runtime.context.sandbox_context
+    sandbox_id = sandbox_context.sandbox_id
+    repo_path = sandbox_context.working_directory
+    
     if not sandbox_id:
-        raise ValueError("Sandbox session ID not found in runtime state")
-    repo_path = runtime.state.get("repo_path")
+        raise ValueError("Sandbox session ID not found in runtime context")
     if not repo_path:
-        raise ValueError("Repository directory not found in runtime state")
+        raise ValueError("Repository directory not found in runtime context")
+    
     return sandbox_id, repo_path
 
 @tool
-async def run_command(command: str, runtime: ToolRuntime) -> str:
+async def run_command(command: str, runtime: ToolRuntime[SandboxToolContext]) -> str:
     """
     Run a shell command in working directory of the repository.
     
@@ -44,7 +63,7 @@ async def run_command(command: str, runtime: ToolRuntime) -> str:
 
 
 @tool
-async def read_file(file_path: str, runtime: ToolRuntime) -> str:
+async def read_file(file_path: str, runtime: ToolRuntime[SandboxToolContext]) -> str:
     """
     Read a file from the repository.
 
@@ -68,7 +87,7 @@ async def read_file(file_path: str, runtime: ToolRuntime) -> str:
 
 
 @tool
-async def grep(pattern: str, file_path: str, runtime: ToolRuntime) -> str:
+async def grep(pattern: str, file_path: str, runtime: ToolRuntime[SandboxToolContext]) -> str:
     """
     Search for a pattern in files using grep in the repository.
 
@@ -103,7 +122,7 @@ async def grep(pattern: str, file_path: str, runtime: ToolRuntime) -> str:
 
 
 @tool
-async def write_file(file_path: str, content: str, runtime: ToolRuntime) -> str:
+async def write_file(file_path: str, content: str, runtime: ToolRuntime[SandboxToolContext]) -> str:
     """
     Write or overwrite a file in the repository.
     
@@ -132,7 +151,7 @@ async def patch_file(
     file_path: str,
     old_string: str,
     new_string: str,
-    runtime: ToolRuntime,
+    runtime: ToolRuntime[SandboxToolContext],
     replace_all: bool 
 ) -> str:
     """
@@ -205,7 +224,7 @@ async def patch_file(
 
 
 @tool
-async def apply_patch(diff_content: str, runtime: ToolRuntime) -> str:
+async def apply_patch(diff_content: str, runtime: ToolRuntime[SandboxToolContext]) -> str:
     """
     Apply a git-style unified diff to files in the repository.
     This is the most robust way to edit files as it uses git's patch mechanism.
@@ -278,7 +297,7 @@ async def apply_patch(diff_content: str, runtime: ToolRuntime) -> str:
 
 
 @tool
-async def inspect_directory(directory_path: str, runtime: ToolRuntime, depth: int ) -> str:
+async def inspect_directory(directory_path: str, runtime: ToolRuntime[SandboxToolContext], depth: int ) -> str:
     """
     List files and directories in the repository.
     
@@ -310,7 +329,7 @@ async def inspect_directory(directory_path: str, runtime: ToolRuntime, depth: in
 
 
 @tool
-async def create_file(file_path: str, content: str , runtime: ToolRuntime) -> str:
+async def create_file(file_path: str, content: str , runtime: ToolRuntime[SandboxToolContext]) -> str:
     """
     Create a new file in the repository. Fails if file already exists.
     
@@ -344,7 +363,7 @@ async def create_file(file_path: str, content: str , runtime: ToolRuntime) -> st
 
 
 @tool
-async def create_directory(directory_path: str, runtime: ToolRuntime) -> str:
+async def create_directory(directory_path: str, runtime: ToolRuntime[SandboxToolContext]) -> str:
     """
     Create a new directory in the repository. Creates parent directories as needed.
     

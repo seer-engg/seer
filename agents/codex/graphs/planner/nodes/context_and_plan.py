@@ -8,6 +8,7 @@ from sandbox.tools import (
     inspect_directory,
     read_file,
     grep,
+    SandboxToolContext,
 )
 from shared.tools import web_search, think
 
@@ -15,10 +16,13 @@ from langchain.agents import create_agent
 from agents.codex.llm.model import get_chat_model
 from agents.codex.common.state import PlannerState, TaskPlan
 from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import HumanMessage
 
 
 SYSTEM_PROMPT = f"""
-    You are an agent specializing in planning by gathering context about a codebase . Gather only what's needed for high-level planning: 
+    You are an Technical manager specializing in LLM based Agent development.
+    Your role is to Create a plan for the Agent to be developed.
+    Your task is to analyze the failed evals of the agent ,understand the current state of the agent through its code and plan the next steps to be taken to improve the agent.  
     Create a plan with 3-7 concrete steps to fulfill the request.
 
     Available tools:
@@ -33,16 +37,22 @@ SYSTEM_PROMPT = f"""
     - use respective tools to gather context and plan the task.
 """
 
+USER_PROMPT = """
+    The Agent has failed the following evals:
+    {eval_results}
+    Create a plan with 3-7 concrete steps to improve the agent.
+"""
+
+
 async def context_and_plan_agent(state: PlannerState) -> PlannerState:
     """Single ReAct agent that gathers repo context and returns a concrete plan."""
-    if not (state.sandbox_session_id and state.repo_path):
-        raise ValueError("Sandbox session ID and repository path are required")
 
-    sandbox_id = state.sandbox_session_id
-    repo_dir = state.repo_path
-    request = state.request
-
+    # Extract sandbox context for tools
+    sandbox_context = state.sandbox_context
+    if not sandbox_context:
+        raise ValueError("No sandbox context found in state")
     
+    eval_results = state.testing_context.test_results
 
     agent = create_agent(
         model=get_chat_model(),
@@ -57,23 +67,18 @@ async def context_and_plan_agent(state: PlannerState) -> PlannerState:
         system_prompt=SYSTEM_PROMPT,
         state_schema=PlannerState,
         response_format=TaskPlan,
+        context_schema=SandboxToolContext,  # Add context schema for sandbox tools
     )
 
     msgs = list(state.messages)
-    msgs.append({
-        "role": "user",
-        "content": (
-            "Task: " + request + "\n"
-            "Gather minimal repo context and return JSON with repo_context and plan_steps.\n"
-            "Always use the tool to inspect the repo."
-        ),
-    })
+    msgs.append(HumanMessage(content=USER_PROMPT.format(eval_results=eval_results)))
 
-    result = await agent.ainvoke({
-        "messages": msgs,
-        "sandbox_session_id": sandbox_id,
-        "repo_path": repo_dir,
-    }, config = RunnableConfig(recursion_limit=100))
+    # Pass context along with state
+    result = await agent.ainvoke(
+        {"messages": msgs},
+        config=RunnableConfig(recursion_limit=100),
+        context=SandboxToolContext(sandbox_context=sandbox_context)  # Pass sandbox context
+    )
     logger.info(f"Result: {result.keys()}")
     logger.info(f"Result: {result.get('structured_response')}")
     taskPlan: TaskPlan = result.get("structured_response")

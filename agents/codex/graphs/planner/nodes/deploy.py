@@ -27,15 +27,23 @@ async def deploy_service(state: PlannerState) -> PlannerState:
     - deployment_port: preferred port
     - deployment_graph_name: desired graph to serve
     """
-    sbx: AsyncSandbox = await AsyncSandbox.connect(state.sandbox_session_id)
-    sb, handle = await deploy_server_and_confirm_ready(
-        cmd=TARGET_AGENT_COMMAND,
-        sb=sbx,
-        cwd=state.repo_path,
-        timeout_s=50
-    )
-    server_url = sb.get_host(TARGET_AGENT_PORT)
-    return {
-        "server_running": True,
-        "deployment_url": server_url,
-    }
+    try:
+        sbx: AsyncSandbox = await AsyncSandbox.connect(state.sandbox_context.sandbox_id)
+        sb, handle = await deploy_server_and_confirm_ready(
+            cmd=TARGET_AGENT_COMMAND,
+            sb=sbx,
+            cwd=state.sandbox_context.working_directory,
+            timeout_s=50
+        )
+        server_url = sb.get_host(TARGET_AGENT_PORT)
+        return {
+            "server_running": True,
+            "deployment_url": server_url,
+            "agent_updated": True,
+        }
+    except Exception as e:
+        logger.error(f"Error deploying service: {e}")
+        return {
+            "server_running": False,
+            "agent_updated": False,
+        }

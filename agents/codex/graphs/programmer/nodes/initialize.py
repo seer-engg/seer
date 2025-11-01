@@ -20,7 +20,7 @@ USER_PROMPT = """
 async def initialize(state: ProgrammerState) -> ProgrammerState:
     logger.info(f"Initializing programmer state: {state}")
     messages = list[BaseMessage](state.messages)
-    messages.append(HumanMessage(content=USER_PROMPT.format(request=state.request, task_plan=state.taskPlan)))
+    messages.append(HumanMessage(content=USER_PROMPT.format(request=state.user_context.user_expectation, task_plan=state.taskPlan)))
     return {
         "messages": messages,
     }

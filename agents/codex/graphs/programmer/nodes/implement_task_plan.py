@@ -16,6 +16,7 @@ from sandbox.tools import (
     apply_patch,
     write_file,
     patch_file,
+    SandboxToolContext,
 )
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
@@ -80,6 +81,10 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
     if not plan:
         raise ValueError("No plan found")
 
+    # Extract sandbox context for tools
+    sandbox_context = state.sandbox_context
+    if not sandbox_context:
+        raise ValueError("No sandbox context found in state")
 
     agent = create_agent(
         model=get_chat_model(),
@@ -97,14 +102,15 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
         ],
         system_prompt=SYSTEM_PROMPT,
         state_schema=ProgrammerState,
+        context_schema=SandboxToolContext,  # Add context schema for sandbox tools
     )
 
-    result = await agent.ainvoke({
-        "messages": state.messages,
-        # Needed by tool runtime
-        "sandbox_session_id": state.sandbox_session_id,
-        "repo_path": state.repo_path,
-    }, config = RunnableConfig(recursion_limit=100))
+    # Pass context along with state
+    result = await agent.ainvoke(
+        state, 
+        config=RunnableConfig(recursion_limit=100),
+        context=SandboxToolContext(sandbox_context=sandbox_context)  # Pass sandbox context
+    )
     return {
         "taskPlan": plan,
         "messages": result.get("messages", []),
