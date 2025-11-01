@@ -90,6 +90,6 @@ def compile_planner_graph():
     workflow.add_edge("raise-pr", "deploy-service")
     workflow.add_edge("deploy-service", END)
 
-    return workflow.compile()
+    return workflow.compile(debug=True)
 
 graph = compile_planner_graph()

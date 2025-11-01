@@ -159,18 +159,7 @@ class Launcher:
         self.cleanup_existing_processes()
         
         try:
-            # 1. Start Buggy Coder (LangGraph)
-            logger.info("\n1️⃣  Buggy Coder (LangGraph)")
-            buggy_port = 8004
-            self.start_process(
-                "Buggy Coder (LangGraph)",
-                [self.langgraph_exe, "dev", "--port", str(buggy_port), "--host", "127.0.0.1"],
-                cwd=str(self.project_root / "agents" / "buggy-coder")
-            )
-            if not self.check_port_listening(buggy_port, timeout=15):
-                raise Exception(f"Buggy Coder failed to start on port {buggy_port}")
-
-            # 2. Start Eval Agent (LangGraph)
+            # 1. Start Eval Agent (LangGraph)
             logger.info("\n2️⃣  Eval Agent (LangGraph)")
             eval_port = 8002
             self.start_process(
@@ -181,7 +170,7 @@ class Launcher:
             if not self.check_port_listening(eval_port, timeout=15):
                 raise Exception(f"Eval agent failed to start on port {eval_port}")
             
-            # 3. Start Coding Agent (langgraph dev)
+            # 2. Start Coding Agent (langgraph dev)
             logger.info("\n3️⃣  Coding Agent (LangGraph)")
             coding_port = 8003
             self.start_process(
@@ -195,7 +184,6 @@ class Launcher:
             logger.info("\n" + "=" * 60)
             logger.info("✅ All components started!\n")
             logger.info("🔮 Seer Agents are running:")
-            logger.info(f"   - Buggy Coder:       http://127.0.0.1:{buggy_port}")
             logger.info(f"   - Eval Agent:        http://127.0.0.1:{eval_port}")
             logger.info(f"   - Coding Agent:      http://127.0.0.1:{coding_port}")
             logger.info("=" * 60)

@@ -33,10 +33,10 @@ build-backend = "setuptools.build_meta"
 packages = [
   "shared",
   "agents",
+  "sandbox",
   "agents.eval_agent",
   "agents.codex",
   "agents.reflexion",
-  "agents.buggy-coder",
 ]
 
 [tool.setuptools.package-data]

@@ -1,8 +1,8 @@
 {
     "dependencies": ["../.."],
     "graphs": {
-      "programmer": "./graphs/programmer/graph.py:graph",
-      "planner": "./graphs/planner/graph.py:graph"
+      "planner": "./graphs/planner/graph.py:graph",
+      "programmer": "./graphs/programmer/graph.py:graph"
     },
     "env": "../../.env",
     "store": {

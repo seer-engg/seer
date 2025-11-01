@@ -1,13 +1,13 @@
-from agents.codex.common.state import ProgrammerState
 from shared.logger import get_logger
-logger = get_logger("planner.test_server_ready")
 from e2b import AsyncSandbox
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-
+from langchain_core.messages import AIMessage
 from sandbox import deploy_server_and_confirm_ready, TARGET_AGENT_COMMAND
 
+logger = get_logger("planner.test_server_ready")
 
-async def test_server_ready(state: ProgrammerState) -> ProgrammerState:
+
+async def test_server_ready(state: dict) -> dict:
+    """Intentionally keeping the typing of this function open because it's used commonly both by programmer and planner which have different state schemas"""
     logger.info(f"Testing server readiness: {state}")
     sbx: AsyncSandbox = await AsyncSandbox.connect(state.sandbox_session_id)
 

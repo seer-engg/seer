@@ -31,6 +31,7 @@ class TaskPlan(BaseModel):
 class PlannerIOState(BaseModel):
     request: str = Field(..., description="The request to be fulfilled")
     repo_url: str = Field(..., description="The URL of the repository")
+    repo_path: Optional[str] = Field(None, description="The path to the repository")
     branch_name: Optional[str] = Field(None, description="The name of the branch")
     messages: Annotated[list[BaseMessage], add_messages] = Field(None, description="The messages in the conversation")
     sandbox_session_id: str = Field(..., description="The ID of the sandbox session")
@@ -38,7 +39,6 @@ class PlannerIOState(BaseModel):
 class PlannerState(PlannerIOState):
     autoAcceptPlan: bool = Field(True, description="Whether to automatically accept the plan")
     structured_response: Optional[dict] = Field(None, description="The structured response")
-    repo_path: Optional[str] = Field(None, description="The path to the repository")
     taskPlan: Optional[TaskPlan] = Field(None, description="The task plan")
     # Deployment metadata (filled by deploy node)
     deployment_url: Optional[str] = Field(None, description="Public URL of the deployed LangGraph service")

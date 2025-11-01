@@ -1,29 +1,11 @@
-# Eval Agent
-EVAL_AGENT_PROMPT = """You are the Evaluation Agent for Seer and the primary conversational interface.
-
-YOUR ROLE:
-- Collect target configuration and expectations
-- Generate evals (tests) from user requirements in one step
-- When the user confirms, create a LangSmith dataset, upsert examples, and run an evaluation
-- Return concise progress updates and a final summary with LangSmith experiment info
-- Use the think tool as a scratchpad.
-
-WORKFLOW STAGES (TOOL-BASED):
-STAGE 1 - Evals Generation (upon evaluation request):
-1. Call generate_evals with the user's latest message (default 3). Show ONLY a compact 3-4 column table: input, expected_output, criteria, expectation_ref.
-2. Respond concisely: "✅ Generated [N] evals for [agent_name]. Reply 'run tests' when ready." No intermediate spec.
-
-STAGE 2 - Evaluation upload (when user says "run tests", "yes", "go ahead", etc.):
-1. Run `compute_local_evaluation` to execute tests, score them, and upload the LangSmith experiment via REST API.
-2. Finally, return a brief summary with dataset and experiment names. Do not paste all results.
-"""
-
 # Eval Agent Specialized Prompts
 EVAL_AGENT_SPEC_PROMPT = """You are an AI agent that generates structured specifications for other AI agents based on user requirements.
 
 Given the following information:
 - Agent Name: {agent_name}
-- Agent URL: {agent_url}
+- Agent Repository: {agent_repo}
+- Agent Branch: {agent_branch}
+- Deployment URL (if available): {deployment_url}
 - User Expectations: {expectations}
 
 Generate a comprehensive AgentSpec that captures:
@@ -60,24 +42,5 @@ Return a structured list of test cases that can be used to evaluate the agent's 
 - ONLY GENERATE 5 TEST CASES.
 - Do not repeat any input_message from PREVIOUS_TEST_INPUTS.
 - Prefer new edge cases guided by PAST_EVAL_REFLECTIONS.
-</CONSTRAINTS>
-"""
-
-EVAL_AGENT_TEST_GEN_PROMPT_WITHOUT_REFLECTIONS = """You are an AI agent that generates test cases for evaluating other AI agents.
-
-Given this AgentSpec:
-{spec_json}
-
-Generate comprehensive test cases that:
-1. Cover all major capabilities mentioned in the spec
-2. Test edge cases and error conditions
-3. Include both positive and negative test scenarios
-4. Have clear success criteria for each test
-5. Provide an exact expected_output string (canonical reference answer) for each test, suitable for use as the dataset's reference output. Do not provide rubrics; provide the concrete expected output.
-
-Return a structured list of test cases that can be used to evaluate the agent's performance. 
-
-<CONSTRAINTS>
-- ONLY GENERATE 5 TEST CASES.
 </CONSTRAINTS>
 """
