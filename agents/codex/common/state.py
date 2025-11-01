@@ -6,6 +6,7 @@ from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field, ConfigDict
 
+from agents.eval_agent.models import TestResult
 
 
 class Message(TypedDict, total=False):
@@ -28,6 +29,29 @@ class TaskPlan(BaseModel):
 
 
 
+class GithubContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    repo_url: str = Field(..., description="Canonical repository URL under review")
+
+
+class SandboxContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    sandbox_session_id: str = Field(..., description="E2B sandbox session identifier")
+    working_directory: Optional[str] = Field(None, description="Absolute sandbox path to the repository root")
+    working_branch: Optional[str] = Field(None, description="Git branch checked out in the sandbox")
+
+
+class UserContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_expectation: str = Field(..., description="Natural language expectations supplied by the user")
+
+
+class TestingContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    test_results: List[TestResult] = Field(default_factory=list, description="Ordered test verdicts captured by the eval agent")
+
+
+
 class PlannerIOState(BaseModel):
     request: str = Field(..., description="The request to be fulfilled")
     repo_url: str = Field(..., description="The URL of the repository")
@@ -35,6 +59,10 @@ class PlannerIOState(BaseModel):
     branch_name: Optional[str] = Field(None, description="The name of the branch")
     messages: Annotated[list[BaseMessage], add_messages] = Field(None, description="The messages in the conversation")
     sandbox_session_id: str = Field(..., description="The ID of the sandbox session")
+    github_context: Optional[GithubContext] = Field(None, description="Structured repository metadata for Codex")
+    sandbox_context: Optional[SandboxContext] = Field(None, description="Sandbox runtime metadata for Codex")
+    user_context: Optional[UserContext] = Field(None, description="User expectation context for Codex")
+    testing_context: Optional[TestingContext] = Field(None, description="Structured eval results for Codex")
 
 class PlannerState(PlannerIOState):
     autoAcceptPlan: bool = Field(True, description="Whether to automatically accept the plan")

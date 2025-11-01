@@ -23,7 +23,9 @@ from agents.eval_agent.models import (
     GeneratedTestCase,
     GeneratedTests,
     TargetAgentConfig,
+    TestResult,
 )
+from agents.codex.common.state import GithubContext, SandboxContext, UserContext, TestingContext
 from agents.eval_agent.prompts import (
     EVAL_AGENT_SPEC_PROMPT,
     EVAL_AGENT_TEST_GEN_PROMPT,
@@ -791,6 +793,20 @@ async def finalize_node(state: EvalAgentState) -> dict:
     deployment_metadata = dict(getattr(state, "deployment_metadata", {}) or {})
     codex_thread_id = state.codex_thread_id
     failed_cases = list(state.accumulated_failed_cases or state.last_failed_cases or [])
+    structured_test_results: List[TestResult] = []
+    for idx, case in enumerate(failed_cases, start=1):
+        expectation_ref = case.get("expectation_ref") or f"test-{idx}"
+        structured_test_results.append(
+            TestResult(
+                test_case_id=str(expectation_ref),
+                input_sent=str(case.get("input", "")),
+                actual_output=str(case.get("actual_output", "")),
+                expected_behavior=str(case.get("expected_output") or case.get("expected_behavior", "")),
+                passed=False,
+                score=float(case.get("score", 0.0)),
+                judge_reasoning=str(case.get("judge_comment", "")),
+            )
+        )
     metadata = dict(state.accumulated_run_context or state.last_run_metadata or {})
     failed_cases_count = len(failed_cases)
     codex_status = "skipped (no failing tests)" if failed_cases_count == 0 else "pending"
@@ -798,6 +814,27 @@ async def finalize_node(state: EvalAgentState) -> dict:
     cfg = state.target_agent_config
     codex_request_payload = state.codex_request
     codex_response_payload = state.codex_response
+
+    resolved_repo_url = (cfg.repo_url if cfg else None) or deployment_metadata.get("repo_url")
+    github_context = GithubContext(repo_url=resolved_repo_url) if resolved_repo_url else None
+
+    resolved_sandbox_id = state.sandbox_id or deployment_metadata.get("sandbox_id")
+    resolved_sandbox_dir = state.sandbox_repo_dir or deployment_metadata.get("sandbox_repo_dir")
+    resolved_sandbox_branch = state.sandbox_branch or deployment_metadata.get("branch_name")
+    sandbox_context = (
+        SandboxContext(
+            sandbox_session_id=resolved_sandbox_id,
+            working_directory=resolved_sandbox_dir,
+            working_branch=resolved_sandbox_branch,
+        )
+        if resolved_sandbox_id
+        else None
+    )
+
+    user_expectations = cfg.expectations if cfg else None
+    user_context = UserContext(user_expectation=user_expectations) if user_expectations else None
+
+    testing_context = TestingContext(test_results=structured_test_results)
 
     if failed_cases_count > 0 and cfg is not None:
         dataset_name = metadata.get("dataset_name", state.dataset_name)
@@ -822,21 +859,23 @@ async def finalize_node(state: EvalAgentState) -> dict:
         )
 
         handoff_timestamp = datetime.now(timezone.utc)
+        context_payload: Dict[str, Any] = {}
+        if github_context:
+            context_payload["github_context"] = github_context.model_dump()
+        if sandbox_context:
+            context_payload["sandbox_context"] = sandbox_context.model_dump()
+        if user_context:
+            context_payload["user_context"] = user_context.model_dump()
+        context_payload["testing_context"] = testing_context.model_dump()
+
         codex_request_payload = {
             "message": codex_message,
-            "metadata": {
-                "graph_name": cfg.graph_name,
-                "repo_url": cfg.repo_url,
-                "branch_name": cfg.branch_name,
-                "deployment_url": deployment_url,
-                "dataset_name": dataset_name,
-                "experiment_name": experiment_name,
-                "latest_score": latest_score_value,
-                "aggregate_score": aggregate_score_value,
-                "failed_cases": failed_cases,
-                "handoff_at": handoff_timestamp,
-            },
+            "graph_name": cfg.graph_name,
+            "handoff_at": handoff_timestamp.isoformat(),
+            **context_payload,
         }
+        if deployment_url:
+            codex_request_payload["deployment_url"] = deployment_url
 
         planner_request = (
             f"Address failing evaluations for agent '{cfg.graph_name}'. "
@@ -851,8 +890,8 @@ async def finalize_node(state: EvalAgentState) -> dict:
             "deployment_url": deployment_url,
             "dataset_name": dataset_name,
             "experiment_name": experiment_name,
-            "failed_cases": failed_cases,
         }
+        planner_payload.update(context_payload)
         repo_path = state.sandbox_repo_dir or deployment_metadata.get("sandbox_repo_dir")
         if repo_path:
             planner_payload["repo_path"] = repo_path
