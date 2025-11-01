@@ -252,14 +252,7 @@ async def _generate_eval_plan(state: EvalAgentState) -> dict:
     }
 
 
-_PLAN_SUBGRAPH = None
-
-
 def _get_plan_subgraph():
-    global _PLAN_SUBGRAPH
-    if _PLAN_SUBGRAPH is not None:
-        return _PLAN_SUBGRAPH
-
     builder = StateGraph(EvalAgentState)
     builder.add_node("ensure-config", _ensure_target_agent_config)
     builder.add_node("provision-target", _provision_target_agent)
@@ -270,8 +263,7 @@ def _get_plan_subgraph():
     builder.add_edge("provision-target", "generate-tests")
     builder.add_edge("generate-tests", END)
 
-    _PLAN_SUBGRAPH = builder.compile()
-    return _PLAN_SUBGRAPH
+    return builder.compile()
 
 
 async def plan_node(state: EvalAgentState) -> dict:
