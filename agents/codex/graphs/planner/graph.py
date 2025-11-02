@@ -39,7 +39,9 @@ async def _run_programmer(state: PlannerState) -> PlannerState:
         "taskPlan": state.taskPlan,
     }
     programmer_output = await programmer_graph.ainvoke(programmer_input)
-    return state
+    return {
+        "pr_summary": programmer_output.get("pr_summary"),
+    }
 
 
 def is_server_ready(state: PlannerState) -> PlannerState:

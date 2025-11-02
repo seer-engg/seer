@@ -35,6 +35,7 @@ class PlannerState(CodexInput, CodexOutput):
 
     deployment_url: Optional[str] = Field(None, description="Public URL of the deployed LangGraph service")
     server_running: bool = Field(False, description="Whether the server is running")
+    pr_summary: Optional[str] = Field(None, description="The summary of the PR")
     
 
 
@@ -59,3 +60,4 @@ class ProgrammerState(CodexInput):
     max_attempts: int = Field(2, description="The maximum number of attempts")
     testResults: Optional[TestResults] = Field(None, description="The test results")
     server_running: bool = Field(False, description="Whether the server is running")
+    pr_summary: Optional[str] = Field(None, description="The summary of the PR")

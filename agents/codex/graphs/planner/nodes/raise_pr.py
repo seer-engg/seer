@@ -193,6 +193,7 @@ async def raise_pr(state: PlannerState) -> PlannerState:
             f"- Base: `{base_branch}`\n"
             f"- Head: `{new_branch}`\n"
             "- Changes were implemented in an isolated sandbox and pushed automatically."
+            f"- PR Summary: {state.pr_summary}"
         )
 
         headers = {
