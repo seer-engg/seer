@@ -1,7 +1,0 @@
-{
-    "dependencies": ["."],
-    "graphs": {
-        "buggy_coder": "./src/graph.py:app"
-    },
-    "env": ".env"
-}

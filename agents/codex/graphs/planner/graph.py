@@ -51,8 +51,6 @@ def is_server_ready(state: PlannerState) -> PlannerState:
         return "end"
 
 
-#TODO: add reflexion mechanism here
-
 def compile_planner_graph():
     workflow = StateGraph(state_schema=PlannerState, input=CodexInput, output=CodexOutput)
     workflow.add_node("prepare-graph-state", _prepare_graph_state)

@@ -36,7 +36,6 @@ packages = [
   "sandbox",
   "agents.eval_agent",
   "agents.codex",
-  "agents.reflexion",
 ]
 
 [tool.setuptools.package-data]

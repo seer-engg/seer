@@ -16,7 +16,7 @@ alwaysApply: true
 - When you realize you're wrong, point your mistakes and nudge the user to update `.cursor/rules/seer-default.mdc` file.
 
 ## On Code Structure
-- Keep agents (eval, codex, reflexion) as separate as possible. Each should be in their own folder.
+- Keep agents (eval, codex) as separate as possible. Each should be in their own folder.
 
 ## On LangChain Agents
 - Build agents using LangChain. 
