@@ -7,7 +7,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.pregel.remote import RemoteGraph
 from langgraph_sdk import get_sync_client
 
-from agents.codex.common.state import GithubContext, SandboxContext, TestingContext, UserContext
+from shared.schema import GithubContext, SandboxContext, TestingContext, UserContext, TestResult, CodexInput, CodexOutput
 from agents.eval_agent.deps import (
     CODEX_REMOTE_URL,
     LANGSMITH_CLIENT,
@@ -16,7 +16,7 @@ from agents.eval_agent.deps import (
     PASS_THRESHOLD,
     logger,
 )
-from agents.eval_agent.models import DeploymentContext, EvalAgentState, RunContext, TargetAgentConfig, TestResult
+from agents.eval_agent.models import DeploymentContext, EvalAgentState, RunContext, TargetAgentConfig
 
 
 def should_continue(state: EvalAgentState) -> Literal["reflect", "finalize"]:
@@ -176,7 +176,7 @@ def _prepare_finalize_context(state: EvalAgentState) -> dict:
     resolved_sandbox_branch = deployment.sandbox_branch or deployment_metadata.get("sandbox_branch") or deployment_metadata.get("branch_name")
     sandbox_context = (
         SandboxContext(
-            sandbox_session_id=resolved_sandbox_id,
+            sandbox_id=resolved_sandbox_id,
             working_directory=resolved_sandbox_dir,
             working_branch=resolved_sandbox_branch,
         )
@@ -265,6 +265,23 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
     user_context: Optional[UserContext] = context.get("user_context")
     deployment_url = context.get("deployment_url", deployment.url)
 
+    # Prepare typed CodexInput and default CodexOutput for downstream state
+    github_ctx_for_input = github_context or GithubContext(repo_url="")
+    sandbox_ctx_for_input = sandbox_context or SandboxContext(
+        sandbox_id="",
+        working_directory=None,
+        working_branch=None,
+    )
+    user_ctx_for_input = user_context or UserContext(user_expectation="")
+    testing_ctx_for_input = testing_context or TestingContext()
+    codex_input = CodexInput(
+        github_context=github_ctx_for_input,
+        sandbox_context=sandbox_ctx_for_input,
+        user_context=user_ctx_for_input,
+        testing_context=testing_ctx_for_input,
+    )
+    codex_output: CodexOutput = CodexOutput(agent_updated=False, new_branch_name=None)
+
     pending_followup = state.pending_followup
     codex_followup_branch = state.codex_followup_branch
     codex_followup_metadata = dict(getattr(state, "codex_followup_metadata", {}) or {})
@@ -292,14 +309,8 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
         )
 
         handoff_timestamp = datetime.now(timezone.utc)
-        context_payload: Dict[str, Any] = {}
-        if github_context:
-            context_payload["github_context"] = github_context.model_dump()
-        if sandbox_context:
-            context_payload["sandbox_context"] = sandbox_context.model_dump()
-        if user_context:
-            context_payload["user_context"] = user_context.model_dump()
-        context_payload["testing_context"] = testing_context.model_dump()
+
+        context_payload: Dict[str, Any] = codex_input.model_dump()
 
         codex_request_payload = {
             "message": codex_message,
@@ -374,6 +385,7 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
                 failed_cases = []
                 metadata.clear()
                 codex_status = "ok"
+                codex_output = CodexOutput(agent_updated=True, new_branch_name=branch_name)
             else:
                 codex_status = "error: Codex response missing branch_name"
                 logger.error("finalize.handoff: Codex response missing branch_name: %s", codex_response)
@@ -413,8 +425,8 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
         "finalize_context": context,
         "deployment": updated_deployment,
         "codex_thread_id": codex_thread_id,
-        "codex_request": codex_request_payload,
-        "codex_response": codex_response_payload,
+        "codex_request": codex_input,
+        "codex_response": codex_output,
         "pending_followup": pending_followup,
         "codex_followup_branch": codex_followup_branch,
         "codex_followup_metadata": codex_followup_metadata,
