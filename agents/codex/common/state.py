@@ -5,13 +5,12 @@ from typing import Annotated, List, Literal, Optional, TypedDict
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field, ConfigDict
-from shared.schema import  CodexInput, CodexOutput
+from shared.schema import CodexInput, CodexOutput
 
 
 class Message(TypedDict, total=False):
     role: Literal["user", "assistant", "system"]
     content: str
-
 
 class TaskItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -38,7 +37,6 @@ class PlannerState(CodexInput, CodexOutput):
     pr_summary: Optional[str] = Field(None, description="The summary of the PR")
     
 
-
 class Failure(BaseModel):
     model_config = ConfigDict(extra="forbid")
     test_intention: str = Field(..., description="The intention of the test")
@@ -52,7 +50,6 @@ class TestResults(BaseModel):
 
 
 class ProgrammerState(CodexInput):
-
     taskPlan: TaskPlan = Field(..., description="The task plan")
     messages: Annotated[list[BaseMessage], add_messages] = Field(None, description="The messages in the conversation")
     attempt_number: int = Field(0, description="The number of attempts")

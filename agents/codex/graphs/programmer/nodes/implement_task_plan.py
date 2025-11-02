@@ -84,6 +84,10 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
     if not sandbox_context:
         raise ValueError("No sandbox context found in state")
 
+    # Extract sandbox context for tools
+    sandbox_context = state.sandbox_context
+    if not sandbox_context:
+        raise ValueError("No sandbox context found in state")
 
     agent = create_agent(
         model=get_chat_model(),
@@ -101,7 +105,7 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
         ],
         system_prompt=SYSTEM_PROMPT,
         state_schema=ProgrammerState,
-        context_schema=SandboxToolContext,
+        context_schema=SandboxToolContext,  # Add context schema for sandbox tools
     )
 
     # Pass context along with state

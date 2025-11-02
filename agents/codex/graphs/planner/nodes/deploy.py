@@ -45,5 +45,5 @@ async def deploy_service(state: PlannerState) -> PlannerState:
         logger.error(f"Error deploying service: {e}")
         return {
             "server_running": False,
-            'agent_updated': False,
+            "agent_updated": False,
         }

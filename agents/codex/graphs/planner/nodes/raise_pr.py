@@ -82,7 +82,7 @@ async def raise_pr(state: PlannerState) -> PlannerState:
     sandbox_id = state.sandbox_context.sandbox_id
     repo_dir = state.sandbox_context.working_directory
     repo_url = state.github_context.repo_url
-    # base_branch = state.sandbox_context.working_branch or "main"
+    base_branch = state.sandbox_context.working_branch or "main"
     base_branch = BASE_BRANCH
 
     # Generate branch name and commit message

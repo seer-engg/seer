@@ -68,6 +68,11 @@ async def test_implementation(state: ProgrammerState) -> ProgrammerState:
     if not sandbox_context:
         raise ValueError("No sandbox context found in state")
 
+    # Extract sandbox context for tools
+    sandbox_context = state.sandbox_context
+    if not sandbox_context:
+        raise ValueError("No sandbox context found in state")
+
     agent = create_agent(
         model=get_chat_model(),
         tools=[
@@ -86,11 +91,11 @@ async def test_implementation(state: ProgrammerState) -> ProgrammerState:
         system_prompt=SYSTEM_PROMPT,
         state_schema=ProgrammerState,
         response_format=TestResults,
-        context_schema=SandboxToolContext,
+        context_schema=SandboxToolContext,  # Add context schema for sandbox tools
     )
 
     user_prompt = USER_PROMPT.format(request=state.user_context.user_expectation, task_plan=plan)
-    state.messages.append(HumanMessage(content=user_prompt))
+    state.messages.append(HumanMessage(content=user_prompt))    
 
     # Pass context along with state
     result = await agent.ainvoke(
