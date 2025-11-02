@@ -1,13 +1,19 @@
+from typing import Literal
 from langgraph.graph import END, START, StateGraph
 
 from agents.eval_agent.deps import logger
-from agents.eval_agent.nodes.finalize import build_finalize_subgraph, finalize_router, should_continue
+from agents.eval_agent.nodes.finalize import build_finalize_subgraph, should_continue
 from agents.eval_agent.models import EvalAgentState
 from agents.eval_agent.nodes.plan import build_plan_subgraph
 from agents.eval_agent.nodes.reflect import reflect_node
 from agents.eval_agent.nodes.run import build_run_subgraph
 
 
+def finalize_router(state: EvalAgentState) -> Literal["plan", END]:
+    if state.pending_followup:
+        return "plan"
+    else:
+        return END
 
 def build_graph():
     workflow = StateGraph(EvalAgentState)
@@ -24,7 +30,7 @@ def build_graph():
     workflow.add_edge("plan", "run")
     workflow.add_conditional_edges("run", should_continue, {"reflect": "reflect", "finalize": "finalize"})
     workflow.add_edge("reflect", "plan")
-    workflow.add_conditional_edges("finalize", finalize_router, {"followup": "plan", "end": END})
+    workflow.add_conditional_edges("finalize", finalize_router)
 
     graph = workflow.compile(debug=True)
     logger.info("Eval Agent graph compiled successfully")

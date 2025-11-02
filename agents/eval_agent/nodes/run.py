@@ -309,7 +309,7 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
         "results": serialised_results,
     }
 
-    logger.info(f"XXX Uploading experiment to LangSmith: {upload_body}")
+    logger.info(f"Uploading experiment to LangSmith: {upload_body}")
 
     response = await asyncio.to_thread(
         requests.post,

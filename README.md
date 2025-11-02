@@ -17,3 +17,11 @@ pip install -e .
 # 3. Start Seer
 python run.py
 ```
+
+### Sample Eval Agent Input
+"""
+Evaluate my agent at buggy_coder at github https://github.com/seer-engg/buggy-coder. It should be fixing flawed python code correctly and sharing the fixed code too
+"""
+
+## Notes
+- To enable codex handoff, set `CODEX_HANDOFF_ENABLED` to `true` in `.env` file.

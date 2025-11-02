@@ -1,3 +1,4 @@
+import os
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
@@ -11,8 +12,7 @@ from shared.schema import GithubContext, SandboxContext, TestingContext, UserCon
 from agents.eval_agent.deps import (
     CODEX_REMOTE_URL,
     LANGSMITH_CLIENT,
-    MAX_ATTEMPTS,
-    MIN_ATTEMPTS,
+    ATTEMPTS,
     PASS_THRESHOLD,
     logger,
 )
@@ -24,9 +24,9 @@ def should_continue(state: EvalAgentState) -> Literal["reflect", "finalize"]:
 
     run_ctx = state.run or RunContext()
 
-    if run_ctx.attempts < MIN_ATTEMPTS:
+    if run_ctx.attempts < ATTEMPTS:
         return "reflect"
-    if run_ctx.score >= PASS_THRESHOLD or run_ctx.attempts >= MAX_ATTEMPTS:
+    if run_ctx.score >= PASS_THRESHOLD or run_ctx.attempts >= ATTEMPTS:
         return "finalize"
     return "reflect"
 
@@ -44,8 +44,6 @@ def _build_codex_handoff_message(
     aggregate_score: float,
 ) -> str:
     def _truncate(text: str, limit: int = 400) -> str:
-        if text is None:
-            return ""
         text = str(text)
         if len(text) <= limit:
             return text
@@ -144,7 +142,7 @@ def _prepare_finalize_context(state: EvalAgentState) -> dict:
     codex_thread_id = state.codex_thread_id
     failed_cases = list(run_ctx.accumulated_failed_cases or run_ctx.last_failed_cases or [])
     structured_test_results: List[TestResult] = []
-    for idx, case in enumerate(failed_cases, start=1):
+    for case in failed_cases:
         structured_test_results.append(
             TestResult(
                 input_sent=str(case.get("input", "")),
@@ -241,7 +239,7 @@ def _prepare_finalize_context(state: EvalAgentState) -> dict:
 
 
 async def _handoff_to_codex(state: EvalAgentState) -> dict:
-    context = dict(getattr(state, "finalize_context", {}) or {})
+    context = dict[Any, Any](getattr(state, "finalize_context", {}) or {})
     if not context:
         return {}
 
@@ -443,7 +441,6 @@ def _summarize_finalize(state: EvalAgentState) -> dict:
     codex_thread_id = state.codex_thread_id
     codex_status = context.get("codex_status", "skipped (no failing tests)")
     failed_cases = list(context.get("failed_cases", []))
-    metadata = context.get("metadata", {})
     codex_request_payload = context.get("codex_request_payload", state.codex_request)
     codex_response_payload = context.get("codex_response_payload", state.codex_response)
 
@@ -532,20 +529,17 @@ def _summarize_finalize(state: EvalAgentState) -> dict:
 
 def build_finalize_subgraph():
     builder = StateGraph(EvalAgentState)
-    builder.add_node("prepare", _prepare_finalize_context)
-    builder.add_node("handoff", _handoff_to_codex)
     builder.add_node("summarize", _summarize_finalize)
-
-    builder.add_edge(START, "prepare")
-    builder.add_edge("prepare", "handoff")
-    builder.add_edge("handoff", "summarize")
     builder.add_edge("summarize", END)
-
+    
+    if os.getenv("CODEX_HANDOFF_ENABLED") == "true":
+        builder.add_node("prepare", _prepare_finalize_context)
+        builder.add_node("handoff", _handoff_to_codex)
+        builder.add_edge(START, "prepare")
+        builder.add_edge("prepare", "handoff")
+        builder.add_edge("handoff", "summarize")
+    else:
+        # just summarize the results
+        builder.add_edge(START, "summarize")
+    
     return builder.compile()
-
-
-def finalize_router(state: EvalAgentState) -> Literal["followup", "end"]:
-    return "followup" if state.pending_followup else "end"
-
-
-

@@ -18,14 +18,10 @@ async def search_eval_reflections(agent_name: str, query: str, limit: int = 5) -
 
 
 def _parse_reflection_item(item: Dict[str, Any]) -> Optional[EvalReflection]:
-    try:
-        value = item.get("value") if isinstance(item, dict) else item
-        if not isinstance(value, dict):
-            return None
-        return EvalReflection.model_validate(value)
-    except Exception:
-        logger.debug("reflection_store: unable to parse reflection payload", exc_info=True)
+    value = item.get("value") if isinstance(item, dict) else item
+    if not isinstance(value, dict):
         return None
+    return EvalReflection.model_validate(value)
 
 
 async def load_recent_reflections(agent_name: str, expectations: str, limit: int = 5) -> List[EvalReflection]:
@@ -66,16 +62,12 @@ def format_previous_inputs(prev_inputs: List[str], limit: int = 10) -> str:
 
 def persist_reflection(agent_name: str, reflection: EvalReflection) -> None:
     """Store the reflection synchronously for future retrieval."""
-
-    try:
-        key = uuid.uuid4().hex
-        LANGGRAPH_SYNC_CLIENT.store.put_item(
-            ("eval_reflections", agent_name),
-            key=key,
-            value=reflection.model_dump(),
-        )
-        logger.info("reflection_store: stored eval reflection")
-    except Exception:
-        logger.warning("reflection_store: failed to store eval reflection")
+    key = uuid.uuid4().hex
+    LANGGRAPH_SYNC_CLIENT.store.put_item(
+        ("eval_reflections", agent_name),
+        key=key,
+        value=reflection.model_dump(),
+    )
+    logger.info("reflection_store: stored eval reflection")
 
 

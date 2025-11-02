@@ -101,7 +101,6 @@ class EvalReflection(BaseModel):
 
 
 class EvalAgentState(BaseModel):
-    """State for eval-agent v2 reflexion loop (Plan → Run → Reflect)."""
     messages: Annotated[list[BaseMessage], add_messages]
     target_agent_config: Optional[TargetAgentConfig] = Field(default=None, description="Configuration for the target agent to evaluate")
     deployment: DeploymentContext = Field(default_factory=DeploymentContext, description="Context for the active deployment/sandbox")

@@ -169,23 +169,26 @@ class Launcher:
             )
             if not self.check_port_listening(eval_port, timeout=15):
                 raise Exception(f"Eval agent failed to start on port {eval_port}")
-            
-            # 2. Start Coding Agent (langgraph dev)
-            logger.info("\n3️⃣  Coding Agent (LangGraph)")
-            coding_port = 8003
-            self.start_process(
-                "Coding Agent (LangGraph)",
-                [self.langgraph_exe, "dev", "--port", str(coding_port), "--host", "127.0.0.1"],
-                cwd=str(self.project_root / "agents" / "codex")
-            )
-            if not self.check_port_listening(coding_port, timeout=15):
-                raise Exception(f"Coding agent failed to start on port {coding_port}")
+
+
+            if os.getenv("CODEX_HANDOFF_ENABLED") == "true":
+                # 2. Start Coding Agent (langgraph dev)
+                logger.info("\n3️⃣  Coding Agent (LangGraph)")
+                coding_port = 8003
+                self.start_process(
+                    "Coding Agent (LangGraph)",
+                    [self.langgraph_exe, "dev", "--port", str(coding_port), "--host", "127.0.0.1"],
+                    cwd=str(self.project_root / "agents" / "codex")
+                )
+                if not self.check_port_listening(coding_port, timeout=15):
+                    raise Exception(f"Coding agent failed to start on port {coding_port}")
             
             logger.info("\n" + "=" * 60)
             logger.info("✅ All components started!\n")
             logger.info("🔮 Seer Agents are running:")
             logger.info(f"   - Eval Agent:        http://127.0.0.1:{eval_port}")
-            logger.info(f"   - Coding Agent:      http://127.0.0.1:{coding_port}")
+            if os.getenv("CODEX_HANDOFF_ENABLED") == "true":
+                logger.info(f"   - Coding Agent:      http://127.0.0.1:{coding_port}")
             logger.info("=" * 60)
             logger.info("Press Ctrl+C to stop all components\n")
             
