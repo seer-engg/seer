@@ -5,7 +5,7 @@ from .base import (
 )
 from .deploy import deploy_server_and_confirm_ready
 from .initialize import initialize_e2b_sandbox, setup_project
-from .constants import TARGET_AGENT_COMMAND, TARGET_AGENT_PORT
+from .constants import TARGET_AGENT_COMMAND, TARGET_AGENT_PORT, TARGET_AGENT_SETUP_SCRIPT
 from e2b import AsyncSandbox
 
 __all__ = [
@@ -16,6 +16,7 @@ __all__ = [
     "setup_project",
     "TARGET_AGENT_COMMAND",
     "TARGET_AGENT_PORT",
+    "TARGET_AGENT_SETUP_SCRIPT",
     "prepare_target_agent",
 ]
 

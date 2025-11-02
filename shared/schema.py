@@ -18,7 +18,6 @@ class GithubContext(BaseModel):
 
 class TestingContext(BaseModel):
     test_results: List[TestResult]
-    repo_url: str = Field(..., description="The URL of the repository")
     # branch_name: str
 
 class SandboxContext(BaseModel):
@@ -32,11 +31,12 @@ class UserContext(BaseModel):
 
 
 class CodexInput(BaseModel):
-    github_context: GithubContext
-    sandbox_context: SandboxContext
-    user_context: UserContext
-    testing_context: TestingContext
+    github_context: GithubContext = Field(..., description="The GitHub context")
+    sandbox_context: Optional[SandboxContext] = Field(None, description="The sandbox context")
+    user_context: UserContext = Field(..., description="The user context")
+    testing_context: TestingContext = Field(..., description="The testing context")
 
 class CodexOutput(BaseModel):
     agent_updated: bool = Field(False, description="Whether the agent was updated")
     new_branch_name: Optional[str] = Field(None, description="The name of the new branch")
+    updated_sandbox_context: Optional[SandboxContext] = Field(None, description="The updated sandbox context")

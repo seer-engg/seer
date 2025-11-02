@@ -79,8 +79,8 @@ async def raise_pr(state: PlannerState) -> PlannerState:
     if not github_token:
         raise RuntimeError("GITHUB_TOKEN not configured in environment")
 
-    sandbox_id = state.sandbox_context.sandbox_id
-    repo_dir = state.sandbox_context.working_directory
+    sandbox_id = state.updated_sandbox_context.sandbox_id
+    repo_dir = state.updated_sandbox_context.working_directory
     repo_url = state.github_context.repo_url
     base_branch = state.sandbox_context.working_branch or "main"
     base_branch = BASE_BRANCH
@@ -242,10 +242,13 @@ async def raise_pr(state: PlannerState) -> PlannerState:
             "role": "system",
             "content": f"Pushed branch '{new_branch}'. Please open a PR manually.",
         })
+    
+    state.updated_sandbox_context.working_branch = new_branch
 
     return {
         "messages": msgs,
         "new_branch_name": new_branch,
+        "updated_sandbox_context": state.updated_sandbox_context,
         'agent_updated': True,
     }
 

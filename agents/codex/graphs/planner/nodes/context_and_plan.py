@@ -48,8 +48,8 @@ async def context_and_plan_agent(state: PlannerState) -> PlannerState:
     """Single ReAct agent that gathers repo context and returns a concrete plan."""
 
     # Extract sandbox context for tools
-    sandbox_context = state.sandbox_context
-    if not sandbox_context:
+    updated_sandbox_context = state.updated_sandbox_context
+    if not updated_sandbox_context:
         raise ValueError("No sandbox context found in state")
     
     eval_results = state.testing_context.test_results
@@ -77,7 +77,7 @@ async def context_and_plan_agent(state: PlannerState) -> PlannerState:
     result = await agent.ainvoke(
         {"messages": msgs},
         config=RunnableConfig(recursion_limit=100),
-        context=SandboxToolContext(sandbox_context=sandbox_context)  # Pass sandbox context
+        context=SandboxToolContext(sandbox_context=updated_sandbox_context)  # Pass sandbox context
     )
     logger.info(f"Result: {result.keys()}")
     logger.info(f"Result: {result.get('structured_response')}")

@@ -32,7 +32,7 @@ def _interrupt_proposed_plan(state: PlannerState) -> PlannerState:
 
 async def _run_programmer(state: PlannerState) -> PlannerState:
     programmer_input = {
-        "sandbox_context": state.sandbox_context,
+        "updated_sandbox_context": state.updated_sandbox_context,
         "user_context": state.user_context,
         "testing_context": state.testing_context,
         "github_context": state.github_context,
