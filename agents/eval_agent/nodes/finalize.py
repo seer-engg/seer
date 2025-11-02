@@ -425,8 +425,8 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
         "finalize_context": context,
         "deployment": updated_deployment,
         "codex_thread_id": codex_thread_id,
-        "codex_request": codex_input,
-        "codex_response": codex_output,
+        "codex_request": codex_input.model_dump(),
+        "codex_response": codex_output.model_dump(),
         "pending_followup": pending_followup,
         "codex_followup_branch": codex_followup_branch,
         "codex_followup_metadata": codex_followup_metadata,
@@ -489,11 +489,18 @@ def _summarize_finalize(state: EvalAgentState) -> dict:
 
     deployment_metadata["deployment_url"] = deployment_url
 
+    codex_request_value = (
+        codex_request_payload.model_dump() if hasattr(codex_request_payload, "model_dump") else codex_request_payload
+    )
+    codex_response_value = (
+        codex_response_payload.model_dump() if hasattr(codex_response_payload, "model_dump") else codex_response_payload
+    )
+
     next_state: Dict[str, Any] = {
         "messages": [AIMessage(content=user_summary)],
         "codex_thread_id": codex_thread_id,
-        "codex_request": codex_request_payload.model_dump(),
-        "codex_response": codex_response_payload.model_dump(),
+        "codex_request": codex_request_value,
+        "codex_response": codex_response_value,
         "pending_followup": pending_followup,
         "codex_followup_branch": codex_branch,
         "codex_followup_metadata": codex_followup_metadata,
