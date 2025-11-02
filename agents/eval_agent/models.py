@@ -47,16 +47,6 @@ class AgentSpec(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
 
 
-class TestResult(BaseModel):
-    """Result of running a single test case"""
-    test_case_id: str
-    input_sent: str
-    actual_output: str
-    expected_behavior: str
-    passed: bool
-    score: float = Field(ge=0.0, le=1.0, description="Judge's score 0-1")
-    judge_reasoning: str = Field(description="Why the judge scored this way")
-
 class GeneratedTestCase(BaseModel):
     expectation_ref: str
     input_message: str

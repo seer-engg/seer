@@ -73,23 +73,21 @@ async def raise_pr(state: PlannerState) -> PlannerState:
     - repo_url: remote repository URL (GitHub)
     - branch_name: base branch name (defaults to main)
     """
-    if not (state.sandbox_session_id and state.repo_path and state.repo_url):
-        raise ValueError("Sandbox session ID, repo_path, and repo_url are required")
 
     github_token = os.getenv("GITHUB_TOKEN")
     if not github_token:
         raise RuntimeError("GITHUB_TOKEN not configured in environment")
 
-    sandbox_id = state.sandbox_session_id
-    repo_dir = state.repo_path
-    repo_url = state.repo_url
-    base_branch = state.branch_name or "main"
+    sandbox_id = state.sandbox_context.sandbox_id
+    repo_dir = state.sandbox_context.working_directory
+    repo_url = state.github_context.repo_url
+    base_branch = state.sandbox_context.working_branch or "main"
 
     # Generate branch name and commit message
     ts = time.strftime("%Y%m%d-%H%M%S")
     short_id = uuid.uuid4().hex[:7]
     new_branch = f"seer/codex/{ts}-{short_id}"
-    req_snippet = (state.request or "Automated update").strip().replace("\n", " ")
+    req_snippet = (state.user_context.user_expectation or "Automated update").strip().replace("\n", " ")
     if len(req_snippet) > 72:
         req_snippet = req_snippet[:69] + "..."
     commit_msg = f"chore(seer): {req_snippet}"
@@ -244,7 +242,8 @@ async def raise_pr(state: PlannerState) -> PlannerState:
 
     return {
         "messages": msgs,
-        "branch_name": new_branch,
+        "new_branch_name": new_branch,
+        'agent_updated': True,
     }
 
 
