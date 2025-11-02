@@ -16,8 +16,7 @@
           "input_sent": "what is wrong in the code def sum(a,b) return a+b",
           "judge_reasoning": "The agent should have figured out that semicolon was missing in function defenintion and corrected it",
           "passed": false,
-          "score": 0,
-          "test_case_id": "1"
+          "score": 0
         }
       ]
     },

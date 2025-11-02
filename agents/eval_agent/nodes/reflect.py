@@ -40,7 +40,6 @@ def reflect_node(state: EvalAgentState) -> dict:
         for case in recent_failures:
             failure_lines.append(
                 (
-                    f"- Expectation: {case.get('expectation_ref') or '(unknown expectation)'}\n"
                     f"  Input: {_truncate(case.get('input'))}\n"
                     f"  Expected: {_truncate(case.get('expected_output'))}\n"
                     f"  Actual: {_truncate(case.get('actual_output')) or '(empty)'}\n"
@@ -71,7 +70,6 @@ def reflect_node(state: EvalAgentState) -> dict:
         "- summary: 2-3 sentences describing key gaps.\n"
         "- failure_modes: list of short phrases (max 4) capturing root causes.\n"
         "- recommended_tests: list of concrete future test ideas (max 5).\n"
-        "- expectation_ref: include if a single expectation is most affected, else null.\n"
         "- latest_score, attempt, dataset_name, experiment_name should reflect the context above."
     )
 

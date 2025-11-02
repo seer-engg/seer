@@ -80,9 +80,7 @@ def _build_codex_handoff_message(
     if not failed_cases:
         lines.append("All tests passed. No remediation required.")
     else:
-        for idx, case in enumerate(failed_cases, start=1):
-            expectation_ref = case.get("expectation_ref") or f"Test {idx}"
-            lines.append(f"{idx}. Expectation: {expectation_ref}")
+        for case in failed_cases:
             lines.append(f"   - Input: {_truncate(case.get('input'))}")
             lines.append(f"   - Expected: {_truncate(case.get('expected_output'))}")
             lines.append(f"   - Actual: {_truncate(case.get('actual_output')) or '(empty)'}")
@@ -147,10 +145,8 @@ def _prepare_finalize_context(state: EvalAgentState) -> dict:
     failed_cases = list(run_ctx.accumulated_failed_cases or run_ctx.last_failed_cases or [])
     structured_test_results: List[TestResult] = []
     for idx, case in enumerate(failed_cases, start=1):
-        expectation_ref = case.get("expectation_ref") or f"test-{idx}"
         structured_test_results.append(
             TestResult(
-                test_case_id=str(expectation_ref),
                 input_sent=str(case.get("input", "")),
                 actual_output=str(case.get("actual_output", "")),
                 expected_behavior=str(case.get("expected_output") or case.get("expected_behavior", "")),

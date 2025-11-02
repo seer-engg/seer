@@ -291,7 +291,6 @@ async def _generate_eval_plan(state: EvalAgentState) -> dict:
     for tc in generated.test_cases:
         test_cases.append(
             GeneratedTestCase(
-                expectation_ref=tc.expectation_ref,
                 input_message=tc.input_message,
                 expected_behavior=tc.expected_behavior,
                 success_criteria=tc.success_criteria,

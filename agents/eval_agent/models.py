@@ -48,7 +48,6 @@ class AgentSpec(BaseModel):
 
 
 class GeneratedTestCase(BaseModel):
-    expectation_ref: str
     input_message: str
     expected_behavior: str
     success_criteria: str
@@ -73,7 +72,6 @@ class TargetAgentConfig(BaseModel):
 class EvalReflection(BaseModel):
     """A meta-evaluation insight to improve future eval generation only."""
     agent_name: str = Field(description="Target agent/graph this reflection applies to")
-    expectation_ref: Optional[str] = Field(default=None, description="Expectation/test reference this reflection relates to")
     summary: str = Field(description="Concise reflection focused on improving test quality/coverage")
     failure_modes: List[str] = Field(
         default_factory=list,

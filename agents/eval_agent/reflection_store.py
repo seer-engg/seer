@@ -50,7 +50,6 @@ def format_reflections_for_prompt(reflections: List[EvalReflection], limit: int 
                 "summary": reflection.summary,
                 "failure_modes": reflection.failure_modes,
                 "recommended_tests": reflection.recommended_tests,
-                "expectation_ref": reflection.expectation_ref,
                 "latest_score": reflection.latest_score,
                 "attempt": reflection.attempt,
             }

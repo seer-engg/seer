@@ -163,7 +163,6 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
         else:
             failed_cases.append(
                 {
-                    "expectation_ref": tc.expectation_ref,
                     "input": question,
                     "expected_output": expected,
                     "actual_output": answer,
@@ -190,7 +189,6 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
                 "end_time": run_end,
                 "run_name": cfg.graph_name,
                 "run_metadata": {
-                    "expectation_ref": tc.expectation_ref,
                     "success_criteria": tc.success_criteria,
                 },
             }

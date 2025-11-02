@@ -5,7 +5,6 @@ from typing import List, Optional
 
 class TestResult(BaseModel):
     """Result of running a single test case"""
-    test_case_id: str
     input_sent: str
     actual_output: str
     expected_behavior: str
