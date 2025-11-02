@@ -111,7 +111,13 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
         context=SandboxToolContext(sandbox_context=sandbox_context)  # Pass sandbox context
     )
 
-    pr_summary = str(result.get("messages", [])[-1].content)
+    pr_summary = ""
+    last_message = result.get("messages", [])[-1].content
+    if isinstance(last_message, list):
+        for message in last_message:
+            if message.get("type") == "text":
+                pr_summary += message.get("text")
+
     return {
         "taskPlan": plan,
         "messages": result.get("messages", []),
