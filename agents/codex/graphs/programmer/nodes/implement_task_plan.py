@@ -80,6 +80,9 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
     plan: TaskPlan | None = state.taskPlan
     if not plan:
         raise ValueError("No plan found")
+    sandbox_context = state.sandbox_context
+    if not sandbox_context:
+        raise ValueError("No sandbox context found in state")
 
     # Extract sandbox context for tools
     sandbox_context = state.sandbox_context
@@ -111,7 +114,16 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
         config=RunnableConfig(recursion_limit=100),
         context=SandboxToolContext(sandbox_context=sandbox_context)  # Pass sandbox context
     )
+
+    pr_summary = ""
+    last_message = result.get("messages", [])[-1].content
+    if isinstance(last_message, list):
+        for message in last_message:
+            if message.get("type") == "text":
+                pr_summary += message.get("text")
+
     return {
         "taskPlan": plan,
         "messages": result.get("messages", []),
+        "pr_summary": pr_summary,
     }

@@ -39,7 +39,7 @@ async def deploy_service(state: PlannerState) -> PlannerState:
         return {
             "server_running": True,
             "deployment_url": server_url,
-            "agent_updated": True,
+            'agent_updated': True,
         }
     except Exception as e:
         logger.error(f"Error deploying service: {e}")

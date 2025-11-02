@@ -64,6 +64,9 @@ async def test_implementation(state: ProgrammerState) -> ProgrammerState:
     plan: TaskPlan | None = state.taskPlan
     if not plan:
         raise ValueError("No plan found")
+    sandbox_context = state.sandbox_context
+    if not sandbox_context:
+        raise ValueError("No sandbox context found in state")
 
     # Extract sandbox context for tools
     sandbox_context = state.sandbox_context
@@ -92,8 +95,8 @@ async def test_implementation(state: ProgrammerState) -> ProgrammerState:
     )
 
     user_prompt = USER_PROMPT.format(request=state.user_context.user_expectation, task_plan=plan)
-    state.messages.append(HumanMessage(content=user_prompt))
-    
+    state.messages.append(HumanMessage(content=user_prompt))    
+
     # Pass context along with state
     result = await agent.ainvoke(
         state, 

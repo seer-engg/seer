@@ -1,0 +1,26 @@
+{
+    "github_context": {
+      "branch_name": "main",
+      "repo_url": "https://github.com/seer-engg/buggy-coder"
+    },
+    "sandbox_context": {
+      "sandbox_id": "iw0xzbghu0nodmet55tdi",
+      "working_branch": "main",
+      "working_directory": "/home/user/buggy-coder"
+    },
+    "testing_context": {
+      "test_results": [
+        {
+          "actual_output": "def sum(a,b) return float(a+b)",
+          "expected_behavior": "def sum(a+b): return a+b",
+          "input_sent": "what is wrong in the code def sum(a,b) return a+b",
+          "judge_reasoning": "The agent should have figured out that semicolon was missing in function defenintion and corrected it",
+          "passed": false,
+          "score": 0
+        }
+      ]
+    },
+    "user_context": {
+      "user_expectation": "enhance this"
+    }
+}

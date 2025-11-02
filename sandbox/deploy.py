@@ -78,7 +78,7 @@ async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, 
         cwd=cwd
     )
     url = sb.get_host(TARGET_AGENT_PORT)
-    EXTERNAL_URL = f"{url}/docs"
+    EXTERNAL_URL = f"https://{url}/docs"
     INTERNAL_URL = f"http://0.0.0.0:{TARGET_AGENT_PORT}/docs"
 
     try:
@@ -170,6 +170,9 @@ async def _probe_from_inside(sb: AsyncSandbox, url: str) -> bool:
 async def _probe_from_outside(url: str, timeout: float = 5.0) -> bool:
     """Probe server from outside (current server) using HTTP request."""
     import httpx
+
+    if 'http' not in url:
+        url = f"http://{url}"
     
     logger.info(f"Probing from outside: {url}")
     try:

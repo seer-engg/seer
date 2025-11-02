@@ -21,8 +21,6 @@ async def initialize_e2b_sandbox(
     repo_url: str,
     branch_name: str = "main",
     github_token: Optional[str] = os.getenv("GITHUB_TOKEN"),
-    existing_sandbox_id: Optional[str] = None,
-
 ) -> tuple[AsyncSandbox, str, str]:
     """
     Create (or resume) an E2B sandbox and ensure the GitHub repository is cloned
@@ -37,6 +35,7 @@ async def initialize_e2b_sandbox(
     sbx: AsyncSandbox = await AsyncSandbox.beta_create(
       auto_pause=True,
       envs=TARGET_AGENT_ENVS,
+      timeout=60*30, # 30 minutes
     )
     sandbox_id = sbx.sandbox_id
     logger.info(f"Sandbox created: {sandbox_id}")
