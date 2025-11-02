@@ -14,6 +14,7 @@ from urllib.parse import quote as urlquote
 from shared.logger import get_logger
 from e2b_code_interpreter import AsyncSandbox, CommandResult
 from agents.codex.common.state import PlannerState
+from agents.codex.common.constants import BASE_BRANCH
 
 logger = get_logger("codex.planner.nodes.raise_pr")
 
@@ -81,7 +82,8 @@ async def raise_pr(state: PlannerState) -> PlannerState:
     sandbox_id = state.sandbox_context.sandbox_id
     repo_dir = state.sandbox_context.working_directory
     repo_url = state.github_context.repo_url
-    base_branch = state.sandbox_context.working_branch or "main"
+    # base_branch = state.sandbox_context.working_branch or "main"
+    base_branch = BASE_BRANCH
 
     # Generate branch name and commit message
     ts = time.strftime("%Y%m%d-%H%M%S")
@@ -193,6 +195,7 @@ async def raise_pr(state: PlannerState) -> PlannerState:
             f"- Base: `{base_branch}`\n"
             f"- Head: `{new_branch}`\n"
             "- Changes were implemented in an isolated sandbox and pushed automatically."
+            f"- PR Summary: {state.pr_summary}"
         )
 
         headers = {

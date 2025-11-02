@@ -492,8 +492,8 @@ def _summarize_finalize(state: EvalAgentState) -> dict:
     next_state: Dict[str, Any] = {
         "messages": [AIMessage(content=user_summary)],
         "codex_thread_id": codex_thread_id,
-        "codex_request": codex_request_payload,
-        "codex_response": codex_response_payload,
+        "codex_request": codex_request_payload.model_dump(),
+        "codex_response": codex_response_payload.model_dump(),
         "pending_followup": pending_followup,
         "codex_followup_branch": codex_branch,
         "codex_followup_metadata": codex_followup_metadata,

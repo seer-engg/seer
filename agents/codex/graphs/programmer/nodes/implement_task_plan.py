@@ -110,7 +110,10 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
         config=RunnableConfig(recursion_limit=100),
         context=SandboxToolContext(sandbox_context=sandbox_context)  # Pass sandbox context
     )
+
+    pr_summary = str(result.get("messages", [])[-1].content)
     return {
         "taskPlan": plan,
         "messages": result.get("messages", []),
+        "pr_summary": pr_summary,
     }
