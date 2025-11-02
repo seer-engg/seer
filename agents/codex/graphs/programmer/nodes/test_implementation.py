@@ -13,9 +13,11 @@ from sandbox.tools import (
     apply_patch,
     write_file,
     patch_file,
+    SandboxToolContext,
 )
 from shared.tools import web_search, think
 from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import HumanMessage
 
 
 SYSTEM_PROMPT = f"""
@@ -62,6 +64,9 @@ async def test_implementation(state: ProgrammerState) -> ProgrammerState:
     plan: TaskPlan | None = state.taskPlan
     if not plan:
         raise ValueError("No plan found")
+    sandbox_context = state.sandbox_context
+    if not sandbox_context:
+        raise ValueError("No sandbox context found in state")
 
     agent = create_agent(
         model=get_chat_model(),
@@ -81,17 +86,18 @@ async def test_implementation(state: ProgrammerState) -> ProgrammerState:
         system_prompt=SYSTEM_PROMPT,
         state_schema=ProgrammerState,
         response_format=TestResults,
+        context_schema=SandboxToolContext,
     )
 
-    user_prompt = USER_PROMPT.format(request=state.request, task_plan=plan)
-    msgs = []
-    msgs.append({"role": "user", "content": user_prompt})
-    result = await agent.ainvoke({
-        "messages": msgs,
-        # Needed by tool runtime
-        "sandbox_session_id": state.sandbox_session_id,
-        "repo_path": state.repo_path,
-    }, config = RunnableConfig(recursion_limit=100))
+    user_prompt = USER_PROMPT.format(request=state.user_context.user_expectation, task_plan=plan)
+    state.messages.append(HumanMessage(content=user_prompt))
+
+    # Pass context along with state
+    result = await agent.ainvoke(
+        state, 
+        config=RunnableConfig(recursion_limit=100),
+        context=SandboxToolContext(sandbox_context=sandbox_context)  # Pass sandbox context
+    )
 
     test_results: TestResults = result.get("structured_response", TestResults(success=True, failures=[]))
     return {
