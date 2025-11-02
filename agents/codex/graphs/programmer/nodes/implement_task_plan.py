@@ -80,14 +80,10 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
     plan: TaskPlan | None = state.taskPlan
     if not plan:
         raise ValueError("No plan found")
-    sandbox_context = state.sandbox_context
-    if not sandbox_context:
+    updated_sandbox_context = state.updated_sandbox_context
+    if not updated_sandbox_context:
         raise ValueError("No sandbox context found in state")
 
-    # Extract sandbox context for tools
-    sandbox_context = state.sandbox_context
-    if not sandbox_context:
-        raise ValueError("No sandbox context found in state")
 
     agent = create_agent(
         model=get_chat_model(),
@@ -112,7 +108,7 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
     result = await agent.ainvoke(
         state, 
         config=RunnableConfig(recursion_limit=100),
-        context=SandboxToolContext(sandbox_context=sandbox_context)  # Pass sandbox context
+        context=SandboxToolContext(sandbox_context=updated_sandbox_context)  # Pass sandbox context
     )
 
     pr_summary = ""

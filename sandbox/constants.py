@@ -82,7 +82,7 @@ TARGET_AGENT_ENVS={
 
 
 # Target agent constants
-
+TARGET_AGENT_SETUP_SCRIPT = "pip install -e ."
 TARGET_AGENT_COMMAND = "langgraph dev --host 0.0.0.0"
 TARGET_AGENT_PORT = 2024
 

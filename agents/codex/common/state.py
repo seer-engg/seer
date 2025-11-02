@@ -5,7 +5,7 @@ from typing import Annotated, List, Literal, Optional, TypedDict
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field, ConfigDict
-from shared.schema import CodexInput, CodexOutput
+from shared.schema import  CodexInput, CodexOutput, SandboxContext
 
 
 class Message(TypedDict, total=False):
@@ -34,8 +34,9 @@ class PlannerState(CodexInput, CodexOutput):
 
     deployment_url: Optional[str] = Field(None, description="Public URL of the deployed LangGraph service")
     server_running: bool = Field(False, description="Whether the server is running")
-    pr_summary: Optional[str] = Field(None, description="The summary of the PR")
+    pr_summary: Optional[str] = Field(None, description="The summary of the PR")    
     
+
 
 class Failure(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -58,3 +59,4 @@ class ProgrammerState(CodexInput):
     testResults: Optional[TestResults] = Field(None, description="The test results")
     server_running: bool = Field(False, description="Whether the server is running")
     pr_summary: Optional[str] = Field(None, description="The summary of the PR")
+    updated_sandbox_context: Optional[SandboxContext] = Field(None, description="The updated sandbox context")
