@@ -13,6 +13,13 @@ class TestResult(BaseModel):
     judge_reasoning: str = Field(description="Why the judge scored this way")
     model_config = ConfigDict(extra="forbid")
 
+
+class GeneratedTestCase(BaseModel):
+    input_message: str
+    expected_behavior: str
+    success_criteria: str
+    expected_output: Optional[str] = None
+
 class GithubContext(BaseModel):
     """Context for the active GitHub repository"""
     agent_name: str = Field(..., description="The name of the agent")
@@ -24,8 +31,10 @@ class GithubContext(BaseModel):
 class TestingContext(BaseModel):
     """Context for the testing session."""
     test_results: List[TestResult]
+    test_cases: List[GeneratedTestCase]
+    graph_name: str
+    # branch_name: str
     model_config = ConfigDict(extra="forbid")
-
 
 class SandboxContext(BaseModel):
     """Context for the active sandbox session."""

@@ -62,7 +62,11 @@ def _prepare_finalize_context(state: EvalAgentState) -> dict:
 
     codex_response_payload = state.codex_response
 
+    testing_context = TestingContext(test_results=structured_test_results)
+    testing_context.test_cases = state.test_cases
+
     return {
+        "testing_context": testing_context,
         "codex_thread_id": codex_thread_id,
         "codex_response": codex_response_payload,
         "codex_followup_branch": state.codex_followup_branch,
@@ -206,6 +210,7 @@ def _summarize_finalize(state: EvalAgentState) -> dict:
 
 
 def build_finalize_subgraph():
+    """Build the finalize subgraph."""
     builder = StateGraph(EvalAgentState)
     builder.add_node("summarize", _summarize_finalize)
     builder.add_edge("summarize", END)

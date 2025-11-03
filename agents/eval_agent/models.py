@@ -3,7 +3,7 @@ from typing import Annotated, Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
-from shared.schema import SandboxContext, GithubContext, UserContext
+from shared.schema import SandboxContext, GithubContext, UserContext, GeneratedTestCase
 
 
 class RunContext(BaseModel):
@@ -16,14 +16,6 @@ class RunContext(BaseModel):
     current_thread_id: Optional[str] = Field(default=None, description="Temporary thread used during the current run invocation")
     last_results: List[Dict[str, Any]] = Field(default_factory=list, description="Raw result rows produced by the most recent run before upload")
     last_failed_cases: List[Dict[str, Any]] = Field(default_factory=list, description="Failed test case details from the most recent run")
-
-
-class GeneratedTestCase(BaseModel):
-    """A generated test case."""
-    input_message: str
-    expected_behavior: str
-    success_criteria: str
-    expected_output: Optional[str] = None
 
 
 class GeneratedTests(BaseModel):

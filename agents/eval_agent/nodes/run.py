@@ -58,6 +58,7 @@ async def _prepare_run_context(state: EvalAgentState) -> dict:
         "run": updated_run,
     }
 
+from shared.eval_runner import run_evals
 
 async def _execute_test_cases(state: EvalAgentState) -> dict:
     run_ctx = state.run or RunContext()
