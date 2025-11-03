@@ -18,11 +18,6 @@ class RunContext(BaseModel):
     last_failed_cases: List[Dict[str, Any]] = Field(default_factory=list, description="Failed test case details from the most recent run")
 
 
-class GeneratedTests(BaseModel):
-    """A list of generated test cases."""
-    test_cases: list[GeneratedTestCase]
-
-
 class EvalReflection(BaseModel):
     """A meta-evaluation insight to improve future eval generation only."""
     agent_name: str = Field(description="Target agent/graph this reflection applies to")
@@ -61,7 +56,7 @@ class EvalAgentState(BaseModel):
     sandbox_context: SandboxContext = Field(default=None, description="Context for the active sandbox")
     github_context: GithubContext = Field(default=None, description="Context for the active GitHub repository")
     run: RunContext = Field(default_factory=RunContext, description="Execution context for evaluation attempts")
-    test_cases: list[GeneratedTestCase] = Field(default_factory=list)
+    test_cases: List[GeneratedTestCase] = Field(default_factory=list, description="List of generated test cases")
     previous_inputs: list[str] = Field(default_factory=list, description="History of prior test input messages to avoid repetition")
     codex_thread_id: Optional[str] = Field(default=None, description="Stable thread identifier used when contacting the Codex agent")
     codex_request: Optional[Dict[str, Any]] = Field(default=None, description="Last Codex handoff payload sent for remediation")

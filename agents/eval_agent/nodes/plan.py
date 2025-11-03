@@ -1,5 +1,9 @@
+"""
+This file contains code for the plan node of the eval agent. 
+This is also responsible for generating the test cases for the target agent.
+"""
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List
 from pydantic import BaseModel
 
 from langchain_core.messages import HumanMessage
@@ -10,7 +14,6 @@ from agents.eval_agent.constants import LLM, logger
 from agents.eval_agent.models import (
     EvalAgentState,
     GeneratedTestCase,
-    GeneratedTests,
 )
 from agents.eval_agent.prompts import (
     EVAL_AGENT_TEST_GEN_PROMPT,
@@ -32,13 +35,13 @@ from sandbox import (
 async def _invoke_test_generation_llm(
     reflections_text: str,
     prev_inputs_text: str,
-) -> tuple[GeneratedTests, Dict[str, Any]]:
+) -> tuple[List[GeneratedTestCase], Dict[str, Any]]:
     augmented_prompt = EVAL_AGENT_TEST_GEN_PROMPT.format(
         reflections_text=reflections_text,
         prev_inputs_text=prev_inputs_text,
     )
-    generated_runnable = LLM.with_structured_output(GeneratedTests)
-    generated: GeneratedTests = await generated_runnable.ainvoke(augmented_prompt)
+    generated_runnable = LLM.with_structured_output(List[GeneratedTestCase])
+    generated: List[GeneratedTestCase] = await generated_runnable.ainvoke(augmented_prompt)
 
     trace = {
         "prompt": augmented_prompt,
