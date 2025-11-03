@@ -31,17 +31,24 @@ from sandbox import (
     setup_project,
 )
 
+class _TestGenerationOutput(BaseModel):
+    """
+    Explicitly defined internal class for the test generation LLM output. 
+    Since structured output does not support lists, we need to define it explicitly.
+    """
+    test_cases: List[GeneratedTestCase]
+
 
 async def _invoke_test_generation_llm(
     reflections_text: str,
     prev_inputs_text: str,
-) -> tuple[List[GeneratedTestCase], Dict[str, Any]]:
+) -> _TestGenerationOutput:
     augmented_prompt = EVAL_AGENT_TEST_GEN_PROMPT.format(
         reflections_text=reflections_text,
         prev_inputs_text=prev_inputs_text,
     )
-    generated_runnable = LLM.with_structured_output(List[GeneratedTestCase])
-    generated: List[GeneratedTestCase] = await generated_runnable.ainvoke(augmented_prompt)
+    generated_runnable = LLM.with_structured_output(_TestGenerationOutput)
+    generated: _TestGenerationOutput = await generated_runnable.ainvoke(augmented_prompt)
 
     trace = {
         "prompt": augmented_prompt,
