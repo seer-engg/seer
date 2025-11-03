@@ -4,8 +4,6 @@ from langgraph.pregel.remote import RemoteGraph
 import os
 from langsmith import Client
 from shared.schema import GeneratedTestCase
-LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
-LANGSMITH_CLIENT = Client(api_key=LANGSMITH_API_KEY)
 from typing import List, Dict, Any
 from datetime import datetime, timezone
 import uuid
@@ -18,6 +16,8 @@ from shared.llm import get_llm
 
 
 logger = get_logger("eval_runner")
+LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
+LANGSMITH_CLIENT = Client(api_key=LANGSMITH_API_KEY)
 
 
 LLM = get_llm(temperature=0.2)
