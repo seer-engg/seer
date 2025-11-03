@@ -25,7 +25,7 @@ LANGSMITH_CLIENT = Client(api_key=LANGSMITH_API_KEY)
 
 # Evaluation loop thresholds
 PASS_THRESHOLD = 0.99
-ATTEMPTS = 2
+ATTEMPTS = 1
 
 
 # Remote Codex planner URL for follow-up remediation workflows

@@ -1,19 +1,10 @@
 from __future__ import annotations
-
-import json
-import os
-import re
-from typing import Optional
-
-from e2b_code_interpreter import AsyncSandbox, CommandResult
-
+from e2b_code_interpreter import AsyncSandbox
 from agents.codex.common.state import PlannerState
 from shared.logger import get_logger
 from sandbox import deploy_server_and_confirm_ready, TARGET_AGENT_COMMAND, TARGET_AGENT_PORT
 
-
 logger = get_logger("codex.planner.nodes.deploy")
-
 
 
 async def deploy_service(state: PlannerState) -> PlannerState:

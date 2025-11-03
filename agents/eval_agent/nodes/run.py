@@ -12,55 +12,31 @@ from langgraph.pregel.remote import RemoteGraph
 from langgraph_sdk import get_sync_client
 from openevals.types import EvaluatorResult
 
-from agents.eval_agent.deps import (
+from agents.eval_agent.constants import (
     CORRECTNESS_EVALUATOR,
     LANGSMITH_CLIENT,
     PASS_THRESHOLD,
     logger,
 )
-from agents.eval_agent.models import DeploymentContext, EvalAgentState, RunContext
+from agents.eval_agent.models import EvalAgentState, RunContext
 
 
 async def _prepare_run_context(state: EvalAgentState) -> dict:
-    cfg = state.target_agent_config
-    if cfg is None:
-        raise ValueError("_prepare_run_context requires target_agent_config to be set")
-
-    target_graph_name = cfg.graph_name
-    deployment = state.deployment or DeploymentContext()
     run_ctx = state.run or RunContext()
-    target_url = cfg.url or deployment.url
-    if not target_url:
-        raise ValueError("_prepare_run_context requires a deployment URL")
 
     dataset_name = run_ctx.dataset_name
     if not dataset_name:
-        agent_id = target_graph_name.replace("/", "_")
-        date_tag = datetime.now().strftime("%Y%m%d")
-        dataset_name = f"seer_eval_{agent_id}_{date_tag}"
+        date_tag = datetime.now().strftime("%Y%m%d-%H%M")
+        dataset_name = f"seer_eval_{date_tag}"
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
 
     # always use a new experiment name, else langsmith will raise a 409 while uploading results
-    experiment_name = f"seer-local-eval-{target_graph_name}-{timestamp}"
+    experiment_name = f"seer-eval-local-{timestamp}"
 
-    sync_client = get_sync_client(url=target_url)
+    sync_client = get_sync_client(url=state.sandbox_context.deployment_url)
     thread = await asyncio.to_thread(sync_client.threads.create)
     thread_id = thread["thread_id"]
-
-    metadata = dict(deployment.metadata)
-    metadata.setdefault("deployment_url", target_url)
-    metadata.setdefault("repo_url", cfg.repo_url)
-    metadata.setdefault("branch_name", cfg.branch_name)
-
-    deployment = deployment.model_copy(
-        update={
-            "url": target_url,
-            "repo_url": cfg.repo_url or deployment.repo_url,
-            "branch_name": cfg.branch_name or deployment.branch_name,
-            "metadata": metadata,
-        }
-    )
 
     logger.info(
         "run.prepare: dataset=%s experiment=%s thread=%s",
@@ -75,41 +51,26 @@ async def _prepare_run_context(state: EvalAgentState) -> dict:
         "current_thread_id": thread_id,
         "last_failed_cases": [],
         "last_results": [],
-        "last_metadata": {
-            "target_graph_name": target_graph_name,
-            "target_url": target_url,
-            "experiment_prepared_at": datetime.now(timezone.utc),
-        },
     }
     updated_run = run_ctx.model_copy(update=run_updates)
 
     return {
         "run": updated_run,
-        "deployment": deployment,
     }
 
 
 async def _execute_test_cases(state: EvalAgentState) -> dict:
-    cfg = state.target_agent_config
-    if cfg is None:
-        raise ValueError("_execute_test_cases requires target_agent_config to be set")
-
-    deployment = state.deployment or DeploymentContext()
     run_ctx = state.run or RunContext()
-    target_url = cfg.url or deployment.url
-    if not target_url:
-        raise ValueError("_execute_test_cases requires a deployment URL")
-
     thread_id = run_ctx.current_thread_id
-    sync_client = get_sync_client(url=target_url)
+    sync_client = get_sync_client(url=state.sandbox_context.deployment_url)
     if not thread_id:
         thread = sync_client.threads.create()
         thread_id = thread["thread_id"]
 
     thread_cfg = {"configurable": {"thread_id": thread_id}}
     remote_graph = RemoteGraph(
-        cfg.graph_name,
-        url=target_url,
+        state.github_context.agent_name,
+        url=state.sandbox_context.deployment_url,
         client=LANGSMITH_CLIENT,
         sync_client=sync_client,
         distributed_tracing=True,
@@ -131,31 +92,22 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
         row_id = uuid.uuid4().hex
 
         run_start = datetime.now(timezone.utc)
-        try:
-            result = await asyncio.to_thread(
-                remote_graph.invoke,
-                {"messages": [{"role": "user", "content": question}]},
-                thread_cfg,
-            )
-            answer = result.get("messages", [{}])[-1].get("content", "")
-        except Exception as invoke_error:
-            logger.error("run.execute: error invoking remote graph: %s", invoke_error)
-            answer = ""
+        result = await asyncio.to_thread(
+            remote_graph.invoke,
+            {"messages": [{"role": "user", "content": question}]},
+            thread_cfg,
+        )
+        answer = result.get("messages", [{}])[-1].get("content", "")
         run_end = datetime.now(timezone.utc)
 
-        try:
-            eval_result: EvaluatorResult = await asyncio.to_thread(
-                CORRECTNESS_EVALUATOR,
-                inputs={"question": question},
-                outputs={"answer": answer},
-                reference_outputs={"answer": expected},
-            )
-            score = float(eval_result.get("score", 0.0))
-            evaluator_comment = eval_result.get("comment", "")
-        except Exception as eval_error:
-            logger.error("run.execute: error running correctness evaluator: %s", eval_error)
-            score = 0.0
-            evaluator_comment = f"Evaluation error: {eval_error}"
+        eval_result: EvaluatorResult = await asyncio.to_thread(
+            CORRECTNESS_EVALUATOR,
+            inputs={"question": question},
+            outputs={"answer": answer},
+            reference_outputs={"answer": expected},
+        )
+        score = float(eval_result.get("score", 0.0))
+        evaluator_comment = eval_result.get("comment", "")
 
         scores.append(score)
         if score >= PASS_THRESHOLD:
@@ -187,7 +139,7 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
                 ],
                 "start_time": run_start,
                 "end_time": run_end,
-                "run_name": cfg.graph_name,
+                "run_name": state.github_context.agent_name,
                 "run_metadata": {
                     "success_criteria": tc.success_criteria,
                 },
@@ -205,41 +157,10 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
         len(failed_cases),
     )
 
-    metadata = dict(run_ctx.last_metadata or {})
-    metadata.update(
-        {
-            "scores": scores,
-            "passed_count": passed_count,
-            "total_tests": total_tests,
-            "experiment_start_time": experiment_start_time,
-            "earliest_start": earliest_start,
-            "latest_end": latest_end,
-        }
-    )
-
-    accumulated_cases = list(run_ctx.accumulated_failed_cases or [])
-    accumulated_context = dict(run_ctx.accumulated_metadata or {})
-    if failed_cases:
-        accumulated_cases.extend(failed_cases)
-        accumulated_context.update(
-            {
-                "dataset_name": run_ctx.dataset_name,
-                "experiment_name": run_ctx.experiment_name,
-                "target_url": metadata.get("target_url", deployment.url or cfg.url),
-                "latest_score": metadata.get("scores", [0])[-1] if metadata.get("scores") else run_ctx.score,
-                "aggregate_score": metadata.get("aggregate_score", run_ctx.score),
-                "total_tests": metadata.get("total_tests", total_tests),
-                "passed_tests": metadata.get("passed_count", passed_count),
-            }
-        )
-
     run_updates = {
         "current_thread_id": thread_id,
         "last_results": results_payload,
         "last_failed_cases": failed_cases,
-        "last_metadata": metadata,
-        "accumulated_failed_cases": accumulated_cases,
-        "accumulated_metadata": accumulated_context,
     }
     updated_run = run_ctx.model_copy(update=run_updates)
 
@@ -249,27 +170,11 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
 
 
 async def _upload_run_results(state: EvalAgentState) -> dict:
-    cfg = state.target_agent_config
-    if cfg is None:
-        raise ValueError("_upload_run_results requires target_agent_config to be set")
-
-    deployment = state.deployment or DeploymentContext()
     run_ctx = state.run or RunContext()
     results_payload = list(run_ctx.last_results or [])
-    metadata = dict(run_ctx.last_metadata or {})
     failed_cases = list(run_ctx.last_failed_cases or [])
-    scores: List[float] = list(metadata.get("scores", []))
-    passed_count = metadata.get("passed_count", 0)
-    total_tests = metadata.get("total_tests", len(state.test_cases))
-
-    mean_score = round(sum(scores) / max(len(scores), 1), 4)
-    earliest_start = metadata.get("earliest_start", datetime.now(timezone.utc))
-    latest_end = metadata.get("latest_end", earliest_start)
-    experiment_end_time = max(latest_end, datetime.now(timezone.utc))
 
     score_history = list(run_ctx.score_history or [])
-    score_history.append(float(mean_score))
-    aggregate_score = round(sum(score_history) / len(score_history), 4)
 
     api_key = os.getenv("LANGSMITH_API_KEY")
     if not api_key:
@@ -292,24 +197,24 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
         "experiment_name": run_ctx.experiment_name,
         "experiment_description": "Evaluation uploaded by Seer eval_agent run_node.",
         "dataset_name": run_ctx.dataset_name,
-        "experiment_start_time": earliest_start.isoformat(),
-        "experiment_end_time": experiment_end_time.isoformat(),
+        "experiment_start_time": run_ctx.experiment_start_time.isoformat(),
+        "experiment_end_time": run_ctx.experiment_end_time.isoformat(),
         "summary_experiment_scores": [
             {
                 "key": "mean_correctness",
-                "score": mean_score,
+                "score": run_ctx.score,
                 "comment": "Average correctness score across generated tests.",
             },
             {
                 "key": "aggregate_correctness",
-                "score": aggregate_score,
+                "score": sum(run_ctx.score_history) / len(run_ctx.score_history),
                 "comment": "Rolling average correctness score across eval attempts.",
             },
         ],
         "results": serialised_results,
     }
 
-    logger.info(f"Uploading experiment to LangSmith: {upload_body}")
+    logger.info("run.upload: uploading experiment to LangSmith: %s", upload_body)
 
     response = await asyncio.to_thread(
         requests.post,
@@ -327,75 +232,22 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
         uploaded_dataset_name = response_data.get("dataset", {}).get("name", run_ctx.dataset_name)
         uploaded_experiment_name = response_data.get("experiment", {}).get("name", run_ctx.experiment_name)
 
-    metadata.update(
-        {
-            "dataset_name": uploaded_dataset_name,
-            "experiment_name": uploaded_experiment_name,
-            "latest_score": mean_score,
-            "aggregate_score": aggregate_score,
-            "failed_tests": len(failed_cases),
-            "passed_tests": passed_count,
-            "total_tests": total_tests,
-            "handoff_ready_at": datetime.now(timezone.utc),
-        }
-    )
-
-    target_url = metadata.get("target_url", deployment.url or cfg.url)
-    metadata.setdefault("target_url", target_url)
-
-    deployment_metadata = dict(deployment.metadata)
-    deployment_metadata.update(
-        {
-            "deployment_url": target_url,
-            "repo_url": cfg.repo_url,
-            "branch_name": cfg.branch_name,
-            "last_upload_at": datetime.now(timezone.utc).isoformat(),
-            "codex_handoff_status": "pending",
-        }
-    )
-
-    deployment = deployment.model_copy(
-        update={
-            "url": target_url,
-            "repo_url": cfg.repo_url or deployment.repo_url,
-            "branch_name": cfg.branch_name or deployment.branch_name,
-            "metadata": deployment_metadata,
-        }
-    )
-
-    accumulated_metadata = dict(run_ctx.accumulated_metadata or {})
-    accumulated_metadata.update(
-        {
-            "dataset_name": uploaded_dataset_name,
-            "experiment_name": uploaded_experiment_name,
-            "latest_score": mean_score,
-            "aggregate_score": aggregate_score,
-            "total_tests": total_tests,
-            "passed_tests": passed_count,
-            "target_url": target_url,
-        }
-    )
-
     run_updates = {
         "dataset_name": uploaded_dataset_name,
         "experiment_name": uploaded_experiment_name,
-        "score": float(mean_score),
+        "score": run_ctx.score,
         "score_history": score_history,
         "last_results": results_payload,
-        "last_metadata": metadata,
         "last_failed_cases": failed_cases,
-        "accumulated_metadata": accumulated_metadata,
     }
     updated_run = run_ctx.model_copy(update=run_updates)
 
     tool_payload = {
         "dataset_name": uploaded_dataset_name,
         "experiment_name": uploaded_experiment_name,
-        "latest_score": mean_score,
-        "aggregate_score": aggregate_score,
+        "latest_score": run_ctx.score,
+        "aggregate_score": sum(run_ctx.score_history) / len(run_ctx.score_history),
         "failed_tests": len(failed_cases),
-        "passed_tests": passed_count,
-        "deployment_url": target_url,
         "codex_handoff_status": "pending",
     }
 
@@ -404,13 +256,13 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
     return {
         "run": updated_run,
         "messages": [tool_message],
-        "deployment": deployment,
         "codex_request": None,
         "codex_response": None,
     }
 
 
 def build_run_subgraph():
+    """Build the run subgraph."""
     builder = StateGraph(EvalAgentState)
     builder.add_node("prepare", _prepare_run_context)
     builder.add_node("execute", _execute_test_cases)
