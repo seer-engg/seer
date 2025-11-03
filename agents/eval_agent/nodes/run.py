@@ -1,24 +1,19 @@
+"""nodes for running and uploading evaluation results"""
 import asyncio
 import json
 import os
-import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict, List
-
+from datetime import datetime
 import requests
+
 from langchain_core.messages import ToolMessage
 from langgraph.graph import END, START, StateGraph
-from langgraph.pregel.remote import RemoteGraph
 from langgraph_sdk import get_sync_client
-from openevals.types import EvaluatorResult
 
-from agents.eval_agent.constants import (
-    CORRECTNESS_EVALUATOR,
-    LANGSMITH_CLIENT,
-    PASS_THRESHOLD,
-    logger,
-)
+from shared.eval_runner import run_evals
+from shared.logger import get_logger
 from agents.eval_agent.models import EvalAgentState, RunContext
+
+logger = get_logger("eval_agent.run")
 
 
 async def _prepare_run_context(state: EvalAgentState) -> dict:
@@ -58,99 +53,10 @@ async def _prepare_run_context(state: EvalAgentState) -> dict:
         "run": updated_run,
     }
 
-from shared.eval_runner import run_evals
 
 async def _execute_test_cases(state: EvalAgentState) -> dict:
-    run_ctx = state.run or RunContext()
-    thread_id = run_ctx.current_thread_id
-    sync_client = get_sync_client(url=state.sandbox_context.deployment_url)
-    if not thread_id:
-        thread = sync_client.threads.create()
-        thread_id = thread["thread_id"]
-
-    thread_cfg = {"configurable": {"thread_id": thread_id}}
-    remote_graph = RemoteGraph(
-        state.github_context.agent_name,
-        url=state.sandbox_context.deployment_url,
-        client=LANGSMITH_CLIENT,
-        sync_client=sync_client,
-        distributed_tracing=True,
-    )
-
-    results_payload: List[Dict[str, Any]] = []
-    failed_cases: List[Dict[str, Any]] = []
-    scores: List[float] = []
-    passed_count = 0
-    total_tests = len(state.test_cases)
-
-    experiment_start_time = datetime.now(timezone.utc)
-    earliest_start = experiment_start_time
-    latest_end = experiment_start_time
-
-    for tc in state.test_cases:
-        question = tc.input_message
-        expected = tc.expected_output or tc.expected_behavior
-        row_id = uuid.uuid4().hex
-
-        run_start = datetime.now(timezone.utc)
-        result = await asyncio.to_thread(
-            remote_graph.invoke,
-            {"messages": [{"role": "user", "content": question}]},
-            thread_cfg,
-        )
-        answer = result.get("messages", [{}])[-1].get("content", "")
-        run_end = datetime.now(timezone.utc)
-
-        eval_result: EvaluatorResult = await asyncio.to_thread(
-            CORRECTNESS_EVALUATOR,
-            inputs={"question": question},
-            outputs={"answer": answer},
-            reference_outputs={"answer": expected},
-        )
-        score = float(eval_result.get("score", 0.0))
-        evaluator_comment = eval_result.get("comment", "")
-
-        scores.append(score)
-        if score >= PASS_THRESHOLD:
-            passed_count += 1
-        else:
-            failed_cases.append(
-                {
-                    "input": question,
-                    "expected_output": expected,
-                    "actual_output": answer,
-                    "success_criteria": tc.success_criteria,
-                    "score": score,
-                    "judge_comment": evaluator_comment,
-                }
-            )
-
-        results_payload.append(
-            {
-                "row_id": row_id,
-                "inputs": {"question": question},
-                "expected_outputs": {"answer": expected},
-                "actual_outputs": {"answer": answer},
-                "evaluation_scores": [
-                    {
-                        "key": "correctness",
-                        "score": score,
-                        "comment": evaluator_comment,
-                    }
-                ],
-                "start_time": run_start,
-                "end_time": run_end,
-                "run_name": state.github_context.agent_name,
-                "run_metadata": {
-                    "success_criteria": tc.success_criteria,
-                },
-            }
-        )
-
-        if run_start < earliest_start:
-            earliest_start = run_start
-        if run_end > latest_end:
-            latest_end = run_end
+    """Execute the test cases and return the results."""
+    results_payload, failed_cases, scores, passed_count, total_tests, earliest_start, latest_end = await run_evals(state.sandbox_context.deployment_url, state.github_context.agent_name, state.test_cases)
 
     logger.info(
         "run.execute: completed %d tests (failures=%d)",
@@ -158,15 +64,15 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
         len(failed_cases),
     )
 
-    run_updates = {
-        "current_thread_id": thread_id,
-        "last_results": results_payload,
-        "last_failed_cases": failed_cases,
-    }
-    updated_run = run_ctx.model_copy(update=run_updates)
+    state.run.score = sum(scores) / len(scores)
+    state.run.score_history.append(state.run.score)
+    state.run.last_results = results_payload
+    state.run.last_failed_cases = failed_cases
+    state.run.experiment_end_time = latest_end
+    state.run.experiment_start_time = earliest_start
 
     return {
-        "run": updated_run,
+        "run": state.run,
     }
 
 
@@ -203,12 +109,12 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
         "summary_experiment_scores": [
             {
                 "key": "mean_correctness",
-                "score": run_ctx.score,
+                "score": round(run_ctx.score, 3),
                 "comment": "Average correctness score across generated tests.",
             },
             {
                 "key": "aggregate_correctness",
-                "score": sum(run_ctx.score_history) / len(run_ctx.score_history),
+                "score": round(sum(run_ctx.score_history) / len(run_ctx.score_history), 3),
                 "comment": "Rolling average correctness score across eval attempts.",
             },
         ],

@@ -12,10 +12,11 @@ class RunContext(BaseModel):
     experiment_name: str = Field(default="", description="Experiment identifier for the latest evaluation attempt")
     score: float = Field(default=0.0, description="Latest mean correctness score")
     score_history: List[float] = Field(default_factory=list, description="History of aggregate scores across attempts")
-    attempts: int = Field(default=0, description="Number of completed eval attempts")
     current_thread_id: Optional[str] = Field(default=None, description="Temporary thread used during the current run invocation")
     last_results: List[Dict[str, Any]] = Field(default_factory=list, description="Raw result rows produced by the most recent run before upload")
     last_failed_cases: List[Dict[str, Any]] = Field(default_factory=list, description="Failed test case details from the most recent run")
+    experiment_start_time: datetime = Field(default_factory=datetime.now, description="Start time of the latest evaluation attempt")
+    experiment_end_time: datetime = Field(default_factory=datetime.now, description="End time of the latest evaluation attempt")
 
 
 class EvalReflection(BaseModel):
@@ -52,6 +53,7 @@ class EvalReflection(BaseModel):
 class EvalAgentState(BaseModel):
     """State for the evaluation agent."""
     messages: Annotated[list[BaseMessage], add_messages]
+    attempts: int = Field(default=0, description="Number of completed eval attempts")
     user_context: UserContext = Field(default=None, description="Context for the user")
     sandbox_context: SandboxContext = Field(default=None, description="Context for the active sandbox")
     github_context: GithubContext = Field(default=None, description="Context for the active GitHub repository")
@@ -62,4 +64,3 @@ class EvalAgentState(BaseModel):
     codex_request: Optional[Dict[str, Any]] = Field(default=None, description="Last Codex handoff payload sent for remediation")
     codex_response: Optional[Dict[str, Any]] = Field(default=None, description="Codex response payload, if available")
     codex_followup_branch: Optional[str] = Field(default=None, description="Git branch produced by Codex for follow-up evaluation")
-    pending_followup: bool = Field(default=False, description="Whether the eval agent must execute a follow-up evaluation on Codex's branch")

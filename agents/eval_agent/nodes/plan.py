@@ -10,7 +10,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
 from shared.schema import GithubContext, UserContext, SandboxContext
 
-from agents.eval_agent.constants import LLM, logger
+from agents.eval_agent.constants import LLM
 from agents.eval_agent.models import (
     EvalAgentState,
     GeneratedTestCase,
@@ -30,6 +30,10 @@ from sandbox import (
     initialize_e2b_sandbox,
     setup_project,
 )
+from shared.logger import get_logger
+
+logger = get_logger("eval_agent.plan")
+
 
 class _TestGenerationOutput(BaseModel):
     """
@@ -64,7 +68,7 @@ async def _invoke_test_generation_llm(
 
 async def _ensure_target_agent_config(state: EvalAgentState) -> dict:
     updates: Dict[str, Any] = {}
-    if state.pending_followup and state.codex_followup_branch:
+    if state.codex_followup_branch:
         new_branch = state.codex_followup_branch.strip()
 
         cfg_updates: Dict[str, Any] = {"url": None}
@@ -76,12 +80,7 @@ async def _ensure_target_agent_config(state: EvalAgentState) -> dict:
             )
         cfg = cfg.model_copy(update=cfg_updates)
 
-        updates.update(
-            {
-                "pending_followup": False,
-            }
-        )
-        return updates
+        return {}
 
     last_human = None
     for msg in reversed(state.messages or []):

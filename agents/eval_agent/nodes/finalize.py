@@ -1,3 +1,4 @@
+"""nodes for finalizing the evaluation"""
 import os
 import asyncio
 from typing import Any, Dict, List, Optional
@@ -7,14 +8,13 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.pregel.remote import RemoteGraph
 from langgraph_sdk import get_sync_client
 
-from shared.schema import GithubContext, SandboxContext, TestingContext, UserContext, TestResult, CodexInput, CodexOutput
-from agents.eval_agent.constants import (
-    CODEX_REMOTE_URL,
-    LANGSMITH_CLIENT,
-    logger,
-)
+from agents.eval_agent.constants import CODEX_REMOTE_URL, LANGSMITH_CLIENT
 from agents.eval_agent.models import EvalAgentState, RunContext
+from shared.logger import get_logger
+from shared.schema import GithubContext, SandboxContext, TestingContext, UserContext, TestResult, CodexInput, CodexOutput
 
+
+logger = get_logger("eval_agent.finalize")
 
 def _extract_branch_from_codex_response(response: Any) -> tuple[Optional[str], Dict[str, Any]]:
     branch_name: Optional[str] = None
@@ -70,7 +70,6 @@ def _prepare_finalize_context(state: EvalAgentState) -> dict:
         "codex_thread_id": codex_thread_id,
         "codex_response": codex_response_payload,
         "codex_followup_branch": state.codex_followup_branch,
-        "pending_followup": state.pending_followup,
     }
 
 
@@ -98,7 +97,6 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
     )
     codex_output: CodexOutput = CodexOutput(agent_updated=False, new_branch_name=None)
 
-    pending_followup = state.pending_followup
     codex_followup_branch = state.codex_followup_branch
 
     codex_input_payload: Dict[str, Any] = codex_input.model_dump()
@@ -139,7 +137,6 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
     branch_name = _extract_branch_from_codex_response(codex_response)
     if branch_name:
         codex_followup_branch = branch_name
-        pending_followup = True
         codex_output = CodexOutput(agent_updated=True, new_branch_name=branch_name)
     else:
         logger.error("finalize.handoff: Codex response missing branch_name: %s", codex_response)
@@ -148,7 +145,6 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
         "codex_thread_id": codex_thread_id,
         "codex_request": codex_input.model_dump(),
         "codex_response": codex_output.model_dump(),
-        "pending_followup": pending_followup,
         "codex_followup_branch": codex_followup_branch,
     }
 
@@ -170,7 +166,7 @@ def _summarize_finalize(state: EvalAgentState) -> dict:
     )
 
     user_summary = (
-        f"Final evaluation complete: attempts={max(attempts, run_ctx.attempts)}; "
+        f"Final evaluation complete: attempts={max(attempts, state.attempts)}; "
         f"average score={average_score:.2f} (0–1), latest={latest_score:.2f}. "
         f"Dataset=`{run_ctx.dataset_name}`, Experiment=`{run_ctx.experiment_name}`."
     )
@@ -179,12 +175,9 @@ def _summarize_finalize(state: EvalAgentState) -> dict:
     if failed_cases:
         user_summary += f" Escalated failing tests: {len(failed_cases)}."
 
-    pending_followup = state.pending_followup
     codex_branch = state.codex_followup_branch
     if codex_branch:
         user_summary += f" Codex branch: {codex_branch}."
-        if pending_followup:
-            user_summary += " Follow-up evaluation scheduled."
 
     codex_response_value = (
         codex_response_payload.model_dump() if hasattr(codex_response_payload, "model_dump") else codex_response_payload
@@ -194,14 +187,10 @@ def _summarize_finalize(state: EvalAgentState) -> dict:
         "messages": [AIMessage(content=user_summary)],
         "codex_thread_id": codex_thread_id,
         "codex_response": codex_response_value,
-        "pending_followup": pending_followup,
         "codex_followup_branch": codex_branch,
     }
 
     run_updates: Dict[str, Any] = {}
-
-    if pending_followup:
-        run_updates["current_thread_id"] = None
 
     if run_updates:
         next_state["run"] = run_ctx.model_copy(update=run_updates)

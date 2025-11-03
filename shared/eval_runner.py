@@ -1,24 +1,25 @@
-from langgraph_sdk import get_sync_client
-
-from langgraph.pregel.remote import RemoteGraph
+"""shared module for running evaluations"""
+import asyncio
 import os
-from langsmith import Client
-from shared.schema import GeneratedTestCase
-LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
-LANGSMITH_CLIENT = Client(api_key=LANGSMITH_API_KEY)
+import uuid
 from typing import List, Dict, Any
 from datetime import datetime, timezone
-import uuid
-from shared.logger import get_logger
+
+from langgraph_sdk import get_sync_client
+from langgraph.pregel.remote import RemoteGraph
+from langsmith import Client
 from openevals.types import EvaluatorResult
 from openevals.prompts import CORRECTNESS_PROMPT
 from openevals.llm import create_llm_as_judge
-import asyncio
+
+from shared.schema import GeneratedTestCase
+from shared.logger import get_logger
 from shared.llm import get_llm
 
 
+LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
+LANGSMITH_CLIENT = Client(api_key=LANGSMITH_API_KEY)
 logger = get_logger("eval_runner")
-
 
 LLM = get_llm(temperature=0.2)
 CORRECTNESS_EVALUATOR = create_llm_as_judge(
@@ -31,11 +32,14 @@ PASS_THRESHOLD = 0.99
 
 
 async def run_evals(target_url: str, graph_name: str, test_cases: List[GeneratedTestCase]) -> dict:
+    """Run evaluations for a given target URL and graph name."""
     sync_client = get_sync_client(url=target_url)
-    if not thread_id:
-        thread = sync_client.threads.create()
-        thread_id = thread["thread_id"]
+
+    # always create a new thread for the evaluations
+    thread = await asyncio.to_thread(sync_client.threads.create)
+    thread_id = thread["thread_id"]
     
+    # configure the remote graph to use the new thread
     thread_cfg = {"configurable": {"thread_id": thread_id}}
     remote_graph = RemoteGraph(
         graph_name,
@@ -44,7 +48,6 @@ async def run_evals(target_url: str, graph_name: str, test_cases: List[Generated
         sync_client=sync_client,
         distributed_tracing=True,
     )
-
 
     results_payload: List[Dict[str, Any]] = []
     failed_cases: List[Dict[str, Any]] = []
@@ -63,31 +66,22 @@ async def run_evals(target_url: str, graph_name: str, test_cases: List[Generated
         row_id = uuid.uuid4().hex
 
         run_start = datetime.now(timezone.utc)
-        try:
-            result = await asyncio.to_thread(
-                remote_graph.invoke,
-                {"messages": [{"role": "user", "content": question}]},
-                thread_cfg,
-            )
-            answer = result.get("messages", [{}])[-1].get("content", "")
-        except Exception as invoke_error:
-            logger.error("run.execute: error invoking remote graph: %s", invoke_error)
-            answer = ""
+        result = await asyncio.to_thread(
+            remote_graph.invoke,
+            {"messages": [{"role": "user", "content": question}]},
+            thread_cfg,
+        )
+        answer = result.get("messages", [{}])[-1].get("content", "")
         run_end = datetime.now(timezone.utc)
 
-        try:
-            eval_result: EvaluatorResult = await asyncio.to_thread(
-                CORRECTNESS_EVALUATOR,
-                inputs={"question": question},
-                outputs={"answer": answer},
-                reference_outputs={"answer": expected},
-            )
-            score = float(eval_result.get("score", 0.0))
-            evaluator_comment = eval_result.get("comment", "")
-        except Exception as eval_error:
-            logger.error("run.execute: error running correctness evaluator: %s", eval_error)
-            score = 0.0
-            evaluator_comment = f"Evaluation error: {eval_error}"
+        eval_result: EvaluatorResult = await asyncio.to_thread(
+            CORRECTNESS_EVALUATOR,
+            inputs={"question": question},
+            outputs={"answer": answer},
+            reference_outputs={"answer": expected},
+        )
+        score = float(eval_result.get("score", 0.0))
+        evaluator_comment = eval_result.get("comment", "")
 
         scores.append(score)
         if score >= PASS_THRESHOLD:

@@ -1,9 +1,11 @@
 from typing import Any, List
 
-from agents.eval_agent.constants import LLM, logger
+from agents.eval_agent.constants import LLM
 from agents.eval_agent.models import EvalAgentState, EvalReflection, RunContext
 from agents.eval_agent.reflection_store import persist_reflection
+from shared.logger import get_logger
 
+logger = get_logger("eval_agent.reflect")
 
 def _truncate(text: Any, limit: int = 280) -> str:
     if text is None:
@@ -19,7 +21,6 @@ def reflect_node(state: EvalAgentState) -> dict:
     run_ctx = state.run or RunContext()
 
     latest_score = run_ctx.score_history[-1] if run_ctx.score_history else run_ctx.score
-    attempt_number = run_ctx.attempts + 1
 
     failed_cases = list(run_ctx.last_failed_cases or [])
     recent_failures = failed_cases[:5]
@@ -47,7 +48,6 @@ def reflect_node(state: EvalAgentState) -> dict:
         "Review the provided run context and produce an EvalReflection with actionable guidance.\n"
         "Keep recommendations concise, specific, and test-focused.\n\n"
         f"User expectations: {state.user_context.user_expectation}\n"
-        f"Attempt number: {attempt_number}\n"
         f"Latest aggregate score: {latest_score:.3f}\n"
         f"Score history: {score_history}\n"
         "Failed test cases (up to 5 most recent):\n"
@@ -65,7 +65,6 @@ def reflect_node(state: EvalAgentState) -> dict:
     # Ensure correct agent_name populated
     reflection.agent_name = state.github_context.agent_name
     reflection.latest_score = reflection.latest_score or latest_score
-    reflection.attempt = reflection.attempt or attempt_number
 
     logger.info(
         "reflect_node: captured reflection trace (agent=%s prompt_chars=%d failures_used=%d)",
@@ -76,17 +75,9 @@ def reflect_node(state: EvalAgentState) -> dict:
 
     persist_reflection(state.github_context.agent_name, reflection)
 
-    updated_run = run_ctx.model_copy(
-        update={
-            "attempts": attempt_number,
-        }
-    )
-
     return {
-        "run": updated_run,
+        "attempts": state.attempts + 1,
         "codex_thread_id": state.codex_thread_id,
         "codex_request": state.codex_request,
         "codex_response": state.codex_response,
     }
-
-

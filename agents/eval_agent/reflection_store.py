@@ -3,7 +3,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from shared.logger import get_logger
-from agents.eval_agent.constants import LANGGRAPH_CLIENT, LANGGRAPH_SYNC_CLIENT, logger
+from agents.eval_agent.constants import LANGGRAPH_CLIENT, LANGGRAPH_SYNC_CLIENT
 from agents.eval_agent.models import EvalReflection
 
 logger = get_logger("eval_agent.reflection_store")
