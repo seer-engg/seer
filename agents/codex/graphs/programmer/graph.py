@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from agents.codex.common.state import ProgrammerState, TaskPlan, TaskItem
-import time
-from e2b_code_interpreter import AsyncSandbox
+from agents.codex.common.state import ProgrammerState
 from shared.logger import get_logger
 from agents.codex.graphs.programmer.nodes import (
     implement_task_plan,
@@ -19,10 +17,9 @@ logger = get_logger("codex.programmer")
 
 
 def reflection_router(state: ProgrammerState) -> ProgrammerState:
-    if state.testResults.success or state.attempt_number >= state.max_attempts:
+    if state.attempt_number >= state.max_attempts:
         return "finalize"
-    else:
-        return "reflect"
+    return "reflect"
 
 def is_server_ready(state: ProgrammerState) -> ProgrammerState:
     if state.server_running:

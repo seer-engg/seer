@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from shared.logger import get_logger
+
 logger = get_logger("codex.planner.nodes.context_and_plan_agent")
 
 from sandbox.tools import (
@@ -52,7 +53,25 @@ async def context_and_plan_agent(state: PlannerState) -> PlannerState:
     if not updated_sandbox_context:
         raise ValueError("No sandbox context found in state")
     
-    eval_results = state.testing_context.test_results
+    experiment = state.experiment_context
+    if not experiment:
+        raise ValueError("Experiment context is required for planning")
+
+    failing_results = [res for res in experiment.results if not res.passed]
+    if failing_results:
+        eval_results = "\n\n".join(
+            (
+                f"Thread / Example ID: {res.dataset_example.example_id}\n"
+                f"Input: {res.dataset_example.input_message}\n"
+                f"Expected: {res.dataset_example.expected_output}\n"
+                f"Actual: {res.actual_output}\n"
+                f"Score: {res.score:.3f}\n"
+                f"Judge feedback: {res.judge_reasoning}\n"
+            )
+            for res in failing_results
+        )
+    else:
+        eval_results = "All recent evaluations passed."
 
     agent = create_agent(
         model=get_chat_model(),
@@ -70,7 +89,7 @@ async def context_and_plan_agent(state: PlannerState) -> PlannerState:
         context_schema=SandboxToolContext,  # Add context schema for sandbox tools
     )
 
-    msgs = list(state.messages)
+    msgs = list(state.messages or [])
     msgs.append(HumanMessage(content=USER_PROMPT.format(eval_results=eval_results)))
 
     # Pass context along with state

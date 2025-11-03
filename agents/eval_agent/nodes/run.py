@@ -3,85 +3,95 @@ import asyncio
 import json
 import os
 from datetime import datetime
-import requests
 
+import requests
 from langchain_core.messages import ToolMessage
 from langgraph.graph import END, START, StateGraph
-from langgraph_sdk import get_sync_client
 
+from agents.eval_agent.models import EvalAgentState
 from shared.eval_runner import run_evals
 from shared.logger import get_logger
-from agents.eval_agent.models import EvalAgentState, RunContext
+from shared.schema import DatasetContext, ExperimentContext
 
 logger = get_logger("eval_agent.run")
 
 
 async def _prepare_run_context(state: EvalAgentState) -> dict:
-    run_ctx = state.run or RunContext()
+    dataset = state.dataset_context or DatasetContext()
 
-    dataset_name = run_ctx.dataset_name
-    if not dataset_name:
+    if not dataset.dataset_name:
         date_tag = datetime.now().strftime("%Y%m%d-%H%M")
-        dataset_name = f"seer_eval_{date_tag}"
+        dataset.dataset_id = dataset.dataset_id or f"seer-dataset-{date_tag}"
+        dataset.dataset_name = f"seer_eval_{date_tag}"
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-
-    # always use a new experiment name, else langsmith will raise a 409 while uploading results
-    experiment_name = f"seer-eval-local-{timestamp}"
-
-    sync_client = get_sync_client(url=state.sandbox_context.deployment_url)
-    thread = await asyncio.to_thread(sync_client.threads.create)
-    thread_id = thread["thread_id"]
+    experiment = ExperimentContext(
+        experiment_id=f"seer-exp-{timestamp}",
+        experiment_name=f"seer-eval-local-{timestamp}",
+        attempt_index=len(dataset.experiments) + 1,
+        started_at=datetime.utcnow(),
+    )
+    dataset.experiments.append(experiment)
 
     logger.info(
-        "run.prepare: dataset=%s experiment=%s thread=%s",
-        dataset_name,
-        experiment_name,
-        thread_id,
+        "run.prepare: dataset=%s experiment=%s",
+        dataset.dataset_name,
+        experiment.experiment_name,
     )
 
-    run_updates = {
-        "dataset_name": dataset_name,
-        "experiment_name": experiment_name,
-        "current_thread_id": thread_id,
-        "last_failed_cases": [],
-        "last_results": [],
-    }
-    updated_run = run_ctx.model_copy(update=run_updates)
-
     return {
-        "run": updated_run,
+        "dataset_context": dataset,
+        "active_experiment": experiment,
+        "latest_results": [],
     }
 
 
 async def _execute_test_cases(state: EvalAgentState) -> dict:
     """Execute the test cases and return the results."""
-    results_payload, failed_cases, scores, passed_count, total_tests, earliest_start, latest_end = await run_evals(state.sandbox_context.deployment_url, state.github_context.agent_name, state.test_cases)
+
+    if not state.sandbox_context or not state.github_context:
+        raise RuntimeError("Sandbox and GitHub context must be set before executing tests")
+    if not state.active_experiment:
+        raise RuntimeError("Active experiment missing before executing tests")
+
+    results, scores = await run_evals(
+        state.sandbox_context.deployment_url,
+        state.github_context.agent_name,
+        state.dataset_examples,
+    )
+
+    experiment = state.active_experiment
+    experiment.results.extend(results)
+
+    if results:
+        experiment.started_at = min(res.started_at for res in results)
+        experiment.completed_at = max(res.completed_at for res in results)
+
+    if scores:
+        experiment.mean_score = sum(scores) / len(scores)
 
     logger.info(
         "run.execute: completed %d tests (failures=%d)",
-        total_tests,
-        len(failed_cases),
+        len(results),
+        len(experiment.failed_results),
     )
 
-    state.run.score = sum(scores) / len(scores)
-    state.run.score_history.append(state.run.score)
-    state.run.last_results = results_payload
-    state.run.last_failed_cases = failed_cases
-    state.run.experiment_end_time = latest_end
-    state.run.experiment_start_time = earliest_start
-
     return {
-        "run": state.run,
+        "active_experiment": experiment,
+        "dataset_context": state.dataset_context,
+        "latest_results": results,
     }
 
 
 async def _upload_run_results(state: EvalAgentState) -> dict:
-    run_ctx = state.run or RunContext()
-    results_payload = list(run_ctx.last_results or [])
-    failed_cases = list(run_ctx.last_failed_cases or [])
+    experiment = state.active_experiment
+    dataset = state.dataset_context
 
-    score_history = list(run_ctx.score_history or [])
+    if not experiment or not dataset:
+        raise RuntimeError("Cannot upload without dataset and experiment context")
+
+    results_payload = list(experiment.results)
+    failed_cases = list(experiment.failed_results)
 
     api_key = os.getenv("LANGSMITH_API_KEY")
     if not api_key:
@@ -90,32 +100,41 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
     endpoint_base = os.getenv("LANGSMITH_API_URL", "https://api.smith.langchain.com")
     endpoint = f"{endpoint_base.rstrip('/')}/api/v1/datasets/upload-experiment"
 
-    serialised_results = []
-    for row in results_payload:
-        serialised_results.append(
-            {
-                **row,
-                "start_time": row["start_time"].isoformat(),
-                "end_time": row["end_time"].isoformat(),
-            }
-        )
+    serialised_results = [
+        {
+            "row_id": res.dataset_example.example_id,
+            "thread_id": res.dataset_example.example_id,
+            "inputs": {"question": res.dataset_example.input_message},
+            "expected_outputs": {"answer": res.dataset_example.expected_output},
+            "actual_outputs": {"answer": res.actual_output},
+            "evaluation_scores": [
+                {
+                    "key": "correctness",
+                    "score": res.score,
+                    "comment": res.judge_reasoning,
+                }
+            ],
+            "start_time": res.started_at.isoformat(),
+            "end_time": res.completed_at.isoformat(),
+            "run_name": state.github_context.agent_name if state.github_context else "",
+            "run_metadata": {"passed": res.passed},
+        }
+        for res in results_payload
+    ]
+
+    mean_score = experiment.mean_score
 
     upload_body = {
-        "experiment_name": run_ctx.experiment_name,
+        "experiment_name": experiment.experiment_name,
         "experiment_description": "Evaluation uploaded by Seer eval_agent run_node.",
-        "dataset_name": run_ctx.dataset_name,
-        "experiment_start_time": run_ctx.experiment_start_time.isoformat(),
-        "experiment_end_time": run_ctx.experiment_end_time.isoformat(),
+        "dataset_name": dataset.dataset_name,
+        "experiment_start_time": (experiment.started_at or datetime.utcnow()).isoformat(),
+        "experiment_end_time": (experiment.completed_at or datetime.utcnow()).isoformat(),
         "summary_experiment_scores": [
             {
                 "key": "mean_correctness",
-                "score": round(run_ctx.score, 3),
+                "score": round(mean_score, 3),
                 "comment": "Average correctness score across generated tests.",
-            },
-            {
-                "key": "aggregate_correctness",
-                "score": round(sum(run_ctx.score_history) / len(run_ctx.score_history), 3),
-                "comment": "Rolling average correctness score across eval attempts.",
             },
         ],
         "results": serialised_results,
@@ -136,24 +155,13 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
         )
     else:
         response_data = response.json()
-        uploaded_dataset_name = response_data.get("dataset", {}).get("name", run_ctx.dataset_name)
-        uploaded_experiment_name = response_data.get("experiment", {}).get("name", run_ctx.experiment_name)
-
-    run_updates = {
-        "dataset_name": uploaded_dataset_name,
-        "experiment_name": uploaded_experiment_name,
-        "score": run_ctx.score,
-        "score_history": score_history,
-        "last_results": results_payload,
-        "last_failed_cases": failed_cases,
-    }
-    updated_run = run_ctx.model_copy(update=run_updates)
+        dataset.dataset_name = response_data.get("dataset", {}).get("name", dataset.dataset_name)
+        experiment.experiment_name = response_data.get("experiment", {}).get("name", experiment.experiment_name)
 
     tool_payload = {
-        "dataset_name": uploaded_dataset_name,
-        "experiment_name": uploaded_experiment_name,
-        "latest_score": run_ctx.score,
-        "aggregate_score": sum(run_ctx.score_history) / len(run_ctx.score_history),
+        "dataset_name": dataset.dataset_name,
+        "experiment_name": experiment.experiment_name,
+        "latest_score": mean_score,
         "failed_tests": len(failed_cases),
         "codex_handoff_status": "pending",
     }
@@ -161,10 +169,10 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
     tool_message = ToolMessage(content=json.dumps(tool_payload), tool_call_id="run_node")
 
     return {
-        "run": updated_run,
+        "dataset_context": dataset,
+        "active_experiment": experiment,
+        "latest_results": results_payload,
         "messages": [tool_message],
-        "codex_request": None,
-        "codex_response": None,
     }
 
 

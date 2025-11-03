@@ -23,20 +23,18 @@ def _prepare_graph_state(state: PlannerState) -> PlannerState:
     state.setdefault("autoAcceptPlan", True)
     return state
 
-
-
-def _interrupt_proposed_plan(state: PlannerState) -> PlannerState:
-    # In MVP, auto-accept the plan
-    return state
-
-
 async def _run_programmer(state: PlannerState) -> PlannerState:
     programmer_input = {
         "updated_sandbox_context": state.updated_sandbox_context,
         "user_context": state.user_context,
-        "testing_context": state.testing_context,
         "github_context": state.github_context,
+        "sandbox_context": state.sandbox_context,
+        "dataset_context": state.dataset_context,
+        "experiment_context": state.experiment_context,
+        "dataset_examples": state.dataset_examples,
         "taskPlan": state.taskPlan,
+        "messages": state.messages,
+        "deployment_url": state.deployment_url,
     }
     programmer_output = await programmer_graph.ainvoke(programmer_input)
     return {
@@ -58,7 +56,6 @@ def compile_planner_graph():
     # Combined context + planning agent
     workflow.add_node("context-plan-agent", context_and_plan_agent)
     # Removed separate context agent; using combined agent instead
-    workflow.add_node("interrupt-proposed-plan", _interrupt_proposed_plan)
     workflow.add_node("programmer", _run_programmer)
     workflow.add_node("raise-pr", raise_pr)
     workflow.add_node("deploy-service", deploy_service)
@@ -73,8 +70,7 @@ def compile_planner_graph():
         "end": END
     })
 
-    workflow.add_edge("context-plan-agent", "interrupt-proposed-plan")
-    workflow.add_edge("interrupt-proposed-plan", "programmer")
+    workflow.add_edge("context-plan-agent", "programmer")
     workflow.add_edge("programmer", "raise-pr")
     workflow.add_edge("raise-pr", "deploy-service")
     workflow.add_edge("deploy-service", END)

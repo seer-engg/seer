@@ -59,13 +59,6 @@ def format_reflections_for_prompt(reflections: List[EvalReflection], limit: int 
     return json.dumps(digest, indent=2)
 
 
-def format_previous_inputs(prev_inputs: List[str], limit: int = 10) -> str:
-    if not prev_inputs:
-        return "[]"
-    tail = prev_inputs[-limit:]
-    return json.dumps(tail, indent=2)
-
-
 def persist_reflection(agent_name: str, reflection: EvalReflection) -> None:
     """Store the reflection synchronously for future retrieval."""
     key = uuid.uuid4().hex

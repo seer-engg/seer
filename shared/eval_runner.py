@@ -1,8 +1,7 @@
 """shared module for running evaluations"""
 import asyncio
 import os
-import uuid
-from typing import List, Dict, Any
+from typing import List, Tuple
 from datetime import datetime, timezone
 
 from langgraph_sdk import get_sync_client
@@ -12,7 +11,7 @@ from openevals.types import EvaluatorResult
 from openevals.prompts import CORRECTNESS_PROMPT
 from openevals.llm import create_llm_as_judge
 
-from shared.schema import GeneratedTestCase
+from shared.schema import DatasetExample, ExperimentResultContext
 from shared.logger import get_logger
 from shared.llm import get_llm
 
@@ -33,16 +32,10 @@ CORRECTNESS_EVALUATOR = create_llm_as_judge(
 PASS_THRESHOLD = 0.99
 
 
-async def run_evals(target_url: str, graph_name: str, test_cases: List[GeneratedTestCase]) -> dict:
+async def run_evals(target_url: str, graph_name: str, dataset_examples: List[DatasetExample]) -> Tuple[List[ExperimentResultContext], List[float]]:
     """Run evaluations for a given target URL and graph name."""
-    sync_client = get_sync_client(url=target_url)
 
-    # always create a new thread for the evaluations
-    thread = await asyncio.to_thread(sync_client.threads.create)
-    thread_id = thread["thread_id"]
-    
-    # configure the remote graph to use the new thread
-    thread_cfg = {"configurable": {"thread_id": thread_id}}
+    sync_client = get_sync_client(url=target_url)
     remote_graph = RemoteGraph(
         graph_name,
         url=target_url,
@@ -51,21 +44,17 @@ async def run_evals(target_url: str, graph_name: str, test_cases: List[Generated
         distributed_tracing=True,
     )
 
-    results_payload: List[Dict[str, Any]] = []
-    failed_cases: List[Dict[str, Any]] = []
+    results: List[ExperimentResultContext] = []
     scores: List[float] = []
-    passed_count = 0
-    total_tests = len(test_cases)
 
-    experiment_start_time = datetime.now(timezone.utc)
-    earliest_start = experiment_start_time
-    latest_end = experiment_start_time
-
-
-    for tc in test_cases:
+    for tc in dataset_examples:
         question = tc.input_message
-        expected = tc.expected_output or tc.expected_behavior
-        row_id = uuid.uuid4().hex
+        expected = tc.expected_output
+
+        # use the example_id as the thread_id
+        example_id = tc.example_id
+        await asyncio.to_thread(sync_client.threads.create, thread_id=example_id)
+        thread_cfg = {"configurable": {"thread_id": example_id}}
 
         run_start = datetime.now(timezone.utc)
         result = await asyncio.to_thread(
@@ -84,53 +73,24 @@ async def run_evals(target_url: str, graph_name: str, test_cases: List[Generated
         )
         score = float(eval_result.get("score", 0.0))
         evaluator_comment = eval_result.get("comment", "")
+        passed = score >= PASS_THRESHOLD
 
-        scores.append(score)
-        if score >= PASS_THRESHOLD:
-            passed_count += 1
-        else:
-            failed_cases.append(
-                {
-                    "input": question,
-                    "expected_output": expected,
-                    "actual_output": answer,
-                    "success_criteria": tc.success_criteria,
-                    "score": score,
-                    "judge_comment": evaluator_comment,
-                }
+        results.append(
+            ExperimentResultContext(
+                dataset_example=tc,
+                actual_output=answer,
+                score=score,
+                passed=passed,
+                judge_reasoning=evaluator_comment,
+                started_at=run_start,
+                completed_at=run_end,
             )
-
-        results_payload.append(
-            {
-                "row_id": row_id,
-                "inputs": {"question": question},
-                "expected_outputs": {"answer": expected},
-                "actual_outputs": {"answer": answer},
-                "evaluation_scores": [
-                    {
-                        "key": "correctness",
-                        "score": score,
-                        "comment": evaluator_comment,
-                    }
-                ],
-                "start_time": run_start,
-                "end_time": run_end,
-                "run_name": graph_name,
-                "run_metadata": {
-                    "success_criteria": tc.success_criteria,
-                },
-            }
         )
-
-        if run_start < earliest_start:
-            earliest_start = run_start
-        if run_end > latest_end:
-            latest_end = run_end
+        scores.append(score)
 
     logger.info(
-        "run.execute: completed %d tests (failures=%d)",
-        total_tests,
-        len(failed_cases),
+        "run.execute: completed %d tests",
+        len(dataset_examples),
     )
 
-    return results_payload, failed_cases, scores, passed_count, total_tests, earliest_start, latest_end
+    return results, scores

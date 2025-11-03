@@ -1,8 +1,9 @@
-from shared.logger import get_logger
-logger = get_logger("programmer.initialize")
-from agents.codex.common.state import ProgrammerState
 from langchain.messages import HumanMessage
-from langchain_core.messages.base import BaseMessage
+from shared.logger import get_logger
+from agents.codex.common.state import ProgrammerState
+
+logger = get_logger("programmer.initialize")
+
 USER_PROMPT = """
     based on the request 
     <request>
@@ -19,8 +20,15 @@ USER_PROMPT = """
 
 async def initialize(state: ProgrammerState) -> ProgrammerState:
     logger.info(f"Initializing programmer state: {state}")
-    messages = list[BaseMessage](state.messages)
-    messages.append(HumanMessage(content=USER_PROMPT.format(request=state.user_context.user_expectation, task_plan=state.taskPlan)))
+    messages = list(state.messages or [])
+    messages.append(
+        HumanMessage(
+            content=USER_PROMPT.format(
+                request=state.user_context.user_expectation,
+                task_plan=state.taskPlan,
+            )
+        )
+    )
     return {
         "messages": messages,
     }

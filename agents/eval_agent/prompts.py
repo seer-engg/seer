@@ -9,18 +9,23 @@ Generate comprehensive test cases that:
 
 Return a structured list of test cases that can be used to evaluate the agent's performance. 
 
+<USER_EXPECTATION>
+{user_expectation}
+</USER_EXPECTATION>
+
 <PAST_EVAL_REFLECTIONS>
 {reflections_text}
 </PAST_EVAL_REFLECTIONS>
 
 <PREVIOUS_TEST_INPUTS>
-{prev_inputs_text}
+{prev_dataset_examples}
 </PREVIOUS_TEST_INPUTS>
 
 <CONSTRAINTS>
+- Respect the user's expectation in <USER_EXPECTATION>.
 - ONLY GENERATE 5 TEST CASES.
-- Do not repeat any input_message from PREVIOUS_TEST_INPUTS.
-- Prefer new edge cases guided by PAST_EVAL_REFLECTIONS.
+- Do not repeat any input_message from <PREVIOUS_TEST_INPUTS>.
+- Prefer new edge cases guided by <PAST_EVAL_REFLECTIONS>.
 </CONSTRAINTS>
 """
 

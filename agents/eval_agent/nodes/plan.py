@@ -3,23 +3,22 @@ This file contains code for the plan node of the eval agent.
 This is also responsible for generating the test cases for the target agent.
 """
 import os
-from typing import Any, Dict, List
+import json
+from typing import List
+from uuid import uuid4
 from pydantic import BaseModel
-
 from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
-from shared.schema import GithubContext, UserContext, SandboxContext
 
 from agents.eval_agent.constants import LLM
 from agents.eval_agent.models import (
     EvalAgentState,
-    GeneratedTestCase,
+    DatasetExample,
 )
 from agents.eval_agent.prompts import (
     EVAL_AGENT_TEST_GEN_PROMPT,
 )
 from agents.eval_agent.reflection_store import (
-    format_previous_inputs,
     format_reflections_for_prompt,
     load_recent_reflections,
 )
@@ -30,58 +29,46 @@ from sandbox import (
     initialize_e2b_sandbox,
     setup_project,
 )
+from shared.schema import GithubContext, UserContext, SandboxContext
 from shared.logger import get_logger
 
 logger = get_logger("eval_agent.plan")
 
 
-class _TestGenerationOutput(BaseModel):
-    """
-    Explicitly defined internal class for the test generation LLM output. 
-    Since structured output does not support lists, we need to define it explicitly.
-    """
-    test_cases: List[GeneratedTestCase]
-
 
 async def _invoke_test_generation_llm(
+    user_expectation: str,
     reflections_text: str,
-    prev_inputs_text: str,
-) -> _TestGenerationOutput:
+    prev_dataset_examples: str,
+) -> List[DatasetExample]:
     augmented_prompt = EVAL_AGENT_TEST_GEN_PROMPT.format(
+        user_expectation=user_expectation,
         reflections_text=reflections_text,
-        prev_inputs_text=prev_inputs_text,
+        prev_dataset_examples=prev_dataset_examples,
     )
-    generated_runnable = LLM.with_structured_output(_TestGenerationOutput)
-    generated: _TestGenerationOutput = await generated_runnable.ainvoke(augmented_prompt)
 
-    trace = {
-        "prompt": augmented_prompt,
-        "response": [tc.model_dump(mode="json") for tc in generated.test_cases],
-    }
+    class _TestGenerationOutput(BaseModel):
+        """
+        Explicitly defined internal class for the test generation LLM output. 
+        Since structured output does not support lists, we need to define it explicitly.
+        """
+        dataset_examples: List[DatasetExample]
+
+    test_generation_llm = LLM.with_structured_output(_TestGenerationOutput)
+    generated: _TestGenerationOutput = await test_generation_llm.ainvoke(augmented_prompt)
+    
+    for example in generated.dataset_examples:
+        example.example_id = str(uuid4())
+
     logger.info(
         "plan.test-llm: generated %d tests (prompt_chars=%d)",
-        len(generated.test_cases),
+        len(generated.dataset_examples),
         len(augmented_prompt),
     )
-    return generated, trace
+    return generated.dataset_examples
 
 
 async def _ensure_target_agent_config(state: EvalAgentState) -> dict:
-    updates: Dict[str, Any] = {}
-    if state.codex_followup_branch:
-        new_branch = state.codex_followup_branch.strip()
-
-        cfg_updates: Dict[str, Any] = {"url": None}
-        if new_branch and cfg.branch_name != new_branch:
-            cfg_updates["branch_name"] = new_branch
-            logger.info(
-                "plan.ensure-config: switched target branch to Codex follow-up branch %s",
-                new_branch,
-            )
-        cfg = cfg.model_copy(update=cfg_updates)
-
-        return {}
-
     last_human = None
     for msg in reversed(state.messages or []):
         if isinstance(msg, HumanMessage) or getattr(msg, "type", "") == "human":
@@ -159,34 +146,15 @@ async def _generate_eval_plan(state: EvalAgentState) -> dict:
     reflections = await load_recent_reflections(agent_name, 'what previous tests failed',limit=5)
     reflections_text = format_reflections_for_prompt(reflections)
 
-    prev_inputs = state.previous_inputs or []
-    prev_inputs_text = format_previous_inputs(prev_inputs)
-
-    generated, _ = await _invoke_test_generation_llm(
+    dataset_examples = await _invoke_test_generation_llm(
+        user_expectation=state.user_context.user_expectation,
         reflections_text=reflections_text,
-        prev_inputs_text=prev_inputs_text,
+        prev_dataset_examples=json.dumps([example.model_dump() for example in state.dataset_examples], indent=2),
     )
 
-    test_cases: list[GeneratedTestCase] = []
-    for tc in generated.test_cases:
-        test_cases.append(
-            GeneratedTestCase(
-                input_message=tc.input_message,
-                expected_behavior=tc.expected_behavior,
-                success_criteria=tc.success_criteria,
-                expected_output=getattr(tc, "expected_output", None) or "",
-            )
-        )
-
-    new_prev = list(prev_inputs)
-    new_prev.extend([tc.input_message for tc in test_cases])
-
-    logger.info("plan.generate: produced %d tests (agent=%s)", len(test_cases), agent_name)
+    logger.info("plan.generate: produced %d tests (agent=%s)", len(dataset_examples), agent_name)
     return {
-        "test_cases": test_cases,
-        "previous_inputs": new_prev,
-        "dataset_name": "",
-        "experiment_name": "",
+        "dataset_examples": dataset_examples,
     }
 
 

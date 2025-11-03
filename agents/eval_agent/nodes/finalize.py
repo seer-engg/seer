@@ -1,7 +1,7 @@
 """nodes for finalizing the evaluation"""
 import os
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from langchain_core.messages import AIMessage
 from langgraph.graph import END, START, StateGraph
@@ -9,9 +9,9 @@ from langgraph.pregel.remote import RemoteGraph
 from langgraph_sdk import get_sync_client
 
 from agents.eval_agent.constants import CODEX_REMOTE_URL, LANGSMITH_CLIENT
-from agents.eval_agent.models import EvalAgentState, RunContext
+from agents.eval_agent.models import EvalAgentState
 from shared.logger import get_logger
-from shared.schema import GithubContext, SandboxContext, TestingContext, UserContext, TestResult, CodexInput, CodexOutput
+from shared.schema import SandboxContext, CodexInput
 
 
 logger = get_logger("eval_agent.finalize")
@@ -42,62 +42,28 @@ def _extract_branch_from_codex_response(response: Any) -> tuple[Optional[str], D
     return branch_name, metadata
 
 
-def _prepare_finalize_context(state: EvalAgentState) -> dict:
-    run_ctx = state.run or RunContext()
-
-    codex_thread_id = state.codex_thread_id
-    failed_cases = list(run_ctx.last_failed_cases or [])
-    structured_test_results: List[TestResult] = []
-    for case in failed_cases:
-        structured_test_results.append(
-            TestResult(
-                input_sent=str(case.get("input", "")),
-                actual_output=str(case.get("actual_output", "")),
-                expected_behavior=str(case.get("expected_output") or case.get("expected_behavior", "")),
-                passed=False,
-                score=float(case.get("score", 0.0)),
-                judge_reasoning=str(case.get("judge_comment", "")),
-            )
-        )
-
-    codex_response_payload = state.codex_response
-
-    testing_context = TestingContext(test_results=structured_test_results)
-    testing_context.test_cases = state.test_cases
-
-    return {
-        "testing_context": testing_context,
-        "codex_thread_id": codex_thread_id,
-        "codex_response": codex_response_payload,
-        "codex_followup_branch": state.codex_followup_branch,
-    }
-
-
 async def _handoff_to_codex(state: EvalAgentState) -> dict:
-    codex_thread_id = state.codex_thread_id
-    testing_context = state.testing_context or TestingContext()
-    github_context = state.github_context or GithubContext(repo_url="")
-    sandbox_context = state.sandbox_context or SandboxContext(sandbox_id="", working_directory=None, working_branch=None)
-    user_context = state.user_context or UserContext(user_expectation="")
+    if not state.github_context or not state.user_context:
+        raise RuntimeError("GitHub and user context are required for Codex handoff")
+    if not state.dataset_context or not state.active_experiment:
+        raise RuntimeError("Dataset and experiment context are required for Codex handoff")
 
-    # Prepare typed CodexInput and default CodexOutput for downstream state
-    github_ctx_for_input = github_context or GithubContext(repo_url="")
-    sandbox_ctx_for_input = sandbox_context or SandboxContext(
+    github_context = state.github_context
+    sandbox_context = state.sandbox_context or SandboxContext(
         sandbox_id="",
-        working_directory=None,
-        working_branch=None,
+        working_directory="",
+        working_branch="",
     )
-    user_ctx_for_input = user_context or UserContext(user_expectation="")
-    testing_ctx_for_input = testing_context or TestingContext()
-    codex_input = CodexInput(
-        github_context=github_ctx_for_input,
-        sandbox_context=sandbox_ctx_for_input,
-        user_context=user_ctx_for_input,
-        testing_context=testing_ctx_for_input,
-    )
-    codex_output: CodexOutput = CodexOutput(agent_updated=False, new_branch_name=None)
+    user_context = state.user_context
 
-    codex_followup_branch = state.codex_followup_branch
+    codex_input = CodexInput(
+        github_context=github_context,
+        sandbox_context=sandbox_context,
+        user_context=user_context,
+        dataset_context=state.dataset_context.model_copy(deep=True),
+        experiment_context=state.active_experiment.model_copy(deep=True),
+        dataset_examples=list(state.dataset_examples or []),
+    )
 
     codex_input_payload: Dict[str, Any] = codex_input.model_dump()
 
@@ -114,12 +80,11 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
 
     logger.info("Planner payload: %s", planner_payload)
 
+    # create a new thread for the Codex agent
     codex_sync_client = get_sync_client(url=CODEX_REMOTE_URL)
-    if not codex_thread_id:
-        thread = await asyncio.to_thread(codex_sync_client.threads.create)
-        codex_thread_id = thread["thread_id"]
+    thread = await asyncio.to_thread(codex_sync_client.threads.create)
 
-    codex_thread_cfg = {"configurable": {"thread_id": codex_thread_id}}
+    codex_thread_cfg = {"configurable": {"thread_id": thread["thread_id"]}}
     codex_remote = RemoteGraph(
         "planner",
         url=CODEX_REMOTE_URL,
@@ -134,66 +99,38 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
         codex_thread_cfg,
     )
 
-    branch_name = _extract_branch_from_codex_response(codex_response)
+    branch_name, metadata = _extract_branch_from_codex_response(codex_response)
     if branch_name:
-        codex_followup_branch = branch_name
-        codex_output = CodexOutput(agent_updated=True, new_branch_name=branch_name)
+        logger.info("Codex handoff response metadata: %s", metadata)
     else:
         logger.error("finalize.handoff: Codex response missing branch_name: %s", codex_response)
 
-    return {
-        "codex_thread_id": codex_thread_id,
-        "codex_request": codex_input.model_dump(),
-        "codex_response": codex_output.model_dump(),
-        "codex_followup_branch": codex_followup_branch,
-    }
+    return {}
 
 
 def _summarize_finalize(state: EvalAgentState) -> dict:
-    run_ctx = state.run or RunContext()
-    attempts = len(run_ctx.score_history or [])
-    latest_score = run_ctx.score
-    average_score = (sum(run_ctx.score_history or []) / attempts) if attempts else run_ctx.score
-    codex_thread_id = state.codex_thread_id
-    failed_cases = list(run_ctx.last_failed_cases or [])
-    codex_response_payload = state.codex_response
+    experiment = state.active_experiment
+    dataset = state.dataset_context
+    latest_score = experiment.mean_score if experiment else 0.0
+    failed_cases = list(experiment.failed_results) if experiment else []
 
     logger.info(
-        "finalize_node: attempts=%d latest_score=%.3f average_score=%.3f",
-        attempts,
+        "finalize_node: attempts=%d latest_score=%.3f",
+        state.attempts,
         latest_score,
-        average_score,
     )
 
     user_summary = (
-        f"Final evaluation complete: attempts={max(attempts, state.attempts)}; "
-        f"average score={average_score:.2f} (0–1), latest={latest_score:.2f}. "
-        f"Dataset=`{run_ctx.dataset_name}`, Experiment=`{run_ctx.experiment_name}`."
+        f"Final evaluation complete: attempts={state.attempts}; "
+        f"latest score={latest_score:.2f}. "
+        f"Dataset=`{dataset.dataset_name if dataset else ''}`, Experiment=`{experiment.experiment_name if experiment else ''}`."
     )
-    if codex_thread_id:
-        user_summary += f" Codex thread ID: {codex_thread_id}."
     if failed_cases:
         user_summary += f" Escalated failing tests: {len(failed_cases)}."
 
-    codex_branch = state.codex_followup_branch
-    if codex_branch:
-        user_summary += f" Codex branch: {codex_branch}."
-
-    codex_response_value = (
-        codex_response_payload.model_dump() if hasattr(codex_response_payload, "model_dump") else codex_response_payload
-    )
-
     next_state: Dict[str, Any] = {
         "messages": [AIMessage(content=user_summary)],
-        "codex_thread_id": codex_thread_id,
-        "codex_response": codex_response_value,
-        "codex_followup_branch": codex_branch,
     }
-
-    run_updates: Dict[str, Any] = {}
-
-    if run_updates:
-        next_state["run"] = run_ctx.model_copy(update=run_updates)
 
     return next_state
 
@@ -205,10 +142,8 @@ def build_finalize_subgraph():
     builder.add_edge("summarize", END)
     
     if os.getenv("CODEX_HANDOFF_ENABLED") == "true":
-        builder.add_node("prepare", _prepare_finalize_context)
         builder.add_node("handoff", _handoff_to_codex)
-        builder.add_edge(START, "prepare")
-        builder.add_edge("prepare", "handoff")
+        builder.add_edge(START, "handoff")
         builder.add_edge("handoff", "summarize")
     else:
         # just summarize the results

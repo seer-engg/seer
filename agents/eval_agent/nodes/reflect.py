@@ -1,7 +1,7 @@
 from typing import Any, List
 
 from agents.eval_agent.constants import LLM
-from agents.eval_agent.models import EvalAgentState, EvalReflection, RunContext
+from agents.eval_agent.models import EvalAgentState, EvalReflection
 from agents.eval_agent.reflection_store import persist_reflection
 from shared.logger import get_logger
 
@@ -18,11 +18,14 @@ def _truncate(text: Any, limit: int = 280) -> str:
 
 def reflect_node(state: EvalAgentState) -> dict:
     """Summarize how tests should be improved and persist as EvalReflection."""
-    run_ctx = state.run or RunContext()
 
-    latest_score = run_ctx.score_history[-1] if run_ctx.score_history else run_ctx.score
+    experiment = state.active_experiment
+    if not experiment:
+        raise RuntimeError("Cannot reflect without an active experiment.")
 
-    failed_cases = list(run_ctx.last_failed_cases or [])
+    latest_score = experiment.mean_score if experiment.results else 0.0
+
+    failed_cases = [res for res in state.latest_results if not res.passed]
     recent_failures = failed_cases[:5]
 
     if recent_failures:
@@ -30,26 +33,27 @@ def reflect_node(state: EvalAgentState) -> dict:
         for case in recent_failures:
             failure_lines.append(
                 (
-                    f"  Input: {_truncate(case.get('input'))}\n"
-                    f"  Expected: {_truncate(case.get('expected_output'))}\n"
-                    f"  Actual: {_truncate(case.get('actual_output')) or '(empty)'}\n"
-                    f"  Judge feedback: {_truncate(case.get('judge_comment')) or '(none)'}\n"
-                    f"  Score: {case.get('score', 0.0):.3f}"
+                    f"  Thread / Example ID: {case.dataset_example.example_id}\n"
+                    f"  Input: {_truncate(case.dataset_example.input_message)}\n"
+                    f"  Expected: {_truncate(case.dataset_example.expected_output)}\n"
+                    f"  Actual: {_truncate(case.actual_output) or '(empty)'}\n"
+                    f"  Judge feedback: {_truncate(case.judge_reasoning) or '(none)'}\n"
+                    f"  Score: {case.score:.3f}\n"
                 )
             )
         failures_text = "\n".join(failure_lines)
     else:
         failures_text = "All tests passed on the latest attempt. Focus on preventing regressions."
 
-    score_history = ", ".join(f"{score:.3f}" for score in (run_ctx.score_history or [])) or "(no score history)"
+    user_expectation = state.user_context.user_expectation if state.user_context else ""
 
     summary_prompt = (
         "You are a QA lead improving end-to-end eval tests.\n"
-        "Review the provided run context and produce an EvalReflection with actionable guidance.\n"
+        "Review the provided experiment context and produce an EvalReflection with actionable guidance.\n"
         "Keep recommendations concise, specific, and test-focused.\n\n"
-        f"User expectations: {state.user_context.user_expectation}\n"
+        f"User expectations: {user_expectation}\n"
         f"Latest aggregate score: {latest_score:.3f}\n"
-        f"Score history: {score_history}\n"
+        f"Score history: {state.active_experiment.mean_score:.3f}\n"
         "Failed test cases (up to 5 most recent):\n"
         f"{failures_text}\n\n"
         "Return fields that match the EvalReflection schema.\n"
@@ -62,9 +66,11 @@ def reflect_node(state: EvalAgentState) -> dict:
     reflection_llm = LLM.with_structured_output(EvalReflection)
     reflection: EvalReflection = reflection_llm.invoke(summary_prompt)
 
-    # Ensure correct agent_name populated
-    reflection.agent_name = state.github_context.agent_name
+    if state.github_context:
+        reflection.agent_name = state.github_context.agent_name
     reflection.latest_score = reflection.latest_score or latest_score
+    reflection.dataset_name = state.dataset_context.dataset_name if state.dataset_context else None
+    reflection.experiment_name = experiment.experiment_name
 
     logger.info(
         "reflect_node: captured reflection trace (agent=%s prompt_chars=%d failures_used=%d)",
@@ -73,11 +79,9 @@ def reflect_node(state: EvalAgentState) -> dict:
         len(recent_failures),
     )
 
-    persist_reflection(state.github_context.agent_name, reflection)
+    if state.github_context:
+        persist_reflection(state.github_context.agent_name, reflection)
 
     return {
         "attempts": state.attempts + 1,
-        "codex_thread_id": state.codex_thread_id,
-        "codex_request": state.codex_request,
-        "codex_response": state.codex_response,
     }

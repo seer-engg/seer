@@ -1,22 +1,20 @@
+"""models for the evaluation agent"""
 from datetime import datetime
-from typing import Annotated, Optional, List, Dict, Any
+from typing import Annotated, Optional, List
+
 from pydantic import BaseModel, Field
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
-from shared.schema import SandboxContext, GithubContext, UserContext, GeneratedTestCase
 
-
-class RunContext(BaseModel):
-    """Context for the latest evaluation attempt."""
-    dataset_name: str = Field(default="", description="Dataset name for the latest evaluation attempt")
-    experiment_name: str = Field(default="", description="Experiment identifier for the latest evaluation attempt")
-    score: float = Field(default=0.0, description="Latest mean correctness score")
-    score_history: List[float] = Field(default_factory=list, description="History of aggregate scores across attempts")
-    current_thread_id: Optional[str] = Field(default=None, description="Temporary thread used during the current run invocation")
-    last_results: List[Dict[str, Any]] = Field(default_factory=list, description="Raw result rows produced by the most recent run before upload")
-    last_failed_cases: List[Dict[str, Any]] = Field(default_factory=list, description="Failed test case details from the most recent run")
-    experiment_start_time: datetime = Field(default_factory=datetime.now, description="Start time of the latest evaluation attempt")
-    experiment_end_time: datetime = Field(default_factory=datetime.now, description="End time of the latest evaluation attempt")
+from shared.schema import (
+    SandboxContext,
+    GithubContext,
+    UserContext,
+    DatasetExample,
+    DatasetContext,
+    ExperimentContext,
+    ExperimentResultContext,
+)
 
 
 class EvalReflection(BaseModel):
@@ -52,15 +50,13 @@ class EvalReflection(BaseModel):
 
 class EvalAgentState(BaseModel):
     """State for the evaluation agent."""
+
     messages: Annotated[list[BaseMessage], add_messages]
     attempts: int = Field(default=0, description="Number of completed eval attempts")
-    user_context: UserContext = Field(default=None, description="Context for the user")
-    sandbox_context: SandboxContext = Field(default=None, description="Context for the active sandbox")
-    github_context: GithubContext = Field(default=None, description="Context for the active GitHub repository")
-    run: RunContext = Field(default_factory=RunContext, description="Execution context for evaluation attempts")
-    test_cases: List[GeneratedTestCase] = Field(default_factory=list, description="List of generated test cases")
-    previous_inputs: list[str] = Field(default_factory=list, description="History of prior test input messages to avoid repetition")
-    codex_thread_id: Optional[str] = Field(default=None, description="Stable thread identifier used when contacting the Codex agent")
-    codex_request: Optional[Dict[str, Any]] = Field(default=None, description="Last Codex handoff payload sent for remediation")
-    codex_response: Optional[Dict[str, Any]] = Field(default=None, description="Codex response payload, if available")
-    codex_followup_branch: Optional[str] = Field(default=None, description="Git branch produced by Codex for follow-up evaluation")
+    user_context: Optional[UserContext] = Field(default=None, description="Context for the user")
+    sandbox_context: Optional[SandboxContext] = Field(default=None, description="Context for the active sandbox")
+    github_context: Optional[GithubContext] = Field(default=None, description="Context for the active GitHub repository")
+    dataset_context: DatasetContext = Field(default_factory=DatasetContext, description="Dataset metadata used across experiments")
+    active_experiment: Optional[ExperimentContext] = Field(default=None, description="Currently running experiment context")
+    latest_results: List[ExperimentResultContext] = Field(default_factory=list, description="Results from the latest experiment execution")
+    dataset_examples: List[DatasetExample] = Field(default_factory=list, description="List of generated test cases")

@@ -12,7 +12,7 @@
       "test_results": [
         {
           "actual_output": "def sum(a,b) return float(a+b)",
-          "expected_behavior": "def sum(a+b): return a+b",
+          "expected_output": "def sum(a+b): return a+b",
           "input_sent": "what is wrong in the code def sum(a,b) return a+b",
           "judge_reasoning": "The agent should have figured out that semicolon was missing in function defenintion and corrected it",
           "passed": false,

@@ -1,8 +1,7 @@
 """Shared LLM utilities"""
-
-from langchain_openai import ChatOpenAI
-from typing import Optional
 import os
+from typing import Optional
+from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -17,7 +16,7 @@ def get_llm(
     Get a configured LLM instance.
     
     Args:
-        model: Model name (uses gpt-4o-mini if not specified)
+        model: Model name
         temperature: Temperature setting
         api_key: Optional API key override
         
@@ -29,17 +28,10 @@ def get_llm(
         if not api_key:
             raise ValueError("OPENAI_API_KEY not found in environment")
     
-    model_name = model or os.getenv("LLM_MODEL") or "gpt-4o-mini"
-    try:
-        temp_env = os.getenv("LLM_TEMPERATURE")
-        if temp_env is not None:
-            temperature = float(temp_env)
-    except Exception:
-        pass
+    model_name = model or "gpt-4.1-nano-2025-04-14"
 
     return ChatOpenAI(
         model=model_name,
         temperature=temperature,
         api_key=api_key
     )
-
