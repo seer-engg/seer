@@ -20,6 +20,8 @@ from shared.llm import get_llm
 LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
 LANGSMITH_CLIENT = Client(api_key=LANGSMITH_API_KEY)
 logger = get_logger("eval_runner")
+LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
+LANGSMITH_CLIENT = Client(api_key=LANGSMITH_API_KEY)
 
 LLM = get_llm(temperature=0.2)
 CORRECTNESS_EVALUATOR = create_llm_as_judge(
