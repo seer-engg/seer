@@ -1,5 +1,9 @@
-from pydantic import BaseModel, Field, computed_field, ConfigDict
+"""
+This file contains the schemas for the shared data between the agents.
+Please review each agents code before making any changes to this file.
+"""
 from typing import List, Optional
+from pydantic import BaseModel, Field, computed_field, ConfigDict
 
 
 class TestResult(BaseModel):
@@ -15,6 +19,7 @@ class TestResult(BaseModel):
 
 
 class GeneratedTestCase(BaseModel):
+    """A generated test case"""
     input_message: str
     expected_behavior: str
     success_criteria: str
@@ -22,9 +27,9 @@ class GeneratedTestCase(BaseModel):
 
 class GithubContext(BaseModel):
     """Context for the active GitHub repository"""
-    agent_name: str = Field(..., description="The name of the agent")
-    repo_url: str
-    branch_name: Field(default="main", description="The name of the branch")
+    agent_name: str = Field(description="The name of the agent")
+    repo_url: str = Field(description="The URL of the repository")
+    branch_name: str = Field(description="The name of the branch. Default is main if not specified")
     model_config = ConfigDict(extra="forbid")
 
 
@@ -40,7 +45,7 @@ class SandboxContext(BaseModel):
     """Context for the active sandbox session."""
     sandbox_id: str = Field(..., description="The ID of the sandbox session")
     working_directory: str = Field("", description="The working directory of the sandbox")
-    working_branch: str = Field(default="main", description="The working branch of the sandbox")
+    working_branch: str = Field(description="The working branch of the sandbox. Default is main if not specified")
 
     @computed_field
     @property
@@ -51,18 +56,20 @@ class SandboxContext(BaseModel):
 
 class UserContext(BaseModel):
     """Context for the user."""
-    user_id: str = Field(default='user_123', description="The ID of the user")
+    user_id: str = Field(description="The ID of the user. Default is user_123 if not specified")
     user_expectation: str = Field(..., description="The user's expectation")
     model_config = ConfigDict(extra="forbid")
 
 
 class CodexInput(BaseModel):
+    """Input for the Codex agent"""
     github_context: GithubContext = Field(..., description="The GitHub context")
     sandbox_context: Optional[SandboxContext] = Field(None, description="The sandbox context")
     user_context: UserContext = Field(..., description="The user context")
     testing_context: TestingContext = Field(..., description="The testing context")
 
 class CodexOutput(BaseModel):
+    """Output for the Codex agent"""
     agent_updated: bool = Field(False, description="Whether the agent was updated")
     new_branch_name: Optional[str] = Field(None, description="The name of the new branch")
     updated_sandbox_context: Optional[SandboxContext] = Field(None, description="The updated sandbox context")
