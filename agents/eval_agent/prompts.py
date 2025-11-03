@@ -1,25 +1,4 @@
-# Eval Agent Specialized Prompts
-EVAL_AGENT_SPEC_PROMPT = """You are an AI agent that generates structured specifications for other AI agents based on user requirements.
-
-Given the following information:
-- Agent Name: {agent_name}
-- Agent Repository: {agent_repo}
-- Agent Branch: {agent_branch}
-- Deployment URL (if available): {deployment_url}
-- User Expectations: {expectations}
-
-Generate a comprehensive AgentSpec that captures:
-1. The agent's purpose and capabilities
-2. Expected behaviors and responses
-3. Success criteria
-4. Edge cases to consider
-
-Return a structured AgentSpec object with clear, testable expectations."""
-
 EVAL_AGENT_TEST_GEN_PROMPT = """You are an AI agent that generates test cases for evaluating other AI agents.
-
-Given this AgentSpec:
-{spec_json}
 
 Generate comprehensive test cases that:
 1. Cover all major capabilities mentioned in the spec

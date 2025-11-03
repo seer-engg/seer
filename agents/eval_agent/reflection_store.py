@@ -2,8 +2,11 @@ import json
 import uuid
 from typing import Any, Dict, List, Optional
 
-from agents.eval_agent.deps import LANGGRAPH_CLIENT, LANGGRAPH_SYNC_CLIENT, logger
+from shared.logger import get_logger
+from agents.eval_agent.constants import LANGGRAPH_CLIENT, LANGGRAPH_SYNC_CLIENT
 from agents.eval_agent.models import EvalReflection
+
+logger = get_logger("eval_agent.reflection_store")
 
 
 async def search_eval_reflections(agent_name: str, query: str, limit: int = 5) -> List[Dict[str, Any]]:
@@ -14,7 +17,8 @@ async def search_eval_reflections(agent_name: str, query: str, limit: int = 5) -
         query=query,
         limit=limit,
     )
-    return list(results)
+    logger.info("search_eval_reflections: %s", results)
+    return list(results["items"])
 
 
 def _parse_reflection_item(item: Dict[str, Any]) -> Optional[EvalReflection]:
@@ -24,8 +28,9 @@ def _parse_reflection_item(item: Dict[str, Any]) -> Optional[EvalReflection]:
     return EvalReflection.model_validate(value)
 
 
-async def load_recent_reflections(agent_name: str, expectations: str, limit: int = 5) -> List[EvalReflection]:
-    prior_results = await search_eval_reflections(agent_name, expectations, limit=limit)
+async def load_recent_reflections(agent_name: str, query: str, limit: int = 5) -> List[EvalReflection]:
+    """Load recent reflections from the LangGraph store index."""
+    prior_results = await search_eval_reflections(agent_name, query, limit=limit)
     reflections: List[EvalReflection] = []
     for item in prior_results:
         reflection = _parse_reflection_item(item)
@@ -35,6 +40,7 @@ async def load_recent_reflections(agent_name: str, expectations: str, limit: int
 
 
 def format_reflections_for_prompt(reflections: List[EvalReflection], limit: int = 5) -> str:
+    """Format reflections for the prompt."""
     if not reflections:
         return "[]"
 

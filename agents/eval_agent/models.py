@@ -1,69 +1,23 @@
 from datetime import datetime
-from typing import Annotated, Optional, List, Literal, Dict, Any
+from typing import Annotated, Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
-
-from shared.schema import GeneratedTestCase
-
-class DeploymentContext(BaseModel):
-    url: Optional[str] = Field(default=None, description="HTTP base URL for the deployed target agent")
-    repo_url: Optional[str] = Field(default=None, description="Git repository associated with the current deployment")
-    branch_name: Optional[str] = Field(default=None, description="Git branch targeted for evaluation")
-    sandbox_id: Optional[str] = Field(default=None, description="Identifier for the active E2B sandbox session")
-    sandbox_repo_dir: Optional[str] = Field(default=None, description="Absolute path of the checked-out repository inside the sandbox")
-    sandbox_branch: Optional[str] = Field(default=None, description="Branch currently active inside the sandbox")
-    setup_script: Optional[str] = Field(default=None, description="Shell script used to set up the project inside the sandbox")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional deployment metadata (timestamps, codex info, etc.)")
+from shared.schema import SandboxContext, GithubContext, UserContext, GeneratedTestCase
 
 
 class RunContext(BaseModel):
+    """Context for the latest evaluation attempt."""
     dataset_name: str = Field(default="", description="Dataset name for the latest evaluation attempt")
     experiment_name: str = Field(default="", description="Experiment identifier for the latest evaluation attempt")
     score: float = Field(default=0.0, description="Latest mean correctness score")
     score_history: List[float] = Field(default_factory=list, description="History of aggregate scores across attempts")
-    attempts: int = Field(default=0, description="Number of completed eval attempts")
     current_thread_id: Optional[str] = Field(default=None, description="Temporary thread used during the current run invocation")
     last_results: List[Dict[str, Any]] = Field(default_factory=list, description="Raw result rows produced by the most recent run before upload")
-    last_metadata: Dict[str, Any] = Field(default_factory=dict, description="Aggregated metrics/metadata from the most recent run used for handoff")
     last_failed_cases: List[Dict[str, Any]] = Field(default_factory=list, description="Failed test case details from the most recent run")
-    accumulated_failed_cases: List[Dict[str, Any]] = Field(default_factory=list, description="Cumulative failing cases across attempts pending Codex escalation")
-    accumulated_metadata: Dict[str, Any] = Field(default_factory=dict, description="Metadata tied to accumulated failures for Codex handoff")
+    experiment_start_time: datetime = Field(default_factory=datetime.now, description="Start time of the latest evaluation attempt")
+    experiment_end_time: datetime = Field(default_factory=datetime.now, description="End time of the latest evaluation attempt")
 
-
-class Expectation(BaseModel):
-    """A single behavioral expectation for the agent"""
-    description: str = Field(description="What the agent should do")
-    context: Optional[str] = Field(default=None, description="When/why this applies")
-    priority: Literal["must", "should", "nice-to-have"] = Field(default="should")
-
-
-class AgentSpec(BaseModel):
-    """Complete specification for an agent's expected behavior"""
-    name: str = Field(description="Name of the agent being specified")
-    version: str = Field(default="1.0.0", description="Spec version")
-    description: str = Field(description="What the agent does")
-    expectations: List[Expectation] = Field(description="List of behavioral expectations")
-    created_at: datetime = Field(default_factory=datetime.now)
-
-
-
-
-
-class GeneratedTests(BaseModel):
-    test_cases: list[GeneratedTestCase]
-
-
-class TargetAgentConfig(BaseModel):
-    graph_name: str = Field(description="Name of the graph (NOT ASSISTANT ID WHICH IS A HEX STRING) to evaluate")
-    repo_url: str = Field(description="Git repository containing the target agent")
-    expectations: str = Field(description="User's natural language expectations")
-    url: Optional[str] = Field(default=None, description="Base URL where the agent is already hosted, if any")
-    branch_name: str = Field(default="main", description="Git branch to check out inside the sandbox")
-    setup_script: str = Field(
-        default="pip install -e .",
-        description="Shell script (single line) to set up the project inside the sandbox before launch",
-    )
 
 class EvalReflection(BaseModel):
     """A meta-evaluation insight to improve future eval generation only."""
@@ -97,18 +51,16 @@ class EvalReflection(BaseModel):
 
 
 class EvalAgentState(BaseModel):
+    """State for the evaluation agent."""
     messages: Annotated[list[BaseMessage], add_messages]
-    target_agent_config: Optional[TargetAgentConfig] = Field(default=None, description="Configuration for the target agent to evaluate")
-    deployment: DeploymentContext = Field(default_factory=DeploymentContext, description="Context for the active deployment/sandbox")
+    attempts: int = Field(default=0, description="Number of completed eval attempts")
+    user_context: UserContext = Field(default=None, description="Context for the user")
+    sandbox_context: SandboxContext = Field(default=None, description="Context for the active sandbox")
+    github_context: GithubContext = Field(default=None, description="Context for the active GitHub repository")
     run: RunContext = Field(default_factory=RunContext, description="Execution context for evaluation attempts")
-    # Planning
-    test_cases: list[GeneratedTestCase] = Field(default_factory=list)
+    test_cases: List[GeneratedTestCase] = Field(default_factory=list, description="List of generated test cases")
     previous_inputs: list[str] = Field(default_factory=list, description="History of prior test input messages to avoid repetition")
-    planning_trace: Dict[str, Any] = Field(default_factory=dict, description="LLM prompt/response traces captured during planning")
     codex_thread_id: Optional[str] = Field(default=None, description="Stable thread identifier used when contacting the Codex agent")
     codex_request: Optional[Dict[str, Any]] = Field(default=None, description="Last Codex handoff payload sent for remediation")
     codex_response: Optional[Dict[str, Any]] = Field(default=None, description="Codex response payload, if available")
     codex_followup_branch: Optional[str] = Field(default=None, description="Git branch produced by Codex for follow-up evaluation")
-    codex_followup_metadata: Dict[str, Any] = Field(default_factory=dict, description="Auxiliary metadata returned by Codex during handoff")
-    pending_followup: bool = Field(default=False, description="Whether the eval agent must execute a follow-up evaluation on Codex's branch")
-    finalize_context: Dict[str, Any] = Field(default_factory=dict, description="Temporary data assembled while finalizing an eval attempt")

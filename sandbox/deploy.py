@@ -1,13 +1,21 @@
-import re
+"""sandbox/deploy.py: Deploy a server and confirm it is ready."""
 import asyncio
 from e2b import AsyncSandbox, AsyncCommandHandle
 from shared.logger import get_logger
-logger = get_logger("codex.planner.deploy_server")
-from .constants import SUCCESS_PAT, FAIL_PATTERNS, TARGET_AGENT_PORT
-
+from sandbox.constants import SUCCESS_PAT, FAIL_PATTERNS, TARGET_AGENT_PORT
+logger = get_logger("sandbox.deploy_server")
 
 
 async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, timeout_s: int = 40) -> tuple[AsyncSandbox, AsyncCommandHandle]:
+    """Deploy a server and confirm it is ready.
+    Args:
+        cmd: The command to deploy the server.
+        sb: The sandbox to deploy the server in.
+        cwd: The working directory to deploy the server in.
+        timeout_s: The timeout in seconds to wait for the server to be ready.
+    Returns:
+        A tuple containing the sandbox and the command handle.
+    """
     ready_evt = asyncio.Event()
     failed_evt = asyncio.Event()
     last_err = []
@@ -30,7 +38,6 @@ async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, 
         # Check the accumulated buffer for success pattern (could span chunks)
         full_buffer = ''.join(stderr_buffer)
         if SUCCESS_PAT.search(full_buffer):
-            logger.info("✓ SUCCESS PATTERN FOUND!")
             ready_evt.set()
             return  # No need to check for failures if success found
             
