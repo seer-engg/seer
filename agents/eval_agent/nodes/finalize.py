@@ -182,6 +182,7 @@ def _prepare_finalize_context(state: EvalAgentState) -> dict:
     user_context = UserContext(user_expectation=user_expectations) if user_expectations else None
 
     testing_context = TestingContext(test_results=structured_test_results)
+    testing_context.test_cases = state.test_cases
 
     deployment_metadata.update(
         {

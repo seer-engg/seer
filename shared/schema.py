@@ -12,12 +12,21 @@ class TestResult(BaseModel):
     score: float = Field(ge=0.0, le=1.0, description="Judge's score 0-1")
     judge_reasoning: str = Field(description="Why the judge scored this way")
 
+
+class GeneratedTestCase(BaseModel):
+    input_message: str
+    expected_behavior: str
+    success_criteria: str
+    expected_output: Optional[str] = None
+
 class GithubContext(BaseModel):
     repo_url: str
     branch_name: str
 
 class TestingContext(BaseModel):
     test_results: List[TestResult]
+    test_cases: List[GeneratedTestCase]
+    graph_name: str
     # branch_name: str
 
 class SandboxContext(BaseModel):

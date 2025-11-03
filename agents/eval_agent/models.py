@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 
-
+from shared.schema import GeneratedTestCase
 
 class DeploymentContext(BaseModel):
     url: Optional[str] = Field(default=None, description="HTTP base URL for the deployed target agent")
@@ -47,11 +47,7 @@ class AgentSpec(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
 
 
-class GeneratedTestCase(BaseModel):
-    input_message: str
-    expected_behavior: str
-    success_criteria: str
-    expected_output: Optional[str] = None
+
 
 
 class GeneratedTests(BaseModel):

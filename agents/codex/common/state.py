@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated, List, Literal, Optional, TypedDict
+from typing import Annotated, List, Literal, Optional, TypedDict, Dict, Any
 
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage
@@ -38,16 +38,11 @@ class PlannerState(CodexInput, CodexOutput):
     
 
 
-class Failure(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    test_intention: str = Field(..., description="The intention of the test")
-    failure_reason: str = Field(..., description="The reason for the failure")
-    optional_reference: str = Field(... , description="An optional refrence to the code that failed the test")
 
 class TestResults(BaseModel):
     model_config = ConfigDict(extra="forbid")
     success: bool = Field(..., description="Whether the tests passed for the requested implementations")
-    failures: List[Failure] = Field(..., description="The failures of the tests")
+    failures: List[Dict[str, Any]] = Field(..., description="The failures of the tests")
 
 
 class ProgrammerState(CodexInput):
@@ -60,3 +55,4 @@ class ProgrammerState(CodexInput):
     server_running: bool = Field(False, description="Whether the server is running")
     pr_summary: Optional[str] = Field(None, description="The summary of the PR")
     updated_sandbox_context: Optional[SandboxContext] = Field(None, description="The updated sandbox context")
+    deployment_url: Optional[str] = Field(None, description="Public URL of the deployed LangGraph service")

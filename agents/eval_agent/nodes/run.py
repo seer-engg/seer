@@ -88,6 +88,7 @@ async def _prepare_run_context(state: EvalAgentState) -> dict:
         "deployment": deployment,
     }
 
+from shared.eval_runner import run_evals
 
 async def _execute_test_cases(state: EvalAgentState) -> dict:
     cfg = state.target_agent_config
@@ -101,109 +102,8 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
         raise ValueError("_execute_test_cases requires a deployment URL")
 
     thread_id = run_ctx.current_thread_id
-    sync_client = get_sync_client(url=target_url)
-    if not thread_id:
-        thread = sync_client.threads.create()
-        thread_id = thread["thread_id"]
 
-    thread_cfg = {"configurable": {"thread_id": thread_id}}
-    remote_graph = RemoteGraph(
-        cfg.graph_name,
-        url=target_url,
-        client=LANGSMITH_CLIENT,
-        sync_client=sync_client,
-        distributed_tracing=True,
-    )
-
-    results_payload: List[Dict[str, Any]] = []
-    failed_cases: List[Dict[str, Any]] = []
-    scores: List[float] = []
-    passed_count = 0
-    total_tests = len(state.test_cases)
-
-    experiment_start_time = datetime.now(timezone.utc)
-    earliest_start = experiment_start_time
-    latest_end = experiment_start_time
-
-    for tc in state.test_cases:
-        question = tc.input_message
-        expected = tc.expected_output or tc.expected_behavior
-        row_id = uuid.uuid4().hex
-
-        run_start = datetime.now(timezone.utc)
-        try:
-            result = await asyncio.to_thread(
-                remote_graph.invoke,
-                {"messages": [{"role": "user", "content": question}]},
-                thread_cfg,
-            )
-            answer = result.get("messages", [{}])[-1].get("content", "")
-        except Exception as invoke_error:
-            logger.error("run.execute: error invoking remote graph: %s", invoke_error)
-            answer = ""
-        run_end = datetime.now(timezone.utc)
-
-        try:
-            eval_result: EvaluatorResult = await asyncio.to_thread(
-                CORRECTNESS_EVALUATOR,
-                inputs={"question": question},
-                outputs={"answer": answer},
-                reference_outputs={"answer": expected},
-            )
-            score = float(eval_result.get("score", 0.0))
-            evaluator_comment = eval_result.get("comment", "")
-        except Exception as eval_error:
-            logger.error("run.execute: error running correctness evaluator: %s", eval_error)
-            score = 0.0
-            evaluator_comment = f"Evaluation error: {eval_error}"
-
-        scores.append(score)
-        if score >= PASS_THRESHOLD:
-            passed_count += 1
-        else:
-            failed_cases.append(
-                {
-                    "input": question,
-                    "expected_output": expected,
-                    "actual_output": answer,
-                    "success_criteria": tc.success_criteria,
-                    "score": score,
-                    "judge_comment": evaluator_comment,
-                }
-            )
-
-        results_payload.append(
-            {
-                "row_id": row_id,
-                "inputs": {"question": question},
-                "expected_outputs": {"answer": expected},
-                "actual_outputs": {"answer": answer},
-                "evaluation_scores": [
-                    {
-                        "key": "correctness",
-                        "score": score,
-                        "comment": evaluator_comment,
-                    }
-                ],
-                "start_time": run_start,
-                "end_time": run_end,
-                "run_name": cfg.graph_name,
-                "run_metadata": {
-                    "success_criteria": tc.success_criteria,
-                },
-            }
-        )
-
-        if run_start < earliest_start:
-            earliest_start = run_start
-        if run_end > latest_end:
-            latest_end = run_end
-
-    logger.info(
-        "run.execute: completed %d tests (failures=%d)",
-        total_tests,
-        len(failed_cases),
-    )
+    results_payload, failed_cases, scores, passed_count, total_tests, earliest_start, latest_end = await run_evals(target_url, cfg.graph_name, state.test_cases)    
 
     metadata = dict(run_ctx.last_metadata or {})
     metadata.update(
@@ -211,7 +111,7 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
             "scores": scores,
             "passed_count": passed_count,
             "total_tests": total_tests,
-            "experiment_start_time": experiment_start_time,
+            "experiment_start_time": earliest_start,
             "earliest_start": earliest_start,
             "latest_end": latest_end,
         }
