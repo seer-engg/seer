@@ -75,11 +75,12 @@ echo "SANDBOX_BRANCH=$BRANCH"
     return textwrap.dedent(script)
 
 
+TARGET_AGENT_LANGSMITH_PROJECT = 'target_agent'
 
 TARGET_AGENT_ENVS={
     'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY'),
     'LANGSMITH_API_KEY': os.getenv('LANGSMITH_API_KEY'),
-    'LANGSMITH_PROJECT': 'target_agent',
+    'LANGSMITH_PROJECT': TARGET_AGENT_LANGSMITH_PROJECT,
 }
 
 
