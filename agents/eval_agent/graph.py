@@ -2,7 +2,7 @@
 from typing import Literal
 from langgraph.graph import END, START, StateGraph
 
-from agents.eval_agent.constants import MAX_ATTEMPTS
+from agents.eval_agent.constants import N_ROUNDS
 from agents.eval_agent.nodes.finalize import build_finalize_subgraph
 from agents.eval_agent.models import EvalAgentState
 from agents.eval_agent.nodes.plan import build_plan_subgraph
@@ -12,7 +12,7 @@ from agents.eval_agent.nodes.run import build_run_subgraph
 
 def should_continue(state: EvalAgentState) -> Literal["reflect", "finalize"]:
     """Determine if the eval loop should continue reflecting or finalize."""
-    return "reflect" if state.attempts < MAX_ATTEMPTS else "finalize"
+    return "reflect" if state.attempts < N_ROUNDS else "finalize"
 
 def build_graph():
     """Build the evaluation agent graph."""

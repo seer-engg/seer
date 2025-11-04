@@ -1,8 +1,10 @@
+"""node for reflecting on the latest test results and persisting as EvalReflection"""
 from typing import Any, List
 
 from agents.eval_agent.constants import LLM
 from agents.eval_agent.models import EvalAgentState, EvalReflection
 from agents.eval_agent.reflection_store import persist_reflection
+from shared.schema import ExperimentResultContext
 from shared.logger import get_logger
 
 logger = get_logger("eval_agent.reflect")
@@ -25,12 +27,12 @@ def reflect_node(state: EvalAgentState) -> dict:
 
     latest_score = experiment.mean_score if experiment.results else 0.0
 
-    failed_cases = [res for res in state.latest_results if not res.passed]
-    recent_failures = failed_cases[:5]
+    latest_results: List[ExperimentResultContext] = state.latest_results or []
+    failed_cases = [res for res in latest_results if not res.passed]
 
-    if recent_failures:
+    if failed_cases:
         failure_lines: List[str] = []
-        for case in recent_failures:
+        for case in failed_cases:
             failure_lines.append(
                 (
                     f"  Thread / Example ID: {case.dataset_example.example_id}\n"
@@ -76,11 +78,16 @@ def reflect_node(state: EvalAgentState) -> dict:
         "reflect_node: captured reflection trace (agent=%s prompt_chars=%d failures_used=%d)",
         state.github_context.agent_name,
         len(summary_prompt),
-        len(recent_failures),
+        len(failed_cases),
     )
 
     if state.github_context:
-        persist_reflection(state.github_context.agent_name, reflection)
+        # persist failed cases as evidence
+        persist_reflection(
+            agent_name=state.github_context.agent_name, 
+            reflection=reflection,
+            evidence_results=failed_cases,
+        )
 
     return {
         "attempts": state.attempts + 1,

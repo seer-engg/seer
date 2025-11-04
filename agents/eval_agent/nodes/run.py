@@ -2,9 +2,10 @@
 import asyncio
 import json
 import os
-import requests
 from typing import List
 from datetime import datetime
+
+import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
 from e2b import AsyncSandbox
 
@@ -12,6 +13,7 @@ from langchain_core.messages import ToolMessage
 from langgraph.graph import END, START, StateGraph
 
 from agents.eval_agent.models import EvalAgentState
+from agents.eval_agent.constants import NEO4J_GRAPH
 from shared.eval_runner import run_evals
 from shared.logger import get_logger
 from shared.schema import DatasetContext, ExperimentContext, ExperimentResultContext
@@ -65,6 +67,41 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
         state.github_context.agent_name,
         state.dataset_examples,
     )
+
+    # --- NEW: LOG FACTUAL MEMORIES TO NEO4J ---
+    # We log the graph data asynchronously in the background
+    # 1. Create a list of parameters for each test case and its result
+    cypher_params = []
+    for res in results:
+        cypher_params.append({
+            "example": res.dataset_example.model_dump(),
+            "result": res.model_dump(exclude={'dataset_example'}),
+        })
+    
+    # 2. Define the Cypher query to create the graph structure
+    # This query creates/updates the test case and the result,
+    # and connects them with a relationship.
+    cypher_query = """
+    UNWIND $params as row
+    
+    // Merge the TestCase node (based on its unique ID)
+    MERGE (ex:DatasetExample {example_id: row.example.example_id})
+    ON CREATE SET ex = row.example
+    
+    // Merge the Result node (based on its unique thread_id)
+    MERGE (res:ExperimentResult {thread_id: row.result.thread_id})
+    ON CREATE SET res = row.result
+    ON MATCH SET res += row.result // Update if it exists
+    
+    // Connect the TestCase to its Result
+    MERGE (ex)-[r:WAS_RUN_IN]->(res)
+    
+    RETURN count(*)
+    """
+    
+    # 3. Run the query
+    await asyncio.to_thread(NEO4J_GRAPH.query, cypher_query, params={"params": cypher_params})
+    logger.info(f"run.execute: Logged {len(results)} test results to Neo4j.")
 
     experiment = state.active_experiment
     experiment.results.extend(results)

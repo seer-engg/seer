@@ -19,6 +19,7 @@ from shared.schema import (
 
 class EvalReflection(BaseModel):
     """A meta-evaluation insight to improve future eval generation only."""
+    reflection_id: str = Field(..., description="Unique ID for this reflection")
     agent_name: str = Field(description="Target agent/graph this reflection applies to")
     summary: str = Field(description="Concise reflection focused on improving test quality/coverage")
     failure_modes: List[str] = Field(

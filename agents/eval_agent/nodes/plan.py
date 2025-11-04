@@ -6,12 +6,13 @@ import os
 import json
 from typing import List
 from uuid import uuid4
-from pydantic import BaseModel, ConfigDict
+
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
-from langchain_openai import ChatOpenAI
 
-from agents.eval_agent.constants import LLM
+from agents.eval_agent.constants import LLM, N_TEST_CASES
 from agents.eval_agent.models import (
     EvalAgentState,
     DatasetExample,
@@ -19,10 +20,7 @@ from agents.eval_agent.models import (
 from agents.eval_agent.prompts import (
     EVAL_AGENT_TEST_GEN_PROMPT,
 )
-from agents.eval_agent.reflection_store import (
-    format_reflections_for_prompt,
-    load_recent_reflections,
-)
+from agents.eval_agent.reflection_store import graph_rag_retrieval
 from sandbox import (
     TARGET_AGENT_COMMAND,
     TARGET_AGENT_PORT,
@@ -43,6 +41,7 @@ async def _invoke_test_generation_llm(
     prev_dataset_examples: str,
 ) -> List[DatasetExample]:
     augmented_prompt = EVAL_AGENT_TEST_GEN_PROMPT.format(
+        N_TEST_CASES=N_TEST_CASES,
         user_expectation=user_expectation,
         reflections_text=reflections_text,
         prev_dataset_examples=prev_dataset_examples,
@@ -54,15 +53,8 @@ async def _invoke_test_generation_llm(
         Since structured output does not support lists, we need to define it explicitly.
         """
         dataset_examples: List[DatasetExample]
-        model_config = ConfigDict(extra="forbid")
 
-
-    _smart_llm = ChatOpenAI(
-        model="gpt-5-codex",
-        use_responses_api=True,             # <— key change
-        output_version="responses/v1",      # nicer content blocks from Responses
-        reasoning={"effort": "medium"},     # optional; supported by Responses models
-    )
+    _smart_llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
 
     test_generation_llm = _smart_llm.with_structured_output(_TestGenerationOutput)
     generated: _TestGenerationOutput = await test_generation_llm.ainvoke(augmented_prompt)
@@ -153,13 +145,21 @@ async def _provision_target_agent(state: EvalAgentState) -> dict:
 
 async def _generate_eval_plan(state: EvalAgentState) -> dict:
     agent_name = state.github_context.agent_name
-    reflections = await load_recent_reflections(agent_name, 'what previous tests failed',limit=5)
-    reflections_text = format_reflections_for_prompt(reflections)
+ 
+    # Get top 3 most relevant reflections + their evidence using GraphRAG
+    reflections_text = await graph_rag_retrieval(
+        query="what previous tests failed and why?",
+        agent_name=agent_name,
+        limit=3 # Get top 3 most relevant reflections + their evidence
+    )
+
+    # Get just the inputs from the most recent run
+    previous_inputs = [res.dataset_example.input_message for res in state.latest_results]
 
     dataset_examples = await _invoke_test_generation_llm(
         user_expectation=state.user_context.user_expectation,
         reflections_text=reflections_text,
-        prev_dataset_examples=json.dumps([example.model_dump() for example in state.dataset_examples], indent=2),
+        prev_dataset_examples=json.dumps(previous_inputs, indent=2),
     )
 
     logger.info("plan.generate: produced %d tests (agent=%s)", len(dataset_examples), agent_name)
