@@ -6,9 +6,10 @@ import os
 import json
 from typing import List
 from uuid import uuid4
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
+from langchain_openai import ChatOpenAI
 
 from agents.eval_agent.constants import LLM
 from agents.eval_agent.models import (
@@ -53,8 +54,17 @@ async def _invoke_test_generation_llm(
         Since structured output does not support lists, we need to define it explicitly.
         """
         dataset_examples: List[DatasetExample]
+        model_config = ConfigDict(extra="forbid")
 
-    test_generation_llm = LLM.with_structured_output(_TestGenerationOutput)
+
+    _smart_llm = ChatOpenAI(
+        model="gpt-5-codex",
+        use_responses_api=True,             # <— key change
+        output_version="responses/v1",      # nicer content blocks from Responses
+        reasoning={"effort": "medium"},     # optional; supported by Responses models
+    )
+
+    test_generation_llm = _smart_llm.with_structured_output(_TestGenerationOutput)
     generated: _TestGenerationOutput = await test_generation_llm.ainvoke(augmented_prompt)
     
     for example in generated.dataset_examples:

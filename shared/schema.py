@@ -2,7 +2,6 @@
 This file contains the schemas for the shared data between the agents.
 Please review each agents code before making any changes to this file.
 """
-from uuid import uuid4
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, Field, ConfigDict, computed_field
@@ -11,14 +10,11 @@ from pydantic import BaseModel, Field, ConfigDict, computed_field
 class DatasetExample(BaseModel):
     """Single example in a dataset."""
 
-    example_id: str = Field(
-        default_factory=lambda: str(uuid4()),
-        description="UUID of the example. A hexadecimal string (e.g., 'a1b2c3d4...')",
-    )  
+    example_id: str = Field(..., description="UUID of the example. A hexadecimal string (e.g., 'a1b2c3d4...')")
     reasoning: str = Field(
         description="Why is this example important? What aspect of target agent will it be testing?"
     )
-    input_message: str = Field(..., description="The input message that should be send to target agent")
+    input_message: str = Field(..., description="The input message that should be send to target agent. MUST NOT CONTAIN ANY HINTS. MUST NOT CONTAIN EXPECTED OUTPUT!")
     expected_output: str = Field(..., description="The expected output that should be produced by the target agent")
     model_config = ConfigDict(extra="forbid")
 
@@ -26,6 +22,7 @@ class DatasetExample(BaseModel):
 class ExperimentResultContext(BaseModel):
     """Full record of a single test execution."""
 
+    thread_id: str = Field(..., description="The thread ID of the evaluation")
     dataset_example: DatasetExample = Field(..., description="The example that was evaluated")
     actual_output: str = Field(..., description="The output produced by the target agent")
     score: float = Field(ge=0.0, le=1.0, description="Judge's score 0-1")

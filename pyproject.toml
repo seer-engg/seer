@@ -23,6 +23,7 @@ dependencies = [
   "pinecone>=5.0.0",
   "pandas>=2.3.3",
   "openevals>=0.1.0",
+  "tenacity>=9.1.2",
 ]
 
 [build-system]

@@ -2,16 +2,19 @@
 import asyncio
 import json
 import os
-from datetime import datetime
-
 import requests
+from typing import List
+from datetime import datetime
+from tenacity import retry, stop_after_attempt, wait_exponential
+from e2b import AsyncSandbox
+
 from langchain_core.messages import ToolMessage
 from langgraph.graph import END, START, StateGraph
 
 from agents.eval_agent.models import EvalAgentState
 from shared.eval_runner import run_evals
 from shared.logger import get_logger
-from shared.schema import DatasetContext, ExperimentContext
+from shared.schema import DatasetContext, ExperimentContext, ExperimentResultContext
 
 logger = get_logger("eval_agent.run")
 
@@ -54,7 +57,10 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     if not state.active_experiment:
         raise RuntimeError("Active experiment missing before executing tests")
 
-    results, scores = await run_evals(
+    # connect to sandbox before running evals
+    await AsyncSandbox.connect(state.sandbox_context.sandbox_id, timeout=60*20) # 20 minutes
+
+    results: List[ExperimentResultContext] = await run_evals(
         state.sandbox_context.deployment_url,
         state.github_context.agent_name,
         state.dataset_examples,
@@ -66,9 +72,7 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     if results:
         experiment.started_at = min(res.started_at for res in results)
         experiment.completed_at = max(res.completed_at for res in results)
-
-    if scores:
-        experiment.mean_score = sum(scores) / len(scores)
+        experiment.mean_score = sum(res.score for res in results) / len(results)
 
     logger.info(
         "run.execute: completed %d tests (failures=%d)",
@@ -83,6 +87,7 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     }
 
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=15))
 async def _upload_run_results(state: EvalAgentState) -> dict:
     experiment = state.active_experiment
     dataset = state.dataset_context
