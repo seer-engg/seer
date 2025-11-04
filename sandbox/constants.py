@@ -78,6 +78,8 @@ echo "SANDBOX_BRANCH=$BRANCH"
 
 TARGET_AGENT_ENVS={
     'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY'),
+    'LANGSMITH_API_KEY': os.getenv('LANGSMITH_API_KEY'),
+    'LANGSMITH_PROJECT': 'target_agent',
 }
 
 
