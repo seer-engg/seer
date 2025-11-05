@@ -98,15 +98,14 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     
     // Merge the TestCase node, now namespaced by user_id
     MERGE (ex:DatasetExample {example_id: row.example.example_id, user_id: $user_id})
-    ON CREATE SET ex = row.example
+    ON CREATE SET ex += row.example
+    ON MATCH SET ex += row.example
     
     // Merge the Result node, now namespaced by user_id
     MERGE (res:ExperimentResult {thread_id: row.result.thread_id, user_id: $user_id})
-    // ON CREATE SET res = row.result  <-- This is now incorrect
-    // ON MATCH SET res += row.result <-- This is now incorrect
     
     // Use SET to overwrite all properties, ensuring schema stays current
-    SET res = row.result
+    SET res += row.result
     
     // Connect the TestCase to its Result
     MERGE (ex)-[r:WAS_RUN_IN]->(res)
@@ -114,13 +113,14 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     RETURN count(*)
     """
     
-    # 3. Run the query
-    await asyncio.to_thread(
-        NEO4J_GRAPH.query, 
-        cypher_query, 
+    # 3. Run the query and capture the response
+    query_result = await asyncio.to_thread(
+        NEO4J_GRAPH.query,
+        cypher_query,
         params={"params": cypher_params, "user_id": user_id}
     )
-    logger.info(f"run.execute: Logged {len(results)} test results to Neo4j for user {user_id}")
+    
+    logger.info(f"run.execute: Neo4j query response: {query_result}")
 
     experiment = state.active_experiment
     experiment.results.extend(results)
