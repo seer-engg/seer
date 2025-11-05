@@ -29,7 +29,6 @@ async def deploy_service(state: PlannerState) -> PlannerState:
         server_url = sb.get_host(TARGET_AGENT_PORT)
         return {
             "server_running": True,
-            "deployment_url": server_url,
             'agent_updated': True,
         }
     except Exception as e:

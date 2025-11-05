@@ -21,14 +21,10 @@ async def test_implementation(state: ProgrammerState) -> ProgrammerState:
         cwd=state.updated_sandbox_context.working_directory,
         timeout_s=50
     )
-    state.deployment_url = f"https://{sbx.get_host(2024)}"
-    # if not state.deployment_url:
-        # raise ValueError("Deployment URL missing for programmer test execution")
-    if not state.github_context:
-        raise ValueError("GitHub context missing for programmer test execution")
+    url = f"https://{sbx.get_host(2024)}"
 
     results: List[ExperimentResultContext] = await run_evals(
-        state.deployment_url,
+        url,
         state.github_context.agent_name,
         state.dataset_examples,
     )

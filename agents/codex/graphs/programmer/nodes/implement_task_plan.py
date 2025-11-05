@@ -13,7 +13,6 @@ from sandbox.tools import (
     inspect_directory,
     create_file,
     create_directory,
-    apply_patch,
     write_file,
     patch_file,
     SandboxToolContext,
@@ -55,21 +54,7 @@ SYSTEM_PROMPT = f"""
     When done, return a brief status summary. You just need to implement the task, you don't need to generate or run any test the implementation.
     You have been provided with following tools to do necessary operation in root directory of the codebase repository.
 
-    Available tools:
-    {read_file.description}
-    {grep.description}
-    {inspect_directory.description}
-    {create_file.description}
-    {create_directory.description}
-    {apply_patch.description}
-    {write_file.description}
-    {patch_file.description}
-    {web_search.description}
-    {think.description}
-    {mark_task_item_as_done.description}
-
     # Important Notes:
-    - Always use the think tool to think about the task before implementing it.
     - use desired tools to implement the task.
     - for searching of packages, use the web_search tool, do not use pip search.
 """
@@ -94,7 +79,6 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
             inspect_directory,
             create_file,
             create_directory,
-            think,
             write_file,
             patch_file,
             web_search,

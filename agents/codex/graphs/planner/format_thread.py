@@ -7,6 +7,7 @@ import json
 import os
 import asyncio
 import random
+from langsmith.schemas import Run
 
 MAX_IO_CHARS = 500  # keep console readable
 
@@ -20,7 +21,7 @@ def _short(obj):
 def _fmt_time(dt):
     return (dt or datetime.utcnow()).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
-async def _collect_runs(client: AsyncClient, **kwargs) -> List[object]:
+async def _collect_runs(client: AsyncClient, **kwargs) -> List[Run]:
     delay_seconds = 0.5
     max_attempts = 6
     for attempt in range(max_attempts):
@@ -72,7 +73,7 @@ async def fetch_thread_runs(thread_id: str, project_name: str | None = None):
     )
 
     # 2) Walk the tree to get every descendant
-    all_runs: Dict[str, object] = {}
+    all_runs: Dict[str, Run] = {}
     children_index: Dict[str, List[str]] = {}
 
     for root in roots:
@@ -112,8 +113,7 @@ async def fetch_thread_timeline_as_string(thread_id: str, project_name: str | No
     def walk(run_id: str, depth=0):
         r = runs[run_id]
         indent = "  " * depth
-        t = _fmt_time(r.start_time or r.end_time)
-        lines.append(f"{indent}- [{t}] {r.name or r.run_type} (type={r.run_type})")
+        lines.append(f"{indent}-{r.name or r.run_type} (type={r.run_type})")
         if r.inputs:
             lines.append(f"{indent}    ↳ in : {_short(r.inputs)}")
         if r.outputs:

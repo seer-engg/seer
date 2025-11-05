@@ -28,14 +28,6 @@ SYSTEM_PROMPT = f"""
     Your role is to Create a plan for the Agent to be developed.
     Your task is to plan the next steps to be taken to improve the agent by analyzing the failed eval thread  of the agent  and understanding the current state of the agent through its code .
     Create a plan with 3-7 concrete steps to fulfill the request.
-
-    Available tools:
-    {run_command.description}
-    {inspect_directory.description}
-    {read_file.description}
-    {grep.description}
-    {web_search.description}
-    {think.description}
     
     ## Notes:
     - use respective tools to gather context and plan the task.
@@ -51,10 +43,13 @@ USER_PROMPT = """
 """
 
 EVALS_AND_THREAD_TRACE_TEMPLATE = """
-    -EVAL: 
+    
+    <EVAL> 
     {eval}
-    -THREAD TRACE:
+    </EVAL>
+    <THREAD TRACE>
     {thread_trace}
+    </THREAD TRACE>
 """
 
 
@@ -74,7 +69,6 @@ async def context_and_plan_agent(state: PlannerState) -> PlannerState:
             read_file,
             grep,
             web_search,
-            think,
         ],
         system_prompt=SYSTEM_PROMPT,
         state_schema=PlannerState,
@@ -93,7 +87,7 @@ async def context_and_plan_agent(state: PlannerState) -> PlannerState:
             "SCORE:": eval.score,
             "JUDGE FEEDBACK:": eval.judge_reasoning
         }
-        thread_trace = await fetch_thread_timeline_as_string(eval.dataset_example.example_id, TARGET_AGENT_LANGSMITH_PROJECT)
+        thread_trace = await fetch_thread_timeline_as_string(eval.thread_id, TARGET_AGENT_LANGSMITH_PROJECT)
         evals_and_thread_traces.append(
             EVALS_AND_THREAD_TRACE_TEMPLATE.format(
                 eval=x,
