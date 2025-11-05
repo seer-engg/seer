@@ -32,9 +32,7 @@ def mark_task_item_as_done(task_item_id: int, runtime: ToolRuntime) -> str:
     Returns:
         A command to update the task plan
     """
-    taskplan: TaskPlan = runtime.state.get('taskPlan')  
-    if not taskplan:
-        raise ValueError("No task plan found")
+    taskplan: TaskPlan = runtime.state.get('taskPlan')
     for item in taskplan.items:
         if item.id == task_item_id:
             item.status = "done"
@@ -90,7 +88,7 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
 
     # Pass context along with state
     result = await agent.ainvoke(
-        state, 
+        input={"messages": state.messages}, 
         config=RunnableConfig(recursion_limit=100),
         context=SandboxToolContext(sandbox_context=updated_sandbox_context)  # Pass sandbox context
     )
@@ -104,6 +102,6 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
 
     return {
         "taskPlan": plan,
-        "messages": result.get("messages", []),
+        "messages": AIMessage(content=pr_summary),
         "pr_summary": pr_summary,
     }
