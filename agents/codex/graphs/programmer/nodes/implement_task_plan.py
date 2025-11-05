@@ -13,7 +13,6 @@ from sandbox.tools import (
     inspect_directory,
     create_file,
     create_directory,
-    apply_patch,
     write_file,
     patch_file,
     SandboxToolContext,
@@ -33,9 +32,7 @@ def mark_task_item_as_done(task_item_id: int, runtime: ToolRuntime) -> str:
     Returns:
         A command to update the task plan
     """
-    taskplan: TaskPlan = runtime.state.get('taskPlan')  
-    if not taskplan:
-        raise ValueError("No task plan found")
+    taskplan: TaskPlan = runtime.state.get('taskPlan')
     for item in taskplan.items:
         if item.id == task_item_id:
             item.status = "done"
@@ -55,21 +52,7 @@ SYSTEM_PROMPT = f"""
     When done, return a brief status summary. You just need to implement the task, you don't need to generate or run any test the implementation.
     You have been provided with following tools to do necessary operation in root directory of the codebase repository.
 
-    Available tools:
-    {read_file.description}
-    {grep.description}
-    {inspect_directory.description}
-    {create_file.description}
-    {create_directory.description}
-    {apply_patch.description}
-    {write_file.description}
-    {patch_file.description}
-    {web_search.description}
-    {think.description}
-    {mark_task_item_as_done.description}
-
     # Important Notes:
-    - Always use the think tool to think about the task before implementing it.
     - use desired tools to implement the task.
     - for searching of packages, use the web_search tool, do not use pip search.
 """
@@ -94,7 +77,6 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
             inspect_directory,
             create_file,
             create_directory,
-            think,
             write_file,
             patch_file,
             web_search,
@@ -106,7 +88,7 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
 
     # Pass context along with state
     result = await agent.ainvoke(
-        state, 
+        input={"messages": state.messages}, 
         config=RunnableConfig(recursion_limit=100),
         context=SandboxToolContext(sandbox_context=updated_sandbox_context)  # Pass sandbox context
     )
@@ -120,6 +102,6 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
 
     return {
         "taskPlan": plan,
-        "messages": result.get("messages", []),
+        "messages": AIMessage(content=pr_summary),
         "pr_summary": pr_summary,
     }

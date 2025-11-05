@@ -7,12 +7,35 @@ import json
 import os
 import asyncio
 import random
+from langsmith.schemas import Run
 
-MAX_IO_CHARS = 500  # keep console readable
+MAX_IO_CHARS = 10000  # keep console readable
 
-def _short(obj):
+KEYS_TO_REMOVE = {"id", "model_name", "refusal", "logprobs", "model_provider", "service_tier",
+"system_fingerprint", "token_usage" , "usage_metadata"
+}
+
+def _remove_keys_recursively(value, keys_to_remove={"id", "model_name"}):
+    """
+    Return a new structure with specified keys removed from all nested dicts.
+    Does not mutate the original input.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _remove_keys_recursively(nested_value, keys_to_remove)
+            for key, nested_value in value.items()
+            if key not in keys_to_remove
+        }
+    if isinstance(value, list):
+        return [_remove_keys_recursively(item, keys_to_remove) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_remove_keys_recursively(item, keys_to_remove) for item in value)
+    return value
+
+def _short(obj:dict):
     try:
-        s = json.dumps(obj, ensure_ascii=False, default=str)
+        sanitized = _remove_keys_recursively(obj, KEYS_TO_REMOVE)
+        s = json.dumps(sanitized, ensure_ascii=False, default=str)
     except Exception:
         s = str(obj)
     return (s[:MAX_IO_CHARS] + "…") if s and len(s) > MAX_IO_CHARS else s
@@ -20,7 +43,7 @@ def _short(obj):
 def _fmt_time(dt):
     return (dt or datetime.utcnow()).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
-async def _collect_runs(client: AsyncClient, **kwargs) -> List[object]:
+async def _collect_runs(client: AsyncClient, **kwargs) -> List[Run]:
     delay_seconds = 0.5
     max_attempts = 6
     for attempt in range(max_attempts):
@@ -72,7 +95,7 @@ async def fetch_thread_runs(thread_id: str, project_name: str | None = None):
     )
 
     # 2) Walk the tree to get every descendant
-    all_runs: Dict[str, object] = {}
+    all_runs: Dict[str, Run] = {}
     children_index: Dict[str, List[str]] = {}
 
     for root in roots:
@@ -112,8 +135,7 @@ async def fetch_thread_timeline_as_string(thread_id: str, project_name: str | No
     def walk(run_id: str, depth=0):
         r = runs[run_id]
         indent = "  " * depth
-        t = _fmt_time(r.start_time or r.end_time)
-        lines.append(f"{indent}- [{t}] {r.name or r.run_type} (type={r.run_type})")
+        lines.append(f"{indent}-{r.name or r.run_type} (type={r.run_type})")
         if r.inputs:
             lines.append(f"{indent}    ↳ in : {_short(r.inputs)}")
         if r.outputs:

@@ -17,7 +17,7 @@ logger = get_logger("codex.programmer")
 
 
 def reflection_router(state: ProgrammerState) -> ProgrammerState:
-    if state.attempt_number >= state.max_attempts:
+    if state.success or state.attempt_number >= state.max_attempts:
         return "finalize"
     return "reflect"
 

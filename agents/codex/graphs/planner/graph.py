@@ -33,8 +33,6 @@ async def _run_programmer(state: PlannerState) -> PlannerState:
         "experiment_context": state.experiment_context,
         "dataset_examples": state.dataset_examples,
         "taskPlan": state.taskPlan,
-        "messages": state.messages,
-        "deployment_url": state.deployment_url,
     }
     programmer_output = await programmer_graph.ainvoke(programmer_input)
     return {
