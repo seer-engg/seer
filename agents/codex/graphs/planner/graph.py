@@ -13,6 +13,7 @@ from agents.codex.graphs.planner.nodes.deploy import deploy_service
 from agents.codex.graphs.planner.nodes.test_server_ready import test_server_ready
 from agents.codex.graphs.programmer.graph import graph as programmer_graph
 from shared.schema import CodexInput, CodexOutput
+from agents.codex.graphs.planner.nodes import finalize
 
 logger = get_logger("codex.planner")
 
@@ -69,6 +70,7 @@ def compile_planner_graph():
     workflow.add_node("raise-pr", raise_pr)
     workflow.add_node("deploy-service", deploy_service)
     workflow.add_node("test-server-ready", test_server_ready)
+    workflow.add_node("finalize", finalize)
 
     workflow.add_edge(START, "prepare-graph-state")
     workflow.add_edge("prepare-graph-state", "initialize-project")
@@ -85,7 +87,8 @@ def compile_planner_graph():
         "end": END
     })
     workflow.add_edge("raise-pr", "deploy-service")
-    workflow.add_edge("deploy-service", END)
+    workflow.add_edge("deploy-service", "finalize")
+    workflow.add_edge("finalize", END)
 
     return workflow.compile(debug=True)
 
