@@ -19,7 +19,7 @@ async def graph_rag_retrieval(query: str, agent_name: str, user_id: str, limit: 
     similar_reflections = await NEO4J_VECTOR.asimilarity_search_with_score(
         query,
         k=limit,
-        filters={"agent_name": agent_name, "user_id": user_id}
+        filters={"agent_name": agent_name, "user_id": user_id, 'latest_score': {'$lt': 1.0}}
     )
     if not similar_reflections:
         logger.warning(f"reflection_store: No similar reflections found for user {user_id}.")

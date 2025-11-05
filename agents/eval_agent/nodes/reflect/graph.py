@@ -88,14 +88,4 @@ async def reflect_node(state: EvalAgentState) -> dict:
         context=tool_context  # Pass the context for the tools
     )
 
-    new_attempts = agent_response.get("update", {}).get("attempts")
-    if new_attempts is None:
-        # Fallback, though this shouldn't happen
-        logger.warning("reflect_node: 'attempts' field missing from agent response.")
-        new_attempts = state.attempts + 1
-    elif not isinstance(new_attempts, int):
-        # Handle if 'attempts' is somehow not an int
-        logger.warning(f"reflect_node: 'attempts' field was not an int, got {type(new_attempts)}. Resetting.")
-        new_attempts = state.attempts + 1
-
-    return {"attempts": new_attempts}
+    return {"attempts": state.attempts + 1}
