@@ -5,17 +5,17 @@ from typing import List, Any
 from pydantic import BaseModel
 from langchain.tools import tool, ToolRuntime
 from langgraph.types import Command
-from langchain_core.documents import Document
 from langchain_core.messages import ToolMessage
+from langchain_openai import OpenAIEmbeddings 
 
-from agents.eval_agent.constants import NEO4J_GRAPH, NEO4J_VECTOR
+from agents.eval_agent.constants import NEO4J_GRAPH, OPENAI_API_KEY
 from agents.eval_agent.models import EvalReflection, Hypothesis
 from agents.eval_agent.reflection_store import _truncate
 from shared.schema import ExperimentResultContext
 from shared.logger import get_logger
 
 
-
+_embeddings_client = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
 logger = get_logger("eval_agent.reflection_tools")
 
 
@@ -113,57 +113,70 @@ def persist_reflection(
     evidence_results: List[ExperimentResultContext]
 ) -> None:
     """
-    Store the complete EvalReflection object in the graph
-    and its summary in the vector index.
+    Atomically store the complete EvalReflection object AND its links
+    in a single, robust transaction.
+    This solves a race condition where ExperimentResult nodes were
+    not queryable in time for link creation.
     """
     
-    # 1. Store the summary in the vector index
-    doc = Document(
-        page_content=reflection.hypothesis.summary,
-        metadata={
-            "user_id": user_id,
-            "reflection_id": reflection.reflection_id,
-            "agent_name": agent_name,
-            "latest_score": reflection.latest_score,
-            "attempt": reflection.attempt,
-        }
-    )
-    NEO4J_VECTOR.add_documents([doc])
-    logger.info(f"reflection_store: Stored summary for {reflection.reflection_id} in vector index.")
-        
-    # 2. Store the full reflection node and link it to evidence
+    # 1. Manually generate the embedding
+    embedding = _embeddings_client.embed_query(reflection.hypothesis.summary)
+
+    # 2. Extract data for the query
     evidence_thread_ids = [res.thread_id for res in evidence_results]
     
-    # Extract the primitive lists from the hypothesis
-    failure_modes_list = reflection.hypothesis.failure_modes
-    recommended_tests_list = reflection.hypothesis.recommended_tests
-
+    # 3. Define the single, atomic Cypher query
     cypher_query = """
+    // 1. Create or Merge the main Reflection node
     MERGE (ref:EvalReflection {reflection_id: $reflection_id})
-    SET
+    ON CREATE SET
+        ref.summary = $summary,
+        ref.embedding = $embedding,
+        ref.user_id = $user_id,
+        ref.agent_name = $agent_name,
+        ref.latest_score = $latest_score,
+        ref.attempt = $attempt,
         ref.failure_modes = $failure_modes,
-        ref.recommended_tests = $recommended_tests,
-        ref.user_id = $user_id
-        // 'summary' and 'embedding' are already set by add_documents()
-
+        ref.recommended_tests = $recommended_tests
+    ON MATCH SET // Update if it already exists (e.g., if embedding failed first time)
+        ref.summary = $summary,
+        ref.embedding = $embedding,
+        ref.latest_score = $latest_score,
+        ref.attempt = $attempt,
+        ref.failure_modes = $failure_modes,
+        ref.recommended_tests = $recommended_tests
+    
+    // 2. Link it to its evidence (if any)
     WITH ref
     UNWIND $evidence_thread_ids AS thread_id
+    
+    // Match the result nodes from the *previous* graph step
     MATCH (res:ExperimentResult {thread_id: thread_id, user_id: $user_id})
+    
+    // Create the link
     MERGE (ref)-[r:GENERATED_FROM]->(res)
+    
     RETURN count(r) as links_created
     """
     
-    NEO4J_GRAPH.query(
+    # 4. Execute the query
+    result = NEO4J_GRAPH.query(
         cypher_query,
         params={
-            "user_id": user_id,
             "reflection_id": reflection.reflection_id,
-            "failure_modes": failure_modes_list,          # Pass the list
-            "recommended_tests": recommended_tests_list,  # Pass the list
+            "summary": reflection.hypothesis.summary,
+            "embedding": embedding,
+            "user_id": user_id,
+            "agent_name": agent_name,
+            "latest_score": reflection.latest_score,
+            "attempt": reflection.attempt,
+            "failure_modes": reflection.hypothesis.failure_modes,
+            "recommended_tests": reflection.hypothesis.recommended_tests,
             "evidence_thread_ids": evidence_thread_ids,
         }
     )
-    logger.info(f"reflection_store: Linked reflection {reflection.reflection_id} to evidence for user {user_id}.")
+    links = result[0]['links_created'] if result else 0
+    logger.info(f"reflection_store: Atomically stored reflection {reflection.reflection_id} and created {links} links.")
 
 
 @tool
