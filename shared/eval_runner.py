@@ -103,7 +103,7 @@ CORRECTNESS_EVALUATOR = create_llm_as_judge(
     continuous=True,
 )
 
-PASS_THRESHOLD = 0.8
+PASS_THRESHOLD = 0.95
 
 
 async def run_evals(target_url: str, graph_name: str, dataset_examples: List[DatasetExample]) -> List[ExperimentResultContext]:
@@ -148,6 +148,8 @@ async def run_evals(target_url: str, graph_name: str, dataset_examples: List[Dat
         score = float(eval_result.get("score", 0))
         evaluator_comment = eval_result.get("comment", "")
         passed = score >= PASS_THRESHOLD
+
+        # logger.info(f"run.execute: score={score}, passed={passed}, evaluator_comment={evaluator_comment}")
 
         results.append(
             ExperimentResultContext(

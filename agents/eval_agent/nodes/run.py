@@ -181,7 +181,7 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
         "experiment_end_time": (experiment.completed_at or datetime.utcnow()).isoformat(),
         "summary_experiment_scores": [
             {
-                "key": "mean_correctness",
+                "key": "correctness",
                 "score": round(mean_score, 3),
                 "comment": "Average correctness score across generated tests.",
             },

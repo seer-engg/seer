@@ -40,12 +40,12 @@ async def graph_rag_retrieval(query: str, agent_name: str, user_id: str, limit: 
     # 2. Graph Retrieval (Find the "Proof")
     cypher_query = """
     UNWIND $reflection_ids as ref_id
-    MATCH (ref:EvalReflection {reflection_id: ref_id})
+    MATCH (ref:EvalReflection {reflection_id: ref_id, user_id: $user_id})
     
     // Ensure we only get reflections linked to actual failures
-    MATCH (ref)-[:GENERATED_FROM]->(res:ExperimentResult {passed: false})
+    MATCH (ref)-[:GENERATED_FROM]->(res:ExperimentResult {passed: false, user_id: $user_id})
     
-    MATCH (ex:DatasetExample)-[:WAS_RUN_IN]->(res)
+    MATCH (ex:DatasetExample {user_id: $user_id})-[:WAS_RUN_IN]->(res)
     
     RETURN 
         ref.summary as reflection_summary, 
@@ -60,7 +60,7 @@ async def graph_rag_retrieval(query: str, agent_name: str, user_id: str, limit: 
     graph_result = await asyncio.to_thread(
         NEO4J_GRAPH.query,
         cypher_query, 
-        params={"reflection_ids": reflection_ids_to_query}
+        params={"reflection_ids": reflection_ids_to_query, "user_id": user_id}
     )
     
     if not graph_result:

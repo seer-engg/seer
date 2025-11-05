@@ -2,10 +2,9 @@
 Node for reflecting on the latest test results.
 This node is an "Analyst Agent" that investigates failures and flakiness.
 """
-import json
 from typing import List
 from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 
 from agents.eval_agent.constants import LLM
@@ -83,26 +82,20 @@ async def reflect_node(state: EvalAgentState) -> dict:
     initial_prompt = "Start your investigation of the latest test run."
 
     # Invoke the agent
-    # The agent's tool calls (like `save_reflection`) will return
-    # Command(update=...) which LangGraph will automatically apply
-    # to the state.
     agent_response = await analyst_agent_runnable.ainvoke(
         {"messages": [HumanMessage(content=initial_prompt)]},
         config=RunnableConfig(recursion_limit=100),
         context=tool_context  # Pass the context for the tools
     )
 
-    # The `save_reflection` tool returns a dictionary with the update payload.
-    # We need to find this tool's output in the agent's final messages
-    # and return it as the state update for the main graph.
-    update_payload = {}
-    last_message = agent_response.get("messages", [])[-1]
-    if isinstance(last_message, ToolMessage) and last_message.name == "save_reflection":
-        try:
-            # The content of the ToolMessage is a string representation of a dict
-            update_payload = json.loads(last_message.content)
-        except (json.JSONDecodeError, TypeError):
-            logger.error(f"Could not parse save_reflection output: {last_message.content}")
+    new_attempts = agent_response.get("update", {}).get("attempts")
+    if new_attempts is None:
+        # Fallback, though this shouldn't happen
+        logger.warning("reflect_node: 'attempts' field missing from agent response.")
+        new_attempts = state.attempts + 1
+    elif not isinstance(new_attempts, int):
+        # Handle if 'attempts' is somehow not an int
+        logger.warning(f"reflect_node: 'attempts' field was not an int, got {type(new_attempts)}. Resetting.")
+        new_attempts = state.attempts + 1
 
-    logger.info(f"reflect_node: Investigation complete. Update payload: {update_payload}")
-    return update_payload
+    return {"attempts": new_attempts}
