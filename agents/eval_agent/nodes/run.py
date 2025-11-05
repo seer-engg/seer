@@ -2,9 +2,10 @@
 import asyncio
 import json
 import os
-import requests
 from typing import List
 from datetime import datetime
+
+import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
 from e2b import AsyncSandbox
 
@@ -12,6 +13,7 @@ from langchain_core.messages import ToolMessage
 from langgraph.graph import END, START, StateGraph
 
 from agents.eval_agent.models import EvalAgentState
+from agents.eval_agent.constants import NEO4J_GRAPH
 from shared.eval_runner import run_evals
 from shared.logger import get_logger
 from shared.schema import DatasetContext, ExperimentContext, ExperimentResultContext
@@ -52,6 +54,9 @@ async def _prepare_run_context(state: EvalAgentState) -> dict:
 async def _execute_test_cases(state: EvalAgentState) -> dict:
     """Execute the test cases and return the results."""
 
+    if not state.user_context or not state.user_context.user_id:
+        raise ValueError("UserContext with user_id is required to log memories")
+    user_id = state.user_context.user_id
     if not state.sandbox_context or not state.github_context:
         raise RuntimeError("Sandbox and GitHub context must be set before executing tests")
     if not state.active_experiment:
@@ -65,6 +70,57 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
         state.github_context.agent_name,
         state.dataset_examples,
     )
+
+    # --- NEW: LOG FACTUAL MEMORIES TO NEO4J ---
+    # We log the graph data asynchronously in the background
+    # 1. Create a list of parameters for each test case and its result
+   # --- MODIFIED: Update Cypher query to store structured analysis ---
+    cypher_params = []
+    for res in results:
+        # Flatten the analysis object for storage as node properties
+        analysis_props = res.analysis.model_dump()
+        
+        # Combine all properties for the result node
+        result_node_props = res.model_dump(
+            exclude={'dataset_example', 'analysis', 'passed'}
+        )
+        result_node_props.update(analysis_props) # Add all analysis fields
+        result_node_props['passed'] = res.passed  # Add the computed 'passed' bool
+        
+        cypher_params.append({
+            "example": res.dataset_example.model_dump(),
+            "result": result_node_props,
+        })
+    
+    # 2. Define the Cypher query to create the graph structure
+    cypher_query = """
+    UNWIND $params as row
+    
+    // Merge the TestCase node, now namespaced by user_id
+    MERGE (ex:DatasetExample {example_id: row.example.example_id, user_id: $user_id})
+    ON CREATE SET ex += row.example
+    ON MATCH SET ex += row.example
+    
+    // Merge the Result node, now namespaced by user_id
+    MERGE (res:ExperimentResult {thread_id: row.result.thread_id, user_id: $user_id})
+    
+    // Use SET to overwrite all properties, ensuring schema stays current
+    SET res += row.result
+    
+    // Connect the TestCase to its Result
+    MERGE (ex)-[r:WAS_RUN_IN]->(res)
+    
+    RETURN count(*)
+    """
+    
+    # 3. Run the query and capture the response
+    query_result = await asyncio.to_thread(
+        NEO4J_GRAPH.query,
+        cypher_query,
+        params={"params": cypher_params, "user_id": user_id}
+    )
+    
+    logger.info(f"run.execute: Neo4j query response: {query_result}")
 
     experiment = state.active_experiment
     experiment.results.extend(results)
@@ -137,7 +193,7 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
         "experiment_end_time": (experiment.completed_at or datetime.utcnow()).isoformat(),
         "summary_experiment_scores": [
             {
-                "key": "mean_correctness",
+                "key": "correctness",
                 "score": round(mean_score, 3),
                 "comment": "Average correctness score across generated tests.",
             },
