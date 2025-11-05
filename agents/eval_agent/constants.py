@@ -73,7 +73,7 @@ LANGSMITH_CLIENT = Client(api_key=LANGSMITH_API_KEY)
 
 
 # Evaluation loop thresholds
-N_ROUNDS = 3
+N_ROUNDS = 5
 N_TEST_CASES = 3 # Number of test cases to generate in 1 round of eval
 
 
