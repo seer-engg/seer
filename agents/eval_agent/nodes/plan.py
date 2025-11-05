@@ -91,7 +91,8 @@ async def _ensure_target_agent_config(state: EvalAgentState) -> dict:
         user_context: UserContext
 
     extractor = LLM.with_structured_output(TargetAgentExtractionContext)
-    context = await extractor.ainvoke(f"{instruction}\n\nUSER:\n{last_human.content}")
+    context: TargetAgentExtractionContext = await extractor.ainvoke(f"{instruction}\n\nUSER:\n{last_human.content}")
+    context.user_context.user_raw_request = last_human.content
     return {
         "github_context": context.github_context,
         "user_context": context.user_context,

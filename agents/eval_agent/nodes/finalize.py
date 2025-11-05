@@ -63,14 +63,12 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
         dataset_context=state.dataset_context.model_copy(deep=True),
         experiment_context=state.active_experiment.model_copy(deep=True),
         dataset_examples=list(state.dataset_examples or []),
+        target_agent_version=state.target_agent_version,
     )
 
     codex_input_payload: Dict[str, Any] = codex_input.model_dump()
 
-    planner_request = (
-        f"Address failing evaluations for agent '{github_context.repo_url}'. "
-        "See the attached summary for context and required fixes."
-    )
+    planner_request = state.messages[0].content
     planner_payload: Dict[str, Any] = {
         "request": planner_request,
         "repo_url": github_context.repo_url,

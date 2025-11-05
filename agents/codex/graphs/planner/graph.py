@@ -33,16 +33,27 @@ async def _run_programmer(state: PlannerState) -> PlannerState:
         "experiment_context": state.experiment_context,
         "dataset_examples": state.dataset_examples,
         "taskPlan": state.taskPlan,
+        "target_agent_version": state.target_agent_version,
     }
     programmer_output = await programmer_graph.ainvoke(programmer_input)
+
     return {
         "pr_summary": programmer_output.get("pr_summary"),
+        "updated_sandbox_context": programmer_output.get("updated_sandbox_context"),
+        "success": programmer_output.get("success"),
+        "messages": programmer_output.get("messages"),
     }
 
 
 def is_server_ready(state: PlannerState) -> PlannerState:
     if state.server_running:
         return "context-plan-agent"
+    else:
+        return "end"
+
+async def is_success(state: PlannerState) -> PlannerState:
+    if state.success:
+        return "raise-pr"
     else:
         return "end"
 
@@ -69,7 +80,10 @@ def compile_planner_graph():
     })
 
     workflow.add_edge("context-plan-agent", "programmer")
-    workflow.add_edge("programmer", "raise-pr")
+    workflow.add_conditional_edges("programmer", is_success, {
+        "raise-pr": "raise-pr",
+        "end": END
+    })
     workflow.add_edge("raise-pr", "deploy-service")
     workflow.add_edge("deploy-service", END)
 

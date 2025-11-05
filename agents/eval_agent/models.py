@@ -91,3 +91,4 @@ class EvalAgentState(BaseModel):
     active_experiment: Optional[ExperimentContext] = Field(default=None, description="Currently running experiment context")
     latest_results: List[ExperimentResultContext] = Field(default_factory=list, description="Results from the latest experiment execution")
     dataset_examples: List[DatasetExample] = Field(default_factory=list, description="List of generated test cases")
+    target_agent_version: int = Field(default=0, description="Version of the target agent")

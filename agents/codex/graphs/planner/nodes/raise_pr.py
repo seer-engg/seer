@@ -82,13 +82,13 @@ async def raise_pr(state: PlannerState) -> PlannerState:
     sandbox_id = state.updated_sandbox_context.sandbox_id
     repo_dir = state.updated_sandbox_context.working_directory
     repo_url = state.github_context.repo_url
-    base_branch = state.sandbox_context.working_branch or "main"
-    base_branch = BASE_BRANCH
+    base_branch = state.github_context.branch_name or BASE_BRANCH
+    new_version = state.target_agent_version + 1
 
     # Generate branch name and commit message
     ts = time.strftime("%Y%m%d-%H%M%S")
     short_id = uuid.uuid4().hex[:7]
-    new_branch = f"seer/codex/{ts}-{short_id}"
+    new_branch = f"seer/codex/{ts}-{short_id}/v{new_version}"
     req_snippet = (state.user_context.user_expectation or "Automated update").strip().replace("\n", " ")
     if len(req_snippet) > 72:
         req_snippet = req_snippet[:69] + "..."
@@ -250,6 +250,7 @@ async def raise_pr(state: PlannerState) -> PlannerState:
         "new_branch_name": new_branch,
         "updated_sandbox_context": state.updated_sandbox_context,
         'agent_updated': True,
+        'target_agent_version': new_version,
     }
 
 

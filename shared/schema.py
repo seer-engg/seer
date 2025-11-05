@@ -156,6 +156,7 @@ class UserContext(BaseModel):
         description=f"The ID of the user. Default is {os.getenv('USER_ID')} if not specified"
     )
     user_expectation: str = Field(..., description="The user's expectation")
+    user_raw_request: str = Field(..., description="The raw request from the user")
     model_config = ConfigDict(extra="forbid")
 
 
@@ -168,6 +169,7 @@ class CodexInput(BaseModel):
     dataset_context: DatasetContext = Field(..., description="The dataset context associated with the evaluation")
     experiment_context: ExperimentContext = Field(..., description="The experiment context associated with the evaluation")
     dataset_examples: List[DatasetExample] = Field(default_factory=list, description="Dataset examples used in the evaluation")
+    target_agent_version: int = Field(..., description="Version of the target agent")
 
 
 class CodexOutput(BaseModel):
@@ -176,3 +178,4 @@ class CodexOutput(BaseModel):
     agent_updated: bool = Field(False, description="Whether the agent was updated")
     new_branch_name: Optional[str] = Field(None, description="The name of the new branch")
     updated_sandbox_context: Optional[SandboxContext] = Field(None, description="The updated sandbox context")
+    target_agent_version: int = Field(..., description="Version of the target agent")
