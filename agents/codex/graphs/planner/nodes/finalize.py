@@ -70,6 +70,6 @@ async def finalize(state: PlannerState) -> PlannerState:
         llm = ChatOpenAI(model="gpt-4o-mini")
         input_messages = []
         input_messages.append(HumanMessage(content=USER_PROMPT.format(request=state.user_context.user_raw_request, new_branch_name=state.new_branch_name)))
-        response = await llm.ainvoke(state.messages)
+        response = await llm.ainvoke(input_messages)
         await _handoff_to_eval(response.content, state)
         return state
