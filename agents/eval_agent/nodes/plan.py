@@ -145,12 +145,17 @@ async def _provision_target_agent(state: EvalAgentState) -> dict:
 
 async def _generate_eval_plan(state: EvalAgentState) -> dict:
     agent_name = state.github_context.agent_name
+
+    if not state.user_context or not state.user_context.user_id:
+        raise ValueError("UserContext with user_id is required to plan")
+    user_id = state.user_context.user_id
  
     # Get top 3 most relevant reflections + their evidence using GraphRAG
     reflections_text = await graph_rag_retrieval(
         query="what previous tests failed and why?",
         agent_name=agent_name,
-        limit=3 # Get top 3 most relevant reflections + their evidence
+        user_id=user_id,
+        limit=3
     )
 
     # Get just the inputs from the most recent run

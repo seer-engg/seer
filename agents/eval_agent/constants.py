@@ -30,24 +30,21 @@ INDEX_NAME = "eval_reflections"
 NODE_LABEL = "EvalReflection"
 EMBEDDING_PROPERTY = "embedding"
 
-try:
-    NEO4J_GRAPH.query(
-        f"""
-        CREATE VECTOR INDEX {INDEX_NAME} IF NOT EXISTS
-        FOR (n:{NODE_LABEL})
-        ON (n.{EMBEDDING_PROPERTY})
-        OPTIONS {{ 
-            indexConfig: {{
-                `vector.dimensions`: {EMBEDDING_DIMS},
-                `vector.similarity_function`: 'cosine'
-            }}
+NEO4J_GRAPH.query(
+    f"""
+    CREATE VECTOR INDEX {INDEX_NAME} IF NOT EXISTS
+    FOR (n:{NODE_LABEL})
+    ON (n.{EMBEDDING_PROPERTY})
+    OPTIONS {{ 
+        indexConfig: {{
+            `vector.dimensions`: {EMBEDDING_DIMS},
+            `vector.similarity_function`: 'cosine'
         }}
-        """
-    )
-    print(f"Successfully created or verified Neo4j vector index '{INDEX_NAME}'.")
-except Exception as e:
-    print(f"Error creating Neo4j vector index: {e}")
-    # In a real app, you might want to raise this
+    }}
+    """
+)
+print(f"Successfully created or verified Neo4j vector index '{INDEX_NAME}'.")
+
 # --- END NEW INDEX CREATION ---
 
 # Client for vector search (your "reflection" store)

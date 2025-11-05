@@ -2,6 +2,7 @@
 This file contains the schemas for the shared data between the agents.
 Please review each agents code before making any changes to this file.
 """
+import os
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, Field, ConfigDict, computed_field
@@ -97,7 +98,10 @@ class SandboxContext(BaseModel):
 class UserContext(BaseModel):
     """Context for the user."""
 
-    user_id: str = Field(description="The ID of the user. Default is user_123 if not specified")
+    user_id: str = Field(
+        default_factory=lambda: os.getenv("USER_ID", "user_123"),
+        description="The ID of the user. Default is user_123 if not specified"
+    )
     user_expectation: str = Field(..., description="The user's expectation")
     model_config = ConfigDict(extra="forbid")
 

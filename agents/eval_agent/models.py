@@ -1,4 +1,5 @@
 """models for the evaluation agent"""
+import uuid
 from datetime import datetime
 from typing import Annotated, Optional, List
 
@@ -16,20 +17,33 @@ from shared.schema import (
     ExperimentResultContext,
 )
 
-
-class EvalReflection(BaseModel):
-    """A meta-evaluation insight to improve future eval generation only."""
-    reflection_id: str = Field(..., description="Unique ID for this reflection")
-    agent_name: str = Field(description="Target agent/graph this reflection applies to")
-    summary: str = Field(description="Concise reflection focused on improving test quality/coverage")
+class Hypothesis(BaseModel):
+    """
+    The creative output of the Eval Agent.
+    Contains only the fields the LLM is responsible for generating.
+    """
+    summary: str = Field(description="Concise summary of new insights, including any flakiness.")
     failure_modes: List[str] = Field(
         default_factory=list,
-        description="Key failure themes observed across the latest attempt(s)",
+        description="Key failure themes observed (e.g., 'Flakiness in divide_by_zero', 'New failure in dict_key_handling').",
     )
     recommended_tests: List[str] = Field(
         default_factory=list,
-        description="Specific future test ideas derived from the observed failures",
+        description="Specific, new test ideas to create next (e.g., 're-run divide_by_zero 3 times', 'test dict access with missing key').",
     )
+
+
+class EvalReflection(BaseModel):
+    """A meta-evaluation insight to improve future eval generation only."""
+    user_id: str = Field(description="The user this reflection belongs to.")
+    reflection_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()), 
+        description="Unique ID for this reflection."
+    )
+    agent_name: str = Field(description="Target agent/graph this reflection applies to")
+    hypothesis: Hypothesis = Field(description="Creative hypothesis about a failure mode in the latest attempt")
+
+    # Metadata
     latest_score: Optional[float] = Field(
         default=None,
         description="Most recent aggregate score when this reflection was generated",
@@ -47,6 +61,22 @@ class EvalReflection(BaseModel):
         description="Experiment name involved in the run that produced this reflection",
     )
     created_at: datetime = Field(default_factory=datetime.now)
+
+
+class FinalReflection(BaseModel):
+    """
+    The final, synthesized reflection produced by the Eval Agent.
+    This is the *input* to the 'save_reflection' tool.
+    """
+    summary: str = Field(description="Concise summary of new insights, including any flakiness.")
+    failure_modes: List[str] = Field(
+        default_factory=list,
+        description="Key failure themes observed (e.g., 'Flakiness in divide_by_zero', 'New failure in dict_key_handling').",
+    )
+    recommended_tests: List[str] = Field(
+        default_factory=list,
+        description="Specific, new test ideas to create next (e.g., 're-run divide(10,0) 3 times', 'test dict access with missing key').",
+    )
 
 
 class EvalAgentState(BaseModel):

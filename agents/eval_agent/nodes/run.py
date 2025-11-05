@@ -54,6 +54,9 @@ async def _prepare_run_context(state: EvalAgentState) -> dict:
 async def _execute_test_cases(state: EvalAgentState) -> dict:
     """Execute the test cases and return the results."""
 
+    if not state.user_context or not state.user_context.user_id:
+        raise ValueError("UserContext with user_id is required to log memories")
+    user_id = state.user_context.user_id
     if not state.sandbox_context or not state.github_context:
         raise RuntimeError("Sandbox and GitHub context must be set before executing tests")
     if not state.active_experiment:
@@ -84,12 +87,12 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     cypher_query = """
     UNWIND $params as row
     
-    // Merge the TestCase node (based on its unique ID)
-    MERGE (ex:DatasetExample {example_id: row.example.example_id})
+    // Merge the TestCase node, now namespaced by user_id
+    MERGE (ex:DatasetExample {example_id: row.example.example_id, user_id: $user_id})
     ON CREATE SET ex = row.example
     
-    // Merge the Result node (based on its unique thread_id)
-    MERGE (res:ExperimentResult {thread_id: row.result.thread_id})
+    // Merge the Result node, now namespaced by user_id
+    MERGE (res:ExperimentResult {thread_id: row.result.thread_id, user_id: $user_id})
     ON CREATE SET res = row.result
     ON MATCH SET res += row.result // Update if it exists
     
@@ -100,8 +103,12 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     """
     
     # 3. Run the query
-    await asyncio.to_thread(NEO4J_GRAPH.query, cypher_query, params={"params": cypher_params})
-    logger.info(f"run.execute: Logged {len(results)} test results to Neo4j.")
+    await asyncio.to_thread(
+        NEO4J_GRAPH.query, 
+        cypher_query, 
+        params={"params": cypher_params, "user_id": user_id}
+    )
+    logger.info(f"run.execute: Logged {len(results)} test results to Neo4j for user {user_id}")
 
     experiment = state.active_experiment
     experiment.results.extend(results)

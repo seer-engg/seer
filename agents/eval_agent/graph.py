@@ -6,7 +6,7 @@ from agents.eval_agent.constants import N_ROUNDS
 from agents.eval_agent.nodes.finalize import build_finalize_subgraph
 from agents.eval_agent.models import EvalAgentState
 from agents.eval_agent.nodes.plan import build_plan_subgraph
-from agents.eval_agent.nodes.reflect import reflect_node
+from agents.eval_agent.nodes.reflect.graph import reflect_node
 from agents.eval_agent.nodes.run import build_run_subgraph
 
 
