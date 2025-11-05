@@ -29,8 +29,9 @@ SYSTEM_PROMPT = f"""
     Your task is to plan the next steps to be taken to improve the agent by analyzing the failed eval thread  of the agent  and understanding the current state of the agent through its code .
     Create a plan with 3-7 concrete steps to fulfill the request.
     
-    ## Notes:
+    ## Important Notes:
     - use respective tools to gather context and plan the task.
+    - You have to only plan the development task, No need to include any testing or evaluation tasks ( unit test or eval runs).
 """
 
 USER_PROMPT = """
@@ -39,7 +40,7 @@ USER_PROMPT = """
     {evals_and_thread_traces}
     </EVALS AND THREAD TRACES>
 
-    Create a plan with 3-7 concrete steps to improve the agent.
+    Create a development plan with 3-7 concrete steps to improve the agent. Do not include any testing or evaluation tasks ( unit test or eval runs).
 """
 
 EVALS_AND_THREAD_TRACE_TEMPLATE = """

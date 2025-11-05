@@ -9,11 +9,33 @@ import asyncio
 import random
 from langsmith.schemas import Run
 
-MAX_IO_CHARS = 500  # keep console readable
+MAX_IO_CHARS = 10000  # keep console readable
 
-def _short(obj):
+KEYS_TO_REMOVE = {"id", "model_name", "refusal", "logprobs", "model_provider", "service_tier",
+"system_fingerprint", "token_usage" , "usage_metadata"
+}
+
+def _remove_keys_recursively(value, keys_to_remove={"id", "model_name"}):
+    """
+    Return a new structure with specified keys removed from all nested dicts.
+    Does not mutate the original input.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _remove_keys_recursively(nested_value, keys_to_remove)
+            for key, nested_value in value.items()
+            if key not in keys_to_remove
+        }
+    if isinstance(value, list):
+        return [_remove_keys_recursively(item, keys_to_remove) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_remove_keys_recursively(item, keys_to_remove) for item in value)
+    return value
+
+def _short(obj:dict):
     try:
-        s = json.dumps(obj, ensure_ascii=False, default=str)
+        sanitized = _remove_keys_recursively(obj, KEYS_TO_REMOVE)
+        s = json.dumps(sanitized, ensure_ascii=False, default=str)
     except Exception:
         s = str(obj)
     return (s[:MAX_IO_CHARS] + "…") if s and len(s) > MAX_IO_CHARS else s
