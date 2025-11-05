@@ -4,8 +4,46 @@ Please review each agents code before making any changes to this file.
 """
 import os
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Literal
 from pydantic import BaseModel, Field, ConfigDict, computed_field
+
+
+class FailureAnalysis(BaseModel):
+    """
+    Structured analysis of a test case failure, provided by the judge.
+    """
+    model_config = ConfigDict(extra="forbid")
+    
+    score: float = Field(
+        ..., 
+        ge=0.0, 
+        le=1.0, 
+        description="The final numeric score from 0.0 (total failure) to 1.0 (perfect)."
+    )
+    failure_type: Optional[Literal[
+        "syntax_error", 
+        "logical_error", 
+        "formatting_error", 
+        "instruction_following", 
+        "structure_preservation",
+        "completeness",
+        "other"
+    ]] = Field(
+        default=None, 
+        description="The primary category of the failure. Null if score is 1.0."
+    )
+    severity: Optional[int] = Field(
+        default=None, 
+        description="Severity of the failure from 1 (minor) to 10 (critical). Null if score is 1.0."
+    )
+    component_failed: Optional[str] = Field(
+        default=None, 
+        description="The specific component or aspect that failed (e.g., 'JSON output formatting', 'sum() function logic')."
+    )
+    judge_reasoning: str = Field(
+        ..., 
+        description="Detailed explanation from the judge about the score and failure."
+    )
 
 
 class DatasetExample(BaseModel):
@@ -26,12 +64,27 @@ class ExperimentResultContext(BaseModel):
     thread_id: str = Field(..., description="The thread ID of the evaluation")
     dataset_example: DatasetExample = Field(..., description="The example that was evaluated")
     actual_output: str = Field(..., description="The output produced by the target agent")
-    score: float = Field(ge=0.0, le=1.0, description="Judge's score 0-1")
-    passed: bool = Field(..., description="Whether the evaluator deemed this test successful. False by default.")
-    judge_reasoning: str = Field(..., description="Explanation from the judge about the score")
+    analysis: FailureAnalysis = Field(..., description="Structured analysis from the judge.")
+    
+    @computed_field
+    @property
+    def score(self) -> float:
+        return self.analysis.score
+
+    @computed_field
+    @property
+    def judge_reasoning(self) -> str:
+        return self.analysis.judge_reasoning
+    
+    @computed_field
+    @property
+    def passed(self) -> bool:
+        """Whether the evaluator deemed this test successful."""
+        return self.analysis.score >= 0.95
+
     started_at: datetime = Field(..., description="Timestamp when the execution started")
     completed_at: datetime = Field(..., description="Timestamp when the execution completed")
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")
 
 
 class ExperimentContext(BaseModel):
@@ -99,8 +152,8 @@ class UserContext(BaseModel):
     """Context for the user."""
 
     user_id: str = Field(
-        default_factory=lambda: os.getenv("USER_ID", "user_123"),
-        description="The ID of the user. Default is user_123 if not specified"
+        default_factory=lambda: os.getenv("USER_ID"),
+        description=f"The ID of the user. Default is {os.getenv('USER_ID')} if not specified"
     )
     user_expectation: str = Field(..., description="The user's expectation")
     model_config = ConfigDict(extra="forbid")

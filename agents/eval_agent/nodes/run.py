@@ -74,16 +74,25 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     # --- NEW: LOG FACTUAL MEMORIES TO NEO4J ---
     # We log the graph data asynchronously in the background
     # 1. Create a list of parameters for each test case and its result
+   # --- MODIFIED: Update Cypher query to store structured analysis ---
     cypher_params = []
     for res in results:
+        # Flatten the analysis object for storage as node properties
+        analysis_props = res.analysis.model_dump()
+        
+        # Combine all properties for the result node
+        result_node_props = res.model_dump(
+            exclude={'dataset_example', 'analysis', 'passed'}
+        )
+        result_node_props.update(analysis_props) # Add all analysis fields
+        result_node_props['passed'] = res.passed  # Add the computed 'passed' bool
+        
         cypher_params.append({
             "example": res.dataset_example.model_dump(),
-            "result": res.model_dump(exclude={'dataset_example'}),
+            "result": result_node_props,
         })
     
     # 2. Define the Cypher query to create the graph structure
-    # This query creates/updates the test case and the result,
-    # and connects them with a relationship.
     cypher_query = """
     UNWIND $params as row
     
@@ -93,8 +102,11 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     
     // Merge the Result node, now namespaced by user_id
     MERGE (res:ExperimentResult {thread_id: row.result.thread_id, user_id: $user_id})
-    ON CREATE SET res = row.result
-    ON MATCH SET res += row.result // Update if it exists
+    // ON CREATE SET res = row.result  <-- This is now incorrect
+    // ON MATCH SET res += row.result <-- This is now incorrect
+    
+    // Use SET to overwrite all properties, ensuring schema stays current
+    SET res = row.result
     
     // Connect the TestCase to its Result
     MERGE (ex)-[r:WAS_RUN_IN]->(res)

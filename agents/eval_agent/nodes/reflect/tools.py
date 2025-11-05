@@ -52,19 +52,18 @@ async def get_latest_run_results(
         
     results = []
     for res in runtime.context.latest_results:
+        # --- MODIFIED: Pass the structured analysis ---
         results.append({
             "example_id": res.dataset_example.example_id,
             "input": _truncate(res.dataset_example.input_message),
             "passed": res.passed,
-            "score": res.score,
-            "judge_reasoning": _truncate(res.judge_reasoning),
+            "analysis": res.analysis.model_dump() # Pass the full structured analysis
         })
     return Command(update={
         "messages": [
             ToolMessage(content=json.dumps(results, indent=2), tool_call_id=runtime.tool_call_id)
         ]
     })
-
 
 @tool
 async def get_historical_test_results(

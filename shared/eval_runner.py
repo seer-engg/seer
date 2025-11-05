@@ -4,13 +4,12 @@ import os
 from typing import List
 from datetime import datetime, timezone
 
+from langchain_core.prompts import PromptTemplate
 from langgraph_sdk import get_sync_client
 from langgraph.pregel.remote import RemoteGraph
 from langsmith import Client
-from openevals.types import EvaluatorResult
-from openevals.llm import create_llm_as_judge
 
-from shared.schema import DatasetExample, ExperimentResultContext
+from shared.schema import DatasetExample, ExperimentResultContext, FailureAnalysis
 from shared.logger import get_logger
 from shared.llm import get_llm
 
@@ -19,8 +18,7 @@ LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
 LANGSMITH_CLIENT = Client(api_key=LANGSMITH_API_KEY)
 logger = get_logger("eval_runner")
 
-
-CORRECTNESS_PROMPT = """You are an expert data labeler evaluating the correctness of a coding agent's output. 
+CORRECTNESS_PROMPT = """You are an expert data labeler evaluating the correctness of a coding agent's output.
 The coding agent's job is to fix broken Python code snippets while preserving the original code structure.
 
 Here is the original broken Python code that was given to the agent:
@@ -38,72 +36,49 @@ Use the reference outputs below to help you evaluate the correctness of the resp
 {reference_outputs}
 </reference_outputs>
 
-Your task is to evaluate the agent's output and assign a correctness score from 0 to 1.
+Your task is to evaluate the agent's output and provide a structured analysis.
 
 **Scoring Rubric:**
 
-**1 = Completely correct, accurate, and complete**
-- Fixes all issues in the original code
-- Contains no factual errors or bugs
-- Addresses all parts of the problem
-- Maintains exact original structure (function names, class names, schemas, invocation patterns)
-- Uses precise and accurate Python syntax
+**1.0 = Completely correct, accurate, and complete**
+- Fixes all issues, contains no bugs, preserves original structure.
 
-**0.8 = Mostly correct with minor issues**  
-- Fixes the main issues but may have small problems
-- Structure preservation is good with minimal deviations
-- Minor syntax or logic issues that don't break functionality
+**0.8 = Mostly correct with minor issues** - Fixes main issues, good structure preservation, minor syntax/logic issues.
 
 **0.6 = Partially correct but with notable problems**
-- Fixes some issues but misses others
-- May have moderate structural changes or naming violations
-- Contains logical errors or incomplete solutions
+- Fixes some issues but misses others, moderate structural changes, logical errors.
 
 **0.4 = Largely incorrect with some correct elements**
-- Major structural changes or renaming of original components
-- Significant logical errors or missing functionality
-- Some correct elements present
+- Major structural changes, significant logical errors, some correct elements.
 
 **0.2 = Mostly or completely incorrect**
-- Fails to fix the original issues
-- Major violations of structure preservation requirements
-- Contains serious errors or completely wrong approach
+- Fails to fix original issues, major structure violations, serious errors.
+
+**0.0 = Total failure**
+- No output, irrelevant output, or made the code significantly worse.
 
 **Critical Structure Preservation Requirements:**
-- Original function names, class names, and schemas MUST remain unchanged
-- Original invocation patterns MUST be preserved
-- You may create new internal variables or helper functions, but cannot rename existing components
-- The overall framework and interface must stay intact
+- Original function names, class names, and schemas MUST remain unchanged.
+- Original invocation patterns MUST be preserved.
+- You may create new internal variables or helper functions, but cannot rename existing components.
+- The overall framework and interface must stay intact.
 
 **Evaluation Process:**
-1. Identify the specific issues/problems in the original broken code (list each one)
-2. For each identified issue, check whether the agent's output successfully resolves it
-3. Verify structure preservation by listing the original function names, class names, and key components, then checking if they remain unchanged in the agent's output
-4. Compare the agent's approach and solution to the reference outputs
-5. Note any additional errors or problems introduced by the agent's fix
+1. Identify the specific issues/problems in the original broken code.
+2. For each identified issue, check whether the agent's output successfully resolves it.
+3. Verify structure preservation.
+4. Compare the agent's approach to the reference outputs.
+5. Note any additional errors or problems introduced by the agent's fix.
+6. Assign a final score, failure type, severity, and reasoning.
 
-It's OK for this section to be quite long.
-
-Then provide your final assessment in the following format:
-
-`<justification>`
-[Write a detailed explanation of your evaluation, covering technical correctness, completeness, and structure preservation. Explain your reasoning for the score.]
-`</justification>`
-
-`<score>`
-[Your score from 0 to 1]
-`</score>`
+Provide your final assessment as a structured object.
 """
 
 LLM = get_llm(temperature=0.0)
-CORRECTNESS_EVALUATOR = create_llm_as_judge(
-    prompt=CORRECTNESS_PROMPT,
-    model="openai:gpt-4.1-mini",
-    feedback_key="score",
-    continuous=True,
-)
-
-PASS_THRESHOLD = 0.95
+SMART_LLM = get_llm(model="gpt-4.1-mini", temperature=0.0)
+STRUCTURED_JUDGE = SMART_LLM.with_structured_output(FailureAnalysis)
+JUDGE_PROMPT_TEMPLATE = PromptTemplate.from_template(CORRECTNESS_PROMPT)
+CORRECTNESS_EVALUATOR = JUDGE_PROMPT_TEMPLATE | STRUCTURED_JUDGE
 
 
 async def run_evals(target_url: str, graph_name: str, dataset_examples: List[DatasetExample]) -> List[ExperimentResultContext]:
@@ -139,26 +114,21 @@ async def run_evals(target_url: str, graph_name: str, dataset_examples: List[Dat
         answer = result.get("messages", [{}])[-1].get("content", "")
         run_end = datetime.now(timezone.utc)
 
-        eval_result: EvaluatorResult = await asyncio.to_thread(
-            CORRECTNESS_EVALUATOR,
-            inputs={"question": question},
-            outputs={"answer": answer},
-            reference_outputs={"answer": expected},
+        eval_result_obj: FailureAnalysis = await asyncio.to_thread(
+            CORRECTNESS_EVALUATOR.invoke,
+            {
+                "inputs": question,
+                "outputs": answer,
+                "reference_outputs": expected,
+            },
         )
-        score = float(eval_result.get("score", 0))
-        evaluator_comment = eval_result.get("comment", "")
-        passed = score >= PASS_THRESHOLD
-
-        # logger.info(f"run.execute: score={score}, passed={passed}, evaluator_comment={evaluator_comment}")
-
+        
         results.append(
             ExperimentResultContext(
                 dataset_example=tc,
                 thread_id=thread["thread_id"],
                 actual_output=answer,
-                score=score,
-                passed=passed,
-                judge_reasoning=evaluator_comment,
+                analysis=eval_result_obj,
                 started_at=run_start,
                 completed_at=run_end,
             )
