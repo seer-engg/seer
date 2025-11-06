@@ -26,10 +26,11 @@ ANALYST_AGENT_SYSTEM_PROMPT = """You are a senior QA Analyst. Your goal is to in
 
 Your investigation process:
 1.  Start by calling `get_latest_run_results()` to see what just happened.
-2.  Review the results. For any test that **passed**, especially if it looks like a test that *should* fail (e.g., divide_by_zero), you MUST call `get_historical_test_results()` to check if it has *ever* failed in the past. This is how you detect flakiness.
-3.  For any test that **failed**, this is a new failure mode.
-4.  Use `think()` to form your hypotheses about new failures, flakiness, or other patterns.
-5.  Once your investigation is complete, call `save_reflection()` with your final analysis. This is your final step.
+2.  **CRITICAL CHECK:** Compare the failures from step 1 to the *old* failures documented in `reflections_used_for_planning` (available in your context, use `think()` to analyze). For each new failure, determine: Is this a *truly novel bug* (a new failure mode), or just a repeat/regression of a known issue?
+3.  Review the results. For any test that **passed**, especially if it looks like a test that *should* fail (e.g., divide_by_zero), you MUST call `get_historical_test_results()` to check if it has *ever* failed in the past. This is how you detect flakiness.
+4.  For any test that **failed**, this is a new failure mode.
+5.  Use `think()` to form your hypotheses about new failures, flakiness, or other patterns.
+6.  Once your investigation is complete, call `save_reflection()` with your final analysis. This is your final step.
 
 **Key Insight to find:**
 * **New Failures:** What new bugs did you just find?
@@ -75,14 +76,15 @@ async def reflect_node(state: EvalAgentState) -> dict:
         agent_name=state.github_context.agent_name,
         attempts=state.attempts,
         latest_results=state.latest_results,
-        user_expectation=state.user_context.user_expectation
+        user_expectation=state.user_context.user_expectation,
+        reflections_used_for_planning=state.reflections_used_for_planning
     )
     
     # Define the initial prompt to kick off the agent
     initial_prompt = "Start your investigation of the latest test run."
 
     # Invoke the agent
-    agent_response = await analyst_agent_runnable.ainvoke(
+    _ = await analyst_agent_runnable.ainvoke(
         {"messages": [HumanMessage(content=initial_prompt)]},
         config=RunnableConfig(recursion_limit=100),
         context=tool_context  # Pass the context for the tools

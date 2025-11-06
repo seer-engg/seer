@@ -217,6 +217,7 @@ async def _generate_eval_plan(state: EvalAgentState) -> dict:
     logger.info("plan.generate: produced %d tests (agent=%s)", len(dataset_examples), agent_name)
     return {
         "dataset_examples": dataset_examples,
+        "reflections_used_for_planning": reflections_text,
     }
 
 

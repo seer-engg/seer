@@ -23,6 +23,7 @@ class Hypothesis(BaseModel):
     Contains only the fields the LLM is responsible for generating.
     """
     summary: str = Field(description="Concise summary of new insights, including any flakiness.")
+    found_novel_bugs: bool = Field(..., description="Set to true if the analyst concluded that new, previously undocumented failure modes were discovered in this run.")
     failure_modes: List[str] = Field(
         default_factory=list,
         description="Key failure themes observed (e.g., 'Flakiness in divide_by_zero', 'New failure in dict_key_handling').",
@@ -63,22 +64,6 @@ class EvalReflection(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
 
 
-class FinalReflection(BaseModel):
-    """
-    The final, synthesized reflection produced by the Eval Agent.
-    This is the *input* to the 'save_reflection' tool.
-    """
-    summary: str = Field(description="Concise summary of new insights, including any flakiness.")
-    failure_modes: List[str] = Field(
-        default_factory=list,
-        description="Key failure themes observed (e.g., 'Flakiness in divide_by_zero', 'New failure in dict_key_handling').",
-    )
-    recommended_tests: List[str] = Field(
-        default_factory=list,
-        description="Specific, new test ideas to create next (e.g., 're-run divide(10,0) 3 times', 'test dict access with missing key').",
-    )
-
-
 class EvalAgentState(BaseModel):
     """State for the evaluation agent."""
 
@@ -92,3 +77,4 @@ class EvalAgentState(BaseModel):
     latest_results: List[ExperimentResultContext] = Field(default_factory=list, description="Results from the latest experiment execution")
     dataset_examples: List[DatasetExample] = Field(default_factory=list, description="List of generated test cases")
     target_agent_version: int = Field(default=0, description="Version of the target agent")
+    reflections_used_for_planning: str = Field(default="", description="The string of RAG-retrieved reflections used by the plan node")

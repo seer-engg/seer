@@ -26,6 +26,7 @@ class ReflectionToolContext(BaseModel):
     attempts: int
     latest_results: List[ExperimentResultContext]
     user_expectation: str
+    reflections_used_for_planning: str
 
 
 def _truncate(text: Any, limit: int = 280) -> str:
@@ -52,12 +53,11 @@ async def get_latest_run_results(
         
     results = []
     for res in runtime.context.latest_results:
-        # --- MODIFIED: Pass the structured analysis ---
         results.append({
             "example_id": res.dataset_example.example_id,
             "input": _truncate(res.dataset_example.input_message),
             "passed": res.passed,
-            "analysis": res.analysis.model_dump() # Pass the full structured analysis
+            "analysis": res.analysis.model_dump()
         })
     return Command(update={
         "messages": [
@@ -136,6 +136,7 @@ def persist_reflection(
         ref.agent_name = $agent_name,
         ref.latest_score = $latest_score,
         ref.attempt = $attempt,
+        ref.found_novel_bugs = $found_novel_bugs,
         ref.failure_modes = $failure_modes,
         ref.recommended_tests = $recommended_tests
     ON MATCH SET // Update if it already exists (e.g., if embedding failed first time)
@@ -143,6 +144,7 @@ def persist_reflection(
         ref.embedding = $embedding,
         ref.latest_score = $latest_score,
         ref.attempt = $attempt,
+        ref.found_novel_bugs = $found_novel_bugs,
         ref.failure_modes = $failure_modes,
         ref.recommended_tests = $recommended_tests
     
@@ -170,6 +172,7 @@ def persist_reflection(
             "agent_name": agent_name,
             "latest_score": reflection.latest_score,
             "attempt": reflection.attempt,
+            "found_novel_bugs": reflection.hypothesis.found_novel_bugs,
             "failure_modes": reflection.hypothesis.failure_modes,
             "recommended_tests": reflection.hypothesis.recommended_tests,
             "evidence_thread_ids": evidence_thread_ids,
