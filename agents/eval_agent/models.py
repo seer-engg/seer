@@ -76,5 +76,6 @@ class EvalAgentState(BaseModel):
     active_experiment: Optional[ExperimentContext] = Field(default=None, description="Currently running experiment context")
     latest_results: List[ExperimentResultContext] = Field(default_factory=list, description="Results from the latest experiment execution")
     dataset_examples: List[DatasetExample] = Field(default_factory=list, description="List of generated test cases")
-    target_agent_version: int = Field(default=0, description="Version of the target agent")
     reflections_used_for_planning: str = Field(default="", description="The string of RAG-retrieved reflections used by the plan node")
+    agent_updated: bool = Field(default=False, description="Whether the agent was updated")
+    target_agent_version: int = Field(default=0, description="Version of the target agent")

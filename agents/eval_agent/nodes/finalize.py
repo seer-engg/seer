@@ -11,7 +11,7 @@ from langgraph_sdk import get_sync_client
 from agents.eval_agent.constants import CODEX_REMOTE_URL, LANGSMITH_CLIENT
 from agents.eval_agent.models import EvalAgentState
 from shared.logger import get_logger
-from shared.schema import SandboxContext, CodexInput
+from shared.schema import SandboxContext, CodexInput, CodexOutput
 
 
 logger = get_logger("eval_agent.finalize")
@@ -97,13 +97,21 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
         codex_thread_cfg,
     )
 
-    branch_name, metadata = _extract_branch_from_codex_response(codex_response)
-    if branch_name:
-        logger.info("Codex handoff response metadata: %s", metadata)
-    else:
-        logger.error("finalize.handoff: Codex response missing branch_name: %s", codex_response)
+    codex_response_payload: CodexOutput = CodexOutput.model_validate(codex_response)
+    logger.info("Codex response payload: %s", codex_response_payload)
 
-    return {}
+    # if the target agent was updated, reset the attempts, dataset examples, and latest results
+    if codex_response_payload.target_agent_version > state.target_agent_version:
+        return {
+            "agent_updated": True,
+            "updated_sandbox_context": codex_response_payload.updated_sandbox_context,
+            "target_agent_version": codex_response_payload.target_agent_version,
+            "attempts": 0,
+            "dataset_examples": [],
+            "latest_results": [],
+        }
+    else:
+        return {"agent_updated": False}
 
 
 def _summarize_finalize(state: EvalAgentState) -> dict:
