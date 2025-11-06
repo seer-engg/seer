@@ -11,7 +11,7 @@ from sandbox.tools import (
     grep,
     SandboxToolContext,
 )
-from shared.tools import web_search, think
+from shared.tools import web_search, LANGCHAIN_MCP_TOOLS
 
 from langchain.agents import create_agent
 from agents.codex.llm.model import get_chat_model
@@ -31,6 +31,7 @@ SYSTEM_PROMPT = f"""
     
     ## Important Notes:
     - use respective tools to gather context and plan the task.
+    - SearchDocsByLangChain tool is available to search the documentation of langchain & langgraph.
     - You have to only plan the development task, No need to include any testing or evaluation tasks ( unit test or eval runs).
 """
 
@@ -70,6 +71,7 @@ async def context_and_plan_agent(state: PlannerState) -> PlannerState:
             read_file,
             grep,
             web_search,
+            *LANGCHAIN_MCP_TOOLS,
         ],
         system_prompt=SYSTEM_PROMPT,
         state_schema=PlannerState,

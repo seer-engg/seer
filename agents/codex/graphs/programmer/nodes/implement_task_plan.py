@@ -19,7 +19,7 @@ from sandbox.tools import (
 )
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
-from shared.tools import web_search, think
+from shared.tools import web_search, think, LANGCHAIN_MCP_TOOLS
 from langgraph.types import Command
 from langchain.tools import tool,ToolRuntime
 
@@ -80,6 +80,7 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
             write_file,
             patch_file,
             web_search,
+            *LANGCHAIN_MCP_TOOLS,
         ],
         system_prompt=SYSTEM_PROMPT,
         state_schema=ProgrammerState,

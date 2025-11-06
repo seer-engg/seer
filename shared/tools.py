@@ -3,11 +3,13 @@ from shared.logger import get_logger
 import os
 import asyncio
 from tavily import TavilyClient
-
+from shared.constants import LANGCHAIN_MCP_URL
 logger = get_logger("shared.tools")
 
 tavily_api_key = os.getenv("TAVILY_API_KEY")
 client = TavilyClient(api_key=tavily_api_key)
+from langchain_mcp_adapters.client import MultiServerMCPClient
+
 
 
 
@@ -75,3 +77,21 @@ def think(thought: str) -> str:
         the thought
     """
     return thought
+
+
+
+langchain_mcp_client = MultiServerMCPClient(
+    {
+        "docs-langchain": {
+            "transport": "streamable_http",
+            "url": LANGCHAIN_MCP_URL,
+        }
+    }
+)
+
+async def get_langchain_mcp_tools():
+    tools = await langchain_mcp_client.get_tools()
+    return tools
+
+LANGCHAIN_MCP_TOOLS = asyncio.run(get_langchain_mcp_tools())
+
