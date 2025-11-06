@@ -1,11 +1,12 @@
-from langchain_core.messages.base import BaseMessage
-
-
-from shared.logger import get_logger
-from agents.codex.common.state import ProgrammerState, TaskPlan
-logger = get_logger("programmer.execute_task_item")
+"""Implement the task plan"""
 from langchain.agents import create_agent
-from agents.codex.llm.model import get_chat_model
+from langchain_core.messages import HumanMessage
+from langchain_core.runnables import RunnableConfig
+
+from shared.tools import web_search
+from shared.logger import get_logger
+from agents.codex.state import PlannerState, TaskPlan
+from shared.llm import get_llm
 from sandbox.tools import (
     run_command,
     read_file,
@@ -17,38 +18,25 @@ from sandbox.tools import (
     patch_file,
     SandboxToolContext,
 )
-from langchain_core.messages import AIMessage
-from langchain_core.runnables import RunnableConfig
-from shared.tools import web_search, think
-from langgraph.types import Command
-from langchain.tools import tool,ToolRuntime
 
-@tool
-def mark_task_item_as_done(task_item_id: int, runtime: ToolRuntime) -> str:
-    """
-    Mark a task item as done.
-    Args:
-        task_item_id: The id of the task item to mark as done
-    Returns:
-        A command to update the task plan
-    """
-    taskplan: TaskPlan = runtime.state.get('taskPlan')
-    for item in taskplan.items:
-        if item.id == task_item_id:
-            item.status = "done"
-            logger.info(f"Marked task item as done: {item.description}")
-            break
-    else:
-        raise ValueError(f"Task item with id {task_item_id} not found")
-    return Command(
-        update={
-            "taskPlan": taskplan,
-        }
-    )
+logger = get_logger("planner.implement_task_plan")
 
+USER_PROMPT = """
+    based on the request 
+    <request>
+    {request}
+    </request>
 
-SYSTEM_PROMPT = f"""
-    You are a junior software engineer. You have been given a task to implement. Implement the assigned task to the codebase in the sandbox.
+    Implement the following task plan:
+    <task_plan>
+    {task_plan}
+    </task_plan>
+
+    After implementing the task plan, return a brief status summary.
+"""
+
+SYSTEM_PROMPT = """
+    You are a software engineer. You have been given a task to implement. Implement the assigned task to the codebase in the sandbox.
     When done, return a brief status summary. You just need to implement the task, you don't need to generate or run any test the implementation.
     You have been provided with following tools to do necessary operation in root directory of the codebase repository.
 
@@ -58,8 +46,8 @@ SYSTEM_PROMPT = f"""
 """
 
 
-async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
-    # Action ReAct agent: implement the chosen task using sandbox tools
+async def implement_task_plan(state: PlannerState) -> PlannerState:
+    """Action ReAct agent: implement the chosen task using sandbox tools"""
     plan: TaskPlan | None = state.taskPlan
     if not plan:
         raise ValueError("No plan found")
@@ -69,7 +57,7 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
 
 
     agent = create_agent(
-        model=get_chat_model(),
+        model=get_llm(),
         tools=[
             run_command,
             read_file,
@@ -82,13 +70,28 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
             web_search,
         ],
         system_prompt=SYSTEM_PROMPT,
-        state_schema=ProgrammerState,
+        state_schema=PlannerState,
         context_schema=SandboxToolContext,  # Add context schema for sandbox tools
     )
 
+    # Prepare messages for the agent
+    messages = list(state.messages or [])
+    
+    # Check if this is the first attempt (no reflections yet)
+    if state.attempt_number == 0:
+         messages.append(
+            HumanMessage(
+                content=USER_PROMPT.format(
+                    request=state.user_context.user_expectation,
+                    task_plan=state.taskPlan,
+                )
+            )
+        )
+    # If this is a reflection loop, the 'reflect' node already added the new HumanMessage
+    
     # Pass context along with state
     result = await agent.ainvoke(
-        input={"messages": state.messages}, 
+        input={"messages": messages}, 
         config=RunnableConfig(recursion_limit=100),
         context=SandboxToolContext(sandbox_context=updated_sandbox_context)  # Pass sandbox context
     )
@@ -102,6 +105,6 @@ async def implement_task_plan(state: ProgrammerState) -> ProgrammerState:
 
     return {
         "taskPlan": plan,
-        "messages": AIMessage(content=pr_summary),
+        "messages": result.get("messages", []), # Pass along the full history
         "pr_summary": pr_summary,
     }

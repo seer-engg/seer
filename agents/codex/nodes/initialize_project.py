@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from agents.codex.common.state import PlannerState
+from agents.codex.state import PlannerState
 from shared.logger import get_logger
-logger = get_logger("codex.planner.nodes.initialize_project")
+logger = get_logger("codex.nodes.initialize_project")
 
 from sandbox import initialize_e2b_sandbox, setup_project, TARGET_AGENT_SETUP_SCRIPT
 from shared.schema import SandboxContext

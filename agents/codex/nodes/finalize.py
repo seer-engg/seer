@@ -1,4 +1,4 @@
-from agents.codex.common.state import PlannerState
+from agents.codex.state import PlannerState
 from shared.logger import get_logger
 logger = get_logger("planner.finalize")
 import os

@@ -2,7 +2,7 @@
 from typing import List
 from e2b import AsyncSandbox
 
-from agents.codex.common.state import ProgrammerState
+from agents.codex.state import PlannerState
 from shared.logger import get_logger
 from shared.eval_runner import run_evals
 from shared.schema import ExperimentResultContext
@@ -12,7 +12,7 @@ from sandbox.constants import TARGET_AGENT_COMMAND
 logger = get_logger("programmer.test_implementation")
 
 
-async def test_implementation(state: ProgrammerState) -> ProgrammerState:
+async def test_implementation(state: PlannerState) -> PlannerState:
     """Test the implementation of the task plan"""
     sbx: AsyncSandbox = await AsyncSandbox.connect(state.updated_sandbox_context.sandbox_id, timeout=60*20) # 20 minutes
     _, handle = await deploy_server_and_confirm_ready(

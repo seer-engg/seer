@@ -8,9 +8,10 @@ load_dotenv()
 
 
 def get_llm(
-    model: Optional[str] = None,
-    temperature: float = 0.0,
-    api_key: Optional[str] = None
+    model: str = "gpt-4.1-nano-2025-04-14",
+    temperature: float = 0.2,
+    reasoning_effort: str = "medium",
+    api_key: Optional[str] = os.getenv("OPENAI_API_KEY"),
 ) -> ChatOpenAI:
     """
     Get a configured LLM instance.
@@ -23,15 +24,19 @@ def get_llm(
     Returns:
         Configured ChatOpenAI instance
     """
-    if api_key is None:
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("OPENAI_API_KEY not found in environment")
-    
-    model_name = model or "gpt-4.1-nano-2025-04-14"
+    if api_key is None or api_key == "":
+        raise ValueError("OPENAI_API_KEY not found in environment")
 
-    return ChatOpenAI(
-        model=model_name,
-        temperature=temperature,
-        api_key=api_key
-    )
+    if 'codex' in model:
+        return ChatOpenAI(
+            model="gpt-5-codex",
+            use_responses_api=True,            
+            output_version="responses/v1",     
+            reasoning={"effort": reasoning_effort},
+        )
+    else:
+        return ChatOpenAI(
+            model=model,
+            temperature=temperature,
+            api_key=api_key
+        )

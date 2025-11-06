@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from shared.logger import get_logger
 
-logger = get_logger("codex.planner.nodes.context_and_plan_agent")
+logger = get_logger("codex.nodes.context_and_plan")
 
 from sandbox.tools import (
     run_command,
@@ -11,19 +11,19 @@ from sandbox.tools import (
     grep,
     SandboxToolContext,
 )
-from shared.tools import web_search, think
+from shared.tools import web_search
 
 from langchain.agents import create_agent
-from agents.codex.llm.model import get_chat_model
-from agents.codex.common.state import PlannerState, TaskPlan
+from shared.llm import get_llm
+from agents.codex.state import PlannerState, TaskPlan
 from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import HumanMessage
 
-from agents.codex.graphs.planner.format_thread import fetch_thread_timeline_as_string
+from agents.codex.format_thread import fetch_thread_timeline_as_string
 from sandbox.constants import TARGET_AGENT_LANGSMITH_PROJECT
 
 
-SYSTEM_PROMPT = f"""
+SYSTEM_PROMPT = """
     You are an Technical manager specializing in LLM based Agent development.
     Your role is to Create a plan for the Agent to be developed.
     Your task is to plan the next steps to be taken to improve the agent by analyzing the failed eval thread  of the agent  and understanding the current state of the agent through its code .
@@ -63,7 +63,7 @@ async def context_and_plan_agent(state: PlannerState) -> PlannerState:
         raise ValueError("No sandbox context found in state")
 
     agent = create_agent(
-        model=get_chat_model(reasoning_effort="high"),
+        model=get_llm(reasoning_effort="high"),
         tools=[
             run_command,
             inspect_directory,

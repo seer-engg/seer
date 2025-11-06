@@ -1,18 +1,18 @@
 from shared.logger import get_logger
 
-from agents.codex.common.state import ProgrammerState
+from agents.codex.state import PlannerState
 from langchain_core.messages import HumanMessage
-from agents.codex.llm.model import get_chat_model
-from agents.codex.graphs.planner.format_thread import fetch_thread_timeline_as_string
+from shared.llm import get_llm
+from agents.codex.format_thread import fetch_thread_timeline_as_string
 from sandbox.constants import TARGET_AGENT_LANGSMITH_PROJECT
 from langchain_core.messages import SystemMessage
 
-logger = get_logger("programmer.reflect")
+logger = get_logger("codex.nodes.reflect")
 
 SYSTEM_PROMPT = """
 You are a Refective person , part of an agent development team.
 Your team is trying to enhance an agent so that it can pass all the eval cases. Based on some failed eval cases your team devised a plan to fix the agent. A programmer implemented some code changes to the agent following the plan.
-But after the implementation, the agent is not passing all the eval cases. You are tasked to reflect on the latest test results and suggest necessary changes.
+But after the implementation, the agent is not passing all the eval cases. You are tasked to reflect on the latest test results and suggest necessary changes to the plan.
 """
 
 EVALS_AND_THREAD_TRACE_TEMPLATE = """    
@@ -40,15 +40,20 @@ But after the implementation, the agent is not passing all the eval cases. You a
 <LATEST FAILED EVALS AND THREAD TRACES>
 {latest_failed_evals_and_thread_traces}
 </LATEST FAILED EVALS AND THREAD TRACES>
+
+Please provide a new, concrete set of implementation steps to fix the remaining issues.
 """
 
-async def reflect(state: ProgrammerState) -> ProgrammerState:
+async def reflect(state: PlannerState) -> PlannerState:
     """Reflect on the latest test results and plan necessary fixes."""
+    logger.info("Reflecting on failed implementation...")
     if not state.latest_test_results:
         logger.warning("No test results available for reflection; skipping prompt generation")
-        return {}
+        return {
+            "messages": [HumanMessage(content="No test results found, attempting plan again.")]
+        }
 
-    llm = get_chat_model()
+    llm = get_llm()
     evals_and_thread_traces=[] 
     for eval in state.latest_test_results:
         if eval.passed:
@@ -67,6 +72,7 @@ async def reflect(state: ProgrammerState) -> ProgrammerState:
                 thread_trace=thread_trace
             )
         )
+    
     originalfailing_evals = []
     for eval in state.experiment_context.results:
         if eval.passed:
@@ -86,9 +92,16 @@ async def reflect(state: ProgrammerState) -> ProgrammerState:
     response = await llm.ainvoke(input_messages)
 
     reflection = ""
-    for content in response.content:
-        if content.get("type") == "text":
-            reflection += content.get("text")
+    if isinstance(response.content, list):
+        for content in response.content:
+            if content.get("type") == "text":
+                reflection += content.get("text")
+    else:
+        reflection = response.content
+        
+    logger.info(f"Reflection complete. New instruction: {reflection[:100]}...")
+    
+    # We return a HumanMessage, which will be the *input* for the implement_task_plan agent
     return {
         "messages": [HumanMessage(content=reflection)],
     }
