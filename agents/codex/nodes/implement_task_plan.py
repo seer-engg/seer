@@ -3,7 +3,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 
-from shared.tools import web_search
+from shared.tools import web_search, LANGCHAIN_MCP_TOOLS
 from shared.logger import get_logger
 from agents.codex.state import PlannerState, TaskPlan
 from shared.llm import get_llm
@@ -68,6 +68,7 @@ async def implement_task_plan(state: PlannerState) -> PlannerState:
             write_file,
             patch_file,
             web_search,
+            *LANGCHAIN_MCP_TOOLS,
         ],
         system_prompt=SYSTEM_PROMPT,
         state_schema=PlannerState,
