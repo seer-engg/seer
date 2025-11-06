@@ -23,7 +23,6 @@ class FailureAnalysis(BaseModel):
     failure_type: Optional[Literal[
         "syntax_error", 
         "logical_error", 
-        "formatting_error", 
         "instruction_following", 
         "structure_preservation",
         "completeness",
@@ -35,10 +34,6 @@ class FailureAnalysis(BaseModel):
     severity: Optional[int] = Field(
         default=None, 
         description="Severity of the failure from 1 (minor) to 10 (critical). Null if score is 1.0."
-    )
-    component_failed: Optional[str] = Field(
-        default=None, 
-        description="The specific component or aspect that failed (e.g., 'JSON output formatting', 'sum() function logic')."
     )
     judge_reasoning: str = Field(
         ..., 
