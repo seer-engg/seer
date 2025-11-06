@@ -79,6 +79,11 @@ N_TEST_CASES = 3 # Number of test cases to generate in 1 round of eval
 
 # Remote Codex planner URL for follow-up remediation workflows
 CODEX_REMOTE_URL = os.getenv("CODEX_REMOTE_URL", "http://127.0.0.1:8003")
+EVAL_REMOTE_URL = os.getenv("EVAL_REMOTE_URL", "http://127.0.0.1:8002")
 
 # Shared LLM handles
 LLM = get_llm(temperature=0.0)
+
+
+# total versions of the target agent
+N_VERSIONS = 2

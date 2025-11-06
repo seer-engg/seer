@@ -33,7 +33,8 @@ class PlannerState(CodexInput, CodexOutput):
     taskPlan: Optional[TaskPlan] = Field(None, description="The task plan")
 
     server_running: bool = Field(False, description="Whether the server is running")
-    pr_summary: Optional[str] = Field(None, description="The summary of the PR")    
+    pr_summary: Optional[str] = Field(None, description="The summary of the PR")
+    success: bool = Field(False, description="Whether the request was successful")    
     
 
 
