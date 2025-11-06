@@ -1,9 +1,16 @@
+"""Context and plan step"""
 from __future__ import annotations
 
+from langchain.agents import create_agent
+from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import HumanMessage
+
 from shared.logger import get_logger
-
-logger = get_logger("codex.nodes.context_and_plan")
-
+from shared.tools import web_search, LANGCHAIN_MCP_TOOLS
+from shared.llm import get_llm
+from agents.codex.state import PlannerState, TaskPlan
+from agents.codex.format_thread import fetch_thread_timeline_as_string
+from sandbox.constants import TARGET_AGENT_LANGSMITH_PROJECT
 from sandbox.tools import (
     run_command,
     inspect_directory,
@@ -11,16 +18,8 @@ from sandbox.tools import (
     grep,
     SandboxToolContext,
 )
-from shared.tools import web_search, LANGCHAIN_MCP_TOOLS
 
-from langchain.agents import create_agent
-from shared.llm import get_llm
-from agents.codex.state import PlannerState, TaskPlan
-from langchain_core.runnables import RunnableConfig
-from langchain_core.messages import HumanMessage
-
-from agents.codex.format_thread import fetch_thread_timeline_as_string
-from sandbox.constants import TARGET_AGENT_LANGSMITH_PROJECT
+logger = get_logger("codex.nodes.context_and_plan")
 
 
 SYSTEM_PROMPT = """
