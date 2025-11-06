@@ -1,9 +1,9 @@
-"""Planner graph"""
+"""Codex graph"""
 from __future__ import annotations
 from langgraph.graph import END, START, StateGraph
 from shared.logger import get_logger
 from shared.schema import CodexInput, CodexOutput
-from agents.codex.state import PlannerState
+from agents.codex.state import CodexState
 from agents.codex.nodes.raise_pr import raise_pr
 from agents.codex.nodes.deploy import deploy_service
 from agents.codex.nodes.test_server_ready import test_server_ready
@@ -12,18 +12,10 @@ from agents.codex.nodes import (
     initialize_project, context_and_plan_agent
 )
 
-logger = get_logger("codex.planner")
+logger = get_logger("codex.graph")
 
 
-def _prepare_graph_state(state: PlannerState) -> PlannerState:
-    state = dict(state)
-    state.setdefault("messages", [])
-    state.setdefault("autoAcceptPlan", True)
-    state.setdefault("attempt_number", 0)
-    state.setdefault("max_attempts", 3) # Let's default to 3 attempts
-    return state
-
-def is_server_ready(state: PlannerState) -> PlannerState:
+def is_server_ready(state: CodexState) -> CodexState:
     """This router checks if the server is ready at the *start*"""
     if state.server_running:
         return "context-plan-agent"
@@ -32,7 +24,7 @@ def is_server_ready(state: PlannerState) -> PlannerState:
         logger.error("Initial server readiness check failed. Ending graph.")
         return "end"
 
-def should_reflect_or_raise_pr(state: PlannerState) -> PlannerState:
+def should_reflect_or_raise_pr(state: CodexState) -> CodexState:
     """This router decides what to do *after* an implementation attempt"""
     if state.success:
         logger.info("Implementation successful. Proceeding to raise PR.")
@@ -46,12 +38,11 @@ def should_reflect_or_raise_pr(state: PlannerState) -> PlannerState:
     return "reflect"
 
 
-def compile_planner_graph():
-    """Compile the planner graph"""
-    workflow = StateGraph(state_schema=PlannerState, input=CodexInput, output=CodexOutput)
+def compile_codex_graph():
+    """Compile the codex graph"""
+    workflow = StateGraph(state_schema=CodexState, input=CodexInput, output=CodexOutput)
     
     # --- Add all nodes ---
-    workflow.add_node("prepare-graph-state", _prepare_graph_state)
     workflow.add_node("initialize-project", initialize_project)
     workflow.add_node("test-server-ready", test_server_ready) # Initial check
     workflow.add_node("context-plan-agent", context_and_plan_agent)
@@ -67,8 +58,7 @@ def compile_planner_graph():
     workflow.add_node("finalize", finalize)
 
     # --- Wire the graph ---
-    workflow.add_edge(START, "prepare-graph-state")
-    workflow.add_edge("prepare-graph-state", "initialize-project")
+    workflow.add_edge(START, "initialize-project")
     workflow.add_edge("initialize-project", "test-server-ready")
 
     # 1. Initial server check
@@ -100,4 +90,4 @@ def compile_planner_graph():
 
     return workflow.compile(debug=True)
 
-graph = compile_planner_graph()
+graph = compile_codex_graph()

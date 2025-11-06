@@ -1,10 +1,17 @@
-from agents.codex.state import PlannerState
-from shared.logger import get_logger
-logger = get_logger("planner.finalize")
+"""Finalize the codex agent"""
 import os
+import asyncio
+from typing import Dict, Any
 
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import HumanMessage
+from langgraph.pregel.remote import RemoteGraph
+from langgraph_sdk import get_sync_client
+from agents.codex.state import CodexState
+from agents.eval_agent.constants import EVAL_REMOTE_URL, LANGSMITH_CLIENT, N_VERSIONS
+from shared.logger import get_logger
+
+logger = get_logger("codex.finalize")
 
 USER_PROMPT = """
     IN the following request from the user, just update the github branch name to the new branch name, if it is present. If not present just add the new branch name to the request and only return the updated request with github branch name.
@@ -15,18 +22,14 @@ USER_PROMPT = """
     {new_branch_name}
     </new_branch_name>
 
-    # important notes:
+    <NOTES>
     - only return the updated request with github branch name.
     - do not include any other text in the response.
+    </NOTES>
 """
 
-from langgraph.pregel.remote import RemoteGraph
-from langgraph_sdk import get_sync_client
-from agents.eval_agent.constants import EVAL_REMOTE_URL, LANGSMITH_CLIENT, N_VERSIONS
-import asyncio
-from typing import Dict, Any
 
-async def _handoff_to_eval(message_content:str, state: PlannerState) -> dict:
+async def _handoff_to_eval(message_content:str, state: CodexState) -> dict:
     eval_payload: Dict[str, Any] = {
         "messages": [{"role": "user", "content": message_content}],
         "target_agent_version": state.target_agent_version,
@@ -64,8 +67,8 @@ async def _handoff_to_eval(message_content:str, state: PlannerState) -> dict:
 
 
 
-async def finalize(state: PlannerState) -> PlannerState:
-    logger.info(f"Finalizing planner state: {state}")
+async def finalize(state: CodexState) -> CodexState:
+    logger.info(f"Finalizing state: {state}")
     if os.getenv("EVAL_HANDOFF_ENABLED") == "true" and state.target_agent_version < N_VERSIONS:
         llm = ChatOpenAI(model="gpt-4o-mini")
         input_messages = []

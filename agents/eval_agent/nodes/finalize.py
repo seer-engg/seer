@@ -68,15 +68,15 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
 
     codex_input_payload: Dict[str, Any] = codex_input.model_dump()
 
-    planner_request = state.messages[0].content
-    planner_payload: Dict[str, Any] = {
-        "request": planner_request,
+    codex_request = state.messages[0].content
+    codex_payload: Dict[str, Any] = {
+        "request": codex_request,
         "repo_url": github_context.repo_url,
         "branch_name": github_context.branch_name,
     }
-    planner_payload.update(codex_input_payload)
+    codex_payload.update(codex_input_payload)
 
-    logger.info("Planner payload: %s", planner_payload)
+    logger.info("Codex payload: %s", codex_payload)
 
     # create a new thread for the Codex agent
     codex_sync_client = get_sync_client(url=CODEX_REMOTE_URL)
@@ -93,7 +93,7 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
 
     codex_response = await asyncio.to_thread(
         codex_remote.invoke,
-        planner_payload,
+        codex_payload,
         codex_thread_cfg,
     )
 

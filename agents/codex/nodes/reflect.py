@@ -1,6 +1,6 @@
 from shared.logger import get_logger
 
-from agents.codex.state import PlannerState
+from agents.codex.state import CodexState
 from langchain_core.messages import HumanMessage
 from shared.llm import get_llm
 from agents.codex.format_thread import fetch_thread_timeline_as_string
@@ -44,7 +44,7 @@ But after the implementation, the agent is not passing all the eval cases. You a
 Please provide a new, concrete set of implementation steps to fix the remaining issues.
 """
 
-async def reflect(state: PlannerState) -> PlannerState:
+async def reflect(state: CodexState) -> CodexState:
     """Reflect on the latest test results and plan necessary fixes."""
     logger.info("Reflecting on failed implementation...")
     if not state.latest_test_results:

@@ -13,7 +13,7 @@ from urllib.parse import quote as urlquote
 
 from shared.logger import get_logger
 from e2b_code_interpreter import AsyncSandbox, CommandResult
-from agents.codex.state import PlannerState
+from agents.codex.state import CodexState
 
 logger = get_logger("codex.nodes.raise_pr")
 
@@ -64,7 +64,7 @@ def _masked(s: str) -> str:
     return s.replace(token, "***")
 
 
-async def raise_pr(state: PlannerState) -> PlannerState:
+async def raise_pr(state: CodexState) -> CodexState:
     """Commit local changes in sandbox, push a branch, and open a GitHub PR.
 
     Requires in state:

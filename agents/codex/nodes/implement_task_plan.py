@@ -5,8 +5,8 @@ from langchain_core.runnables import RunnableConfig
 
 from shared.tools import web_search, LANGCHAIN_MCP_TOOLS
 from shared.logger import get_logger
-from agents.codex.state import PlannerState, TaskPlan
 from shared.llm import get_llm
+from agents.codex.state import CodexState, TaskPlan
 from sandbox.tools import (
     run_command,
     read_file,
@@ -19,7 +19,7 @@ from sandbox.tools import (
     SandboxToolContext,
 )
 
-logger = get_logger("planner.implement_task_plan")
+logger = get_logger("codex.implement_task_plan")
 
 USER_PROMPT = """
     based on the request 
@@ -46,7 +46,7 @@ SYSTEM_PROMPT = """
 """
 
 
-async def implement_task_plan(state: PlannerState) -> PlannerState:
+async def implement_task_plan(state: CodexState) -> CodexState:
     """Action ReAct agent: implement the chosen task using sandbox tools"""
     plan: TaskPlan | None = state.taskPlan
     if not plan:
@@ -71,7 +71,7 @@ async def implement_task_plan(state: PlannerState) -> PlannerState:
             *LANGCHAIN_MCP_TOOLS,
         ],
         system_prompt=SYSTEM_PROMPT,
-        state_schema=PlannerState,
+        state_schema=CodexState,
         context_schema=SandboxToolContext,  # Add context schema for sandbox tools
     )
 

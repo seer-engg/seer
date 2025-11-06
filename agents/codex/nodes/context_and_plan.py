@@ -8,7 +8,7 @@ from langchain_core.messages import HumanMessage
 from shared.logger import get_logger
 from shared.tools import web_search, LANGCHAIN_MCP_TOOLS
 from shared.llm import get_llm
-from agents.codex.state import PlannerState, TaskPlan
+from agents.codex.state import CodexState, TaskPlan
 from agents.codex.format_thread import fetch_thread_timeline_as_string
 from sandbox.constants import TARGET_AGENT_LANGSMITH_PROJECT
 from sandbox.tools import (
@@ -54,7 +54,7 @@ EVALS_AND_THREAD_TRACE_TEMPLATE = """
 """
 
 
-async def context_and_plan_agent(state: PlannerState) -> PlannerState:
+async def context_and_plan_agent(state: CodexState) -> CodexState:
     """Single ReAct agent that gathers repo context and returns a concrete plan."""
 
     # Extract sandbox context for tools
@@ -73,7 +73,7 @@ async def context_and_plan_agent(state: PlannerState) -> PlannerState:
             *LANGCHAIN_MCP_TOOLS,
         ],
         system_prompt=SYSTEM_PROMPT,
-        state_schema=PlannerState,
+        state_schema=CodexState,
         response_format=TaskPlan,
         context_schema=SandboxToolContext,  # Add context schema for sandbox tools
     )

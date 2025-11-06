@@ -22,7 +22,7 @@ class TaskPlan(BaseModel):
     items: List[TaskItem] = Field(..., description="Ordered plan steps")
 
 
-class PlannerState(CodexInput, CodexOutput):
+class CodexState(CodexInput, CodexOutput):
     messages: Annotated[list[BaseMessage], add_messages] = Field(None, description="The messages in the conversation")
     structured_response: Optional[dict] = Field(None, description="The structured response")
     taskPlan: Optional[TaskPlan] = Field(None, description="The task plan")

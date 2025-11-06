@@ -1,13 +1,13 @@
 from __future__ import annotations
 from e2b_code_interpreter import AsyncSandbox
-from agents.codex.state import PlannerState
+from agents.codex.state import CodexState
 from shared.logger import get_logger
 from sandbox import deploy_server_and_confirm_ready, TARGET_AGENT_COMMAND, TARGET_AGENT_PORT
 
 logger = get_logger("codex.nodes.deploy")
 
 
-async def deploy_service(state: PlannerState) -> PlannerState:
+async def deploy_service(state: CodexState) -> CodexState:
     """Deploy the LangGraph app in the sandbox and publish its URL.
 
     Requires in state:
