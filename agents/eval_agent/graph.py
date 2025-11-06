@@ -8,7 +8,9 @@ from agents.eval_agent.models import EvalAgentState
 from agents.eval_agent.nodes.plan import build_plan_subgraph
 from agents.eval_agent.nodes.reflect.graph import reflect_node
 from agents.eval_agent.nodes.run import build_run_subgraph
-from shared.logger import logger
+from shared.logger import get_logger
+
+logger = get_logger("eval_agent.graph")
 
 
 def should_continue(state: EvalAgentState) -> Literal["plan", "finalize"]:
