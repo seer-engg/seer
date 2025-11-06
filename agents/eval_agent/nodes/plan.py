@@ -4,7 +4,8 @@ This is also responsible for generating the test cases for the target agent.
 """
 import os
 import json
-from typing import List
+import re
+from typing import List, Tuple, Optional
 from uuid import uuid4
 
 from langchain_openai import ChatOpenAI
@@ -32,6 +33,42 @@ from shared.schema import GithubContext, UserContext, SandboxContext
 from shared.logger import get_logger
 
 logger = get_logger("eval_agent.plan")
+
+
+def _parse_github_url(url: str, branch_name: Optional[str] = None) -> Tuple[str, str]:
+    """
+    Parse a GitHub URL and extract the repository URL and branch name.
+    
+    Handles both:
+    - Web URLs: https://github.com/owner/repo/tree/branch-name
+    - Git URLs: https://github.com/owner/repo or https://github.com/owner/repo.git
+    
+    Args:
+        url: The GitHub URL (can be a web URL with /tree/ or a git URL)
+        branch_name: Optional branch name to use if not in URL
+    
+    Returns:
+        Tuple of (repo_url, branch_name)
+    """
+    # Pattern to match GitHub web URLs with /tree/ path
+    # The branch name can contain slashes, so we match everything after /tree/ 
+    # up to an optional trailing slash or path
+    web_url_pattern = r'^(https?://github\.com/[^/]+/[^/]+)/tree/([^/]+(?:/[^/]+)*)/?(?:/.+)?$'
+    match = re.match(web_url_pattern, url)
+    
+    if match:
+        # Extract repo URL and branch from web URL
+        repo_url = match.group(1)
+        extracted_branch = match.group(2)
+        logger.info(f"Parsed GitHub web URL: repo_url={repo_url}, branch={extracted_branch}")
+        return repo_url, extracted_branch
+    
+    # If it's a standard git URL, use it as-is
+    # Remove trailing .git if present for consistency
+    repo_url = re.sub(r'\.git$', '', url)
+    final_branch = branch_name or "main"
+    
+    return repo_url, final_branch
 
 
 
@@ -93,6 +130,15 @@ async def _ensure_target_agent_config(state: EvalAgentState) -> dict:
     extractor = LLM.with_structured_output(TargetAgentExtractionContext)
     context: TargetAgentExtractionContext = await extractor.ainvoke(f"{instruction}\n\nUSER:\n{last_human.content}")
     context.user_context.user_raw_request = last_human.content
+    
+    # Normalize the GitHub URL in case it's a web URL with /tree/ in it
+    normalized_repo_url, normalized_branch = _parse_github_url(
+        context.github_context.repo_url, 
+        context.github_context.branch_name
+    )
+    context.github_context.repo_url = normalized_repo_url
+    context.github_context.branch_name = normalized_branch
+    
     return {
         "github_context": context.github_context,
         "user_context": context.user_context,
