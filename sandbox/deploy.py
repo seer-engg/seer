@@ -106,8 +106,7 @@ async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, 
         # process might still be running; kill and surface last logs
         await sb.commands.kill(handle.pid)
         raise RuntimeError(
-            "Server reported startup failure. "
-            f"stderr tail: {''.join(last_err)[-800:]}"
+            "Server reported startup failure: " + "\n".join(last_err)
         )
 
     # 3) if we saw the success line (fast path), double-check with probes
