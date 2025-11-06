@@ -84,7 +84,7 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
 
     codex_thread_cfg = {"configurable": {"thread_id": thread["thread_id"]}}
     codex_remote = RemoteGraph(
-        "planner",
+        "codex",
         url=CODEX_REMOTE_URL,
         client=LANGSMITH_CLIENT,
         sync_client=codex_sync_client,
