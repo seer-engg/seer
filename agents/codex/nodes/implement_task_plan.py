@@ -64,7 +64,7 @@ async def implement_task_plan(state: CodexState) -> CodexState:
     )
 
     agent = create_agent(
-        model=get_llm(),
+        model=get_llm(model="codex"),
         tools=[
             run_command,
             read_file,

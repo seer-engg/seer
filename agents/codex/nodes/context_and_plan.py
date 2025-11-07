@@ -71,7 +71,7 @@ async def context_and_plan_agent(state: CodexState) -> CodexState:
         raise ValueError("No sandbox context found in state")
 
     agent = create_agent(
-        model=get_llm(reasoning_effort="high"),
+        model=get_llm(reasoning_effort="high", model="codex"),
         tools=[
             run_command,
             inspect_directory,
@@ -119,6 +119,5 @@ async def context_and_plan_agent(state: CodexState) -> CodexState:
     taskPlan: TaskPlan = result.get("structured_response")
 
     return {
-        "messages": result.get("messages", []),
         "taskPlan": taskPlan,
     }
