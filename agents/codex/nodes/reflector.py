@@ -44,7 +44,7 @@ But after the implementation, the agent is not passing all the eval cases. You a
 Please provide a new, concrete set of implementation steps to fix the remaining issues.
 """
 
-async def reflect(state: CodexState) -> CodexState:
+async def reflector(state: CodexState) -> CodexState:
     """Reflect on the latest test results and plan necessary fixes."""
     logger.info("Reflecting on failed implementation...")
     if not state.latest_test_results:

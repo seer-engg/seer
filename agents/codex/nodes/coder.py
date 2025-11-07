@@ -47,7 +47,7 @@ SYSTEM_PROMPT = """
 """
 
 
-async def implement_task_plan(state: CodexState) -> CodexState:
+async def coder(state: CodexState) -> CodexState:
     """Action ReAct agent: implement the chosen task using sandbox tools"""
     plan: TaskPlan | None = state.taskPlan
     if not plan:
@@ -119,6 +119,6 @@ async def implement_task_plan(state: CodexState) -> CodexState:
 
     return {
         "taskPlan": plan,
-        "messages": [AIMessage(content=pr_summary)],
+        "messages": [HumanMessage(content=pr_summary)],
         "pr_summary": pr_summary,
     }

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from langchain.agents import create_agent
 from langchain_core.runnables import RunnableConfig
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 
 from shared.logger import get_logger
 from shared.tools import web_search, LANGCHAIN_MCP_TOOLS
@@ -62,13 +62,15 @@ EVALS_AND_THREAD_TRACE_TEMPLATE = """
 """
 
 
-async def context_and_plan_agent(state: CodexState) -> CodexState:
+async def planner(state: CodexState) -> CodexState:
     """Single ReAct agent that gathers repo context and returns a concrete plan."""
 
     # Extract sandbox context for tools
     updated_sandbox_context = state.updated_sandbox_context
     if not updated_sandbox_context:
         raise ValueError("No sandbox context found in state")
+    
+    experiment_results = state.latest_test_results or state.experiment_context.results
 
     agent = create_agent(
         model=get_llm(reasoning_effort="high", model="codex"),
@@ -87,7 +89,7 @@ async def context_and_plan_agent(state: CodexState) -> CodexState:
     )
 
     evals_and_thread_traces=[] 
-    for eval in state.experiment_context.results:
+    for eval in experiment_results:
         if eval.passed:
             continue
         x={
@@ -118,6 +120,10 @@ async def context_and_plan_agent(state: CodexState) -> CodexState:
     logger.info(f"Result: {result.get('structured_response')}")
     taskPlan: TaskPlan = result.get("structured_response")
 
+    output_message = AIMessage(content=f"Development plan created successfully. {taskPlan.model_dump_json()}")
+
+
     return {
         "taskPlan": taskPlan,
+        "messages": [output_message],
     }

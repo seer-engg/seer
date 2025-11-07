@@ -12,7 +12,7 @@ from sandbox.constants import TARGET_AGENT_COMMAND
 logger = get_logger("programmer.test_implementation")
 
 
-async def test_implementation(state: CodexState) -> CodexState:
+async def evaluator(state: CodexState) -> CodexState:
     """Test the implementation of the task plan"""
     sbx: AsyncSandbox = await AsyncSandbox.connect(state.updated_sandbox_context.sandbox_id, timeout=60*20) # 20 minutes
     _, handle = await deploy_server_and_confirm_ready(
