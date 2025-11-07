@@ -8,8 +8,8 @@ from agents.codex.nodes.raise_pr import raise_pr
 from agents.codex.nodes.deploy import deploy_service
 from agents.codex.nodes.test_server_ready import test_server_ready
 from agents.codex.nodes import (
-    implement_task_plan, test_implementation, reflect, finalize,
-    initialize_project, context_and_plan_agent
+    planner, coder, evaluator, reflector, finalize,
+    initialize_project
 )
 
 logger = get_logger("codex.graph")
@@ -18,7 +18,7 @@ logger = get_logger("codex.graph")
 def is_server_ready(state: CodexState) -> CodexState:
     """This router checks if the server is ready at the *start*"""
     if state.server_running:
-        return "context-plan-agent"
+        return "planner"
     else:
         # If server fails initial check, we can't proceed.
         logger.error("Initial server readiness check failed. Ending graph.")
@@ -35,7 +35,7 @@ def should_reflect_or_raise_pr(state: CodexState) -> CodexState:
         return "end"
         
     logger.info(f"Implementation failed (Attempt {state.attempt_number}). Reflecting.")
-    return "reflect"
+    return "reflector"
 
 
 def compile_codex_graph():
@@ -45,12 +45,12 @@ def compile_codex_graph():
     # --- Add all nodes ---
     workflow.add_node("initialize-project", initialize_project)
     workflow.add_node("test-server-ready", test_server_ready) # Initial check
-    workflow.add_node("context-plan-agent", context_and_plan_agent)
+    workflow.add_node("planner", planner)
     
     # --- implementation loop nodes ---
-    workflow.add_node("implement-task-plan", implement_task_plan)
-    workflow.add_node("test-implementation", test_implementation)
-    workflow.add_node("reflect", reflect)
+    workflow.add_node("coder", coder)
+    workflow.add_node("evaluator", evaluator)
+    workflow.add_node("reflector", reflector)
     
     # --- Final step nodes ---
     workflow.add_node("raise-pr", raise_pr)
@@ -63,25 +63,25 @@ def compile_codex_graph():
 
     # 1. Initial server check
     workflow.add_conditional_edges("test-server-ready", is_server_ready, {
-        "context-plan-agent": "context-plan-agent",
+        "planner": "planner",
         "end": END
     })
 
     # 2. Plan, then Implement
-    workflow.add_edge("context-plan-agent", "implement-task-plan")
+    workflow.add_edge("planner", "coder")
 
     # 3. After implement, always test
-    workflow.add_edge("implement-task-plan", "test-implementation")
+    workflow.add_edge("coder", "evaluator")
 
     # 4. After testing, decide what's next (THE LOOP)
-    workflow.add_conditional_edges("test-implementation", should_reflect_or_raise_pr, {
+    workflow.add_conditional_edges("evaluator", should_reflect_or_raise_pr, {
         "raise-pr": "raise-pr",
-        "reflect": "reflect",
+        "reflector": "reflector",
         "end": END
     })
     
-    # 5. If reflect, loop back to implement
-    workflow.add_edge("reflect", "implement-task-plan")
+    # 5. If reflector, loop back to planner
+    workflow.add_edge("reflector", "planner")
 
     # 6. Final success path
     workflow.add_edge("raise-pr", "deploy-service")

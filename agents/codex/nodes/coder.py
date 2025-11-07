@@ -1,6 +1,6 @@
 """Implement the task plan"""
 from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
 
 from shared.tools import web_search, LANGCHAIN_MCP_TOOLS
@@ -47,7 +47,7 @@ SYSTEM_PROMPT = """
 """
 
 
-async def implement_task_plan(state: CodexState) -> CodexState:
+async def coder(state: CodexState) -> CodexState:
     """Action ReAct agent: implement the chosen task using sandbox tools"""
     plan: TaskPlan | None = state.taskPlan
     if not plan:
@@ -64,7 +64,7 @@ async def implement_task_plan(state: CodexState) -> CodexState:
     )
 
     agent = create_agent(
-        model=get_llm(),
+        model=get_llm(model="codex"),
         tools=[
             run_command,
             read_file,
@@ -119,6 +119,6 @@ async def implement_task_plan(state: CodexState) -> CodexState:
 
     return {
         "taskPlan": plan,
-        "messages": result.get("messages", []), # Pass along the full history
+        "messages": [HumanMessage(content=pr_summary)],
         "pr_summary": pr_summary,
     }
