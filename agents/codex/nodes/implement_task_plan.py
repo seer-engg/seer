@@ -1,6 +1,6 @@
 """Implement the task plan"""
 from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
 
 from shared.tools import web_search, LANGCHAIN_MCP_TOOLS
@@ -119,6 +119,6 @@ async def implement_task_plan(state: CodexState) -> CodexState:
 
     return {
         "taskPlan": plan,
-        "messages": result.get("messages", []), # Pass along the full history
+        "messages": [AIMessage(content=pr_summary)],
         "pr_summary": pr_summary,
     }

@@ -12,7 +12,7 @@ logger = get_logger("codex.nodes.reflect")
 SYSTEM_PROMPT = """
 You are a Refective person , part of an agent development team.
 Your team is trying to enhance an agent so that it can pass all the eval cases. Based on some failed eval cases your team devised a plan to fix the agent. A programmer implemented some code changes to the agent following the plan.
-But after the implementation, the agent is not passing all the eval cases. You are tasked to reflect on the latest test results and suggest necessary changes to the plan.
+But after the implementation, the agent is not passing all the eval cases. You are tasked to reflect on the latest test results and suggest necessary policy changes the plan should follow to fix the agent.
 """
 
 EVALS_AND_THREAD_TRACE_TEMPLATE = """    
@@ -53,7 +53,7 @@ async def reflect(state: CodexState) -> CodexState:
             "messages": [HumanMessage(content="No test results found, attempting plan again.")]
         }
 
-    llm = get_llm()
+    llm = get_llm(model="codex")
     evals_and_thread_traces=[] 
     for eval in state.latest_test_results:
         if eval.passed:
