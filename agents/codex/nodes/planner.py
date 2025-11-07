@@ -108,7 +108,8 @@ async def planner(state: CodexState) -> CodexState:
         )
 
     msgs = list(state.messages or [])
-    msgs.append(HumanMessage(content=USER_PROMPT.format(evals_and_thread_traces=evals_and_thread_traces)))
+    task_message = HumanMessage(content=USER_PROMPT.format(evals_and_thread_traces=evals_and_thread_traces))
+    msgs.append(task_message)
 
     # Pass context along with state
     result = await agent.ainvoke(
