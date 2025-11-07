@@ -1,7 +1,7 @@
 """nodes for finalizing the evaluation"""
 import os
 import asyncio
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from langchain_core.messages import AIMessage
 from langgraph.graph import END, START, StateGraph
@@ -11,35 +11,14 @@ from langgraph_sdk import get_sync_client
 from agents.eval_agent.constants import CODEX_REMOTE_URL, LANGSMITH_CLIENT
 from agents.eval_agent.models import EvalAgentState
 from shared.logger import get_logger
-from shared.schema import SandboxContext, CodexInput
+from shared.schema import (
+    CodexInput,
+    SandboxContext,
+    CodexOutput,
+)
 
 
 logger = get_logger("eval_agent.finalize")
-
-def _extract_branch_from_codex_response(response: Any) -> tuple[Optional[str], Dict[str, Any]]:
-    branch_name: Optional[str] = None
-    branch_path: Optional[str] = None
-
-    def _walk(obj: Any, path: str = "") -> None:
-        nonlocal branch_name, branch_path
-        if branch_name is not None:
-            return
-        if isinstance(obj, dict):
-            for key, value in obj.items():
-                current_path = f"{path}.{key}" if path else key
-                if isinstance(value, str) and key in {"branch_name", "branch", "head_branch"} and value.strip():
-                    branch_name = value.strip()
-                    branch_path = current_path
-                    return
-                _walk(value, current_path)
-        elif isinstance(obj, list):
-            for idx, item in enumerate(obj):
-                current_path = f"{path}[{idx}]" if path else f"[{idx}]"
-                _walk(item, current_path)
-
-    _walk(response)
-    metadata = {"branch_path": branch_path} if branch_path else {}
-    return branch_name, metadata
 
 
 async def _handoff_to_codex(state: EvalAgentState) -> dict:
@@ -68,15 +47,15 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
 
     codex_input_payload: Dict[str, Any] = codex_input.model_dump()
 
-    planner_request = state.messages[0].content
-    planner_payload: Dict[str, Any] = {
-        "request": planner_request,
+    codex_request = state.messages[0].content
+    codex_payload: Dict[str, Any] = {
+        "request": codex_request,
         "repo_url": github_context.repo_url,
         "branch_name": github_context.branch_name,
     }
-    planner_payload.update(codex_input_payload)
+    codex_payload.update(codex_input_payload)
 
-    logger.info("Planner payload: %s", planner_payload)
+    logger.info("Codex payload: %s", codex_payload)
 
     # create a new thread for the Codex agent
     codex_sync_client = get_sync_client(url=CODEX_REMOTE_URL)
@@ -84,7 +63,7 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
 
     codex_thread_cfg = {"configurable": {"thread_id": thread["thread_id"]}}
     codex_remote = RemoteGraph(
-        "planner",
+        "codex",
         url=CODEX_REMOTE_URL,
         client=LANGSMITH_CLIENT,
         sync_client=codex_sync_client,
@@ -93,17 +72,25 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
 
     codex_response = await asyncio.to_thread(
         codex_remote.invoke,
-        planner_payload,
+        codex_payload,
         codex_thread_cfg,
     )
 
-    branch_name, metadata = _extract_branch_from_codex_response(codex_response)
-    if branch_name:
-        logger.info("Codex handoff response metadata: %s", metadata)
-    else:
-        logger.error("finalize.handoff: Codex response missing branch_name: %s", codex_response)
+    codex_response_payload: CodexOutput = CodexOutput.model_validate(codex_response)
+    logger.info("Codex response payload: %s", codex_response_payload)
 
-    return {}
+    # if the target agent was updated, store the handoff and reset the state for a new round
+    if codex_response_payload.target_agent_version > state.target_agent_version:
+        # Pass the handoff object and reset the loop state
+        return {
+            "codex_output": codex_response_payload,
+            "attempts": 0,
+            "dataset_examples": [],
+            "latest_results": [],
+        }
+    else:
+        # Agent was not updated, clear any potential stale handoff object
+        return {"codex_output": None}
 
 
 def _summarize_finalize(state: EvalAgentState) -> dict:

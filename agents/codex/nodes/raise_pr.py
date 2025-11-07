@@ -13,10 +13,9 @@ from urllib.parse import quote as urlquote
 
 from shared.logger import get_logger
 from e2b_code_interpreter import AsyncSandbox, CommandResult
-from agents.codex.common.state import PlannerState
-from agents.codex.common.constants import BASE_BRANCH
+from agents.codex.state import CodexState
 
-logger = get_logger("codex.planner.nodes.raise_pr")
+logger = get_logger("codex.nodes.raise_pr")
 
 
 def _parse_github_owner_repo(repo_url: str) -> Optional[Tuple[str, str]]:
@@ -65,7 +64,7 @@ def _masked(s: str) -> str:
     return s.replace(token, "***")
 
 
-async def raise_pr(state: PlannerState) -> PlannerState:
+async def raise_pr(state: CodexState) -> CodexState:
     """Commit local changes in sandbox, push a branch, and open a GitHub PR.
 
     Requires in state:
@@ -82,7 +81,7 @@ async def raise_pr(state: PlannerState) -> PlannerState:
     sandbox_id = state.updated_sandbox_context.sandbox_id
     repo_dir = state.updated_sandbox_context.working_directory
     repo_url = state.github_context.repo_url
-    base_branch = state.github_context.branch_name or BASE_BRANCH
+    base_branch = state.github_context.branch_name or "main"
     new_version = state.target_agent_version + 1
 
     # Generate branch name and commit message

@@ -162,7 +162,7 @@ async def patch_file(
         file_path: Path to the file relative to the repository root
         old_string: The exact text to find and replace (must match exactly including whitespace)
         new_string: The text to replace it with
-        replace_all: If True, replace all occurrences. If False (default), replace only the first occurrence.
+        replace_all: If True, replace all occurrences. If False, replace only the first occurrence.
 
     Returns:
         A success message if the patch was applied, or an error message if:
@@ -296,8 +296,39 @@ async def apply_patch(diff_content: str, runtime: ToolRuntime[SandboxToolContext
         return f"Error applying diff: {e}"
 
 
+async def _inspect_directory_impl(
+    directory_path: str, sandbox_context: SandboxContext, depth: int = 2
+) -> str:
+    """Core implementation for inspecting a directory."""
+    sandbox_id = sandbox_context.sandbox_id
+    repo_path = sandbox_context.working_directory
+
+    if not sandbox_id:
+        raise ValueError("Sandbox session ID not found in context")
+    if not repo_path:
+        raise ValueError("Repository directory not found in context")
+
+    sbx: AsyncSandbox = await get_sandbox(sandbox_id)
+    try:
+        # Use tree for detailed listing
+        command = f"tree -a -L {depth} -I 'node_modules|.git|.venv|dist|build|__pycache__' -F {directory_path}"
+        res: CommandResult = await sbx.commands.run(command, cwd=repo_path)
+
+        if res.exit_code == 0:
+            return res.stdout
+        else:
+            return (
+                f"Error listing directory (exit code {res.exit_code}):\n{res.stderr}"
+            )
+    except Exception as e:
+        logger.error(f"Error listing files in sandbox: {e}")
+        return f"Error: {e}"
+
+
 @tool
-async def inspect_directory(directory_path: str, runtime: ToolRuntime[SandboxToolContext], depth: int ) -> str:
+async def inspect_directory(
+    directory_path: str, runtime: ToolRuntime[SandboxToolContext], depth: int = 2
+) -> str:
     """
     List files and directories in the repository.
     
@@ -308,24 +339,16 @@ async def inspect_directory(directory_path: str, runtime: ToolRuntime[SandboxToo
     Returns:
         A tree of the directory structure including files and directories, or an error message if the directory could not be inspected
     """
-    sandbox_id, repo_path = vaildate_sandbox_tool_call(runtime)
+    if not runtime.context:
+        raise ValueError(
+            "Runtime context not found. Make sure context is passed when invoking the agent."
+        )
 
-    if depth is None:
-        depth = 2
-    
-    sbx: AsyncSandbox = await get_sandbox(sandbox_id)
-    try:
-        # Use ls -la for detailed listing
-        command = f"tree -a -L {depth} -I 'node_modules|.git|.venv|dist|build|__pycache__' -F {directory_path} "
-        res: CommandResult = await sbx.commands.run(command, cwd=repo_path)
-        
-        if res.exit_code == 0:
-            return res.stdout
-        else:
-            return f"Error listing directory (exit code {res.exit_code}):\n{res.stderr}"
-    except Exception as e:
-        logger.error(f"Error listing files in sandbox: {e}")
-        return f"Error: {e}"
+    return await _inspect_directory_impl(
+        directory_path=directory_path,
+        sandbox_context=runtime.context.sandbox_context,
+        depth=depth,
+    )
 
 
 @tool

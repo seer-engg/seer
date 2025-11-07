@@ -1,13 +1,15 @@
-from shared.logger import get_logger
 from e2b import AsyncSandbox
 from langchain_core.messages import AIMessage
+
+from shared.logger import get_logger
 from sandbox import deploy_server_and_confirm_ready, TARGET_AGENT_COMMAND
+from agents.codex.state import CodexState
 
-logger = get_logger("planner.test_server_ready")
+logger = get_logger("codex.test_server_ready")
 
 
-async def test_server_ready(state: dict) -> dict:
-    """Intentionally keeping the typing of this function open because it's used commonly both by programmer and planner which have different state schemas"""
+async def test_server_ready(state: CodexState) -> CodexState:
+    """Test if the server is ready"""
     logger.info(f"Testing server readiness: {state}")
     sbx: AsyncSandbox = await AsyncSandbox.connect(state.updated_sandbox_context.sandbox_id)
 

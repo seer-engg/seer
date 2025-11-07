@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from agents.codex.common.state import PlannerState
+from agents.codex.state import CodexState
 from shared.logger import get_logger
-logger = get_logger("codex.planner.nodes.initialize_project")
+logger = get_logger("codex.nodes.initialize_project")
 
 from sandbox import initialize_e2b_sandbox, setup_project, TARGET_AGENT_SETUP_SCRIPT
 from shared.schema import SandboxContext
 
 
 
-async def initialize_project(state: PlannerState) -> PlannerState:
+async def initialize_project(state: CodexState) -> CodexState:
     """If a remote repo URL is provided, initialize an E2B sandbox and clone/pull there."""
     logger.info("Skipping project initialization as it is already done")
     sbx, repo_dir, branch_in_sandbox = await initialize_e2b_sandbox(
