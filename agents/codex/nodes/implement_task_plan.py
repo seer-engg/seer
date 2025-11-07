@@ -12,6 +12,7 @@ from sandbox.tools import (
     read_file,
     grep,
     inspect_directory,
+    _inspect_directory_impl,
     create_file,
     create_directory,
     write_file,
@@ -55,6 +56,12 @@ async def implement_task_plan(state: CodexState) -> CodexState:
     if not updated_sandbox_context:
         raise ValueError("No sandbox context found in state")
 
+    # Ground the agent with the current directory structure
+    initial_context = await _inspect_directory_impl(
+        directory_path=".",
+        depth=2,
+        sandbox_context=updated_sandbox_context,
+    )
 
     agent = create_agent(
         model=get_llm(),
@@ -80,14 +87,20 @@ async def implement_task_plan(state: CodexState) -> CodexState:
     
     # Check if this is the first attempt (no reflections yet)
     if state.attempt_number == 0:
-         messages.append(
-            HumanMessage(
-                content=USER_PROMPT.format(
-                    request=state.user_context.user_expectation,
-                    task_plan=state.taskPlan,
-                )
-            )
+         # --- Start of proposed change ---
+         # Prepend the file system context to the user prompt
+        user_prompt_content = USER_PROMPT.format(
+            request=state.user_context.user_expectation,
+            task_plan=state.taskPlan,
         )
+        initial_prompt = (
+            "Here is the current structure of the codebase you are working in:\n"
+            f"<directory_listing>\n{initial_context}\n</directory_listing>\n\n"
+            f"{user_prompt_content}"
+        )
+        messages.append(HumanMessage(content=initial_prompt))
+        # --- End of proposed change ---
+
     # If this is a reflection loop, the 'reflect' node already added the new HumanMessage
     
     # Pass context along with state

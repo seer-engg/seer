@@ -1,7 +1,7 @@
 """models for the evaluation agent"""
 import uuid
 from datetime import datetime
-from typing import Annotated, Optional, List
+from typing import Annotated, Optional, List, Literal
 
 from pydantic import BaseModel, Field
 from langchain_core.messages import BaseMessage
@@ -15,6 +15,7 @@ from shared.schema import (
     DatasetContext,
     ExperimentContext,
     ExperimentResultContext,
+    CodexOutput,
 )
 
 class Hypothesis(BaseModel):
@@ -77,5 +78,5 @@ class EvalAgentState(BaseModel):
     latest_results: List[ExperimentResultContext] = Field(default_factory=list, description="Results from the latest experiment execution")
     dataset_examples: List[DatasetExample] = Field(default_factory=list, description="List of generated test cases")
     reflections_used_for_planning: str = Field(default="", description="The string of RAG-retrieved reflections used by the plan node")
-    agent_updated: bool = Field(default=False, description="Whether the agent was updated")
-    target_agent_version: int = Field(default=0, description="Version of the target agent")
+    target_agent_version: int = Field(default=0, description="Version of the target agent being evaluated")
+    codex_output: Optional[CodexOutput] = Field(default=None, description="Output from the codex agent, used for handoff.")
