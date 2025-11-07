@@ -48,7 +48,8 @@ async def graph_rag_retrieval(query: str, agent_name: str, user_id: str, limit: 
     MATCH (ex:DatasetExample {user_id: $user_id})-[:WAS_RUN_IN]->(res)
     
     RETURN 
-        ref.summary as reflection_summary, 
+        ref.summary as reflection_summary,
+        ref.test_generation_critique as test_generation_critique,
         collect({
             input: ex.input_message,
             actual: res.actual_output,
@@ -70,9 +71,14 @@ async def graph_rag_retrieval(query: str, agent_name: str, user_id: str, limit: 
     # 3. Format for Prompt
     for data in graph_result:
         summary = data.get("reflection_summary")
+        critique = data.get("test_generation_critique")
         evidence_list = data.get("evidence", [])
         
         rag_context_parts.append(f"Insight: {summary}")
+        
+        if critique:
+            rag_context_parts.append(f"Past Test Critique: {critique}")
+            
         if evidence_list:
             rag_context_parts.append("Supporting Failed Tests:")
             for ev in evidence_list:

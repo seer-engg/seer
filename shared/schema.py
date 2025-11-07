@@ -6,6 +6,7 @@ import os
 from datetime import datetime
 from typing import List, Optional, Literal
 from pydantic import BaseModel, Field, ConfigDict, computed_field
+from agents.eval_agent.constants import EVAL_PASS_THRESHOLD
 
 
 class FailureAnalysis(BaseModel):
@@ -75,7 +76,7 @@ class ExperimentResultContext(BaseModel):
     @property
     def passed(self) -> bool:
         """Whether the evaluator deemed this test successful."""
-        return self.analysis.score >= 0.95
+        return self.analysis.score >= EVAL_PASS_THRESHOLD
 
     started_at: datetime = Field(..., description="Timestamp when the execution started")
     completed_at: datetime = Field(..., description="Timestamp when the execution completed")

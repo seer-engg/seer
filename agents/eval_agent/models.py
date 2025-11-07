@@ -33,6 +33,10 @@ class Hypothesis(BaseModel):
         default_factory=list,
         description="Specific, new test ideas to create next (e.g., 're-run divide_by_zero 3 times', 'test dict access with missing key').",
     )
+    test_generation_critique: Optional[str] = Field(
+        default=None,
+        description="A critique of the test cases that were just run. Were they too easy? Did they find the *right* bugs? What could be improved for next time?"
+    )
 
 
 class EvalReflection(BaseModel):

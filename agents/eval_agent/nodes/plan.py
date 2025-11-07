@@ -35,6 +35,56 @@ from shared.logger import get_logger
 logger = get_logger("eval_agent.plan")
 
 
+CANDIDATE_GENERATION_PROMPT = """You are a creative, adversarial QA analyst. Your goal is to brainstorm a wide variety of test cases.
+
+<USER_EXPECTATION>
+{user_expectation}
+</USER_EXPECTATION>
+
+<PAST_EVAL_REFLECTIONS>
+{reflections_text}
+</PAST_EVAL_REFLECTIONS>
+
+<RECENTLY_RUN_TESTS>
+{prev_dataset_examples}
+</RECENTLY_RUN_TESTS>
+
+<CONSTRAINTS>
+- Generate {N_CANDIDATES} diverse test case candidates.
+- Focus on variety: simple cases, complex cases, edge cases, and failure-seeking cases inspired by the reflections.
+- Do not repeat any input_message from <RECENTLY_RUN_TESTS>.
+- **This is a brainstorm, so prioritize creativity and breadth over perfect refinement.**
+</CONSTRAINTS>
+"""
+
+FINAL_SELECTION_PROMPT = """You are a senior, highly critical QA Lead. Your job is to review a list of test case candidates and select *only* the most effective ones.
+
+<USER_EXPECTATION>
+{user_expectation}
+</USER_EXPECTATION>
+
+<PAST_EVAL_REFLECTIONS>
+{reflections_text}
+</PAST_EVAL_REFLECTIONS>
+
+<CANDIDATE_TEST_CASES>
+Here are {N_CANDIDATES} candidates brainstormed by your team:
+{candidate_examples_json}
+</CANDIDATE_TEST_CASES>
+
+<CONSTRAINTS>
+- Your goal is to find *novel* bugs.
+- **You MUST select exactly {N_TEST_CASES} test cases.**
+- **Critically analyze the candidates:**
+    - Discard any that are too simple or duplicates.
+    - Discard any that repeat failure modes we've already seen in the reflections, unless they test it in a new, harder way.
+    - **Prioritize tests that are complex, target known weak spots (from reflections), or test novel edge cases.**
+- **Learn from the "Past Test Critique" in the reflections.** If a critique said "tests were too simple," you MUST select the hardest ones.
+- Return *only* your final selection of {N_TEST_CASES} test cases.
+</CONSTRAINTS>
+"""
+
+
 def _parse_github_url(url: str, branch_name: Optional[str] = None) -> Tuple[str, str]:
     """
     Parse a GitHub URL and extract the repository URL and branch name.
@@ -77,13 +127,7 @@ async def _invoke_test_generation_llm(
     reflections_text: str,
     prev_dataset_examples: str,
 ) -> List[DatasetExample]:
-    augmented_prompt = EVAL_AGENT_TEST_GEN_PROMPT.format(
-        N_TEST_CASES=N_TEST_CASES,
-        user_expectation=user_expectation,
-        reflections_text=reflections_text,
-        prev_dataset_examples=prev_dataset_examples,
-    )
-
+    
     class _TestGenerationOutput(BaseModel):
         """
         Explicitly defined internal class for the test generation LLM output. 
@@ -91,20 +135,85 @@ async def _invoke_test_generation_llm(
         """
         dataset_examples: List[DatasetExample]
 
+    # Use a smart, critical LLM for this reasoning chain
     _smart_llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
-
     test_generation_llm = _smart_llm.with_structured_output(_TestGenerationOutput)
-    generated: _TestGenerationOutput = await test_generation_llm.ainvoke(augmented_prompt)
+
+    # --- Step 1: Generate a large pool of candidates ---
     
-    for example in generated.dataset_examples:
+    # Generate 3x the number of tests we actually need
+    N_CANDIDATES = N_TEST_CASES * 3 
+    
+    logger.info(
+        "plan.test-llm: Step 1 - Generating %d candidates...", N_CANDIDATES
+    )
+    
+    candidate_prompt = CANDIDATE_GENERATION_PROMPT.format(
+        N_CANDIDATES=N_CANDIDATES,
+        user_expectation=user_expectation,
+        reflections_text=reflections_text,
+        prev_dataset_examples=prev_dataset_examples,
+    )
+    
+    try:
+        candidate_output: _TestGenerationOutput = await test_generation_llm.ainvoke(candidate_prompt)
+        candidates = candidate_output.dataset_examples
+        logger.info(
+            "plan.test-llm: Step 1 - Successfully generated %d candidates.", len(candidates)
+        )
+    except Exception as e:
+        logger.error(f"plan.test-llm: Step 1 - FAILED to generate candidates. {e}")
+        # Fallback: If candidate generation fails, return an empty list.
+        return []
+
+    if not candidates:
+        logger.warning("plan.test-llm: Step 1 - No candidates were generated.")
+        return []
+
+    # --- Step 2: Critique and Select the best N_TEST_CASES ---
+
+    logger.info(
+        "plan.test-llm: Step 2 - Critiquing and selecting %d final tests...", N_TEST_CASES
+    )
+    
+    candidate_examples_json = json.dumps(
+        [ex.model_dump() for ex in candidates], indent=2
+    )
+
+    selection_prompt = FINAL_SELECTION_PROMPT.format(
+        N_TEST_CASES=N_TEST_CASES,
+        N_CANDIDATES=len(candidates),
+        user_expectation=user_expectation,
+        reflections_text=reflections_text,
+        candidate_examples_json=candidate_examples_json,
+    )
+
+    try:
+        final_selection_output: _TestGenerationOutput = await test_generation_llm.ainvoke(selection_prompt)
+        final_tests = final_selection_output.dataset_examples
+        logger.info(
+            "plan.test-llm: Step 2 - Successfully selected %d final tests.", len(final_tests)
+        )
+    except Exception as e:
+        logger.error(f"plan.test-llm: Step 2 - FAILED to select final tests. {e}")
+        # Fallback: If selection fails, return the first N tests from candidates
+        final_tests = candidates[:N_TEST_CASES]
+        
+    if not final_tests:
+        logger.warning("plan.test-llm: Step 2 - No final tests were selected.")
+        return []
+
+    # Assign final Example IDs
+    for example in final_tests:
         example.example_id = str(uuid4())
 
     logger.info(
-        "plan.test-llm: generated %d tests (prompt_chars=%d)",
-        len(generated.dataset_examples),
-        len(augmented_prompt),
+        "plan.test-llm: Chain of Thought generation complete. Produced %d tests.",
+        len(final_tests),
     )
-    return generated.dataset_examples
+    
+    # Return *only* the final, selected tests
+    return final_tests
 
 
 async def _ensure_target_agent_config(state: EvalAgentState) -> dict:

@@ -30,12 +30,18 @@ Your investigation process:
 3.  Review the results. For any test that **passed**, especially if it looks like a test that *should* fail (e.g., divide_by_zero), you MUST call `get_historical_test_results()` to check if it has *ever* failed in the past. This is how you detect flakiness.
 4.  For any test that **failed**, this is a new failure mode.
 5.  Use `think()` to form your hypotheses about new failures, flakiness, or other patterns.
-6.  Once your investigation is complete, call `save_reflection()` with your final analysis. This is your final step.
+6.  **META-REFLECTION:** Now, critique the test cases that were just run.
+    * If all tests passed, does that mean the agent is perfect, or *were the tests too easy*?
+    * If a bug was found, was it the bug you *expected* to find?
+    * How can the *next* batch of tests be even better and more difficult?
+    * Formulate this as your `test_generation_critique`.
+7.  Once your investigation is complete, call `save_reflection()` with your final analysis, including your `test_generation_critique`. This is your final step.
 
 **Key Insight to find:**
 * **New Failures:** What new bugs did you just find?
 * **Flakiness:** Which tests are *unreliable* (pass sometimes, fail other times)?
 * **Next Steps:** What *new* tests should be generated to explore these failures or confirm flakiness (e.g., "re-run divide_by_zero 3 times")?
+* **Test Critique:** How effective were the tests themselves? (This goes into `test_generation_critique`)
 """
 
 # 2. Create the Agent Runnable

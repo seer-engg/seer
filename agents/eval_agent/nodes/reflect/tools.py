@@ -138,7 +138,8 @@ def persist_reflection(
         ref.attempt = $attempt,
         ref.found_novel_bugs = $found_novel_bugs,
         ref.failure_modes = $failure_modes,
-        ref.recommended_tests = $recommended_tests
+        ref.recommended_tests = $recommended_tests,
+        ref.test_generation_critique = $test_generation_critique
     ON MATCH SET // Update if it already exists (e.g., if embedding failed first time)
         ref.summary = $summary,
         ref.embedding = $embedding,
@@ -146,7 +147,8 @@ def persist_reflection(
         ref.attempt = $attempt,
         ref.found_novel_bugs = $found_novel_bugs,
         ref.failure_modes = $failure_modes,
-        ref.recommended_tests = $recommended_tests
+        ref.recommended_tests = $recommended_tests,
+        ref.test_generation_critique = $test_generation_critique
     
     // 2. Link it to its evidence (if any)
     WITH ref
@@ -175,6 +177,7 @@ def persist_reflection(
             "found_novel_bugs": reflection.hypothesis.found_novel_bugs,
             "failure_modes": reflection.hypothesis.failure_modes,
             "recommended_tests": reflection.hypothesis.recommended_tests,
+            "test_generation_critique": reflection.hypothesis.test_generation_critique, # Add the new field
             "evidence_thread_ids": evidence_thread_ids,
         }
     )
