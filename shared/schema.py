@@ -31,6 +31,7 @@ class FailureAnalysis(BaseModel):
         default=None, 
         description="The primary category of the failure. Null if score is 1.0."
     )
+    #TODO: Why do we need severity? when we already had score !
     severity: Optional[int] = Field(
         default=None, 
         description="Severity of the failure from 1 (minor) to 10 (critical). Null if score is 1.0."
