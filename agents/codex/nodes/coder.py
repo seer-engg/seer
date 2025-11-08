@@ -83,27 +83,16 @@ async def coder(state: CodexState) -> CodexState:
     )
 
     # Prepare messages for the agent
-    messages = list(state.messages or [])
+    messages = list(state.coder_thread or [])
     
-    # Check if this is the first attempt (no reflections yet)
-    if state.attempt_number == 0:
-         # --- Start of proposed change ---
-         # Prepend the file system context to the user prompt
-        user_prompt_content = USER_PROMPT.format(
-            request=state.user_context.user_expectation,
-            task_plan=state.taskPlan,
-        )
-        initial_prompt = (
-            "Here is the current structure of the codebase you are working in:\n"
-            f"<directory_listing>\n{initial_context}\n</directory_listing>\n\n"
-            f"{user_prompt_content}"
-        )
-        messages.append(HumanMessage(content=initial_prompt))
-        # --- End of proposed change ---
+    user_prompt_content = USER_PROMPT.format(
+        request=state.user_context.user_expectation,
+        task_plan=state.taskPlan,
+    )
+    # TODO: when coming from test_server_ready, do not add the user_prompt_content
 
-    # If this is a reflection loop, the 'reflect' node already added the new HumanMessage
-    
-    # Pass context along with state
+    messages.append(HumanMessage(content=user_prompt_content))
+
     result = await agent.ainvoke(
         input={"messages": messages}, 
         config=RunnableConfig(recursion_limit=100),
@@ -119,6 +108,7 @@ async def coder(state: CodexState) -> CodexState:
 
     return {
         "taskPlan": plan,
-        "messages": [HumanMessage(content=pr_summary)],
+        "coder_thread": result.get("messages"),
+        "planner_thread": [AIMessage(content=pr_summary)],
         "pr_summary": pr_summary,
     }

@@ -1,8 +1,8 @@
 from .base import (
     cd_and_run_in_sandbox,
     get_sandbox,
-
 )
+from .commands import kill_process_on_port, check_for_process_on_port
 from .deploy import deploy_server_and_confirm_ready
 from .initialize import initialize_e2b_sandbox, setup_project
 from .constants import TARGET_AGENT_COMMAND, TARGET_AGENT_PORT, TARGET_AGENT_SETUP_SCRIPT
@@ -18,6 +18,8 @@ __all__ = [
     "TARGET_AGENT_PORT",
     "TARGET_AGENT_SETUP_SCRIPT",
     "prepare_target_agent",
+    "kill_process_on_port",
+    "check_for_process_on_port",
 ]
 
 

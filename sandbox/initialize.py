@@ -7,7 +7,7 @@ from typing import Optional
 from e2b import AsyncSandbox, CommandResult
 from shared.logger import get_logger
 logger = get_logger("sandbox.initialize")
-from .constants import _build_git_shell_script, TARGET_AGENT_ENVS
+from .constants import _build_git_shell_script, TARGET_AGENT_ENVS, BASE_TEMPLATE_ALIAS
 import os
 
 def _masked(s: str) -> str:
@@ -33,6 +33,7 @@ async def initialize_e2b_sandbox(
 
     logger.info("Creating E2B sandbox for codex...")
     sbx: AsyncSandbox = await AsyncSandbox.beta_create(
+      template=BASE_TEMPLATE_ALIAS,
       auto_pause=True,
       envs=TARGET_AGENT_ENVS,
       timeout=60*30, # 30 minutes
