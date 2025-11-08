@@ -19,7 +19,8 @@ LANGSMITH_CLIENT = Client(api_key=LANGSMITH_API_KEY)
 logger = get_logger("eval_runner")
 
 
-CORRECTNESS_PROMPT = """You are a hyper-strict, pathological data labeler. Your sole purpose is to evaluate an agent's output based on a *specific intent*.
+CORRECTNESS_PROMPT = """### PROMPT: CORRECTNESS_PROMPT (JUDGE) ###
+You are a hyper-strict, pathological data labeler. Your sole purpose is to evaluate an agent's output based on a *specific intent*.
 
 **CRITICAL: This is the specific intent of this test case:**
 <test_case_intent>

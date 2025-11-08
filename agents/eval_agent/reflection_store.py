@@ -84,21 +84,11 @@ async def graph_rag_retrieval(query: str, agent_name: str, user_id: str, limit: 
             for ev in evidence_list:
                 if ev and ev.get('input'): 
                     rag_context_parts.append(
-                        f"  - Input: {_truncate(ev.get('input'))}\n"
-                        f"    Actual: {_truncate(ev.get('actual'))}\n"
-                        f"    Reasoning: {_truncate(ev.get('reasoning'))}\n"
+                        f"  - Input: {ev.get('input')}\n"
+                        f"    Actual: {ev.get('actual')}\n"
+                        f"    Reasoning: {ev.get('reasoning')}\n"
                         f"    Score: {ev.get('score') or 0.0:.2f}"
                     )
         rag_context_parts.append("-" * 20)
             
     return "\n".join(rag_context_parts) if rag_context_parts else "No relevant reflections with evidence found."
-
-
-def _truncate(text: Any, limit: int = 280) -> str:
-    """Helper to keep prompt context small."""
-    if text is None:
-        return ""
-    text = str(text)
-    if len(text) <= limit:
-        return text
-    return f"{text[:limit]}… (truncated {len(text)} chars)"

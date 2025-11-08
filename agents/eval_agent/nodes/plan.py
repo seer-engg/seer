@@ -18,9 +18,6 @@ from agents.eval_agent.models import (
     EvalAgentState,
     DatasetExample,
 )
-from agents.eval_agent.prompts import (
-    EVAL_AGENT_TEST_GEN_PROMPT,
-)
 from agents.eval_agent.reflection_store import graph_rag_retrieval
 from sandbox import (
     TARGET_AGENT_COMMAND,
@@ -35,7 +32,8 @@ from shared.logger import get_logger
 logger = get_logger("eval_agent.plan")
 
 
-CANDIDATE_GENERATION_PROMPT = """You are a creative, adversarial QA analyst. Your goal is to brainstorm a wide variety of test cases.
+CANDIDATE_GENERATION_PROMPT = """### PROMPT: CANDIDATE_GENERATION_PROMPT (EVAL_AGENT) ###
+You are a creative, adversarial QA analyst. Your goal is to brainstorm a wide variety of test cases based on fundamental software engineering principles.
 
 <USER_EXPECTATION>
 {user_expectation}
@@ -49,15 +47,30 @@ CANDIDATE_GENERATION_PROMPT = """You are a creative, adversarial QA analyst. You
 {prev_dataset_examples}
 </RECENTLY_RUN_TESTS>
 
+<TEST_CATEGORIES_TO_GENERATE>
+You should generate test cases that cover the following fundamental categories:
+1.  **Basic Logic:** `if/else`, `elif`, nested conditions, boolean logic (`and`, `or`, `not`).
+2.  **Loops:** `for` loops, `while` loops, loops on empty lists, loops on single-item lists, `break`, `continue`.
+3.  **Data Structures:**
+    * **Lists:** Empty lists, single-item lists, lists with duplicates, nested lists.
+    * **Dictionaries:** Empty dicts, dicts with missing keys, dicts with `None` values, nested dicts.
+    * **Strings:** Empty strings, strings with special characters, multi-line strings.
+    * **Other:** `None` inputs, `sets`, `tuples`.
+4.  **Error Conditions:** `try/except` blocks, `raise` statements, divide-by-zero, index-out-of-bounds, `KeyError`.
+5.  **OOP (if applicable):** Class instantiation, method calls, inheritance, class variables.
+6.  **Adversarial Inputs:** Inputs designed to break simple parsers, inputs that *almost* match but are wrong, inputs that test for flakiness (e.g., non-determinism).
+</TEST_CATEGORIES_TO_GENERATE>
+
 <CONSTRAINTS>
-- Generate {N_CANDIDATES} diverse test case candidates.
-- Focus on variety: simple cases, complex cases, edge cases, and failure-seeking cases inspired by the reflections.
+- Generate {N_CANDIDATES} diverse test case candidates, drawing inspiration from the <TEST_CATEGORIES_TO_GENERATE>.
+- Use <PAST_EVAL_REFLECTIONS> to create *harder, novel* tests that explore the *root cause* of past failures.
 - Do not repeat any input_message from <RECENTLY_RUN_TESTS>.
 - **This is a brainstorm, so prioritize creativity and breadth over perfect refinement.**
 </CONSTRAINTS>
 """
 
-FINAL_SELECTION_PROMPT = """You are a senior, highly critical QA Lead. Your job is to review a list of test case candidates and select *only* the most effective ones.
+FINAL_SELECTION_PROMPT = """### PROMPT: FINAL_SELECTION_PROMPT (EVAL_AGENT) ###
+You are a senior, highly critical QA Lead. Your job is to review a list of test case candidates and select *only* the most effective ones.
 
 <USER_EXPECTATION>
 {user_expectation}

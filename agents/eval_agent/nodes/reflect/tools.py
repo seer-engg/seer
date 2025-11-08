@@ -10,7 +10,6 @@ from langchain_openai import OpenAIEmbeddings
 
 from agents.eval_agent.constants import NEO4J_GRAPH, OPENAI_API_KEY
 from agents.eval_agent.models import EvalReflection, Hypothesis
-from agents.eval_agent.reflection_store import _truncate
 from shared.schema import ExperimentResultContext
 from shared.logger import get_logger
 
@@ -28,17 +27,6 @@ class ReflectionToolContext(BaseModel):
     user_expectation: str
     reflections_used_for_planning: str
 
-
-def _truncate(text: Any, limit: int = 280) -> str:
-    """Helper to keep prompt context small."""
-    if text is None:
-        return ""
-    text = str(text)
-    if len(text) <= limit:
-        return text
-    return f"{text[:limit]}… (truncated {len(text)} chars)"
-
-
 @tool
 async def get_latest_run_results(
     runtime: ToolRuntime[ReflectionToolContext],
@@ -55,7 +43,7 @@ async def get_latest_run_results(
     for res in runtime.context.latest_results:
         results.append({
             "example_id": res.dataset_example.example_id,
-            "input": _truncate(res.dataset_example.input_message),
+            "input": res.dataset_example.input_message,
             "passed": res.passed,
             "analysis": res.analysis.model_dump()
         })
