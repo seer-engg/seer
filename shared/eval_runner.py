@@ -41,7 +41,7 @@ Your task is to evaluate the agent's output and provide a structured analysis.
 **Scoring Rubric:**
 
 **1.0 = Completely correct, accurate, and complete**
-- Fixes all issues, contains no bugs, preserves original structure.
+- Fixes all issues, contains no bugs, logically correct , structure preservation.
 
 **0.8 = Mostly correct with minor issues** - Fixes main issues, good structure preservation, minor syntax/logic issues.
 
@@ -72,6 +72,10 @@ Your task is to evaluate the agent's output and provide a structured analysis.
 6. Assign a final score, failure type, severity, and reasoning.
 
 Provide your final assessment as a structured object.
+
+
+**IMPORTANT**
+- Do not penalise if output is logically better then the expected output
 """
 
 LLM = get_llm(temperature=0.0)

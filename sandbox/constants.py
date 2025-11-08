@@ -98,3 +98,10 @@ FAIL_PATTERNS = [
     re.compile(r"ImportError"),
     re.compile(r"Application startup failed"),
 ]
+
+
+BASE_TEMPLATE_ALIAS = "seer-base"
+BASE_TEMPLATE_CPU_COUNT = 1
+BASE_TEMPLATE_MEMORY_MB = 1024
+
+

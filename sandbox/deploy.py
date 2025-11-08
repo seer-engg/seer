@@ -4,6 +4,7 @@ from e2b import AsyncSandbox, AsyncCommandHandle
 from shared.logger import get_logger
 from sandbox.constants import SUCCESS_PAT, FAIL_PATTERNS, TARGET_AGENT_PORT
 logger = get_logger("sandbox.deploy_server")
+from .commands import kill_process_on_port, check_for_process_on_port
 
 
 async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, timeout_s: int = 40) -> tuple[AsyncSandbox, AsyncCommandHandle]:
@@ -16,17 +17,7 @@ async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, 
     Returns:
         A tuple containing the sandbox and the command handle.
     """
-    # Add this block to kill the existing process
-    try:
-        # Find and kill the process using the port.
-        # ss is more common than fuser in minimal environments.
-        # grep -oP extracts the PID.
-        # xargs -r ensures kill is only run if a PID is found.
-        kill_cmd = f"ss -lptn 'sport = :{TARGET_AGENT_PORT}' | grep -oP 'pid=\\K\\d+' | xargs -r kill -9"
-        await sb.commands.run(kill_cmd, cwd=cwd)
-        logger.info(f"Successfully killed process on port {TARGET_AGENT_PORT}")
-    except Exception as e:
-        logger.info(f"No process to kill on port {TARGET_AGENT_PORT} or an error occurred: {e}")
+    await kill_process_on_port(sb, TARGET_AGENT_PORT)
 
     ready_evt = asyncio.Event()
     failed_evt = asyncio.Event()

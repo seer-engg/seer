@@ -23,7 +23,9 @@ class TaskPlan(BaseModel):
 
 
 class CodexState(CodexInput, CodexOutput):
-    messages: Annotated[list[BaseMessage], add_messages] = Field(None, description="The messages in the conversation")
+    messages: Annotated[list[BaseMessage], add_messages] = Field(None, description="The message context for the codex agent")
+    planner_thread: Annotated[list[BaseMessage], add_messages] = Field(None, description="The message context for planner node")
+    coder_thread: Annotated[list[BaseMessage], add_messages] = Field(None, description="The message context for coder node")
     structured_response: Optional[dict] = Field(None, description="The structured response")
     taskPlan: Optional[TaskPlan] = Field(None, description="The task plan")
 

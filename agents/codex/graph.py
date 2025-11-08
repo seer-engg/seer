@@ -37,6 +37,13 @@ def should_reflect_or_raise_pr(state: CodexState) -> CodexState:
     logger.info(f"Implementation failed (Attempt {state.attempt_number}). Reflecting.")
     return "reflector"
 
+def is_codeer_implementation_working(state: CodexState) -> CodexState:
+    """This router checks if the codeer implementation is working"""
+    if state.server_running:
+        return "evaluator"
+    else:
+        return "coder"
+
 
 def compile_codex_graph():
     """Compile the codex graph"""
@@ -49,6 +56,7 @@ def compile_codex_graph():
     
     # --- implementation loop nodes ---
     workflow.add_node("coder", coder)
+    workflow.add_node("server-check", test_server_ready)
     workflow.add_node("evaluator", evaluator)
     workflow.add_node("reflector", reflector)
     
@@ -71,7 +79,11 @@ def compile_codex_graph():
     workflow.add_edge("planner", "coder")
 
     # 3. After implement, always test
-    workflow.add_edge("coder", "evaluator")
+    workflow.add_edge("coder", "server-check")
+    workflow.add_conditional_edges("server-check", is_codeer_implementation_working, {
+        "evaluator": "evaluator",
+        "coder": "coder",
+    })
 
     # 4. After testing, decide what's next (THE LOOP)
     workflow.add_conditional_edges("evaluator", should_reflect_or_raise_pr, {

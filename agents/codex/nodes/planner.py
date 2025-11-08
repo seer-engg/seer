@@ -1,5 +1,6 @@
 """Context and plan step"""
 from __future__ import annotations
+from langchain_core.messages.base import BaseMessage
 
 from langchain.agents import create_agent
 from langchain_core.runnables import RunnableConfig
@@ -107,13 +108,13 @@ async def planner(state: CodexState) -> CodexState:
             )
         )
 
-    msgs = list(state.messages or [])
+    msgs = list[BaseMessage](state.planner_thread or [])
     task_message = HumanMessage(content=USER_PROMPT.format(evals_and_thread_traces=evals_and_thread_traces))
     msgs.append(task_message)
 
     # Pass context along with state
     result = await agent.ainvoke(
-        {"messages": msgs},
+        input={"messages": msgs},
         config=RunnableConfig(recursion_limit=100),
         context=SandboxToolContext(sandbox_context=updated_sandbox_context)  # Pass sandbox context
     )
@@ -126,5 +127,5 @@ async def planner(state: CodexState) -> CodexState:
 
     return {
         "taskPlan": taskPlan,
-        "messages": [output_message],
+        "planner_thread": [task_message, output_message],
     }
