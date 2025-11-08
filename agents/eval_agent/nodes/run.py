@@ -20,7 +20,6 @@ from shared.schema import DatasetContext, ExperimentContext, ExperimentResultCon
 
 logger = get_logger("eval_agent.run")
 
-
 async def _prepare_run_context(state: EvalAgentState) -> dict:
     dataset = state.dataset_context or DatasetContext()
 
@@ -49,7 +48,6 @@ async def _prepare_run_context(state: EvalAgentState) -> dict:
         "active_experiment": experiment,
         "latest_results": [],
     }
-
 
 async def _execute_test_cases(state: EvalAgentState) -> dict:
     """Execute the test cases and return the results."""
@@ -98,8 +96,12 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     
     // Merge the TestCase node, now namespaced by user_id
     MERGE (ex:DatasetExample {example_id: row.example.example_id, user_id: $user_id})
-    ON CREATE SET ex += row.example
-    ON MATCH SET ex += row.example
+    ON CREATE SET 
+        ex += row.example,
+        ex.status = 'active'
+    ON MATCH SET 
+        ex += row.example,
+        ex.status = COALESCE(ex.status, 'active')
     
     // Merge the Result node, now namespaced by user_id
     MERGE (res:ExperimentResult {thread_id: row.result.thread_id, user_id: $user_id})
@@ -143,7 +145,6 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     }
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=15))
 async def _upload_run_results(state: EvalAgentState) -> dict:
     experiment = state.active_experiment
     dataset = state.dataset_context

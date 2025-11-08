@@ -51,6 +51,10 @@ class DatasetExample(BaseModel):
     )
     input_message: str = Field(..., description="The input message that should be send to target agent. MUST NOT CONTAIN ANY HINTS. MUST NOT CONTAIN EXPECTED OUTPUT!")
     expected_output: str = Field(..., description="The expected output that should be produced by the target agent")
+    status: Literal["active", "retired"] = Field(
+        default="active",
+        description="Fitness status: 'active' tests are in the pool, 'retired' tests passed too often and are culled."
+    )
     model_config = ConfigDict(extra="forbid")
 
 

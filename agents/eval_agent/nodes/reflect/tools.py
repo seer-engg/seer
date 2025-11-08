@@ -25,7 +25,6 @@ class ReflectionToolContext(BaseModel):
     attempts: int
     latest_results: List[ExperimentResultContext]
     user_expectation: str
-    reflections_used_for_planning: str
 
 @tool
 async def get_latest_run_results(
@@ -101,10 +100,8 @@ def persist_reflection(
     evidence_results: List[ExperimentResultContext]
 ) -> None:
     """
-    Atomically store the complete EvalReflection object AND its links
-    in a single, robust transaction.
-    This solves a race condition where ExperimentResult nodes were
-    not queryable in time for link creation.
+    Atomically store the complete EvalReflection object, link it to evidence,
+    AND update test case fitness ("culling") in a single, robust transaction.
     """
     
     # 1. Manually generate the embedding
@@ -112,6 +109,11 @@ def persist_reflection(
 
     # 2. Extract data for the query
     evidence_thread_ids = [res.thread_id for res in evidence_results]
+    
+    # Get all test case IDs that were *just run* (passed or failed)
+    all_run_example_ids = [
+        res.dataset_example.example_id for res in evidence_results
+    ]
     
     # 3. Define the single, atomic Cypher query
     cypher_query = """
@@ -124,17 +126,13 @@ def persist_reflection(
         ref.agent_name = $agent_name,
         ref.latest_score = $latest_score,
         ref.attempt = $attempt,
-        ref.found_novel_bugs = $found_novel_bugs,
-        ref.failure_modes = $failure_modes,
         ref.recommended_tests = $recommended_tests,
         ref.test_generation_critique = $test_generation_critique
-    ON MATCH SET // Update if it already exists (e.g., if embedding failed first time)
+    ON MATCH SET // Update if it already exists
         ref.summary = $summary,
         ref.embedding = $embedding,
         ref.latest_score = $latest_score,
         ref.attempt = $attempt,
-        ref.found_novel_bugs = $found_novel_bugs,
-        ref.failure_modes = $failure_modes,
         ref.recommended_tests = $recommended_tests,
         ref.test_generation_critique = $test_generation_critique
     
@@ -148,7 +146,40 @@ def persist_reflection(
     // Create the link
     MERGE (ref)-[r:GENERATED_FROM]->(res)
     
-    RETURN count(r) as links_created
+    // 3. Update fitness ("culling") for ALL tests that were just run
+    WITH ref // 'ref' is still in scope
+    UNWIND $all_run_example_ids AS ex_id
+    
+    // Use a subquery to update each example without losing 'ref'
+    CALL {
+        WITH ex_id // Import only the loop variable
+        // The $user_id parameter is available globally in the subquery
+        MATCH (ex:DatasetExample {example_id: ex_id, user_id: $user_id})
+        
+        // Get all historical results for this test
+        OPTIONAL MATCH (ex)-[:WAS_RUN_IN]->(hist_res:ExperimentResult {user_id: $user_id})
+        WITH ex, hist_res
+        ORDER BY hist_res.completed_at DESC
+        WITH ex, collect(hist_res) as history
+        
+        // --- CULLING LOGIC ---
+        WITH ex, history,
+             CASE
+               WHEN size(history) >= 3 AND
+                    history[0].passed = true AND
+                    history[1].passed = true AND
+                    history[2].passed = true
+               THEN 'retired'
+               ELSE 'active'
+             END AS new_status
+        
+        SET ex.status = new_status
+        RETURN count(ex) as updated_count // Complete the subquery
+    }
+    
+    // 'ref' is still in scope here after the CALL/UNWIND
+    // We must return a value. We use 'ref' to confirm the reflection node.
+    RETURN count(ref) as ref_count
     """
     
     # 4. Execute the query
@@ -162,15 +193,14 @@ def persist_reflection(
             "agent_name": agent_name,
             "latest_score": reflection.latest_score,
             "attempt": reflection.attempt,
-            "found_novel_bugs": reflection.hypothesis.found_novel_bugs,
-            "failure_modes": reflection.hypothesis.failure_modes,
             "recommended_tests": reflection.hypothesis.recommended_tests,
-            "test_generation_critique": reflection.hypothesis.test_generation_critique, # Add the new field
+            "test_generation_critique": reflection.hypothesis.test_generation_critique,
             "evidence_thread_ids": evidence_thread_ids,
+            "all_run_example_ids": all_run_example_ids, # Pass in all test IDs
         }
     )
-    links = result[0]['links_created'] if result else 0
-    logger.info(f"reflection_store: Atomically stored reflection {reflection.reflection_id} and created {links} links.")
+    ref_count = result[0]['ref_count'] if result else 0
+    logger.info(f"reflection_store: Atomically stored reflection {reflection.reflection_id} (ref_count: {ref_count}) and updated fitness for {len(all_run_example_ids)} tests.")
 
 
 @tool
