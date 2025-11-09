@@ -97,7 +97,8 @@ def persist_reflection(
     user_id: str,
     agent_name: str, 
     reflection: EvalReflection, 
-    evidence_results: List[ExperimentResultContext]
+    failed_evidence_results: List[ExperimentResultContext],
+    all_latest_results: List[ExperimentResultContext],
 ) -> None:
     """
     Atomically store the complete EvalReflection object, link it to evidence,
@@ -108,11 +109,11 @@ def persist_reflection(
     embedding = _embeddings_client.embed_query(reflection.hypothesis.summary)
 
     # 2. Extract data for the query
-    evidence_thread_ids = [res.thread_id for res in evidence_results]
+    evidence_thread_ids = [res.thread_id for res in failed_evidence_results]
     
     # Get all test case IDs that were *just run* (passed or failed)
     all_run_example_ids = [
-        res.dataset_example.example_id for res in evidence_results
+        res.dataset_example.example_id for res in all_latest_results
     ]
     
     # 3. Define the single, atomic Cypher query
@@ -228,7 +229,6 @@ async def save_reflection(
         agent_name=runtime.context.agent_name,
         latest_score=sum(r.score for r in runtime.context.latest_results) / len(runtime.context.latest_results),
         attempt=runtime.context.attempts,
-        # (reflection_id and created_at are set by default)
     )
     
     # Persist the complete EvalReflection object
@@ -237,7 +237,8 @@ async def save_reflection(
         user_id=runtime.context.user_id,
         agent_name=runtime.context.agent_name,
         reflection=full_reflection,
-        evidence_results=[r for r in runtime.context.latest_results if not r.passed],
+        failed_evidence_results=[r for r in runtime.context.latest_results if not r.passed],
+        all_latest_results=runtime.context.latest_results,
     )
 
     # Return a Command to update the main graph's state

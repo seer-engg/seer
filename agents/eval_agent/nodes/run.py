@@ -55,8 +55,13 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     if not state.user_context or not state.user_context.user_id:
         raise ValueError("UserContext with user_id is required to log memories")
     user_id = state.user_context.user_id
-    if not state.sandbox_context or not state.github_context:
-        raise RuntimeError("Sandbox and GitHub context must be set before executing tests")
+
+    if not state.github_context or not state.github_context.agent_name:
+     raise ValueError("GithubContext with agent_name is required to log memories")
+    agent_name = state.github_context.agent_name
+
+    if not state.sandbox_context:
+        raise RuntimeError("Sandbox context must be set before executing tests")
     if not state.active_experiment:
         raise RuntimeError("Active experiment missing before executing tests")
 
@@ -93,25 +98,27 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     # 2. Define the Cypher query to create the graph structure
     cypher_query = """
     UNWIND $params as row
-    
+
     // Merge the TestCase node, now namespaced by user_id
     MERGE (ex:DatasetExample {example_id: row.example.example_id, user_id: $user_id})
     ON CREATE SET 
         ex += row.example,
-        ex.status = 'active'
+        ex.status = 'active',
+        ex.agent_name = $agent_name 
     ON MATCH SET 
         ex += row.example,
-        ex.status = COALESCE(ex.status, 'active')
-    
+        ex.status = COALESCE(ex.status, 'active'),
+        ex.agent_name = $agent_name 
+
     // Merge the Result node, now namespaced by user_id
     MERGE (res:ExperimentResult {thread_id: row.result.thread_id, user_id: $user_id})
-    
+
     // Use SET to overwrite all properties, ensuring schema stays current
     SET res += row.result
-    
+
     // Connect the TestCase to its Result
     MERGE (ex)-[r:WAS_RUN_IN]->(res)
-    
+
     RETURN count(*)
     """
     
@@ -119,7 +126,7 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     query_result = await asyncio.to_thread(
         NEO4J_GRAPH.query,
         cypher_query,
-        params={"params": cypher_params, "user_id": user_id}
+        params={"params": cypher_params, "user_id": user_id, "agent_name": agent_name}
     )
     
     logger.info(f"run.execute: Neo4j query response: {query_result}")
