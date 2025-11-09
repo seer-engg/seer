@@ -21,10 +21,6 @@ NEO4J_GRAPH = Neo4jGraph(
     password=NEO4J_PASS,
 )
 
-# --- NEW: EXPLICITLY CREATE THE VECTOR INDEX ---
-# This query is idempotent (IF NOT EXISTS) and ensures the index is ready
-# before the vector client tries to connect to it.
-
 EMBEDDING_DIMS = 1536 # From your langgraph.json
 INDEX_NAME = "eval_reflections"
 NODE_LABEL = "EvalReflection"
@@ -45,21 +41,15 @@ NEO4J_GRAPH.query(
 )
 print(f"Successfully created or verified Neo4j vector index '{INDEX_NAME}'.")
 
-# --- END NEW INDEX CREATION ---
-
-# Client for vector search (your "reflection" store)
-# This will create and manage a vector index inside Neo4j
-NEO4J_VECTOR = Neo4jVector.from_existing_index(
-    OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY),
-    url=NEO4J_URL,
-    username=NEO4J_USER,
-    password=NEO4J_PASS,
-    index_name="eval_reflections",      # Name of the vector index
-    node_label="EvalReflection",        # Graph node label for reflections
-    text_node_property="summary",       # Which property stores the text
-    embedding_node_property="embedding", # Which property stores the vector
+SCORE_INDEX_NAME = "eval_reflection_score_index"
+NEO4J_GRAPH.query(
+    f"""
+    CREATE RANGE INDEX {SCORE_INDEX_NAME} IF NOT EXISTS
+    FOR (n:{NODE_LABEL})
+    ON (n.latest_score)
+    """
 )
-# --- END NEW NEO4J CONFIG ---
+print(f"Successfully created or verified Neo4j range index '{SCORE_INDEX_NAME}'.")
 
 # Local LangGraph store used for eval reflections and metadata persistence
 LANGGRAPH_BASE_URL = os.getenv("LANGGRAPH_BASE_URL", "http://127.0.0.1:8002")
@@ -73,9 +63,10 @@ LANGSMITH_CLIENT = Client(api_key=LANGSMITH_API_KEY)
 
 
 # Evaluation loop thresholds
-N_ROUNDS = 2
+N_ROUNDS = 5
 N_TEST_CASES = 3 # Number of test cases to generate in 1 round of eval
 N_VERSIONS = 2 # total versions of the target agent
+EVAL_PASS_THRESHOLD = 0.8
 
 
 CODEX_REMOTE_URL = os.getenv("CODEX_REMOTE_URL", "http://127.0.0.1:8003")

@@ -24,14 +24,12 @@ class Hypothesis(BaseModel):
     Contains only the fields the LLM is responsible for generating.
     """
     summary: str = Field(description="Concise summary of new insights, including any flakiness.")
-    found_novel_bugs: bool = Field(..., description="Set to true if the analyst concluded that new, previously undocumented failure modes were discovered in this run.")
-    failure_modes: List[str] = Field(
-        default_factory=list,
-        description="Key failure themes observed (e.g., 'Flakiness in divide_by_zero', 'New failure in dict_key_handling').",
+    test_generation_critique: Optional[str] = Field(
+        default=None,
+        description="A critique of the test cases that were just run. Were they too easy? Did they find the *right* bugs? What could be improved for next time?"
     )
-    recommended_tests: List[str] = Field(
-        default_factory=list,
-        description="Specific, new test ideas to create next (e.g., 're-run divide_by_zero 3 times', 'test dict access with missing key').",
+    judge_critique: str = Field(
+        description="A critique of the *judge's* performance. Was the judge too strict or too lenient? Did its reasoning make sense? What should the judge focus on for the *next* run?"
     )
 
 
@@ -77,6 +75,5 @@ class EvalAgentState(BaseModel):
     active_experiment: Optional[ExperimentContext] = Field(default=None, description="Currently running experiment context")
     latest_results: List[ExperimentResultContext] = Field(default_factory=list, description="Results from the latest experiment execution")
     dataset_examples: List[DatasetExample] = Field(default_factory=list, description="List of generated test cases")
-    reflections_used_for_planning: str = Field(default="", description="The string of RAG-retrieved reflections used by the plan node")
     target_agent_version: int = Field(default=0, description="Version of the target agent being evaluated")
     codex_output: Optional[CodexOutput] = Field(default=None, description="Output from the codex agent, used for handoff.")

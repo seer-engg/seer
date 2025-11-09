@@ -9,6 +9,7 @@ from langgraph_sdk import get_sync_client
 from langgraph.pregel.remote import RemoteGraph
 from langsmith import Client
 
+from agents.eval_agent.reflection_store import get_latest_critique
 from shared.schema import DatasetExample, ExperimentResultContext, FailureAnalysis
 from shared.logger import get_logger
 from shared.llm import get_llm
@@ -18,25 +19,33 @@ LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
 LANGSMITH_CLIENT = Client(api_key=LANGSMITH_API_KEY)
 logger = get_logger("eval_runner")
 
-CORRECTNESS_PROMPT = """You are an expert data labeler evaluating the correctness of a coding agent's output.
-The coding agent's job is to fix broken Python code snippets while preserving the original code structure.
 
-Here is the original broken Python code that was given to the agent:
+CORRECTNESS_PROMPT = """### PROMPT: CORRECTNESS_PROMPT (JUDGE) ###
+You are a hyper-strict, pathological data labeler. Your sole purpose is to evaluate an agent's output based on a *specific intent*.
+
+**CRITICAL: This is the specific intent of this test case:**
+<test_case_intent>
+{test_case_intent}
+</test_case_intent>
+
+Use this intent as your *primary* source of truth. If the intent is "fix syntax only," you MUST fail the agent for changing logic. If the intent is "fix logic," you MUST fail the agent if it *only* fixes syntax.
+
+Here is the original code:
 <input>
 {inputs}
 </input>
 
-Here is the agent's attempt to fix the code:
+Here is the agent's attempt to fulfill the intent:
 <output>
 {outputs}
 </output>
 
-Use the reference outputs below to help you evaluate the correctness of the response:
+Here is the "golden" reference output that perfectly fulfills the intent:
 <reference_outputs>
 {reference_outputs}
 </reference_outputs>
 
-Your task is to evaluate the agent's output and provide a structured analysis.
+Your task is to evaluate if the agent's output *matches the reference* AND *fulfills the specific intent*.
 
 **Scoring Rubric:**
 
@@ -64,12 +73,11 @@ Your task is to evaluate the agent's output and provide a structured analysis.
 - The overall framework and interface must stay intact.
 
 **Evaluation Process:**
-1. Identify the specific issues/problems in the original broken code.
-2. For each identified issue, check whether the agent's output successfully resolves it.
-3. Verify structure preservation.
-4. Compare the agent's approach to the reference outputs.
-5. Note any additional errors or problems introduced by the agent's fix.
-6. Assign a final score, failure type, severity, and reasoning.
+1. Read the <test_case_intent> and internalize it. This is your only guide.
+2. Compare <output> to <reference_outputs>.
+3. Check if <output> *perfectly* achieved the goal stated in <test_case_intent>.
+4. Note any deviations, *even if* the agent's output seems "better" but violates the *specific intent*. (e.g., if intent is syntax-only, "fixing" logic is a failure).
+5. Assign a final score, failure type, severity, and reasoning *relative to the intent*.
 
 Provide your final assessment as a structured object.
 
@@ -85,7 +93,12 @@ JUDGE_PROMPT_TEMPLATE = PromptTemplate.from_template(CORRECTNESS_PROMPT)
 CORRECTNESS_EVALUATOR = JUDGE_PROMPT_TEMPLATE | STRUCTURED_JUDGE
 
 
-async def run_evals(target_url: str, graph_name: str, dataset_examples: List[DatasetExample]) -> List[ExperimentResultContext]:
+async def run_evals(
+        target_url: str, 
+        graph_name: str, 
+        dataset_examples: List[DatasetExample],
+        user_id: str,
+    ) -> List[ExperimentResultContext]:
     """Run evaluations for a given target URL and graph name."""
 
     sync_client = get_sync_client(url=target_url)
@@ -98,6 +111,33 @@ async def run_evals(target_url: str, graph_name: str, dataset_examples: List[Dat
         sync_client=sync_client,
         distributed_tracing=True,
     )
+
+    judge_critique = ""
+    try:
+        # Retrieve the single most relevant judge critique
+        judge_critique = await get_latest_critique(
+            query="What was the most recent critique of the judge?",
+            agent_name=graph_name,
+            user_id=user_id,
+        )
+        if judge_critique:
+            logger.info(f"Injecting Judge Critique: {judge_critique}")
+    except Exception as e:
+        logger.warning(f"Could not retrieve judge critique: {e}")
+
+    # Dynamically create the prompt template string
+    dynamic_prompt_str = CORRECTNESS_PROMPT
+    if judge_critique:
+        dynamic_prompt_str += (
+            "\n\n**CRITICAL: This is a critique from your last review. You MUST apply this feedback:**\n"
+            "<judge_critique>\n"
+            f"{judge_critique}\n"
+            "</judge_critique>"
+        )
+    
+    # Create a new, dynamic evaluator for this specific run
+    dynamic_judge_prompt = PromptTemplate.from_template(dynamic_prompt_str)
+    dynamic_evaluator = dynamic_judge_prompt | STRUCTURED_JUDGE
 
     results: List[ExperimentResultContext] = []
 
@@ -119,11 +159,12 @@ async def run_evals(target_url: str, graph_name: str, dataset_examples: List[Dat
         run_end = datetime.now(timezone.utc)
 
         eval_result_obj: FailureAnalysis = await asyncio.to_thread(
-            CORRECTNESS_EVALUATOR.invoke,
+            dynamic_evaluator.invoke,
             {
                 "inputs": question,
                 "outputs": answer,
                 "reference_outputs": expected,
+                "test_case_intent": tc.reasoning, 
             },
         )
         

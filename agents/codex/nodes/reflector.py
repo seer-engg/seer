@@ -9,7 +9,7 @@ from langchain_core.messages import SystemMessage
 
 logger = get_logger("codex.nodes.reflect")
 
-SYSTEM_PROMPT = """
+SYSTEM_PROMPT = """### PROMPT: SYSTEM_PROMPT (CODEX/REFLECTOR) ###
 You are a Refective person , part of an agent development team.
 Your team is trying to enhance an agent so that it can pass all the eval cases. Based on some failed eval cases your team devised a plan to fix the agent. A programmer implemented some code changes to the agent following the plan.
 But after the implementation, the agent is not passing all the eval cases. You are tasked to reflect on the latest test results and suggest necessary policy changes the plan should follow to fix the agent.

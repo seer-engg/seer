@@ -23,5 +23,9 @@ python run.py
 Evaluate my agent at buggy_coder at github https://github.com/seer-engg/buggy-coder. It should be fixing flawed python code correctly and sharing the fixed code too
 """
 
+"""
+Evaluate my agent at buggy_coder at github https://github.com/seer-engg/buggy-coder/tree/seer/codex/20251108-125730-92e6b17/v1. It should be fixing flawed python code correctly and sharing the fixed code too
+"""
+
 ## Notes
 - To enable codex handoff, set `CODEX_HANDOFF_ENABLED` to `true` in `.env` file.

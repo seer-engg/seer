@@ -5,6 +5,7 @@ This is also responsible for generating the test cases for the target agent.
 import os
 import json
 import re
+import asyncio
 from typing import List, Tuple, Optional
 from uuid import uuid4
 
@@ -18,9 +19,6 @@ from agents.eval_agent.models import (
     EvalAgentState,
     DatasetExample,
 )
-from agents.eval_agent.prompts import (
-    EVAL_AGENT_TEST_GEN_PROMPT,
-)
 from agents.eval_agent.reflection_store import graph_rag_retrieval
 from sandbox import (
     TARGET_AGENT_COMMAND,
@@ -29,10 +27,94 @@ from sandbox import (
     initialize_e2b_sandbox,
     setup_project,
 )
+from agents.eval_agent.constants import NEO4J_GRAPH
 from shared.schema import GithubContext, UserContext, SandboxContext
 from shared.logger import get_logger
 
 logger = get_logger("eval_agent.plan")
+
+class _TestGenerationOutput(BaseModel):
+    """Helper for structured output"""
+    dataset_example: DatasetExample
+
+
+MUTATION_PROMPT = """### PROMPT: TEST_CASE_MUTATOR (EVAL_AGENT) ###
+You are an adversarial "Test Case Mutator."
+The target agent *passed* this test, which is a *failure* for you. You MUST create a harder test.
+
+**Parent Test (Passed):**
+{parent_test_json}
+
+**Past Reflections (Agent Weaknesses):**
+{reflections_text}
+
+**Your Task:**
+Create one new `DatasetExample` that is a *harder, mutated* version of this parent.
+You MUST use the following Chain of Thought:
+
+**Chain of Thought (MANDATORY):**
+1.  **Analyze Parent:** What simple case does the parent test? (e.g., 'basic dict access', 'simple string replacement')
+2.  **Brainstorm Mutations:** Look at the "Genetic Operators" below. Brainstorm 3 *different* ways to mutate the "Parent Test" to make it harder and more complex.
+    * **Genetic Operators:** `combine` (merge with another idea), `extract` (test a tiny part in isolation), `nest` (add nested data structures), `repeat` (force it to run in a loop), `summarize` (force it to handle large data), `reverse` (reverse the logic), `add_error_condition` (force a `KeyError`, `IndexError`, `ZeroDivisionError`), `add_adversarial_input` (non-UTF-8, empty strings, `None` values, large inputs).
+3.  **Select Best Mutation:** Which of your 3 ideas is *most likely* to cause a sophisticated agent to fail?
+4.  **Generate Test:** Write the new `DatasetExample` (input_message, expected_output, reasoning) for your selected mutation.
+
+Provide your final output as *only* the new `DatasetExample` Pydantic object.
+"""
+
+CROSSOVER_PROMPT = """### PROMPT: TEST_CASE_BREEDER (EVAL_AGENT) ###
+You are an adversarial "Test Case Breeder."
+You will be given two "fit" parent test cases that each *found a bug*.
+Your job is to create one new, "hybrid" test case that combines the "genetic material" (the failure modes) of *both* parents.
+
+**Parent 1 (Fit):**
+{parent_1_json}
+
+**Parent 2 (Fit):**
+{parent_2_json}
+
+**Past Reflections (Agent Weaknesses):**
+{reflections_text}
+
+**Your Task:**
+Create one new `DatasetExample` that is a *complex, hybrid* of both parents.
+You MUST use the following Chain of Thought:
+
+**Chain of Thought (MANDATORY):**
+1.  **Analyze Parents:** What failure mode did Parent 1 find? (e.g., 'failed on `KeyError`'). What failure mode did Parent 2 find? (e.g., 'failed on `ZeroDivisionError`').
+2.  **Brainstorm Hybrids:** Look at the "Genetic Operators" below. Brainstorm 2 *different* ways to create a hybrid test that forces the agent to confront *both* failure modes at once.
+    * **Genetic Operators:** `combine` (make the output of one the input of the other), `nest` (put one failure mode inside the data structure of the other), `repeat` (force the agent to handle both failure modes inside a loop).
+3.  **Select Best Hybrid:** Which of your 2 ideas is the *most complex* and difficult test?
+4.  **Generate Test:** Write the new `DatasetExample` (input_message, expected_output, reasoning) for your selected hybrid.
+
+Provide your final output as *only* the new `DatasetExample` Pydantic object.
+"""
+
+NEW_TEST_PROMPT = """### PROMPT: NEW_TEST_GENERATOR (EVAL_AGENT) ###
+You are an adversarial QA analyst. Your goal is to brainstorm *one* novel test case.
+
+**User Expectation:**
+{user_expectation}
+
+**Past Reflections (Agent Weaknesses):**
+{reflections_text}
+
+**Recently Run Tests (Do Not Repeat These):**
+{prev_dataset_examples}
+
+**Your Task:**
+Create one new, creative, and *hard* `DatasetExample`.
+You MUST use the following Chain of Thought:
+
+**Chain of Thought (MANDATORY):**
+1.  **Analyze Weaknesses:** Based on "Past Reflections," what is the agent's *biggest* known weakness? (If no reflections, focus on the "User Expectation").
+2.  **Brainstorm New Attack:** Look at the "Adversarial Techniques" below. Brainstorm 3 *new, different* test ideas that attack this weakness or the user expectation.
+    * **Adversarial Techniques:** `combine` (test multiple features at once), `extract` (test one obscure feature), `nest` (use deeply nested data), `repeat` (test with loops or large data), `summarize` (test with large inputs), `reverse` (test reverse logic), `add_error_condition` (`KeyError`, `IndexError`, `None`), `add_adversarial_input` (non-UTF-8, empty strings, edge-case strings).
+3.  **Select Best Attack:** Which of your 3 ideas is *most novel* and *not* in "Recently Run Tests"?
+4.  **Generate Test:** Write the new `DatasetExample` (input_message, expected_output, reasoning) for your selected attack.
+
+Provide your final output as *only* the new `DatasetExample` Pydantic object.
+"""
 
 
 def _parse_github_url(url: str, branch_name: Optional[str] = None) -> Tuple[str, str]:
@@ -71,40 +153,107 @@ def _parse_github_url(url: str, branch_name: Optional[str] = None) -> Tuple[str,
     return repo_url, final_branch
 
 
-
 async def _invoke_test_generation_llm(
     user_expectation: str,
     reflections_text: str,
-    prev_dataset_examples: str,
+    prev_dataset_examples: str, # JSON string of recent inputs
+    agent_name: str,
+    user_id: str,
 ) -> List[DatasetExample]:
-    augmented_prompt = EVAL_AGENT_TEST_GEN_PROMPT.format(
-        N_TEST_CASES=N_TEST_CASES,
-        user_expectation=user_expectation,
-        reflections_text=reflections_text,
-        prev_dataset_examples=prev_dataset_examples,
-    )
-
-    class _TestGenerationOutput(BaseModel):
-        """
-        Explicitly defined internal class for the test generation LLM output. 
-        Since structured output does not support lists, we need to define it explicitly.
-        """
-        dataset_examples: List[DatasetExample]
-
-    _smart_llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
-
-    test_generation_llm = _smart_llm.with_structured_output(_TestGenerationOutput)
-    generated: _TestGenerationOutput = await test_generation_llm.ainvoke(augmented_prompt)
     
-    for example in generated.dataset_examples:
+    logger.info("plan.test-llm: Starting evolutionary test generation...")
+    
+    # Use a smart, critical LLM for this
+    _smart_llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
+    test_generation_llm = _smart_llm.with_structured_output(_TestGenerationOutput)
+
+    new_generation: List[DatasetExample] = []
+    
+    # --- Define our new "Genetic Operator" functions ---
+    
+    async def get_parent(passed: bool, k: int = 1) -> List[dict]:
+        """Helper to get a parent test from Neo4j."""
+        # Find an active test, that was run, and had the desired pass/fail outcome
+        cypher_query = """
+        MATCH (ex:DatasetExample {user_id: $user_id, agent_name: $agent_name, status: 'active'})
+        MATCH (ex)-[:WAS_RUN_IN]->(res:ExperimentResult {passed: $passed})
+        RETURN ex.reasoning as reasoning, ex.input_message as input_message, ex.expected_output as expected_output, ex.example_id as example_id, ex.status as status
+        LIMIT $k
+        """
+        result = await asyncio.to_thread(
+            NEO4J_GRAPH.query,
+            cypher_query,
+            params={"user_id": user_id, "agent_name": agent_name, "passed": passed, "k": k}
+        )
+        return [dict(r) for r in result]
+
+    async def run_crossover(parents: List[dict]):
+        """Run the Crossover prompt"""
+        logger.info("plan.test-llm: Running Crossover...")
+        prompt = CROSSOVER_PROMPT.format(
+            parent_1_json=json.dumps(parents[0], indent=2),
+            parent_2_json=json.dumps(parents[1], indent=2),
+            reflections_text=reflections_text
+        )
+        output = await test_generation_llm.ainvoke(prompt)
+        new_generation.append(output.dataset_example)
+
+    async def run_mutation(parent: dict):
+        """Run the Mutation prompt"""
+        logger.info("plan.test-llm: Running Mutation...")
+        prompt = MUTATION_PROMPT.format(
+            parent_test_json=json.dumps(parent, indent=2),
+            reflections_text=reflections_text
+        )
+        output = await test_generation_llm.ainvoke(prompt)
+        new_generation.append(output.dataset_example)
+
+    async def run_new_test():
+        """Run the New Test prompt"""
+        logger.info("plan.test-llm: Running New Test generation...")
+        prompt = NEW_TEST_PROMPT.format(
+            user_expectation=user_expectation,
+            reflections_text=reflections_text,
+            prev_dataset_examples=prev_dataset_examples
+        )
+        output = await test_generation_llm.ainvoke(prompt)
+        new_generation.append(output.dataset_example)
+
+    # --- Genetic Algorithm "Breeding" Strategy ---
+    # Example for N_TEST_CASES = 3: 1 Crossover, 1 Mutation, 1 New
+    # This ensures a mix of exploitation (Crossover/Mutation) and exploration (New)
+    
+    # 1. Crossover (Exploitation)
+    if len(new_generation) < N_TEST_CASES:
+        fit_parents = await get_parent(passed=False, k=2) # Get 2 FAILED tests
+        if len(fit_parents) == 2:
+            await run_crossover(fit_parents)
+        else:
+            logger.warning("Could not find 2 'fit' (failed) parents for crossover. Skipping.")
+
+    # 2. Mutation (Exploitation)
+    if len(new_generation) < N_TEST_CASES:
+        unfit_parent = await get_parent(passed=True, k=1) # Get 1 PASSED test
+        if unfit_parent:
+            await run_mutation(unfit_parent[0])
+        else:
+            logger.warning("Could not find 1 'unfit' (passed) parent for mutation. Skipping.")
+
+    # 3. New Tests (Exploration)
+    # Fill the remaining slots with brand new tests
+    while len(new_generation) < N_TEST_CASES:
+        await run_new_test()
+
+    # --- Assign final Example IDs ---
+    for example in new_generation:
         example.example_id = str(uuid4())
 
     logger.info(
-        "plan.test-llm: generated %d tests (prompt_chars=%d)",
-        len(generated.dataset_examples),
-        len(augmented_prompt),
+        "plan.test-llm: Evolutionary generation complete. Produced %d tests.",
+        len(new_generation),
     )
-    return generated.dataset_examples
+    
+    return new_generation[:N_TEST_CASES] # Ensure we only return the number requested
 
 
 async def _ensure_target_agent_config(state: EvalAgentState) -> dict:
@@ -212,12 +361,13 @@ async def _generate_eval_plan(state: EvalAgentState) -> dict:
         user_expectation=state.user_context.user_expectation,
         reflections_text=reflections_text,
         prev_dataset_examples=json.dumps(previous_inputs, indent=2),
+        agent_name=agent_name,
+        user_id=user_id,
     )
 
     logger.info("plan.generate: produced %d tests (agent=%s)", len(dataset_examples), agent_name)
     return {
         "dataset_examples": dataset_examples,
-        "reflections_used_for_planning": reflections_text,
     }
 
 

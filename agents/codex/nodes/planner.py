@@ -23,7 +23,7 @@ from sandbox.tools import (
 logger = get_logger("codex.nodes.context_and_plan")
 
 
-SYSTEM_PROMPT = """
+SYSTEM_PROMPT = """### PROMPT: SYSTEM_PROMPT (CODEX/PLANNER) ###
     You are an Technical manager specializing in LLM based Agent development.
     Your role is to Create a plan for the Agent to be developed.
     Your task is to plan the next steps to be taken to improve the agent by analyzing the failed eval thread  of the agent  and understanding the current state of the agent through its code .

@@ -36,7 +36,7 @@ USER_PROMPT = """
     After implementing the task plan, return a brief status summary.
 """
 
-SYSTEM_PROMPT = """
+SYSTEM_PROMPT = """### PROMPT: SYSTEM_PROMPT (CODEX/CODER) ###
     You are a software engineer. You have been given a task to implement. Implement the assigned task to the codebase in the sandbox.
     When done, return a brief status summary. You just need to implement the task, you don't need to generate or run any test the implementation.
     You have been provided with following tools to do necessary operation in root directory of the codebase repository.

@@ -10,7 +10,6 @@ from langchain_openai import OpenAIEmbeddings
 
 from agents.eval_agent.constants import NEO4J_GRAPH, OPENAI_API_KEY
 from agents.eval_agent.models import EvalReflection, Hypothesis
-from agents.eval_agent.reflection_store import _truncate
 from shared.schema import ExperimentResultContext
 from shared.logger import get_logger
 
@@ -26,18 +25,6 @@ class ReflectionToolContext(BaseModel):
     attempts: int
     latest_results: List[ExperimentResultContext]
     user_expectation: str
-    reflections_used_for_planning: str
-
-
-def _truncate(text: Any, limit: int = 280) -> str:
-    """Helper to keep prompt context small."""
-    if text is None:
-        return ""
-    text = str(text)
-    if len(text) <= limit:
-        return text
-    return f"{text[:limit]}… (truncated {len(text)} chars)"
-
 
 @tool
 async def get_latest_run_results(
@@ -55,7 +42,7 @@ async def get_latest_run_results(
     for res in runtime.context.latest_results:
         results.append({
             "example_id": res.dataset_example.example_id,
-            "input": _truncate(res.dataset_example.input_message),
+            "input": res.dataset_example.input_message,
             "passed": res.passed,
             "analysis": res.analysis.model_dump()
         })
@@ -110,20 +97,24 @@ def persist_reflection(
     user_id: str,
     agent_name: str, 
     reflection: EvalReflection, 
-    evidence_results: List[ExperimentResultContext]
+    failed_evidence_results: List[ExperimentResultContext],
+    all_latest_results: List[ExperimentResultContext],
 ) -> None:
     """
-    Atomically store the complete EvalReflection object AND its links
-    in a single, robust transaction.
-    This solves a race condition where ExperimentResult nodes were
-    not queryable in time for link creation.
+    Atomically store the complete EvalReflection object, link it to evidence,
+    AND update test case fitness ("culling") in a single, robust transaction.
     """
     
     # 1. Manually generate the embedding
     embedding = _embeddings_client.embed_query(reflection.hypothesis.summary)
 
     # 2. Extract data for the query
-    evidence_thread_ids = [res.thread_id for res in evidence_results]
+    evidence_thread_ids = [res.thread_id for res in failed_evidence_results]
+    
+    # Get all test case IDs that were *just run* (passed or failed)
+    all_run_example_ids = [
+        res.dataset_example.example_id for res in all_latest_results
+    ]
     
     # 3. Define the single, atomic Cypher query
     cypher_query = """
@@ -136,17 +127,15 @@ def persist_reflection(
         ref.agent_name = $agent_name,
         ref.latest_score = $latest_score,
         ref.attempt = $attempt,
-        ref.found_novel_bugs = $found_novel_bugs,
-        ref.failure_modes = $failure_modes,
-        ref.recommended_tests = $recommended_tests
-    ON MATCH SET // Update if it already exists (e.g., if embedding failed first time)
+        ref.test_generation_critique = $test_generation_critique,
+        ref.judge_critique = $judge_critique
+    ON MATCH SET // Update if it already exists
         ref.summary = $summary,
         ref.embedding = $embedding,
         ref.latest_score = $latest_score,
         ref.attempt = $attempt,
-        ref.found_novel_bugs = $found_novel_bugs,
-        ref.failure_modes = $failure_modes,
-        ref.recommended_tests = $recommended_tests
+        ref.test_generation_critique = $test_generation_critique,
+        ref.judge_critique = $judge_critique
     
     // 2. Link it to its evidence (if any)
     WITH ref
@@ -158,7 +147,40 @@ def persist_reflection(
     // Create the link
     MERGE (ref)-[r:GENERATED_FROM]->(res)
     
-    RETURN count(r) as links_created
+    // 3. Update fitness ("culling") for ALL tests that were just run
+    WITH ref // 'ref' is still in scope
+    UNWIND $all_run_example_ids AS ex_id
+    
+    // Use a subquery to update each example without losing 'ref'
+    CALL {
+        WITH ex_id // Import only the loop variable
+        // The $user_id parameter is available globally in the subquery
+        MATCH (ex:DatasetExample {example_id: ex_id, user_id: $user_id})
+        
+        // Get all historical results for this test
+        OPTIONAL MATCH (ex)-[:WAS_RUN_IN]->(hist_res:ExperimentResult {user_id: $user_id})
+        WITH ex, hist_res
+        ORDER BY hist_res.completed_at DESC
+        WITH ex, collect(hist_res) as history
+        
+        // --- CULLING LOGIC ---
+        WITH ex, history,
+             CASE
+               WHEN size(history) >= 3 AND
+                    history[0].passed = true AND
+                    history[1].passed = true AND
+                    history[2].passed = true
+               THEN 'retired'
+               ELSE 'active'
+             END AS new_status
+        
+        SET ex.status = new_status
+        RETURN count(ex) as updated_count // Complete the subquery
+    }
+    
+    // 'ref' is still in scope here after the CALL/UNWIND
+    // We must return a value. We use 'ref' to confirm the reflection node.
+    RETURN count(ref) as ref_count
     """
     
     # 4. Execute the query
@@ -172,14 +194,14 @@ def persist_reflection(
             "agent_name": agent_name,
             "latest_score": reflection.latest_score,
             "attempt": reflection.attempt,
-            "found_novel_bugs": reflection.hypothesis.found_novel_bugs,
-            "failure_modes": reflection.hypothesis.failure_modes,
-            "recommended_tests": reflection.hypothesis.recommended_tests,
+            "test_generation_critique": reflection.hypothesis.test_generation_critique,
+            "judge_critique": reflection.hypothesis.judge_critique,
             "evidence_thread_ids": evidence_thread_ids,
+            "all_run_example_ids": all_run_example_ids, # Pass in all test IDs
         }
     )
-    links = result[0]['links_created'] if result else 0
-    logger.info(f"reflection_store: Atomically stored reflection {reflection.reflection_id} and created {links} links.")
+    ref_count = result[0]['ref_count'] if result else 0
+    logger.info(f"reflection_store: Atomically stored reflection {reflection.reflection_id} (ref_count: {ref_count}) and updated fitness for {len(all_run_example_ids)} tests.")
 
 
 @tool
@@ -205,9 +227,8 @@ async def save_reflection(
         hypothesis=hypothesis, 
         # System-generated metadata
         agent_name=runtime.context.agent_name,
-        latest_score=sum(r.score for r in runtime.context.latest_results) / len(runtime.context.latest_results),
+        latest_score=round(sum(r.score for r in runtime.context.latest_results) / len(runtime.context.latest_results), 5),
         attempt=runtime.context.attempts,
-        # (reflection_id and created_at are set by default)
     )
     
     # Persist the complete EvalReflection object
@@ -216,7 +237,8 @@ async def save_reflection(
         user_id=runtime.context.user_id,
         agent_name=runtime.context.agent_name,
         reflection=full_reflection,
-        evidence_results=[r for r in runtime.context.latest_results if not r.passed],
+        failed_evidence_results=[r for r in runtime.context.latest_results if not r.passed],
+        all_latest_results=runtime.context.latest_results,
     )
 
     # Return a Command to update the main graph's state

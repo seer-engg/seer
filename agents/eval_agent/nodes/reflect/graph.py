@@ -21,21 +21,42 @@ from shared.logger import get_logger
 logger = get_logger("eval_agent.reflect")
 
 
-# 1. Define the System Prompt for the "Analyst Agent"
-ANALYST_AGENT_SYSTEM_PROMPT = """You are a senior QA Analyst. Your goal is to investigate the latest test run to identify new failures, regressions, and, most importantly, *test flakiness*.
+ANALYST_AGENT_SYSTEM_PROMPT = """### PROMPT: ANALYST_AGENT_SYSTEM_PROMPT (EVAL_AGENT/REFLECT) ###
+You are a Senior QA Analyst and Root Cause Investigator. You are the "Fitness Function" in an evolutionary system.
 
-Your investigation process:
-1.  Start by calling `get_latest_run_results()` to see what just happened.
-2.  **CRITICAL CHECK:** Compare the failures from step 1 to the *old* failures documented in `reflections_used_for_planning` (available in your context, use `think()` to analyze). For each new failure, determine: Is this a *truly novel bug* (a new failure mode), or just a repeat/regression of a known issue?
-3.  Review the results. For any test that **passed**, especially if it looks like a test that *should* fail (e.g., divide_by_zero), you MUST call `get_historical_test_results()` to check if it has *ever* failed in the past. This is how you detect flakiness.
-4.  For any test that **failed**, this is a new failure mode.
-5.  Use `think()` to form your hypotheses about new failures, flakiness, or other patterns.
-6.  Once your investigation is complete, call `save_reflection()` with your final analysis. This is your final step.
+Your goal is to:
+1.  Identify the "fittest" test cases (the ones that **failed**).
+2.  Hypothesize the root cause (the "gene") of that failure.
+3.  Critique the *entire test generation* (the "environmental pressure").
+4.  Recommend specific "mutations" for the next generation.
+5.  **NEW: Critique the "Judge" (the scoring rubric) itself.**
 
-**Key Insight to find:**
-* **New Failures:** What new bugs did you just find?
-* **Flakiness:** Which tests are *unreliable* (pass sometimes, fail other times)?
-* **Next Steps:** What *new* tests should be generated to explore these failures or confirm flakiness (e.g., "re-run divide_by_zero 3 times")?
+**Your mandatory investigation process:**
+
+1.  **Get Evidence:** Call `get_latest_run_results()` to see what just happened.
+2.  **Formulate Root Cause Hypothesis:**
+    * Look at all failures. Find the *pattern* (the "gene").
+    * **Bad summary:** "Test 1 (divide_by_zero) failed."
+    * **Good summary:** "The agent appears to lack fundamental error handling for `ZeroDivisionError`, as seen in test 1."
+    * Use `think()` to write down your hypothesis.
+3.  **Investigate Flakiness:**
+    * If a test **passed** but looks suspicious (e.g., an error case that passed), or if a test **failed** that passed before, you MUST call `get_historical_test_results()` to check for flakiness.
+4.  **Formulate Test Critique (Meta-Reflection):**
+    * Now, critique the test cases that were just run.
+    * If all tests passed: "The tests were too easy. The 'mutations' were not aggressive enough. We need to increase the complexity."
+    * If tests failed: "These tests successfully found a bug. The *next* batch of tests should mutate this specific failure mode."
+5.  **Formulate Judge Critique (NEW):**
+    * Review the `analysis` field for the tests (e.g., scores, reasoning).
+    * Was the judge fair? Was a 0.8 too high for a minor error? Was a 0.2 too low?
+    * **Example:** "The judge correctly failed test 2 but gave it a 0.6. This was too lenient. The agent missed the core intent. The judge must be stricter on instruction-following failures next time."
+    * **Example:** "The judge gave a 1.0 on all tests. The tests were too simple, but the judge *also* needs to be prepared to score complex logic, not just syntax."
+6.  **Save Final Analysis (Genetic Blueprint):**
+    * Call `save_reflection()` with your final analysis.
+    * `summary`: Your **root cause hypothesis**.
+    * `test_generation_critique`: Your **meta-reflection on test quality**.
+    * `judge_critique`: Your **new critique of the judge's rubric.**
+
+This is your final step. Do not add any more steps.
 """
 
 # 2. Create the Agent Runnable
@@ -55,7 +76,6 @@ analyst_agent_runnable = create_agent(
 )
 
 
-# 3. Define the Graph Node
 async def reflect_node(state: EvalAgentState) -> dict:
     """
     Runs the Analyst Agent to investigate the latest test run
@@ -69,6 +89,30 @@ async def reflect_node(state: EvalAgentState) -> dict:
     if not state.latest_results:
         logger.warning("reflect_node: No results to analyze. Skipping.")
         return {"attempts": state.attempts + 1}
+    
+    failed_tests = [r for r in state.latest_results if not r.passed]
+    
+    initial_prompt = ""
+    if not failed_tests:
+        # All tests passed - this is a failure of *test generation*
+        logger.info("reflect_node: All tests passed. Priming Analyst to critique test quality.")
+        initial_prompt = (
+            "All tests passed. This is a failure of test generation. "
+            "Your primary goal is to critique these tests (step 4) and "
+            "the judge's leniency (step 5). "
+            "Start your investigation."
+        )
+    else:
+        # Some tests failed - this is a failure of the *agent*
+        logger.info(f"reflect_node: {len(failed_tests)} tests failed. Priming Analyst to find root cause.")
+        failed_ids = [r.dataset_example.example_id for r in failed_tests]
+        initial_prompt = (
+            f"Investigation required. Tests {failed_ids} failed. "
+            "Your primary goal is to find the *root cause pattern* (the 'gene') "
+            "connecting these failures (step 2). "
+            "Start your investigation by calling `get_latest_run_results()`."
+        )
+
 
     # Define the context we will pass to the agent's tools
     tool_context = ReflectionToolContext(
@@ -77,12 +121,8 @@ async def reflect_node(state: EvalAgentState) -> dict:
         attempts=state.attempts,
         latest_results=state.latest_results,
         user_expectation=state.user_context.user_expectation,
-        reflections_used_for_planning=state.reflections_used_for_planning
     )
     
-    # Define the initial prompt to kick off the agent
-    initial_prompt = "Start your investigation of the latest test run."
-
     # Invoke the agent
     _ = await analyst_agent_runnable.ainvoke(
         {"messages": [HumanMessage(content=initial_prompt)]},
