@@ -107,21 +107,11 @@ class ExperimentContext(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-
-class DatasetSplitContext(BaseModel):
-    """Context for a dataset split."""
-
-    split_name: str
-    example_ids: List[str] = Field(default_factory=list, description="The example IDs in the split")
-    model_config = ConfigDict(extra="forbid")
-
-
 class DatasetContext(BaseModel):
     """Dataset metadata, including examples, splits, and experiments."""
 
     dataset_id: str = Field("", description="Unique identifier for the dataset")
     dataset_name: str = Field("", description="Human-readable dataset name")
-    splits: List[DatasetSplitContext] = Field(default_factory=list, description="The splits of the dataset")
     experiments: List[ExperimentContext] = Field(default_factory=list, description="The experiments in the dataset")
     model_config = ConfigDict(extra="forbid")
 

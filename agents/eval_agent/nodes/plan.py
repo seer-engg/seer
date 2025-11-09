@@ -37,7 +37,6 @@ class _TestGenerationOutput(BaseModel):
     """Helper for structured output"""
     dataset_example: DatasetExample
 
-
 MUTATION_PROMPT = """### PROMPT: TEST_CASE_MUTATOR (EVAL_AGENT) ###
 You are an adversarial "Test Case Mutator."
 The target agent *passed* this test, which is a *failure* for you. You MUST create a harder test.
@@ -55,9 +54,16 @@ You MUST use the following Chain of Thought:
 **Chain of Thought (MANDATORY):**
 1.  **Analyze Parent:** What simple case does the parent test? (e.g., 'basic dict access', 'simple string replacement')
 2.  **Brainstorm Mutations:** Look at the "Genetic Operators" below. Brainstorm 3 *different* ways to mutate the "Parent Test" to make it harder and more complex.
-    * **Genetic Operators:** `combine` (merge with another idea), `extract` (test a tiny part in isolation), `nest` (add nested data structures), `repeat` (force it to run in a loop), `summarize` (force it to handle large data), `reverse` (reverse the logic), `add_error_condition` (force a `KeyError`, `IndexError`, `ZeroDivisionError`), `add_adversarial_input` (non-UTF-8, empty strings, `None` values, large inputs).
+    * **Genetic Operators:** `add_error_condition` (force a `KeyError`, `IndexError`, `ZeroDivisionError`), `add_adversarial_input` (non-UTF-8, empty strings, `None` values, large inputs), `nest` (add nested data structures), `repeat` (force it to run in a loop).
 3.  **Select Best Mutation:** Which of your 3 ideas is *most likely* to cause a sophisticated agent to fail?
-4.  **Generate Test:** Write the new `DatasetExample` (input_message, expected_output, reasoning) for your selected mutation.
+4.  **Generate Test Package:**
+    * **Write Buggy Code:** Create a new, simple Python code snippet with your selected mutation (e.g., a function that will divide by zero).
+    * **Write Visible Tests:** Write 1-2 *passing* `unittest` cases that a *correct* solution should pass. These *must not* trigger the bug.
+    * **Write Hidden Tests:** Write 1-2 `unittest` cases that *specifically* test the bug. **Your test code MUST import the functions from `solution.py` (e.g., `from solution import your_function_name`).**
+5.  **Format Output:**
+    * `reasoning`: "A mutation of '{{parent_test_reason}}' to also test {{new_bug_description}}."
+    * `input_message`: A string containing the buggy code (in ` ```python `) and the *visible tests* (in ` ```python `).
+    * `expected_output`: A string containing only the raw Python code for the hidden tests. Do NOT wrap this in ```python markdown fences.
 
 Provide your final output as *only* the new `DatasetExample` Pydantic object.
 """
@@ -82,10 +88,16 @@ You MUST use the following Chain of Thought:
 
 **Chain of Thought (MANDATORY):**
 1.  **Analyze Parents:** What failure mode did Parent 1 find? (e.g., 'failed on `KeyError`'). What failure mode did Parent 2 find? (e.g., 'failed on `ZeroDivisionError`').
-2.  **Brainstorm Hybrids:** Look at the "Genetic Operators" below. Brainstorm 2 *different* ways to create a hybrid test that forces the agent to confront *both* failure modes at once.
-    * **Genetic Operators:** `combine` (make the output of one the input of the other), `nest` (put one failure mode inside the data structure of the other), `repeat` (force the agent to handle both failure modes inside a loop).
+2.  **Brainstorm Hybrids:** Brainstorm 2 ways to create a *single piece of buggy code* that could suffer from *both* failure modes (e.g., a function that accesses a dict *and* performs division).
 3.  **Select Best Hybrid:** Which of your 2 ideas is the *most complex* and difficult test?
-4.  **Generate Test:** Write the new `DatasetExample` (input_message, expected_output, reasoning) for your selected hybrid.
+4.  **Generate Test Package:**
+    * **Write Buggy Code:** Write the new hybrid buggy code.
+    * **Write Visible Tests:** Write 1-2 *passing* `unittest` cases for the "happy path."
+    * **Write Hidden Tests:** Write 2+ `unittest` cases that test *both* failure modes independently. **Your test code MUST import the functions from `solution.py` (e.g., `from solution import your_function_name`).**
+5.  **Format Output:**
+    * `reasoning`: "A hybrid test combining {{parent_1_failure}} and {{parent_2_failure}}."
+    * `input_message`: A string containing the hybrid buggy code and the *visible tests*.
+    * `expected_output`: A string containing only the raw Python code for the hidden tests. Do NOT wrap this in ```python markdown fences.
 
 Provide your final output as *only* the new `DatasetExample` Pydantic object.
 """
@@ -108,10 +120,17 @@ You MUST use the following Chain of Thought:
 
 **Chain of Thought (MANDATORY):**
 1.  **Analyze Weaknesses:** Based on "Past Reflections," what is the agent's *biggest* known weakness? (If no reflections, focus on the "User Expectation").
-2.  **Brainstorm New Attack:** Look at the "Adversarial Techniques" below. Brainstorm 3 *new, different* test ideas that attack this weakness or the user expectation.
-    * **Adversarial Techniques:** `combine` (test multiple features at once), `extract` (test one obscure feature), `nest` (use deeply nested data), `repeat` (test with loops or large data), `summarize` (test with large inputs), `reverse` (test reverse logic), `add_error_condition` (`KeyError`, `IndexError`, `None`), `add_adversarial_input` (non-UTF-8, empty strings, edge-case strings).
+2.  **Brainstorm New Attack:** Brainstorm 3 *new, different* test scenarios based on this weakness.
+    * **Adversarial Techniques:** `add_error_condition` (`KeyError`, `IndexError`, `ZeroDivisionError`, `TypeError`), `add_adversarial_input` (non-UTF-8, empty strings, `None` values, edge-case strings, large inputs), `nest` (use deeply nested data), `repeat` (test with loops).
 3.  **Select Best Attack:** Which of your 3 ideas is *most novel* and *not* in "Recently Run Tests"?
-4.  **Generate Test:** Write the new `DatasetExample` (input_message, expected_output, reasoning) for your selected attack.
+4.  **Generate Test Package:**
+    * **Write Buggy Code:** Create a simple Python code snippet that has your selected bug (e.g., `def process(data): return data['key']`).
+    * **Write Visible Tests:** Write 1-2 *passing* `unittest` cases (e.g., `test_happy_path(self): self.assertEqual(process({{'key': 'val'}}), 'val')`).
+    * **Write Hidden Tests:** Write 1-2 `unittest` cases that *specifically* test the bug. **Your test code MUST import the functions from `solution.py` (e.g., `from solution import process_data`).
+5.  **Format Output:**
+    * `reasoning`: "A new test for {{description_of_bug}}."
+    * `input_message`: A string containing the buggy code (in ` ```python `) and the *visible tests* (in ` ```python `).
+    * `expected_output`: A string containing only the raw Python code for the hidden tests. Do NOT wrap this in ```python markdown fences.
 
 Provide your final output as *only* the new `DatasetExample` Pydantic object.
 """

@@ -1,6 +1,6 @@
 # template.py
 from e2b import Template, default_build_logger
-from .constants import BASE_TEMPLATE_ALIAS, BASE_TEMPLATE_CPU_COUNT, BASE_TEMPLATE_MEMORY_MB
+from sandbox.constants import BASE_TEMPLATE_ALIAS, BASE_TEMPLATE_CPU_COUNT, BASE_TEMPLATE_MEMORY_MB
 from shared.logger import get_logger
 
 def ensure_base_template():
