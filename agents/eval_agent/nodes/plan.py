@@ -37,9 +37,11 @@ class _TestGenerationOutput(BaseModel):
     """Helper for structured output"""
     dataset_example: DatasetExample
 
+
 MUTATION_PROMPT = """### PROMPT: TEST_CASE_MUTATOR (EVAL_AGENT) ###
 You are an adversarial "Test Case Mutator."
 The target agent *passed* this test, which is a *failure* for you. You MUST create a harder test.
+
 
 **Parent Test (Passed):**
 {parent_test_json}
@@ -59,7 +61,12 @@ You MUST use the following Chain of Thought:
 4.  **Generate Test Package:**
     * **Write Buggy Code:** Create a new, simple Python code snippet with your selected mutation (e.g., a function that will divide by zero).
     * **Write Visible Tests:** Write 1-2 *passing* `unittest` cases that a *correct* solution should pass. These *must not* trigger the bug.
-    * **Write Hidden Tests:** Write 1-2 `unittest` cases that *specifically* test the bug. **Your test code MUST import the functions from `solution.py` (e.g., `from solution import your_function_name`).**
+    * **Write Hidden Tests:** Write 1-2 `unittest` cases that *specifically* test the bug.
+      * **Your test code MUST import the functions from `solution.py` (e.g., `from solution import process_data`).**
+      * **CRITICAL:** When testing for errors (like division by zero, index errors, etc.), write *robust* tests.
+      * **Bad Test:** `with self.assertRaises(ZeroDivisionError):` (This is too specific!)
+      * **Good Test:** `with self.assertRaises((ZeroDivisionError, ValueError, TypeError, Exception)):` (This is better, as it accepts any valid error-handling strategy the agent might use).
+      * **Best Test:** If possible, write a test that checks the *behavior*. For example, wrap the call in a `try/except` block and assert that an exception *was* raised, without being too specific about its type.
 5.  **Format Output:**
     * `reasoning`: "A mutation of '{{parent_test_reason}}' to also test {{new_bug_description}}."
     * `input_message`: A string containing the buggy code (in ` ```python `) and the *visible tests* (in ` ```python `).
@@ -93,7 +100,12 @@ You MUST use the following Chain of Thought:
 4.  **Generate Test Package:**
     * **Write Buggy Code:** Write the new hybrid buggy code.
     * **Write Visible Tests:** Write 1-2 *passing* `unittest` cases for the "happy path."
-    * **Write Hidden Tests:** Write 2+ `unittest` cases that test *both* failure modes independently. **Your test code MUST import the functions from `solution.py` (e.g., `from solution import your_function_name`).**
+    * **Write Hidden Tests:** Write 1-2 `unittest` cases that *specifically* test the bug.
+      * **Your test code MUST import the functions from `solution.py` (e.g., `from solution import process_data`).**
+      * **CRITICAL:** When testing for errors (like division by zero, index errors, etc.), write *robust* tests.
+      * **Bad Test:** `with self.assertRaises(ZeroDivisionError):` (This is too specific!)
+      * **Good Test:** `with self.assertRaises((ZeroDivisionError, ValueError, TypeError, Exception)):` (This is better, as it accepts any valid error-handling strategy the agent might use).
+      * **Best Test:** If possible, write a test that checks the *behavior*. For example, wrap the call in a `try/except` block and assert that an exception *was* raised, without being too specific about its type.
 5.  **Format Output:**
     * `reasoning`: "A hybrid test combining {{parent_1_failure}} and {{parent_2_failure}}."
     * `input_message`: A string containing the hybrid buggy code and the *visible tests*.
@@ -126,7 +138,12 @@ You MUST use the following Chain of Thought:
 4.  **Generate Test Package:**
     * **Write Buggy Code:** Create a simple Python code snippet that has your selected bug (e.g., `def process(data): return data['key']`).
     * **Write Visible Tests:** Write 1-2 *passing* `unittest` cases (e.g., `test_happy_path(self): self.assertEqual(process({{'key': 'val'}}), 'val')`).
-    * **Write Hidden Tests:** Write 1-2 `unittest` cases that *specifically* test the bug. **Your test code MUST import the functions from `solution.py` (e.g., `from solution import process_data`).
+    * **Write Hidden Tests:** Write 1-2 `unittest` cases that *specifically* test the bug.
+      * **Your test code MUST import the functions from `solution.py` (e.g., `from solution import process_data`).**
+      * **CRITICAL:** When testing for errors (like division by zero, index errors, etc.), write *robust* tests.
+      * **Bad Test:** `with self.assertRaises(ZeroDivisionError):` (This is too specific!)
+      * **Good Test:** `with self.assertRaises((ZeroDivisionError, ValueError, TypeError, Exception)):` (This is better, as it accepts any valid error-handling strategy the agent might use).
+      * **Best Test:** If possible, write a test that checks the *behavior*. For example, wrap the call in a `try/except` block and assert that an exception *was* raised, without being too specific about its type.
 5.  **Format Output:**
     * `reasoning`: "A new test for {{description_of_bug}}."
     * `input_message`: A string containing the buggy code (in ` ```python `) and the *visible tests* (in ` ```python `).
