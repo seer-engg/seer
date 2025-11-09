@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from langchain_core.prompts import PromptTemplate
 from langgraph_sdk import get_sync_client
-from langgraph.pregel.remote import RemoteGraph
+from langgraph.pregel.remote import RemoteGraph, RemoteException
 from langsmith import Client
 
 from agents.eval_agent.reflection_store import get_latest_critique
@@ -150,23 +150,30 @@ async def run_evals(
         thread_cfg = {"configurable": {"thread_id": thread["thread_id"]}}
 
         run_start = datetime.now(timezone.utc)
-        result = await asyncio.to_thread(
-            remote_graph.invoke,
-            {"messages": [{"role": "user", "content": question}]},
-            thread_cfg,
-        )
-        answer = result.get("messages", [{}])[-1].get("content", "")
-        run_end = datetime.now(timezone.utc)
+        try:
+            result = await asyncio.to_thread(
+                remote_graph.invoke,
+                {"messages": [{"role": "user", "content": question}]},
+                thread_cfg,
+            )
+            answer = result.get("messages", [{}])[-1].get("content", "")
+            run_end = datetime.now(timezone.utc)
 
-        eval_result_obj: FailureAnalysis = await asyncio.to_thread(
-            dynamic_evaluator.invoke,
-            {
-                "inputs": question,
-                "outputs": answer,
-                "reference_outputs": expected,
-                "test_case_intent": tc.reasoning, 
-            },
-        )
+            eval_result_obj: FailureAnalysis = await asyncio.to_thread(
+                dynamic_evaluator.invoke,
+                {
+                    "inputs": question,
+                    "outputs": answer,
+                    "reference_outputs": expected,
+                    "test_case_intent": tc.reasoning, 
+                },
+            )
+        except Exception as e:
+            logger.error(f"Error running eval: {e}")
+            answer = str(e)
+            run_end = datetime.now(timezone.utc)
+            eval_result_obj = FailureAnalysis(score=0.0, judge_reasoning="Runtime error in Target agent while running eval")
+            
         
         results.append(
             ExperimentResultContext(

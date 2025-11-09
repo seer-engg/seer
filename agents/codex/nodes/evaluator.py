@@ -28,6 +28,7 @@ async def evaluator(state: CodexState) -> CodexState:
         url,
         state.github_context.agent_name,
         state.dataset_examples,
+        user_id=state.user_context.user_id,
     )
 
     await kill_process_on_port(sbx, TARGET_AGENT_PORT)
