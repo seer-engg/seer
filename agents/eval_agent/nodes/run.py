@@ -72,6 +72,7 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
         state.sandbox_context.deployment_url,
         state.github_context.agent_name,
         state.dataset_examples,
+        user_id,
     )
 
     # --- NEW: LOG FACTUAL MEMORIES TO NEO4J ---

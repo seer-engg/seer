@@ -128,14 +128,16 @@ def persist_reflection(
         ref.latest_score = $latest_score,
         ref.attempt = $attempt,
         ref.recommended_tests = $recommended_tests,
-        ref.test_generation_critique = $test_generation_critique
+        ref.test_generation_critique = $test_generation_critique,
+        ref.judge_critique = $judge_critique
     ON MATCH SET // Update if it already exists
         ref.summary = $summary,
         ref.embedding = $embedding,
         ref.latest_score = $latest_score,
         ref.attempt = $attempt,
         ref.recommended_tests = $recommended_tests,
-        ref.test_generation_critique = $test_generation_critique
+        ref.test_generation_critique = $test_generation_critique,
+        ref.judge_critique = $judge_critique
     
     // 2. Link it to its evidence (if any)
     WITH ref
@@ -196,6 +198,7 @@ def persist_reflection(
             "attempt": reflection.attempt,
             "recommended_tests": reflection.hypothesis.recommended_tests,
             "test_generation_critique": reflection.hypothesis.test_generation_critique,
+            "judge_critique": reflection.hypothesis.judge_critique,
             "evidence_thread_ids": evidence_thread_ids,
             "all_run_example_ids": all_run_example_ids, # Pass in all test IDs
         }

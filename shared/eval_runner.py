@@ -9,6 +9,7 @@ from langgraph_sdk import get_sync_client
 from langgraph.pregel.remote import RemoteGraph
 from langsmith import Client
 
+from agents.eval_agent.reflection_store import get_latest_critique
 from shared.schema import DatasetExample, ExperimentResultContext, FailureAnalysis
 from shared.logger import get_logger
 from shared.llm import get_llm
@@ -88,7 +89,12 @@ JUDGE_PROMPT_TEMPLATE = PromptTemplate.from_template(CORRECTNESS_PROMPT)
 CORRECTNESS_EVALUATOR = JUDGE_PROMPT_TEMPLATE | STRUCTURED_JUDGE
 
 
-async def run_evals(target_url: str, graph_name: str, dataset_examples: List[DatasetExample]) -> List[ExperimentResultContext]:
+async def run_evals(
+        target_url: str, 
+        graph_name: str, 
+        dataset_examples: List[DatasetExample],
+        user_id: str,
+    ) -> List[ExperimentResultContext]:
     """Run evaluations for a given target URL and graph name."""
 
     sync_client = get_sync_client(url=target_url)
@@ -101,6 +107,33 @@ async def run_evals(target_url: str, graph_name: str, dataset_examples: List[Dat
         sync_client=sync_client,
         distributed_tracing=True,
     )
+
+    judge_critique = ""
+    try:
+        # Retrieve the single most relevant judge critique
+        judge_critique = await get_latest_critique(
+            query="What was the most recent critique of the judge?",
+            agent_name=graph_name,
+            user_id=user_id,
+        )
+        if judge_critique:
+            logger.info(f"Injecting Judge Critique: {judge_critique}")
+    except Exception as e:
+        logger.warning(f"Could not retrieve judge critique: {e}")
+
+    # Dynamically create the prompt template string
+    dynamic_prompt_str = CORRECTNESS_PROMPT
+    if judge_critique:
+        dynamic_prompt_str += (
+            "\n\n**CRITICAL: This is a critique from your last review. You MUST apply this feedback:**\n"
+            "<judge_critique>\n"
+            f"{judge_critique}\n"
+            "</judge_critique>"
+        )
+    
+    # Create a new, dynamic evaluator for this specific run
+    dynamic_judge_prompt = PromptTemplate.from_template(dynamic_prompt_str)
+    dynamic_evaluator = dynamic_judge_prompt | STRUCTURED_JUDGE
 
     results: List[ExperimentResultContext] = []
 
@@ -122,7 +155,7 @@ async def run_evals(target_url: str, graph_name: str, dataset_examples: List[Dat
         run_end = datetime.now(timezone.utc)
 
         eval_result_obj: FailureAnalysis = await asyncio.to_thread(
-            CORRECTNESS_EVALUATOR.invoke,
+            dynamic_evaluator.invoke,
             {
                 "inputs": question,
                 "outputs": answer,
