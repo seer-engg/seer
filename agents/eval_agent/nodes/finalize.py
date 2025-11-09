@@ -26,6 +26,16 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
         raise RuntimeError("GitHub and user context are required for Codex handoff")
     if not state.dataset_context or not state.active_experiment:
         raise RuntimeError("Dataset and experiment context are required for Codex handoff")
+    
+    is_any_eval_failed = False
+    for result in state.active_experiment.results:
+        if not result.passed:
+            is_any_eval_failed = True
+            break
+    
+    if not is_any_eval_failed:
+        logger.warning("No eval failed, skipping Codex handoff")
+        return {"codex_output": None}
 
     github_context = state.github_context
     sandbox_context = state.sandbox_context or SandboxContext(
