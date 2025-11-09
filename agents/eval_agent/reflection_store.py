@@ -124,12 +124,10 @@ async def get_latest_critique(query: str, agent_name: str, user_id: str) -> str:
         cypher_query = """
         CALL db.index.vector.queryNodes("eval_reflections", 1, $embedding) YIELD node, score
         
-        // --- THIS IS THE FIX ---
         // Combine all filters into a single WHERE clause
         WHERE node.user_id = $user_id 
           AND node.agent_name = $agent_name
           AND node.judge_critique IS NOT NULL
-        // --- END OF FIX ---
         
         RETURN node.judge_critique AS critique, score
         ORDER BY score DESC

@@ -24,16 +24,11 @@ class Hypothesis(BaseModel):
     Contains only the fields the LLM is responsible for generating.
     """
     summary: str = Field(description="Concise summary of new insights, including any flakiness.")
-    recommended_tests: List[str] = Field(
-        default_factory=list,
-        description="Specific, new test ideas to create next (e.g., 're-run divide_by_zero 3 times', 'test dict access with missing key').",
-    )
     test_generation_critique: Optional[str] = Field(
         default=None,
         description="A critique of the test cases that were just run. Were they too easy? Did they find the *right* bugs? What could be improved for next time?"
     )
-    judge_critique: Optional[str] = Field(
-        default=None,
+    judge_critique: str = Field(
         description="A critique of the *judge's* performance. Was the judge too strict or too lenient? Did its reasoning make sense? What should the judge focus on for the *next* run?"
     )
 

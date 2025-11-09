@@ -138,8 +138,8 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     if results:
         experiment.started_at = min(res.started_at for res in results)
         experiment.completed_at = max(res.completed_at for res in results)
-        experiment.mean_score = sum(res.score for res in results) / len(results)
-
+        experiment.mean_score = round(sum(res.score for res in results) / len(results), 5)
+        
     logger.info(
         "run.execute: completed %d tests (failures=%d)",
         len(results),

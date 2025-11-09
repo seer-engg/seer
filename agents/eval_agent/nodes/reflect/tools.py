@@ -127,7 +127,6 @@ def persist_reflection(
         ref.agent_name = $agent_name,
         ref.latest_score = $latest_score,
         ref.attempt = $attempt,
-        ref.recommended_tests = $recommended_tests,
         ref.test_generation_critique = $test_generation_critique,
         ref.judge_critique = $judge_critique
     ON MATCH SET // Update if it already exists
@@ -135,7 +134,6 @@ def persist_reflection(
         ref.embedding = $embedding,
         ref.latest_score = $latest_score,
         ref.attempt = $attempt,
-        ref.recommended_tests = $recommended_tests,
         ref.test_generation_critique = $test_generation_critique,
         ref.judge_critique = $judge_critique
     
@@ -196,7 +194,6 @@ def persist_reflection(
             "agent_name": agent_name,
             "latest_score": reflection.latest_score,
             "attempt": reflection.attempt,
-            "recommended_tests": reflection.hypothesis.recommended_tests,
             "test_generation_critique": reflection.hypothesis.test_generation_critique,
             "judge_critique": reflection.hypothesis.judge_critique,
             "evidence_thread_ids": evidence_thread_ids,
@@ -230,7 +227,7 @@ async def save_reflection(
         hypothesis=hypothesis, 
         # System-generated metadata
         agent_name=runtime.context.agent_name,
-        latest_score=sum(r.score for r in runtime.context.latest_results) / len(runtime.context.latest_results),
+        latest_score=round(sum(r.score for r in runtime.context.latest_results) / len(runtime.context.latest_results), 5),
         attempt=runtime.context.attempts,
     )
     

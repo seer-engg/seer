@@ -55,9 +55,6 @@ Your goal is to:
     * `summary`: Your **root cause hypothesis**.
     * `test_generation_critique`: Your **meta-reflection on test quality**.
     * `judge_critique`: Your **new critique of the judge's rubric.**
-    * `recommended_tests`: This is critical. Recommend *specific, incremental mutations* of the failures you just found.
-        * **Good Recommendation:** "Mutate the `divide_by_zero` test to use a *variable* that becomes zero, not a literal zero."
-        * **Bad Recommendation:** "Test more error cases." (This is too vague).
 
 This is your final step. Do not add any more steps.
 """
