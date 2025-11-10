@@ -67,11 +67,15 @@ You MUST use the following Chain of Thought:
       * **Bad Test:** `with self.assertRaises(ZeroDivisionError):` (This is too specific!)
       * **Good Test:** `with self.assertRaises((ZeroDivisionError, ValueError, TypeError, Exception)):` (This is better, as it accepts any valid error-handling strategy the agent might use).
       * **Best Test:** If possible, write a test that checks the *behavior*. For example, wrap the call in a `try/except` block and assert that an exception *was* raised, without being too specific about its type.
-5.  **Format Output:**
-    * `reasoning`: "A mutation of '{{parent_test_reason}}' to also test {{new_bug_description}}."
-    * `input_message`: A string containing the buggy code (in ` ```python `) and the *visible tests* (in ` ```python `).
-    * `expected_output`: A string containing only the raw Python code for the hidden tests. Do NOT wrap this in ```python markdown fences.
+5.  **Format Output (CRITICAL):**
+    * `reasoning`: "A test for..."
+    * `input_message`: "A string containing the buggy code (in ` ```python `) AND the *visible tests* (e.g., a `TestVisible` class). **Plus a final instruction for the agent to only return code.**"
+    * `expected_output`: "A string containing *ONLY* the raw Python code for the *hidden tests* (e.g., a `TestHidden` class). **DO NOT include `TestVisible` in this field. DO NOT wrap this in markdown.**"
 
+    **RULES FOR WRITING TESTS (MANDATORY):**
+    1.  **Test Imports:** Your hidden tests (`expected_output`) *must* import from `solution.py` (e.g., `from solution import outer`).
+    2.  **Testing Globals:** When testing global variables, you **MUST** import the module itself (e.g., `import solution`) and access the variable via the module (e.g., `self.assertEqual(solution.global_var, 1)`). **DO NOT** use `from solution import global_var`.
+    3.  **Test Isolation:** Use a `setUp(self)` method to reset any global state before each test. (e.g., `def setUp(self): import solution; solution.global_var = 0`).
 Provide your final output as *only* the new `DatasetExample` Pydantic object.
 """
 
@@ -106,19 +110,23 @@ You MUST use the following Chain of Thought:
       * **Bad Test:** `with self.assertRaises(ZeroDivisionError):` (This is too specific!)
       * **Good Test:** `with self.assertRaises((ZeroDivisionError, ValueError, TypeError, Exception)):` (This is better, as it accepts any valid error-handling strategy the agent might use).
       * **Best Test:** If possible, write a test that checks the *behavior*. For example, wrap the call in a `try/except` block and assert that an exception *was* raised, without being too specific about its type.
-5.  **Format Output:**
-    * `reasoning`: "A hybrid test combining {{parent_1_failure}} and {{parent_2_failure}}."
-    * `input_message`: A string containing the hybrid buggy code and the *visible tests*.
-    * `expected_output`: A string containing only the raw Python code for the hidden tests. Do NOT wrap this in ```python markdown fences.
+5.  **Format Output (CRITICAL):**
+    * `reasoning`: "A test for..."
+    * `input_message`: "A string containing the buggy code (in ` ```python `) AND the *visible tests* (e.g., a `TestVisible` class). **Plus a final instruction for the agent to only return code.**"
+    * `expected_output`: "A string containing *ONLY* the raw Python code for the *hidden tests* (e.g., a `TestHidden` class). **DO NOT include `TestVisible` in this field. DO NOT wrap this in markdown.**"
 
+    **RULES FOR WRITING TESTS (MANDATORY):**
+    1.  **Test Imports:** Your hidden tests (`expected_output`) *must* import from `solution.py` (e.g., `from solution import outer`).
+    2.  **Testing Globals:** When testing global variables, you **MUST** import the module itself (e.g., `import solution`) and access the variable via the module (e.g., `self.assertEqual(solution.global_var, 1)`). **DO NOT** use `from solution import global_var`.
+    3.  **Test Isolation:** Use a `setUp(self)` method to reset any global state before each test. (e.g., `def setUp(self): import solution; solution.global_var = 0`).
 Provide your final output as *only* the new `DatasetExample` Pydantic object.
 """
 
 NEW_TEST_PROMPT = """### PROMPT: NEW_TEST_GENERATOR (EVAL_AGENT) ###
 You are an adversarial QA analyst. Your goal is to brainstorm *one* novel test case.
 
-**User Expectation:**
-{user_expectation}
+**Raw request:**
+{raw_request}
 
 **Past Reflections (Agent Weaknesses):**
 {reflections_text}
@@ -131,7 +139,7 @@ Create one new, creative, and *hard* `DatasetExample`.
 You MUST use the following Chain of Thought:
 
 **Chain of Thought (MANDATORY):**
-1.  **Analyze Weaknesses:** Based on "Past Reflections," what is the agent's *biggest* known weakness? (If no reflections, focus on the "User Expectation").
+1.  **Analyze Weaknesses:** Based on "Past Reflections," what is the agent's *biggest* known weakness? (If no reflections, focus on the "Raw request").
 2.  **Brainstorm New Attack:** Brainstorm 3 *new, different* test scenarios based on this weakness.
     * **Adversarial Techniques:** `add_error_condition` (`KeyError`, `IndexError`, `ZeroDivisionError`, `TypeError`), `add_adversarial_input` (non-UTF-8, empty strings, `None` values, edge-case strings, large inputs), `nest` (use deeply nested data), `repeat` (test with loops).
 3.  **Select Best Attack:** Which of your 3 ideas is *most novel* and *not* in "Recently Run Tests"?
@@ -144,11 +152,15 @@ You MUST use the following Chain of Thought:
       * **Bad Test:** `with self.assertRaises(ZeroDivisionError):` (This is too specific!)
       * **Good Test:** `with self.assertRaises((ZeroDivisionError, ValueError, TypeError, Exception)):` (This is better, as it accepts any valid error-handling strategy the agent might use).
       * **Best Test:** If possible, write a test that checks the *behavior*. For example, wrap the call in a `try/except` block and assert that an exception *was* raised, without being too specific about its type.
-5.  **Format Output:**
-    * `reasoning`: "A new test for {{description_of_bug}}."
-    * `input_message`: A string containing the buggy code (in ` ```python `) and the *visible tests* (in ` ```python `).
-    * `expected_output`: A string containing only the raw Python code for the hidden tests. Do NOT wrap this in ```python markdown fences.
+5.  **Format Output (CRITICAL):**
+    * `reasoning`: "A test for..."
+    * `input_message`: "A string containing the buggy code (in ` ```python `) AND the *visible tests* (e.g., a `TestVisible` class). **Plus a final instruction for the agent to only return code.**"
+    * `expected_output`: "A string containing *ONLY* the raw Python code for the *hidden tests* (e.g., a `TestHidden` class). **DO NOT include `TestVisible` in this field. DO NOT wrap this in markdown.**"
 
+    **RULES FOR WRITING TESTS (MANDATORY):**
+    1.  **Test Imports:** Your hidden tests (`expected_output`) *must* import from `solution.py` (e.g., `from solution import outer`).
+    2.  **Testing Globals:** When testing global variables, you **MUST** import the module itself (e.g., `import solution`) and access the variable via the module (e.g., `self.assertEqual(solution.global_var, 1)`). **DO NOT** use `from solution import global_var`.
+    3.  **Test Isolation:** Use a `setUp(self)` method to reset any global state before each test. (e.g., `def setUp(self): import solution; solution.global_var = 0`).
 Provide your final output as *only* the new `DatasetExample` Pydantic object.
 """
 
@@ -190,7 +202,7 @@ def _parse_github_url(url: str, branch_name: Optional[str] = None) -> Tuple[str,
 
 
 async def _invoke_test_generation_llm(
-    user_expectation: str,
+    raw_request: str,
     reflections_text: str,
     prev_dataset_examples: str, # JSON string of recent inputs
     agent_name: str,
@@ -248,7 +260,7 @@ async def _invoke_test_generation_llm(
         """Run the New Test prompt"""
         logger.info("plan.test-llm: Running New Test generation...")
         prompt = NEW_TEST_PROMPT.format(
-            user_expectation=user_expectation,
+            raw_request=raw_request,
             reflections_text=reflections_text,
             prev_dataset_examples=prev_dataset_examples
         )
@@ -314,7 +326,7 @@ async def _ensure_target_agent_config(state: EvalAgentState) -> dict:
 
     extractor = LLM.with_structured_output(TargetAgentExtractionContext)
     context: TargetAgentExtractionContext = await extractor.ainvoke(f"{instruction}\n\nUSER:\n{last_human.content}")
-    context.user_context.user_raw_request = last_human.content
+    context.user_context.raw_request = last_human.content
     
     # Normalize the GitHub URL in case it's a web URL with /tree/ in it
     normalized_repo_url, normalized_branch = _parse_github_url(
@@ -394,7 +406,7 @@ async def _generate_eval_plan(state: EvalAgentState) -> dict:
     previous_inputs = [res.dataset_example.input_message for res in state.latest_results]
 
     dataset_examples = await _invoke_test_generation_llm(
-        user_expectation=state.user_context.user_expectation,
+        raw_request=state.user_context.raw_request,
         reflections_text=reflections_text,
         prev_dataset_examples=json.dumps(previous_inputs, indent=2),
         agent_name=agent_name,

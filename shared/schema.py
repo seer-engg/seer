@@ -146,8 +146,7 @@ class UserContext(BaseModel):
         default_factory=lambda: os.getenv("USER_ID"),
         description=f"The ID of the user. Default is {os.getenv('USER_ID')} if not specified"
     )
-    user_expectation: str = Field(..., description="The user's expectation")
-    user_raw_request: str = Field(..., description="The raw request from the user")
+    raw_request: str = Field(..., description="The raw request from the user")
     model_config = ConfigDict(extra="forbid")
 
 

@@ -72,7 +72,7 @@ async def finalize(state: CodexState) -> CodexState:
     if os.getenv("EVAL_HANDOFF_ENABLED") == "true" and state.target_agent_version < N_VERSIONS:
         llm = ChatOpenAI(model="gpt-4o-mini")
         input_messages = []
-        input_messages.append(HumanMessage(content=USER_PROMPT.format(request=state.user_context.user_raw_request, new_branch_name=state.new_branch_name)))
+        input_messages.append(HumanMessage(content=USER_PROMPT.format(request=state.user_context.raw_request, new_branch_name=state.new_branch_name)))
         response = await llm.ainvoke(input_messages)
         await _handoff_to_eval(response.content, state)
         return state
