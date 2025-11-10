@@ -17,11 +17,73 @@ class _TestGenerationOutput(BaseModel):
     dataset_example: DatasetExample
 
 
+COMMON_INSTRUCIONS = """\n\n
+4.  **Generate Test Package:**
+    * **Write Buggy Code:** Create a new, simple Python code snippet with your selected mutation (e.g., a function that will divide by zero).
+    * **Write Visible Tests:** Write 1-2 *passing* `unittest` cases that a *correct* solution should pass. These *must not* trigger the bug.
+    * **Write Hidden Tests:** Write 1-2 `unittest` cases that *specifically* test the bug.
+      * **Your test code MUST import the functions from `solution.py` (e.g., `from solution import process_data`).**
+      * **CRITICAL:** When testing for errors (like division by zero, index errors, etc.), write *robust* tests.
+      * **Bad Test:** `with self.assertRaises(ZeroDivisionError):` (This is too specific!)
+      * **Good Test:** `with self.assertRaises((ZeroDivisionError, ValueError, TypeError, Exception)):` (This is better, as it accepts any valid error-handling strategy the agent might use).
+      * **Best Test:** If possible, write a test that checks the *behavior*. For example, wrap the call in a `try/except` block and assert that an exception *was* raised, without being too specific about its type.
+5.  **Format Output (CRITICAL):**
+    <reasoning>
+        # why this is a good test
+        "A test for..."
+    </reasoning>
+
+    <input_message>
+        <buggy_code>
+            # include only the buggy code here
+            ```python
+            ...
+            ```
+        </buggy_code>
+        <visible_tests>
+            # include only 1-2 visible tests here
+            from solution import <function_to_test>
+            import unittest
+            ....
+        </visible_tests>
+        <instructions>
+            # what should the target agent do?
+            <example>
+                please fix the buggy code above so that all visible tests pass.
+                you don't need to generate hidden test cases. we'll handle that part.
+            </example>
+        </instructions>
+    </input_message>
+
+    <expected_output>
+        <candidate_solution>
+            # include a possible fixed version of the buggy code here
+            ```python
+            ...
+            ```
+        </candidate_solution>
+        <hidden_tests>
+            # include only 2-4 hidden tests here
+            from solution import <function_to_test>
+            import unittest
+            ....
+        </hidden_tests>
+    </expected_output>
+
+    <test_generation_instructions>
+    1.  **Test Imports:** Your hidden tests (`expected_output`) *must* import from `solution.py` (e.g., `from solution import outer`).
+    2.  **Testing Globals:** When testing global variables, you **MUST** import the module itself (e.g., `import solution`) and access the variable via the module (e.g., `self.assertEqual(solution.global_var, 1)`). **DO NOT** use `from solution import global_var`.
+    3.  **Test Isolation:** Use a `setUp(self)` method to reset any global state before each test. (e.g., `def setUp(self): import solution; solution.global_var = 0`).
+    </test_generation_instructions>
+    
+Provide your final output as *only* the new `DatasetExample` Pydantic object.
+"""
+
+
 
 MUTATION_PROMPT = """### PROMPT: TEST_CASE_MUTATOR (EVAL_AGENT) ###
 You are an adversarial "Test Case Mutator."
 The target agent *passed* this test, which is a *failure* for you. You MUST create a harder test.
-
 
 **Parent Test (Passed):**
 {parent_test_json}
@@ -38,26 +100,7 @@ You MUST use the following Chain of Thought:
 2.  **Brainstorm Mutations:** Look at the "Genetic Operators" below. Brainstorm 3 *different* ways to mutate the "Parent Test" to make it harder and more complex.
     * **Genetic Operators:** `add_error_condition` (force a `KeyError`, `IndexError`, `ZeroDivisionError`), `add_adversarial_input` (non-UTF-8, empty strings, `None` values, large inputs), `nest` (add nested data structures), `repeat` (force it to run in a loop).
 3.  **Select Best Mutation:** Which of your 3 ideas is *most likely* to cause a sophisticated agent to fail?
-4.  **Generate Test Package:**
-    * **Write Buggy Code:** Create a new, simple Python code snippet with your selected mutation (e.g., a function that will divide by zero).
-    * **Write Visible Tests:** Write 1-2 *passing* `unittest` cases that a *correct* solution should pass. These *must not* trigger the bug.
-    * **Write Hidden Tests:** Write 1-2 `unittest` cases that *specifically* test the bug.
-      * **Your test code MUST import the functions from `solution.py` (e.g., `from solution import process_data`).**
-      * **CRITICAL:** When testing for errors (like division by zero, index errors, etc.), write *robust* tests.
-      * **Bad Test:** `with self.assertRaises(ZeroDivisionError):` (This is too specific!)
-      * **Good Test:** `with self.assertRaises((ZeroDivisionError, ValueError, TypeError, Exception)):` (This is better, as it accepts any valid error-handling strategy the agent might use).
-      * **Best Test:** If possible, write a test that checks the *behavior*. For example, wrap the call in a `try/except` block and assert that an exception *was* raised, without being too specific about its type.
-5.  **Format Output (CRITICAL):**
-    * `reasoning`: "A test for..."
-    * `input_message`: "A string containing the buggy code (in ` ```python `) AND the *visible tests* (e.g., a `TestVisible` class). **Plus a final instruction for the agent to only return code.**"
-    * `expected_output`: "A string containing *ONLY* the raw Python code for the *hidden tests* (e.g., a `TestHidden` class). **DO NOT include `TestVisible` in this field. DO NOT wrap this in markdown.**"
-
-    **RULES FOR WRITING TESTS (MANDATORY):**
-    1.  **Test Imports:** Your hidden tests (`expected_output`) *must* import from `solution.py` (e.g., `from solution import outer`).
-    2.  **Testing Globals:** When testing global variables, you **MUST** import the module itself (e.g., `import solution`) and access the variable via the module (e.g., `self.assertEqual(solution.global_var, 1)`). **DO NOT** use `from solution import global_var`.
-    3.  **Test Isolation:** Use a `setUp(self)` method to reset any global state before each test. (e.g., `def setUp(self): import solution; solution.global_var = 0`).
-Provide your final output as *only* the new `DatasetExample` Pydantic object.
-"""
+""" + COMMON_INSTRUCIONS
 
 CROSSOVER_PROMPT = """### PROMPT: TEST_CASE_BREEDER (EVAL_AGENT) ###
 You are an adversarial "Test Case Breeder."
@@ -81,26 +124,7 @@ You MUST use the following Chain of Thought:
 1.  **Analyze Parents:** What failure mode did Parent 1 find? (e.g., 'failed on `KeyError`'). What failure mode did Parent 2 find? (e.g., 'failed on `ZeroDivisionError`').
 2.  **Brainstorm Hybrids:** Brainstorm 2 ways to create a *single piece of buggy code* that could suffer from *both* failure modes (e.g., a function that accesses a dict *and* performs division).
 3.  **Select Best Hybrid:** Which of your 2 ideas is the *most complex* and difficult test?
-4.  **Generate Test Package:**
-    * **Write Buggy Code:** Write the new hybrid buggy code.
-    * **Write Visible Tests:** Write 1-2 *passing* `unittest` cases for the "happy path."
-    * **Write Hidden Tests:** Write 1-2 `unittest` cases that *specifically* test the bug.
-      * **Your test code MUST import the functions from `solution.py` (e.g., `from solution import process_data`).**
-      * **CRITICAL:** When testing for errors (like division by zero, index errors, etc.), write *robust* tests.
-      * **Bad Test:** `with self.assertRaises(ZeroDivisionError):` (This is too specific!)
-      * **Good Test:** `with self.assertRaises((ZeroDivisionError, ValueError, TypeError, Exception)):` (This is better, as it accepts any valid error-handling strategy the agent might use).
-      * **Best Test:** If possible, write a test that checks the *behavior*. For example, wrap the call in a `try/except` block and assert that an exception *was* raised, without being too specific about its type.
-5.  **Format Output (CRITICAL):**
-    * `reasoning`: "A test for..."
-    * `input_message`: "A string containing the buggy code (in ` ```python `) AND the *visible tests* (e.g., a `TestVisible` class). **Plus a final instruction for the agent to only return code.**"
-    * `expected_output`: "A string containing *ONLY* the raw Python code for the *hidden tests* (e.g., a `TestHidden` class). **DO NOT include `TestVisible` in this field. DO NOT wrap this in markdown.**"
-
-    **RULES FOR WRITING TESTS (MANDATORY):**
-    1.  **Test Imports:** Your hidden tests (`expected_output`) *must* import from `solution.py` (e.g., `from solution import outer`).
-    2.  **Testing Globals:** When testing global variables, you **MUST** import the module itself (e.g., `import solution`) and access the variable via the module (e.g., `self.assertEqual(solution.global_var, 1)`). **DO NOT** use `from solution import global_var`.
-    3.  **Test Isolation:** Use a `setUp(self)` method to reset any global state before each test. (e.g., `def setUp(self): import solution; solution.global_var = 0`).
-Provide your final output as *only* the new `DatasetExample` Pydantic object.
-"""
+""" + COMMON_INSTRUCIONS
 
 NEW_TEST_PROMPT = """### PROMPT: NEW_TEST_GENERATOR (EVAL_AGENT) ###
 You are an adversarial QA analyst. Your goal is to brainstorm *one* novel test case.
@@ -123,29 +147,7 @@ You MUST use the following Chain of Thought:
 2.  **Brainstorm New Attack:** Brainstorm 3 *new, different* test scenarios based on this weakness.
     * **Adversarial Techniques:** `add_error_condition` (`KeyError`, `IndexError`, `ZeroDivisionError`, `TypeError`), `add_adversarial_input` (non-UTF-8, empty strings, `None` values, edge-case strings, large inputs), `nest` (use deeply nested data), `repeat` (test with loops).
 3.  **Select Best Attack:** Which of your 3 ideas is *most novel* and *not* in "Recently Run Tests"?
-4.  **Generate Test Package:**
-    * **Write Buggy Code:** Create a simple Python code snippet that has your selected bug (e.g., `def process(data): return data['key']`).
-    * **Write Visible Tests:** Write 1-2 *passing* `unittest` cases (e.g., `test_happy_path(self): self.assertEqual(process({{'key': 'val'}}), 'val')`).
-    * **Write Hidden Tests:** Write 1-2 `unittest` cases that *specifically* test the bug.
-      * **Your test code MUST import the functions from `solution.py` (e.g., `from solution import process_data`).**
-      * **CRITICAL:** When testing for errors (like division by zero, index errors, etc.), write *robust* tests.
-      * **Bad Test:** `with self.assertRaises(ZeroDivisionError):` (This is too specific!)
-      * **Good Test:** `with self.assertRaises((ZeroDivisionError, ValueError, TypeError, Exception)):` (This is better, as it accepts any valid error-handling strategy the agent might use).
-      * **Best Test:** If possible, write a test that checks the *behavior*. For example, wrap the call in a `try/except` block and assert that an exception *was* raised, without being too specific about its type.
-5.  **Format Output (CRITICAL):**
-    * `reasoning`: "A test for..."
-    * `input_message`: "A string containing the buggy code (in ` ```python `) AND the *visible tests* (e.g., a `TestVisible` class). **Plus a final instruction for the agent to only return code.**"
-    * `expected_output`: "A string containing *ONLY* the raw Python code for the *hidden tests* (e.g., a `TestHidden` class). **DO NOT include `TestVisible` in this field. DO NOT wrap this in markdown.**"
-
-    **RULES FOR WRITING TESTS (MANDATORY):**
-    1.  **Test Imports:** Your hidden tests (`expected_output`) *must* import from `solution.py` (e.g., `from solution import outer`).
-    2.  **Testing Globals:** When testing global variables, you **MUST** import the module itself (e.g., `import solution`) and access the variable via the module (e.g., `self.assertEqual(solution.global_var, 1)`). **DO NOT** use `from solution import global_var`.
-    3.  **Test Isolation:** Use a `setUp(self)` method to reset any global state before each test. (e.g., `def setUp(self): import solution; solution.global_var = 0`).
-Provide your final output as *only* the new `DatasetExample` Pydantic object.
-"""
-
-
-
+""" + COMMON_INSTRUCIONS
 
 
 async def _invoke_test_generation_llm(
