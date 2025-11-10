@@ -57,43 +57,39 @@ async def run_tests(dataset_examples: List[DatasetExample],sandbox_context: Sand
             # 2. Extract agent code
             code_match = re.search(r"```python\n(.*?)```", answer, re.DOTALL)
             if not code_match:
-                eval_result_obj = FailureAnalysis(
-                    score=0.0,
-                    failure_type="structure_preservation",
-                    judge_reasoning="Agent failed to provide a ```python code block in its output.",
-                )
+                agent_code = answer
             else:
                 agent_code = code_match.group(1)
-                hidden_tests = expected
+            hidden_tests = expected
 
-                hidden_test_match = re.search(
-                    r"```python\n(.*?)```", hidden_tests, re.DOTALL
+            hidden_test_match = re.search(
+                r"```python\n(.*?)```", hidden_tests, re.DOTALL
+            )
+            if hidden_test_match:
+                hidden_tests = hidden_test_match.group(1)
+
+            await sbx.files.write("solution.py", agent_code)
+            await sbx.files.write("test_solution.py", hidden_tests)
+
+            # --- NEW: Nested try/except for the test run ---
+            try:
+                # 3. Run tests. This will raise CommandExitException on failure.
+                await sbx.commands.run("python -m unittest test_solution.py")
+                
+                # If it didn't raise, it passed.
+                eval_result_obj = FailureAnalysis(
+                    score=1.0, 
+                    judge_reasoning="All hidden unit tests passed."
                 )
-                if hidden_test_match:
-                    hidden_tests = hidden_test_match.group(1)
-
-                await sbx.files.write("solution.py", agent_code)
-                await sbx.files.write("test_solution.py", hidden_tests)
-
-                # --- NEW: Nested try/except for the test run ---
-                try:
-                    # 3. Run tests. This will raise CommandExitException on failure.
-                    await sbx.commands.run("python -m unittest test_solution.py")
-                    
-                    # If it didn't raise, it passed.
-                    eval_result_obj = FailureAnalysis(
-                        score=1.0, 
-                        judge_reasoning="All hidden unit tests passed."
-                    )
-                except Exception as test_failure:
-                    # This is the *expected* failure path.
-                    # The exception string *is* the traceback.
-                    eval_result_obj = FailureAnalysis(
-                        score=0.0,
-                        failure_type="logical_error",
-                        judge_reasoning=f"Failed hidden unit tests. Traceback:\n{str(test_failure)}",
-                    )
-                # --- End nested try/except ---
+            except Exception as test_failure:
+                # This is the *expected* failure path.
+                # The exception string *is* the traceback.
+                eval_result_obj = FailureAnalysis(
+                    score=0.0,
+                    failure_type="logical_error",
+                    judge_reasoning=f"Failed hidden unit tests. Traceback:\n{str(test_failure)}",
+                )
+            # --- End nested try/except ---
             
         except Exception as e:
             # This is the *outer* block. It catches agent invocation failures.
