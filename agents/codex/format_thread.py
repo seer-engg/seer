@@ -12,7 +12,8 @@ from langsmith.schemas import Run
 MAX_IO_CHARS = 10000  # keep console readable
 
 KEYS_TO_REMOVE = {"id", "model_name", "refusal", "logprobs", "model_provider", "service_tier",
-"system_fingerprint", "token_usage" , "usage_metadata"
+"system_fingerprint", "token_usage" , "usage_metadata",
+"additional_kwargs"
 }
 
 def _remove_keys_recursively(value, keys_to_remove={"id", "model_name"}):

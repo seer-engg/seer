@@ -29,7 +29,7 @@ async def run_tests(dataset_examples: List[DatasetExample],sandbox_context: Sand
 
     for tc in dataset_examples:
         question = tc.input_message
-        expected = tc.expected_output
+        expected = tc.expected_output.hidden_unit_tests
 
         thread = await asyncio.to_thread(sync_client.threads.create)
         thread_cfg = {"configurable": {"thread_id": thread["thread_id"]}}
@@ -74,6 +74,8 @@ async def run_tests(dataset_examples: List[DatasetExample],sandbox_context: Sand
             )
             if hidden_test_match:
                 hidden_tests = hidden_test_match.group(1)
+            else:
+                hidden_tests = expected
 
             await sbx.files.write("solution.py", agent_code)
             await sbx.files.write("test_solution.py", hidden_tests)
