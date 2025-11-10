@@ -36,6 +36,7 @@ COMMON_INSTRUCIONS = """\n\n
     <input_message>
         <buggy_code>
             # include only the buggy code here
+            # DO NOT DIVULGE ANY BUGS OR HINTS ABOUT HIDDEN TESTS
             ```python
             ...
             ```
@@ -46,13 +47,11 @@ COMMON_INSTRUCIONS = """\n\n
             import unittest
             ....
         </visible_tests>
-        <instructions>
+        <expectation>
             # what should the target agent do?
-            <example>
-                please fix the buggy code above so that all visible tests pass.
-                you don't need to generate hidden test cases. we'll handle that part.
-            </example>
-        </instructions>
+            please fix the buggy code above so that all visible tests pass.
+            you don't need to generate or run any extra or hidden test cases.
+        </expectation>
     </input_message>
 
     <expected_output>
