@@ -142,13 +142,23 @@ You are an adversarial QA analyst. Your goal is to brainstorm *one* novel test c
 
 **Your Task:**
 Create one new, creative, and *hard* `DatasetExample`.
+**Your primary goal is to make the agent fail.**
+DO NOT CREATE SIMPLE TESTS!
 You MUST use the following Chain of Thought:
 
 **Chain of Thought (MANDATORY):**
 1.  **Analyze Weaknesses:** Based on "Past Reflections," what is the agent's *biggest* known weakness? (If no reflections, focus on the "Raw request").
-2.  **Brainstorm New Attack:** Brainstorm 3 *new, different* test scenarios based on this weakness.
-    * **Adversarial Techniques:** `add_error_condition` (`KeyError`, `IndexError`, `ZeroDivisionError`, `TypeError`), `add_adversarial_input` (non-UTF-8, empty strings, `None` values, edge-case strings, large inputs), `nest` (use deeply nested data), `repeat` (test with loops).
-3.  **Select Best Attack:** Which of your 3 ideas is *most novel* and *not* in "Recently Run Tests"?
+2.  **Brainstorm New Attack:** Brainstorm 3 *new, different, and complex* test scenarios.
+    * **Adversarial Techniques:** 
+        - `add_error_condition` (`KeyError`, `IndexError`, `ZeroDivisionError`, `TypeError`)
+        - `add_adversarial_input` (non-UTF-8, empty strings, `None` values, edge-case strings, large inputs)
+        - `inheritance` (use complex data structures)
+        - `composition` (non-trivial mathematical function compositions)
+        - `nest` (use deeply nested data)
+        - `repeat` (test with loops).
+3.  **Select Best Attack:** 
+    - Which of your 3 ideas **combines at least two** adversarial techniques (e.g., `nest` + `add_error_condition`) and is *most likely to cause a failure*? 
+    - This attack MUST NOT be in "Recently Run Tests".
 """ + COMMON_INSTRUCIONS
 
 
@@ -224,22 +234,25 @@ async def _invoke_test_generation_llm(
         new_generation.append(output.dataset_example)
 
     # --- Genetic Algorithm "Breeding" Strategy ---
-    # Example for N_TEST_CASES = 3: 1 Crossover, 1 Mutation, 1 New
-    # This ensures a mix of exploitation (Crossover/Mutation) and exploration (New)
+    fit_parents = await get_parent(passed=False, k=2) # Get 2 FAILED tests
+    unfit_parents = await get_parent(passed=True, k=1) # Get 1 PASSED test
+    has_history = bool(fit_parents or unfit_parents)
+    
+    # --- NEW: Determine how many tests to generate ---
+    # If there's no history, generate more tests to increase chance of a failure
+    logger.info(f"plan.test-llm: Generating {N_TEST_CASES} tests (has_history={has_history})")
     
     # 1. Crossover (Exploitation)
-    if len(new_generation) < N_TEST_CASES:
-        fit_parents = await get_parent(passed=False, k=2) # Get 2 FAILED tests
+    if has_history and len(new_generation) < N_TEST_CASES:
         if len(fit_parents) == 2:
             await run_crossover(fit_parents)
         else:
             logger.warning("Could not find 2 'fit' (failed) parents for crossover. Skipping.")
 
     # 2. Mutation (Exploitation)
-    if len(new_generation) < N_TEST_CASES:
-        unfit_parent = await get_parent(passed=True, k=1) # Get 1 PASSED test
-        if unfit_parent:
-            await run_mutation(unfit_parent[0])
+    if has_history and len(new_generation) < N_TEST_CASES:
+        if unfit_parents:
+            await run_mutation(unfit_parents[0])
         else:
             logger.warning("Could not find 1 'unfit' (passed) parent for mutation. Skipping.")
 
@@ -257,7 +270,7 @@ async def _invoke_test_generation_llm(
         len(new_generation),
     )
     
-    return new_generation[:N_TEST_CASES] # Ensure we only return the number requested
+    return new_generation[:N_TEST_CASES]
 
 
 
