@@ -1,6 +1,6 @@
 """module for retrieving eval reflections"""
 import asyncio
-from typing import Any
+from typing import Any, List, Dict
 
 from shared.logger import get_logger
 from langchain_openai import OpenAIEmbeddings
@@ -15,52 +15,37 @@ logger = get_logger("eval_agent.reflection_store")
 _embeddings_client = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
 
 
-async def graph_rag_retrieval(query: str, agent_name: str, user_id: str, limit: int = 3) -> str:
+async def _find_relevant_reflections(embedding: List[float], agent_name: str, user_id: str, limit: int) -> List[Dict[str, Any]]:
     """
-    Perform GraphRAG using a single, manual Cypher query to bypass library abstractions.
-    1. Vector search for relevant "reflections" (hypotheses) that are linked to failures.
-    2. Graph search to find all "failing tests" (evidence) linked to them.
+    Step 2: Find matching EvalReflection nodes using vector search and metadata filters.
+    
+    This query is optimized to filter by metadata *before* calculating vector similarity.
     """
     
-    # 1. Manually get the embedding
-    try:
-        embedding = await _embeddings_client.aembed_query(query)
-    except Exception as e:
-        logger.error(f"Failed to embed query for RAG: {e}")
-        return "Failed to process query."
+    logger.info(f"Step 2: Searching vector index with params: user_id='{user_id}', agent_name='{agent_name}', pass_threshold<{EVAL_PASS_THRESHOLD}")
 
-    # 2. Run the single, combined Cypher query
-    cypher_query = """
-    // 2a. Call the vector index and apply metadata filters
-    CALL db.index.vector.queryNodes("eval_reflections", $limit, $embedding) YIELD node, score
+    # This query finds all nodes matching the metadata filters first,
+    # then calculates vector similarity only on that subset.
+    vector_search_query = """
+    MATCH (node:EvalReflection)
     WHERE node.user_id = $user_id 
       AND node.agent_name = $agent_name 
       AND node.latest_score < $pass_threshold
-    
-    // 2b. Verify it's linked to an *actual failure*
-    MATCH (node)-[:GENERATED_FROM]->(res:ExperimentResult {passed: false, user_id: $user_id})
-    
-    // 2c. Get the evidence for that failure
-    MATCH (ex:DatasetExample {user_id: $user_id})-[:WAS_RUN_IN]->(res)
-    
-    // 2d. Return the formatted data
+      AND node.embedding IS NOT NULL
+    WITH node, vector.similarity.cosine(node.embedding, $embedding) AS score
     RETURN 
-        node.summary as reflection_summary,
-        node.test_generation_critique as test_generation_critique,
-        collect({
-            input: ex.input_message,
-            actual: res.actual_output,
-            reasoning: res.judge_reasoning,
-            score: res.score
-        }) as evidence,
-        score // Return score for ordering
+        node.reflection_id as reflection_id, 
+        node.summary as reflection_summary, 
+        node.test_generation_critique as test_generation_critique, 
+        score
     ORDER BY score DESC
+    LIMIT $limit
     """
-    
+
     try:
-        graph_result = await asyncio.to_thread(
+        results = await asyncio.to_thread(
             NEO4J_GRAPH.query,
-            cypher_query, 
+            vector_search_query,
             params={
                 "embedding": embedding,
                 "limit": limit,
@@ -69,28 +54,96 @@ async def graph_rag_retrieval(query: str, agent_name: str, user_id: str, limit: 
                 "pass_threshold": EVAL_PASS_THRESHOLD
             }
         )
+        logger.info(f"Step 2: Found {len(results)} candidate reflections from vector search.")
+        return results
     except Exception as e:
-        logger.error(f"Manual graph_rag_retrieval query failed: {e}")
-        return "Error retrieving reflections."
+        logger.error(f"Step 2: Vector search query failed: {e}")
+        return []
+
+
+async def _get_evidence_for_reflection(reflection_id: str, user_id: str) -> List[Dict[str, Any]]:
+    """
+    Step 3: Perform graph traversal to find evidence for a specific reflection.
+    """
+    graph_traversal_query = """
+    MATCH (node:EvalReflection {reflection_id: $reflection_id, user_id: $user_id})
+    MATCH (node)-[:GENERATED_FROM]->(res:ExperimentResult {passed: false, user_id: $user_id})
+    MATCH (ex:DatasetExample {user_id: $user_id})-[:WAS_RUN_IN]->(res)
+    RETURN 
+        collect({
+            input: ex.input_message,
+            actual: res.actual_output,
+            reasoning: res.judge_reasoning,
+            score: res.score
+        }) as evidence
+    """
+    try:
+        results = await asyncio.to_thread(
+            NEO4J_GRAPH.query,
+            graph_traversal_query,
+            params={"reflection_id": reflection_id, "user_id": user_id}
+        )
+        if results and results[0]:
+            return results[0].get("evidence", [])
+        return []
+    except Exception as e:
+        logger.error(f"Step 3: Graph traversal query for reflection {reflection_id} failed: {e}")
+        return []
+
+
+async def graph_rag_retrieval(query: str, agent_name: str, user_id: str, limit: int = 3) -> str:
+    """
+    Perform GraphRAG in distinct steps for easier debugging.
+    1. Vector search for relevant "reflections" (hypotheses).
+    2. Graph search to find all "failing tests" (evidence) linked to them.
+    """
     
-    if not graph_result:
-        # This is the warning you were seeing!
-        # It will now only fire if no reflections *that are linked to failures* are found.
-        logger.info(f"reflection_store: Vector search found no reflections linked to FAILED tests.")
+    # --- Step 1: Get Query Embedding ---
+    try:
+        embedding = await _embeddings_client.aembed_query(query)
+        logger.info("Step 1: Successfully generated query embedding.")
+    except Exception as e:
+        logger.error(f"Step 1: Failed to embed query for RAG: {e}")
+        return "Failed to process query."
+
+    # --- Step 2: Find Matching Reflections (Vector Search) ---
+    # This query just finds the reflection nodes, not their evidence.
+    candidate_reflections = await _find_relevant_reflections(
+        embedding=embedding,
+        agent_name=agent_name,
+        user_id=user_id,
+        limit=limit
+    )
+    
+    if not candidate_reflections:
+        # This is not an error, just no relevant history.
+        logger.info(f"Step 2: Vector search found no relevant reflections for user {user_id}, agent {agent_name}.")
         return "No past reflections found."
 
-    # 3. Format for Prompt (same as before)
+    # --- Step 3: Find Evidence (Graph Traversal) ---
     rag_context_parts = []
-    for data in graph_result:
-        summary = data.get("reflection_summary")
-        critique = data.get("test_generation_critique")
-        evidence_list = data.get("evidence", [])
+    found_evidence_count = 0
+    
+    for reflection in candidate_reflections:
+        reflection_id = reflection.get("reflection_id")
+        summary = reflection.get("reflection_summary")
+        critique = reflection.get("test_generation_critique")
         
-        rag_context_parts.append(f"Insight: {summary}")
+        if not reflection_id:
+            logger.warning("Found reflection node with no ID, skipping.")
+            continue
+            
+        # For each reflection, run a separate query to find its evidence
+        evidence_list = await _get_evidence_for_reflection(reflection_id, user_id)
         
-        if critique:
-            rag_context_parts.append(f"Past Test Critique: {critique}")
         if evidence_list:
+            # Only add reflections that are successfully linked to failed evidence
+            found_evidence_count += 1
+            rag_context_parts.append(f"Insight: {summary}")
+            
+            if critique:
+                rag_context_parts.append(f"Past Test Critique: {critique}")
+                
             rag_context_parts.append("Supporting Failed Tests:")
             for ev in evidence_list:
                 if ev and ev.get('input'): 
@@ -100,9 +153,16 @@ async def graph_rag_retrieval(query: str, agent_name: str, user_id: str, limit: 
                         f"    Reasoning: {ev.get('reasoning')}\n"
                         f"    Score: {ev.get('score') or 0.0:.2f}"
                     )
-        rag_context_parts.append("-" * 20)
-            
-    return "\n".join(rag_context_parts) if rag_context_parts else "No relevant reflections with evidence found."
+            rag_context_parts.append("-" * 20)
+        else:
+            logger.info(f"Step 3: Reflection {reflection_id} had no verifiable failed evidence, skipping.")
+
+    if not rag_context_parts:
+        logger.info(f"Step 3: No reflections had verifiable failed evidence.")
+        return "No relevant reflections with evidence found."
+    
+    logger.info(f"Successfully built RAG context with {found_evidence_count} reflections.")
+    return "\n".join(rag_context_parts)
 
 
 async def get_latest_critique(query: str, agent_name: str, user_id: str) -> str:
