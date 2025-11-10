@@ -71,7 +71,7 @@ async def planner(state: CodexState) -> CodexState:
     if not updated_sandbox_context:
         raise ValueError("No sandbox context found in state")
     
-    experiment_results = state.latest_test_results or state.experiment_context.results
+    experiment_results = state.experiment_context.results
 
     agent = create_agent(
         model=get_llm(reasoning_effort="high", model="codex"),
@@ -88,33 +88,36 @@ async def planner(state: CodexState) -> CodexState:
         response_format=TaskPlan,
         context_schema=SandboxToolContext,  # Add context schema for sandbox tools
     )
+    input_messages = list[BaseMessage](state.planner_thread or [])
+    output_messages = []
 
-    evals_and_thread_traces=[] 
-    for eval in experiment_results:
-        if eval.passed:
-            continue
-        x={
-            "INPUT:": eval.dataset_example.input_message,
-            "EXPECTED OUTPUT:": eval.dataset_example.expected_output,
-            "ACTUAL OUTPUT:": eval.actual_output,
-            "SCORE:": eval.score,
-            "JUDGE FEEDBACK:": eval.judge_reasoning
-        }
-        thread_trace = await fetch_thread_timeline_as_string(eval.thread_id, TARGET_AGENT_LANGSMITH_PROJECT)
-        evals_and_thread_traces.append(
-            EVALS_AND_THREAD_TRACE_TEMPLATE.format(
-                eval=x,
-                thread_trace=thread_trace
+    if not state.latest_test_results:
+        evals_and_thread_traces=[] 
+        for eval in experiment_results:
+            if eval.passed:
+                continue
+            x={
+                "INPUT:": eval.dataset_example.input_message,
+                "EXPECTED OUTPUT:": eval.dataset_example.expected_output,
+                "ACTUAL OUTPUT:": eval.actual_output,
+                "SCORE:": eval.score,
+                "JUDGE FEEDBACK:": eval.judge_reasoning
+            }
+            thread_trace = await fetch_thread_timeline_as_string(eval.thread_id, TARGET_AGENT_LANGSMITH_PROJECT)
+            evals_and_thread_traces.append(
+                EVALS_AND_THREAD_TRACE_TEMPLATE.format(
+                    eval=x,
+                    thread_trace=thread_trace
+                )
             )
-        )
-
-    msgs = list[BaseMessage](state.planner_thread or [])
-    task_message = HumanMessage(content=USER_PROMPT.format(evals_and_thread_traces=evals_and_thread_traces))
-    msgs.append(task_message)
+        
+        task_message = HumanMessage(content=USER_PROMPT.format(evals_and_thread_traces=evals_and_thread_traces))
+        input_messages.append(task_message)
+        output_messages.append(task_message)
 
     # Pass context along with state
     result = await agent.ainvoke(
-        input={"messages": msgs},
+        input={"messages": input_messages},
         config=RunnableConfig(recursion_limit=100),
         context=SandboxToolContext(sandbox_context=updated_sandbox_context)  # Pass sandbox context
     )
@@ -123,9 +126,10 @@ async def planner(state: CodexState) -> CodexState:
     taskPlan: TaskPlan = result.get("structured_response")
 
     output_message = AIMessage(content=f"Development plan created successfully. {taskPlan.model_dump_json()}")
+    output_messages.append(output_message)
 
 
     return {
         "taskPlan": taskPlan,
-        "planner_thread": [task_message, output_message],
+        "planner_thread": output_messages,
     }

@@ -47,7 +47,6 @@ async def graph_rag_retrieval(query: str, agent_name: str, user_id: str, limit: 
     RETURN 
         node.summary as reflection_summary,
         node.test_generation_critique as test_generation_critique,
-        node.judge_critique as judge_critique,
         collect({
             input: ex.input_message,
             actual: res.actual_output,
@@ -85,17 +84,12 @@ async def graph_rag_retrieval(query: str, agent_name: str, user_id: str, limit: 
     for data in graph_result:
         summary = data.get("reflection_summary")
         critique = data.get("test_generation_critique")
-        judge_critique = data.get("judge_critique")
         evidence_list = data.get("evidence", [])
         
         rag_context_parts.append(f"Insight: {summary}")
         
         if critique:
             rag_context_parts.append(f"Past Test Critique: {critique}")
-            
-        if judge_critique:
-            rag_context_parts.append(f"Past Judge Critique: {judge_critique}")
-            
         if evidence_list:
             rag_context_parts.append("Supporting Failed Tests:")
             for ev in evidence_list:
@@ -127,9 +121,8 @@ async def get_latest_critique(query: str, agent_name: str, user_id: str) -> str:
         // Combine all filters into a single WHERE clause
         WHERE node.user_id = $user_id 
           AND node.agent_name = $agent_name
-          AND node.judge_critique IS NOT NULL
         
-        RETURN node.judge_critique AS critique, score
+        RETURN score
         ORDER BY score DESC
         LIMIT 1
         """

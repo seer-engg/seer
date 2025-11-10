@@ -45,16 +45,10 @@ Your goal is to:
     * Now, critique the test cases that were just run.
     * If all tests passed: "The tests were too easy. The 'mutations' were not aggressive enough. We need to increase the complexity."
     * If tests failed: "These tests successfully found a bug. The *next* batch of tests should mutate this specific failure mode."
-5.  **Formulate Judge Critique (NEW):**
-    * Review the `analysis` field for the tests (e.g., scores, reasoning).
-    * Was the judge fair? Was a 0.8 too high for a minor error? Was a 0.2 too low?
-    * **Example:** "The judge correctly failed test 2 but gave it a 0.6. This was too lenient. The agent missed the core intent. The judge must be stricter on instruction-following failures next time."
-    * **Example:** "The judge gave a 1.0 on all tests. The tests were too simple, but the judge *also* needs to be prepared to score complex logic, not just syntax."
-6.  **Save Final Analysis (Genetic Blueprint):**
+5.  **Save Final Analysis (Genetic Blueprint):**
     * Call `save_reflection()` with your final analysis.
     * `summary`: Your **root cause hypothesis**.
     * `test_generation_critique`: Your **meta-reflection on test quality**.
-    * `judge_critique`: Your **new critique of the judge's rubric.**
 
 This is your final step. Do not add any more steps.
 """
@@ -120,7 +114,7 @@ async def reflect_node(state: EvalAgentState) -> dict:
         agent_name=state.github_context.agent_name,
         attempts=state.attempts,
         latest_results=state.latest_results,
-        user_expectation=state.user_context.user_expectation,
+        raw_request=state.user_context.raw_request,
     )
     
     # Invoke the agent

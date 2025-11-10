@@ -24,7 +24,7 @@ class ReflectionToolContext(BaseModel):
     agent_name: str
     attempts: int
     latest_results: List[ExperimentResultContext]
-    user_expectation: str
+    raw_request: str
 
 @tool
 async def get_latest_run_results(
@@ -127,15 +127,13 @@ def persist_reflection(
         ref.agent_name = $agent_name,
         ref.latest_score = $latest_score,
         ref.attempt = $attempt,
-        ref.test_generation_critique = $test_generation_critique,
-        ref.judge_critique = $judge_critique
+        ref.test_generation_critique = $test_generation_critique
     ON MATCH SET // Update if it already exists
         ref.summary = $summary,
         ref.embedding = $embedding,
         ref.latest_score = $latest_score,
         ref.attempt = $attempt,
-        ref.test_generation_critique = $test_generation_critique,
-        ref.judge_critique = $judge_critique
+        ref.test_generation_critique = $test_generation_critique
     
     // 2. Link it to its evidence (if any)
     WITH ref
@@ -195,7 +193,6 @@ def persist_reflection(
             "latest_score": reflection.latest_score,
             "attempt": reflection.attempt,
             "test_generation_critique": reflection.hypothesis.test_generation_critique,
-            "judge_critique": reflection.hypothesis.judge_critique,
             "evidence_thread_ids": evidence_thread_ids,
             "all_run_example_ids": all_run_example_ids, # Pass in all test IDs
         }

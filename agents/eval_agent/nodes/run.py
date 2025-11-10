@@ -1,27 +1,28 @@
 """nodes for running and uploading evaluation results"""
+import re
 import asyncio
 import json
 import os
-from typing import List
-from datetime import datetime
-
 import requests
-from tenacity import retry, stop_after_attempt, wait_exponential
-from e2b import AsyncSandbox
+from typing import List
+from datetime import datetime, timezone
 
+from e2b import AsyncSandbox
 from langchain_core.messages import ToolMessage
 from langgraph.graph import END, START, StateGraph
 
+from langgraph.pregel.remote import RemoteGraph
 from agents.eval_agent.models import EvalAgentState
 from agents.eval_agent.constants import NEO4J_GRAPH
-from shared.eval_runner import run_evals
+from langgraph_sdk import get_sync_client
 from shared.logger import get_logger
-from shared.schema import DatasetContext, ExperimentContext, ExperimentResultContext
+from shared.schema import ExperimentContext, ExperimentResultContext
+from shared.test_runner import run_tests
 
 logger = get_logger("eval_agent.run")
 
 async def _prepare_run_context(state: EvalAgentState) -> dict:
-    dataset = state.dataset_context or DatasetContext()
+    dataset = state.dataset_context
 
     if not dataset.dataset_name:
         date_tag = datetime.now().strftime("%Y%m%d-%H%M")
@@ -49,6 +50,7 @@ async def _prepare_run_context(state: EvalAgentState) -> dict:
         "latest_results": [],
     }
 
+
 async def _execute_test_cases(state: EvalAgentState) -> dict:
     """Execute the test cases and return the results."""
 
@@ -57,7 +59,7 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     user_id = state.user_context.user_id
 
     if not state.github_context or not state.github_context.agent_name:
-     raise ValueError("GithubContext with agent_name is required to log memories")
+        raise ValueError("GithubContext with agent_name is required to log memories")
     agent_name = state.github_context.agent_name
 
     if not state.sandbox_context:
@@ -65,20 +67,8 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     if not state.active_experiment:
         raise RuntimeError("Active experiment missing before executing tests")
 
-    # connect to sandbox before running evals
-    await AsyncSandbox.connect(state.sandbox_context.sandbox_id, timeout=60*20) # 20 minutes
-
-    results: List[ExperimentResultContext] = await run_evals(
-        state.sandbox_context.deployment_url,
-        state.github_context.agent_name,
-        state.dataset_examples,
-        user_id,
-    )
-
-    # --- NEW: LOG FACTUAL MEMORIES TO NEO4J ---
-    # We log the graph data asynchronously in the background
-    # 1. Create a list of parameters for each test case and its result
-   # --- MODIFIED: Update Cypher query to store structured analysis ---
+    
+    results: List[ExperimentResultContext] = await run_tests(state.dataset_examples, state.sandbox_context, state.github_context)
     cypher_params = []
     for res in results:
         # Flatten the analysis object for storage as node properties

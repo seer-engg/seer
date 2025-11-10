@@ -1,46 +1,27 @@
-"""
-This file contains code for the plan node of the eval agent. 
-This is also responsible for generating the test cases for the target agent.
-"""
-import os
-import json
-import re
 import asyncio
-from typing import List, Tuple, Optional
+import json
+from typing import List
 from uuid import uuid4
-
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
-from langchain_core.messages import HumanMessage
-from langgraph.graph import END, START, StateGraph
-
-from agents.eval_agent.constants import LLM, N_TEST_CASES
-from agents.eval_agent.models import (
-    EvalAgentState,
-    DatasetExample,
-)
+from agents.eval_agent.models import EvalAgentState
+from agents.eval_agent.constants import NEO4J_GRAPH, N_TEST_CASES
 from agents.eval_agent.reflection_store import graph_rag_retrieval
-from sandbox import (
-    TARGET_AGENT_COMMAND,
-    TARGET_AGENT_PORT,
-    deploy_server_and_confirm_ready,
-    initialize_e2b_sandbox,
-    setup_project,
-)
-from agents.eval_agent.constants import NEO4J_GRAPH
-from shared.schema import GithubContext, UserContext, SandboxContext
+from shared.schema import DatasetExample
 from shared.logger import get_logger
-
 logger = get_logger("eval_agent.plan")
+
 
 class _TestGenerationOutput(BaseModel):
     """Helper for structured output"""
     dataset_example: DatasetExample
 
 
+
 MUTATION_PROMPT = """### PROMPT: TEST_CASE_MUTATOR (EVAL_AGENT) ###
 You are an adversarial "Test Case Mutator."
 The target agent *passed* this test, which is a *failure* for you. You MUST create a harder test.
+
 
 **Parent Test (Passed):**
 {parent_test_json}
@@ -55,10 +36,26 @@ You MUST use the following Chain of Thought:
 **Chain of Thought (MANDATORY):**
 1.  **Analyze Parent:** What simple case does the parent test? (e.g., 'basic dict access', 'simple string replacement')
 2.  **Brainstorm Mutations:** Look at the "Genetic Operators" below. Brainstorm 3 *different* ways to mutate the "Parent Test" to make it harder and more complex.
-    * **Genetic Operators:** `combine` (merge with another idea), `extract` (test a tiny part in isolation), `nest` (add nested data structures), `repeat` (force it to run in a loop), `summarize` (force it to handle large data), `reverse` (reverse the logic), `add_error_condition` (force a `KeyError`, `IndexError`, `ZeroDivisionError`), `add_adversarial_input` (non-UTF-8, empty strings, `None` values, large inputs).
+    * **Genetic Operators:** `add_error_condition` (force a `KeyError`, `IndexError`, `ZeroDivisionError`), `add_adversarial_input` (non-UTF-8, empty strings, `None` values, large inputs), `nest` (add nested data structures), `repeat` (force it to run in a loop).
 3.  **Select Best Mutation:** Which of your 3 ideas is *most likely* to cause a sophisticated agent to fail?
-4.  **Generate Test:** Write the new `DatasetExample` (input_message, expected_output, reasoning) for your selected mutation.
+4.  **Generate Test Package:**
+    * **Write Buggy Code:** Create a new, simple Python code snippet with your selected mutation (e.g., a function that will divide by zero).
+    * **Write Visible Tests:** Write 1-2 *passing* `unittest` cases that a *correct* solution should pass. These *must not* trigger the bug.
+    * **Write Hidden Tests:** Write 1-2 `unittest` cases that *specifically* test the bug.
+      * **Your test code MUST import the functions from `solution.py` (e.g., `from solution import process_data`).**
+      * **CRITICAL:** When testing for errors (like division by zero, index errors, etc.), write *robust* tests.
+      * **Bad Test:** `with self.assertRaises(ZeroDivisionError):` (This is too specific!)
+      * **Good Test:** `with self.assertRaises((ZeroDivisionError, ValueError, TypeError, Exception)):` (This is better, as it accepts any valid error-handling strategy the agent might use).
+      * **Best Test:** If possible, write a test that checks the *behavior*. For example, wrap the call in a `try/except` block and assert that an exception *was* raised, without being too specific about its type.
+5.  **Format Output (CRITICAL):**
+    * `reasoning`: "A test for..."
+    * `input_message`: "A string containing the buggy code (in ` ```python `) AND the *visible tests* (e.g., a `TestVisible` class). **Plus a final instruction for the agent to only return code.**"
+    * `expected_output`: "A string containing *ONLY* the raw Python code for the *hidden tests* (e.g., a `TestHidden` class). **DO NOT include `TestVisible` in this field. DO NOT wrap this in markdown.**"
 
+    **RULES FOR WRITING TESTS (MANDATORY):**
+    1.  **Test Imports:** Your hidden tests (`expected_output`) *must* import from `solution.py` (e.g., `from solution import outer`).
+    2.  **Testing Globals:** When testing global variables, you **MUST** import the module itself (e.g., `import solution`) and access the variable via the module (e.g., `self.assertEqual(solution.global_var, 1)`). **DO NOT** use `from solution import global_var`.
+    3.  **Test Isolation:** Use a `setUp(self)` method to reset any global state before each test. (e.g., `def setUp(self): import solution; solution.global_var = 0`).
 Provide your final output as *only* the new `DatasetExample` Pydantic object.
 """
 
@@ -82,19 +79,34 @@ You MUST use the following Chain of Thought:
 
 **Chain of Thought (MANDATORY):**
 1.  **Analyze Parents:** What failure mode did Parent 1 find? (e.g., 'failed on `KeyError`'). What failure mode did Parent 2 find? (e.g., 'failed on `ZeroDivisionError`').
-2.  **Brainstorm Hybrids:** Look at the "Genetic Operators" below. Brainstorm 2 *different* ways to create a hybrid test that forces the agent to confront *both* failure modes at once.
-    * **Genetic Operators:** `combine` (make the output of one the input of the other), `nest` (put one failure mode inside the data structure of the other), `repeat` (force the agent to handle both failure modes inside a loop).
+2.  **Brainstorm Hybrids:** Brainstorm 2 ways to create a *single piece of buggy code* that could suffer from *both* failure modes (e.g., a function that accesses a dict *and* performs division).
 3.  **Select Best Hybrid:** Which of your 2 ideas is the *most complex* and difficult test?
-4.  **Generate Test:** Write the new `DatasetExample` (input_message, expected_output, reasoning) for your selected hybrid.
+4.  **Generate Test Package:**
+    * **Write Buggy Code:** Write the new hybrid buggy code.
+    * **Write Visible Tests:** Write 1-2 *passing* `unittest` cases for the "happy path."
+    * **Write Hidden Tests:** Write 1-2 `unittest` cases that *specifically* test the bug.
+      * **Your test code MUST import the functions from `solution.py` (e.g., `from solution import process_data`).**
+      * **CRITICAL:** When testing for errors (like division by zero, index errors, etc.), write *robust* tests.
+      * **Bad Test:** `with self.assertRaises(ZeroDivisionError):` (This is too specific!)
+      * **Good Test:** `with self.assertRaises((ZeroDivisionError, ValueError, TypeError, Exception)):` (This is better, as it accepts any valid error-handling strategy the agent might use).
+      * **Best Test:** If possible, write a test that checks the *behavior*. For example, wrap the call in a `try/except` block and assert that an exception *was* raised, without being too specific about its type.
+5.  **Format Output (CRITICAL):**
+    * `reasoning`: "A test for..."
+    * `input_message`: "A string containing the buggy code (in ` ```python `) AND the *visible tests* (e.g., a `TestVisible` class). **Plus a final instruction for the agent to only return code.**"
+    * `expected_output`: "A string containing *ONLY* the raw Python code for the *hidden tests* (e.g., a `TestHidden` class). **DO NOT include `TestVisible` in this field. DO NOT wrap this in markdown.**"
 
+    **RULES FOR WRITING TESTS (MANDATORY):**
+    1.  **Test Imports:** Your hidden tests (`expected_output`) *must* import from `solution.py` (e.g., `from solution import outer`).
+    2.  **Testing Globals:** When testing global variables, you **MUST** import the module itself (e.g., `import solution`) and access the variable via the module (e.g., `self.assertEqual(solution.global_var, 1)`). **DO NOT** use `from solution import global_var`.
+    3.  **Test Isolation:** Use a `setUp(self)` method to reset any global state before each test. (e.g., `def setUp(self): import solution; solution.global_var = 0`).
 Provide your final output as *only* the new `DatasetExample` Pydantic object.
 """
 
 NEW_TEST_PROMPT = """### PROMPT: NEW_TEST_GENERATOR (EVAL_AGENT) ###
 You are an adversarial QA analyst. Your goal is to brainstorm *one* novel test case.
 
-**User Expectation:**
-{user_expectation}
+**Raw request:**
+{raw_request}
 
 **Past Reflections (Agent Weaknesses):**
 {reflections_text}
@@ -107,54 +119,37 @@ Create one new, creative, and *hard* `DatasetExample`.
 You MUST use the following Chain of Thought:
 
 **Chain of Thought (MANDATORY):**
-1.  **Analyze Weaknesses:** Based on "Past Reflections," what is the agent's *biggest* known weakness? (If no reflections, focus on the "User Expectation").
-2.  **Brainstorm New Attack:** Look at the "Adversarial Techniques" below. Brainstorm 3 *new, different* test ideas that attack this weakness or the user expectation.
-    * **Adversarial Techniques:** `combine` (test multiple features at once), `extract` (test one obscure feature), `nest` (use deeply nested data), `repeat` (test with loops or large data), `summarize` (test with large inputs), `reverse` (test reverse logic), `add_error_condition` (`KeyError`, `IndexError`, `None`), `add_adversarial_input` (non-UTF-8, empty strings, edge-case strings).
+1.  **Analyze Weaknesses:** Based on "Past Reflections," what is the agent's *biggest* known weakness? (If no reflections, focus on the "Raw request").
+2.  **Brainstorm New Attack:** Brainstorm 3 *new, different* test scenarios based on this weakness.
+    * **Adversarial Techniques:** `add_error_condition` (`KeyError`, `IndexError`, `ZeroDivisionError`, `TypeError`), `add_adversarial_input` (non-UTF-8, empty strings, `None` values, edge-case strings, large inputs), `nest` (use deeply nested data), `repeat` (test with loops).
 3.  **Select Best Attack:** Which of your 3 ideas is *most novel* and *not* in "Recently Run Tests"?
-4.  **Generate Test:** Write the new `DatasetExample` (input_message, expected_output, reasoning) for your selected attack.
+4.  **Generate Test Package:**
+    * **Write Buggy Code:** Create a simple Python code snippet that has your selected bug (e.g., `def process(data): return data['key']`).
+    * **Write Visible Tests:** Write 1-2 *passing* `unittest` cases (e.g., `test_happy_path(self): self.assertEqual(process({{'key': 'val'}}), 'val')`).
+    * **Write Hidden Tests:** Write 1-2 `unittest` cases that *specifically* test the bug.
+      * **Your test code MUST import the functions from `solution.py` (e.g., `from solution import process_data`).**
+      * **CRITICAL:** When testing for errors (like division by zero, index errors, etc.), write *robust* tests.
+      * **Bad Test:** `with self.assertRaises(ZeroDivisionError):` (This is too specific!)
+      * **Good Test:** `with self.assertRaises((ZeroDivisionError, ValueError, TypeError, Exception)):` (This is better, as it accepts any valid error-handling strategy the agent might use).
+      * **Best Test:** If possible, write a test that checks the *behavior*. For example, wrap the call in a `try/except` block and assert that an exception *was* raised, without being too specific about its type.
+5.  **Format Output (CRITICAL):**
+    * `reasoning`: "A test for..."
+    * `input_message`: "A string containing the buggy code (in ` ```python `) AND the *visible tests* (e.g., a `TestVisible` class). **Plus a final instruction for the agent to only return code.**"
+    * `expected_output`: "A string containing *ONLY* the raw Python code for the *hidden tests* (e.g., a `TestHidden` class). **DO NOT include `TestVisible` in this field. DO NOT wrap this in markdown.**"
 
+    **RULES FOR WRITING TESTS (MANDATORY):**
+    1.  **Test Imports:** Your hidden tests (`expected_output`) *must* import from `solution.py` (e.g., `from solution import outer`).
+    2.  **Testing Globals:** When testing global variables, you **MUST** import the module itself (e.g., `import solution`) and access the variable via the module (e.g., `self.assertEqual(solution.global_var, 1)`). **DO NOT** use `from solution import global_var`.
+    3.  **Test Isolation:** Use a `setUp(self)` method to reset any global state before each test. (e.g., `def setUp(self): import solution; solution.global_var = 0`).
 Provide your final output as *only* the new `DatasetExample` Pydantic object.
 """
 
 
-def _parse_github_url(url: str, branch_name: Optional[str] = None) -> Tuple[str, str]:
-    """
-    Parse a GitHub URL and extract the repository URL and branch name.
-    
-    Handles both:
-    - Web URLs: https://github.com/owner/repo/tree/branch-name
-    - Git URLs: https://github.com/owner/repo or https://github.com/owner/repo.git
-    
-    Args:
-        url: The GitHub URL (can be a web URL with /tree/ or a git URL)
-        branch_name: Optional branch name to use if not in URL
-    
-    Returns:
-        Tuple of (repo_url, branch_name)
-    """
-    # Pattern to match GitHub web URLs with /tree/ path
-    # The branch name can contain slashes, so we match everything after /tree/ 
-    # up to an optional trailing slash or path
-    web_url_pattern = r'^(https?://github\.com/[^/]+/[^/]+)/tree/([^/]+(?:/[^/]+)*)/?(?:/.+)?$'
-    match = re.match(web_url_pattern, url)
-    
-    if match:
-        # Extract repo URL and branch from web URL
-        repo_url = match.group(1)
-        extracted_branch = match.group(2)
-        logger.info(f"Parsed GitHub web URL: repo_url={repo_url}, branch={extracted_branch}")
-        return repo_url, extracted_branch
-    
-    # If it's a standard git URL, use it as-is
-    # Remove trailing .git if present for consistency
-    repo_url = re.sub(r'\.git$', '', url)
-    final_branch = branch_name or "main"
-    
-    return repo_url, final_branch
+
 
 
 async def _invoke_test_generation_llm(
-    user_expectation: str,
+    raw_request: str,
     reflections_text: str,
     prev_dataset_examples: str, # JSON string of recent inputs
     agent_name: str,
@@ -164,7 +159,7 @@ async def _invoke_test_generation_llm(
     logger.info("plan.test-llm: Starting evolutionary test generation...")
     
     # Use a smart, critical LLM for this
-    _smart_llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
+    _smart_llm = ChatOpenAI(model="gpt-4.1", temperature=0.0)
     test_generation_llm = _smart_llm.with_structured_output(_TestGenerationOutput)
 
     new_generation: List[DatasetExample] = []
@@ -212,7 +207,7 @@ async def _invoke_test_generation_llm(
         """Run the New Test prompt"""
         logger.info("plan.test-llm: Running New Test generation...")
         prompt = NEW_TEST_PROMPT.format(
-            user_expectation=user_expectation,
+            raw_request=raw_request,
             reflections_text=reflections_text,
             prev_dataset_examples=prev_dataset_examples
         )
@@ -256,90 +251,9 @@ async def _invoke_test_generation_llm(
     return new_generation[:N_TEST_CASES] # Ensure we only return the number requested
 
 
-async def _ensure_target_agent_config(state: EvalAgentState) -> dict:
-    last_human = None
-    for msg in reversed(state.messages or []):
-        if isinstance(msg, HumanMessage) or getattr(msg, "type", "") == "human":
-            last_human = msg
-            break
-    if last_human is None:
-        raise ValueError("No human message to extract from")
-
-    instruction = (
-        "Extract the following fields from the user's latest message about the target agent:\n"
-        "- github_context: the GitHub context for the target agent\n"
-        "- user_context: the user context for the target agent\n"
-    )
-
-    class TargetAgentExtractionContext(BaseModel):
-        """Context for extracting the target agent's GitHub and user context."""
-        github_context: GithubContext
-        user_context: UserContext
-
-    extractor = LLM.with_structured_output(TargetAgentExtractionContext)
-    context: TargetAgentExtractionContext = await extractor.ainvoke(f"{instruction}\n\nUSER:\n{last_human.content}")
-    context.user_context.user_raw_request = last_human.content
-    
-    # Normalize the GitHub URL in case it's a web URL with /tree/ in it
-    normalized_repo_url, normalized_branch = _parse_github_url(
-        context.github_context.repo_url, 
-        context.github_context.branch_name
-    )
-    context.github_context.repo_url = normalized_repo_url
-    context.github_context.branch_name = normalized_branch
-    
-    return {
-        "github_context": context.github_context,
-        "user_context": context.user_context,
-    }
 
 
-async def _provision_target_agent(state: EvalAgentState) -> dict:
-    repo_url = state.github_context.repo_url
-    branch_name = state.github_context.branch_name
-
-    if not state.sandbox_context:
-        github_token = os.getenv("GITHUB_TOKEN")
-        logger.info(
-            "plan.provision: provisioning sandbox (repo=%s branch=%s)",
-            repo_url,
-            branch_name,
-        )
-
-        sbx, repo_dir, resolved_branch = await initialize_e2b_sandbox(
-            repo_url=repo_url,
-            branch_name=branch_name,
-            github_token=github_token,
-        )
-        sandbox_branch = resolved_branch or branch_name
-        sandbox_id = sbx.sandbox_id
-
-        await setup_project(sandbox_id, repo_dir, "pip install -e .")
-
-        sandbox, _ = await deploy_server_and_confirm_ready(
-            cmd=TARGET_AGENT_COMMAND,
-            sb=sbx,
-            cwd=repo_dir,
-        )
-
-        deployment_url = sandbox.get_host(TARGET_AGENT_PORT)
-        if not deployment_url.startswith("http"):
-            deployment_url = f"https://{deployment_url}"
-
-        logger.info("plan.provision: sandbox ready at %s", deployment_url)
-
-        return {
-            "sandbox_context": SandboxContext(
-                sandbox_id=sandbox_id,
-                working_branch=sandbox_branch,
-            ),
-        }
-    else:
-        logger.info("plan.provision: reusing deployment url %s", state.sandbox_context.deployment_url)
-        return {}
-
-
-async def _generate_eval_plan(state: EvalAgentState) -> dict:
+async def generate_eval_plan(state: EvalAgentState) -> dict:
     agent_name = state.github_context.agent_name
 
     if not state.user_context or not state.user_context.user_id:
@@ -358,7 +272,7 @@ async def _generate_eval_plan(state: EvalAgentState) -> dict:
     previous_inputs = [res.dataset_example.input_message for res in state.latest_results]
 
     dataset_examples = await _invoke_test_generation_llm(
-        user_expectation=state.user_context.user_expectation,
+        raw_request=state.user_context.raw_request,
         reflections_text=reflections_text,
         prev_dataset_examples=json.dumps(previous_inputs, indent=2),
         agent_name=agent_name,
@@ -369,18 +283,3 @@ async def _generate_eval_plan(state: EvalAgentState) -> dict:
     return {
         "dataset_examples": dataset_examples,
     }
-
-
-def build_plan_subgraph():
-    """Build the plan subgraph."""
-    builder = StateGraph(EvalAgentState)
-    builder.add_node("ensure-config", _ensure_target_agent_config)
-    builder.add_node("provision-target", _provision_target_agent)
-    builder.add_node("generate-tests", _generate_eval_plan)
-
-    builder.add_edge(START, "ensure-config")
-    builder.add_edge("ensure-config", "provision-target")
-    builder.add_edge("provision-target", "generate-tests")
-    builder.add_edge("generate-tests", END)
-
-    return builder.compile()
