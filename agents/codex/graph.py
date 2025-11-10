@@ -33,7 +33,7 @@ def should_reflect_or_raise_pr(state: CodexState) -> CodexState:
     
     if state.attempt_number >= state.max_attempts:
         logger.warning(f"Max attempts ({state.max_attempts}) reached. Ending run.")
-        if os.getenv("ALLOW_PR") == "false":            
+        if os.getenv("ALLOW_PR","true") == "false":            
             return "end"
         else:
             return "raise-pr"
