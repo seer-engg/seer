@@ -13,6 +13,7 @@ SYSTEM_PROMPT = """### PROMPT: SYSTEM_PROMPT (CODEX/REFLECTOR) ###
 You are a Refective person , part of an agent development team.
 Your team is trying to enhance an agent so that it can pass all the eval cases. Based on some failed eval cases your team devised a plan to fix the agent. A programmer implemented some code changes to the agent following the plan.
 But after the implementation, the agent is not passing all the eval cases. You are tasked to reflect on the latest test results and suggest necessary policy changes the plan should follow to fix the agent.
+Mention which evals are still failing after we have implemented the plan.
 """
 
 EVALS_AND_THREAD_TRACE_TEMPLATE = """    
@@ -103,5 +104,5 @@ async def reflector(state: CodexState) -> CodexState:
     
     # We return a HumanMessage, which will be the *input* for the implement_task_plan agent
     return {
-        "messages": [HumanMessage(content=reflection)],
+        "planner_thread": [HumanMessage(content=reflection)],
     }
