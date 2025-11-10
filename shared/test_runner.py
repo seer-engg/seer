@@ -46,7 +46,14 @@ async def run_tests(dataset_examples: List[DatasetExample],sandbox_context: Sand
                 {"messages": [{"role": "user", "content": question}]},
                 thread_cfg,
             )
-            answer = result.get("messages", [{}])[-1].get("content", "")
+            answer = ""
+
+            last_message = result.get("messages", [])[-1].get('content')
+            if isinstance(last_message, list):
+                for message in last_message:
+                    if message.get("type") == "text":
+                        answer += message.get("text")
+
             run_end = datetime.now(timezone.utc)
             
             # --- NEW: Secure the agent's output immediately ---
