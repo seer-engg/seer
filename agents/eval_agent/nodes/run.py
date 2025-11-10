@@ -80,9 +80,12 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
         )
         result_node_props.update(analysis_props) # Add all analysis fields
         result_node_props['passed'] = res.passed  # Add the computed 'passed' bool
+
+        example_node_props = res.dataset_example.model_dump(exclude={'expected_output'})
+        example_node_props['expected_output'] = str(res.dataset_example.expected_output.hidden_unit_tests) + str(res.dataset_example.expected_output.candidate_code_solution)
         
         cypher_params.append({
-            "example": res.dataset_example.model_dump(),
+            "example": example_node_props,
             "result": result_node_props,
         })
     
@@ -165,7 +168,7 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
             "row_id": res.dataset_example.example_id,
             "thread_id": res.dataset_example.example_id,
             "inputs": {"question": res.dataset_example.input_message},
-            "expected_outputs": {"answer": res.dataset_example.expected_output},
+            "expected_outputs": {"answer": str(res.dataset_example.expected_output.hidden_unit_tests) + str(res.dataset_example.expected_output.candidate_code_solution)},
             "actual_outputs": {"answer": res.actual_output},
             "evaluation_scores": [
                 {

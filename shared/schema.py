@@ -42,6 +42,13 @@ class FailureAnalysis(BaseModel):
         description="Detailed explanation from the judge about the score and failure."
     )
 
+class ExpectedOutput(BaseModel):
+    """
+    The expected output of the target agent.
+    """
+    model_config = ConfigDict(extra="forbid")
+    candidate_code_solution: str = Field(..., description="The candidate code solution that should be produced by the target agent")
+    hidden_unit_tests: str = Field(..., description="The hidden unit tests that should be used to test the target agent")
 
 class DatasetExample(BaseModel):
     """Single example in a dataset."""
@@ -51,7 +58,7 @@ class DatasetExample(BaseModel):
         description="Why is this example important? What aspect of target agent will it be testing?"
     )
     input_message: str = Field(..., description="The input message that should be send to target agent. MUST NOT CONTAIN ANY HINTS. MUST NOT CONTAIN EXPECTED OUTPUT!")
-    expected_output: str = Field(..., description="The expected output that should be produced by the target agent")
+    expected_output: ExpectedOutput = Field(...)
     status: Literal["active", "retired"] = Field(
         ...,
         description="Fitness status: 'active' tests are in the pool, 'retired' tests passed too often and are culled."
