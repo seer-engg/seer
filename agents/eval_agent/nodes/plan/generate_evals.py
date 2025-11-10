@@ -264,6 +264,7 @@ async def _invoke_test_generation_llm(
     # --- Assign final Example IDs ---
     for example in new_generation:
         example.example_id = str(uuid4())
+        example.status = "active"
 
     logger.info(
         "plan.test-llm: Evolutionary generation complete. Produced %d tests.",
