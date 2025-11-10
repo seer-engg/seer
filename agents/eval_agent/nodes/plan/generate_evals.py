@@ -10,10 +10,13 @@ from agents.eval_agent.reflection_store import graph_rag_retrieval
 from shared.schema import DatasetExample
 from shared.logger import get_logger
 logger = get_logger("eval_agent.plan")
+from pydantic import BaseModel, Field, ConfigDict
+
 
 
 class _TestGenerationOutput(BaseModel):
     """Helper for structured output"""
+    model_config = ConfigDict(extra="forbid")
     dataset_example: DatasetExample
 
 
@@ -160,7 +163,12 @@ async def _invoke_test_generation_llm(
     logger.info("plan.test-llm: Starting evolutionary test generation...")
     
     # Use a smart, critical LLM for this
-    _smart_llm = ChatOpenAI(model="gpt-4.1", temperature=0.0)
+    _smart_llm = ChatOpenAI(
+            model="gpt-5-codex",
+            use_responses_api=True,            
+            output_version="responses/v1",     
+            reasoning={"effort": "low"},
+        )
     test_generation_llm = _smart_llm.with_structured_output(_TestGenerationOutput)
 
     new_generation: List[DatasetExample] = []
