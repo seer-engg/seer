@@ -5,6 +5,7 @@ from .finalize import finalize
 from .coder import coder
 from .evaluator import evaluator
 from .reflector import reflector
+from .index_codebase import index
 
 __all__ = [
     "initialize_project",
@@ -14,4 +15,5 @@ __all__ = [
     "coder",
     "evaluator",
     "reflector",
+    "index",
 ]

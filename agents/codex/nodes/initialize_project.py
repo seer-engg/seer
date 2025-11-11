@@ -6,6 +6,7 @@ logger = get_logger("codex.nodes.initialize_project")
 
 from sandbox import initialize_e2b_sandbox, setup_project, TARGET_AGENT_SETUP_SCRIPT
 from shared.schema import SandboxContext
+from indexer.service import index_codebase
 
 
 
