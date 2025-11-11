@@ -48,7 +48,7 @@ class ExpectedOutput(BaseModel):
     """
     model_config = ConfigDict(extra="forbid")
     candidate_code_solution: str = Field(..., description="The candidate code solution that should be produced by the target agent")
-    hidden_unit_tests: str = Field(..., description="The hidden unit tests that should be used to test the target agent")
+    hidden_unit_tests: str = Field(..., description="The hidden unit tests that should be used to test the target agent, This should be a valid python code block. that can be executed to test the target agent's output code. It should start with importing target agent's from solution.py")
 
 class DatasetExample(BaseModel):
     """Single example in a dataset."""

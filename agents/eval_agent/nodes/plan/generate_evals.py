@@ -30,20 +30,16 @@ COMMON_INSTRUCIONS = """\n\n
       * **Bad Test:** `with self.assertRaises(ZeroDivisionError):` (This is too specific!)
       * **Good Test:** `with self.assertRaises((ZeroDivisionError, ValueError, TypeError, Exception)):` (This is better, as it accepts any valid error-handling strategy the agent might use).
       * **Best Test:** If possible, write a test that checks the *behavior*. For example, wrap the call in a `try/except` block and assert that an exception *was* raised, without being too specific about its type.
-5.  **Format Output (CRITICAL):**
-    <reasoning>
-        # why this is a good test
-        "A test for..."
-    </reasoning>
-
-    <input_message>
-        <buggy_code>
+5.  **Output Specifications (CRITICAL):**
+    - reasoning :  why this is a good test ?
+    - input_message:
+        <input_code>
             # include only the buggy code here
             # DO NOT DIVULGE ANY BUGS OR HINTS ABOUT HIDDEN TESTS
             ```python
             ...
             ```
-        </buggy_code>
+        </input_code>
         <visible_tests>
             # include only 1-2 visible tests here
             from solution import <function_to_test>
@@ -55,22 +51,10 @@ COMMON_INSTRUCIONS = """\n\n
             please fix the buggy code above so that all visible tests pass.
             you don't need to generate or run any extra or hidden test cases.
         </expectation>
-    </input_message>
-
-    <expected_output>
-        <candidate_solution>
-            # include a possible fixed version of the buggy code here
-            ```python
-            ...
-            ```
-        </candidate_solution>
-        <hidden_tests>
-            # include only 2-4 hidden tests here
-            from solution import <function_to_test>
-            import unittest
-            ....
-        </hidden_tests>
-    </expected_output>
+    
+    - expected_output: expected output contains two parts:
+        - candidate_solution: a possible fixed version of the input code that should be produced by the target agent
+        - hidden_tests: the hidden unit tests that should be used to test the target agent's output code. It should be a valid python code block. It should start with importing target agent's from solution.py
 
     <test_generation_instructions>
     1.  **Test Imports:** Your hidden tests (`expected_output`) *must* import from `solution.py` (e.g., `from solution import outer`).
