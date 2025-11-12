@@ -5,7 +5,7 @@ import json
 import sqlite3
 import traceback
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
 
 import numpy as np
 
@@ -16,6 +16,9 @@ from sandbox.base import get_sandbox
 
 from .db import get_db_connection, init_db
 from .embedding import get_embedder
+
+if TYPE_CHECKING:
+    import aiosqlite
 
 logger = get_logger("indexer.service")
 
@@ -85,21 +88,31 @@ class CodeIndexService:
 
     async def _list_python_files(self, sbx: AsyncSandbox, repo_path: str) -> List[str]:
         logger.info(f"Listing Python files in repository: {repo_path}")
+        # Use find with path excludes; avoid nested bash -lc and complex quoting
         cmd = (
-            r"bash -lc \"shopt -s globstar nullglob; "
-            r"for f in **/*.py; do "
-            r"  case \"$f\" in "
-            r"    *'.git'*|*'__pycache__'*|*'env/'*|*'venv/'*|*'.venv/'*|*'site-packages'*|*'node_modules'* ) ;; "
-            r"    * ) echo \"$f\" ;; "
-            r"  esac; "
-            r"done\""
+            "find . -type f -name '*.py' "
+            "! -path '*/.git/*' "
+            "! -path '*/__pycache__/*' "
+            "! -path '*/env/*' "
+            "! -path '*/venv/*' "
+            "! -path '*/.venv/*' "
+            "! -path '*/site-packages/*' "
+            "! -path '*/node_modules/*' "
+            "-print"
         )
         try:
             res: CommandResult = await sbx.commands.run(cmd, cwd=repo_path)
             if res.exit_code != 0:
                 logger.warning(f"Failed to list python files: {res.stderr}")
                 return []
-            files = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+            files = []
+            for line in res.stdout.splitlines():
+                p = line.strip()
+                if not p:
+                    continue
+                if p.startswith("./"):
+                    p = p[2:]
+                files.append(p)
             logger.info(f"Found {len(files)} Python files in repository")
             return files
         except Exception as e:
@@ -224,7 +237,7 @@ class CodeIndexService:
                 logger.debug(f"Purging dependent rows for file_id={file_id}")
                 await self.conn.execute("DELETE FROM symbols WHERE file_id=?", (file_id,))
                 await self.conn.execute("DELETE FROM imports WHERE file_id=?", (file_id,))
-                await self.conn.execute("DELETE FROM references WHERE file_id=?", (file_id,))
+                await self.conn.execute("DELETE FROM refs WHERE file_id=?", (file_id,))
                 await self.conn.execute("DELETE FROM chunks WHERE file_id=?", (file_id,))
                 # FTS cleanup
                 await self.conn.execute("DELETE FROM file_fts WHERE path=?", (rel_path,))
@@ -420,7 +433,7 @@ class CodeIndexService:
                 try:
                     await self.conn.execute(
                         """
-                        INSERT INTO references(file_id, from_symbol_id, to_symbol_name, to_symbol_qualname, call_type, lineno)
+                        INSERT INTO refs(file_id, from_symbol_id, to_symbol_name, to_symbol_qualname, call_type, lineno)
                         VALUES (?, ?, ?, ?, ?, ?)
                         """,
                         (file_id, from_sym_id, to_name, to_qual, call_type, lineno),
@@ -433,7 +446,7 @@ class CodeIndexService:
             contents = [c[2] for c in chunks]
             if contents:
                 try:
-                    vecs = self.embedder.encode(contents)
+                    vecs = await self.embedder.aencode(contents)
                     logger.debug(f"Generated {len(vecs)} embeddings for {rel_path}")
                 except Exception as e:
                     logger.error(f"Failed to generate embeddings for {rel_path}: {e}", exc_info=True)
@@ -664,10 +677,10 @@ class CodeIndexService:
         try:
             async with self.conn.execute(
                 """
-                SELECT files.path, references.lineno, references.call_type
-                FROM references
-                JOIN files ON files.id = references.file_id
-                WHERE references.to_symbol_qualname=? OR references.to_symbol_name=? 
+                SELECT files.path, refs.lineno, refs.call_type
+                FROM refs
+                JOIN files ON files.id = refs.file_id
+                WHERE refs.to_symbol_qualname=? OR refs.to_symbol_name=? 
                 LIMIT ?
                 """,
                 (name_or_qualname, name_or_qualname, k),
@@ -683,7 +696,7 @@ class CodeIndexService:
         logger.debug(f"Performing semantic search for query: '{query}' (k={k})")
         await self._ensure_db()
         try:
-            qvec = self.embedder.encode([query]).astype(np.float32)[0]
+            qvec = (await self.embedder.aencode([query])).astype(np.float32)[0]
             qnorm = np.linalg.norm(qvec)
             if qnorm > 0:
                 qvec = qvec / qnorm

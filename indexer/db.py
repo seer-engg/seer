@@ -82,7 +82,7 @@ async def init_db(conn: aiosqlite.Connection) -> None:
     # References table (approximate call/usage references)
     await conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS references (
+        CREATE TABLE IF NOT EXISTS refs (
             id INTEGER PRIMARY KEY,
             file_id INTEGER NOT NULL,
             from_symbol_id INTEGER,
@@ -95,8 +95,8 @@ async def init_db(conn: aiosqlite.Connection) -> None:
         );
         """
     )
-    await conn.execute("CREATE INDEX IF NOT EXISTS idx_refs_file ON references(file_id);")
-    await conn.execute("CREATE INDEX IF NOT EXISTS idx_refs_to_name ON references(to_symbol_name);")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_refs_file ON refs(file_id);")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_refs_to_name ON refs(to_symbol_name);")
 
     # Chunk table (for semantic + lexical chunking)
     await conn.execute(

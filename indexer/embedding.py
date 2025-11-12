@@ -3,9 +3,11 @@ import os
 from typing import Iterable, List, Optional
 
 import numpy as np
+import asyncio
 from langchain_openai import OpenAIEmbeddings
 
 from shared.logger import get_logger
+import traceback
 
 logger = get_logger("indexer.embedding")
 
@@ -62,24 +64,56 @@ class OpenAIEmbedder:
             self.dim = 1536
 
     def encode(self, texts: Iterable[str]) -> np.ndarray:
+        # Synchronous path (may trigger blocking warnings); prefer using aencode in async contexts
         texts_list = list(texts)
         vectors: List[List[float]] = []
-        # Batch to avoid request size issues
         batch_size = int(os.getenv("SEER_EMBED_BATCH", "128"))
         for i in range(0, len(texts_list), batch_size):
             chunk = texts_list[i : i + batch_size]
             try:
                 chunk_vecs = self.client.embed_documents(chunk)
-            except Exception as e:
-                logger.error(f"OpenAI embeddings failed: {e}")
+            except Exception:
+                logger.error(f"OpenAI embeddings failed: {traceback.format_exc()}")
                 raise
             vectors.extend(chunk_vecs)
         arr = np.array(vectors, dtype=np.float32)
-        # Normalize for cosine similarity
         norms = np.linalg.norm(arr, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
         arr = arr / norms
-        # Update dim if unknown
+        if arr.shape[1] != self.dim:
+            self.dim = int(arr.shape[1])
+        return arr
+
+    async def aencode(self, texts: Iterable[str]) -> np.ndarray:
+        texts_list = list(texts)
+        vectors: List[List[float]] = []
+        batch_size = int(os.getenv("SEER_EMBED_BATCH", "128"))
+        for i in range(0, len(texts_list), batch_size):
+            chunk = texts_list[i : i + batch_size]
+            try:
+                chunk_vecs = await asyncio.to_thread(self.client.embed_documents, chunk)
+            except Exception:
+                logger.error(f"OpenAI embeddings failed (async): {traceback.format_exc()}")
+                raise
+            vectors.extend(chunk_vecs)
+        arr = np.array(vectors, dtype=np.float32)
+        norms = np.linalg.norm(arr, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        arr = arr / norms
+        if arr.shape[1] != self.dim:
+            self.dim = int(arr.shape[1])
+        return arr
+
+    async def aencode_query(self, text: str) -> np.ndarray:
+        try:
+            vec = await asyncio.to_thread(self.client.embed_query, text)
+        except Exception:
+            logger.error(f"OpenAI query embedding failed (async): {traceback.format_exc()}")
+            raise
+        arr = np.array([vec], dtype=np.float32)
+        norms = np.linalg.norm(arr, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        arr = arr / norms
         if arr.shape[1] != self.dim:
             self.dim = int(arr.shape[1])
         return arr
@@ -101,12 +135,31 @@ class Embedder:
             self._impl = HashingEmbedder(dim=self.dim)
 
     def encode(self, texts: Iterable[str]) -> np.ndarray:
+        # Keep sync path for non-async callers, but prefer aencode to avoid blocking issues
         try:
             return self._impl.encode(texts)
         except Exception as e:
             logger.warning(f"Primary embedder failed, using hashing fallback: {e}")
             fallback = HashingEmbedder(dim=self.dim)
             return fallback.encode(texts)
+
+    async def aencode(self, texts: Iterable[str]) -> np.ndarray:
+        try:
+            if hasattr(self._impl, "aencode"):
+                return await self._impl.aencode(texts)  # type: ignore[attr-defined]
+            return HashingEmbedder(dim=self.dim).encode(texts)
+        except Exception as e:
+            logger.warning(f"Primary embedder failed async, using hashing fallback: {e}")
+            return HashingEmbedder(dim=self.dim).encode(texts)
+
+    async def aencode_query(self, text: str) -> np.ndarray:
+        try:
+            if hasattr(self._impl, "aencode_query"):
+                return await self._impl.aencode_query(text)  # type: ignore[attr-defined]
+            return HashingEmbedder(dim=self.dim).encode([text])
+        except Exception as e:
+            logger.warning(f"Primary query embedder failed async, using hashing fallback: {e}")
+            return HashingEmbedder(dim=self.dim).encode([text])
 
 
 _global_embedder: Optional[Embedder] = None
