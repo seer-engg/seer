@@ -152,11 +152,30 @@ async def run_tests(
                     await asyncio.sleep(params.get("seconds", 1))
                     output = {"status": "wait_completed"}
                 
-                elif full_tool_name in tools_dict:
+                elif tool_name in tools_dict:
                     # This is an MCP tool call (e.g., asana.create_task)
-                    tool_to_run = tools_dict[full_tool_name]
+                    tool_to_run = tools_dict[tool_name]
                     output = await tool_to_run.ainvoke(params)
                 
+                elif service == ".target_agent" and tool_name == "invoke":
+                    # This is a special case for invoking the agent being tested
+                    try:
+                        # Get a client for the target agent
+                        target_agent_client = get_sync_client(
+                            url=f"http://127.0.0.1:{TARGET_AGENT_PORT}"
+                        )
+                        # TODO: We need to figure out how to get the thread_id
+                        # for now, we'll just create a new one
+                        thread_id = f"mcp_run_{uuid.uuid4().hex[:8]}"
+                        output = target_agent_client.runs.invoke(
+                            thread_id=thread_id,
+                            graph_id="agent",
+                            input=params,
+                        )
+                    except Exception as e:
+                        logger.error(f"Error invoking target agent: {e}", exc_info=True)
+                        output = {"status": "error", "error": str(e)}
+
                 else:
                     raise ValueError(f"Unknown service/tool: {full_tool_name}. Available MCP tools: {list(tools_dict.keys())}")
                 
