@@ -130,9 +130,7 @@ async def run_tests(
 
             # 4. Iterate through the action sequence
             for i, action in enumerate(tc.expected_output.actions):
-                service = action.service
                 tool_name = action.tool
-                full_tool_name = f"{service}.{tool_name}"
                 
                 # ... (Params parsing and variable injection logic is unchanged) ...
                 params_str = action.params or "{}"
@@ -144,21 +142,37 @@ async def run_tests(
                 params = _inject_variables(params_dict, variables, mcp_resources)
                 # ... (end of unchanged logic) ...
 
-                logger.info(f"Test {tc.example_id}: Step {i+1} - Executing {full_tool_name}")
+                logger.info(f"Test {tc.example_id}: Step {i+1} - Executing {tool_name}")
 
                 # 5. Execute action
                 output: Any
-                if service == "system" and tool_name == "wait":
+                if tool_name == "system.wait":
                     await asyncio.sleep(params.get("seconds", 1))
                     output = {"status": "wait_completed"}
                 
-                elif full_tool_name in tools_dict:
+                elif tool_name == "target_agent.invoke":
+                    # This is a special case for invoking the agent being tested
+                    try:
+                        # Get a client for the target agent
+                        target_agent_client = get_sync_client(
+                            url=f"http://127.0.0.1:{TARGET_AGENT_PORT}"
+                        )
+                        output = target_agent_client.runs.invoke(
+                            thread_id=thread_id,
+                            graph_id="agent",
+                            input=params,
+                        )
+                    except Exception as e:
+                        logger.error(f"Error invoking target agent: {e}", exc_info=True)
+                        output = {"status": "error", "error": str(e)}
+
+                elif tool_name in tools_dict:
                     # This is an MCP tool call (e.g., asana.create_task)
-                    tool_to_run = tools_dict[full_tool_name]
+                    tool_to_run = tools_dict[tool_name]
                     output = await tool_to_run.ainvoke(params)
                 
                 else:
-                    raise ValueError(f"Unknown service/tool: {full_tool_name}. Available MCP tools: {list(tools_dict.keys())}")
+                    raise ValueError(f"Unknown service/tool: {tool_name}. Available MCP tools: {list(tools_dict.keys())}")
                 
                 # 6. Store variable if needed
                 if action.assign_to_var:

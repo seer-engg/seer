@@ -43,7 +43,7 @@ Each action in the `expected_output.actions` list is a JSON object with:
 
 **Rules for Action-Based Tests:**
 1.  **Use Available Tools:** The `tool` field must be an *exact match* from the <tools> list.
-2.  **System Tools:** For waiting, use `tool: "system.wait"`.
+2.  **System Tools:** For waiting, use `tool: "system.wait"`. For invoking the target agent, use `tool: "target_agent.invoke"`.
 3.  **ALL FIELDS ARE REQUIRED:** You must provide a value for every field. Use "" for empty.
 4.  **Params is a JSON String:** The `params` field *must* be a string containing valid JSON.
 5.  **Assert Expected is a String:** The `assert_expected` field *must* be a string.
@@ -140,25 +140,21 @@ async def _invoke_test_generation_llm(
     prev_dataset_examples: str, # JSON string of recent inputs
     agent_name: str,
     user_id: str,
-    available_tools: List[str] # <-- ADDED
+    available_tools: List[str]
 ) -> List[DatasetExample]:
     
     logger.info("plan.test-llm: Starting evolutionary test generation...")
     
     # Use a smart, critical LLM for this
     _smart_llm = ChatOpenAI(
-            model="gpt-5-codex",
-            use_responses_api=True,            
-            output_version="responses/v1",     
-            reasoning={"effort": "low"},
+            model="gpt-4-turbo",
+            temperature=0.7,
         )
     test_generation_llm = _smart_llm.with_structured_output(_TestGenerationOutput)
 
     new_generation: List[DatasetExample] = []
     
-    # --- ADDED: Format the tool list for the prompt ---
     tools_list_str = "\n".join(available_tools + ["system.wait", "target_agent.invoke"])
-    # --- END ADD ---
 
     # --- Define our new "Genetic Operator" functions ---
     
@@ -292,7 +288,6 @@ async def generate_eval_plan(state: EvalAgentState) -> dict:
     # Get just the inputs from the most recent run
     previous_inputs = [res.dataset_example.input_message for res in state.latest_results]
 
-    # --- ADDED: Get the list of available tools ---
     available_tools = []
     if state.mcp_services:
         try:
@@ -303,7 +298,6 @@ async def generate_eval_plan(state: EvalAgentState) -> dict:
         except Exception as e:
             logger.error(f"Failed to get MCP tools for test generation: {e}")
             # Continue with an empty list, prompts will be less accurate
-    # --- END ADD ---
 
     dataset_examples = await _invoke_test_generation_llm(
         raw_request=state.user_context.raw_request,
@@ -311,7 +305,7 @@ async def generate_eval_plan(state: EvalAgentState) -> dict:
         prev_dataset_examples=json.dumps(previous_inputs, indent=2),
         agent_name=agent_name,
         user_id=user_id,
-        available_tools=available_tools # <-- Pass them in
+        available_tools=available_tools
     )
 
     logger.info("plan.generate: produced %d tests (agent=%s)", len(dataset_examples), agent_name)

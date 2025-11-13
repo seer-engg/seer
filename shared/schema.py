@@ -47,8 +47,7 @@ class ActionStep(BaseModel):
     This provides a strict schema for the 'items' in the 'actions' list.
     """
     model_config = ConfigDict(extra="forbid")
-    service: str = Field(..., description="The service name (e.g., 'asana', 'github', 'system', 'target_agent').")
-    tool: str = Field(..., description="The tool name (e.g., 'create_task', 'update_pr', 'wait', 'invoke').")
+    tool: str = Field(..., description="The full tool name, including service (e.g., 'ASANA_CREATE_TASK', 'GITHUB_CREATE_PULL_REQUEST', 'system.wait').")
     params: str = Field(..., description="A JSON string of the parameters for the tool. E.g., '{\"name\": \"Test\"}' or \"{}\".")
     assign_to_var: str = Field(..., description="Variable name to store output ID. Use an empty string \"\" if not needed.")
     assert_field: str = Field(..., description="JSON path to assert, e.g., \"status.name\". Use an empty string \"\" if not needed.")
