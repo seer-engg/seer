@@ -1,12 +1,14 @@
-from agents.eval_agent.models import EvalAgentState
-from langchain_core.messages import HumanMessage
-from pydantic import BaseModel
-from langchain_openai import ChatOpenAI
-from shared.schema import GithubContext, UserContext
-from agents.eval_agent.constants import LLM
-from shared.logger import get_logger
 import re
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List 
+from pydantic import BaseModel, Field
+from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
+
+from agents.eval_agent.constants import LLM
+from agents.eval_agent.models import EvalAgentState
+from shared.schema import GithubContext, UserContext
+from shared.logger import get_logger
+
 
 logger = get_logger("eval_agent.plan")
 
@@ -61,12 +63,17 @@ async def ensure_target_agent_config(state: EvalAgentState) -> dict:
         "Extract the following fields from the user's latest message about the target agent:\n"
         "- github_context: the GitHub context for the target agent\n"
         "- user_context: the user context for the target agent\n"
+        "- mcp_services: A list of external service names mentioned (e.g., 'asana', 'github', 'jira'). Return an empty list if none are mentioned.\n"
     )
 
     class TargetAgentExtractionContext(BaseModel):
         """Context for extracting the target agent's GitHub and user context."""
         github_context: GithubContext
         user_context: UserContext
+        mcp_services: List[str] = Field(
+            default_factory=list, 
+            description="List of external MCP services mentioned, e.g., ['asana', 'github']"
+        )
 
     extractor = LLM.with_structured_output(TargetAgentExtractionContext)
     context: TargetAgentExtractionContext = await extractor.ainvoke(f"{instruction}\n\nUSER:\n{last_human.content}")
@@ -80,7 +87,10 @@ async def ensure_target_agent_config(state: EvalAgentState) -> dict:
     context.github_context.repo_url = normalized_repo_url
     context.github_context.branch_name = normalized_branch
     
+    logger.info(f"Extracted required MCP services: {context.mcp_services}")
+
     return {
         "github_context": context.github_context,
         "user_context": context.user_context,
+        "mcp_services": context.mcp_services,
     }

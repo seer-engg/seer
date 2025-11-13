@@ -53,6 +53,7 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
         experiment_context=state.active_experiment.model_copy(deep=True),
         dataset_examples=list(state.dataset_examples or []),
         target_agent_version=state.target_agent_version,
+        mcp_services=list(state.mcp_services or []), # ADDED
     )
 
     codex_input_payload: Dict[str, Any] = codex_input.model_dump()
@@ -97,10 +98,15 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
             "attempts": 0,
             "dataset_examples": [],
             "latest_results": [],
+            # ADDED: Clear MCP resources for the next round
+            "mcp_resources": {}, 
         }
     else:
         # Agent was not updated, clear any potential stale handoff object
-        return {"codex_output": None}
+        return {
+            "codex_output": None,
+            "mcp_resources": {}, # ADDED: Clear resources even if no update
+        }
 
 
 def _summarize_finalize(state: EvalAgentState) -> dict:

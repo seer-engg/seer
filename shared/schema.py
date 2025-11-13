@@ -3,8 +3,9 @@ This file contains the schemas for the shared data between the agents.
 Please review each agents code before making any changes to this file.
 """
 import os
+import json
 from datetime import datetime
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict, computed_field
 from agents.eval_agent.constants import EVAL_PASS_THRESHOLD
 
@@ -27,6 +28,8 @@ class FailureAnalysis(BaseModel):
         "instruction_following", 
         "structure_preservation",
         "completeness",
+        "assertion_error",
+        "runtime_error",
         "other"
     ]] = Field(
         default=None, 
@@ -47,8 +50,8 @@ class ExpectedOutput(BaseModel):
     The expected output of the target agent.
     """
     model_config = ConfigDict(extra="forbid")
-    candidate_code_solution: str = Field(..., description="The candidate code solution that should be produced by the target agent")
-    hidden_unit_tests: str = Field(..., description="The hidden unit tests that should be used to test the target agent, This should be a valid python code block. that can be executed to test the target agent's output code. It should start with importing target agent's from solution.py")
+    actions: List[Dict[str, Any]] = Field(..., description="A list of actions (service, tool, params, assign_to_var, assert_field, assert_expected) to execute for the test.")
+
 
 class DatasetExample(BaseModel):
     """Single example in a dataset."""
@@ -150,8 +153,8 @@ class UserContext(BaseModel):
     """Context for the user."""
 
     user_id: str = Field(
-        default_factory=lambda: os.getenv("USER_ID"),
-        description=f"The ID of the user. Default is {os.getenv('USER_ID')} if not specified"
+        default_factory=lambda: os.getenv("USER_ID", ""),
+        description=f"The ID of the user. Default is {os.getenv('USER_ID', '')} if not specified"
     )
     raw_request: str = Field(..., description="The raw request from the user")
     model_config = ConfigDict(extra="forbid")
@@ -167,6 +170,7 @@ class CodexInput(BaseModel):
     experiment_context: ExperimentContext = Field(..., description="The experiment context associated with the evaluation")
     dataset_examples: List[DatasetExample] = Field(default_factory=list, description="Dataset examples used in the evaluation")
     target_agent_version: int = Field(..., description="Version of the target agent")
+    mcp_services: List[str] = Field(default_factory=list, description="List of MCP service names required for this eval, e.g., ['asana', 'github']")
 
 
 class CodexOutput(BaseModel):

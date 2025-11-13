@@ -1,6 +1,8 @@
 """overall graph for the eval agent"""
-from typing import Literal, Optional
+import asyncio
+from typing import Literal, Optional, Dict
 from langgraph.graph import END, START, StateGraph
+from langchain_core.tools import BaseTool
 
 from agents.eval_agent.constants import N_ROUNDS, N_VERSIONS
 from agents.eval_agent.nodes.finalize import build_finalize_subgraph
@@ -9,8 +11,47 @@ from agents.eval_agent.nodes.plan import build_plan_subgraph
 from agents.eval_agent.nodes.reflect.graph import reflect_node
 from agents.eval_agent.nodes.run import build_run_subgraph
 from shared.logger import get_logger
+from shared.mcp_client import get_mcp_client_and_configs
+
 
 logger = get_logger("eval_agent.graph")
+
+
+async def cleanup_environment(state: EvalAgentState) -> dict:
+    """
+    Deletes the MCP resources (Asana project, GitHub repo)
+    created for this evaluation experiment.
+    """
+    if not state.mcp_resources:
+        logger.info("cleanup_environment: No MCP resources to clean up.")
+        return {}
+
+    logger.info(f"cleanup_environment: Cleaning up resources: {state.mcp_resources.keys()}")
+    mcp_client, _ = await get_mcp_client_and_configs(state.mcp_services)
+    mcp_tools = await mcp_client.get_tools()
+    tools_dict: Dict[str, BaseTool] = {t.name: t for t in mcp_tools}
+    
+    try:
+        # 1. Delete Asana Project
+        if "asana_project" in state.mcp_resources and "asana.delete_project" in tools_dict:
+            project_id = state.mcp_resources["asana_project"].get("id")
+            if project_id:
+                logger.info(f"Deleting Asana project: {project_id}")
+                await tools_dict["asana.delete_project"].ainvoke({"id": project_id})
+        
+        # 2. Delete GitHub Repo
+        if "github_repo" in state.mcp_resources and "github.delete_repo" in tools_dict:
+            repo_full_name = state.mcp_resources["github_repo"].get("full_name")
+            if repo_full_name:
+                logger.info(f"Deleting GitHub repo: {repo_full_name}")
+                await tools_dict["github.delete_repo"].ainvoke({"full_name": repo_full_name})
+                
+    except Exception as e:
+        # Log errors but don't stop the graph
+        logger.error(f"cleanup_environment: Error during cleanup: {e}", exc_info=True)
+    
+    # Return an empty dict to clear the resources from the state
+    return {"mcp_resources": {}}
 
 
 def update_state_from_handoff(state: EvalAgentState) -> dict:
@@ -19,6 +60,9 @@ def update_state_from_handoff(state: EvalAgentState) -> dict:
     This is the single source of truth for updating state after a codex run.
     """
     codex_handoff = state.codex_output
+    if not codex_handoff:
+        raise ValueError("No codex handoff object found in state to update from.")
+
     logger.info("Updating state from codex handoff for the next evaluation round.")
     return {
         "target_agent_version": codex_handoff.target_agent_version,
@@ -61,6 +105,7 @@ def build_graph():
     workflow.add_node("reflect", reflect_node)
     workflow.add_node("finalize", finalize_subgraph)
     workflow.add_node("update_state_from_handoff", update_state_from_handoff)
+    workflow.add_node("cleanup", cleanup_environment) # ADDED
 
     workflow.add_edge(START, "plan")
     workflow.add_edge("plan", "run")
@@ -70,8 +115,11 @@ def build_graph():
         "finalize": "finalize"
     })
     
-    # Stricter, sequential flow for handoff
-    workflow.add_conditional_edges("finalize", should_start_new_round, {
+    # MODIFIED: Finalize now goes to cleanup
+    workflow.add_edge("finalize", "cleanup")
+    
+    # MODIFIED: Conditional logic moves to after cleanup
+    workflow.add_conditional_edges("cleanup", should_start_new_round, {
         "update_state_from_handoff": "update_state_from_handoff",
         "__end__": END
     })

@@ -1,14 +1,58 @@
+import os
+import json
+import httpx
+import uuid
+from typing import Dict
+from e2b import AsyncSandbox
+
 from agents.eval_agent.models import EvalAgentState
 from sandbox import initialize_e2b_sandbox, setup_project, TARGET_AGENT_COMMAND, TARGET_AGENT_PORT, deploy_server_and_confirm_ready
 from shared.schema import SandboxContext
 from shared.logger import get_logger
-import os
+from shared.mcp_client import get_mcp_client_and_configs
+from langchain_core.tools import BaseTool
+
 logger = get_logger("eval_agent.plan")
 
 
+async def _configure_target_agent(
+    deployment_url: str, 
+    mcp_resources: dict,
+    mcp_configs: dict
+) -> bool:
+    """
+    Sends a special configuration message to the newly deployed target agent
+    to inform it which Asana project and GitHub repo to use.
+    """
+    configure_url = f"{deployment_url}/configure" # Assuming a /configure endpoint
+    payload = {
+        "mcp_resources": mcp_resources,
+        "mcp_configs": mcp_configs
+    }
+    
+    logger.info(f"Configuring target agent at {configure_url} with payload...")
+    
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(configure_url, json=payload)
+            
+            if response.status_code == 200:
+                logger.info("Target agent configured successfully.")
+                return True
+            else:
+                logger.error(f"Failed to configure target agent. Status: {response.status_code}, Response: {response.text}")
+                return False
+    except Exception as e:
+        logger.error(f"Error configuring target agent: {e}")
+        return False
+
 async def provision_target_agent(state: EvalAgentState) -> dict:
+    if not state.github_context:
+        raise ValueError("GitHub context is required to provision the target agent.")
+    
     repo_url = state.github_context.repo_url
     branch_name = state.github_context.branch_name
+    mcp_resources = {}
 
     if not state.sandbox_context:
         github_token = os.getenv("GITHUB_TOKEN")
@@ -39,13 +83,83 @@ async def provision_target_agent(state: EvalAgentState) -> dict:
             deployment_url = f"https://{deployment_url}"
 
         logger.info("plan.provision: sandbox ready at %s", deployment_url)
+        
+        if state.mcp_services:
+            logger.info(f"Provisioning MCP resources for: {state.mcp_services}")
+            mcp_client, mcp_configs = await get_mcp_client_and_configs(state.mcp_services)
+            mcp_tools = await mcp_client.get_tools()
+            tools_dict: Dict[str, BaseTool] = {t.name: t for t in mcp_tools}
+
+            try:
+                # 1. Create Asana Project
+                if "asana.create_project" in tools_dict:
+                    project_name = f"Seer Eval - {state.github_context.agent_name} - {uuid.uuid4().hex[:6]}"
+                    logger.info(f"Creating Asana project: {project_name}")
+                    asana_project = await tools_dict["asana.create_project"].ainvoke({"name": project_name})
+                    mcp_resources["asana_project"] = asana_project # Store the whole object
+                    logger.info(f"Created Asana project ID: {asana_project.get('id')}")
+
+                # 2. Create GitHub Repo
+                if "github.create_repo" in tools_dict:
+                    repo_name = f"seer-eval-{state.github_context.agent_name}-{uuid.uuid4().hex[:6]}"
+                    logger.info(f"Creating GitHub repo: {repo_name}")
+                    # Assumes create_repo takes a name and returns the repo object
+                    github_repo = await tools_dict["github.create_repo"].ainvoke({"name": repo_name, "private": True})
+                    mcp_resources["github_repo"] = github_repo # Store the whole object
+                    logger.info(f"Created GitHub repo: {github_repo.get('full_name')}")
+
+                # 3. Configure the Target Agent
+                await _configure_target_agent(deployment_url, mcp_resources, mcp_configs)
+
+            except Exception as e:
+                logger.error(f"Failed to provision MCP resources: {e}")
+                # We might want to raise an error here to stop the run
+                raise
+        # --- End MCP Logic ---
 
         return {
             "sandbox_context": SandboxContext(
                 sandbox_id=sandbox_id,
+                working_directory=repo_dir,
                 working_branch=sandbox_branch,
             ),
+            "mcp_resources": mcp_resources,
         }
     else:
-        logger.info("plan.provision: reusing deployment url %s", state.sandbox_context.deployment_url)
-        return {}
+        logger.info("plan.provision: reusing existing sandbox %s", state.sandbox_context.sandbox_id)
+        # We still need to re-provision MCP resources for the new experiment
+        mcp_resources = {}
+        if state.mcp_services:
+            logger.info(f"Provisioning MCP resources for: {state.mcp_services}")
+            mcp_client, mcp_configs = await get_mcp_client_and_configs(state.mcp_services)
+            mcp_tools = await mcp_client.get_tools()
+            tools_dict: Dict[str, BaseTool] = {t.name: t for t in mcp_tools}
+            
+            sbx = await AsyncSandbox.connect(state.sandbox_context.sandbox_id)
+            deployment_url = sbx.get_host(TARGET_AGENT_PORT)
+            if not deployment_url.startswith("http"):
+                deployment_url = f"https://{deployment_url}"
+                
+            try:
+                # (Same as above) Create Asana Project
+                if "asana.create_project" in tools_dict:
+                    project_name = f"Seer Eval - {state.github_context.agent_name} - {uuid.uuid4().hex[:6]}"
+                    asana_project = await tools_dict["asana.create_project"].ainvoke({"name": project_name})
+                    mcp_resources["asana_project"] = asana_project
+                    logger.info(f"Created Asana project ID: {asana_project.get('id')}")
+
+                # (Same as above) Create GitHub Repo
+                if "github.create_repo" in tools_dict:
+                    repo_name = f"seer-eval-{state.github_context.agent_name}-{uuid.uuid4().hex[:6]}"
+                    github_repo = await tools_dict["github.create_repo"].ainvoke({"name": repo_name, "private": True})
+                    mcp_resources["github_repo"] = github_repo
+                    logger.info(f"Created GitHub repo: {github_repo.get('full_name')}")
+                
+                # (Same as above) Configure the Target Agent
+                await _configure_target_agent(deployment_url, mcp_resources, mcp_configs)
+
+            except Exception as e:
+                logger.error(f"Failed to provision MCP resources: {e}")
+                raise
+
+        return {"mcp_resources": mcp_resources}

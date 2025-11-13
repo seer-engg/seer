@@ -1,7 +1,7 @@
 """models for the evaluation agent"""
 import uuid
 from datetime import datetime
-from typing import Annotated, Optional, List, Literal
+from typing import Annotated, Optional, List, Literal, Dict, Any
 
 from pydantic import BaseModel, Field
 from langchain_core.messages import BaseMessage
@@ -73,3 +73,11 @@ class EvalAgentState(BaseModel):
     dataset_examples: List[DatasetExample] = Field(default_factory=list, description="List of generated test cases")
     target_agent_version: int = Field(default=0, description="Version of the target agent being evaluated")
     codex_output: Optional[CodexOutput] = Field(default=None, description="Output from the codex agent, used for handoff.")
+    mcp_services: List[str] = Field(
+        default_factory=list, 
+        description="List of MCP service names required for this eval, e.g., ['asana', 'github']"
+    )
+    mcp_resources: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="MCP resource IDs created for this experiment, e.g., {'asana_project_id': '123', 'github_repo_id': '456'}"
+    )

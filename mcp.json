@@ -1,0 +1,22 @@
+{
+    "services": [
+        {
+            "name": "github",
+            "type": "http",
+            "url": "https://api.githubcopilot.com/mcp/",
+            "description": "Manages GitHub repos, issues, and pull requests for Seer evaluations."
+        },
+        {
+            "name": "asana",
+            "url": "https://mcp.asana.com/sse",
+            "type": "http",
+            "description": "Manages Asana projects, tasks, and comments for Seer evaluations."
+        },
+        {
+            "name": "langchain_docs",
+            "url": "https://docs.langchain.com/mcp",
+            "type": "http",
+            "description": "Searches LangChain documentation."
+        }
+  ]
+}

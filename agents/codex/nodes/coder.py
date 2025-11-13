@@ -1,9 +1,11 @@
 """Implement the task plan"""
+import asyncio # ADDED
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
 
 from shared.tools import web_search, LANGCHAIN_MCP_TOOLS
+from shared.mcp_client import get_mcp_tools
 from shared.logger import get_logger
 from shared.llm import get_llm
 from agents.codex.state import CodexState, TaskPlan
@@ -40,6 +42,10 @@ SYSTEM_PROMPT = """### PROMPT: SYSTEM_PROMPT (CODEX/CODER) ###
     You are a software engineer. You have been given a task to implement. Implement the assigned task to the codebase in the sandbox.
     When done, return a brief status summary. You just need to implement the task, you don't need to generate or run any test the implementation.
     You have been provided with following tools to do necessary operation in root directory of the codebase repository.
+    
+    # ADDED:
+    You also have access to external service tools (like 'asana.create_task', 'github.update_pr').
+    Use these tools to write the logic for the agent you are building.
 
     # Important Notes:
     - use desired tools to implement the task.
@@ -62,21 +68,31 @@ async def coder(state: CodexState) -> CodexState:
         depth=2,
         sandbox_context=updated_sandbox_context,
     )
+    
+    # --- ADDED: Dynamically get MCP tools ---
+    mcp_tools = []
+    if state.mcp_services:
+        logger.info(f"Coder agent loading MCP tools for: {state.mcp_services}")
+        mcp_tools = await get_mcp_tools(state.mcp_services)
+    
+    all_tools = [
+        run_command,
+        read_file,
+        grep,
+        inspect_directory,
+        create_file,
+        create_directory,
+        write_file,
+        patch_file,
+        web_search,
+        *LANGCHAIN_MCP_TOOLS,
+        *mcp_tools, # Add the dynamic tools
+    ]
+    # --- End MCP Logic ---
 
     agent = create_agent(
         model=get_llm(model="codex"),
-        tools=[
-            run_command,
-            read_file,
-            grep,
-            inspect_directory,
-            create_file,
-            create_directory,
-            write_file,
-            patch_file,
-            web_search,
-            *LANGCHAIN_MCP_TOOLS,
-        ],
+        tools=all_tools, # MODIFIED
         system_prompt=SYSTEM_PROMPT,
         state_schema=CodexState,
         context_schema=SandboxToolContext,  # Add context schema for sandbox tools

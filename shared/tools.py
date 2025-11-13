@@ -3,14 +3,12 @@ from shared.logger import get_logger
 import os
 import asyncio
 from tavily import TavilyClient
-from shared.constants import LANGCHAIN_MCP_URL
+from shared.mcp_client import get_mcp_tools 
+
 logger = get_logger("shared.tools")
 
 tavily_api_key = os.getenv("TAVILY_API_KEY")
 client = TavilyClient(api_key=tavily_api_key)
-from langchain_mcp_adapters.client import MultiServerMCPClient
-
-
 
 
 @tool
@@ -79,19 +77,9 @@ def think(thought: str) -> str:
     return thought
 
 
+async def _initialize_langchain_tools():
+    """Async helper to initialize default tools."""
+    return await get_mcp_tools(["langchain_docs"])
 
-langchain_mcp_client = MultiServerMCPClient(
-    {
-        "docs-langchain": {
-            "transport": "streamable_http",
-            "url": LANGCHAIN_MCP_URL,
-        }
-    }
-)
-
-async def get_langchain_mcp_tools():
-    tools = await langchain_mcp_client.get_tools()
-    return tools
-
-LANGCHAIN_MCP_TOOLS = asyncio.run(get_langchain_mcp_tools())
-
+# This provides the LangChain tools to agents that need them by default
+LANGCHAIN_MCP_TOOLS = asyncio.run(_initialize_langchain_tools())

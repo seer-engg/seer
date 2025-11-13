@@ -16,7 +16,7 @@ from agents.eval_agent.models import EvalAgentState
 from agents.eval_agent.constants import NEO4J_GRAPH
 from langgraph_sdk import get_sync_client
 from shared.logger import get_logger
-from shared.schema import ExperimentContext, ExperimentResultContext
+from shared.schema import ExperimentContext, ExperimentResultContext, FailureAnalysis
 from shared.test_runner import run_tests
 
 logger = get_logger("eval_agent.run")
@@ -67,8 +67,15 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     if not state.active_experiment:
         raise RuntimeError("Active experiment missing before executing tests")
 
+    # Call new run_tests with MCP context
+    results: List[ExperimentResultContext] = await run_tests(
+        dataset_examples=state.dataset_examples, 
+        sandbox_context=state.sandbox_context, 
+        github_context=state.github_context,
+        mcp_services=state.mcp_services,
+        mcp_resources=state.mcp_resources
+    )
     
-    results: List[ExperimentResultContext] = await run_tests(state.dataset_examples, state.sandbox_context, state.github_context)
     cypher_params = []
     for res in results:
         # Flatten the analysis object for storage as node properties
@@ -82,7 +89,8 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
         result_node_props['passed'] = res.passed  # Add the computed 'passed' bool
 
         example_node_props = res.dataset_example.model_dump(exclude={'expected_output'})
-        example_node_props['expected_output'] = str(res.dataset_example.expected_output.hidden_unit_tests) + str(res.dataset_example.expected_output.candidate_code_solution)
+        # MODIFIED: Store the action list as a JSON string
+        example_node_props['expected_output'] = json.dumps(res.dataset_example.expected_output.actions)
         
         cypher_params.append({
             "example": example_node_props,
@@ -168,7 +176,8 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
             "row_id": res.dataset_example.example_id,
             "thread_id": res.dataset_example.example_id,
             "inputs": {"question": res.dataset_example.input_message},
-            "expected_outputs": {"answer": str(res.dataset_example.expected_output.hidden_unit_tests) + str(res.dataset_example.expected_output.candidate_code_solution)},
+            # MODIFIED: Store the action list as a JSON string
+            "expected_outputs": {"answer": json.dumps(res.dataset_example.expected_output.actions)},
             "actual_outputs": {"answer": res.actual_output},
             "evaluation_scores": [
                 {
@@ -252,5 +261,3 @@ def build_run_subgraph():
     builder.add_edge("upload", END)
 
     return builder.compile()
-
-
