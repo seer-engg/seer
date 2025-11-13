@@ -89,8 +89,9 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
         result_node_props['passed'] = res.passed  # Add the computed 'passed' bool
 
         example_node_props = res.dataset_example.model_dump(exclude={'expected_output'})
-        # MODIFIED: Store the action list as a JSON string
-        example_node_props['expected_output'] = json.dumps(res.dataset_example.expected_output.actions)
+        # Convert the list of ActionStep objects to a list of dicts before serializing
+        actions_as_dicts = [action.model_dump() for action in res.dataset_example.expected_output.actions]
+        example_node_props['expected_output'] = json.dumps(actions_as_dicts)
         
         cypher_params.append({
             "example": example_node_props,
@@ -176,8 +177,7 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
             "row_id": res.dataset_example.example_id,
             "thread_id": res.dataset_example.example_id,
             "inputs": {"question": res.dataset_example.input_message},
-            # MODIFIED: Store the action list as a JSON string
-            "expected_outputs": {"answer": json.dumps(res.dataset_example.expected_output.actions)},
+            "expected_outputs": {"answer": json.dumps([action.model_dump() for action in res.dataset_example.expected_output.actions])},
             "actual_outputs": {"answer": res.actual_output},
             "evaluation_scores": [
                 {

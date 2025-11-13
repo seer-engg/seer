@@ -15,37 +15,6 @@ from langchain_core.tools import BaseTool
 logger = get_logger("eval_agent.plan")
 
 
-async def _configure_target_agent(
-    deployment_url: str, 
-    mcp_resources: dict,
-    mcp_configs: dict
-) -> bool:
-    """
-    Sends a special configuration message to the newly deployed target agent
-    to inform it which Asana project and GitHub repo to use.
-    """
-    configure_url = f"{deployment_url}/configure" # Assuming a /configure endpoint
-    payload = {
-        "mcp_resources": mcp_resources,
-        "mcp_configs": mcp_configs
-    }
-    
-    logger.info(f"Configuring target agent at {configure_url} with payload...")
-    
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(configure_url, json=payload)
-            
-            if response.status_code == 200:
-                logger.info("Target agent configured successfully.")
-                return True
-            else:
-                logger.error(f"Failed to configure target agent. Status: {response.status_code}, Response: {response.text}")
-                return False
-    except Exception as e:
-        logger.error(f"Error configuring target agent: {e}")
-        return False
-
 async def provision_target_agent(state: EvalAgentState) -> dict:
     if not state.github_context:
         raise ValueError("GitHub context is required to provision the target agent.")
@@ -108,9 +77,6 @@ async def provision_target_agent(state: EvalAgentState) -> dict:
                     mcp_resources["github_repo"] = github_repo # Store the whole object
                     logger.info(f"Created GitHub repo: {github_repo.get('full_name')}")
 
-                # 3. Configure the Target Agent
-                await _configure_target_agent(deployment_url, mcp_resources, mcp_configs)
-
             except Exception as e:
                 logger.error(f"Failed to provision MCP resources: {e}")
                 # We might want to raise an error here to stop the run
@@ -134,11 +100,6 @@ async def provision_target_agent(state: EvalAgentState) -> dict:
             mcp_client, mcp_configs = await get_mcp_client_and_configs(state.mcp_services)
             mcp_tools = await mcp_client.get_tools()
             tools_dict: Dict[str, BaseTool] = {t.name: t for t in mcp_tools}
-            
-            sbx = await AsyncSandbox.connect(state.sandbox_context.sandbox_id)
-            deployment_url = sbx.get_host(TARGET_AGENT_PORT)
-            if not deployment_url.startswith("http"):
-                deployment_url = f"https://{deployment_url}"
                 
             try:
                 # (Same as above) Create Asana Project
@@ -155,9 +116,6 @@ async def provision_target_agent(state: EvalAgentState) -> dict:
                     mcp_resources["github_repo"] = github_repo
                     logger.info(f"Created GitHub repo: {github_repo.get('full_name')}")
                 
-                # (Same as above) Configure the Target Agent
-                await _configure_target_agent(deployment_url, mcp_resources, mcp_configs)
-
             except Exception as e:
                 logger.error(f"Failed to provision MCP resources: {e}")
                 raise

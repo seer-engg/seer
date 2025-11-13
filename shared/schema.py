@@ -5,7 +5,7 @@ Please review each agents code before making any changes to this file.
 import os
 import json
 from datetime import datetime
-from typing import List, Optional, Literal, Dict, Any
+from typing import List, Optional, Literal, Dict, Any, Union
 from pydantic import BaseModel, Field, ConfigDict, computed_field
 from agents.eval_agent.constants import EVAL_PASS_THRESHOLD
 
@@ -35,22 +35,32 @@ class FailureAnalysis(BaseModel):
         default=None, 
         description="The primary category of the failure. Null if score is 1.0."
     )
-    #TODO: Why do we need severity? when we already had score !
-    severity: Optional[int] = Field(
-        default=None, 
-        description="Severity of the failure from 1 (minor) to 10 (critical). Null if score is 1.0."
-    )
     judge_reasoning: str = Field(
         ..., 
         description="Detailed explanation from the judge about the score and failure."
     )
+
+
+class ActionStep(BaseModel):
+    """
+    A single step in an action-based test case.
+    This provides a strict schema for the 'items' in the 'actions' list.
+    """
+    model_config = ConfigDict(extra="forbid")
+    service: str = Field(..., description="The service name (e.g., 'asana', 'github', 'system', 'target_agent').")
+    tool: str = Field(..., description="The tool name (e.g., 'create_task', 'update_pr', 'wait', 'invoke').")
+    params: str = Field(..., description="A JSON string of the parameters for the tool. E.g., '{\"name\": \"Test\"}' or \"{}\".")
+    assign_to_var: str = Field(..., description="Variable name to store output ID. Use an empty string \"\" if not needed.")
+    assert_field: str = Field(..., description="JSON path to assert, e.g., \"status.name\". Use an empty string \"\" if not needed.")
+    assert_expected: str = Field(..., description="Expected value (as a string). Use an empty string \"\" if not needed.")
+
 
 class ExpectedOutput(BaseModel):
     """
     The expected output of the target agent.
     """
     model_config = ConfigDict(extra="forbid")
-    actions: List[Dict[str, Any]] = Field(..., description="A list of actions (service, tool, params, assign_to_var, assert_field, assert_expected) to execute for the test.")
+    actions: List[ActionStep] = Field(..., description="A list of action steps to execute for the test.")
 
 
 class DatasetExample(BaseModel):
