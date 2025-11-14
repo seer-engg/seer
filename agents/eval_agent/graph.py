@@ -12,9 +12,18 @@ from agents.eval_agent.nodes.reflect.graph import reflect_node
 from agents.eval_agent.nodes.run import build_run_subgraph
 from shared.logger import get_logger
 from shared.mcp_client import get_mcp_client_and_configs
+from shared.tool_catalog import canonicalize_tool_name
 
 
 logger = get_logger("eval_agent.graph")
+
+
+def _resolve_tool_key(tools_dict: Dict[str, BaseTool], *candidates: str) -> str | None:
+    for candidate in candidates:
+        key = canonicalize_tool_name(candidate)
+        if key in tools_dict:
+            return key
+    return None
 
 
 async def cleanup_environment(state: EvalAgentState) -> dict:
@@ -29,22 +38,37 @@ async def cleanup_environment(state: EvalAgentState) -> dict:
     logger.info(f"cleanup_environment: Cleaning up resources: {state.mcp_resources.keys()}")
     mcp_client, _ = await get_mcp_client_and_configs(state.mcp_services)
     mcp_tools = await mcp_client.get_tools()
-    tools_dict: Dict[str, BaseTool] = {t.name: t for t in mcp_tools}
+    tools_dict: Dict[str, BaseTool] = {
+        canonicalize_tool_name(t.name): t for t in mcp_tools
+    }
     
     try:
         # 1. Delete Asana Project
-        if "asana_project" in state.mcp_resources and "asana.delete_project" in tools_dict:
-            project_id = state.mcp_resources["asana_project"].get("id")
-            if project_id:
-                logger.info(f"Deleting Asana project: {project_id}")
-                await tools_dict["asana.delete_project"].ainvoke({"id": project_id})
+        if "asana_project" in state.mcp_resources:
+            delete_project = _resolve_tool_key(
+                tools_dict,
+                "ASANA_DELETE_PROJECT",
+                "asana.delete_project",
+            )
+            if delete_project:
+                project_id = state.mcp_resources["asana_project"].get("id")
+                if project_id:
+                    logger.info(f"Deleting Asana project: {project_id}")
+                    await tools_dict[delete_project].ainvoke({"id": project_id})
         
         # 2. Delete GitHub Repo
-        if "github_repo" in state.mcp_resources and "github.delete_repo" in tools_dict:
-            repo_full_name = state.mcp_resources["github_repo"].get("full_name")
-            if repo_full_name:
-                logger.info(f"Deleting GitHub repo: {repo_full_name}")
-                await tools_dict["github.delete_repo"].ainvoke({"full_name": repo_full_name})
+        if "github_repo" in state.mcp_resources:
+            delete_repo = _resolve_tool_key(
+                tools_dict,
+                "GITHUB_DELETE_REPOSITORY",
+                "github.delete_repo",
+                "GITHUB_DELETE_A_REPOSITORY",
+            )
+            if delete_repo:
+                repo_full_name = state.mcp_resources["github_repo"].get("full_name")
+                if repo_full_name:
+                    logger.info(f"Deleting GitHub repo: {repo_full_name}")
+                    await tools_dict[delete_repo].ainvoke({"full_name": repo_full_name})
                 
     except Exception as e:
         # Log errors but don't stop the graph

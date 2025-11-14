@@ -8,6 +8,7 @@ from agents.eval_agent.constants import LLM
 from agents.eval_agent.models import EvalAgentState
 from shared.schema import GithubContext, UserContext
 from shared.logger import get_logger
+from shared.tool_catalog import resolve_mcp_services
 
 
 logger = get_logger("eval_agent.plan")
@@ -87,10 +88,13 @@ async def ensure_target_agent_config(state: EvalAgentState) -> dict:
     context.github_context.repo_url = normalized_repo_url
     context.github_context.branch_name = normalized_branch
     
-    logger.info(f"Extracted required MCP services: {context.mcp_services}")
+    resolved_services = resolve_mcp_services(context.mcp_services)
+    logger.info(
+        f"Resolved MCP services (requested={context.mcp_services}): {resolved_services}"
+    )
 
     return {
         "github_context": context.github_context,
         "user_context": context.user_context,
-        "mcp_services": context.mcp_services,
+        "mcp_services": resolved_services,
     }

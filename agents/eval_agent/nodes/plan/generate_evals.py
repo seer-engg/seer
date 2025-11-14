@@ -1,16 +1,22 @@
 import asyncio
 import json
-from typing import List
+from typing import Any, Dict, List
 from uuid import uuid4
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ConfigDict
 from agents.eval_agent.models import EvalAgentState
 from agents.eval_agent.constants import NEO4J_GRAPH, N_TEST_CASES
 from agents.eval_agent.reflection_store import graph_rag_retrieval
 from shared.schema import DatasetExample
 from shared.logger import get_logger
-from pydantic import BaseModel, Field, ConfigDict
-from shared.mcp_client import get_mcp_client_and_configs
+from shared.tool_catalog import (
+    ToolEntry,
+    build_tool_name_set,
+    canonicalize_tool_name,
+    load_tool_entries,
+    select_relevant_tools,
+)
+from shared.resource_utils import format_resource_hints
 
 
 logger = get_logger("eval_agent.plan.generate_evals")
@@ -22,20 +28,54 @@ class _TestGenerationOutput(BaseModel):
     dataset_example: DatasetExample
 
 
+def _validate_generated_actions(
+    examples: List[DatasetExample], tool_entries: Dict[str, ToolEntry]
+) -> None:
+    """Ensure every generated action references a known tool."""
+
+    if not tool_entries:
+        return
+
+    name_map = build_tool_name_set(tool_entries)
+    valid_names = set(name_map.keys())
+    valid_names.add("system.wait")
+
+    invalid: List[str] = []
+    for example in examples:
+        for idx, action in enumerate(example.expected_output.actions):
+            normalized = canonicalize_tool_name(action.tool)
+            if normalized not in valid_names:
+                invalid.append(
+                    f"example={example.example_id or '<pending>'} action_index={idx} tool={action.tool}"
+                )
+
+    if invalid:
+        sample = ", ".join(list(name_map.values())[:20])
+        raise ValueError(
+            "Generated actions referenced unknown tools. Details: "
+            + ", ".join(invalid)
+            + (f". Known tools include: {sample}" if sample else "")
+        )
+
+
 COMMON_INSTRUCIONS = """\n\n
 **Your Task:**
 Create one new `DatasetExample` that is a complex, adversarial test case.
 Your test case MUST be a JSON list of actions.
 
 **Available Tools:**
-You *must* pick your tool names from this list:
+You *must* pick your tool names from this list (exact strings such as `ASANA_CREATE_TASK`).
 <tools>
 {available_tools}
 </tools>
 
+**Available Resources:**
+Use `[resource:resource_name.field]` tokens when you need stable IDs.
+{resource_hints}
+
 **Action Schema (ALL FIELDS REQUIRED):**
 Each action in the `expected_output.actions` list is a JSON object with:
-- `tool`: (str) The FULL tool name, chosen from the <tools> list (e.g., "ASANA_CREATE_SUBTASK", "GITHUB_CREATE_A_PULL_REQUEST", "system.wait").
+- `tool`: (str) The FULL tool name, chosen from the <tools> list (e.g., "ASANA_CREATE_SUBTASK", "GITHUB_CREATE_PULL_REQUEST", "system.wait").
 - `params`: (str) A JSON STRING of the parameters for the tool. e.g., "{{\\"name\\": \\"My Task\\"}}" or "{{}}"
 - `assign_to_var`: (str) Variable name to store output ID. Use an empty string "" if not needed.
 - `assert_field`: (str) A JSON path to check in the tool's output (e.g., "status.name"). Use an empty string "" if not needed.
@@ -47,12 +87,12 @@ Each action in the `expected_output.actions` list is a JSON object with:
 3.  **ALL FIELDS ARE REQUIRED:** You must provide a value for every field. Use "" for empty.
 4.  **Params is a JSON String:** The `params` field *must* be a string containing valid JSON.
 5.  **Assert Expected is a String:** The `assert_expected` field *must* be a string.
-6.  **Environment is Ready:** You MUST assume the Asana project and GitHub repo are already created.
+6.  **Environment is Ready:** You MUST assume all required MCP services are already provisioned.
 7.  **Variable Usage:** Use `[var:variable_name]` in your `params` JSON string.
 8.  **Assertion:** To make an assertion, provide a non-empty `assert_field`.
 
 **Example Test Case (using real tool names):**
-{{ "reasoning": "Tests if merging a PR updates the linked Asana task's status.", "input_message": "Please sync GitHub PR merges to Asana task statuses.", "expected_output": {{ "actions": [ {{ "tool": "ASANA_CREATE_SUBTASK", "params": "{{\"name\": \"Test Task\", \"notes\": \"Ticket for PR sync test\"}}", "assign_to_var": "ticket_id", "assert_field": "", "assert_expected": "" }}, {{ "tool": "GITHUB_CREATE_A_PULL_REQUEST", "params": "{{\"title\": \"Test PR\", \"body\": \"Links to [var:ticket_id]\"}}", "assign_to_var": "pr_id", "assert_field": "", "assert_expected": "" }}, {{ "tool": "system.wait", "params": "{{\"seconds\": 30}}", "assign_to_var": "", "assert_field": "", "assert_expected": "" }}, {{ "tool": "ASANA_GET_A_TASK", "params": "{{\"id\": \"[var:ticket_id]\"}}", "assign_to_var": "", "assert_field": "status", "assert_expected": "Done" }} ] }}, "status": "active" }}
+{{ "reasoning": "Tests if merging a PR updates the linked Asana task's status.", "input_message": "Please sync GitHub PR merges to Asana task statuses.", "expected_output": {{ "actions": [ {{ "tool": "ASANA_CREATE_SUBTASK", "params": "{{\"name\": \"Test Task\", \"notes\": \"Ticket for PR sync test\"}}", "assign_to_var": "ticket_id", "assert_field": "", "assert_expected": "" }}, {{ "tool": "GITHUB_CREATE_PULL_REQUEST", "params": "{{\"title\": \"Test PR\", \"body\": \"Links to [var:ticket_id]\"}}", "assign_to_var": "pr_id", "assert_field": "", "assert_expected": "" }}, {{ "tool": "system.wait", "params": "{{\"seconds\": 30}}", "assign_to_var": "", "assert_field": "", "assert_expected": "" }}, {{ "tool": "ASANA_GET_A_TASK", "params": "{{\"id\": \"[var:ticket_id]\"}}", "assign_to_var": "", "assert_field": "status", "assert_expected": "Done" }} ] }}, "status": "active" }}
 Provide your final output as *only* the new `DatasetExample` Pydantic object, matching the schema.
 """
 
@@ -140,7 +180,8 @@ async def _invoke_test_generation_llm(
     prev_dataset_examples: str, # JSON string of recent inputs
     agent_name: str,
     user_id: str,
-    available_tools: List[str] # <-- ADDED
+    available_tools: List[str],
+    resource_hints: str,
 ) -> List[DatasetExample]:
     
     logger.info("plan.test-llm: Starting evolutionary test generation...")
@@ -157,7 +198,11 @@ async def _invoke_test_generation_llm(
     new_generation: List[DatasetExample] = []
     
     # --- ADDED: Format the tool list for the prompt ---
-    tools_list_str = "\n".join(available_tools + ["system.wait", "target_agent.invoke"])
+    tool_names = list(dict.fromkeys(available_tools or []))
+    lower_names = {name.lower() for name in tool_names}
+    if "system.wait" not in lower_names:
+        tool_names.append("system.wait")
+    tools_list_str = "\n".join(tool_names) if tool_names else "system.wait"
     # --- END ADD ---
 
     # --- Define our new "Genetic Operator" functions ---
@@ -198,7 +243,8 @@ async def _invoke_test_generation_llm(
             parent_1_json=json.dumps(parents[0], indent=2),
             parent_2_json=json.dumps(parents[1], indent=2),
             reflections_text=reflections_text,
-            available_tools=tools_list_str 
+            available_tools=tools_list_str,
+            resource_hints=resource_hints,
         )
         # --- END ADD ---
         output = await test_generation_llm.ainvoke(prompt)
@@ -211,7 +257,8 @@ async def _invoke_test_generation_llm(
         prompt = MUTATION_PROMPT.format(
             parent_test_json=json.dumps(parent, indent=2),
             reflections_text=reflections_text,
-            available_tools=tools_list_str
+            available_tools=tools_list_str,
+            resource_hints=resource_hints,
         )
         # --- END ADD ---
         output = await test_generation_llm.ainvoke(prompt)
@@ -225,7 +272,8 @@ async def _invoke_test_generation_llm(
             raw_request=raw_request,
             reflections_text=reflections_text,
             prev_dataset_examples=prev_dataset_examples,
-            available_tools=tools_list_str
+            available_tools=tools_list_str,
+            resource_hints=resource_hints,
         )
         # --- END ADD ---
         output = await test_generation_llm.ainvoke(prompt)
@@ -292,18 +340,33 @@ async def generate_eval_plan(state: EvalAgentState) -> dict:
     # Get just the inputs from the most recent run
     previous_inputs = [res.dataset_example.input_message for res in state.latest_results]
 
-    # --- ADDED: Get the list of available tools ---
-    available_tools = []
+    tool_entries: Dict[str, ToolEntry] = {}
+    available_tools: List[str] = []
     if state.mcp_services:
         try:
-            mcp_client, _ = await get_mcp_client_and_configs(state.mcp_services)
-            mcp_tools = await mcp_client.get_tools()
-            available_tools = [t.name for t in mcp_tools]
-            logger.info(f"Found {len(available_tools)} tools for test generation.")
-        except Exception as e:
-            logger.error(f"Failed to get MCP tools for test generation: {e}")
-            # Continue with an empty list, prompts will be less accurate
-    # --- END ADD ---
+            tool_entries = await load_tool_entries(state.mcp_services)
+            context_for_scoring = "\n".join(
+                filter(None, [state.user_context.raw_request, reflections_text])
+            )
+            prioritized = select_relevant_tools(
+                tool_entries,
+                context_for_scoring,
+                max_total=20,
+                max_per_service=5,
+            )
+            if not prioritized:
+                prioritized = sorted({entry.name for entry in tool_entries.values()})
+            available_tools = prioritized
+            logger.info(
+                "Found %d prioritized MCP tools for test generation.",
+                len(available_tools),
+            )
+        except Exception as exc:
+            logger.error(f"Failed to load MCP tools for test generation: {exc}")
+    else:
+        logger.info("No MCP services configured; tool prompts will be limited to system tools.")
+
+    resource_hints = _format_resource_hints(state.mcp_resources)
 
     dataset_examples = await _invoke_test_generation_llm(
         raw_request=state.user_context.raw_request,
@@ -311,8 +374,11 @@ async def generate_eval_plan(state: EvalAgentState) -> dict:
         prev_dataset_examples=json.dumps(previous_inputs, indent=2),
         agent_name=agent_name,
         user_id=user_id,
-        available_tools=available_tools # <-- Pass them in
+        available_tools=available_tools,
+        resource_hints=resource_hints,
     )
+
+    _validate_generated_actions(dataset_examples, tool_entries)
 
     logger.info("plan.generate: produced %d tests (agent=%s)", len(dataset_examples), agent_name)
     return {

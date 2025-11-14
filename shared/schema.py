@@ -6,8 +6,9 @@ import os
 import json
 from datetime import datetime
 from typing import List, Optional, Literal, Dict, Any, Union
-from pydantic import BaseModel, Field, ConfigDict, computed_field
+from pydantic import BaseModel, Field, ConfigDict, computed_field, model_validator
 from agents.eval_agent.constants import EVAL_PASS_THRESHOLD
+from shared.tool_catalog import canonicalize_tool_name
 
 
 class FailureAnalysis(BaseModel):
@@ -42,17 +43,44 @@ class FailureAnalysis(BaseModel):
 
 
 class ActionStep(BaseModel):
-    """
-    A single step in an action-based test case.
-    This provides a strict schema for the 'items' in the 'actions' list.
-    """
+    """Single action executed by the evaluator."""
+
     model_config = ConfigDict(extra="forbid")
-    service: str = Field(..., description="The service name (e.g., 'asana', 'github', 'system', 'target_agent').")
-    tool: str = Field(..., description="The tool name (e.g., 'create_task', 'update_pr', 'wait', 'invoke').")
-    params: str = Field(..., description="A JSON string of the parameters for the tool. E.g., '{\"name\": \"Test\"}' or \"{}\".")
-    assign_to_var: str = Field(..., description="Variable name to store output ID. Use an empty string \"\" if not needed.")
-    assert_field: str = Field(..., description="JSON path to assert, e.g., \"status.name\". Use an empty string \"\" if not needed.")
-    assert_expected: str = Field(..., description="Expected value (as a string). Use an empty string \"\" if not needed.")
+
+    tool: str = Field(
+        ...,
+        description="Tool identifier (e.g., 'ASANA_CREATE_TASK', 'GITHUB_CREATE_PULL_REQUEST', 'system.wait').",
+    )
+    params: str = Field(
+        ...,
+        description="A JSON string containing the parameters for the tool (e.g., '{\"name\": \"Test\"}' or '{}').",
+    )
+    assign_to_var: str = Field(
+        ...,
+        description="Variable name used to store tool output (\"\" if unused).",
+    )
+    assert_field: str = Field(
+        ...,
+        description="JSON path to assert against the tool output (\"\" if unused).",
+    )
+    assert_expected: str = Field(
+        ...,
+        description="The expected value for the assertion, stored as a string (\"\" if unused).",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_tool(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(values, dict):
+            return values
+
+        service_hint = values.pop("service", None)
+        tool_name = values.get("tool")
+        if tool_name:
+            values["tool"] = canonicalize_tool_name(tool_name, service_hint=service_hint)
+        elif service_hint:
+            raise ValueError("'tool' must be provided when 'service' is specified.")
+        return values
 
 
 class ExpectedOutput(BaseModel):

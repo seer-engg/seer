@@ -1,27 +1,168 @@
 import os
-import json
-import httpx
-import uuid
-from typing import Dict
-from e2b import AsyncSandbox
+from typing import Dict, List, Any
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, ConfigDict
 
 from agents.eval_agent.models import EvalAgentState
-from sandbox import initialize_e2b_sandbox, setup_project, TARGET_AGENT_COMMAND, TARGET_AGENT_PORT, deploy_server_and_confirm_ready
-from shared.schema import SandboxContext
+from sandbox import (
+    initialize_e2b_sandbox,
+    setup_project,
+    TARGET_AGENT_COMMAND,
+    TARGET_AGENT_PORT,
+    deploy_server_and_confirm_ready,
+)
+from shared.schema import SandboxContext, ActionStep
 from shared.logger import get_logger
-from shared.mcp_client import get_mcp_client_and_configs
-from langchain_core.tools import BaseTool
+from shared.tool_catalog import load_tool_entries, select_relevant_tools
+from shared.resource_utils import format_resource_hints
+from shared.test_runner import execute_action_plan
 
 logger = get_logger("eval_agent.plan")
+
+
+class _ProvisioningPlan(BaseModel):
+    """Structured response describing the MCP tool calls to run."""
+
+    model_config = ConfigDict(extra="forbid")
+    actions: List[ActionStep]
+
+
+def _seed_default_resources(mcp_resources: Dict[str, Any]) -> None:
+    workspace_id = os.getenv("ASANA_WORKSPACE_ID") or os.getenv("ASANA_DEFAULT_WORKSPACE_GID")
+    if workspace_id and "asana_workspace" not in mcp_resources:
+        mcp_resources["asana_workspace"] = {"id": workspace_id, "gid": workspace_id}
+        logger.info("Seeded Asana workspace from environment: %s", workspace_id)
+
+    project_id = os.getenv("ASANA_PROJECT_ID") or os.getenv("ASANA_DEFAULT_PROJECT_GID")
+    if project_id and "asana_project" not in mcp_resources:
+        mcp_resources["asana_project"] = {"id": project_id, "gid": project_id}
+        logger.info("Seeded Asana project from environment: %s", project_id)
+
+
+def _resource_assignment_callback(mcp_resources: Dict[str, Any]):
+    async def _callback(name: str, output: Any):
+        if not name:
+            return
+        if isinstance(output, dict):
+            payload = output
+        else:
+            payload = {"value": output}
+        mcp_resources[name] = payload
+        logger.info("Stored MCP resource '%s'", name)
+
+    return _callback
+
+
+_PROVISION_PROMPT = """### TOOL PROVISIONING PLANNER ###
+You are responsible for preparing external services before the evaluation agent runs.
+
+**User Request / Context:**
+{raw_request}
+
+**MCP Services In Scope:** {services}
+
+**Existing Resources:**
+{resource_hints}
+
+**Available Tools (use exact names):**
+<tools>
+{available_tools}
+</tools>
+
+Design a concise sequence of MCP tool calls (1-6 steps) that ensures:
+1. All required workspaces/projects/repos exist for the services mentioned.
+2. Any IDs needed later are captured with `assign_to_var` so they can be referenced via `[var:...]` and persisted.
+3. You only use tools from the list above and respect their parameter schema.
+
+Return the ProvisioningPlan with fully-populated ActionStep objects.
+"""
+
+
+async def _plan_provisioning_actions(
+    state: EvalAgentState,
+    available_tools: List[str],
+    resource_hints: str,
+) -> List[ActionStep]:
+    provision_llm = ChatOpenAI(
+        model="gpt-5-codex",
+        use_responses_api=True,
+        output_version="responses/v1",
+        reasoning={"effort": "low"},
+    )
+    structured = provision_llm.with_structured_output(_ProvisioningPlan)
+
+    prompt = _PROVISION_PROMPT.format(
+        raw_request=state.user_context.raw_request if state.user_context else "",
+        services=", ".join(state.mcp_services),
+        resource_hints=resource_hints,
+        available_tools="\n".join(available_tools),
+    )
+
+    plan = await structured.ainvoke(prompt)
+    return plan.actions
+
+
+async def _run_mcp_provisioning(
+    state: EvalAgentState,
+    mcp_resources: Dict[str, Any],
+) -> Dict[str, Any]:
+    if not state.mcp_services:
+        return mcp_resources
+
+    tool_entries = await load_tool_entries(state.mcp_services)
+    if not tool_entries:
+        logger.warning("No MCP tools available for provisioning plan generation.")
+        return mcp_resources
+
+    context_for_scoring = state.user_context.raw_request if state.user_context else ""
+    prioritized = select_relevant_tools(
+        tool_entries,
+        context_for_scoring,
+        max_total=15,
+        max_per_service=5,
+    )
+    if not prioritized:
+        prioritized = sorted({entry.name for entry in tool_entries.values()})
+
+    tool_names: List[str] = list(dict.fromkeys(prioritized))
+    lower = {name.lower() for name in tool_names}
+    if "system.wait" not in lower:
+        tool_names.append("system.wait")
+
+    resource_hints = format_resource_hints(mcp_resources)
+    actions = await _plan_provisioning_actions(state, tool_names, resource_hints)
+    if not actions:
+        logger.info("Provisioning planner returned no actions; skipping MCP provisioning.")
+        return mcp_resources
+
+    assign_cb = _resource_assignment_callback(mcp_resources)
+    failure_analysis, _, _ = await execute_action_plan(
+        actions,
+        state.mcp_services,
+        mcp_resources,
+        run_label="Provisioning",
+        assign_callback=assign_cb,
+        require_assertion=False,
+    )
+
+    if failure_analysis.score < 1.0:
+        raise RuntimeError(
+            f"Provisioning plan failed: {failure_analysis.judge_reasoning}"
+        )
+
+    return mcp_resources
 
 
 async def provision_target_agent(state: EvalAgentState) -> dict:
     if not state.github_context:
         raise ValueError("GitHub context is required to provision the target agent.")
-    
+
     repo_url = state.github_context.repo_url
     branch_name = state.github_context.branch_name
-    mcp_resources = {}
+    mcp_resources = dict(state.mcp_resources or {})
+    _seed_default_resources(mcp_resources)
+
+    updates: Dict[str, Any] = {}
 
     if not state.sandbox_context:
         github_token = os.getenv("GITHUB_TOKEN")
@@ -52,72 +193,20 @@ async def provision_target_agent(state: EvalAgentState) -> dict:
             deployment_url = f"https://{deployment_url}"
 
         logger.info("plan.provision: sandbox ready at %s", deployment_url)
-        
-        if state.mcp_services:
-            logger.info(f"Provisioning MCP resources for: {state.mcp_services}")
-            mcp_client, mcp_configs = await get_mcp_client_and_configs(state.mcp_services)
-            mcp_tools = await mcp_client.get_tools()
-            tools_dict: Dict[str, BaseTool] = {t.name: t for t in mcp_tools}
 
-            try:
-                # 1. Create Asana Project
-                if "asana.create_project" in tools_dict:
-                    project_name = f"Seer Eval - {state.github_context.agent_name} - {uuid.uuid4().hex[:6]}"
-                    logger.info(f"Creating Asana project: {project_name}")
-                    asana_project = await tools_dict["asana.create_project"].ainvoke({"name": project_name})
-                    mcp_resources["asana_project"] = asana_project # Store the whole object
-                    logger.info(f"Created Asana project ID: {asana_project.get('id')}")
-
-                # 2. Create GitHub Repo
-                if "github.create_repo" in tools_dict:
-                    repo_name = f"seer-eval-{state.github_context.agent_name}-{uuid.uuid4().hex[:6]}"
-                    logger.info(f"Creating GitHub repo: {repo_name}")
-                    # Assumes create_repo takes a name and returns the repo object
-                    github_repo = await tools_dict["github.create_repo"].ainvoke({"name": repo_name, "private": True})
-                    mcp_resources["github_repo"] = github_repo # Store the whole object
-                    logger.info(f"Created GitHub repo: {github_repo.get('full_name')}")
-
-            except Exception as e:
-                logger.error(f"Failed to provision MCP resources: {e}")
-                # We might want to raise an error here to stop the run
-                raise
-        # --- End MCP Logic ---
-
-        return {
-            "sandbox_context": SandboxContext(
-                sandbox_id=sandbox_id,
-                working_directory=repo_dir,
-                working_branch=sandbox_branch,
-            ),
-            "mcp_resources": mcp_resources,
-        }
+        updates["sandbox_context"] = SandboxContext(
+            sandbox_id=sandbox_id,
+            working_directory=repo_dir,
+            working_branch=sandbox_branch,
+        )
     else:
-        logger.info("plan.provision: reusing existing sandbox %s", state.sandbox_context.sandbox_id)
-        # We still need to re-provision MCP resources for the new experiment
-        mcp_resources = {}
-        if state.mcp_services:
-            logger.info(f"Provisioning MCP resources for: {state.mcp_services}")
-            mcp_client, mcp_configs = await get_mcp_client_and_configs(state.mcp_services)
-            mcp_tools = await mcp_client.get_tools()
-            tools_dict: Dict[str, BaseTool] = {t.name: t for t in mcp_tools}
-                
-            try:
-                # (Same as above) Create Asana Project
-                if "asana.create_project" in tools_dict:
-                    project_name = f"Seer Eval - {state.github_context.agent_name} - {uuid.uuid4().hex[:6]}"
-                    asana_project = await tools_dict["asana.create_project"].ainvoke({"name": project_name})
-                    mcp_resources["asana_project"] = asana_project
-                    logger.info(f"Created Asana project ID: {asana_project.get('id')}")
+        logger.info(
+            "plan.provision: reusing existing sandbox %s",
+            state.sandbox_context.sandbox_id,
+        )
 
-                # (Same as above) Create GitHub Repo
-                if "github.create_repo" in tools_dict:
-                    repo_name = f"seer-eval-{state.github_context.agent_name}-{uuid.uuid4().hex[:6]}"
-                    github_repo = await tools_dict["github.create_repo"].ainvoke({"name": repo_name, "private": True})
-                    mcp_resources["github_repo"] = github_repo
-                    logger.info(f"Created GitHub repo: {github_repo.get('full_name')}")
-                
-            except Exception as e:
-                logger.error(f"Failed to provision MCP resources: {e}")
-                raise
+    if state.mcp_services:
+        mcp_resources = await _run_mcp_provisioning(state, mcp_resources)
 
-        return {"mcp_resources": mcp_resources}
+    updates["mcp_resources"] = mcp_resources
+    return updates
