@@ -1,7 +1,7 @@
 """models for the evaluation agent"""
 import uuid
 from datetime import datetime
-from typing import Annotated, Optional, List, Literal, Dict, Any
+from typing import Annotated, Optional, List, Dict, Any
 
 from pydantic import BaseModel, Field
 from langchain_core.messages import BaseMessage
@@ -59,6 +59,15 @@ class EvalReflection(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
 
 
+class ToolSelectionLog(BaseModel):
+    """
+    A record of which tools were selected for test generation
+    and the context used to make that selection.
+    This provides transparency for debugging in LangGraph Studio.
+    """
+    selection_context: str = Field(description="The 'why' - the context string used to score and prioritize tools.")
+    selected_tools: List[str] = Field(description="The 'what' - the list of tool names that were prioritized and selected.")
+
 class EvalAgentState(BaseModel):
     """State for the evaluation agent."""
 
@@ -73,6 +82,10 @@ class EvalAgentState(BaseModel):
     dataset_examples: List[DatasetExample] = Field(default_factory=list, description="List of generated test cases")
     target_agent_version: int = Field(default=0, description="Version of the target agent being evaluated")
     codex_output: Optional[CodexOutput] = Field(default=None, description="Output from the codex agent, used for handoff.")
+    tool_selection_log: Optional[ToolSelectionLog] = Field(
+        default=None, 
+        description="The log of how MCP tools were selected for the current round."
+    )
     mcp_services: List[str] = Field(
         default_factory=list, 
         description="List of MCP service names required for this eval, e.g., ['asana', 'github']"

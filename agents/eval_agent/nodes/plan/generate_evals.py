@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 from uuid import uuid4
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field, ConfigDict
-from agents.eval_agent.models import EvalAgentState
+from agents.eval_agent.models import EvalAgentState, ToolSelectionLog
 from agents.eval_agent.constants import NEO4J_GRAPH, N_TEST_CASES
 from agents.eval_agent.reflection_store import graph_rag_retrieval
 from shared.schema import DatasetExample
@@ -342,10 +342,14 @@ async def generate_eval_plan(state: EvalAgentState) -> dict:
 
     tool_entries: Dict[str, ToolEntry] = {}
     available_tools: List[str] = []
+
+    # We'll initialize context_for_scoring here to ensure it's always defined
+    context_for_scoring = ""
+
     if state.mcp_services:
         try:
             tool_entries = await load_tool_entries(state.mcp_services)
-            context_for_scoring = "\n".join(
+            context_for_scoring = "\n".join( 
                 filter(None, [state.user_context.raw_request, reflections_text])
             )
             prioritized = select_relevant_tools(
@@ -366,7 +370,12 @@ async def generate_eval_plan(state: EvalAgentState) -> dict:
     else:
         logger.info("No MCP services configured; tool prompts will be limited to system tools.")
 
-    resource_hints = _format_resource_hints(state.mcp_resources)
+    resource_hints = format_resource_hints(state.mcp_resources)
+
+    log_entry = ToolSelectionLog(
+        selection_context=context_for_scoring,
+        selected_tools=available_tools
+    )
 
     dataset_examples = await _invoke_test_generation_llm(
         raw_request=state.user_context.raw_request,
@@ -383,4 +392,5 @@ async def generate_eval_plan(state: EvalAgentState) -> dict:
     logger.info("plan.generate: produced %d tests (agent=%s)", len(dataset_examples), agent_name)
     return {
         "dataset_examples": dataset_examples,
+        "tool_selection_log": log_entry,
     }
