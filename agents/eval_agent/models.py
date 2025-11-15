@@ -105,6 +105,7 @@ class EvalAgentPlannerState(EvalAgentState):
     tool_entries: Dict[str, ToolEntry] = Field(default_factory=dict, description="Tool entries to use for test generation")
     use_genetic_test_generation: bool = Field(default=os.getenv("USE_GENETIC_TEST_GENERATION", "false").lower() == "true", description="Whether to use genetic test generation")
     use_agentic_test_generation: bool = Field(default=os.getenv("USE_AGENTIC_TEST_GENERATION", "false").lower() == "true", description="Whether to use agentic test generation")
+    structured_response: Optional[dict] = Field(default=None, description="The structured response from the test generation agent")
 
 
 
