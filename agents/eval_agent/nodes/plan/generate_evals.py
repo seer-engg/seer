@@ -1,14 +1,29 @@
 import asyncio
 import json
+import os  # ADDED
 from typing import Any, Dict, List
 from uuid import uuid4
+
+from langchain.agents import create_agent  # ADDED
+from langchain_core.messages import HumanMessage, SystemMessage  # ADDED
+from langchain_core.runnables import RunnableConfig  # ADDED
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field, ConfigDict
+
+from agents.eval_agent.constants import (  # MODIFIED
+    LLM,
+    NEO4J_GRAPH,
+    N_TEST_CASES,
+)
 from agents.eval_agent.models import EvalAgentState, ToolSelectionLog
-from agents.eval_agent.constants import NEO4J_GRAPH, N_TEST_CASES
 from agents.eval_agent.reflection_store import graph_rag_retrieval
-from shared.schema import DatasetExample
 from shared.logger import get_logger
+from shared.resource_utils import format_resource_hints
+from shared.schema import (  # ADDED
+    ActionStep,
+    DatasetExample,
+    ExpectedOutput,
+)
 from shared.tool_catalog import (
     ToolEntry,
     build_tool_name_set,
@@ -16,8 +31,11 @@ from shared.tool_catalog import (
     load_tool_entries,
     select_relevant_tools,
 )
-from shared.resource_utils import format_resource_hints
-
+from shared.tools import (  # ADDED
+    LANGCHAIN_MCP_TOOLS,
+    think,
+    web_search,
+)
 
 logger = get_logger("eval_agent.plan.generate_evals")
 
@@ -42,6 +60,12 @@ def _validate_generated_actions(
 
     invalid: List[str] = []
     for example in examples:
+        # ADDED: Handle cases where expected_output might be None
+        if not example.expected_output:
+            invalid.append(
+                f"example={example.example_id or '<pending>'} has missing expected_output"
+            )
+            continue
         for idx, action in enumerate(example.expected_output.actions):
             normalized = canonicalize_tool_name(action.tool)
             if normalized not in valid_names:
@@ -52,7 +76,7 @@ def _validate_generated_actions(
     if invalid:
         sample = ", ".join(list(name_map.values())[:20])
         raise ValueError(
-            "Generated actions referenced unknown tools. Details: "
+            "Generated actions referenced unknown tools or had missing data. Details: "
             + ", ".join(invalid)
             + (f". Known tools include: {sample}" if sample else "")
         )
@@ -92,7 +116,7 @@ Each action in the `expected_output.actions` list is a JSON object with:
 8.  **Assertion:** To make an assertion, provide a non-empty `assert_field`.
 
 **Example Test Case (using real tool names):**
-{{ "reasoning": "Tests if merging a PR updates the linked Asana task's status.", "input_message": "Please sync GitHub PR merges to Asana task statuses.", "expected_output": {{ "actions": [ {{ "tool": "ASANA_CREATE_SUBTASK", "params": "{{\"name\": \"Test Task\", \"notes\": \"Ticket for PR sync test\"}}", "assign_to_var": "ticket_id", "assert_field": "", "assert_expected": "" }}, {{ "tool": "GITHUB_CREATE_PULL_REQUEST", "params": "{{\"title\": \"Test PR\", \"body\": \"Links to [var:ticket_id]\"}}", "assign_to_var": "pr_id", "assert_field": "", "assert_expected": "" }}, {{ "tool": "system.wait", "params": "{{\"seconds\": 30}}", "assign_to_var": "", "assert_field": "", "assert_expected": "" }}, {{ "tool": "ASANA_GET_A_TASK", "params": "{{\"id\": \"[var:ticket_id]\"}}", "assign_to_var": "", "assert_field": "status", "assert_expected": "Done" }} ] }}, "status": "active" }}
+{{ "reasoning": "Tests if merging a PR updates the linked Asana task's status.", "input_message": "Please sync GitHub PR merges to Asana task statuses.", "expected_output": {{ "actions": [ {{ "tool": "ASANA_CREATE_SUBTASK", "params": "{{\"name\": \\"Test Task\", \"notes\": \"Ticket for PR sync test\"}}", "assign_to_var": "ticket_id", "assert_field": "", "assert_expected": "" }}, {{ "tool": "GITHUB_CREATE_PULL_REQUEST", "params": "{{\"title\": \\"Test PR\", \"body\": \"Links to [var:ticket_id]\"}}", "assign_to_var": "pr_id", "assert_field": "", "assert_expected": "" }}, {{ "tool": "system.wait", "params": "{{\"seconds\": 30}}", "assign_to_var": "", "assert_field": "", "assert_expected": "" }}, {{ "tool": "ASANA_GET_A_TASK", "params": "{{\"id\": \"[var:ticket_id]\"}}", "assign_to_var": "", "assert_field": "status", "assert_expected": "Done" }} ] }}, "status": "active" }}
 Provide your final output as *only* the new `DatasetExample` Pydantic object, matching the schema.
 """
 
@@ -174,7 +198,8 @@ You MUST use the following Chain of Thought:
 """ + COMMON_INSTRUCIONS
 
 
-async def _invoke_test_generation_llm(
+# --- RENAMED: This is the old "genetic" / structured prompt method ---
+async def _invoke_genetic_llm(
     raw_request: str,
     reflections_text: str,
     prev_dataset_examples: str, # JSON string of recent inputs
@@ -182,9 +207,10 @@ async def _invoke_test_generation_llm(
     user_id: str,
     available_tools: List[str],
     resource_hints: str,
+    force_new_test: bool = False, # ADDED
 ) -> List[DatasetExample]:
     
-    logger.info("plan.test-llm: Starting evolutionary test generation...")
+    logger.info("plan.test-llm: Starting 'genetic' (structured prompt) test generation...")
     
     # Use a smart, critical LLM for this
     _smart_llm = ChatOpenAI(
@@ -280,36 +306,45 @@ async def _invoke_test_generation_llm(
         new_generation.append(output.dataset_example)
 
     # --- Genetic Algorithm "Breeding" Strategy ---
-    fit_parents = await get_parent(passed=False, k=2) # Get 2 FAILED tests
-    unfit_parents = await get_parent(passed=True, k=1) # Get 1 PASSED test
-    has_history = bool(fit_parents or unfit_parents)
-    
-    # --- NEW: Determine how many tests to generate ---
-    # If there's no history, generate more tests to increase chance of a failure
-    logger.info(f"plan.test-llm: Generating {N_TEST_CASES} tests (has_history={has_history})")
-    
-    # 1. Crossover (Exploitation)
-    if has_history and len(new_generation) < N_TEST_CASES:
-        if len(fit_parents) == 2:
-            await run_crossover(fit_parents)
-        else:
-            logger.warning("Could not find 2 'fit' (failed) parents for crossover. Skipping.")
 
-    # 2. Mutation (Exploitation)
-    if has_history and len(new_generation) < N_TEST_CASES:
-        if unfit_parents:
-            await run_mutation(unfit_parents[0])
-        else:
-            logger.warning("Could not find 1 'unfit' (passed) parent for mutation. Skipping.")
-
-    # 3. New Tests (Exploration)
-    # Fill the remaining slots with brand new tests
-    while len(new_generation) < N_TEST_CASES:
+    # --- ADDED: Fallback logic ---
+    if force_new_test:
+        logger.info("Forcing generation of one new test as a fallback.")
         await run_new_test()
+    else:
+        # --- Original logic ---
+        fit_parents = await get_parent(passed=False, k=2) # Get 2 FAILED tests
+        unfit_parents = await get_parent(passed=True, k=1) # Get 1 PASSED test
+        has_history = bool(fit_parents or unfit_parents)
+        
+        # --- NEW: Determine how many tests to generate ---
+        # If there's no history, generate more tests to increase chance of a failure
+        logger.info(f"plan.test-llm: Generating {N_TEST_CASES} tests (has_history={has_history})")
+        
+        # 1. Crossover (Exploitation)
+        if has_history and len(new_generation) < N_TEST_CASES:
+            if len(fit_parents) == 2:
+                await run_crossover(fit_parents)
+            else:
+                logger.warning("Could not find 2 'fit' (failed) parents for crossover. Skipping.")
+
+        # 2. Mutation (Exploitation)
+        if has_history and len(new_generation) < N_TEST_CASES:
+            if unfit_parents:
+                await run_mutation(unfit_parents[0])
+            else:
+                logger.warning("Could not find 1 'unfit' (passed) parent for mutation. Skipping.")
+
+        # 3. New Tests (Exploration)
+        # Fill the remaining slots with brand new tests
+        while len(new_generation) < N_TEST_CASES:
+            await run_new_test()
 
     # --- Assign final Example IDs ---
     for example in new_generation:
-        example.example_id = str(uuid4())
+        # ADDED: Ensure example_id is None before assigning new one
+        if not getattr(example, 'example_id', None):
+            example.example_id = str(uuid4())
         example.status = "active"
 
     logger.info(
@@ -320,6 +355,132 @@ async def _invoke_test_generation_llm(
     return new_generation[:N_TEST_CASES]
 
 
+# --- ADDED: Agentic (create_agent) generation method ---
+
+class _AgentTestGenerationOutput(BaseModel):
+    """The final output from the test generation agent."""
+    model_config = ConfigDict(extra="forbid")
+    dataset_examples: List[DatasetExample] = Field(
+        description=f"A list of {N_TEST_CASES} generated test cases."
+    )
+    generation_summary: str = Field(
+        description="A brief summary of the agent's reasoning and strategy (e.g., 'created 1 new test, 1 mutation')."
+    )
+
+AGENTIC_GENERATOR_SYSTEM_PROMPT = """### PROMPT: TEST_CASE_GENERATOR_AGENT (EVAL_AGENT) ###
+You are an adversarial QA agent. Your goal is to generate {n_tests} new, complex, and creative test cases (`DatasetExample`) to make the target agent fail.
+
+**1. CONTEXT:**
+* **Raw Request:** {raw_request}
+* **Agent Weaknesses (from past reflections):** {reflections_text}
+* **Recently Run Tests (Do Not Repeat):** {prev_dataset_examples}
+* **Available Resources:** {resource_hints}
+
+**2. AVAILABLE TOOLS:**
+You have access to tools like `think`, `web_search`, and documentation search (`langchain_docs_...`).
+You MUST use these tools to iteratively plan and refine your test cases.
+* Use `think` to reason about your plan.
+* Use `web_search` or `langchain_docs` if you are unsure about tool parameters or behavior.
+* Your goal is to *plan* a list of `ActionStep` objects, not to *execute* them (like `asana.create_task`).
+
+**3. YOUR TASK:**
+Generate {n_tests} `DatasetExample` objects.
+You MUST use the following iterative process:
+
+1.  **Reason:** Use `think` to analyze the context. What is the biggest weakness? What is a novel attack? (e.g., "I will test a race condition by creating two PRs that link to the same Asana task and see if the agent syncs both or gets confused.")
+2.  **Plan Action Steps:** Use `think` to outline the *sequence* of `ActionStep` objects for your test.
+    * What tool? (e.g., `asana_create_task`)
+    * What params? (e.g., `{{"name": "Race Condition Test Task"}}`)
+    * Assign to variable? (e.g., `task_id`)
+    * What assertion? (e.g., `asana_get_task` -> `assert_field: "name"`, `assert_expected: "Race Condition Test Task"`)
+3.  **Refine Action Steps:**
+    * Your `tool` names in the `ActionStep` objects MUST be *canonicalized* (e.g., `asana_create_task`, `github_create_pull_request`, `system_wait`).
+    * This is a *suggested* list of canonical names: {available_tool_names}
+    * `params` MUST be a JSON string.
+    * `assign_to_var`, `assert_field`, `assert_expected` MUST be provided (use "" if empty).
+4.  **Ground the Test Case:** Once you have a solid list of `ActionStep` objects, create the final `DatasetExample` with:
+    * `reasoning`: Why this test is valuable and what it targets.
+    * `input_message`: A *plausible* human request that would trigger this behavior (e.g., "Please sync my new PRs.")
+    * `expected_output`: An `ExpectedOutput` object containing your list of `ActionStep` objects.
+    * `status`: "active"
+    * `example_id`: null (the system will assign this)
+5.  **Repeat:** Repeat this process until you have {n_tests} high-quality, *different* test cases.
+6.  **Final Output:** Your final response MUST be formatted as the `_AgentTestGenerationOutput` object, containing your list of generated tests.
+
+**RULES:**
+* **DO NOT** just copy a test from the "Recently Run" list.
+* **DO** create complex, multi-step tests that target *interactions* (e.g., Asana + GitHub).
+* **DO** use `think` extensively to show your work.
+* **Your final step MUST be to provide your answer in the `_AgentTestGenerationOutput` format.**
+"""
+
+async def _invoke_agentic_llm(
+    raw_request: str,
+    reflections_text: str,
+    prev_dataset_examples: str, 
+    agent_name: str,
+    user_id: str,
+    available_tool_names: List[str],
+    resource_hints: str,
+    n_tests: int,
+) -> List[DatasetExample]:
+    
+    logger.info(f"plan.test-llm: Starting agentic test generation for {n_tests} tests...")
+
+    # Tools for the generator agent to *plan*
+    agent_tools = [think, web_search] + LANGCHAIN_MCP_TOOLS
+    
+    system_prompt = AGENTIC_GENERATOR_SYSTEM_PROMPT.format(
+        n_tests=n_tests,
+        raw_request=raw_request,
+        reflections_text=reflections_text,
+        prev_dataset_examples=prev_dataset_examples,
+        resource_hints=resource_hints,
+        available_tool_names="\n".join(available_tool_names),
+    )
+
+    # Use the constants LLM
+    test_generation_agent = create_agent(
+        model=LLM, 
+        tools=agent_tools,
+        system_prompt=system_prompt,
+        state_schema=EvalAgentState, # Re-use existing state
+        response_format=_AgentTestGenerationOutput,
+    )
+    
+    logger.info("Invoking agentic test generator...")
+    
+    try:
+        result = await test_generation_agent.ainvoke(
+            {"messages": [HumanMessage(content=f"Please generate {n_tests} complex test cases.")]},
+            config=RunnableConfig(recursion_limit=50),
+        )
+        
+        output: _AgentTestGenerationOutput = result.get("structured_response")
+        
+        if not output or not output.dataset_examples:
+            raise ValueError("Agentic test generator failed to return valid output.")
+
+        logger.info(f"Agentic generator summary: {output.generation_summary}")
+        
+        # Assign IDs
+        for example in output.dataset_examples:
+            if not example.example_id:
+                example.example_id = str(uuid4())
+            example.status = "active"
+            
+        return output.dataset_examples[:n_tests]
+        
+    except Exception as e:
+        logger.error(f"Agentic test generator failed: {e}. Falling back to genetic method.")
+        # Fallback to one empty new test to avoid crashing
+        return await _invoke_genetic_llm(
+            raw_request, reflections_text, prev_dataset_examples, 
+            agent_name, user_id, available_tool_names, resource_hints, 
+            force_new_test=True # Force one new test
+        )
+
+# --- END ADDED SECTION ---
 
 
 async def generate_eval_plan(state: EvalAgentState) -> dict:
@@ -377,15 +538,36 @@ async def generate_eval_plan(state: EvalAgentState) -> dict:
         selected_tools=available_tools
     )
 
-    dataset_examples = await _invoke_test_generation_llm(
-        raw_request=state.user_context.raw_request,
-        reflections_text=reflections_text,
-        prev_dataset_examples=json.dumps(previous_inputs, indent=2),
-        agent_name=agent_name,
-        user_id=user_id,
-        available_tools=available_tools,
-        resource_hints=resource_hints,
-    )
+    # --- MODIFIED: Add feature flag for generation strategy ---
+    
+    # Default to 'false' (the new agentic way)
+    USE_GENETIC_TEST_GENERATION = os.getenv("USE_GENETIC_TEST_GENERATION", "false").lower() == "true"
+    
+    if USE_GENETIC_TEST_GENERATION:
+        logger.info("Using 'genetic' (structured prompt) test generation.")
+        dataset_examples = await _invoke_genetic_llm(
+            raw_request=state.user_context.raw_request,
+            reflections_text=reflections_text,
+            prev_dataset_examples=json.dumps(previous_inputs, indent=2),
+            agent_name=agent_name,
+            user_id=user_id,
+            available_tools=available_tools,
+            resource_hints=resource_hints,
+        )
+    else:
+        logger.info("Using 'agentic' (create_agent) test generation.")
+        dataset_examples = await _invoke_agentic_llm(
+            raw_request=state.user_context.raw_request,
+            reflections_text=reflections_text,
+            prev_dataset_examples=json.dumps(previous_inputs, indent=2),
+            agent_name=agent_name,
+            user_id=user_id,
+            available_tool_names=available_tools, # Pass tool *names* as guide
+            resource_hints=resource_hints,
+            n_tests=N_TEST_CASES,
+        )
+    
+    # --- END MODIFIED SECTION ---
 
     _validate_generated_actions(dataset_examples, tool_entries)
 
