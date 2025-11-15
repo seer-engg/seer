@@ -13,11 +13,11 @@ from langgraph.graph import END, START, StateGraph
 
 from langgraph.pregel.remote import RemoteGraph
 from agents.eval_agent.models import EvalAgentState
-from agents.eval_agent.constants import NEO4J_GRAPH
 from langgraph_sdk import get_sync_client
 from shared.logger import get_logger
 from shared.schema import ExperimentContext, ExperimentResultContext, FailureAnalysis
 from shared.test_runner import run_tests
+from graph_db import NEO4J_GRAPH
 
 logger = get_logger("eval_agent.run")
 

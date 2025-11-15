@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field, ConfigDict
 
 from agents.eval_agent.constants import (  # MODIFIED
     LLM,
-    NEO4J_GRAPH,
     N_TEST_CASES,
 )
 from agents.eval_agent.models import EvalAgentState, ToolSelectionLog
@@ -36,6 +35,7 @@ from shared.tools import (  # ADDED
     think,
     web_search,
 )
+from graph_db import NEO4J_GRAPH
 
 logger = get_logger("eval_agent.plan.generate_evals")
 

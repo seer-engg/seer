@@ -15,6 +15,7 @@ from shared.logger import get_logger
 from shared.mcp_client import get_mcp_client_and_configs
 import asyncio
 import traceback
+from graph_db import NEO4J_GRAPH, TOOL_NODE_LABEL, TOOL_EMBED_PROP, TOOL_VECTOR_INDEX
 
 
 logger = get_logger("shared.tool_catalog")
@@ -60,24 +61,14 @@ class ToolEntry:
 
 # --- Neo4j + Embeddings setup for semantic tool catalog ---
 # We keep this local to avoid coupling shared/ -> agents/*
-_NEO4J_URL = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-_NEO4J_USER = os.getenv("NEO4J_USERNAME")
-_NEO4J_PASS = os.getenv("NEO4J_PASSWORD")
+
 _OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-_TOOL_NODE_LABEL = "MCPTool"
-_TOOL_EMBED_PROP = "embedding"
-_TOOL_VECTOR_INDEX = "mcp_tools_index"
+
 _EMBED_DIMS = 1536  # OpenAI text-embedding-3-small default
 
 _embeddings: OpenAIEmbeddings | None = None
-_graph: Neo4jGraph = Neo4jGraph(url=_NEO4J_URL, username=_NEO4J_USER, password=_NEO4J_PASS)
 
-
-def _get_graph() -> Neo4jGraph | None:
-    """Lazy-init Neo4jGraph or return None if not configured."""
-    global _graph
-    return _graph
 
 
 def _get_embeddings() -> OpenAIEmbeddings | None:
@@ -91,23 +82,6 @@ def _get_embeddings() -> OpenAIEmbeddings | None:
     _embeddings = OpenAIEmbeddings(openai_api_key=_OPENAI_API_KEY)
     return _embeddings
 
-
-async def _ensure_tool_vector_index(graph: Neo4jGraph, dims: int = _EMBED_DIMS) -> None:
-    """Create the MCP tools vector index if it doesn't exist."""
-    await asyncio.to_thread(
-        graph.query,
-        f"""
-        CREATE VECTOR INDEX {_TOOL_VECTOR_INDEX} IF NOT EXISTS
-        FOR (t:{_TOOL_NODE_LABEL})
-        ON (t.{_TOOL_EMBED_PROP})
-        OPTIONS {{
-            indexConfig: {{
-                `vector.dimensions`: {dims},
-                `vector.similarity_function`: 'cosine'
-            }}
-        }}
-        """,
-    )
 
 
 def _build_tool_id(entry: "ToolEntry") -> str:
@@ -123,10 +97,8 @@ async def _sync_tools_to_vector_index(entries: Dict[str, "ToolEntry"]) -> None:
     """
     if not entries:
         return
-    graph = _get_graph()
+
     embedder = _get_embeddings()
-    if not (graph and embedder):
-        return
 
     # Prepare documents for embeddings
     # Use name + description to represent the tool semantically.
@@ -135,9 +107,6 @@ async def _sync_tools_to_vector_index(entries: Dict[str, "ToolEntry"]) -> None:
         f"{e.name}\n{e.description or ''}".strip() for e in ordered_entries
     ]
     vectors: List[List[float]] = await asyncio.to_thread(embedder.embed_documents, documents)
-
-    # Ensure vector index exists (use known dims)
-    await _ensure_tool_vector_index(graph, dims=len(vectors[0]) if vectors else _EMBED_DIMS)
 
     rows: List[Dict[str, object]] = []
     for entry, vec in zip(ordered_entries, vectors):
@@ -152,14 +121,14 @@ async def _sync_tools_to_vector_index(entries: Dict[str, "ToolEntry"]) -> None:
         )
 
     await asyncio.to_thread(
-        graph.query,
+        NEO4J_GRAPH.query,
         f"""
         UNWIND $rows AS row
-        MERGE (t:{_TOOL_NODE_LABEL} {{tool_id: row.tool_id}})
+        MERGE (t:{TOOL_NODE_LABEL} {{tool_id: row.tool_id}})
         SET t.name = row.name,
             t.service = row.service,
             t.description = row.description,
-            t.{_TOOL_EMBED_PROP} = row.embedding
+            t.{TOOL_EMBED_PROP} = row.embedding
         RETURN count(*) AS upserts
         """,
         params={"rows": rows},
@@ -175,9 +144,8 @@ async def _semantic_select_tools(
     max_per_service: int,
 ) -> List[str]:
     """Semantic selection using Neo4j vector index; assumes entries are synced."""
-    graph = _get_graph()
     embedder = _get_embeddings()
-    if not (graph and embedder):
+    if not embedder:
         return []
     if not context:
         return []
@@ -187,9 +155,9 @@ async def _semantic_select_tools(
     # Query top N, then enforce per-service max in Python
     k = max_total * 3  # fetch extra to allow per-service filtering
     results = await asyncio.to_thread(
-        graph.query,
+        NEO4J_GRAPH.query,
         f"""
-        CALL db.index.vector.queryNodes("{_TOOL_VECTOR_INDEX}", $k, $embedding)
+        CALL db.index.vector.queryNodes("{TOOL_VECTOR_INDEX}", $k, $embedding)
         YIELD node, score
         RETURN node.name AS name, node.service AS service, score
         ORDER BY score DESC

@@ -8,10 +8,11 @@ from langgraph.types import Command
 from langchain_core.messages import ToolMessage
 from langchain_openai import OpenAIEmbeddings 
 
-from agents.eval_agent.constants import NEO4J_GRAPH, OPENAI_API_KEY
+from agents.eval_agent.constants import OPENAI_API_KEY
 from agents.eval_agent.models import EvalReflection, Hypothesis
 from shared.schema import ExperimentResultContext
 from shared.logger import get_logger
+from graph_db import NEO4J_GRAPH
 
 
 _embeddings_client = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
