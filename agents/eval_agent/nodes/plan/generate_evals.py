@@ -513,7 +513,7 @@ async def generate_eval_plan(state: EvalAgentState) -> dict:
             context_for_scoring = "\n".join( 
                 filter(None, [state.user_context.raw_request, reflections_text])
             )
-            prioritized = select_relevant_tools(
+            prioritized = await select_relevant_tools(
                 tool_entries,
                 context_for_scoring,
                 max_total=20,

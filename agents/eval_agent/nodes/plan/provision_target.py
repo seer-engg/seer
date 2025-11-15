@@ -115,12 +115,13 @@ async def _run_mcp_provisioning(
         return mcp_resources
 
     context_for_scoring = state.user_context.raw_request if state.user_context else ""
-    prioritized = select_relevant_tools(
+    prioritized = await select_relevant_tools(
         tool_entries,
         context_for_scoring,
         max_total=15,
         max_per_service=5,
     )
+    logger.info(f"Prioritized tools: {prioritized}")
     if not prioritized:
         prioritized = sorted({entry.name for entry in tool_entries.values()})
 

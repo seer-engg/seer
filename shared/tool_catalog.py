@@ -8,9 +8,13 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, Sequence
 
 from langchain_core.tools import BaseTool
+from langchain_openai import OpenAIEmbeddings
+from langchain_neo4j import Neo4jGraph
 
 from shared.logger import get_logger
 from shared.mcp_client import get_mcp_client_and_configs
+import asyncio
+import traceback
 
 
 logger = get_logger("shared.tool_catalog")
@@ -54,6 +58,169 @@ class ToolEntry:
     service: str
 
 
+# --- Neo4j + Embeddings setup for semantic tool catalog ---
+# We keep this local to avoid coupling shared/ -> agents/*
+_NEO4J_URL = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+_NEO4J_USER = os.getenv("NEO4J_USERNAME")
+_NEO4J_PASS = os.getenv("NEO4J_PASSWORD")
+_OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+_TOOL_NODE_LABEL = "MCPTool"
+_TOOL_EMBED_PROP = "embedding"
+_TOOL_VECTOR_INDEX = "mcp_tools_index"
+_EMBED_DIMS = 1536  # OpenAI text-embedding-3-small default
+
+_embeddings: OpenAIEmbeddings | None = None
+_graph: Neo4jGraph = Neo4jGraph(url=_NEO4J_URL, username=_NEO4J_USER, password=_NEO4J_PASS)
+
+
+def _get_graph() -> Neo4jGraph | None:
+    """Lazy-init Neo4jGraph or return None if not configured."""
+    global _graph
+    return _graph
+
+
+def _get_embeddings() -> OpenAIEmbeddings | None:
+    """Lazy-init OpenAIEmbeddings or return None if not configured."""
+    global _embeddings
+    if _embeddings is not None:
+        return _embeddings
+    if not _OPENAI_API_KEY:
+        logger.info("OPENAI_API_KEY missing; falling back to keyword tool selection.")
+        return None
+    _embeddings = OpenAIEmbeddings(openai_api_key=_OPENAI_API_KEY)
+    return _embeddings
+
+
+async def _ensure_tool_vector_index(graph: Neo4jGraph, dims: int = _EMBED_DIMS) -> None:
+    """Create the MCP tools vector index if it doesn't exist."""
+    await asyncio.to_thread(
+        graph.query,
+        f"""
+        CREATE VECTOR INDEX {_TOOL_VECTOR_INDEX} IF NOT EXISTS
+        FOR (t:{_TOOL_NODE_LABEL})
+        ON (t.{_TOOL_EMBED_PROP})
+        OPTIONS {{
+            indexConfig: {{
+                `vector.dimensions`: {dims},
+                `vector.similarity_function`: 'cosine'
+            }}
+        }}
+        """,
+    )
+
+
+def _build_tool_id(entry: "ToolEntry") -> str:
+    """Stable identifier for a tool node."""
+    # Tools typically include service prefix (e.g., 'asana.create_task'), but be safe.
+    return f"{entry.service}::{entry.name}".lower()
+
+
+async def _sync_tools_to_vector_index(entries: Dict[str, "ToolEntry"]) -> None:
+    """
+    Upsert MCP tools as nodes with embeddings, ensuring the vector index exists.
+    No-op if Neo4j or embeddings are not configured.
+    """
+    if not entries:
+        return
+    graph = _get_graph()
+    embedder = _get_embeddings()
+    if not (graph and embedder):
+        return
+
+    # Prepare documents for embeddings
+    # Use name + description to represent the tool semantically.
+    ordered_entries: List[ToolEntry] = list(entries.values())
+    documents: List[str] = [
+        f"{e.name}\n{e.description or ''}".strip() for e in ordered_entries
+    ]
+    vectors: List[List[float]] = await asyncio.to_thread(embedder.embed_documents, documents)
+
+    # Ensure vector index exists (use known dims)
+    await _ensure_tool_vector_index(graph, dims=len(vectors[0]) if vectors else _EMBED_DIMS)
+
+    rows: List[Dict[str, object]] = []
+    for entry, vec in zip(ordered_entries, vectors):
+        rows.append(
+            {
+                "tool_id": _build_tool_id(entry),
+                "name": entry.name,
+                "service": entry.service,
+                "description": entry.description,
+                "embedding": vec,
+            }
+        )
+
+    await asyncio.to_thread(
+        graph.query,
+        f"""
+        UNWIND $rows AS row
+        MERGE (t:{_TOOL_NODE_LABEL} {{tool_id: row.tool_id}})
+        SET t.name = row.name,
+            t.service = row.service,
+            t.description = row.description,
+            t.{_TOOL_EMBED_PROP} = row.embedding
+        RETURN count(*) AS upserts
+        """,
+        params={"rows": rows},
+    )
+    logger.info("Upserted %d tools into Neo4j vector index.", len(rows))
+
+
+async def _semantic_select_tools(
+    entries: Dict[str, "ToolEntry"],
+    context: str,
+    *,
+    max_total: int,
+    max_per_service: int,
+) -> List[str]:
+    """Semantic selection using Neo4j vector index; assumes entries are synced."""
+    graph = _get_graph()
+    embedder = _get_embeddings()
+    if not (graph and embedder):
+        return []
+    if not context:
+        return []
+
+    query_vec: List[float] = await asyncio.to_thread(embedder.embed_query, context)
+
+    # Query top N, then enforce per-service max in Python
+    k = max_total * 3  # fetch extra to allow per-service filtering
+    results = await asyncio.to_thread(
+        graph.query,
+        f"""
+        CALL db.index.vector.queryNodes("{_TOOL_VECTOR_INDEX}", $k, $embedding)
+        YIELD node, score
+        RETURN node.name AS name, node.service AS service, score
+        ORDER BY score DESC
+        LIMIT $k
+        """,
+        params={"embedding": query_vec, "k": k},
+    )
+
+    by_service: Dict[str, int] = {}
+    prioritized: List[str] = []
+    for row in results or []:
+        name = row.get("name")
+        service = row.get("service") or "misc"
+        if not name:
+            continue
+        # Only consider names present in the current entries payload
+        if name.lower() not in entries:
+            # entries dict keyed by lower(), preserve original names check
+            # We also allow exact match if keys differ in case
+            if name not in (e.name for e in entries.values()):
+                continue
+        used = by_service.get(service, 0)
+        if used >= max_per_service:
+            continue
+        prioritized.append(name)
+        by_service[service] = used + 1
+        if len(prioritized) >= max_total:
+            break
+    return prioritized
+
+
 async def load_tool_entries(service_names: Sequence[str]) -> Dict[str, ToolEntry]:
     """Return lightweight metadata for the requested MCP tools keyed by name."""
 
@@ -79,21 +246,41 @@ async def load_tool_entries(service_names: Sequence[str]) -> Dict[str, ToolEntry
     return entries
 
 
-def select_relevant_tools(
+async def select_relevant_tools(
     entries: Dict[str, ToolEntry],
     context: str,
     *,
     max_total: int = 20,
     max_per_service: int = 5,
 ) -> List[str]:
-    """Score tools against the provided context string and return a limited list."""
+    """
+    Return tool names most relevant to the context.
+    Primary: semantic search via Neo4j vector index.
+    Fallback: keyword ranking (previous behavior).
+    """
 
     if not entries:
         return []
 
-    keywords = set(re.findall(r"[a-z0-9_]+", context.lower()))
-    service_buckets: Dict[str, List[tuple[int, str]]] = defaultdict(list)
+    # 1) Try semantic selection
+    try:
+        # Ensure graph is up to date with current entries
+        await _sync_tools_to_vector_index(entries)
+        semantic = await _semantic_select_tools(
+            entries,
+            context,
+            max_total=max_total,
+            max_per_service=max_per_service,
+        )
+        if semantic:
+            return semantic[:max_total]
+    except Exception as exc:
+        logger.error(f"Semantic tool selection failed: {traceback.format_exc()}")
+        logger.warning("Semantic tool selection failed, falling back to keywords: %s", exc)
 
+    # 2) Fallback to keyword-based selection (original behavior)
+    keywords = set(re.findall(r"[a-z0-9_]+", (context or "").lower()))
+    service_buckets: Dict[str, List[tuple[int, str]]] = defaultdict(list)
     for entry in entries.values():
         haystack = f"{entry.name} {entry.description}".lower()
         score = sum(1 for kw in keywords if kw and kw in haystack)
