@@ -3,7 +3,7 @@ import asyncio
 from e2b import AsyncSandbox
 from langgraph.pregel.remote import RemoteGraph
 from langgraph_sdk import get_sync_client
-from agents.eval_agent.models import EvalAgentState
+from agents.eval_agent.models import EvalAgentPlannerState
 from shared.schema import SandboxContext
 from shared.logger import get_logger
 from shared.mcp_client import get_mcp_client_and_configs
@@ -11,7 +11,7 @@ from sandbox.constants import TARGET_AGENT_PORT
 
 logger = get_logger("eval_agent.plan.configure")
 
-async def configure_target_agent(state: EvalAgentState) -> dict:
+async def configure_target_agent(state: EvalAgentPlannerState) -> dict:
     """
     Configures the Target Agent by sending it the user's request
     and the MCP resource/config map.

@@ -5,7 +5,7 @@ from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 
 from agents.eval_agent.constants import LLM
-from agents.eval_agent.models import EvalAgentState
+from agents.eval_agent.models import EvalAgentPlannerState
 from shared.schema import GithubContext, UserContext
 from shared.logger import get_logger
 from shared.tool_catalog import resolve_mcp_services
@@ -51,7 +51,7 @@ def _parse_github_url(url: str, branch_name: Optional[str] = None) -> Tuple[str,
 
 
 
-async def ensure_target_agent_config(state: EvalAgentState) -> dict:
+async def ensure_target_agent_config(state: EvalAgentPlannerState) -> dict:
     last_human = None
     for msg in reversed(state.messages or []):
         if isinstance(msg, HumanMessage) or getattr(msg, "type", "") == "human":

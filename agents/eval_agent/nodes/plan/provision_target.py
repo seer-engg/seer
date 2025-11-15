@@ -3,7 +3,7 @@ from typing import Dict, List, Any
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ConfigDict
 
-from agents.eval_agent.models import EvalAgentState
+from agents.eval_agent.models import EvalAgentPlannerState
 from sandbox import (
     initialize_e2b_sandbox,
     setup_project,
@@ -79,7 +79,7 @@ Return the ProvisioningPlan with fully-populated ActionStep objects.
 
 
 async def _plan_provisioning_actions(
-    state: EvalAgentState,
+    state: EvalAgentPlannerState,
     available_tools: List[str],
     resource_hints: str,
 ) -> List[ActionStep]:
@@ -103,7 +103,7 @@ async def _plan_provisioning_actions(
 
 
 async def _run_mcp_provisioning(
-    state: EvalAgentState,
+    state: EvalAgentPlannerState,
     mcp_resources: Dict[str, Any],
 ) -> Dict[str, Any]:
     if not state.mcp_services:
@@ -154,7 +154,7 @@ async def _run_mcp_provisioning(
     return mcp_resources
 
 
-async def provision_target_agent(state: EvalAgentState) -> dict:
+async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
     if not state.github_context:
         raise ValueError("GitHub context is required to provision the target agent.")
 

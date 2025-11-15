@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Optional, List, Dict, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 
@@ -17,6 +17,8 @@ from shared.schema import (
     ExperimentResultContext,
     CodexOutput,
 )
+from shared.tool_catalog import ToolEntry
+import os
 
 class Hypothesis(BaseModel):
     """
@@ -94,3 +96,19 @@ class EvalAgentState(BaseModel):
         default_factory=dict,
         description="MCP resource IDs created for this experiment, e.g., {'asana_project_id': '123', 'github_repo_id': '456'}"
     )
+
+
+class EvalAgentPlannerState(EvalAgentState):
+    """State for the evaluation agent planner."""
+    reflections_text: Optional[str] = Field(default=None, description="Text of the reflections to use for test generation")
+    available_tools: List[str] = Field(default_factory=list, description="List of available tools to use for test generation")
+    tool_entries: Dict[str, ToolEntry] = Field(default_factory=dict, description="Tool entries to use for test generation")
+    use_genetic_test_generation: bool = Field(default=os.getenv("USE_GENETIC_TEST_GENERATION", "false").lower() == "true", description="Whether to use genetic test generation")
+    use_agentic_test_generation: bool = Field(default=os.getenv("USE_AGENTIC_TEST_GENERATION", "false").lower() == "true", description="Whether to use agentic test generation")
+
+
+
+class TestGenerationOutput(BaseModel):
+    """Helper for structured output"""
+    model_config = ConfigDict(extra="forbid")
+    dataset_example: DatasetExample
