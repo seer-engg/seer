@@ -27,8 +27,7 @@ def _validate_generated_actions(
             )
             continue
         for idx, action in enumerate(example.expected_output.actions):
-            normalized = canonicalize_tool_name(action.tool)
-            if normalized not in valid_names:
+            if action.tool not in valid_names:
                 invalid.append(
                     f"example={example.example_id or '<pending>'} action_index={idx} tool={action.tool}"
                 )

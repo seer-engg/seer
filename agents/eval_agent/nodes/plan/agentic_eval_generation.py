@@ -65,8 +65,7 @@ You MUST use the following iterative process:
     * Assign to variable? (e.g., `task_id`)
     * What assertion? (e.g., `asana_get_task` -> `assert_field: "name"`, `assert_expected: "Race Condition Test Task"`)
 3.  **Refine Action Steps:**
-    * Your `tool` names in the `ActionStep` objects MUST be *canonicalized* (e.g., `asana_create_task`, `github_create_pull_request`, `system_wait`).
-    * This is a *suggested* list of canonical names: {available_tool_names}
+    * Your `tool` names in the `ActionStep` objects MUST be from the list of available tools: {available_tool_names} 
     * `params` MUST be a JSON string.
     * `assign_to_var`, `assert_field`, `assert_expected` MUST be provided (use "" if empty).
 4.  **Ground the Test Case:** Once you have a solid list of `ActionStep` objects, create the final `DatasetExample` with:
