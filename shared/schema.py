@@ -3,11 +3,9 @@ This file contains the schemas for the shared data between the agents.
 Please review each agents code before making any changes to this file.
 """
 import os
-import json
 from datetime import datetime
-from typing import List, Optional, Literal, Dict, Any, Union
+from typing import List, Optional, Literal, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict, computed_field, model_validator
-from agents.eval_agent.constants import EVAL_PASS_THRESHOLD
 from shared.tool_catalog import canonicalize_tool_name
 
 
@@ -56,15 +54,15 @@ class ActionStep(BaseModel):
         description="A JSON string containing the parameters for the tool (e.g., '{\"name\": \"Test\"}' or '{}').",
     )
     assign_to_var: str = Field(
-        ...,
+        default="",
         description="Variable name used to store tool output (\"\" if unused).",
     )
     assert_field: str = Field(
-        ...,
+        default="",
         description="JSON path to assert against the tool output (\"\" if unused).",
     )
     assert_expected: str = Field(
-        ...,
+        default="",
         description="The expected value for the assertion, stored as a string (\"\" if unused).",
     )
 
@@ -101,7 +99,7 @@ class DatasetExample(BaseModel):
     input_message: str = Field(..., description="The input message that should be send to target agent. MUST NOT CONTAIN ANY HINTS. MUST NOT CONTAIN EXPECTED OUTPUT!")
     expected_output: ExpectedOutput = Field(...)
     status: Literal["active", "retired"] = Field(
-        ...,
+        "active",
         description="Fitness status: 'active' tests are in the pool, 'retired' tests passed too often and are culled."
     )
     model_config = ConfigDict(extra="forbid")
@@ -118,19 +116,16 @@ class ExperimentResultContext(BaseModel):
     @computed_field
     @property
     def score(self) -> float:
+        """The score from the analysis."""
         return self.analysis.score
 
     @computed_field
     @property
     def judge_reasoning(self) -> str:
+        """The judge's reasoning from the analysis."""
         return self.analysis.judge_reasoning
     
-    @computed_field
-    @property
-    def passed(self) -> bool:
-        """Whether the evaluator deemed this test successful."""
-        return self.analysis.score >= EVAL_PASS_THRESHOLD
-
+    passed: bool = Field(..., description="Whether the evaluator deemed this test successful.")
     started_at: datetime = Field(..., description="Timestamp when the execution started")
     completed_at: datetime = Field(..., description="Timestamp when the execution completed")
     model_config = ConfigDict(extra="allow")

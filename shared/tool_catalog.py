@@ -3,18 +3,30 @@ from __future__ import annotations
 
 import os
 import re
+import asyncio
+import traceback
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Sequence, Optional, Type, Any
+from typing import Dict, Iterable, List, Sequence, Optional, Any
 
 from langchain_core.tools import BaseTool
 from langchain_openai import OpenAIEmbeddings
 
 from shared.logger import get_logger
 from shared.mcp_client import get_mcp_client_and_configs
-import asyncio
-import traceback
-from graph_db import NEO4J_GRAPH, TOOL_NODE_LABEL, TOOL_EMBED_PROP, TOOL_VECTOR_INDEX
+from shared.config import OPENAI_API_KEY, EVAL_AGENT_LOAD_DEFAULT_MCPS
+
+# Import graph_db constants with explicit handling
+try:
+    from graph_db import NEO4J_GRAPH, TOOL_NODE_LABEL, TOOL_EMBED_PROP, TOOL_VECTOR_INDEX
+except ImportError:
+    # If graph_db module is not available, set defaults
+    logger = get_logger("shared.tool_catalog")
+    logger.warning("graph_db module not available, vector search will be disabled")
+    NEO4J_GRAPH = None
+    TOOL_NODE_LABEL = "MCPTool"
+    TOOL_EMBED_PROP = "embedding"
+    TOOL_VECTOR_INDEX = "mcp_tools_index"
 
 
 logger = get_logger("shared.tool_catalog")
@@ -41,7 +53,7 @@ def resolve_mcp_services(requested_services: Iterable[str]) -> List[str]:
         if normalized_name and normalized_name not in normalized:
             normalized.append(normalized_name)
 
-    if not _env_flag("EVAL_AGENT_LOAD_DEFAULT_MCPS", default=True):
+    if not EVAL_AGENT_LOAD_DEFAULT_MCPS:
         return normalized
 
     combined: List[str] = list(DEFAULT_MCP_SERVICES)
@@ -62,11 +74,7 @@ class ToolEntry:
 # --- Neo4j + Embeddings setup for semantic tool catalog ---
 # We keep this local to avoid coupling shared/ -> agents/*
 
-_OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-
 _embeddings: OpenAIEmbeddings | None = None
-
 
 
 def _get_embeddings() -> OpenAIEmbeddings | None:
@@ -74,10 +82,10 @@ def _get_embeddings() -> OpenAIEmbeddings | None:
     global _embeddings
     if _embeddings is not None:
         return _embeddings
-    if not _OPENAI_API_KEY:
+    if not OPENAI_API_KEY:
         logger.info("OPENAI_API_KEY missing; falling back to keyword tool selection.")
         return None
-    _embeddings = OpenAIEmbeddings(openai_api_key=_OPENAI_API_KEY)
+    _embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
     return _embeddings
 
 
@@ -198,11 +206,21 @@ async def load_tool_entries(service_names: Sequence[str]) -> Dict[str, ToolEntry
     entries: Dict[str, ToolEntry] = {}
     for tool in tools:
         service = tool.name.split(".", 1)[0] if "." in tool.name else "misc"
+        
+        # Convert Pydantic model to JSON schema dict
+        args_schema = getattr(tool, "args_schema", None)
+        json_schema = None
+        if args_schema and hasattr(args_schema, "model_json_schema"):
+            try:
+                json_schema = args_schema.model_json_schema()
+            except Exception as e:
+                logger.warning(f"Failed to convert schema for tool {tool.name}: {e}")
+        
         entry = ToolEntry(
             name=tool.name,
             description=getattr(tool, "description", "") or "",
             service=service,
-            pydantic_schema=getattr(tool, "args_schema", None),
+            pydantic_schema=json_schema,
         )
         entries[tool.name.lower()] = entry
     logger.info(

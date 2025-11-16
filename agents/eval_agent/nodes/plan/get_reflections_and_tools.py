@@ -1,10 +1,9 @@
-from agents.eval_agent.models import EvalAgentPlannerState, ToolSelectionLog
+from typing import List, Dict
 
+from agents.eval_agent.models import EvalAgentPlannerState, ToolSelectionLog
 from agents.eval_agent.reflection_store import graph_rag_retrieval
 from shared.logger import get_logger
-from shared.tool_catalog import load_tool_entries, select_relevant_tools, resolve_mcp_services
-from typing import List, Dict
-from shared.tool_catalog import ToolEntry
+from shared.tool_catalog import load_tool_entries, select_relevant_tools, ToolEntry
 logger = get_logger("eval_agent.plan.get_reflections")
 
 async def get_reflections_and_tools(state: EvalAgentPlannerState) -> dict:
@@ -36,7 +35,7 @@ async def get_reflections_and_tools(state: EvalAgentPlannerState) -> dict:
                 tool_entries,
                 context_for_scoring,
                 max_total=20,
-                max_per_service=5,
+                max_per_service=10,
             )
             if not prioritized:
                 prioritized = sorted({entry.name for entry in tool_entries.values()})

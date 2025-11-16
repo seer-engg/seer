@@ -2,7 +2,7 @@
 Central client for managing Multi-Server MCP (Multi-Modal Communication Protocol) connections.
 
 Reads a central mcp.json configuration file and provides functions
-to get tools for specified services.
+to get tools for specified services with caching support.
 """
 import json
 import os
@@ -19,6 +19,10 @@ MCP_CONFIG_PATH = Path(__file__).parent.parent / "mcp.json"
 
 # Cache for service definitions
 _service_definitions: List[Dict[str, Any]] = []
+
+# Cache for MCP clients and tools (keyed by frozenset of service names)
+_client_cache: Dict[frozenset, Tuple[MultiServerMCPClient, Dict[str, Dict[str, Any]]]] = {}
+_tools_cache: Dict[frozenset, List[BaseTool]] = {}
 
 def _load_mcp_services() -> List[Dict[str, Any]]:
     """Loads MCP service definitions from mcp.json."""
@@ -44,11 +48,17 @@ def _create_mcp_client_and_services(
     service_names: List[str],
 ) -> Tuple[MultiServerMCPClient, Dict[str, Dict[str, Any]]]:
     """
-    Creates an MCP client for the specified services.
+    Creates an MCP client for the specified services with caching.
     
     Returns:
         A tuple of (MultiServerMCPClient, service_config_dict)
     """
+    # Check cache first
+    service_key = frozenset(service_names)
+    if service_key in _client_cache:
+        logger.debug(f"Returning cached MCP client for services: {service_names}")
+        return _client_cache[service_key]
+    
     all_services = _load_mcp_services()
     
     services_to_load = {}
@@ -70,18 +80,29 @@ def _create_mcp_client_and_services(
 
     if not services_to_load:
         logger.info("No valid MCP services requested or configured. Returning empty client.")
-        return MultiServerMCPClient({}), {}
+        empty_result = (MultiServerMCPClient({}), {})
+        _client_cache[service_key] = empty_result
+        return empty_result
 
     mcp_client = MultiServerMCPClient(services_to_load)
-    return mcp_client, service_configs
+    result = (mcp_client, service_configs)
+    _client_cache[service_key] = result
+    logger.info(f"Created and cached MCP client for services: {service_names}")
+    return result
 
 
 async def get_mcp_tools(service_names: List[str]) -> List[BaseTool]:
     """
-    Get a list of LangChain tools for the specified MCP services.
+    Get a list of LangChain tools for the specified MCP services with caching.
     """
     if not service_names:
         return []
+
+    # Check cache first
+    service_key = frozenset(service_names)
+    if service_key in _tools_cache:
+        logger.debug(f"Returning cached tools for services: {service_names}")
+        return _tools_cache[service_key]
 
     logger.info(f"Initializing MCP tools for services: {service_names}")
     mcp_client, _ = _create_mcp_client_and_services(service_names)
@@ -89,6 +110,7 @@ async def get_mcp_tools(service_names: List[str]) -> List[BaseTool]:
     try:
         tools = await mcp_client.get_tools()
         logger.info(f"Successfully fetched {len(tools)} tools for {service_names}")
+        _tools_cache[service_key] = tools
         return tools
     except Exception as e:
         logger.error(f"Failed to get MCP tools for {service_names}: {e}")

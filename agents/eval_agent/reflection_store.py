@@ -4,10 +4,7 @@ from typing import Any, List, Dict
 
 from shared.logger import get_logger
 from langchain_openai import OpenAIEmbeddings
-from agents.eval_agent.constants import (
-    EVAL_PASS_THRESHOLD, 
-    OPENAI_API_KEY
-)
+from shared.config import EVAL_PASS_THRESHOLD, OPENAI_API_KEY
 from graph_db import NEO4J_GRAPH
 
 logger = get_logger("eval_agent.reflection_store")

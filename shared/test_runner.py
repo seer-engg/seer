@@ -6,14 +6,11 @@ import json
 from datetime import datetime, timezone
 import re
 import inspect
-from e2b import AsyncSandbox
-from langgraph_sdk import get_sync_client
-from langgraph.pregel.remote import RemoteGraph
 from shared.mcp_client import get_mcp_client_and_configs
 from shared.schema import DatasetExample, ExperimentResultContext, SandboxContext, GithubContext, FailureAnalysis, ActionStep
 from shared.tool_catalog import canonicalize_tool_name
 from shared.logger import get_logger
-from sandbox.constants import TARGET_AGENT_PORT
+from shared.config import EVAL_PASS_THRESHOLD
 from langchain_core.tools import BaseTool
 
 logger = get_logger("test_runner.action_executor")
@@ -368,6 +365,7 @@ async def run_tests(
                 thread_id=thread_id, # Use our generated run ID
                 actual_output=agent_actual_output,
                 analysis=eval_result_obj,
+                passed=eval_result_obj.score >= EVAL_PASS_THRESHOLD,
                 started_at=run_start,
                 completed_at=run_end,
             )
