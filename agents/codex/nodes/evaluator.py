@@ -26,7 +26,7 @@ async def evaluator(state: CodexState) -> CodexState:
     results: List[ExperimentResultContext] = await run_tests(
         dataset_examples=state.dataset_examples,
         sandbox_context=state.updated_sandbox_context,
-        github_context=state.github_context,
+        github_context=state.context.github_context,
     )
 
     await kill_process_on_port(sbx, TARGET_AGENT_PORT)

@@ -5,10 +5,12 @@ import base64
 import shlex
 from typing import Optional
 from e2b import AsyncSandbox, CommandResult
+
+from .constants import _build_git_shell_script
+from shared.config import TARGET_AGENT_ENVS, BASE_TEMPLATE_ALIAS
 from shared.logger import get_logger
+
 logger = get_logger("sandbox.initialize")
-from .constants import _build_git_shell_script, TARGET_AGENT_ENVS, BASE_TEMPLATE_ALIAS
-import os
 
 def _masked(s: str) -> str:
     token = os.getenv("GITHUB_TOKEN") or ""

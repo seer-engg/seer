@@ -54,15 +54,15 @@ async def _prepare_run_context(state: EvalAgentState) -> dict:
 async def _execute_test_cases(state: EvalAgentState) -> dict:
     """Execute the test cases and return the results."""
 
-    if not state.user_context or not state.user_context.user_id:
+    if not state.context.user_context or not state.context.user_context.user_id:
         raise ValueError("UserContext with user_id is required to log memories")
-    user_id = state.user_context.user_id
+    user_id = state.context.user_context.user_id
 
-    if not state.github_context or not state.github_context.agent_name:
+    if not state.context.github_context or not state.context.github_context.agent_name:
         raise ValueError("GithubContext with agent_name is required to log memories")
-    agent_name = state.github_context.agent_name
+    agent_name = state.context.github_context.agent_name
 
-    if not state.sandbox_context:
+    if not state.context.sandbox_context:
         raise RuntimeError("Sandbox context must be set before executing tests")
     if not state.active_experiment:
         raise RuntimeError("Active experiment missing before executing tests")
@@ -70,10 +70,10 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     # Call new run_tests with MCP context
     results: List[ExperimentResultContext] = await run_tests(
         dataset_examples=state.dataset_examples, 
-        sandbox_context=state.sandbox_context, 
-        github_context=state.github_context,
-        mcp_services=state.mcp_services,
-        mcp_resources=state.mcp_resources
+        sandbox_context=state.context.sandbox_context, 
+        github_context=state.context.github_context,
+        mcp_services=state.context.mcp_services,
+        mcp_resources=state.context.mcp_resources
     )
     
     cypher_params = []
@@ -188,7 +188,7 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
             ],
             "start_time": res.started_at.isoformat(),
             "end_time": res.completed_at.isoformat(),
-            "run_name": state.github_context.agent_name if state.github_context else "",
+            "run_name": state.context.github_context.agent_name if state.context.github_context else "",
             "run_metadata": {"passed": res.passed},
         }
         for res in results_payload

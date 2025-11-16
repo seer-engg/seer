@@ -16,22 +16,22 @@ async def configure_target_agent(state: EvalAgentPlannerState) -> dict:
     Configures the Target Agent by sending it the user's request
     and the MCP resource/config map.
     """
-    if not state.sandbox_context:
+    if not state.context.sandbox_context:
         raise ValueError("Sandbox context is missing, cannot configure agent.")
     
     logger.info("Connecting to sandbox to configure target agent...")
-    sbx = await AsyncSandbox.connect(state.sandbox_context.sandbox_id)
+    sbx = await AsyncSandbox.connect(state.context.sandbox_context.sandbox_id)
     deployment_url = sbx.get_host(TARGET_AGENT_PORT)
     if not deployment_url.startswith("http"):
         deployment_url = f"https://{deployment_url}"
 
     # 1. Get MCP configs (to pass to the TA)
-    _, mcp_configs = await get_mcp_client_and_configs(state.mcp_services)
+    _, mcp_configs = await get_mcp_client_and_configs(state.context.mcp_services)
     
     # 2. Set up the RemoteGraph client for the TA
     sync_client = get_sync_client(url=deployment_url)
     remote_graph = RemoteGraph(
-        state.github_context.agent_name,
+        state.context.github_context.agent_name,
         sync_client=sync_client,
     )
     
@@ -42,14 +42,14 @@ async def configure_target_agent(state: EvalAgentPlannerState) -> dict:
     # 4. Create the config payload
     config_payload = {
         "type": "config",
-        "mcp_resources": state.mcp_resources,
+        "mcp_resources": state.context.mcp_resources,
         "mcp_configs": mcp_configs
     }
     
     # 5. Create the user request payload
     user_request_payload = {
         "type": "invoke",
-        "content": state.user_context.raw_request
+        "content": state.context.user_context.raw_request
     }
     
     # 6. Send the messages to the Target Agent

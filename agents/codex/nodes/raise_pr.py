@@ -80,9 +80,9 @@ async def raise_pr(state: CodexState) -> CodexState:
 
     sandbox_id = state.updated_sandbox_context.sandbox_id
     repo_dir = state.updated_sandbox_context.working_directory
-    repo_url = state.github_context.repo_url
-    base_branch = state.github_context.branch_name or "main"
-    new_version = state.target_agent_version + 1
+    repo_url = state.context.github_context.repo_url
+    base_branch = state.context.github_context.branch_name or "main"
+    new_version = state.context.target_agent_version + 1
 
     # Generate branch name and commit message
     ts = time.strftime("%Y%m%d-%H%M%S")

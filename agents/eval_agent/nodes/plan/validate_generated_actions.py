@@ -1,9 +1,12 @@
+import json
+from typing import Dict, List
+
 from agents.eval_agent.models import EvalAgentPlannerState
 from shared.logger import get_logger
-logger = get_logger("eval_agent.plan.validate_generated_actions")
-from typing import Dict, List
 from shared.schema import DatasetExample
-from shared.tool_catalog import ToolEntry, build_tool_name_set, canonicalize_tool_name
+from shared.tools import ToolEntry, build_tool_name_set, canonicalize_tool_name
+
+logger = get_logger("eval_agent.plan.validate_generated_actions")
 
 
 def _validate_generated_actions(
@@ -27,7 +30,9 @@ def _validate_generated_actions(
             )
             continue
         for idx, action in enumerate(example.expected_output.actions):
-            if action.tool not in valid_names:
+            # Canonicalize the tool name for validation
+            canonical_tool = canonicalize_tool_name(action.tool)
+            if canonical_tool not in valid_names:
                 invalid.append(
                     f"example={example.example_id or '<pending>'} action_index={idx} tool={action.tool}"
                 )
@@ -37,7 +42,7 @@ def _validate_generated_actions(
 
             # Now, let's get the tool's schema to check its parameters.
             # I'm assuming 'name_map' maps all aliases to the canonical name.
-            canonical_name = name_map.get(canonicalize_tool_name(action.tool))
+            canonical_name = name_map.get(canonical_tool)
             
             tool_entry = tool_entries.get(canonical_name)
             
@@ -56,8 +61,13 @@ def _validate_generated_actions(
                 if field.is_required():
                     required_fields.add(field_name)
 
-            # Find all fields the agent provided
-            provided_fields = set(action.inputs.keys()) if action.inputs else set()
+            # Parse the params JSON string to get provided fields
+            try:
+                params_dict = json.loads(action.params) if action.params else {}
+                provided_fields = set(params_dict.keys())
+            except json.JSONDecodeError:
+                # If params is not valid JSON, consider it as having no fields
+                provided_fields = set()
 
             # Now, check for any missing fields
             missing_fields = required_fields - provided_fields

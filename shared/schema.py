@@ -6,7 +6,12 @@ import os
 from datetime import datetime
 from typing import List, Optional, Literal, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict, computed_field, model_validator
-from shared.tool_catalog import canonicalize_tool_name
+from shared.tools import canonicalize_tool_name
+
+# Forward reference for AgentContext
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from shared.agent_context import AgentContext
 
 
 class FailureAnalysis(BaseModel):
@@ -54,16 +59,16 @@ class ActionStep(BaseModel):
         description="A JSON string containing the parameters for the tool (e.g., '{\"name\": \"Test\"}' or '{}').",
     )
     assign_to_var: str = Field(
-        default="",
-        description="Variable name used to store tool output (\"\" if unused).",
+        ...,
+        description="Variable name used to store tool output. Use empty string \"\" if unused.",
     )
     assert_field: str = Field(
-        default="",
-        description="JSON path to assert against the tool output (\"\" if unused).",
+        ...,
+        description="JSON path to assert against the tool output. Use empty string \"\" if unused.",
     )
     assert_expected: str = Field(
-        default="",
-        description="The expected value for the assertion, stored as a string (\"\" if unused).",
+        ...,
+        description="The expected value for the assertion, stored as a string. Use empty string \"\" if unused.",
     )
 
     @model_validator(mode="before")
@@ -92,7 +97,7 @@ class ExpectedOutput(BaseModel):
 class DatasetExample(BaseModel):
     """Single example in a dataset."""
 
-    example_id: str = Field(..., description="UUID of the example. A hexadecimal string (e.g., 'a1b2c3d4...')")
+    example_id: str = Field(..., description="UUID of the example in standard format (e.g., '550e8400-e29b-41d4-a716-446655440000'). Leave empty to auto-generate.")
     reasoning: str = Field(...,
         description="Why is this example important? What aspect of target agent will it be testing?"
     )
@@ -195,15 +200,11 @@ class UserContext(BaseModel):
 
 class CodexInput(BaseModel):
     """Input for the Codex agent"""
-
-    github_context: GithubContext = Field(..., description="The GitHub context")
-    sandbox_context: Optional[SandboxContext] = Field(None, description="The sandbox context")
-    user_context: UserContext = Field(..., description="The user context")
+    
+    context: "AgentContext" = Field(..., description="Shared agent context")
     dataset_context: DatasetContext = Field(..., description="The dataset context associated with the evaluation")
     experiment_context: ExperimentContext = Field(..., description="The experiment context associated with the evaluation")
     dataset_examples: List[DatasetExample] = Field(default_factory=list, description="Dataset examples used in the evaluation")
-    target_agent_version: int = Field(..., description="Version of the target agent")
-    mcp_services: List[str] = Field(default_factory=list, description="List of MCP service names required for this eval, e.g., ['asana', 'github']")
 
 
 class CodexOutput(BaseModel):
@@ -211,5 +212,4 @@ class CodexOutput(BaseModel):
 
     agent_updated: bool = Field(False, description="Whether the agent was updated")
     new_branch_name: Optional[str] = Field(None, description="The name of the new branch")
-    updated_sandbox_context: Optional[SandboxContext] = Field(None, description="The updated sandbox context")
-    target_agent_version: int = Field(..., description="Version of the target agent")
+    updated_context: Optional["AgentContext"] = Field(None, description="The updated agent context")

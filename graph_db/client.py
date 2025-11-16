@@ -1,17 +1,34 @@
 
-
-
 from langchain_neo4j import Neo4jGraph
-from .constants import NEO4J_URL, NEO4J_USER, NEO4J_PASS, INDEX_NAME, NODE_LABEL, EMBEDDING_PROPERTY, EMBEDDING_DIMS, TOOL_NODE_LABEL, TOOL_EMBED_PROP, TOOL_VECTOR_INDEX
+from shared.config import (
+    NEO4J_URI,
+    NEO4J_USERNAME,
+    NEO4J_PASSWORD,
+    EMBEDDING_DIMS,
+    EVAL_REFLECTIONS_INDEX_NAME,
+    EVAL_REFLECTIONS_NODE_LABEL,
+    EVAL_REFLECTIONS_EMBEDDING_PROPERTY,
+    TOOL_NODE_LABEL,
+    TOOL_EMBED_PROP,
+    TOOL_VECTOR_INDEX,
+)
 from shared.logger import get_logger
 
 logger = get_logger("graph_db.client")
 
+# Alias for backward compatibility
+NEO4J_URL = NEO4J_URI
+NEO4J_USER = NEO4J_USERNAME
+NEO4J_PASS = NEO4J_PASSWORD
+INDEX_NAME = EVAL_REFLECTIONS_INDEX_NAME
+NODE_LABEL = EVAL_REFLECTIONS_NODE_LABEL
+EMBEDDING_PROPERTY = EVAL_REFLECTIONS_EMBEDDING_PROPERTY
+
 # Client for factual graph operations (Cypher queries)
 NEO4J_GRAPH = Neo4jGraph(
-    url=NEO4J_URL,
-    username=NEO4J_USER,
-    password=NEO4J_PASS,
+    url=NEO4J_URI,
+    username=NEO4J_USERNAME,
+    password=NEO4J_PASSWORD,
 )
 logger.info(f"Successfully created Neo4j graph client.")
 

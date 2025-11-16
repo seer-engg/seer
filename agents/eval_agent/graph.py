@@ -1,6 +1,5 @@
 """overall graph for the eval agent"""
-import asyncio
-from typing import Literal, Optional, Dict
+from typing import Literal, Dict
 from langgraph.graph import END, START, StateGraph
 from langchain_core.tools import BaseTool
 
@@ -11,8 +10,8 @@ from agents.eval_agent.nodes.plan import build_plan_subgraph
 from agents.eval_agent.nodes.reflect.graph import reflect_node
 from agents.eval_agent.nodes.run import build_run_subgraph
 from shared.logger import get_logger
-from shared.mcp_client import get_mcp_client_and_configs
-from shared.tool_catalog import canonicalize_tool_name
+from shared.tool_service import get_tool_service
+from shared.tools import canonicalize_tool_name
 
 
 logger = get_logger("eval_agent.graph")
@@ -36,11 +35,11 @@ async def cleanup_environment(state: EvalAgentState) -> dict:
         return {}
 
     logger.info(f"cleanup_environment: Cleaning up resources: {state.mcp_resources.keys()}")
-    mcp_client, _ = await get_mcp_client_and_configs(state.mcp_services)
-    mcp_tools = await mcp_client.get_tools()
-    tools_dict: Dict[str, BaseTool] = {
-        canonicalize_tool_name(t.name): t for t in mcp_tools
-    }
+    
+    # Use ToolService for tool access
+    tool_service = get_tool_service()
+    await tool_service.initialize(state.mcp_services)
+    tools_dict = tool_service.get_tools()
     
     try:
         # 1. Delete Asana Project

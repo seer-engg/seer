@@ -8,7 +8,7 @@ load_dotenv()
 
 
 def get_llm(
-    model: str = "gpt-4.1-nano-2025-04-14",
+    model: str = "gpt-4.1",
     temperature: float = 0.2,
     reasoning_effort: str = "medium",
     api_key: Optional[str] = os.getenv("OPENAI_API_KEY"),

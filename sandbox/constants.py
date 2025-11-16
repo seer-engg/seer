@@ -81,3 +81,4 @@ FAIL_PATTERNS = [
     re.compile(r"ImportError"),
     re.compile(r"Application startup failed"),
 ]
+TARGET_AGENT_PORT = 2024

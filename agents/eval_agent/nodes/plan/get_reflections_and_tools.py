@@ -3,14 +3,16 @@ from typing import List, Dict
 from agents.eval_agent.models import EvalAgentPlannerState, ToolSelectionLog
 from agents.eval_agent.reflection_store import graph_rag_retrieval
 from shared.logger import get_logger
-from shared.tool_catalog import load_tool_entries, select_relevant_tools, ToolEntry
+from shared.tool_service import get_tool_service
+from shared.tools import ToolEntry
+
 logger = get_logger("eval_agent.plan.get_reflections")
 
 async def get_reflections_and_tools(state: EvalAgentPlannerState) -> dict:
     """Get the reflections for the test generation."""
     # Get top 3 most relevant reflections + their evidence using GraphRAG
-    agent_name = state.github_context.agent_name
-    user_id = state.user_context.user_id
+    agent_name = state.context.github_context.agent_name
+    user_id = state.context.user_context.user_id
 
     reflections_text = await graph_rag_retrieval(
         query="what previous tests failed and why?",
@@ -25,21 +27,27 @@ async def get_reflections_and_tools(state: EvalAgentPlannerState) -> dict:
     # We'll initialize context_for_scoring here to ensure it's always defined
     context_for_scoring = ""
 
-    if state.mcp_services:
+    if state.context.mcp_services:
         try:
-            tool_entries = await load_tool_entries(state.mcp_services)
+            tool_service = get_tool_service()
+            await tool_service.initialize(state.context.mcp_services)
+            tool_entries = tool_service.get_tool_entries()
+            
             context_for_scoring = "\n".join( 
-                filter(None, [state.user_context.raw_request, reflections_text])
+                filter(None, [state.context.user_context.raw_request, reflections_text])
             )
-            prioritized = await select_relevant_tools(
-                tool_entries,
+            
+            prioritized = await tool_service.select_relevant_tools(
                 context_for_scoring,
-                max_total=20,
-                max_per_service=10,
+                max_total=40,  # Increased from 20 to accommodate multiple services
+                max_per_service=20,  # Increased from 10 to ensure all relevant tools per service
             )
-            if not prioritized:
-                prioritized = sorted({entry.name for entry in tool_entries.values()})
-            available_tools = prioritized
+            
+            # Convert tools to names
+            available_tools = [tool.name for tool in prioritized]
+            if not available_tools:
+                available_tools = sorted({entry.name for entry in tool_entries.values()})
+                
             logger.info(
                 "Found %d prioritized MCP tools for test generation.",
                 len(available_tools),

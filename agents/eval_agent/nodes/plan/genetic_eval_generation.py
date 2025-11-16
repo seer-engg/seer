@@ -140,10 +140,10 @@ async def genetic_eval_generation(state: EvalAgentPlannerState) -> dict:
 
     available_tools = state.available_tools
     reflections_text = state.reflections_text
-    agent_name = state.github_context.agent_name
-    user_id = state.user_context.user_id
-    raw_request = state.user_context.raw_request
-    resource_hints = format_resource_hints(state.mcp_resources)
+    agent_name = state.context.github_context.agent_name
+    user_id = state.context.user_context.user_id
+    raw_request = state.context.user_context.raw_request
+    resource_hints = format_resource_hints(state.context.mcp_resources)
     previous_inputs = [res.dataset_example.input_message for res in state.latest_results]
     prev_dataset_examples = json.dumps(previous_inputs, indent=2)
 
@@ -273,8 +273,8 @@ async def genetic_eval_generation(state: EvalAgentPlannerState) -> dict:
 
     # --- Assign final Example IDs ---
     for example in new_generation:
-        # ADDED: Ensure example_id is None before assigning new one
-        if not getattr(example, 'example_id', None):
+        # Generate UUID if example_id is missing or empty
+        if not example.example_id or example.example_id == "":
             example.example_id = str(uuid4())
         example.status = "active"
 

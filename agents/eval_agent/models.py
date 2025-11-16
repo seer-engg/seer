@@ -2,23 +2,22 @@
 import uuid
 from datetime import datetime
 from typing import Annotated, Optional, List, Dict, Any
-
 from pydantic import BaseModel, Field, ConfigDict
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 
 from shared.schema import (
-    SandboxContext,
-    GithubContext,
-    UserContext,
     DatasetExample,
     DatasetContext,
     ExperimentContext,
     ExperimentResultContext,
     CodexOutput,
 )
-from shared.tool_catalog import ToolEntry
-import os
+from shared.tools import ToolEntry
+from shared.config import USE_GENETIC_TEST_GENERATION, USE_AGENTIC_TEST_GENERATION
+
+# Import AgentContext after schema to avoid circular imports
+from shared.agent_context import AgentContext
 
 class Hypothesis(BaseModel):
     """
@@ -73,28 +72,26 @@ class ToolSelectionLog(BaseModel):
 class EvalAgentState(BaseModel):
     """State for the evaluation agent."""
 
+    # Core agent context (shared with Codex)
+    context: AgentContext = Field(default_factory=AgentContext, description="Shared agent context")
+    
+    # Agent-specific state
     messages: Annotated[list[BaseMessage], add_messages]
     attempts: int = Field(default=0, description="Number of completed eval attempts")
-    user_context: Optional[UserContext] = Field(default=None, description="Context for the user")
-    sandbox_context: Optional[SandboxContext] = Field(default=None, description="Context for the active sandbox")
-    github_context: Optional[GithubContext] = Field(default=None, description="Context for the active GitHub repository")
+    
+    # Evaluation-specific context
     dataset_context: DatasetContext = Field(default_factory=DatasetContext, description="Dataset metadata used across experiments")
     active_experiment: Optional[ExperimentContext] = Field(default=None, description="Currently running experiment context")
     latest_results: List[ExperimentResultContext] = Field(default_factory=list, description="Results from the latest experiment execution")
     dataset_examples: List[DatasetExample] = Field(default_factory=list, description="List of generated test cases")
-    target_agent_version: int = Field(default=0, description="Version of the target agent being evaluated")
+    
+    # Handoff from Codex
     codex_output: Optional[CodexOutput] = Field(default=None, description="Output from the codex agent, used for handoff.")
+    
+    # Tool selection debugging
     tool_selection_log: Optional[ToolSelectionLog] = Field(
         default=None, 
         description="The log of how MCP tools were selected for the current round."
-    )
-    mcp_services: List[str] = Field(
-        default_factory=list, 
-        description="List of MCP service names required for this eval, e.g., ['asana', 'github']"
-    )
-    mcp_resources: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="MCP resource IDs created for this experiment, e.g., {'asana_project_id': '123', 'github_repo_id': '456'}"
     )
 
 
@@ -103,8 +100,8 @@ class EvalAgentPlannerState(EvalAgentState):
     reflections_text: Optional[str] = Field(default=None, description="Text of the reflections to use for test generation")
     available_tools: List[str] = Field(default_factory=list, description="List of available tools to use for test generation")
     tool_entries: Dict[str, ToolEntry] = Field(default_factory=dict, description="Tool entries to use for test generation")
-    use_genetic_test_generation: bool = Field(default=os.getenv("USE_GENETIC_TEST_GENERATION", "false").lower() == "true", description="Whether to use genetic test generation")
-    use_agentic_test_generation: bool = Field(default=os.getenv("USE_AGENTIC_TEST_GENERATION", "false").lower() == "true", description="Whether to use agentic test generation")
+    use_genetic_test_generation: bool = Field(default=USE_GENETIC_TEST_GENERATION, description="Whether to use genetic test generation")
+    use_agentic_test_generation: bool = Field(default=USE_AGENTIC_TEST_GENERATION, description="Whether to use agentic test generation")
     structured_response: Optional[dict] = Field(default=None, description="The structured response from the test generation agent")
 
 
@@ -113,3 +110,8 @@ class TestGenerationOutput(BaseModel):
     """Helper for structured output"""
     model_config = ConfigDict(extra="forbid")
     dataset_example: DatasetExample
+
+
+# Rebuild models to resolve forward references
+EvalAgentState.model_rebuild()
+EvalAgentPlannerState.model_rebuild()

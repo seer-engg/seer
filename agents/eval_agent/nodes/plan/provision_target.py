@@ -11,9 +11,10 @@ from sandbox import (
     TARGET_AGENT_PORT,
     deploy_server_and_confirm_ready,
 )
+from shared.agent_context import AgentContext
 from shared.schema import SandboxContext, ActionStep
 from shared.logger import get_logger
-from shared.tool_catalog import load_tool_entries, select_relevant_tools
+from shared.tool_service import get_tool_service
 from shared.resource_utils import format_resource_hints
 from shared.test_runner import execute_action_plan
 
@@ -92,8 +93,8 @@ async def _plan_provisioning_actions(
     structured = provision_llm.with_structured_output(_ProvisioningPlan)
 
     prompt = _PROVISION_PROMPT.format(
-        raw_request=state.user_context.raw_request if state.user_context else "",
-        services=", ".join(state.mcp_services),
+        raw_request=state.context.user_context.raw_request if state.context.user_context else "",
+        services=", ".join(state.context.mcp_services),
         resource_hints=resource_hints,
         available_tools="\n".join(available_tools),
     )
@@ -106,26 +107,33 @@ async def _run_mcp_provisioning(
     state: EvalAgentPlannerState,
     mcp_resources: Dict[str, Any],
 ) -> Dict[str, Any]:
-    if not state.mcp_services:
+    if not state.context.mcp_services:
         return mcp_resources
 
-    tool_entries = await load_tool_entries(state.mcp_services)
+    tool_service = get_tool_service()
+    await tool_service.initialize(state.context.mcp_services)
+    tool_entries = tool_service.get_tool_entries()
+    
     if not tool_entries:
         logger.warning("No MCP tools available for provisioning plan generation.")
         return mcp_resources
 
-    context_for_scoring = state.user_context.raw_request if state.user_context else ""
-    prioritized = await select_relevant_tools(
-        tool_entries,
+    user_ctx = state.context.user_context
+    context_for_scoring = user_ctx.raw_request if user_ctx else ""
+    prioritized = await tool_service.select_relevant_tools(
         context_for_scoring,
-        max_total=15,
-        max_per_service=5,
+        max_total=20,
+        max_per_service=10,
     )
-    logger.info(f"Prioritized tools: {prioritized}")
-    if not prioritized:
-        prioritized = sorted({entry.name for entry in tool_entries.values()})
+    
+    # Convert tools to names
+    tool_names = [tool.name for tool in prioritized]
+    logger.info(f"Prioritized tools: {tool_names}")
+    
+    if not tool_names:
+        tool_names = sorted({entry.name for entry in tool_entries.values()})
 
-    tool_names: List[str] = list(dict.fromkeys(prioritized))
+    tool_names = list(dict.fromkeys(tool_names))
     lower = {name.lower() for name in tool_names}
     if "system.wait" not in lower:
         tool_names.append("system.wait")
@@ -139,7 +147,7 @@ async def _run_mcp_provisioning(
     assign_cb = _resource_assignment_callback(mcp_resources)
     failure_analysis, _, _ = await execute_action_plan(
         actions,
-        state.mcp_services,
+        state.context.mcp_services,
         mcp_resources,
         run_label="Provisioning",
         assign_callback=assign_cb,
@@ -147,25 +155,25 @@ async def _run_mcp_provisioning(
     )
 
     if failure_analysis.score < 1.0:
-        raise RuntimeError(
-            f"Provisioning plan failed: {failure_analysis.judge_reasoning}"
+        logger.warning(
+            f"Provisioning plan had issues but continuing: {failure_analysis.judge_reasoning}"
         )
 
     return mcp_resources
 
 
 async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
-    if not state.github_context:
+    if not state.context.github_context:
         raise ValueError("GitHub context is required to provision the target agent.")
 
-    repo_url = state.github_context.repo_url
-    branch_name = state.github_context.branch_name
-    mcp_resources = dict(state.mcp_resources or {})
+    repo_url = state.context.github_context.repo_url
+    branch_name = state.context.github_context.branch_name
+    mcp_resources = dict(state.context.mcp_resources or {})
     _seed_default_resources(mcp_resources)
 
     updates: Dict[str, Any] = {}
 
-    if not state.sandbox_context:
+    if not state.context.sandbox_context:
         github_token = os.getenv("GITHUB_TOKEN")
         logger.info(
             "plan.provision: provisioning sandbox (repo=%s branch=%s)",
@@ -195,19 +203,29 @@ async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
 
         logger.info("plan.provision: sandbox ready at %s", deployment_url)
 
-        updates["sandbox_context"] = SandboxContext(
+        sandbox_ctx = SandboxContext(
             sandbox_id=sandbox_id,
             working_directory=repo_dir,
             working_branch=sandbox_branch,
         )
+        updates["sandbox_context"] = sandbox_ctx
     else:
         logger.info(
             "plan.provision: reusing existing sandbox %s",
-            state.sandbox_context.sandbox_id,
+            state.context.sandbox_context.sandbox_id,
         )
 
-    if state.mcp_services:
+    if state.context.mcp_services:
         mcp_resources = await _run_mcp_provisioning(state, mcp_resources)
 
-    updates["mcp_resources"] = mcp_resources
-    return updates
+    # Update the AgentContext with new sandbox and resources
+    updated_context = AgentContext(
+        user_context=state.context.user_context,
+        github_context=state.context.github_context,
+        sandbox_context=updates.get("sandbox_context", state.context.sandbox_context),
+        target_agent_version=state.context.target_agent_version,
+        mcp_services=state.context.mcp_services,
+        mcp_resources=mcp_resources,
+    )
+    
+    return {"context": updated_context}

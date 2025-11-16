@@ -6,9 +6,10 @@ from langchain_openai import ChatOpenAI
 
 from agents.eval_agent.constants import LLM
 from agents.eval_agent.models import EvalAgentPlannerState
+from shared.agent_context import AgentContext
 from shared.schema import GithubContext, UserContext
 from shared.logger import get_logger
-from shared.tool_catalog import resolve_mcp_services
+from shared.tools import resolve_mcp_services
 
 
 logger = get_logger("eval_agent.plan")
@@ -92,9 +93,20 @@ async def ensure_target_agent_config(state: EvalAgentPlannerState) -> dict:
     logger.info(
         f"Resolved MCP services (requested={context.mcp_services}): {resolved_services}"
     )
+    
+    # Create or update the AgentContext
+    agent_context = state.context if state.context else AgentContext()
+    
+    # Update the context with extracted values
+    updated_context = AgentContext(
+        user_context=context.user_context,
+        github_context=context.github_context,
+        sandbox_context=agent_context.sandbox_context,  # Preserve existing sandbox
+        target_agent_version=agent_context.target_agent_version,
+        mcp_services=resolved_services,
+        mcp_resources=agent_context.mcp_resources,
+    )
 
     return {
-        "github_context": context.github_context,
-        "user_context": context.user_context,
-        "mcp_services": resolved_services,
+        "context": updated_context,
     }

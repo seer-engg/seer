@@ -13,7 +13,6 @@ from agents.eval_agent.models import EvalAgentState
 from shared.logger import get_logger
 from shared.schema import (
     CodexInput,
-    SandboxContext,
     CodexOutput,
 )
 
@@ -22,7 +21,7 @@ logger = get_logger("eval_agent.finalize")
 
 
 async def _handoff_to_codex(state: EvalAgentState) -> dict:
-    if not state.github_context or not state.user_context:
+    if not state.context.github_context or not state.context.user_context:
         raise RuntimeError("GitHub and user context are required for Codex handoff")
     if not state.dataset_context or not state.active_experiment:
         raise RuntimeError("Dataset and experiment context are required for Codex handoff")
@@ -37,23 +36,11 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
         logger.warning("No eval failed, skipping Codex handoff")
         return {"codex_output": None}
 
-    github_context = state.github_context
-    sandbox_context = state.sandbox_context or SandboxContext(
-        sandbox_id="",
-        working_directory="",
-        working_branch="",
-    )
-    user_context = state.user_context
-
     codex_input = CodexInput(
-        github_context=github_context,
-        sandbox_context=sandbox_context,
-        user_context=user_context,
+        context=state.context,
         dataset_context=state.dataset_context.model_copy(deep=True),
         experiment_context=state.active_experiment.model_copy(deep=True),
         dataset_examples=list(state.dataset_examples or []),
-        target_agent_version=state.target_agent_version,
-        mcp_services=list(state.mcp_services or []), # ADDED
     )
 
     codex_input_payload: Dict[str, Any] = codex_input.model_dump()
@@ -61,8 +48,8 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
     codex_request = state.messages[0].content
     codex_payload: Dict[str, Any] = {
         "request": codex_request,
-        "repo_url": github_context.repo_url,
-        "branch_name": github_context.branch_name,
+        "repo_url": state.context.github_context.repo_url,
+        "branch_name": state.context.github_context.branch_name,
     }
     codex_payload.update(codex_input_payload)
 
@@ -91,7 +78,7 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
     logger.info("Codex response payload: %s", codex_response_payload)
 
     # if the target agent was updated, store the handoff and reset the state for a new round
-    if codex_response_payload.target_agent_version > state.target_agent_version:
+    if codex_response_payload.target_agent_version > state.context.target_agent_version:
         # Pass the handoff object and reset the loop state
         return {
             "codex_output": codex_response_payload,
