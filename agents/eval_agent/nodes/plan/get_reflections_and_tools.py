@@ -2,7 +2,7 @@ from agents.eval_agent.models import EvalAgentPlannerState, ToolSelectionLog
 
 from agents.eval_agent.reflection_store import graph_rag_retrieval
 from shared.logger import get_logger
-from shared.tool_catalog import load_tool_entries, select_relevant_tools
+from shared.tool_catalog import load_tool_entries, select_relevant_tools, resolve_mcp_services
 from typing import List, Dict
 from shared.tool_catalog import ToolEntry
 logger = get_logger("eval_agent.plan.get_reflections")

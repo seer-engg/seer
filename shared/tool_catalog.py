@@ -5,11 +5,10 @@ import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Sequence
+from typing import Dict, Iterable, List, Sequence, Optional, Type, Any
 
 from langchain_core.tools import BaseTool
 from langchain_openai import OpenAIEmbeddings
-from langchain_neo4j import Neo4jGraph
 
 from shared.logger import get_logger
 from shared.mcp_client import get_mcp_client_and_configs
@@ -57,6 +56,7 @@ class ToolEntry:
     name: str
     description: str
     service: str
+    pydantic_schema: Optional[Dict[str, Any]] = None
 
 
 # --- Neo4j + Embeddings setup for semantic tool catalog ---
@@ -64,8 +64,6 @@ class ToolEntry:
 
 _OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-
-_EMBED_DIMS = 1536  # OpenAI text-embedding-3-small default
 
 _embeddings: OpenAIEmbeddings | None = None
 
@@ -204,6 +202,7 @@ async def load_tool_entries(service_names: Sequence[str]) -> Dict[str, ToolEntry
             name=tool.name,
             description=getattr(tool, "description", "") or "",
             service=service,
+            pydantic_schema=getattr(tool, "args_schema", None),
         )
         entries[tool.name.lower()] = entry
     logger.info(

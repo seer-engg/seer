@@ -31,6 +31,41 @@ def _validate_generated_actions(
                 invalid.append(
                     f"example={example.example_id or '<pending>'} action_index={idx} tool={action.tool}"
                 )
+            
+            if action.tool == "system.wait":
+                continue  # 'system.wait' is a special case with no params
+
+            # Now, let's get the tool's schema to check its parameters.
+            # I'm assuming 'name_map' maps all aliases to the canonical name.
+            canonical_name = name_map.get(canonicalize_tool_name(action.tool))
+            
+            tool_entry = tool_entries.get(canonical_name)
+            
+            # If there's no entry or it has no schema, we can't validate its params.
+            # This follows the principle of Abstraction: if a tool doesn't publish
+            # its 'contract' (its schema), we can't enforce it.
+            if not tool_entry or not tool_entry.pydantic_schema:
+                continue # Can't validate params for this tool, so we skip it
+
+            schema = tool_entry.pydantic_schema
+            
+            # Find all required fields from the Pydantic model
+            required_fields = set()
+            # .model_fields is for Pydantic v2. Use .__fields__ if you're on v1
+            for field_name, field in schema.model_fields.items():
+                if field.is_required():
+                    required_fields.add(field_name)
+
+            # Find all fields the agent provided
+            provided_fields = set(action.inputs.keys()) if action.inputs else set()
+
+            # Now, check for any missing fields
+            missing_fields = required_fields - provided_fields
+            
+            if missing_fields:
+                invalid.append(
+                    f"example={example.example_id or '<pending>'} action_index={idx} tool={action.tool} (Missing required params: {', '.join(missing_fields)})"
+                )
 
     if invalid:
         sample = ", ".join(list(name_map.values())[:20])

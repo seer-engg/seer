@@ -1,6 +1,5 @@
-import asyncio
 import json
-from typing import Dict, List
+from typing import Dict, List, Optional
 from uuid import uuid4
 
 from langchain.agents import create_agent
@@ -15,17 +14,59 @@ from agents.eval_agent.constants import (
 from agents.eval_agent.models import EvalAgentPlannerState
 from shared.logger import get_logger
 from shared.resource_utils import format_resource_hints
+from shared.tool_catalog import ToolEntry
 from shared.schema import (
     DatasetExample,
 )
 from shared.tools import (
     LANGCHAIN_MCP_TOOLS,
     think,
-    web_search,
 )
 
 logger = get_logger("eval_agent.plan.generate_evals")
 
+
+def _format_tool_schemas(tool_entries: Dict[str, ToolEntry], available_tool_names: List[str]) -> str:
+    """
+    Formats the tool schemas (which are dicts) into a string for the prompt.
+    This is the 'explicit contract' for the LLM.
+    """
+    lines = []
+    if not available_tool_names:
+        return "No tools were selected for this agent."
+    
+    for name in available_tool_names:
+        entry = tool_entries.get(name.lower()) # Get tool data from the big dict
+        
+        if not entry:
+            logger.warning(f"Tool '{name}' was in available_tools but not in tool_entries dict.")
+            continue
+
+        # Check if the schema is a valid, non-empty dictionary
+        if not entry.pydantic_schema or not isinstance(entry.pydantic_schema, dict):
+            lines.append(f"Tool: `{name}` (No parameters)")
+            continue
+        
+        schema = entry.pydantic_schema
+        
+        try:
+            # Get all fields from the 'properties' key
+            all_fields = list(schema.get('properties', {}).keys())
+            # Get required fields from the 'required' key
+            required_fields = schema.get('required', [])
+        except Exception:
+            # Fallback in case the schema is malformed
+            logger.warning(f"Could not parse schema for tool: {name}", exc_info=True)
+            all_fields = ["(Schema format un-parseable)"]
+            required_fields = []
+
+        lines.append(
+            f"Tool: `{name}`\n"
+            f"  Description: {entry.description}\n"
+            f"  All Params: {all_fields or 'None'}\n"
+            f"  Required Params: {required_fields or 'None'}"
+        )
+    return "\n".join(lines)
 
 
 class _AgentTestGenerationOutput(BaseModel):
@@ -34,25 +75,19 @@ class _AgentTestGenerationOutput(BaseModel):
     dataset_examples: List[DatasetExample] = Field(
         description=f"A list of {N_TEST_CASES} generated test cases."
     )
-    generation_summary: str = Field(
-        description="A brief summary of the agent's reasoning and strategy (e.g., 'created 1 new test, 1 mutation')."
-    )
 
 AGENTIC_GENERATOR_SYSTEM_PROMPT = """### PROMPT: TEST_CASE_GENERATOR_AGENT (EVAL_AGENT) ###
-You are an adversarial QA agent. Your goal is to generate {n_tests} new, complex, and creative test cases (`DatasetExample`) to make the target agent fail.
+You are an expert adversarial QA agent. Your goal is to generate {n_tests} new, robust, and creative test cases (`DatasetExample`) to test a target agent.
 
 **1. CONTEXT:**
-* **Raw Request:** {raw_request}
+* **System Goal:** {system_goal_description}
 * **Agent Weaknesses (from past reflections):** {reflections_text}
 * **Recently Run Tests (Do Not Repeat):** {prev_dataset_examples}
 * **Available Resources:** {resource_hints}
 
-**2. AVAILABLE TOOLS:**
-You have access to tools like `think`, `web_search`, and documentation search (`langchain_docs_...`).
-You MUST use these tools to iteratively plan and refine your test cases.
-* Use `think` to reason about your plan.
-* Use `web_search` or `langchain_docs` if you are unsure about tool parameters or behavior.
-* Your goal is to *plan* a list of `ActionStep` objects, not to *execute* them (like `asana.create_task`).
+**2. AVAILABLE TOOLS & SCHEMAS (Your "Contract"):**
+Here is the "contract" for each tool. Your generated actions MUST adhere to these schemas.
+{formatted_tool_schemas}
 
 **3. YOUR TASK:**
 Generate {n_tests} `DatasetExample` objects.
@@ -60,28 +95,20 @@ You MUST use the following iterative process:
 
 1.  **Reason:** Use `think` to analyze the context. What is the biggest weakness? What is a novel attack? (e.g., "I will test a race condition by creating two PRs that link to the same Asana task and see if the agent syncs both or gets confused.")
 2.  **Plan Action Steps:** Use `think` to outline the *sequence* of `ActionStep` objects for your test.
-    * What tool? (e.g., `asana_create_task`)
+    * What tool? (e.g., `asana.create_task`)
     * What params? (e.g., `{{"name": "Race Condition Test Task"}}`)
-    * Assign to variable? (e.g., `task_id`)
-    * What assertion? (e.g., `asana_get_task` -> `assert_field: "name"`, `assert_expected: "Race Condition Test Task"`)
+    * What assertion? (e.g., `asana.get_task` -> `assert_field: "name"`, `assert_expected: "Race Condition Test Task"`)
 3.  **Refine Action Steps:**
-    * Your `tool` names in the `ActionStep` objects MUST be from the list of available tools: {available_tool_names} 
-    * `params` MUST be a JSON string.
-    * `assign_to_var`, `assert_field`, `assert_expected` MUST be provided (use "" if empty).
+    * Your `tool` names in the `ActionStep` objects MUST be from the list of available tools.
+    * `params` MUST be a valid JSON string.
+    * `params` MUST include all `Required Params` for that tool (as defined in your "Contract" above).
 4.  **Ground the Test Case:** Once you have a solid list of `ActionStep` objects, create the final `DatasetExample` with:
     * `reasoning`: Why this test is valuable and what it targets.
     * `input_message`: A *plausible* human request that would trigger this behavior (e.g., "Please sync my new PRs.")
     * `expected_output`: An `ExpectedOutput` object containing your list of `ActionStep` objects.
     * `status`: "active"
-    * `example_id`: a unique identifier for the test case.
 5.  **Repeat:** Repeat this process until you have {n_tests} high-quality, *different* test cases.
 6.  **Final Output:** Your final response MUST be formatted as the `_AgentTestGenerationOutput` object, containing your list of generated tests.
-
-**RULES:**
-* **DO NOT** just copy a test from the "Recently Run" list.
-* **DO** create complex, multi-step tests that target *interactions* (e.g., Asana + GitHub).
-* **DO** use `think` extensively to show your work.
-* **Your final step MUST be to provide your answer in the `_AgentTestGenerationOutput` format.**
 """
 
 async def _invoke_agentic_llm(
@@ -91,6 +118,7 @@ async def _invoke_agentic_llm(
     agent_name: str,
     user_id: str,
     available_tool_names: List[str],
+    tool_entries: Dict[str, ToolEntry],
     resource_hints: str,
     n_tests: int,
 ) -> List[DatasetExample]:
@@ -98,15 +126,17 @@ async def _invoke_agentic_llm(
     logger.info(f"plan.test-llm: Starting agentic test generation for {n_tests} tests...")
 
     # Tools for the generator agent to *plan*
-    agent_tools = [think, web_search] + LANGCHAIN_MCP_TOOLS
+    agent_tools = [think] + LANGCHAIN_MCP_TOOLS
+
+    formatted_tool_schemas = _format_tool_schemas(tool_entries, available_tool_names)
     
     system_prompt = AGENTIC_GENERATOR_SYSTEM_PROMPT.format(
         n_tests=n_tests,
-        raw_request=raw_request,
+        system_goal_description=raw_request,
         reflections_text=reflections_text,
         prev_dataset_examples=prev_dataset_examples,
         resource_hints=resource_hints,
-        available_tool_names="\n".join(available_tool_names),
+        formatted_tool_schemas=formatted_tool_schemas,
     )
 
     # Use the constants LLM
@@ -127,8 +157,6 @@ async def _invoke_agentic_llm(
         )
         
         output: _AgentTestGenerationOutput = result.get("structured_response")
-
-        logger.info(f"Agentic generator summary: {output.generation_summary}")
         
         # Assign IDs
         for example in output.dataset_examples:
@@ -153,18 +181,16 @@ async def agentic_eval_generation(state: EvalAgentPlannerState) -> dict:
     previous_inputs = [res.dataset_example.input_message for res in state.latest_results]
     
     resource_hints = format_resource_hints(state.mcp_resources)
-    available_tools = state.available_tools
-    reflections_text = state.reflections_text
-
 
     logger.info("Using 'agentic' (create_agent) test generation.")
     dataset_examples = await _invoke_agentic_llm(
         raw_request=state.user_context.raw_request,
-        reflections_text=reflections_text,
+        reflections_text=state.reflections_text,
         prev_dataset_examples=json.dumps(previous_inputs, indent=2),
         agent_name=agent_name,
         user_id=user_id,
-        available_tool_names=available_tools, # Pass tool *names* as guide
+        available_tool_names=state.available_tools,
+        tool_entries = state.tool_entries,
         resource_hints=resource_hints,
         n_tests=N_TEST_CASES,
     )
