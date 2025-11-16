@@ -54,15 +54,15 @@ class ActionStep(BaseModel):
         description="A JSON string containing the parameters for the tool (e.g., '{\"name\": \"Test\"}' or '{}').",
     )
     assign_to_var: str = Field(
-        default="",
+        ...,
         description="Variable name used to store tool output (\"\" if unused).",
     )
     assert_field: str = Field(
-        default="",
+        ...,
         description="JSON path to assert against the tool output (\"\" if unused).",
     )
     assert_expected: str = Field(
-        default="",
+        ...,
         description="The expected value for the assertion, stored as a string (\"\" if unused).",
     )
 
