@@ -17,16 +17,9 @@ from shared.mcp_client import get_mcp_client_and_configs
 from shared.config import OPENAI_API_KEY, EVAL_AGENT_LOAD_DEFAULT_MCPS
 
 # Import graph_db constants with explicit handling
-try:
-    from graph_db import NEO4J_GRAPH, TOOL_NODE_LABEL, TOOL_EMBED_PROP, TOOL_VECTOR_INDEX
-except ImportError:
-    # If graph_db module is not available, set defaults
-    logger = get_logger("shared.tool_catalog")
-    logger.warning("graph_db module not available, vector search will be disabled")
-    NEO4J_GRAPH = None
-    TOOL_NODE_LABEL = "MCPTool"
-    TOOL_EMBED_PROP = "embedding"
-    TOOL_VECTOR_INDEX = "mcp_tools_index"
+from shared.config import TOOL_NODE_LABEL, TOOL_EMBED_PROP, TOOL_VECTOR_INDEX
+logger = get_logger("shared.tool_catalog")
+from graph_db import NEO4J_GRAPH
 
 
 logger = get_logger("shared.tool_catalog")
@@ -207,20 +200,11 @@ async def load_tool_entries(service_names: Sequence[str]) -> Dict[str, ToolEntry
     for tool in tools:
         service = tool.name.split(".", 1)[0] if "." in tool.name else "misc"
         
-        # Convert Pydantic model to JSON schema dict
-        args_schema = getattr(tool, "args_schema", None)
-        json_schema = None
-        if args_schema and hasattr(args_schema, "model_json_schema"):
-            try:
-                json_schema = args_schema.model_json_schema()
-            except Exception as e:
-                logger.warning(f"Failed to convert schema for tool {tool.name}: {e}")
-        
         entry = ToolEntry(
             name=tool.name,
             description=getattr(tool, "description", "") or "",
             service=service,
-            pydantic_schema=json_schema,
+            pydantic_schema=tool.args_schema,
         )
         entries[tool.name.lower()] = entry
     logger.info(

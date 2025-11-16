@@ -26,47 +26,17 @@ from shared.tools import (
 logger = get_logger("eval_agent.plan.generate_evals")
 
 
-def _format_tool_schemas(tool_entries: Dict[str, ToolEntry], available_tool_names: List[str]) -> str:
+def _fetch_available_tools(tool_entries: Dict[str, ToolEntry], available_tool_names: List[str]) -> List[ToolEntry]:
     """
     Formats the tool schemas (which are dicts) into a string for the prompt.
     This is the 'explicit contract' for the LLM.
     """
-    lines = []
-    if not available_tool_names:
-        return "No tools were selected for this agent."
-    
+    tools = []
     for name in available_tool_names:
-        entry = tool_entries.get(name.lower()) # Get tool data from the big dict
-        
-        if not entry:
-            logger.warning(f"Tool '{name}' was in available_tools but not in tool_entries dict.")
-            continue
-
-        # Check if the schema is a valid, non-empty dictionary
-        if not entry.pydantic_schema or not isinstance(entry.pydantic_schema, dict):
-            lines.append(f"Tool: `{name}` (No parameters)")
-            continue
-        
-        schema = entry.pydantic_schema
-        
-        try:
-            # Get all fields from the 'properties' key
-            all_fields = list(schema.get('properties', {}).keys())
-            # Get required fields from the 'required' key
-            required_fields = schema.get('required', [])
-        except Exception:
-            # Fallback in case the schema is malformed
-            logger.warning(f"Could not parse schema for tool: {name}", exc_info=True)
-            all_fields = ["(Schema format un-parseable)"]
-            required_fields = []
-
-        lines.append(
-            f"Tool: `{name}`\n"
-            f"  Description: {entry.description}\n"
-            f"  All Params: {all_fields or 'None'}\n"
-            f"  Required Params: {required_fields or 'None'}"
-        )
-    return "\n".join(lines)
+        entry = tool_entries.get(name.lower())
+        if entry:
+            tools.append(entry)
+    return tools
 
 
 class _AgentTestGenerationOutput(BaseModel):
@@ -87,7 +57,7 @@ You are an expert adversarial QA agent. Your goal is to generate {n_tests} new, 
 
 **2. AVAILABLE TOOLS & SCHEMAS (Your "Contract"):**
 Here is the "contract" for each tool. Your generated actions MUST adhere to these schemas.
-{formatted_tool_schemas}
+{available_tools}
 
 **3. YOUR TASK:**
 Generate {n_tests} `DatasetExample` objects.
@@ -128,7 +98,7 @@ async def _invoke_agentic_llm(
     # Tools for the generator agent to *plan*
     agent_tools = [think] + LANGCHAIN_MCP_TOOLS
 
-    formatted_tool_schemas = _format_tool_schemas(tool_entries, available_tool_names)
+    available_tools = _fetch_available_tools(tool_entries, available_tool_names)
     
     system_prompt = AGENTIC_GENERATOR_SYSTEM_PROMPT.format(
         n_tests=n_tests,
@@ -136,7 +106,7 @@ async def _invoke_agentic_llm(
         reflections_text=reflections_text,
         prev_dataset_examples=prev_dataset_examples,
         resource_hints=resource_hints,
-        formatted_tool_schemas=formatted_tool_schemas,
+        available_tools=available_tools,
     )
 
     # Use the constants LLM
