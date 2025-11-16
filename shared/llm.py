@@ -2,13 +2,14 @@
 import os
 from typing import Optional
 from langchain_openai import ChatOpenAI
+from shared.config import DEFAULT_LLM_MODEL
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
 def get_llm(
-    model: str = "gpt-4.1",
+    model: str = DEFAULT_LLM_MODEL,
     temperature: float = 0.2,
     reasoning_effort: str = "medium",
     api_key: Optional[str] = os.getenv("OPENAI_API_KEY"),

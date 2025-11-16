@@ -54,12 +54,8 @@ def _validate_generated_actions(
 
             schema = tool_entry.pydantic_schema
             
-            # Find all required fields from the Pydantic model
-            required_fields = set()
-            # .model_fields is for Pydantic v2. Use .__fields__ if you're on v1
-            for field_name, field in schema.model_fields.items():
-                if field.is_required():
-                    required_fields.add(field_name)
+            # Extract required fields from JSON schema
+            required_fields = set(schema.get('required', []))
 
             # Parse the params JSON string to get provided fields
             try:

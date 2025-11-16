@@ -125,8 +125,19 @@ def sanitize_tool_params(
     
     This function contains Asana-specific business logic that ideally should
     be moved to an Asana-specific adapter or plugin in the future.
+    
+    DEFENSE-IN-DEPTH: Also provides last-resort type coercion for common
+    parameters that often have type mismatches with external APIs.
     """
     sanitized = dict(params)
+    
+    # ROBUSTNESS: Last-resort boolean→string coercion for common parameters
+    # Some external APIs (Mercury, etc.) require string "true"/"false" not boolean
+    # This is a safety net; proper coercion should happen in parameter_population
+    BOOLEAN_PARAMS = {'recursive', 'enabled', 'active', 'archived', 'public', 'private', 'draft'}
+    for key, value in list(sanitized.items()):
+        if isinstance(value, bool) and key.lower() in BOOLEAN_PARAMS:
+            sanitized[key] = "true" if value else "false"
 
     # Generic: Convert comma-separated opt_fields string to list
     if "opt_fields" in sanitized and isinstance(sanitized["opt_fields"], str):

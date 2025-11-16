@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from shared.schema import ActionStep
 from shared.tools import canonicalize_tool_name
 from shared.logger import get_logger
+from shared.config import DEFAULT_LLM_MODEL
 
 logger = get_logger("shared.cleanup_inverses")
 
@@ -29,6 +30,7 @@ _inverse_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 class InverseMapping(BaseModel):
     """LLM response for inverse action mapping."""
     delete_tool: Optional[str] = Field(
+        default=None,
         description="The tool that deletes this resource, or null if no cleanup needed"
     )
     param_mapping: Dict[str, str] = Field(
@@ -36,7 +38,6 @@ class InverseMapping(BaseModel):
         description="Map of output fields to input params (e.g., {'gid': 'project_gid'})"
     )
     reasoning: str = Field(
-        default="",
         description="Why these are inverses (for logging/debugging)"
     )
 
@@ -129,7 +130,7 @@ async def _llm_generate_inverse(
     """
     # Use fast, cheap model for inverse detection
     llm = ChatOpenAI(
-        model="gpt-4o-mini",
+        model=DEFAULT_LLM_MODEL,
         temperature=0,  # Deterministic
     )
     
@@ -163,7 +164,9 @@ EXAMPLES:
 
 Return InverseMapping JSON."""
     
-    structured_llm = llm.with_structured_output(InverseMapping)
+    # Use function_calling method instead of strict mode
+    # Strict mode has additional schema requirements that are incompatible with optional fields
+    structured_llm = llm.with_structured_output(InverseMapping, method="function_calling")
     return await structured_llm.ainvoke(prompt)
 
 

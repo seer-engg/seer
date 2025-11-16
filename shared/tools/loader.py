@@ -63,11 +63,16 @@ async def load_tool_entries(service_names: Sequence[str]) -> Dict[str, ToolEntry
     for tool in tools:
         service = tool.name.split(".", 1)[0] if "." in tool.name else "misc"
         
-        # Convert Pydantic model to JSON schema dict
+        # Extract JSON schema - handles both dict and Pydantic model formats
         args_schema = getattr(tool, "args_schema", None)
         json_schema = None
-        if args_schema and hasattr(args_schema, "model_json_schema"):
-            json_schema = args_schema.model_json_schema()
+        if args_schema:
+            if isinstance(args_schema, dict):
+                # Already a JSON schema dict (e.g., from MCP tools)
+                json_schema = args_schema
+            elif hasattr(args_schema, "model_json_schema"):
+                # Pydantic model - extract schema
+                json_schema = args_schema.model_json_schema()
         
         entry = ToolEntry(
             name=tool.name,

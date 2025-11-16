@@ -3,7 +3,6 @@ import asyncio
 import json
 import inspect
 from typing import List, Dict, Any, Optional, Callable
-from datetime import datetime, timezone
 
 from shared.schema import FailureAnalysis, ActionStep
 from shared.tools import canonicalize_tool_name
@@ -178,12 +177,4 @@ async def execute_action_sequence(
             judge_reasoning=f"Execution failed: {exc}",
         )
 
-    if eval_result_obj is None:
-        eval_result_obj = FailureAnalysis(
-            score=1.0 if not require_assertion else 0.0,
-            failure_type=None if not require_assertion else "completeness",
-            judge_reasoning="Actions executed successfully." if not require_assertion else "No assertion was evaluated.",
-        )
-
     return eval_result_obj, agent_actual_output, variables, cleanup_stack
-

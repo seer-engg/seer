@@ -117,6 +117,8 @@ class SeerConfig(BaseSettings):
     # ============================================================================
     # Computed Properties
     # ============================================================================
+
+    default_llm_model: str = Field(default="gpt-4.1", description="Default LLM model")
     
     @computed_field
     @property
@@ -154,6 +156,7 @@ config = SeerConfig()
 OPENAI_API_KEY = config.openai_api_key
 LANGSMITH_API_KEY = config.langsmith_api_key
 TAVILY_API_KEY = config.tavily_api_key
+DEFAULT_LLM_MODEL = config.default_llm_model
 
 # Eval Configuration
 N_ROUNDS = config.eval_n_rounds
