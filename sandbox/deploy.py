@@ -2,7 +2,8 @@
 import asyncio
 from e2b import AsyncSandbox, AsyncCommandHandle
 from shared.logger import get_logger
-from sandbox.constants import SUCCESS_PAT, FAIL_PATTERNS, TARGET_AGENT_PORT
+from sandbox.constants import SUCCESS_PAT, FAIL_PATTERNS
+from shared.config import TARGET_AGENT_PORT
 logger = get_logger("sandbox.deploy_server")
 from .commands import kill_process_on_port, check_for_process_on_port
 

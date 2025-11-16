@@ -7,7 +7,7 @@ from agents.eval_agent.models import EvalAgentPlannerState
 from shared.schema import SandboxContext
 from shared.logger import get_logger
 from shared.mcp_client import get_mcp_client_and_configs
-from sandbox.constants import TARGET_AGENT_PORT
+from shared.config import TARGET_AGENT_PORT
 
 logger = get_logger("eval_agent.plan.configure")
 

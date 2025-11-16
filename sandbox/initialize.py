@@ -7,8 +7,9 @@ from typing import Optional
 from e2b import AsyncSandbox, CommandResult
 from shared.logger import get_logger
 logger = get_logger("sandbox.initialize")
-from .constants import _build_git_shell_script, TARGET_AGENT_ENVS, BASE_TEMPLATE_ALIAS
+from .constants import _build_git_shell_script
 import os
+from shared.config import TARGET_AGENT_ENVS, BASE_TEMPLATE_ALIAS
 
 def _masked(s: str) -> str:
     token = os.getenv("GITHUB_TOKEN") or ""
