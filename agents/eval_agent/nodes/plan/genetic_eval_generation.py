@@ -10,6 +10,7 @@ logger = get_logger("eval_agent.plan.genetic_eval_generation")
 from langchain_openai import ChatOpenAI
 from agents.eval_agent.models import TestGenerationOutput
 from shared.resource_utils import format_resource_hints
+from shared.tools.schema_formatter import format_tool_schemas_for_llm
 
 from agents.eval_agent.constants import (
     N_TEST_CASES,
@@ -20,11 +21,9 @@ COMMON_INSTRUCIONS = """\n\n
 Create one new `DatasetExample` that is a complex, adversarial test case.
 Your test case MUST be a JSON list of actions.
 
-**Available Tools:**
-You *must* pick your tool names from this list (exact strings such as `ASANA_CREATE_TASK`).
-<tools>
-{available_tools}
-</tools>
+**Available Tools with Schemas:**
+You *must* pick your tool names from this list and provide ALL required parameters.
+{formatted_tool_schemas}
 
 **Available Resources:**
 Use `[resource:resource_name.field]` tokens when you need stable IDs.
@@ -32,21 +31,22 @@ Use `[resource:resource_name.field]` tokens when you need stable IDs.
 
 **Action Schema (ALL FIELDS REQUIRED):**
 Each action in the `expected_output.actions` list is a JSON object with:
-- `tool`: (str) The FULL tool name, chosen from the <tools> list (e.g., "ASANA_CREATE_SUBTASK", "GITHUB_CREATE_PULL_REQUEST", "system.wait").
-- `params`: (str) A JSON STRING of the parameters for the tool. e.g., "{{\\"name\\": \\"My Task\\"}}" or "{{}}"
+- `tool`: (str) The FULL tool name, chosen from the tools list above (e.g., "ASANA_CREATE_SUBTASK", "GITHUB_CREATE_PULL_REQUEST", "system.wait").
+- `params`: (str) A JSON STRING of the parameters for the tool. MUST include ALL required parameters. e.g., "{{\\"name\\": \\"My Task\\", \\"owner\\": \\"user\\"}}"
 - `assign_to_var`: (str) Variable name to store output ID. Use an empty string "" if not needed.
 - `assert_field`: (str) A JSON path to check in the tool's output (e.g., "status.name"). Use an empty string "" if not needed.
 - `assert_expected`: (str) The expected value, AS A STRING. Use an empty string "" if not needed.
 
 **Rules for Action-Based Tests:**
-1.  **Use Available Tools:** The `tool` field must be an *exact match* from the <tools> list.
-2.  **System Tools:** For waiting, use `tool: "system.wait"`.
-3.  **ALL FIELDS ARE REQUIRED:** You must provide a value for every field. Use "" for empty.
-4.  **Params is a JSON String:** The `params` field *must* be a string containing valid JSON.
-5.  **Assert Expected is a String:** The `assert_expected` field *must* be a string.
-6.  **Environment is Ready:** You MUST assume all required MCP services are already provisioned.
-7.  **Variable Usage:** Use `[var:variable_name]` in your `params` JSON string.
-8.  **Assertion:** To make an assertion, provide a non-empty `assert_field`.
+1.  **Use Available Tools:** The `tool` field must be an *exact match* from the tools list.
+2.  **Provide ALL Required Params:** Check the "Required Params" for each tool and include them in your params JSON string.
+3.  **System Tools:** For waiting, use `tool: "system.wait"`.
+4.  **ALL FIELDS ARE REQUIRED:** You must provide a value for every field. Use "" for empty.
+5.  **Params is a JSON String:** The `params` field *must* be a string containing valid JSON with all required fields.
+6.  **Assert Expected is a String:** The `assert_expected` field *must* be a string.
+7.  **Environment is Ready:** You MUST assume all required MCP services are already provisioned.
+8.  **Variable Usage:** Use `[var:variable_name]` in your `params` JSON string.
+9.  **Assertion:** To make an assertion, provide a non-empty `assert_field`.
 
 **Example Test Case (using real tool names):**
 {{ "reasoning": "Tests if merging a PR updates the linked Asana task's status.", "input_message": "Please sync GitHub PR merges to Asana task statuses.", "expected_output": {{ "actions": [ {{ "tool": "ASANA_CREATE_SUBTASK", "params": "{{\"name\": \\"Test Task\", \"notes\": \"Ticket for PR sync test\"}}", "assign_to_var": "ticket_id", "assert_field": "", "assert_expected": "" }}, {{ "tool": "GITHUB_CREATE_PULL_REQUEST", "params": "{{\"title\": \\"Test PR\", \"body\": \"Links to [var:ticket_id]\"}}", "assign_to_var": "pr_id", "assert_field": "", "assert_expected": "" }}, {{ "tool": "system.wait", "params": "{{\"seconds\": 30}}", "assign_to_var": "", "assert_field": "", "assert_expected": "" }}, {{ "tool": "ASANA_GET_A_TASK", "params": "{{\"id\": \"[var:ticket_id]\"}}", "assign_to_var": "", "assert_field": "status", "assert_expected": "Done" }} ] }}, "status": "active" }}
@@ -158,13 +158,15 @@ async def genetic_eval_generation(state: EvalAgentPlannerState) -> dict:
 
     new_generation: List[DatasetExample] = []
     
-    # --- ADDED: Format the tool list for the prompt ---
+    # Format tool schemas with all parameters and required fields
     tool_names = list(dict.fromkeys(available_tools or []))
     lower_names = {name.lower() for name in tool_names}
     if "system.wait" not in lower_names:
         tool_names.append("system.wait")
-    tools_list_str = "\n".join(tool_names) if tool_names else "system.wait"
-    # --- END ADD ---
+    
+    # Use shared formatter to show schemas with required params
+    tool_entries = state.tool_entries
+    formatted_schemas = format_tool_schemas_for_llm(tool_entries, tool_names)
 
     # --- Define our new "Genetic Operator" functions ---
     
@@ -199,51 +201,42 @@ async def genetic_eval_generation(state: EvalAgentPlannerState) -> dict:
     async def run_crossover(parents: List[dict]):
         """Run the Crossover prompt"""
         logger.info("plan.test-llm: Running Crossover...")
-        # --- ADDED available_tools ---
         prompt = CROSSOVER_PROMPT.format(
             parent_1_json=json.dumps(parents[0], indent=2),
             parent_2_json=json.dumps(parents[1], indent=2),
             reflections_text=reflections_text,
-            available_tools=tools_list_str,
+            formatted_tool_schemas=formatted_schemas,
             resource_hints=resource_hints,
         )
-        # --- END ADD ---
         output = await test_generation_llm.ainvoke(prompt)
         new_generation.append(output.dataset_example)
 
     async def run_mutation(parent: dict):
         """Run the Mutation prompt"""
         logger.info("plan.test-llm: Running Mutation...")
-        # --- ADDED available_tools ---
         prompt = MUTATION_PROMPT.format(
             parent_test_json=json.dumps(parent, indent=2),
             reflections_text=reflections_text,
-            available_tools=tools_list_str,
+            formatted_tool_schemas=formatted_schemas,
             resource_hints=resource_hints,
         )
-        # --- END ADD ---
         output = await test_generation_llm.ainvoke(prompt)
         new_generation.append(output.dataset_example)
 
     async def run_new_test():
         """Run the New Test prompt"""
         logger.info("plan.test-llm: Running New Test generation...")
-        # --- ADDED available_tools ---
         prompt = NEW_TEST_PROMPT.format(
             raw_request=raw_request,
             reflections_text=reflections_text,
             prev_dataset_examples=prev_dataset_examples,
-            available_tools=tools_list_str,
+            formatted_tool_schemas=formatted_schemas,
             resource_hints=resource_hints,
         )
-        # --- END ADD ---
         output = await test_generation_llm.ainvoke(prompt)
         new_generation.append(output.dataset_example)
-
-    # --- Genetic Algorithm "Breeding" Strategy ---
-
  
-        # --- Original logic ---
+    # --- Original logic ---
     fit_parents = await get_parent(passed=False, k=2) # Get 2 FAILED tests
     unfit_parents = await get_parent(passed=True, k=1) # Get 1 PASSED test
     has_history = bool(fit_parents or unfit_parents)

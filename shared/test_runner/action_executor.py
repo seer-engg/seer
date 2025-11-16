@@ -13,6 +13,7 @@ from langchain_core.tools import BaseTool
 
 from shared.test_runner.variable_injection import get_field, inject_variables
 from shared.test_runner.parameter_sanitization import sanitize_tool_params
+from shared.cleanup_inverses import create_inverse_action
 
 
 logger = get_logger("test_runner.action_executor")
@@ -54,7 +55,7 @@ async def execute_action_sequence(
     run_label: str,
     assign_callback: Optional[Callable] = None,
     require_assertion: bool = True,
-) -> tuple[FailureAnalysis, str, Dict[str, Any]]:
+) -> tuple[FailureAnalysis, str, Dict[str, Any], List[ActionStep]]:
     """
     Execute a sequence of actions, injecting variables and evaluating assertions.
     
@@ -62,10 +63,12 @@ async def execute_action_sequence(
         - FailureAnalysis: The evaluation result
         - str: The final agent output (JSON string)
         - Dict[str, Any]: Variables collected during execution
+        - List[ActionStep]: Cleanup actions generated (inverse of provisioning actions)
     """
     variables: Dict[str, Any] = {}
     agent_actual_output = ""
     eval_result_obj: Optional[FailureAnalysis] = None
+    cleanup_stack: List[ActionStep] = []  # NEW: Track cleanup actions
 
     try:
         for idx, action in enumerate(actions):
@@ -105,6 +108,17 @@ async def execute_action_sequence(
                     f"  > Stored '{str(var_value)[:50]}' in var '{action.assign_to_var}'"
                 )
                 await maybe_call_assign_callback(assign_callback, action.assign_to_var, output)
+
+            # NEW: Generate inverse cleanup action with LLM
+            inverse_action = await create_inverse_action(
+                original=action,
+                output=output,
+                assign_var=action.assign_to_var if action.assign_to_var else None,
+                available_tools=list(tools_dict.keys())
+            )
+            if inverse_action:
+                cleanup_stack.append(inverse_action)
+                logger.info(f"  > Recorded cleanup action: {inverse_action.tool}")
 
             agent_actual_output = json.dumps(output, default=str)
 
@@ -171,5 +185,5 @@ async def execute_action_sequence(
             judge_reasoning="Actions executed successfully." if not require_assertion else "No assertion was evaluated.",
         )
 
-    return eval_result_obj, agent_actual_output, variables
+    return eval_result_obj, agent_actual_output, variables, cleanup_stack
 

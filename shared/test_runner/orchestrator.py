@@ -37,7 +37,7 @@ async def run_tests(
         run_start = datetime.now(timezone.utc)
         thread_id = f"mcp_run_{uuid.uuid4().hex[:8]}" 
 
-        eval_result_obj, agent_actual_output, _ = await execute_action_sequence(
+        eval_result_obj, agent_actual_output, _, _ = await execute_action_sequence(
             tc.expected_output.actions,
             tools_dict,
             mcp_resources,

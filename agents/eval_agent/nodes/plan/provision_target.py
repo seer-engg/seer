@@ -15,6 +15,8 @@ from shared.agent_context import AgentContext
 from shared.schema import SandboxContext, ActionStep
 from shared.logger import get_logger
 from shared.tool_service import get_tool_service
+from shared.tools import ToolEntry
+from shared.tools.schema_formatter import format_tool_schemas_for_llm
 from shared.resource_utils import format_resource_hints
 from shared.test_runner import execute_action_plan
 
@@ -65,17 +67,17 @@ You are responsible for preparing external services before the evaluation agent 
 **Existing Resources:**
 {resource_hints}
 
-**Available Tools (use exact names):**
-<tools>
-{available_tools}
-</tools>
+**Available Tools with Schemas:**
+{formatted_tool_schemas}
 
 Design a concise sequence of MCP tool calls (1-6 steps) that ensures:
 1. All required workspaces/projects/repos exist for the services mentioned.
 2. Any IDs needed later are captured with `assign_to_var` so they can be referenced via `[var:...]` and persisted.
-3. You only use tools from the list above and respect their parameter schema.
+3. You MUST provide ALL required parameters for each tool call.
+4. Use tools from the list above and respect their parameter schemas exactly.
 
 Return the ProvisioningPlan with fully-populated ActionStep objects.
+Each ActionStep.params must be valid JSON containing ALL required fields.
 """
 
 
@@ -83,6 +85,7 @@ async def _plan_provisioning_actions(
     state: EvalAgentPlannerState,
     available_tools: List[str],
     resource_hints: str,
+    tool_entries: Dict[str, ToolEntry],
 ) -> List[ActionStep]:
     provision_llm = ChatOpenAI(
         model="gpt-5-codex",
@@ -92,11 +95,14 @@ async def _plan_provisioning_actions(
     )
     structured = provision_llm.with_structured_output(_ProvisioningPlan)
 
+    # Format tool schemas for the prompt using shared formatter
+    formatted_schemas = format_tool_schemas_for_llm(tool_entries, available_tools)
+
     prompt = _PROVISION_PROMPT.format(
         raw_request=state.context.user_context.raw_request if state.context.user_context else "",
         services=", ".join(state.context.mcp_services),
         resource_hints=resource_hints,
-        available_tools="\n".join(available_tools),
+        formatted_tool_schemas=formatted_schemas,
     )
 
     plan = await structured.ainvoke(prompt)
@@ -106,9 +112,16 @@ async def _plan_provisioning_actions(
 async def _run_mcp_provisioning(
     state: EvalAgentPlannerState,
     mcp_resources: Dict[str, Any],
-) -> Dict[str, Any]:
+) -> tuple[Dict[str, Any], List[ActionStep]]:
+    """
+    Run MCP provisioning actions and generate cleanup stack.
+    
+    Returns:
+        - mcp_resources: Updated resources dict
+        - cleanup_stack: List of inverse cleanup actions (LIFO)
+    """
     if not state.context.mcp_services:
-        return mcp_resources
+        return mcp_resources, []
 
     tool_service = get_tool_service()
     await tool_service.initialize(state.context.mcp_services)
@@ -139,13 +152,13 @@ async def _run_mcp_provisioning(
         tool_names.append("system.wait")
 
     resource_hints = format_resource_hints(mcp_resources)
-    actions = await _plan_provisioning_actions(state, tool_names, resource_hints)
+    actions = await _plan_provisioning_actions(state, tool_names, resource_hints, tool_entries)
     if not actions:
         logger.info("Provisioning planner returned no actions; skipping MCP provisioning.")
         return mcp_resources
 
     assign_cb = _resource_assignment_callback(mcp_resources)
-    failure_analysis, _, _ = await execute_action_plan(
+    failure_analysis, _, _, cleanup_stack = await execute_action_plan(
         actions,
         state.context.mcp_services,
         mcp_resources,
@@ -159,7 +172,7 @@ async def _run_mcp_provisioning(
             f"Provisioning plan had issues but continuing: {failure_analysis.judge_reasoning}"
         )
 
-    return mcp_resources
+    return mcp_resources, cleanup_stack
 
 
 async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
@@ -215,8 +228,9 @@ async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
             state.context.sandbox_context.sandbox_id,
         )
 
+    cleanup_stack = []
     if state.context.mcp_services:
-        mcp_resources = await _run_mcp_provisioning(state, mcp_resources)
+        mcp_resources, cleanup_stack = await _run_mcp_provisioning(state, mcp_resources)
 
     # Update the AgentContext with new sandbox and resources
     updated_context = AgentContext(
@@ -228,4 +242,4 @@ async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
         mcp_resources=mcp_resources,
     )
     
-    return {"context": updated_context}
+    return {"context": updated_context, "cleanup_stack": cleanup_stack}

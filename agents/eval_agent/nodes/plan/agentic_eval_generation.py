@@ -13,54 +13,12 @@ from agents.eval_agent.models import EvalAgentPlannerState
 from shared.logger import get_logger
 from shared.resource_utils import format_resource_hints
 from shared.tools import ToolEntry
+from shared.tools.schema_formatter import format_tool_schemas_for_llm
 from shared.schema import (
     DatasetExample,
 )
 
 logger = get_logger("eval_agent.plan.generate_evals")
-
-
-def _format_tool_schemas(tool_entries: Dict[str, ToolEntry], available_tool_names: List[str]) -> str:
-    """
-    Formats the tool schemas (which are dicts) into a string for the prompt.
-    This is the 'explicit contract' for the LLM.
-    """
-    lines = []
-    if not available_tool_names:
-        return "No tools were selected for this agent."
-    
-    for name in available_tool_names:
-        entry = tool_entries.get(name.lower()) # Get tool data from the big dict
-        
-        if not entry:
-            logger.warning(f"Tool '{name}' was in available_tools but not in tool_entries dict.")
-            continue
-
-        # Check if the schema is a valid, non-empty dictionary
-        if not entry.pydantic_schema or not isinstance(entry.pydantic_schema, dict):
-            lines.append(f"Tool: `{name}` (No parameters)")
-            continue
-        
-        schema = entry.pydantic_schema
-        
-        try:
-            # Get all fields from the 'properties' key
-            all_fields = list(schema.get('properties', {}).keys())
-            # Get required fields from the 'required' key
-            required_fields = schema.get('required', [])
-        except Exception:
-            # Fallback in case the schema is malformed
-            logger.warning(f"Could not parse schema for tool: {name}", exc_info=True)
-            all_fields = ["(Schema format un-parseable)"]
-            required_fields = []
-
-        lines.append(
-            f"Tool: `{name}`\n"
-            f"  Description: {entry.description}\n"
-            f"  All Params: {all_fields or 'None'}\n"
-            f"  Required Params: {required_fields or 'None'}"
-        )
-    return "\n".join(lines)
 
 
 class _AgentTestGenerationOutput(BaseModel):
@@ -116,9 +74,9 @@ async def _invoke_agentic_llm(
     n_tests: int,
 ) -> List[DatasetExample]:
     
-    logger.info(f"plan.test-llm: Starting test generation for {n_tests} tests...")
-
-    formatted_tool_schemas = _format_tool_schemas(tool_entries, available_tool_names)
+    logger.info(f"plan.test-llm: Starting test generation for {n_tests} tests...")    
+    # Format tool schemas using shared formatter
+    formatted_tool_schemas = format_tool_schemas_for_llm(tool_entries, available_tool_names)
     
     system_prompt = AGENTIC_GENERATOR_SYSTEM_PROMPT.format(
         n_tests=n_tests,

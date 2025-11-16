@@ -1,0 +1,48 @@
+====================================================================================================
+LLM INVERSE DETECTION RESULTS
+====================================================================================================
+
+DETECTED INVERSE PAIRS: 3
+----------------------------------------------------------------------------------------------------
+#   CREATE TOOL                              DELETE TOOL                              CONF  
+----------------------------------------------------------------------------------------------------
+1   ASANA_CREATE_ALLOCATION                  ASANA_DELETE_ALLOCATION                  0.90
+    Resource: allocation
+    Mapping: id -> id
+    Reasoning: Both tools operate on 'allocation' resources, with the CREATE tool generating an 'id' that the DELETE tool requires.
+
+2   ASANA_CREATE_ATTACHMENT_FOR_TASK         ASANA_DELETE_ATTACHMENT                  0.90
+    Resource: attachment
+    Mapping: gid -> gid
+    Reasoning: The CREATE tool uploads an attachment and returns a 'gid', which is used by the DELETE tool to remove the attachment.
+
+3   ASANA_CREATE_CUSTOM_FIELD                ASANA_DELETE_CUSTOM_FIELD                0.90
+    Resource: custom field
+    Mapping: gid -> gid
+    Reasoning: Both tools manage 'custom field' resources, with the CREATE tool returning a 'gid' that the DELETE tool uses.
+
+
+UNMATCHED CREATES (8):
+----------------------------------------------------------------------------------------------------
+  - ASANA_ADD_FOLLOWERS_TO_TASK
+  - ASANA_ADD_SUPPORTING_RELATIONSHIP
+  - ASANA_ADD_TASK_TO_SECTION
+  - ASANA_CREATE_ENUM_OPTION_FOR_CUSTOM_FIELD
+  - ASANA_CREATE_PROJECT_STATUS_UPDATE
+  - ASANA_CREATE_SECTION_IN_PROJECT
+  - ASANA_CREATE_SUBTASK
+  - ASANA_CREATE_TASK_COMMENT
+
+UNMATCHED DELETES (3):
+----------------------------------------------------------------------------------------------------
+  - ASANA_DELETE_PROJECT
+  - ASANA_DELETE_TAG
+  - ASANA_DELETE_TASK
+
+====================================================================================================
+VALIDATION INSTRUCTIONS:
+For each pair above, mark as:
+  ✅ CORRECT - Delete truly undoes create
+  ❌ WRONG   - Not inverses
+  ⚠️  PARTIAL - Right idea but wrong field mapping
+====================================================================================================

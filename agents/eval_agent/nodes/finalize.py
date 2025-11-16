@@ -85,14 +85,15 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
             "attempts": 0,
             "dataset_examples": [],
             "latest_results": [],
-            # ADDED: Clear MCP resources for the next round
-            "mcp_resources": {}, 
+            # Clear MCP resources for the next round via context
+            "context": state.context.model_copy(update={"mcp_resources": {}}),
         }
     else:
         # Agent was not updated, clear any potential stale handoff object
         return {
             "codex_output": None,
-            "mcp_resources": {}, # ADDED: Clear resources even if no update
+            # Clear resources even if no update via context
+            "context": state.context.model_copy(update={"mcp_resources": {}}),
         }
 
 

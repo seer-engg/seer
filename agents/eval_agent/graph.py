@@ -1,4 +1,5 @@
 """overall graph for the eval agent"""
+import json
 from typing import Literal, Dict
 from langgraph.graph import END, START, StateGraph
 from langchain_core.tools import BaseTool
@@ -12,69 +13,59 @@ from agents.eval_agent.nodes.run import build_run_subgraph
 from shared.logger import get_logger
 from shared.tool_service import get_tool_service
 from shared.tools import canonicalize_tool_name
+from shared.test_runner.variable_injection import inject_variables
 
 
 logger = get_logger("eval_agent.graph")
 
 
-def _resolve_tool_key(tools_dict: Dict[str, BaseTool], *candidates: str) -> str | None:
-    for candidate in candidates:
-        key = canonicalize_tool_name(candidate)
-        if key in tools_dict:
-            return key
-    return None
+# _resolve_tool_key removed - no longer needed with dynamic cleanup
 
 
 async def cleanup_environment(state: EvalAgentState) -> dict:
     """
-    Deletes the MCP resources (Asana project, GitHub repo)
-    created for this evaluation experiment.
+    Execute cleanup actions in reverse order (LIFO).
+    
+    This is fully dynamic - no hardcoded service logic. Cleanup actions
+    are generated automatically during provisioning as inverse operations.
     """
-    if not state.mcp_resources:
-        logger.info("cleanup_environment: No MCP resources to clean up.")
+    if not state.cleanup_stack:
+        logger.info("cleanup_environment: No cleanup actions to execute.")
         return {}
 
-    logger.info(f"cleanup_environment: Cleaning up resources: {state.mcp_resources.keys()}")
+    logger.info(f"cleanup_environment: Executing {len(state.cleanup_stack)} cleanup actions in LIFO order...")
     
     # Use ToolService for tool access
     tool_service = get_tool_service()
-    await tool_service.initialize(state.mcp_services)
+    await tool_service.initialize(state.context.mcp_services)
     tools_dict = tool_service.get_tools()
     
-    try:
-        # 1. Delete Asana Project
-        if "asana_project" in state.mcp_resources:
-            delete_project = _resolve_tool_key(
-                tools_dict,
-                "ASANA_DELETE_PROJECT",
-                "asana.delete_project",
-            )
-            if delete_project:
-                project_id = state.mcp_resources["asana_project"].get("id")
-                if project_id:
-                    logger.info(f"Deleting Asana project: {project_id}")
-                    await tools_dict[delete_project].ainvoke({"id": project_id})
+    # Execute in REVERSE order (LIFO - last created = first deleted)
+    for idx, action in enumerate(reversed(state.cleanup_stack), 1):
+        tool_name = canonicalize_tool_name(action.tool)
         
-        # 2. Delete GitHub Repo
-        if "github_repo" in state.mcp_resources:
-            delete_repo = _resolve_tool_key(
-                tools_dict,
-                "GITHUB_DELETE_REPOSITORY",
-                "github.delete_repo",
-                "GITHUB_DELETE_A_REPOSITORY",
-            )
-            if delete_repo:
-                repo_full_name = state.mcp_resources["github_repo"].get("full_name")
-                if repo_full_name:
-                    logger.info(f"Deleting GitHub repo: {repo_full_name}")
-                    await tools_dict[delete_repo].ainvoke({"full_name": repo_full_name})
-                
-    except Exception as e:
-        # Log errors but don't stop the graph
-        logger.error(f"cleanup_environment: Error during cleanup: {e}", exc_info=True)
+        if tool_name not in tools_dict:
+            logger.warning(f"Cleanup tool not found: {tool_name}")
+            continue
+        
+        try:
+            params = json.loads(action.params or "{}")
+            
+            # Inject variables from mcp_resources if needed (e.g., [var:asana_project])
+            params = inject_variables(params, {}, state.context.mcp_resources)
+            
+            logger.info(f"Cleanup {idx}/{len(state.cleanup_stack)}: {action.tool} with {params}")
+            await tools_dict[tool_name].ainvoke(params)
+            
+        except Exception as e:
+            # Log but continue - don't let one failure stop other cleanups
+            logger.error(f"Cleanup failed for {action.tool}: {e}", exc_info=True)
     
-    # Return an empty dict to clear the resources from the state
-    return {"mcp_resources": {}}
+    # Clear both cleanup stack and resources
+    return {
+        "cleanup_stack": [],
+        "context": state.context.model_copy(update={"mcp_resources": {}})
+    }
 
 
 def update_state_from_handoff(state: EvalAgentState) -> dict:

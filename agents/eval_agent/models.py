@@ -12,6 +12,7 @@ from shared.schema import (
     ExperimentContext,
     ExperimentResultContext,
     CodexOutput,
+    ActionStep,
 )
 from shared.tools import ToolEntry
 from shared.config import USE_GENETIC_TEST_GENERATION, USE_AGENTIC_TEST_GENERATION
@@ -92,6 +93,12 @@ class EvalAgentState(BaseModel):
     tool_selection_log: Optional[ToolSelectionLog] = Field(
         default=None, 
         description="The log of how MCP tools were selected for the current round."
+    )
+    
+    # Dynamic cleanup stack (LIFO: last created = first deleted)
+    cleanup_stack: List['ActionStep'] = Field(
+        default_factory=list,
+        description="Stack of inverse cleanup actions generated during provisioning. Executed in reverse order (LIFO)."
     )
 
 
