@@ -20,6 +20,7 @@ from langchain_core.messages import HumanMessage
 
 from langchain.agents.middleware import wrap_tool_call
 from langchain_core.messages import ToolMessage
+from shared.tools import canonicalize_tool_name
 
 
 @wrap_tool_call
@@ -51,6 +52,9 @@ Instructions:
 
 Resources:
 {resources}
+
+Context:
+{context}
 """
 
 
@@ -89,8 +93,9 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
         use_responses_api=True,
         output_version="responses/v1",
     )
+    selected_tools = state.tool_selection_log.selected_tools
 
-    actual_tools = list(tools_dict.values())
+    actual_tools = [tools_dict[canonicalize_tool_name(tool)] for tool in selected_tools]
 
     assertion_agent = create_agent(
         model=llm,
@@ -100,7 +105,7 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
         middleware=[handle_tool_errors]
     )
 
-    user_prompt = HumanMessage(content=USER_PROMPT.format(instructions=instructions, resources=resource_hints))
+    user_prompt = HumanMessage(content=USER_PROMPT.format(instructions=instructions, resources=resource_hints, context=formatted_context_vars))
 
     result = await assertion_agent.ainvoke(input={"messages": [user_prompt]})
 

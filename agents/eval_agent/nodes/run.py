@@ -101,6 +101,7 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
             context=state.context,
             dataset_example=example,
             mcp_resources=dict(enriched_resources),
+            tool_selection_log=state.tool_selection_log,
         )
         final_state = await test_graph.ainvoke(initial)
         # Support both dict and pydantic object returns

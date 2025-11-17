@@ -16,6 +16,7 @@ from shared.parameter_population import (
 )
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
+from shared.tools import canonicalize_tool_name
 
 logger = get_logger("eval_agent.execute.provision")
 
@@ -58,6 +59,9 @@ Instructions:
 Resources:
 {resources}
 
+Context:
+{context}
+
 github repo buggy-coder already exist in the organization seer-engg.
 """
 
@@ -79,8 +83,8 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
     # Ensure tools initialized (for execution) and entries loaded (for parameter completion)
     tool_service = get_tool_service()
     await tool_service.initialize(state.context.mcp_services)
-    tool_entries = tool_service.get_tool_entries()
     tools_dict = await load_mcp_tools(state.context.mcp_services)
+    selected_tools = state.tool_selection_log.selected_tools
 
     # Prepare prompt context
     context_vars = extract_all_context_variables(
@@ -91,7 +95,7 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
     formatted_context_vars = format_context_variables_for_llm(context_vars)
     resource_hints = format_resource_hints(state.mcp_resources)
 
-    actual_tools = list(tools_dict.values())
+    actual_tools = [tools_dict[canonicalize_tool_name(tool)] for tool in selected_tools]
     llm = ChatOpenAI(
         model="gpt-5",
         use_responses_api=True,
@@ -104,7 +108,7 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
         system_prompt=SYSTEM_PROMPT,
         middleware=[handle_tool_errors]
     )
-    user_prompt = HumanMessage(content=USER_PROMPT.format(instructions=instructions, resources=resource_hints))
+    user_prompt = HumanMessage(content=USER_PROMPT.format(instructions=instructions, resources=resource_hints, context=formatted_context_vars))
 
     result = await provisioning_agent.ainvoke(input={"messages": [user_prompt]}, config=RunnableConfig(recursion_limit=75))
 

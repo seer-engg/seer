@@ -143,6 +143,11 @@ class TestExecutionState(BaseModel):
     started_at: Optional[datetime] = Field(default=None, description="Start time of this example execution")
     completed_at: Optional[datetime] = Field(default=None, description="End time of this example execution")
 
+    tool_selection_log: Optional[ToolSelectionLog] = Field(
+        default=None, 
+        description="The log of how MCP tools were selected for the current round."
+    )
+
 
 # Rebuild models to resolve forward references
 EvalAgentState.model_rebuild()
