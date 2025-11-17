@@ -23,6 +23,8 @@ logger = get_logger("eval_agent.execute.provision")
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_tool_call
 from langchain_core.messages import ToolMessage
+from langchain_core.runnables import RunnableConfig
+
 
 
 @wrap_tool_call
@@ -94,6 +96,7 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
         model="gpt-5",
         use_responses_api=True,
         output_version="responses/v1",
+        reasoning={"effort": "medium"},
     )
     provisioning_agent = create_agent(
         model=llm,
@@ -103,7 +106,7 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
     )
     user_prompt = HumanMessage(content=USER_PROMPT.format(instructions=instructions, resources=resource_hints))
 
-    result = await provisioning_agent.ainvoke(input={"messages": [user_prompt]})
+    result = await provisioning_agent.ainvoke(input={"messages": [user_prompt]}, config=RunnableConfig(recursion_limit=75))
 
     return {
         "mcp_resources": state.mcp_resources,
