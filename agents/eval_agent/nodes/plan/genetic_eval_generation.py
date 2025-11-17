@@ -1,281 +1,439 @@
-from agents.eval_agent.models import EvalAgentPlannerState
-from shared.logger import get_logger
-from typing import List
-from shared.schema import DatasetExample
-from graph_db import NEO4J_GRAPH
 import asyncio
 import json
 from uuid import uuid4
-logger = get_logger("eval_agent.plan.genetic_eval_generation")
+from typing import List, Optional, Dict, Any
+
+from graph_db import NEO4J_GRAPH
 from langchain_openai import ChatOpenAI
-from agents.eval_agent.models import TestGenerationOutput
+from pydantic import BaseModel, Field, ConfigDict
+from agents.eval_agent.constants import N_TEST_CASES
+from agents.eval_agent.models import EvalAgentPlannerState
+
 from shared.resource_utils import format_resource_hints
 from shared.tools.schema_formatter import format_tool_schemas_for_llm
+from shared.logger import get_logger
+from shared.schema import DatasetExample
 
-from agents.eval_agent.constants import (
-    N_TEST_CASES,
-)
+
+logger = get_logger("eval_agent.plan.genetic_eval_generation")
 
 COMMON_INSTRUCIONS = """\n\n
-**Your Task:**
-Create one new `DatasetExample` that is a complex, adversarial test case.
-Your test case MUST be a JSON list of actions.
+Create one new `DatasetExample` using **3-PHASE TESTING ARCHITECTURE**.
 
-**Available Tools with Schemas:**
-You *must* pick your tool names from this list and provide ALL required parameters.
+**CRITICAL**: Tests MUST work on an EMPTY CANVAS. Create ALL test data from scratch.
+
+**Available Tools:**
 {formatted_tool_schemas}
 
 **Available Resources:**
-Use `[resource:resource_name.field]` tokens when you need stable IDs.
 {resource_hints}
 
-**Action Schema (ALL FIELDS REQUIRED):**
-Each action in the `expected_output.actions` list is a JSON object with:
-- `tool`: (str) The FULL tool name, chosen from the tools list above (e.g., "ASANA_CREATE_SUBTASK", "GITHUB_CREATE_PULL_REQUEST", "system.wait").
-- `params`: (str) A JSON STRING of the parameters for the tool. MUST include ALL required parameters. e.g., "{{\\"name\\": \\"My Task\\", \\"owner\\": \\"user\\"}}"
-- `assign_to_var`: (str) Variable name to store output ID. Use an empty string "" if not needed.
-- `assert_field`: (str) A JSON path to check in the tool's output (e.g., "status.name"). Use an empty string "" if not needed.
-- `assert_expected`: (str) The expected value, AS A STRING. Use an empty string "" if not needed.
+**CRITICAL - Variable Syntax:**
+- Reference previous action output: [var:variable_name.field]
+- Reference pre-provisioned resource: [resource:resource_name.field]
+- NEVER use angle brackets: <owner>, <repo>, <pr_number> will FAIL
+- Example array access: [var:prs.data.pull_requests.0.number]
 
-**Rules for Action-Based Tests:**
-1.  **Use Available Tools:** The `tool` field must be an *exact match* from the tools list.
-2.  **Provide ALL Required Params:** Check the "Required Params" for each tool and include them in your params JSON string.
-3.  **System Tools:** For waiting, use `tool: "system.wait"`.
-4.  **ALL FIELDS ARE REQUIRED:** You must provide a value for every field. Use "" for empty.
-5.  **Params is a JSON String:** The `params` field *must* be a string containing valid JSON with all required fields.
-6.  **Assert Expected is a String:** The `assert_expected` field *must* be a string.
-7.  **Environment is Ready:** You MUST assume all required MCP services are already provisioned.
-8.  **Variable Usage:** Use `[var:variable_name]` in your `params` JSON string.
-9.  **Assertion:** To make an assertion, provide a non-empty `assert_field`.
+**Action Fields (all required):**
+- `tool`: Exact tool name from list above
+- `params`: Dict/object with ALL required params
+- `assign_to_var`: Variable name (or "")
+- `assert_field`: Field to check (or "")
+- `assert_expected`: Expected value as string (or "")
 
-**Example Test Case (using real tool names):**
-{{ "reasoning": "Tests if merging a PR updates the linked Asana task's status.", "input_message": "Please sync GitHub PR merges to Asana task statuses.", "expected_output": {{ "actions": [ {{ "tool": "ASANA_CREATE_SUBTASK", "params": "{{\"name\": \\"Test Task\", \"notes\": \"Ticket for PR sync test\"}}", "assign_to_var": "ticket_id", "assert_field": "", "assert_expected": "" }}, {{ "tool": "GITHUB_CREATE_PULL_REQUEST", "params": "{{\"title\": \\"Test PR\", \"body\": \"Links to [var:ticket_id]\"}}", "assign_to_var": "pr_id", "assert_field": "", "assert_expected": "" }}, {{ "tool": "system.wait", "params": "{{\"seconds\": 30}}", "assign_to_var": "", "assert_field": "", "assert_expected": "" }}, {{ "tool": "ASANA_GET_A_TASK", "params": "{{\"id\": \"[var:ticket_id]\"}}", "assign_to_var": "", "assert_field": "status", "assert_expected": "Done" }} ] }}, "status": "active" }}
-Provide your final output as *only* the new `DatasetExample` Pydantic object, matching the schema.
+**3-PHASE TEST STRUCTURE:**
+
+**Phase 1: PROVISION (provision_actions)** - Create test data
+- Create PRs, labels, tasks, etc.
+- Assign resources to variables
+- NO assertions in this phase
+
+**Phase 2: INVOKE (input_message)** - Agent is invoked automatically
+- Human-readable scenario describing what needs to be done
+- Example: "A PR was merged that mentions Asana tickets, but one of its labels was deleted. Please sync."
+
+**Phase 3: ASSERT (assert_actions)** - Verify final state
+- Check if resources were updated correctly
+- Use assertions (assert_field + assert_expected)
+- Verify observable state changes
+
+**MATHEMATICAL GUARANTEE**: 
+- Phase 1 MUST create everything Phase 2's scenario requires
+- Phase 3 MUST verify observable changes (not just "did agent call tool X")
+- NEVER assume existing data - create it!
+
+**Example (3-phase testing):**
+{{
+  "reasoning": "Tests handling of deleted GitHub labels in PR-Asana sync",
+  "input_message": "A PR was merged that mentions Asana tickets, but one of its labels was deleted. Please sync the Asana tasks.",
+  "expected_output": {{
+    "provision_actions": [
+      {{
+        "tool": "GITHUB_CREATE_PULL_REQUEST",
+        "params": "{{\\"title\\": \\"Fix bug\\", \\"base\\": \\"main\\", \\"head\\": \\"bugfix\\", \\"body\\": \\"Fixes ASANA-123\\", \\"owner\\": \\"[resource:github_owner]\\", \\"repo\\": \\"[resource:github_repo]\\"}}",
+        "assign_to_var": "test_pr",
+        "assert_field": "",
+        "assert_expected": ""
+      }},
+      {{
+        "tool": "GITHUB_ADD_LABELS_TO_AN_ISSUE",
+        "params": "{{\\"owner\\": \\"[resource:github_owner]\\", \\"repo\\": \\"[resource:github_repo]\\", \\"issue_number\\": \\"[var:test_pr.number]\\", \\"labels\\": [\\"bug\\"]}}",
+        "assign_to_var": "",
+        "assert_field": "",
+        "assert_expected": ""
+      }},
+      {{
+        "tool": "ASANA_CREATE_TASK",
+        "params": "{{\\"name\\": \\"ASANA-123\\", \\"workspace_gid\\": \\"[resource:asana_workspace]\\"}}",
+        "assign_to_var": "asana_task",
+        "assert_field": "",
+        "assert_expected": ""
+      }}
+    ],
+    "assert_actions": [
+      {{
+        "tool": "ASANA_GET_TASK",
+        "params": "{{\\"task_gid\\": \\"[var:asana_task.gid]\\"}}",
+        "assign_to_var": "",
+        "assert_field": "completed",
+        "assert_expected": "true"
+      }}
+    ]
+  }}
+}}
 """
 
 
 
-MUTATION_PROMPT = """### PROMPT: TEST_CASE_MUTATOR (EVAL_AGENT) ###
-You are an adversarial "Test Case Mutator."
-The target agent *passed* this test, which is a *failure* for you. You MUST create a harder test.
+MUTATION_PROMPT = """The agent PASSED this test - make it harder.
 
-**Parent Test (Passed):**
+**Parent Test:**
 {parent_test_json}
 
-**Past Reflections (Agent Weaknesses):**
+**Known Agent Weaknesses:**
 {reflections_text}
 
-**Your Task:**
-Create one new `DatasetExample` that is a *harder, mutated* version of this parent.
-You MUST use the following Chain of Thought:
-
-**Chain of Thought (MANDATORY):**
-1.  **Analyze Parent:** What simple action sequence does the parent test? (e.g., 'create task, create PR, check status')
-2.  **Brainstorm Mutations:** Brainstorm 3 *different* ways to mutate the parent's action list to make it harder.
-    * **Genetic Operators:** `add_noise` (add extra irrelevant actions), `add_edge_case` (use empty strings, special characters), `change_order` (trigger actions in an unexpected order), `add_delay` (add extra `wait` steps).
-3.  **Select Best Mutation:** Which of your 3 ideas is *most likely* to cause a sophisticated sync agent to fail?
+Mutate the parent test to exploit weaknesses. Add edge cases, delays, or unexpected sequences.
 """ + COMMON_INSTRUCIONS
 
-CROSSOVER_PROMPT = """### PROMPT: TEST_CASE_BREEDER (EVAL_AGENT) ###
-You are an adversarial "Test Case Breeder."
-You will be given two "fit" parent test cases that each *found a bug*.
-Your job is to create one new, "hybrid" test case that combines the "genetic material" (the failure modes) of *both* parents.
+CROSSOVER_PROMPT = """Both parents found bugs - combine their failure modes.
 
-**Parent 1 (Fit):**
+**Parent 1:**
 {parent_1_json}
 
-**Parent 2 (Fit):**
+**Parent 2:**
 {parent_2_json}
 
-**Past Reflections (Agent Weaknesses):**
+**Known Agent Weaknesses:**
 {reflections_text}
 
-**Your Task:**
-Create one new `DatasetExample` that is a *complex, hybrid* of both parents.
-You MUST use the following Chain of Thought:
-
-**Chain of Thought (MANDATORY):**
-1.  **Analyze Parents:** What failure mode did Parent 1 find? (e.g., 'failed on `KeyError`'). What failure mode did Parent 2 find? (e.g., 'failed on `ZeroDivisionError`').
-2.  **Brainstorm Hybrids:** Brainstorm 2 ways to create a *single piece of buggy code* that could suffer from *both* failure modes (e.g., a function that accesses a dict *and* performs division).
-3.  **Select Best Hybrid:** Which of your 2 ideas is the *most complex* and difficult test?
+Create a hybrid test that combines both parents' attack vectors.
 """ + COMMON_INSTRUCIONS
 
-NEW_TEST_PROMPT = """### PROMPT: NEW_TEST_GENERATOR (EVAL_AGENT) ###
-You are an adversarial QA analyst. Your goal is to brainstorm *one* novel test case.
+NEW_TEST_PROMPT = """Create a novel, complex test to make the agent fail.
 
-**Raw request:**
+**Goal:**
 {raw_request}
 
-**Past Reflections (Agent Weaknesses):**
+**Known Weaknesses:**
 {reflections_text}
 
-**Recently Run Tests (Do Not Repeat These):**
+**Don't Repeat:**
 {prev_dataset_examples}
 
-**Your Task:**
-Create one new, creative, and *hard* `DatasetExample`.
-**Your primary goal is to make the agent fail.**
-DO NOT CREATE SIMPLE TESTS!
-You MUST use the following Chain of Thought:
-
-**Chain of Thought (MANDATORY):**
-1.  **Analyze Weaknesses:** Based on "Past Reflections," what is the agent's *biggest* known weakness? (If no reflections, focus on the "Raw request").
-2.  **Brainstorm New Attack:** Brainstorm 3 *new, different, and complex* test scenarios.
-    * **Adversarial Techniques:** - `state_change_race`: Update the *same* resource on two systems at once and see if the agent gets confused or creates a loop.
-        - `invalid_data`: Create a PR that links to a *deleted* Asana task.
-        - `permission_error`: (Simulated) Create a resource and then make it read-only.
-        - `rapid_updates`: Update a PR title 5 times in 5 seconds. Does it spam Asana?
-        - `out_of_order`: Comment on a PR *before* linking it to a task.
-3.  **Select Best Attack:** - Which of your 3 ideas **combines at least two** adversarial techniques (e.g., `nest` + `add_error_condition`) and is *most likely to cause a failure*? 
-    - This attack MUST NOT be in "Recently Run Tests".
+Attack vectors: race conditions, invalid data, rapid updates, edge cases.
 """ + COMMON_INSTRUCIONS
 
 
-
+def _create_constrained_schema_genetic(available_tool_names: List[str], tool_entries: Dict[str, Any]):
+    """
+    Create dynamic schemas with individual models for each tool.
+    
+    This generates a separate Pydantic model for each tool with its actual parameters
+    as direct fields (not nested under 'params'). This allows OpenAI's strict mode
+    to work properly while preventing tool hallucinations.
+    """
+    from typing import Literal, Union
+    from pydantic import create_model
+    
+    # Add system.wait to valid tools
+    all_tools = available_tool_names + ["system.wait"]
+    
+    # Create individual model for each tool
+    tool_models = []
+    
+    for tool_name in all_tools:
+        if tool_name == "system.wait":
+            # Special case for system.wait
+            tool_model = create_model(
+                f"Action_{tool_name.replace('.', '_').replace('-', '_')}",
+                __config__=ConfigDict(extra="forbid"),
+                tool=(Literal[tool_name], Field(description=f"Tool name: {tool_name}")),
+                seconds=(int, Field(description="Number of seconds to wait")),
+                assign_to_var=(str, Field(default="", description="Variable name (or empty)")),
+                assert_field=(str, Field(default="", description="Field to check (or empty)")),
+                assert_expected=(str, Field(default="", description="Expected value (or empty)")),
+            )
+            tool_models.append(tool_model)
+            continue
+        
+        # Get tool schema from entries
+        tool_entry = tool_entries.get(tool_name.lower())
+        if not tool_entry or not tool_entry.pydantic_schema:
+            logger.warning("No schema found for tool %s, skipping", tool_name)
+            continue
+        
+        schema = tool_entry.pydantic_schema
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        
+        # Build field definitions for this tool
+        field_defs = {
+            "tool": (Literal[tool_name], Field(description=f"Tool name: {tool_name}")),
+            "assign_to_var": (str, Field(default="", description="Variable name (or empty)")),
+            "assert_field": (str, Field(default="", description="Field to check (or empty)")),
+            "assert_expected": (str, Field(default="", description="Expected value (or empty)")),
+        }
+        
+        # Add each parameter as a direct field
+        for param_name, param_schema in properties.items():
+            param_type = param_schema.get("type", "string")
+            param_desc = param_schema.get("description", "")
+            is_required = param_name in required
+            
+            # Map JSON schema types to Python types
+            # Note: For strict mode, we must avoid Any in arrays/dicts where possible
+            if param_type == "string":
+                py_type = str
+            elif param_type == "integer":
+                py_type = int
+            elif param_type == "number":
+                py_type = float
+            elif param_type == "boolean":
+                py_type = bool
+            elif param_type == "array":
+                # Check if items schema specifies a type
+                items_schema = param_schema.get("items", {})
+                items_type = items_schema.get("type")
+                
+                if items_type == "string":
+                    py_type = List[str]
+                elif items_type == "integer":
+                    py_type = List[int]
+                elif items_type == "object":
+                    py_type = List[Dict[str, Any]]
+                else:
+                    # Fallback: use List[str] as safest default for strict mode
+                    # This works for most Asana/GitHub params which are string arrays
+                    py_type = List[str]
+            elif param_type == "object":
+                # Dict type
+                py_type = Dict[str, str]  # Safer default for strict mode
+            else:
+                # Fallback to string for unknown types (strict mode compatible)
+                py_type = str
+            
+            # Create field with or without default
+            if is_required:
+                field_defs[param_name] = (py_type, Field(description=param_desc))
+            else:
+                field_defs[param_name] = (Optional[py_type], Field(default=None, description=param_desc))
+        
+        # Create the model dynamically
+        model_name = f"Action_{tool_name.replace('.', '_').replace('-', '_')}"
+        tool_model = create_model(
+            model_name,
+            __config__=ConfigDict(extra="forbid"),
+            **field_defs
+        )
+        tool_models.append(tool_model)
+    
+    # Create Union of all tool models
+    if len(tool_models) == 0:
+        raise ValueError("No valid tool models created")
+    elif len(tool_models) == 1:
+        ConstrainedActionStep = tool_models[0]
+    else:
+        ConstrainedActionStep = Union[tuple(tool_models)]  # type: ignore
+    
+    # Create constrained ExpectedOutput
+    class ConstrainedExpectedOutput(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        
+        provision_actions: Optional[List[ConstrainedActionStep]] = Field(
+            None,
+            description="Phase 1: Actions to create test data"
+        )
+        expected_actions: Optional[List[ConstrainedActionStep]] = Field(
+            None,
+            description="Phase 2: Expected tool calls the agent should make"
+        )
+        assert_actions: List[ConstrainedActionStep] = Field(
+            ...,
+            description="Phase 3: Actions to verify final state - REQUIRED"
+        )
+    
+    # Create constrained DatasetExample
+    class ConstrainedDatasetExample(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        
+        example_id: str = Field(
+            default="",
+            description="Leave empty - will be auto-generated"
+        )
+        reasoning: str = Field(
+            ...,
+            description="Why is this test important? What will it test?"
+        )
+        input_message: str = Field(
+            ...,
+            description="Input message for the agent"
+        )
+        expected_output: ConstrainedExpectedOutput = Field(...)
+        status: str = Field(default="active")
+    
+    # Create constrained output wrapper (single example for genetic)
+    class ConstrainedTestGenerationOutput(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        dataset_example: ConstrainedDatasetExample = Field(...)
+    
+    return ConstrainedTestGenerationOutput
 
 
 async def genetic_eval_generation(state: EvalAgentPlannerState) -> dict:
+    logger.info("Starting genetic test generation with constrained tool names")
+
+    tool_names = list(dict.fromkeys(state.available_tools or [])) + ["system.wait"]
     
-    logger.info("plan.test-llm: Starting 'genetic' (structured prompt) test generation...")
-
-    available_tools = state.available_tools
-    reflections_text = state.reflections_text
-    agent_name = state.context.github_context.agent_name
-    user_id = state.context.user_context.user_id
-    raw_request = state.context.user_context.raw_request
+    # Create constrained schema that prevents tool hallucinations
+    # Each tool gets its own Pydantic model with exact parameters
+    ConstrainedOutput = _create_constrained_schema_genetic(state.available_tools or [], state.tool_entries)
+    
+    # Setup LLM with constrained schema
+    # Use STRICT MODE now that we have proper flat schemas for each tool
+    llm = ChatOpenAI(
+        model="gpt-5-codex",
+        use_responses_api=True,
+        output_version="responses/v1",
+        reasoning={"effort": "low"},
+    ).with_structured_output(ConstrainedOutput, method="json_schema", strict=True)
+    
+    formatted_schemas = format_tool_schemas_for_llm(state.tool_entries, tool_names)
     resource_hints = format_resource_hints(state.context.mcp_resources)
-    previous_inputs = [res.dataset_example.input_message for res in state.latest_results]
-    prev_dataset_examples = json.dumps(previous_inputs, indent=2)
-
-    # Use a smart, critical LLM for this
-    _smart_llm = ChatOpenAI(
-            model="gpt-5-codex",
-            use_responses_api=True,            
-            output_version="responses/v1",     
-            reasoning={"effort": "low"},
-        )
-    test_generation_llm = _smart_llm.with_structured_output(TestGenerationOutput)
-
+    
+    prev_inputs = [r.dataset_example.input_message for r in state.latest_results]
+    
     new_generation: List[DatasetExample] = []
     
-    # Format tool schemas with all parameters and required fields
-    tool_names = list(dict.fromkeys(available_tools or []))
-    lower_names = {name.lower() for name in tool_names}
-    if "system.wait" not in lower_names:
-        tool_names.append("system.wait")
-    
-    # Use shared formatter to show schemas with required params
-    tool_entries = state.tool_entries
-    formatted_schemas = format_tool_schemas_for_llm(tool_entries, tool_names)
-
-    # --- Define our new "Genetic Operator" functions ---
-    
-    async def get_parent(passed: bool, k: int = 1) -> List[dict]:
-        """Helper to get a parent test from Neo4j."""
-        # Find an active test, that was run, and had the desired pass/fail outcome
-        cypher_query = """
-        MATCH (ex:DatasetExample {user_id: $user_id, agent_name: $agent_name, status: 'active'})
-        MATCH (ex)-[:WAS_RUN_IN]->(res:ExperimentResult {passed: $passed})
-        RETURN ex.reasoning as reasoning, ex.input_message as input_message, ex.expected_output as expected_output, ex.example_id as example_id, ex.status as status
-        LIMIT $k
-        """
+    async def get_parents(passed: bool, k: int = 1) -> List[dict]:
+        """Get parent tests from Neo4j."""
         result = await asyncio.to_thread(
             NEO4J_GRAPH.query,
-            cypher_query,
-            params={"user_id": user_id, "agent_name": agent_name, "passed": passed, "k": k}
+            """
+            MATCH (ex:DatasetExample {user_id: $user_id, agent_name: $agent_name, status: 'active'})
+            MATCH (ex)-[:WAS_RUN_IN]->(res:ExperimentResult {passed: $passed})
+            RETURN ex.reasoning as reasoning, ex.input_message as input_message, 
+                   ex.expected_output as expected_output, ex.example_id as example_id
+            LIMIT $k
+            """,
+            params={
+                "user_id": state.context.user_context.user_id,
+                "agent_name": state.context.github_context.agent_name,
+                "passed": passed,
+                "k": k
+            }
         )
-        # MODIFIED: Parse the expected_output from string back to dict
-        parsed_results = []
+        parsed = []
         for r in result:
-            r_dict = dict(r)
             try:
-                # expected_output is stored as a JSON string in Neo4j
-                # It should contain '{"actions": [...] }'
+                r_dict = dict(r)
                 r_dict['expected_output'] = json.loads(r_dict['expected_output'])
+                parsed.append(r_dict)
             except Exception:
-                logger.warning(f"Could not parse expected_output for parent test {r_dict.get('example_id')}")
                 continue
-            parsed_results.append(r_dict)
-        return parsed_results
+        return parsed
 
-    async def run_crossover(parents: List[dict]):
-        """Run the Crossover prompt"""
-        logger.info("plan.test-llm: Running Crossover...")
-        prompt = CROSSOVER_PROMPT.format(
-            parent_1_json=json.dumps(parents[0], indent=2),
-            parent_2_json=json.dumps(parents[1], indent=2),
-            reflections_text=reflections_text,
+    async def generate(prompt_template: str, **kwargs):
+        """Generate a test from a prompt."""
+        prompt = prompt_template.format(
             formatted_tool_schemas=formatted_schemas,
             resource_hints=resource_hints,
+            reflections_text=state.reflections_text,
+            **kwargs
         )
-        output = await test_generation_llm.ainvoke(prompt)
-        new_generation.append(output.dataset_example)
+        output = await llm.ainvoke(prompt)
+        
+        # Convert constrained model back to regular DatasetExample
+        example_dict = output.dataset_example.model_dump()
+        
+        # Convert flat tool parameters to nested params structure
+        # LLM returns: {"tool": "X", "owner": "...", "repo": "...", "assign_to_var": "..."}
+        # We need: {"tool": "X", "params": "{\"owner\": \"...\", \"repo\": \"...\"}", "assign_to_var": "..."}
+        def convert_to_nested_params(actions_list):
+            if not actions_list:
+                return actions_list
+            
+            converted = []
+            for action in actions_list:
+                # Extract tool and metadata fields
+                tool = action.get('tool', '')
+                assign_to_var = action.get('assign_to_var', '')
+                assert_field = action.get('assert_field', '')
+                assert_expected = action.get('assert_expected', '')
+                
+                # Extract all other fields as params
+                params = {}
+                for key, value in action.items():
+                    if key not in ['tool', 'assign_to_var', 'assert_field', 'assert_expected']:
+                        # Only include non-None values
+                        if value is not None:
+                            params[key] = value
+                
+                # Build new action structure
+                converted_action = {
+                    'tool': tool,
+                    'params': json.dumps(params),  # Serialize params dict to JSON string
+                    'assign_to_var': assign_to_var,
+                    'assert_field': assert_field,
+                    'assert_expected': assert_expected,
+                }
+                converted.append(converted_action)
+            
+            return converted
+        
+        if example_dict.get('expected_output'):
+            eo = example_dict['expected_output']
+            if eo.get('provision_actions'):
+                eo['provision_actions'] = convert_to_nested_params(eo['provision_actions'])
+            if eo.get('expected_actions'):
+                eo['expected_actions'] = convert_to_nested_params(eo['expected_actions'])
+            if eo.get('assert_actions'):
+                eo['assert_actions'] = convert_to_nested_params(eo['assert_actions'])
+        
+        example = DatasetExample(**example_dict)
+        new_generation.append(example)
 
-    async def run_mutation(parent: dict):
-        """Run the Mutation prompt"""
-        logger.info("plan.test-llm: Running Mutation...")
-        prompt = MUTATION_PROMPT.format(
-            parent_test_json=json.dumps(parent, indent=2),
-            reflections_text=reflections_text,
-            formatted_tool_schemas=formatted_schemas,
-            resource_hints=resource_hints,
-        )
-        output = await test_generation_llm.ainvoke(prompt)
-        new_generation.append(output.dataset_example)
-
-    async def run_new_test():
-        """Run the New Test prompt"""
-        logger.info("plan.test-llm: Running New Test generation...")
-        prompt = NEW_TEST_PROMPT.format(
-            raw_request=raw_request,
-            reflections_text=reflections_text,
-            prev_dataset_examples=prev_dataset_examples,
-            formatted_tool_schemas=formatted_schemas,
-            resource_hints=resource_hints,
-        )
-        output = await test_generation_llm.ainvoke(prompt)
-        new_generation.append(output.dataset_example)
- 
-    # --- Original logic ---
-    fit_parents = await get_parent(passed=False, k=2) # Get 2 FAILED tests
-    unfit_parents = await get_parent(passed=True, k=1) # Get 1 PASSED test
-    has_history = bool(fit_parents or unfit_parents)
+    # Get history
+    fit_parents = await get_parents(passed=False, k=2)
+    unfit_parents = await get_parents(passed=True, k=1)
     
-    # --- NEW: Determine how many tests to generate ---
-    # If there's no history, generate more tests to increase chance of a failure
-    logger.info(f"plan.test-llm: Generating {N_TEST_CASES} tests (has_history={has_history})")
+    # Generate tests
+    if len(fit_parents) == 2 and len(new_generation) < N_TEST_CASES:
+        await generate(CROSSOVER_PROMPT, parent_1_json=json.dumps(fit_parents[0]), 
+                      parent_2_json=json.dumps(fit_parents[1]))
     
-    # 1. Crossover (Exploitation)
-    if has_history and len(new_generation) < N_TEST_CASES:
-        if len(fit_parents) == 2:
-            await run_crossover(fit_parents)
-        else:
-            logger.warning("Could not find 2 'fit' (failed) parents for crossover. Skipping.")
-
-    # 2. Mutation (Exploitation)
-    if has_history and len(new_generation) < N_TEST_CASES:
-        if unfit_parents:
-            await run_mutation(unfit_parents[0])
-        else:
-            logger.warning("Could not find 1 'unfit' (passed) parent for mutation. Skipping.")
-
-    # 3. New Tests (Exploration)
-    # Fill the remaining slots with brand new tests
+    if unfit_parents and len(new_generation) < N_TEST_CASES:
+        await generate(MUTATION_PROMPT, parent_test_json=json.dumps(unfit_parents[0]))
+    
     while len(new_generation) < N_TEST_CASES:
-        await run_new_test()
+        await generate(NEW_TEST_PROMPT, raw_request=state.context.user_context.raw_request,
+                      prev_dataset_examples=json.dumps(prev_inputs))
 
-    # --- Assign final Example IDs ---
+    # Finalize
     for example in new_generation:
-        # Generate UUID if example_id is missing or empty
-        if not example.example_id or example.example_id == "":
+        if not example.example_id:
             example.example_id = str(uuid4())
         example.status = "active"
 
-    logger.info(
-        "plan.test-llm: Evolutionary generation complete. Produced %d tests.",
-        len(new_generation),
-    )
-    
-    return {
-        "dataset_examples": new_generation[:N_TEST_CASES],
-    }
+    logger.info("Generated %d tests", len(new_generation))
+    return {"dataset_examples": new_generation[:N_TEST_CASES]}

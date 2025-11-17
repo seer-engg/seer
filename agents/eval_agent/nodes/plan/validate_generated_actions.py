@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Dict, List
 
 from agents.eval_agent.models import EvalAgentPlannerState
@@ -9,10 +10,67 @@ from shared.tools import ToolEntry, build_tool_name_set, canonicalize_tool_name
 logger = get_logger("eval_agent.plan.validate_generated_actions")
 
 
+def _validate_action_list(
+    example_id: str,
+    phase_name: str,
+    actions: List,
+    valid_names: set,
+    name_map: Dict[str, str],
+    tool_entries: Dict[str, ToolEntry],
+    invalid: List[str]
+) -> None:
+    """Validate a list of actions from a specific phase."""
+    for idx, action in enumerate(actions):
+        canonical_tool = canonicalize_tool_name(action.tool)
+        action_label = f"{phase_name}[{idx}]"
+        
+        # Check tool exists
+        if canonical_tool not in valid_names:
+            invalid.append(f"{example_id} {action_label}: unknown tool {action.tool}")
+            continue
+        
+        if action.tool == "system.wait":
+            continue
+
+        # Parse params - try to repair if malformed
+        try:
+            params_dict = json.loads(action.params) if action.params else {}
+        except json.JSONDecodeError as e:
+            # Fail fast on invalid JSON - strict mode should prevent this
+            logger.error(
+                "Invalid JSON in %s %s: %s\nParams: %r",
+                example_id, action_label, str(e), action.params[:200]
+            )
+            invalid.append(f"{example_id} {action_label}: invalid JSON params")
+            continue
+
+        # Check for angle-bracket placeholders
+        for key, value in params_dict.items():
+            if isinstance(value, str) and re.match(r'^<[^>]+>$', value):
+                invalid.append(
+                    f"{example_id} {action_label}: invalid placeholder '{value}' in {key}. "
+                    f"Use [var:name] or [resource:name] syntax"
+                )
+
+        # Check required params
+        canonical_name = name_map.get(canonical_tool)
+        tool_entry = tool_entries.get(canonical_name)
+        
+        if tool_entry and tool_entry.pydantic_schema:
+            required = set(tool_entry.pydantic_schema.get('required', []))
+            provided = set(params_dict.keys())
+            missing = required - provided
+            
+            if missing:
+                invalid.append(
+                    f"{example_id} {action_label}: missing params {', '.join(missing)}"
+                )
+
+
 def _validate_generated_actions(
     examples: List[DatasetExample], tool_entries: Dict[str, ToolEntry]
 ) -> None:
-    """Ensure every generated action references a known tool."""
+    """Validate actions in NEW 3-phase format: provision_actions, expected_actions, assert_actions."""
 
     if not tool_entries:
         return
@@ -23,63 +81,38 @@ def _validate_generated_actions(
 
     invalid: List[str] = []
     for example in examples:
-        # ADDED: Handle cases where expected_output might be None
         if not example.expected_output:
-            invalid.append(
-                f"example={example.example_id or '<pending>'} has missing expected_output"
-            )
+            invalid.append(f"{example.example_id}: missing expected_output")
             continue
-        for idx, action in enumerate(example.expected_output.actions):
-            # Canonicalize the tool name for validation
-            canonical_tool = canonicalize_tool_name(action.tool)
-            if canonical_tool not in valid_names:
-                invalid.append(
-                    f"example={example.example_id or '<pending>'} action_index={idx} tool={action.tool}"
-                )
-            
-            if action.tool == "system.wait":
-                continue  # 'system.wait' is a special case with no params
-
-            # Now, let's get the tool's schema to check its parameters.
-            # I'm assuming 'name_map' maps all aliases to the canonical name.
-            canonical_name = name_map.get(canonical_tool)
-            
-            tool_entry = tool_entries.get(canonical_name)
-            
-            # If there's no entry or it has no schema, we can't validate its params.
-            # This follows the principle of Abstraction: if a tool doesn't publish
-            # its 'contract' (its schema), we can't enforce it.
-            if not tool_entry or not tool_entry.pydantic_schema:
-                continue # Can't validate params for this tool, so we skip it
-
-            schema = tool_entry.pydantic_schema
-            
-            # Extract required fields from JSON schema
-            required_fields = set(schema.get('required', []))
-
-            # Parse the params JSON string to get provided fields
-            try:
-                params_dict = json.loads(action.params) if action.params else {}
-                provided_fields = set(params_dict.keys())
-            except json.JSONDecodeError:
-                # If params is not valid JSON, consider it as having no fields
-                provided_fields = set()
-
-            # Now, check for any missing fields
-            missing_fields = required_fields - provided_fields
-            
-            if missing_fields:
-                invalid.append(
-                    f"example={example.example_id or '<pending>'} action_index={idx} tool={action.tool} (Missing required params: {', '.join(missing_fields)})"
-                )
+        
+        expected_output = example.expected_output
+        
+        # Validate provision_actions (Phase 1: create test data)
+        if expected_output.provision_actions:
+            _validate_action_list(
+                example.example_id, "provision_actions",
+                expected_output.provision_actions,
+                valid_names, name_map, tool_entries, invalid
+            )
+        
+        # Validate expected_actions (Phase 2: what agent should do - optional)
+        if expected_output.expected_actions:
+            _validate_action_list(
+                example.example_id, "expected_actions",
+                expected_output.expected_actions,
+                valid_names, name_map, tool_entries, invalid
+            )
+        
+        # Validate assert_actions (Phase 3: verify final state)
+        if expected_output.assert_actions:
+            _validate_action_list(
+                example.example_id, "assert_actions",
+                expected_output.assert_actions,
+                valid_names, name_map, tool_entries, invalid
+            )
 
     if invalid:
-        sample = ", ".join(list(name_map.values())[:20])
-        raise ValueError(
-            "Generated actions referenced unknown tools or had missing data. Details: "
-            + ", ".join(invalid)
-            + (f". Known tools include: {sample}" if sample else "")
-        )
+        raise ValueError("Validation failed:\n- " + "\n- ".join(invalid))
 
 
 

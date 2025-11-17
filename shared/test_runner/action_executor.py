@@ -76,11 +76,11 @@ async def execute_action_sequence(
             params_str = action.params or "{}"
             try:
                 params_dict = json.loads(params_str)
-            except json.JSONDecodeError:
-                logger.warning(
-                    f"{run_label}: Step {idx+1} has invalid JSON params {params_str}. Using empty dict."
-                )
-                params_dict = {}
+            except json.JSONDecodeError as e:
+                raise ValueError(
+                    f"{run_label}: Step {idx+1} has invalid JSON params: {params_str}. "
+                    f"JSON decode error: {str(e)}. Fix the test generation to produce valid JSON."
+                ) from e
             
             params = inject_variables(params_dict, variables, mcp_resources)
             params = sanitize_tool_params(tool_name, params, mcp_resources)
@@ -125,12 +125,21 @@ async def execute_action_sequence(
                 actual_value = get_field(output, action.assert_field)
                 expected_value_str = action.assert_expected
 
+                # Normalize None handling: None is represented as None, not empty string
+                # This ensures consistent comparison across different data sources
                 passed = False
                 try:
                     expected_as_json = json.loads(expected_value_str)
+                    # Direct comparison - None matches None, "" matches ""
                     passed = actual_value == expected_as_json
                 except json.JSONDecodeError:
-                    passed = str(actual_value) == expected_value_str
+                    # String comparison with special handling for None
+                    if actual_value is None:
+                        # None only matches "null" string or empty expected value  
+                        passed = expected_value_str.lower() == "null" or expected_value_str == ""
+                    else:
+                        # Normal string comparison
+                        passed = str(actual_value) == expected_value_str
 
                 if passed:
                     logger.info(
@@ -140,7 +149,8 @@ async def execute_action_sequence(
                         score=1.0, judge_reasoning="Assertion passed."
                     )
                 else:
-                    logger.warning(
+                    # Assertion failed - this is EXPECTED behavior for tests, not an error
+                    logger.info(
                         f"  > ASSERTION FAILED: Expected {action.assert_field} to be '{expected_value_str}', but got '{actual_value}'"
                     )
                     eval_result_obj = FailureAnalysis(
@@ -154,7 +164,10 @@ async def execute_action_sequence(
 
         else:
             if require_assertion:
-                logger.warning(f"{run_label}: Finished without an assertion step.")
+                raise ValueError(
+                    f"{run_label}: Action sequence finished without any assertion step. "
+                    f"Test must have at least one action with assert_field set to verify behavior."
+                )
                 eval_result_obj = FailureAnalysis(
                     score=0.0,
                     failure_type="completeness",

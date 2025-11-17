@@ -88,10 +88,37 @@ class ActionStep(BaseModel):
 
 class ExpectedOutput(BaseModel):
     """
-    The expected output of the target agent.
+    The expected output of the target agent using 3-phase testing.
+    
+    **Phase 1: PROVISION** - Create test data from scratch
+    **Phase 2: INVOKE** - Agent is invoked with input_message (handled by orchestrator)
+    **Phase 3: ASSERT** - Verify final state
     """
     model_config = ConfigDict(extra="forbid")
-    actions: List[ActionStep] = Field(..., description="A list of action steps to execute for the test.")
+    
+    provision_actions: Optional[List[ActionStep]] = Field(
+        None,
+        description="Phase 1: Actions to create test data (PRs, labels, tasks, etc.). These run BEFORE invoking the agent."
+    )
+    expected_actions: Optional[List[ActionStep]] = Field(
+        None, 
+        description="Phase 2: Expected tool calls the agent SHOULD make (optional, for comparison). Not executed directly."
+    )
+    assert_actions: List[ActionStep] = Field(
+        ...,
+        description="Phase 3: Actions to verify final state (e.g., check if Asana task was updated). These run AFTER agent invocation. REQUIRED."
+    )
+    
+    @model_validator(mode="after")
+    def validate_format(self) -> "ExpectedOutput":
+        """Ensure assert_actions is non-empty."""
+        if not self.assert_actions:
+            raise ValueError(
+                "assert_actions is required and must contain at least one action to verify final state. "
+                "provision_actions is optional if no test data needed."
+            )
+        
+        return self
 
 
 class DatasetExample(BaseModel):

@@ -67,13 +67,36 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     if not state.active_experiment:
         raise RuntimeError("Active experiment missing before executing tests")
 
+    # Enrich mcp_resources with github_owner and github_repo for test execution
+    # This ensures tests can reference [resource:github_owner] and [resource:github_repo]
+    enriched_resources = dict(state.context.mcp_resources or {})
+    
+    if state.context.github_context and state.context.github_context.repo_url:
+        from shared.parameter_population import extract_all_context_variables
+        
+        # Extract context variables including github_owner and github_repo
+        context_vars = extract_all_context_variables(
+            user_context=state.context.user_context,
+            github_context=state.context.github_context,
+            mcp_resources=enriched_resources,
+        )
+        
+        # Add github_owner and github_repo as resources if they were extracted
+        if 'github_owner' in context_vars:
+            enriched_resources['github_owner'] = {'id': context_vars['github_owner']}
+            logger.info(f"Added github_owner to mcp_resources: {context_vars['github_owner']}")
+        
+        if 'github_repo' in context_vars:
+            enriched_resources['github_repo'] = {'id': context_vars['github_repo']}
+            logger.info(f"Added github_repo to mcp_resources: {context_vars['github_repo']}")
+
     # Call new run_tests with MCP context
     results: List[ExperimentResultContext] = await run_tests(
         dataset_examples=state.dataset_examples, 
         sandbox_context=state.context.sandbox_context, 
         github_context=state.context.github_context,
         mcp_services=state.context.mcp_services,
-        mcp_resources=state.context.mcp_resources
+        mcp_resources=enriched_resources
     )
     
     cypher_params = []
@@ -89,9 +112,8 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
         result_node_props['passed'] = res.passed  # Add the computed 'passed' bool
 
         example_node_props = res.dataset_example.model_dump(exclude={'expected_output'})
-        # Convert the list of ActionStep objects to a list of dicts before serializing
-        actions_as_dicts = [action.model_dump() for action in res.dataset_example.expected_output.actions]
-        example_node_props['expected_output'] = json.dumps(actions_as_dicts)
+        # Serialize the entire expected_output (3-phase format: provision, expected, assert actions)
+        example_node_props['expected_output'] = json.dumps(res.dataset_example.expected_output.model_dump())
         
         cypher_params.append({
             "example": example_node_props,
@@ -177,7 +199,7 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
             "row_id": res.dataset_example.example_id,
             "thread_id": res.dataset_example.example_id,
             "inputs": {"question": res.dataset_example.input_message},
-            "expected_outputs": {"answer": json.dumps([action.model_dump() for action in res.dataset_example.expected_output.actions])},
+            "expected_outputs": {"answer": json.dumps(res.dataset_example.expected_output.model_dump())},
             "actual_outputs": {"answer": res.actual_output},
             "evaluation_scores": [
                 {

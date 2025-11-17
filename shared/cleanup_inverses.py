@@ -12,7 +12,7 @@ Experiment validation (2025-11-16):
 import json
 from typing import Dict, Any, Optional, List
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 from shared.schema import ActionStep
 from shared.tools import canonicalize_tool_name
@@ -28,14 +28,19 @@ _inverse_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 
 
 class InverseMapping(BaseModel):
-    """LLM response for inverse action mapping."""
+    """
+    LLM response for inverse action mapping.
+    
+    NOTE: All fields are REQUIRED for OpenAI strict mode compatibility.
+    Use null for delete_tool if no cleanup needed, empty string for param_mapping if not applicable.
+    """
+    model_config = ConfigDict(extra="forbid")
+    
     delete_tool: Optional[str] = Field(
-        default=None,
         description="The tool that deletes this resource, or null if no cleanup needed"
     )
-    param_mapping: Dict[str, str] = Field(
-        default_factory=dict,
-        description="Map of output fields to input params (e.g., {'gid': 'project_gid'})"
+    param_mapping: str = Field(
+        description="JSON string mapping output fields to input params (e.g., '{\"gid\": \"project_gid\"}'). Use empty string '' if not applicable."
     )
     reasoning: str = Field(
         description="Why these are inverses (for logging/debugging)"
@@ -94,10 +99,17 @@ async def create_inverse_action(
     )
     
     # Cache the result (even if None)
+    # Parse param_mapping from JSON string
+    try:
+        param_mapping_dict = json.loads(inverse_mapping.param_mapping) if inverse_mapping.param_mapping else {}
+    except json.JSONDecodeError:
+        logger.warning("Invalid JSON in param_mapping for %s: %r", original.tool, inverse_mapping.param_mapping)
+        param_mapping_dict = {}
+    
     _inverse_cache[canonical_name] = (
         {
             "delete_tool": inverse_mapping.delete_tool,
-            "param_mapping": inverse_mapping.param_mapping,
+            "param_mapping": param_mapping_dict,
             "reasoning": inverse_mapping.reasoning
         }
         if inverse_mapping.delete_tool
@@ -147,7 +159,7 @@ AVAILABLE DELETE TOOLS:
 
 TASK:
 1. Identify which DELETE tool removes the resource created by {create_tool}
-2. Map output fields to delete input parameters
+2. Map output fields to delete input parameters as a JSON string
 3. Provide reasoning
 
 RULES:
@@ -155,18 +167,27 @@ RULES:
 - DELETE tool should operate on same resource type as CREATE
 - Output fields like "gid", "id" typically map to "[resource]_gid" or "id" in delete
 - Be conservative - only match if confident (>0.8)
-- If no inverse exists, set delete_tool to null
+- If no inverse exists, set delete_tool to null and param_mapping to ""
+
+FIELD REQUIREMENTS:
+- delete_tool: string or null (the DELETE tool name, or null if no cleanup needed)
+- param_mapping: JSON string (e.g., '{{"gid": "project_gid"}}' or "" if not applicable)
+- reasoning: string (why these are inverses or why no cleanup)
 
 EXAMPLES:
 - CREATE_ALLOCATION (outputs id) → DELETE_ALLOCATION (needs id)
+  param_mapping: '{{"id": "allocation_gid"}}'
 - CREATE_PROJECT (outputs gid) → DELETE_PROJECT (needs project_gid)
+  param_mapping: '{{"gid": "project_gid"}}'
 - CREATE_COMMENT → null (comments typically aren't deleted)
+  param_mapping: ""
 
 Return InverseMapping JSON."""
     
-    # Use function_calling method instead of strict mode
-    # Strict mode has additional schema requirements that are incompatible with optional fields
-    structured_llm = llm.with_structured_output(InverseMapping, method="function_calling")
+    # Use strict mode for reliable structured output
+    # Changed param_mapping from Dict[str, str] to str (JSON string) because
+    # Dict types create nested additionalProperties which conflicts with strict mode
+    structured_llm = llm.with_structured_output(InverseMapping, method="json_schema", strict=True)
     return await structured_llm.ainvoke(prompt)
 
 
