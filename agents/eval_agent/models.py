@@ -11,6 +11,7 @@ from shared.schema import (
     DatasetContext,
     ExperimentContext,
     ExperimentResultContext,
+    FailureAnalysis,
     CodexOutput,
     ActionStep,
 )
@@ -119,6 +120,31 @@ class TestGenerationOutput(BaseModel):
     dataset_example: DatasetExample
 
 
+# -----------------------------------------------------------------------------
+# Subgraph state for per-example test execution
+# -----------------------------------------------------------------------------
+class TestExecutionState(BaseModel):
+    """State for executing a single DatasetExample through provision → invoke → assert."""
+    # Shared context
+    context: AgentContext = Field(default_factory=AgentContext, description="Shared agent context")
+    # The single test case being executed
+    dataset_example: DatasetExample = Field(..., description="Dataset example to execute")
+    # Working resources and cleanup
+    mcp_resources: Dict[str, Any] = Field(default_factory=dict, description="Working MCP resources for this test")
+    cleanup_stack: List[ActionStep] = Field(default_factory=list, description="Cleanup actions collected during execution (LIFO)")
+    # Invocation outputs
+    thread_id: Optional[str] = Field(default=None, description="Thread ID from target agent invocation")
+    agent_output: str = Field(default="", description="Final text output from the target agent invocation")
+    # Assertion/evaluation
+    analysis: Optional[FailureAnalysis] = Field(default=None, description="Evaluation analysis from assertion phase")
+    # Final result object
+    result: Optional[ExperimentResultContext] = Field(default=None, description="Final experiment result context for this example")
+    # Timestamps (set by subgraph)
+    started_at: Optional[datetime] = Field(default=None, description="Start time of this example execution")
+    completed_at: Optional[datetime] = Field(default=None, description="End time of this example execution")
+
+
 # Rebuild models to resolve forward references
 EvalAgentState.model_rebuild()
 EvalAgentPlannerState.model_rebuild()
+TestExecutionState.model_rebuild()

@@ -4,7 +4,6 @@ from e2b import AsyncSandbox
 
 from agents.codex.state import CodexState
 from shared.logger import get_logger
-from shared.test_runner import run_tests
 from shared.schema import ExperimentResultContext
 from sandbox import deploy_server_and_confirm_ready, TARGET_AGENT_PORT, kill_process_on_port
 from sandbox.constants import TARGET_AGENT_COMMAND
@@ -23,11 +22,13 @@ async def evaluator(state: CodexState) -> CodexState:
         timeout_s=50
     )
 
-    results: List[ExperimentResultContext] = await run_tests(
-        dataset_examples=state.dataset_examples,
-        sandbox_context=state.updated_sandbox_context,
-        github_context=state.context.github_context,
-    )
+    # TODO: implement evaluation mechanism here
+    # results: List[ExperimentResultContext] = await run_tests(
+    #     dataset_examples=state.dataset_examples,
+    #     sandbox_context=state.updated_sandbox_context,
+    #     github_context=state.context.github_context,
+    # )
+    results = []
 
     await kill_process_on_port(sbx, TARGET_AGENT_PORT)
 

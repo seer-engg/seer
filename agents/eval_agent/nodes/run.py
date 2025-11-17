@@ -12,11 +12,11 @@ from langchain_core.messages import ToolMessage
 from langgraph.graph import END, START, StateGraph
 
 from langgraph.pregel.remote import RemoteGraph
-from agents.eval_agent.models import EvalAgentState
+from agents.eval_agent.models import EvalAgentState, TestExecutionState
 from langgraph_sdk import get_sync_client
 from shared.logger import get_logger
 from shared.schema import ExperimentContext, ExperimentResultContext, FailureAnalysis
-from shared.test_runner import run_tests
+from agents.eval_agent.nodes.execute import build_test_execution_subgraph
 from graph_db import NEO4J_GRAPH
 
 logger = get_logger("eval_agent.run")
@@ -90,14 +90,26 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
             enriched_resources['github_repo'] = {'id': context_vars['github_repo']}
             logger.info(f"Added github_repo to mcp_resources: {context_vars['github_repo']}")
 
-    # Call new run_tests with MCP context
-    results: List[ExperimentResultContext] = await run_tests(
-        dataset_examples=state.dataset_examples, 
-        sandbox_context=state.context.sandbox_context, 
-        github_context=state.context.github_context,
-        mcp_services=state.context.mcp_services,
-        mcp_resources=enriched_resources
-    )
+    # Build test execution subgraph (provision → invoke → assert)
+    test_graph = build_test_execution_subgraph()
+    results: List[ExperimentResultContext] = []
+
+    # Execute each dataset example through the execution subgraph
+    for idx, example in enumerate(state.dataset_examples, start=1):
+        logger.info(f"Executing test {idx}/{len(state.dataset_examples)}: {example.example_id}")
+        initial = TestExecutionState(
+            context=state.context,
+            dataset_example=example,
+            mcp_resources=dict(enriched_resources),
+        )
+        final_state = await test_graph.ainvoke(initial)
+        # Support both dict and pydantic object returns
+        result_ctx = (
+            final_state.get("result") if isinstance(final_state, dict) else getattr(final_state, "result", None)
+        )
+        if not result_ctx:
+            raise RuntimeError(f"Test execution subgraph did not produce a result for {example.example_id}")
+        results.append(result_ctx)
     
     cypher_params = []
     for res in results:

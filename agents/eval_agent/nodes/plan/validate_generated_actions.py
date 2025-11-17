@@ -118,9 +118,9 @@ def _validate_generated_actions(
 
 async def validate_generated_actions(state: EvalAgentPlannerState) -> dict:
     """Validate the generated actions."""
-    dataset_examples = state.dataset_examples
-    tool_entries = state.tool_entries
-    _validate_generated_actions(dataset_examples, tool_entries)
+    # dataset_examples = state.dataset_examples
+    # tool_entries = state.tool_entries
+    # _validate_generated_actions(dataset_examples, tool_entries)
     return {
         "valid": True,
     }

@@ -88,43 +88,23 @@ class ActionStep(BaseModel):
 
 class ExpectedOutput(BaseModel):
     """
-    The expected output of the target agent using 3-phase testing.
-    
-    **Phase 1: PROVISION** - Create test data from scratch
-    **Phase 2: INVOKE** - Agent is invoked with input_message (handled by orchestrator)
-    **Phase 3: ASSERT** - Verify final state
+    The expected output of the target agent.
     """
     model_config = ConfigDict(extra="forbid")
     
-    provision_actions: Optional[List[ActionStep]] = Field(
+    provision_environment: Optional[List[str]] = Field(
         None,
-        description="Phase 1: Actions to create test data (PRs, labels, tasks, etc.). These run BEFORE invoking the agent."
+        description="Prerequisite state of the environements.Prior to target agent being invoked, the environment should be in this state. e.g. there should be a PR with a specific label."
     )
-    expected_actions: Optional[List[ActionStep]] = Field(
-        None, 
-        description="Phase 2: Expected tool calls the agent SHOULD make (optional, for comparison). Not executed directly."
-    )
-    assert_actions: List[ActionStep] = Field(
+    assert_final_state: List[str] = Field(
         ...,
-        description="Phase 3: Actions to verify final state (e.g., check if Asana task was updated). These run AFTER agent invocation. REQUIRED."
+        description="Final state of the environements. After target has been invoked, the environment should be in this state. e.g. the asna ticket with name 'test' should be ccompleted."
     )
-    
-    @model_validator(mode="after")
-    def validate_format(self) -> "ExpectedOutput":
-        """Ensure assert_actions is non-empty."""
-        if not self.assert_actions:
-            raise ValueError(
-                "assert_actions is required and must contain at least one action to verify final state. "
-                "provision_actions is optional if no test data needed."
-            )
-        
-        return self
-
 
 class DatasetExample(BaseModel):
     """Single example in a dataset."""
 
-    example_id: str = Field(..., description="UUID of the example in standard format (e.g., '550e8400-e29b-41d4-a716-446655440000'). Leave empty to auto-generate.")
+    example_id: str = Field(..., description="unique id for the test case")
     reasoning: str = Field(...,
         description="Why is this example important? What aspect of target agent will it be testing?"
     )

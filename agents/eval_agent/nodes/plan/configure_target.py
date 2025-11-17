@@ -16,6 +16,7 @@ async def configure_target_agent(state: EvalAgentPlannerState) -> dict:
     Configures the Target Agent by sending it the user's request
     and the MCP resource/config map.
     """
+    # WHY ? we are sending the MCP resources/configs to the target agent ?
     if not state.context.sandbox_context:
         raise ValueError("Sandbox context is missing, cannot configure agent.")
     
@@ -62,6 +63,7 @@ async def configure_target_agent(state: EvalAgentPlannerState) -> dict:
         )
         
         logger.info(f"Sending user request to TA thread {thread['thread_id']}...")
+        #why sending the user request ?
         await asyncio.to_thread(
             remote_graph.invoke,
             {"messages": [{"role": "user", "content": json.dumps(user_request_payload)}]},
