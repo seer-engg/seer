@@ -21,6 +21,7 @@ from langchain.agents.middleware import wrap_tool_call
 from langchain_core.messages import ToolMessage
 from shared.tools import canonicalize_tool_name
 from shared.llm import convert_response_v1_output_to_message_string
+from shared.tools import web_search
 
 
 @wrap_tool_call
@@ -93,7 +94,7 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
     )
     selected_tools = state.tool_selection_log.selected_tools
 
-    actual_tools = [tools_dict[canonicalize_tool_name(tool)] for tool in selected_tools]
+    actual_tools = [tools_dict[canonicalize_tool_name(tool)] for tool in selected_tools] + [web_search]
 
     assertion_agent = create_agent(
         model=llm,
