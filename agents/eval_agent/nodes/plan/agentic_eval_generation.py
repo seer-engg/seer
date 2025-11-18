@@ -24,18 +24,12 @@ class EvalGenerationOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-AGENTIC_GENERATOR_SYSTEM_PROMPT = """### PROMPT: TEST_CASE_GENERATOR_AGENT (EVAL_AGENT) ###
-You are an expert adversarial QA agent using **3-PHASE TESTING ARCHITECTURE**.
-
-**1. CONTEXT:**
-* **System Goal:** {system_goal_description}
-* **Agent Weaknesses (from past reflections):** {reflections_text}
-* **Recently Run Tests (Do Not Repeat):** {prev_dataset_examples}
-* **Available Resources:** {resource_hints}
+AGENTIC_GENERATOR_SYSTEM_PROMPT = """
+You are an expert adversarial QA agent. Your role is to design test cases for the target agent.
 
 
-**2. YOUR TASK:**
-Generate {n_tests} DatasetExample objects:
+** YOUR TASK:**
+your task is to generate DatasetExample objects for the target agent:
 
 # DatasetExample:
 - `example_id`: unique identifier for the test case
@@ -60,7 +54,18 @@ For each test case:
 
 **CRITICAL**: 
  - Tests MUST work on an EMPTY CANVAS. Create ALL test data from scratch
+ - The instructions in provision_environment and assert_final_state should be self sufficient. They will be consumed by individual agents who doesn't have access to any other information. So both provision_environment and assert_final_state should be detailed enough to be consumed by the agents.
+ - don't leave any room for ambiguity in the instructions for example don't say create a repo named 'test-repo' instead say create a repo named 'test-repo' in organization 'seer-engg'.
  - don't slack in writing down the provision_environment and assert_final_state. They are critical for the test to be valid.  write in detailed points for provision_environment and assert_final_state.
+"""
+
+USER_PROMPT = """
+Based on the context of the target agent, generate {n_tests} test cases for the target agent.
+** CONTEXT of Target Agent:**
+* **System Goal:** {system_goal_description}
+* **Agent Weaknesses (from past reflections):** {reflections_text}
+* **Recently Run Tests (Do Not Repeat):** {prev_dataset_examples}
+* **Available Resources:** {resource_hints}
 """
 
 
@@ -76,23 +81,22 @@ async def _invoke_agentic_llm(
     
     logger.info("plan.test-llm: Starting test generation for %d tests...", n_tests)    
     
-    system_prompt = AGENTIC_GENERATOR_SYSTEM_PROMPT.format(
-        n_tests=n_tests,
-        system_goal_description=raw_request,
-        reflections_text=reflections_text,
-        prev_dataset_examples=prev_dataset_examples,
-        resource_hints=resource_hints,
-    )
-
-    
     try:
         
         structured_llm = LLM.with_structured_output(EvalGenerationOutput, method="json_schema", strict=True)
+
+        user_prompt = USER_PROMPT.format(
+            n_tests=n_tests,
+            system_goal_description=raw_request,
+            reflections_text=reflections_text,
+            prev_dataset_examples=prev_dataset_examples,
+            resource_hints=resource_hints,
+        )
         
         # Single LLM call with system prompt + user message
         output: EvalGenerationOutput = await structured_llm.ainvoke([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=f"Please generate {n_tests} test cases.")
+            SystemMessage(content=AGENTIC_GENERATOR_SYSTEM_PROMPT),
+            HumanMessage(content=user_prompt)
         ])
         
         dataset_examples = []

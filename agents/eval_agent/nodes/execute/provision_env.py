@@ -52,18 +52,11 @@ You are a helpful assistant that provisions the environment for the target agent
     offset: Your pagination token is invalid.
 """
 USER_PROMPT = """
-Provision the environment for the target agent.
+Provision the environment for the target agent based on the instructions provided.
 
 Instructions:
 {instructions}
 
-Resources:
-{resources}
-
-Context:
-{context}
-
-github repo buggy-coder already exist in the organization seer-engg.
 """
 
 

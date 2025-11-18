@@ -46,13 +46,6 @@ SYSTEM_PROMPT = """
 You are a helpful assistant that asserts the final state of the environment for the target agent. based on the specified criterias. you will use all the tools available to you to assert the final state.
 """
 USER_PROMPT = """
-
-Resources:
-{resources}
-
-Context:
-{context}
-
 Assert the following criterias by using the tools available to you:
 {criterias}
 """
