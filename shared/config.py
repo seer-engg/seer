@@ -99,6 +99,10 @@ class SeerConfig(BaseSettings):
     
     langchain_mcp_url: str = Field(default="https://docs.langchain.com/mcp", description="LangChain MCP documentation URL")
     
+    # Composio configuration
+    composio_user_id: Optional[str] = Field(default=None, description="Composio user ID for tool access")
+    composio_api_key: Optional[str] = Field(default=None, description="Composio API key (if required)")
+    
     # ============================================================================
     # LangSmith Configuration
     # ============================================================================
@@ -201,6 +205,8 @@ TOOL_VECTOR_INDEX = config.tool_vector_index
 
 # MCP
 LANGCHAIN_MCP_URL = config.langchain_mcp_url
+COMPOSIO_USER_ID = config.composio_user_id
+COMPOSIO_API_KEY = config.composio_api_key
 
 # LangSmith
 LANGSMITH_API_URL = config.langsmith_api_url

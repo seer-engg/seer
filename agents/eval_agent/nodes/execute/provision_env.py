@@ -26,6 +26,7 @@ from langchain.agents.middleware import wrap_tool_call
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 from shared.tools import web_search
+from .utils import COMMMON_TOOL_INSTRUCTIONS
 
 
 
@@ -47,10 +48,7 @@ async def handle_tool_errors(request, handler):
 SYSTEM_PROMPT = """
 You are a helpful assistant that provisions the environment for the target agent. based on the instructions provided. you will use all the tools available to you to provision the environment.
 
-# Important:
-- Asana expects no offset parameter at all on the first page. Sending offset="" (empty string) is treated as an invalid pagination token, so Asana returns:
-    offset: Your pagination token is invalid.
-"""
+""" + COMMMON_TOOL_INSTRUCTIONS
 USER_PROMPT = """
 Provision the environment for the target agent based on the instructions provided.
 
@@ -88,12 +86,12 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
     formatted_context_vars = format_context_variables_for_llm(context_vars)
     resource_hints = format_resource_hints(state.mcp_resources)
 
-    actual_tools = [tools_dict[canonicalize_tool_name(tool)] for tool in selected_tools] + [web_search]
+    actual_tools = [tools_dict[canonicalize_tool_name(tool)] for tool in selected_tools]
     llm = ChatOpenAI(
         model="gpt-5",
         use_responses_api=True,
         output_version="responses/v1",
-        reasoning={"effort": "medium"},
+        # reasoning={"effort": "medium"},
     )
     provisioning_agent = create_agent(
         model=llm,

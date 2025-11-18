@@ -131,7 +131,7 @@ async def _initialize_langchain_tools():
 
 
 # This provides the LangChain tools to agents that need them by default
-LANGCHAIN_MCP_TOOLS = asyncio.run(_initialize_langchain_tools())
+# LANGCHAIN_MCP_TOOLS = asyncio.run(_initialize_langchain_tools())
 
 
 # ============================================================================
@@ -157,7 +157,7 @@ __all__ = [
     # General-purpose tools
     "web_search",
     "think",
-    "LANGCHAIN_MCP_TOOLS",
+    # "LANGCHAIN_MCP_TOOLS",
 ]
 
 

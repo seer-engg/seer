@@ -22,6 +22,7 @@ from langchain_core.messages import ToolMessage
 from shared.tools import canonicalize_tool_name
 from shared.llm import convert_response_v1_output_to_message_string
 from shared.tools import web_search
+from .utils import COMMMON_TOOL_INSTRUCTIONS
 
 
 @wrap_tool_call
@@ -44,7 +45,7 @@ logger = get_logger("eval_agent.execute.assert")
 
 SYSTEM_PROMPT = """
 You are a helpful assistant that asserts the final state of the environment for the target agent. based on the specified criterias. you will use all the tools available to you to assert the final state.
-"""
+""" + COMMMON_TOOL_INSTRUCTIONS
 USER_PROMPT = """
 Assert the following criterias by using the tools available to you:
 {criterias}
@@ -87,7 +88,7 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
     )
     selected_tools = state.tool_selection_log.selected_tools
 
-    actual_tools = [tools_dict[canonicalize_tool_name(tool)] for tool in selected_tools] + [web_search]
+    actual_tools = [tools_dict[canonicalize_tool_name(tool)] for tool in selected_tools]
 
     assertion_agent = create_agent(
         model=llm,

@@ -14,7 +14,7 @@ Usage:
     tools = tool_service.get_tools()
 """
 from typing import Dict, List, Optional
-from langchain_core.tools import BaseTool
+from langchain_core.tools import BaseTool, StructuredTool
 
 from shared.logger import get_logger
 from shared.mcp_client import get_mcp_tools
@@ -74,6 +74,7 @@ class ToolService:
             if not service:
                 continue
             service_tools = await get_mcp_tools([service])
+
             by_name = {t.name: t for t in service_tools}
 
             # Iterate only entries from this service to build canonical keys
