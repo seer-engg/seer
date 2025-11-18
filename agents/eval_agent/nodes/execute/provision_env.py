@@ -69,8 +69,7 @@ github repo buggy-coder already exist in the organization seer-engg.
 async def provision_environment_node(state: TestExecutionState) -> dict:
     """Plan and execute provisioning steps for the test example."""
     # Set start time if not set
-    if not state.started_at:
-        state.started_at = datetime.utcnow()
+    started_at = datetime.utcnow()
 
     example = state.dataset_example
     instructions: List[str] =  example.expected_output.provision_environment
@@ -95,7 +94,7 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
     formatted_context_vars = format_context_variables_for_llm(context_vars)
     resource_hints = format_resource_hints(state.mcp_resources)
 
-    actual_tools = [tools_dict[canonicalize_tool_name(tool)] for tool in selected_tools if tool != 'ASANA_DUPLICATE_PROJECT']
+    actual_tools = [tools_dict[canonicalize_tool_name(tool)] for tool in selected_tools]
     llm = ChatOpenAI(
         model="gpt-5",
         use_responses_api=True,
@@ -114,6 +113,7 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
 
     return {
         "mcp_resources": state.mcp_resources,
+        "started_at": started_at,
     }
 
 

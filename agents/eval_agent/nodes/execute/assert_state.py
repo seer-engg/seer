@@ -14,13 +14,13 @@ from shared.parameter_population import (
     extract_all_context_variables,
     format_context_variables_for_llm,
 )
-from shared.config import EVAL_PASS_THRESHOLD
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 
 from langchain.agents.middleware import wrap_tool_call
 from langchain_core.messages import ToolMessage
 from shared.tools import canonicalize_tool_name
+from shared.llm import convert_response_v1_output_to_message_string
 
 
 @wrap_tool_call
@@ -42,19 +42,18 @@ logger = get_logger("eval_agent.execute.assert")
 
 
 SYSTEM_PROMPT = """
-You are a helpful assistant that asserts the final state of the environment for the target agent. based on the instructions provided. you will use all the tools available to you to assert the final state.
+You are a helpful assistant that asserts the final state of the environment for the target agent. based on the specified criterias. you will use all the tools available to you to assert the final state.
 """
 USER_PROMPT = """
-Assert the final state of the environment for the target agent.
-
-Instructions:
-{instructions}
 
 Resources:
 {resources}
 
 Context:
 {context}
+
+Assert the following criterias by using the tools available to you:
+{criterias}
 """
 
 
@@ -67,7 +66,6 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
     # Initialize tools and tool entries
     tool_service = get_tool_service()
     await tool_service.initialize(state.context.mcp_services or [])
-    tool_entries = tool_service.get_tool_entries()
     tools_dict = await load_mcp_tools(state.context.mcp_services or [])
 
     # Prepare prompt context
@@ -95,41 +93,26 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
     )
     selected_tools = state.tool_selection_log.selected_tools
 
-    actual_tools = [tools_dict[canonicalize_tool_name(tool)] for tool in selected_tools if tool != 'ASANA_DUPLICATE_PROJECT']
+    actual_tools = [tools_dict[canonicalize_tool_name(tool)] for tool in selected_tools]
 
     assertion_agent = create_agent(
         model=llm,
         tools=actual_tools,
         system_prompt=SYSTEM_PROMPT,
-        response_format=FailureAnalysis,
+        # response_format=FailureAnalysis,
         middleware=[handle_tool_errors]
     )
 
-    user_prompt = HumanMessage(content=USER_PROMPT.format(instructions=instructions, resources=resource_hints, context=formatted_context_vars))
+    user_prompt = HumanMessage(content=USER_PROMPT.format(criterias=instructions, resources=resource_hints, context=formatted_context_vars))
 
     result = await assertion_agent.ainvoke(input={"messages": [user_prompt]})
-
-    failure_analysis: FailureAnalysis = result.get('structured_response')
-
-    # Set end time
     completed_at = datetime.utcnow()
-    started_at = state.started_at or completed_at
-
-    # Build final result object
-    result = ExperimentResultContext(
-        thread_id=(state.thread_id or f"unknown_{example.example_id}"),
-        dataset_example=example,
-        actual_output=(state.agent_output or ""),
-        analysis=failure_analysis,
-        passed=(failure_analysis.score >= EVAL_PASS_THRESHOLD),
-        started_at=started_at,
-        completed_at=completed_at,
-    )
+    assertion_output = await convert_response_v1_output_to_message_string(result)
+    
 
     return {
-        "analysis": failure_analysis,
+        "assertion_output": assertion_output,
         "completed_at": completed_at,
-        "result": result,
     }
 
 

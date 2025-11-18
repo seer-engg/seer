@@ -14,6 +14,7 @@ from shared.logger import get_logger
 from shared.tool_service import get_tool_service
 from shared.tools import canonicalize_tool_name
 from shared.test_runner.variable_injection import inject_variables
+from agents.eval_agent.nodes.run import _prepare_run_context, _execute_test_cases, _upload_run_results
 
 
 logger = get_logger("eval_agent.graph")
@@ -115,15 +116,20 @@ def build_graph():
     finalize_subgraph = build_finalize_subgraph()
 
     workflow.add_node("plan", plan_subgraph)
-    workflow.add_node("run", run_subgraph)
+    # workflow.add_node("run", run_subgraph)
+    workflow.add_node("pre_run", _prepare_run_context)
+    workflow.add_node("execute", _execute_test_cases)
+    workflow.add_node("upload", _upload_run_results)
     workflow.add_node("reflect", reflect_node)
     workflow.add_node("finalize", finalize_subgraph)
     workflow.add_node("update_state_from_handoff", update_state_from_handoff)
     workflow.add_node("cleanup", cleanup_environment) # ADDED
 
     workflow.add_edge(START, "plan")
-    workflow.add_edge("plan", "run")
-    workflow.add_edge("run", "reflect")
+    workflow.add_edge("plan", "pre_run")
+    workflow.add_edge("pre_run", "execute")
+    workflow.add_edge("execute", "upload")
+    workflow.add_edge("upload", "reflect")
     workflow.add_conditional_edges("reflect", should_continue, {
         "plan": "plan",
         "finalize": "finalize"

@@ -148,6 +148,8 @@ class TestExecutionState(BaseModel):
         description="The log of how MCP tools were selected for the current round."
     )
 
+    assertion_output:Optional[str] = Field(default=None, description="The output from the assertion agent")
+
 
 # Rebuild models to resolve forward references
 EvalAgentState.model_rebuild()
