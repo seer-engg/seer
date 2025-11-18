@@ -63,16 +63,30 @@ class ToolService:
         
         logger.info(f"Initializing MCP tools for services: {services}")
         
-        # Load tools from MCP client (uses caching internally)
-        mcp_tools = await get_mcp_tools(services)
-        
-        # Build tools dict keyed by canonical name
-        self._tools_dict = {
-            canonicalize_tool_name(t.name): t for t in mcp_tools
-        }
-        
-        # Load tool entries for metadata
+        # Load tool entries for metadata (service-qualified keys)
         self._tool_entries = await load_tool_entries(services)
+
+        # Build tools dict keyed by canonical name INCLUDING the service hint.
+        # Fetch tools per service to preserve origin and avoid name collisions.
+        tools_dict: Dict[str, BaseTool] = {}
+        for service in services:
+            service = (service or "").strip().lower()
+            if not service:
+                continue
+            service_tools = await get_mcp_tools([service])
+            by_name = {t.name: t for t in service_tools}
+
+            # Iterate only entries from this service to build canonical keys
+            for entry_key, entry in self._tool_entries.items():
+                if entry.service != service:
+                    continue
+                tool = by_name.get(entry.name)
+                if not tool:
+                    continue
+                canonical_key = canonicalize_tool_name(entry.name, service_hint=service)
+                tools_dict[canonical_key] = tool
+
+        self._tools_dict = tools_dict
         
         self._initialized_services = list(services)
         self._initialized = True
@@ -162,14 +176,6 @@ class ToolService:
         
         logger.info(f"Selected {len(selected_tools)} relevant tools for context")
         return selected_tools
-    
-    def is_initialized(self) -> bool:
-        """Check if service has been initialized."""
-        return self._initialized
-    
-    def get_initialized_services(self) -> List[str]:
-        """Get list of initialized service names."""
-        return list(self._initialized_services)
 
 
 # ============================================================================

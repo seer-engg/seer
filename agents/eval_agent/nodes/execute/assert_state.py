@@ -95,7 +95,7 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
     )
     selected_tools = state.tool_selection_log.selected_tools
 
-    actual_tools = [tools_dict[canonicalize_tool_name(tool)] for tool in selected_tools]
+    actual_tools = [tools_dict[canonicalize_tool_name(tool)] for tool in selected_tools if tool != 'ASANA_DUPLICATE_PROJECT']
 
     assertion_agent = create_agent(
         model=llm,

@@ -1,31 +1,24 @@
-from typing import List, Dict
-
 from agents.eval_agent.models import EvalAgentPlannerState, ToolSelectionLog
-from agents.eval_agent.reflection_store import graph_rag_retrieval
 from shared.logger import get_logger
-from shared.tool_service import get_tool_service
 from shared.tools import ToolEntry
+from typing import List, Dict
+from shared.tool_service import get_tool_service
 
-logger = get_logger("eval_agent.plan.get_reflections")
 
-async def get_reflections_and_tools(state: EvalAgentPlannerState) -> dict:
-    """Get the reflections for the test generation."""
-    # Get top 3 most relevant reflections + their evidence using GraphRAG
-    agent_name = state.context.github_context.agent_name
-    user_id = state.context.user_context.user_id
+logger = get_logger("eval_agent.plan.filter_tools")
 
-    reflections_text = await graph_rag_retrieval(
-        query="what previous tests failed and why?",
-        agent_name=agent_name,
-        user_id=user_id,
-        limit=3
-    )
+
+async def filter_tools(state: EvalAgentPlannerState) -> dict:
+    """Filter the tools for the test generation."""
+
     available_tools: List[str] = []
     tool_entries: Dict[str, ToolEntry] = {}
 
 
     # We'll initialize context_for_scoring here to ensure it's always defined
     context_for_scoring = ""
+    for example in state.dataset_examples:
+        context_for_scoring += ",".join(example.expected_output.provision_environment) + "\n" + ",".join(example.expected_output.assert_final_state)
 
     if state.context.mcp_services:
         try:
@@ -33,14 +26,10 @@ async def get_reflections_and_tools(state: EvalAgentPlannerState) -> dict:
             await tool_service.initialize(state.context.mcp_services)
             tool_entries = tool_service.get_tool_entries()
             
-            context_for_scoring = "\n".join( 
-                filter(None, [state.context.user_context.raw_request, reflections_text])
-            )
-            
             prioritized = await tool_service.select_relevant_tools(
                 context_for_scoring,
-                max_total=40,  # Increased from 20 to accommodate multiple services
-                max_per_service=20,  # Increased from 10 to ensure all relevant tools per service
+                max_total=20,  # Increased from 20 to accommodate multiple services
+                max_per_service=10,  # Increased from 10 to ensure all relevant tools per service
             )
             
             # Convert tools to names
@@ -62,11 +51,8 @@ async def get_reflections_and_tools(state: EvalAgentPlannerState) -> dict:
         selected_tools=available_tools
     )
 
-
     return {
-        "reflections_text": reflections_text,
         "available_tools": available_tools,
         "tool_selection_log": log_entry,
         "tool_entries": tool_entries,
-
     }

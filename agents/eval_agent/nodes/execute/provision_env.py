@@ -95,7 +95,7 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
     formatted_context_vars = format_context_variables_for_llm(context_vars)
     resource_hints = format_resource_hints(state.mcp_resources)
 
-    actual_tools = [tools_dict[canonicalize_tool_name(tool)] for tool in selected_tools]
+    actual_tools = [tools_dict[canonicalize_tool_name(tool)] for tool in selected_tools if tool != 'ASANA_DUPLICATE_PROJECT']
     llm = ChatOpenAI(
         model="gpt-5",
         use_responses_api=True,

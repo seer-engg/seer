@@ -10,6 +10,7 @@ from typing import Dict, List
 from shared.logger import get_logger
 from shared.tools.registry import ToolEntry
 from shared.tools.vector_store import sync_tools_to_vector_index, semantic_select_tools
+from shared.tools.normalizer import canonicalize_tool_name
 
 logger = get_logger("shared.tools.selector")
 
@@ -63,9 +64,12 @@ async def select_relevant_tools(
         service_buckets[entry.service].append((score, entry.name))
 
     prioritized: List[str] = []
-    for items in service_buckets.values():
+    for service, items in service_buckets.items():
         items.sort(key=lambda pair: (-pair[0], pair[1]))
-        limited = [name for score, name in items[:max_per_service]]
+        limited = [
+            canonicalize_tool_name(name, service_hint=service)
+            for score, name in items[:max_per_service]
+        ]
         prioritized.extend(limited)
         if len(prioritized) >= max_total:
             break

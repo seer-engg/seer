@@ -10,7 +10,6 @@ from agents.eval_agent.constants import N_TEST_CASES
 from agents.eval_agent.models import EvalAgentPlannerState
 
 from shared.resource_utils import format_resource_hints
-from shared.tools.schema_formatter import format_tool_schemas_for_llm
 from shared.logger import get_logger
 from shared.schema import DatasetExample
 
@@ -318,7 +317,8 @@ async def genetic_eval_generation(state: EvalAgentPlannerState) -> dict:
         reasoning={"effort": "low"},
     ).with_structured_output(ConstrainedOutput, method="json_schema", strict=True)
     
-    formatted_schemas = format_tool_schemas_for_llm(state.tool_entries, tool_names)
+    # TODO: Add make this simliar to the agentic_eval_generation.py
+    formatted_schemas = []
     resource_hints = format_resource_hints(state.context.mcp_resources)
     
     prev_inputs = [r.dataset_example.input_message for r in state.latest_results]

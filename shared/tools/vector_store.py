@@ -10,20 +10,13 @@ from langchain_openai import OpenAIEmbeddings
 from shared.logger import get_logger
 from shared.config import OPENAI_API_KEY
 from shared.tools.registry import ToolEntry
+from shared.tools.normalizer import canonicalize_tool_name
 
 logger = get_logger("shared.tools.vector_store")
 
 # Import graph_db with fallback
-try:
-    from graph_db import NEO4J_GRAPH, TOOL_NODE_LABEL, TOOL_EMBED_PROP, TOOL_VECTOR_INDEX
-    GRAPH_AVAILABLE = True
-except ImportError:
-    logger.warning("graph_db module not available, vector search will be disabled")
-    NEO4J_GRAPH = None
-    TOOL_NODE_LABEL = "MCPTool"
-    TOOL_EMBED_PROP = "embedding"
-    TOOL_VECTOR_INDEX = "mcp_tools_index"
-    GRAPH_AVAILABLE = False
+from graph_db import NEO4J_GRAPH, TOOL_NODE_LABEL, TOOL_EMBED_PROP, TOOL_VECTOR_INDEX
+GRAPH_AVAILABLE = True
 
 
 _embeddings: OpenAIEmbeddings | None = None
@@ -152,7 +145,7 @@ async def semantic_select_tools(
         used = by_service.get(service, 0)
         if used >= max_per_service:
             continue
-        prioritized.append(name)
+        prioritized.append(canonicalize_tool_name(name, service_hint=service))
         by_service[service] = used + 1
         if len(prioritized) >= max_total:
             break

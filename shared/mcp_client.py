@@ -4,6 +4,7 @@ Central client for managing Multi-Server MCP (Multi-Modal Communication Protocol
 Reads a central mcp.json configuration file and provides functions
 to get tools for specified services with caching support.
 """
+import asyncio
 import json
 import os
 from typing import List, Dict, Any, Tuple
@@ -24,8 +25,8 @@ _service_definitions: List[Dict[str, Any]] = []
 _client_cache: Dict[frozenset, Tuple[MultiServerMCPClient, Dict[str, Dict[str, Any]]]] = {}
 _tools_cache: Dict[frozenset, List[BaseTool]] = {}
 
-def _load_mcp_services() -> List[Dict[str, Any]]:
-    """Loads MCP service definitions from mcp.json."""
+async def _load_mcp_services() -> List[Dict[str, Any]]:
+    """Loads MCP service definitions from mcp.json without blocking the event loop."""
     global _service_definitions
     if _service_definitions:
         return _service_definitions
@@ -35,16 +36,19 @@ def _load_mcp_services() -> List[Dict[str, Any]]:
         return []
 
     try:
-        with open(MCP_CONFIG_PATH, "r") as f:
-            config = json.load(f)
-            _service_definitions = config.get("services", [])
-            logger.info(f"Loaded {len(_service_definitions)} MCP service definitions.")
-            return _service_definitions
+        def _read_config_sync() -> Dict[str, Any]:
+            with open(MCP_CONFIG_PATH, "r") as f:
+                return json.load(f)
+
+        config = await asyncio.to_thread(_read_config_sync)
+        _service_definitions = config.get("services", [])
+        logger.info(f"Loaded {len(_service_definitions)} MCP service definitions.")
+        return _service_definitions
     except Exception as e:
         logger.error(f"Failed to load or parse {MCP_CONFIG_PATH}: {e}")
         return []
 
-def _create_mcp_client_and_services(
+async def _create_mcp_client_and_services(
     service_names: List[str],
 ) -> Tuple[MultiServerMCPClient, Dict[str, Dict[str, Any]]]:
     """
@@ -58,8 +62,7 @@ def _create_mcp_client_and_services(
     if service_key in _client_cache:
         logger.debug(f"Returning cached MCP client for services: {service_names}")
         return _client_cache[service_key]
-    
-    all_services = _load_mcp_services()
+    all_services = await _load_mcp_services()
     
     services_to_load = {}
     service_configs = {}
@@ -105,7 +108,7 @@ async def get_mcp_tools(service_names: List[str]) -> List[BaseTool]:
         return _tools_cache[service_key]
 
     logger.info(f"Initializing MCP tools for services: {service_names}")
-    mcp_client, _ = _create_mcp_client_and_services(service_names)
+    mcp_client, _ = await _create_mcp_client_and_services(service_names)
     
     try:
         tools = await mcp_client.get_tools()
@@ -126,4 +129,4 @@ async def get_mcp_client_and_configs(
     if not service_names:
         return MultiServerMCPClient({}), {}
     
-    return _create_mcp_client_and_services(service_names)
+    return await _create_mcp_client_and_services(service_names)
