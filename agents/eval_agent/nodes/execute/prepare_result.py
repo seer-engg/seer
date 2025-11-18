@@ -25,7 +25,7 @@ async def prepare_result_node(state: TestExecutionState) -> dict:
 
     structured_llm = llm.with_structured_output(FailureAnalysis, method="json_schema", strict=True)
 
-    failure_analysis: FailureAnalysis = await structured_llm.ainvoke(input={"messages": [HumanMessage(content=prompt)]})
+    failure_analysis: FailureAnalysis = await structured_llm.ainvoke(input=[HumanMessage(content=prompt)])
 
 
     started_at = state.started_at 
