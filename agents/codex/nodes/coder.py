@@ -5,7 +5,6 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
 
 from shared.tools import web_search, LANGCHAIN_MCP_TOOLS
-from shared.tool_service import get_tool_service
 from shared.logger import get_logger
 from shared.llm import get_llm
 from agents.codex.state import CodexState, TaskPlan
@@ -73,9 +72,9 @@ async def coder(state: CodexState) -> CodexState:
     mcp_tools = []
     if state.context.mcp_services:
         logger.info(f"Coder agent loading MCP tools for: {state.context.mcp_services}")
-        tool_service = get_tool_service()
-        await tool_service.initialize(state.context.mcp_services)
-        mcp_tools = list(tool_service.get_tools().values())
+        # tool_service = get_tool_service()
+        # await tool_service.initialize(state.context.mcp_services)
+        # mcp_tools = list(tool_service.get_tools().values())
     
     all_tools = [
         run_command,
@@ -88,7 +87,7 @@ async def coder(state: CodexState) -> CodexState:
         patch_file,
         web_search,
         *LANGCHAIN_MCP_TOOLS,
-        *mcp_tools, # Add the dynamic tools
+        # *mcp_tools, # Add the dynamic tools
     ]
     # --- End MCP Logic ---
 

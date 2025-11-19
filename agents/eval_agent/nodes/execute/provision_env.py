@@ -1,22 +1,11 @@
 """Provision environment for a single dataset example based on natural language instructions."""
-import os
 from datetime import datetime
-from typing import Dict, Any, List, Optional
-
-from langchain_openai import ChatOpenAI
+from typing import List
 
 from agents.eval_agent.models import TestExecutionState
 from shared.logger import get_logger
-from shared.tool_service import get_tool_service
 from shared.resource_utils import format_resource_hints
-from shared.test_runner.action_executor import load_mcp_tools
-from shared.parameter_population import (
-    extract_all_context_variables,
-    format_context_variables_for_llm,
-)
-from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
-from shared.tools import canonicalize_tool_name
 
 logger = get_logger("eval_agent.execute.provision")
 
@@ -25,12 +14,8 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_tool_call
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
-from shared.tools import web_search
 from .utils import COMMMON_TOOL_INSTRUCTIONS
-from shared.mcp_client import ComposioMCPClient
-from shared.config import COMPOSIO_USER_ID  
 from .utils import get_tools, llm
-from shared.llm import convert_response_v1_output_to_message_string
 
 
 

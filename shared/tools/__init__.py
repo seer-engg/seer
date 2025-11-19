@@ -41,7 +41,6 @@ from shared.config import TAVILY_API_KEY
 
 # Public API exports
 from shared.tools.loader import (
-    load_tool_entries,
     resolve_mcp_services,
     DEFAULT_MCP_SERVICES,
 )
@@ -140,7 +139,6 @@ async def _initialize_langchain_tools():
 
 __all__ = [
     # Loader
-    "load_tool_entries",
     "resolve_mcp_services",
     "DEFAULT_MCP_SERVICES",
     

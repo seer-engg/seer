@@ -1,15 +1,10 @@
 """Assert final state for a single dataset example based on natural language instructions."""
 from datetime import datetime
-from typing import List, Dict, Any, Optional
-
-from langchain_openai import ChatOpenAI
+from typing import List, Optional
 
 from agents.eval_agent.models import TestExecutionState
 from shared.logger import get_logger
-from shared.schema import ExperimentResultContext, FailureAnalysis
-from shared.tool_service import get_tool_service
 from shared.resource_utils import format_resource_hints
-from shared.test_runner.action_executor import load_mcp_tools
 from shared.parameter_population import (
     extract_all_context_variables,
     format_context_variables_for_llm,
@@ -19,9 +14,6 @@ from langchain_core.messages import HumanMessage
 
 from langchain.agents.middleware import wrap_tool_call
 from langchain_core.messages import ToolMessage
-from shared.tools import canonicalize_tool_name
-from shared.llm import convert_response_v1_output_to_message_string
-from shared.tools import web_search
 from .utils import COMMMON_TOOL_INSTRUCTIONS
 from .utils import get_tools, llm
 
@@ -66,9 +58,6 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
     provisioning_output = state.provisioning_output
 
     # Initialize tools and tool entries
-    tool_service = get_tool_service()
-    await tool_service.initialize(state.context.mcp_services or [])
-    tools_dict = await load_mcp_tools(state.context.mcp_services or [])
 
     # Prepare prompt context
     context_vars = extract_all_context_variables(

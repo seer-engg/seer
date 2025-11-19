@@ -11,9 +11,6 @@ from agents.eval_agent.nodes.plan import build_plan_subgraph
 from agents.eval_agent.nodes.reflect.graph import reflect_node
 from agents.eval_agent.nodes.run import build_run_subgraph
 from shared.logger import get_logger
-from shared.tool_service import get_tool_service
-from shared.tools import canonicalize_tool_name
-from shared.test_runner.variable_injection import inject_variables
 from agents.eval_agent.nodes.run import _prepare_run_context, _execute_test_cases, _upload_run_results
 
 
@@ -34,33 +31,9 @@ async def cleanup_environment(state: EvalAgentState) -> dict:
         logger.info("cleanup_environment: No cleanup actions to execute.")
         return {}
 
-    logger.info(f"cleanup_environment: Executing {len(state.cleanup_stack)} cleanup actions in LIFO order...")
     
-    # Use ToolService for tool access
-    tool_service = get_tool_service()
-    await tool_service.initialize(state.context.mcp_services)
-    tools_dict = tool_service.get_tools()
-    
-    # Execute in REVERSE order (LIFO - last created = first deleted)
-    for idx, action in enumerate(reversed(state.cleanup_stack), 1):
-        tool_name = canonicalize_tool_name(action.tool)
-        
-        if tool_name not in tools_dict:
-            logger.warning(f"Cleanup tool not found: {tool_name}")
-            continue
-        
-        try:
-            params = json.loads(action.params or "{}")
-            
-            # Inject variables from mcp_resources if needed (e.g., [var:asana_project])
-            params = inject_variables(params, {}, state.context.mcp_resources)
-            
-            logger.info(f"Cleanup {idx}/{len(state.cleanup_stack)}: {action.tool} with {params}")
-            await tools_dict[tool_name].ainvoke(params)
-            
-        except Exception as e:
-            # Log but continue - don't let one failure stop other cleanups
-            logger.error(f"Cleanup failed for {action.tool}: {e}", exc_info=True)
+    # TODO: Implement cleanup
+    logger.warning(f"cleanup_environment: not implemented yet. ")
     
     # Clear both cleanup stack and resources
     return {

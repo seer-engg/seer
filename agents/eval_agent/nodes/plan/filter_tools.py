@@ -2,7 +2,6 @@ from agents.eval_agent.models import EvalAgentPlannerState, ToolSelectionLog
 from shared.logger import get_logger
 from shared.tools import ToolEntry
 from typing import List, Dict
-from shared.tool_service import get_tool_service
 
 
 logger = get_logger("eval_agent.plan.filter_tools")
