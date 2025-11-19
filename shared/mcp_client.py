@@ -19,6 +19,8 @@ from shared.config import COMPOSIO_USER_ID
 
 logger = get_logger("shared.mcp_client")
 
+#TODO: simpify and cleanup
+
 # Path to the MCP service configuration
 MCP_CONFIG_PATH = Path(__file__).parent.parent / "mcp.json"
 
