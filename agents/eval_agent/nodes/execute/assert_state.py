@@ -23,6 +23,7 @@ from shared.tools import canonicalize_tool_name
 from shared.llm import convert_response_v1_output_to_message_string
 from shared.tools import web_search
 from .utils import COMMMON_TOOL_INSTRUCTIONS
+from .utils import get_tools, llm
 
 
 @wrap_tool_call
@@ -81,14 +82,7 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
             f"DatasetExample {example.example_id} has no assert_final_state instructions."
         )
 
-    llm = ChatOpenAI(
-        model="gpt-5",
-        use_responses_api=True,
-        output_version="responses/v1",
-    )
-    selected_tools = state.tool_selection_log.selected_tools
-
-    actual_tools = [tools_dict[canonicalize_tool_name(tool)] for tool in selected_tools]
+    actual_tools = await get_tools(state)
 
     assertion_agent = create_agent(
         model=llm,

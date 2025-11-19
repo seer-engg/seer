@@ -53,7 +53,7 @@ class ComposioMCPClient:
             self._composio.tools.get,
             user_id=self._user_id or "default",
             toolkits=toolkits,
-            limit=100
+            limit=2000
         )
         return tools
 

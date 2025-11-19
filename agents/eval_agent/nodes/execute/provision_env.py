@@ -27,6 +27,9 @@ from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 from shared.tools import web_search
 from .utils import COMMMON_TOOL_INSTRUCTIONS
+from shared.mcp_client import ComposioMCPClient
+from shared.config import COMPOSIO_USER_ID  
+from .utils import get_tools, llm
 
 
 
@@ -51,6 +54,8 @@ You are a helpful assistant that provisions the environment for the target agent
 """ + COMMMON_TOOL_INSTRUCTIONS
 USER_PROMPT = """
 Provision the environment for the target agent based on the instructions provided.
+Resorces:
+{resources}
 
 Instructions:
 {instructions}
@@ -70,36 +75,18 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
     if not state.context.mcp_services or not instructions:
         logger.error("No provisioning instructions or MCP services; skipping provisioning phase.")
         return {}
-
-    # Ensure tools initialized (for execution) and entries loaded (for parameter completion)
-    tool_service = get_tool_service()
-    await tool_service.initialize(state.context.mcp_services)
-    tools_dict = await load_mcp_tools(state.context.mcp_services)
-    selected_tools = state.tool_selection_log.selected_tools
-
-    # Prepare prompt context
-    context_vars = extract_all_context_variables(
-        user_context=state.context.user_context,
-        github_context=state.context.github_context,
-        mcp_resources=state.mcp_resources,
-    )
-    formatted_context_vars = format_context_variables_for_llm(context_vars)
+    
     resource_hints = format_resource_hints(state.mcp_resources)
 
-    actual_tools = [tools_dict[canonicalize_tool_name(tool)] for tool in selected_tools]
-    llm = ChatOpenAI(
-        model="gpt-5",
-        use_responses_api=True,
-        output_version="responses/v1",
-        # reasoning={"effort": "medium"},
-    )
+    actual_tools = await get_tools(state)
+    
     provisioning_agent = create_agent(
         model=llm,
         tools=actual_tools,
         system_prompt=SYSTEM_PROMPT,
         middleware=[handle_tool_errors]
     )
-    user_prompt = HumanMessage(content=USER_PROMPT.format(instructions=instructions, resources=resource_hints, context=formatted_context_vars))
+    user_prompt = HumanMessage(content=USER_PROMPT.format(instructions=instructions, resources=resource_hints))
 
     result = await provisioning_agent.ainvoke(input={"messages": [user_prompt]}, config=RunnableConfig(recursion_limit=75))
 
