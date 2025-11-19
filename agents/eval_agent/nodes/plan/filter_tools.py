@@ -18,7 +18,7 @@ async def filter_tools(state: EvalAgentPlannerState) -> dict:
     # We'll initialize context_for_scoring here to ensure it's always defined
     context_for_scoring = ""
     for example in state.dataset_examples:
-        context_for_scoring += ",".join(example.expected_output.provision_environment) + "\n" + ",".join(example.expected_output.assert_final_state)
+        context_for_scoring += ",".join(example.expected_output.create_test_data) + "\n" + ",".join(example.expected_output.assert_final_state)
 
     if state.context.mcp_services:
         try:

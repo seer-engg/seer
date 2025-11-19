@@ -64,7 +64,7 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
     started_at = datetime.utcnow()
 
     example = state.dataset_example
-    instructions: List[str] =  example.expected_output.provision_environment
+    instructions: List[str] =  example.expected_output.create_test_data
 
     # If no MCP services or no instructions, skip
     if not state.context.mcp_services or not instructions:

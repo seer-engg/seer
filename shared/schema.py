@@ -92,9 +92,9 @@ class ExpectedOutput(BaseModel):
     """
     model_config = ConfigDict(extra="forbid")
     
-    provision_environment: Optional[List[str]] = Field(
-        None,
-        description="Prerequisite state of the environements.Prior to target agent being invoked, the environment should be in this state. e.g. there should be a PR with a specific label."
+    create_test_data: List[str] = Field(
+        ...,
+        description="Prerequisite data/objects in external apps .Prior to target agent being invoked, the environment should be in this state. e.g. there should be a PR with a specific label."
     )
     assert_final_state: List[str] = Field(
         ...,
@@ -111,7 +111,7 @@ class DatasetExample(BaseModel):
     input_message: str = Field(..., description="The input message that should be send to target agent. MUST NOT CONTAIN ANY HINTS. MUST NOT CONTAIN EXPECTED OUTPUT!")
     expected_output: ExpectedOutput = Field(...)
     status: Literal["active", "retired"] = Field(
-        "active",
+        ...,
         description="Fitness status: 'active' tests are in the pool, 'retired' tests passed too often and are culled."
     )
     model_config = ConfigDict(extra="forbid")

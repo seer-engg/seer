@@ -16,6 +16,7 @@ from shared.tools import ToolEntry
 from shared.schema import (
     DatasetExample,
 )
+from langchain_openai import ChatOpenAI
 
 logger = get_logger("eval_agent.plan.generate_evals")
 
@@ -25,6 +26,7 @@ class EvalGenerationOutput(BaseModel):
 
 
 AGENTIC_GENERATOR_SYSTEM_PROMPT = """
+
 You are an expert adversarial QA agent. Your role is to design test cases for the target agent.
 
 
@@ -36,27 +38,32 @@ your task is to generate DatasetExample objects for the target agent:
 - `reasoning`: Why this test is valuable and what it targets
 - `input_message`: The input message that should be send to target agent. MUST NOT CONTAIN ANY HINTS. MUST NOT CONTAIN EXPECTED OUTPUT!
 - `expected_output`: An `ExpectedOutput` object with:
-  - `provision_environment`: List of strings describing the prerequisite state of the environment, prior to target agent being invoked.
+  - `create_test_data`: List of strings describing the prerequisite data in external apps, prior to target agent being invoked.
   - `assert_final_state`: List of strings describing the final state of the environment, after target agent has been invoked.
 - `status`: "active"
 
 **MATHEMATICAL GUARANTEE**: 
 - provision_environment MUST create everything input_message's scenario requires
 - assert_final_state MUST verify observable changes in the system
-- NEVER assume existing data exists
 
 For each test case:
 1.  **Reason:** What weakness are you exploiting? What edge case?
 2.  **Design input_message and expected_output:**
-    * provision_environment: What resources to create? What state the environment should be in prior to target agent being invoked.
+    * create_test_data: What resources to create ? What all data should be present in external apps before we invoke target agent ?
     * input_message: What scenario to send to agent?
-    * assert_final_state: What to verify? What state the environment should be in after target agent has been invoked.
+    * assert_final_state: What to verify? What state the external apps should be after target agent has been invoked.
 
-**CRITICAL**: 
+**Important**: 
  - Tests MUST work on an EMPTY CANVAS. Create ALL test data from scratch
- - The instructions in provision_environment and assert_final_state should be self sufficient. They will be consumed by individual agents who doesn't have access to any other information. So both provision_environment and assert_final_state should be detailed enough to be consumed by the agents.
- - don't leave any room for ambiguity in the instructions for example don't say create a repo named 'test-repo' instead say create a repo named 'test-repo' in organization 'seer-engg'.
- - don't slack in writing down the provision_environment and assert_final_state. They are critical for the test to be valid.  write in detailed points for provision_environment and assert_final_state.
+ - The instructions in create_test_data and assert_final_state should be self sufficient. They will be consumed by individual helper agents who doesn't have access to any other information. The helper agent will consume your instructions to create/assert data in external apps.
+ - don't leave any room for ambiguity in the instructions, be explicit in stating instructions for provisioning and assertion, Try to state even obvious information .
+ - don't slack in writing down the create_test_data and assert_final_state. They are critical for the test to be valid.  write in detailed points .
+ - For testing playground use the github repo named label-edgecase-repo under seer-engg organization.We have already created this repo, No need to create one. Don't include any instructions to assert it's presence.
+
+# thinking methodology for generating provision_environment and assert_final_state
+- for each instruction point write down explictly what all information is required to complete it.
+
+
 """
 
 USER_PROMPT = """
@@ -66,6 +73,8 @@ Based on the context of the target agent, generate {n_tests} test cases for the 
 * **Agent Weaknesses (from past reflections):** {reflections_text}
 * **Recently Run Tests (Do Not Repeat):** {prev_dataset_examples}
 * **Available Resources:** {resource_hints}
+
+
 """
 
 
@@ -83,7 +92,11 @@ async def _invoke_agentic_llm(
     
     try:
         
-        structured_llm = LLM.with_structured_output(EvalGenerationOutput, method="json_schema", strict=True)
+        structured_llm = ChatOpenAI(
+            model="gpt-5-mini",
+            use_responses_api=True,
+            output_version="responses/v1",
+        ).with_structured_output(EvalGenerationOutput, method="json_schema", strict=True)
 
         user_prompt = USER_PROMPT.format(
             n_tests=n_tests,
