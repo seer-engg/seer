@@ -50,6 +50,11 @@ You are a helpful assistant that asserts the final state of the environment for 
 USER_PROMPT = """
 Assert the following criterias by using the tools available to you:
 {criterias}
+
+previously anothe agent has done provisioning and it's output is:
+<provisioning_output>
+{provisioning_output}
+</provisioning_output>
 """
 
 
@@ -58,6 +63,7 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
     example = state.dataset_example
     if not example:
         raise ValueError("assert_final_state_node requires dataset_example in state")
+    provisioning_output = state.provisioning_output
 
     # Initialize tools and tool entries
     tool_service = get_tool_service()
@@ -92,11 +98,11 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
         middleware=[handle_tool_errors]
     )
 
-    user_prompt = HumanMessage(content=USER_PROMPT.format(criterias=instructions, resources=resource_hints, context=formatted_context_vars))
+    user_prompt = HumanMessage(content=USER_PROMPT.format(criterias=instructions, resources=resource_hints, context=formatted_context_vars, provisioning_output=provisioning_output))
 
     result = await assertion_agent.ainvoke(input={"messages": [user_prompt]})
     completed_at = datetime.utcnow()
-    assertion_output = await convert_response_v1_output_to_message_string(result)
+    assertion_output = result.get('messages')[-1].content
     
 
     return {

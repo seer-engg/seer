@@ -30,6 +30,7 @@ from .utils import COMMMON_TOOL_INSTRUCTIONS
 from shared.mcp_client import ComposioMCPClient
 from shared.config import COMPOSIO_USER_ID  
 from .utils import get_tools, llm
+from shared.llm import convert_response_v1_output_to_message_string
 
 
 
@@ -90,9 +91,12 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
 
     result = await provisioning_agent.ainvoke(input={"messages": [user_prompt]}, config=RunnableConfig(recursion_limit=75))
 
+    provisioning_output = result.get('messages')[-1].content
+
     return {
         "mcp_resources": state.mcp_resources,
         "started_at": started_at,
+        "provisioning_output": provisioning_output,
     }
 
 

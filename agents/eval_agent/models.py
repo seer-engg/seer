@@ -149,6 +149,7 @@ class TestExecutionState(BaseModel):
     )
 
     assertion_output:Optional[str] = Field(default=None, description="The output from the assertion agent")
+    provisioning_output:Optional[str] = Field(default=None, description="The output from the provisioning agent")
 
 
 # Rebuild models to resolve forward references
