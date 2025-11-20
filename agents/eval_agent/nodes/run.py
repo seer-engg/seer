@@ -190,6 +190,81 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     }
 
 
+async def _upload_results_to_neo4j(state: EvalAgentState) -> dict:
+    """
+    Upload latest_results to Neo4j as nodes and relationships.
+    Separated from execution per requirements.
+    """
+    if not state.context.user_context or not state.context.user_context.user_id:
+        raise ValueError("UserContext with user_id is required to log memories")
+    user_id = state.context.user_context.user_id
+
+    if not state.context.github_context or not state.context.github_context.agent_name:
+        raise ValueError("GithubContext with agent_name is required to log memories")
+    agent_name = state.context.github_context.agent_name
+
+    results = list(state.latest_results or [])
+    if not results:
+        logger.warning("neo4j_upload: No latest_results to upload; skipping.")
+        return {}
+
+    cypher_params = []
+    for res in results:
+        # Flatten the analysis object for storage as node properties
+        analysis_props = res.analysis.model_dump()
+        
+        # Combine all properties for the result node
+        result_node_props = res.model_dump(
+            exclude={'dataset_example', 'analysis', 'passed'}
+        )
+        result_node_props.update(analysis_props)  # Add all analysis fields
+        result_node_props['passed'] = res.passed  # Add the computed 'passed' bool
+
+        example_node_props = res.dataset_example.model_dump(exclude={'expected_output'})
+        # Serialize expected_output (3-phase format: provision, expected, assert actions)
+        example_node_props['expected_output'] = json.dumps(res.dataset_example.expected_output.model_dump())
+        
+        cypher_params.append({
+            "example": example_node_props,
+            "result": result_node_props,
+        })
+
+    cypher_query = """
+    UNWIND $params as row
+
+    // Merge the TestCase node, now namespaced by user_id
+    MERGE (ex:DatasetExample {example_id: row.example.example_id, user_id: $user_id})
+    ON CREATE SET 
+        ex += row.example,
+        ex.status = 'active',
+        ex.agent_name = $agent_name 
+    ON MATCH SET 
+        ex += row.example,
+        ex.status = COALESCE(ex.status, 'active'),
+        ex.agent_name = $agent_name 
+
+    // Merge the Result node, now namespaced by user_id
+    MERGE (res:ExperimentResult {thread_id: row.result.thread_id, user_id: $user_id})
+
+    // Use SET to overwrite all properties, ensuring schema stays current
+    SET res += row.result
+
+    // Connect the TestCase to its Result
+    MERGE (ex)-[r:WAS_RUN_IN]->(res)
+
+    RETURN count(*)
+    """
+
+    query_result = await asyncio.to_thread(
+        NEO4J_GRAPH.query,
+        cypher_query,
+        params={"params": cypher_params, "user_id": user_id, "agent_name": agent_name}
+    )
+    logger.info(f"neo4j_upload: Neo4j query response: {query_result}")
+
+    return {}
+
+
 async def _upload_run_results(state: EvalAgentState) -> dict:
     experiment = state.active_experiment
     dataset = state.dataset_context
@@ -197,7 +272,8 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
     if not experiment or not dataset:
         raise RuntimeError("Cannot upload without dataset and experiment context")
 
-    results_payload = list(experiment.results)
+    # Prefer latest_results if present; otherwise fall back to experiment.results
+    results_payload = list(state.latest_results) if state.latest_results else list(experiment.results)
     failed_cases = list(experiment.failed_results)
 
     api_key = os.getenv("LANGSMITH_API_KEY")
@@ -229,6 +305,12 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
         for res in results_payload
     ]
 
+    # Compute experiment aggregates from results if missing or outdated
+    if results_payload:
+        experiment.results = results_payload
+        experiment.started_at = min(res.started_at for res in results_payload)
+        experiment.completed_at = max(res.completed_at for res in results_payload)
+        experiment.mean_score = round(sum(res.score for res in results_payload) / len(results_payload), 5)
     mean_score = experiment.mean_score
 
     upload_body = {
@@ -283,16 +365,3 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
     }
 
 
-def build_run_subgraph():
-    """Build the run subgraph."""
-    builder = StateGraph(EvalAgentState)
-    builder.add_node("prepare", _prepare_run_context)
-    builder.add_node("execute", _execute_test_cases)
-    builder.add_node("upload", _upload_run_results)
-
-    builder.add_edge(START, "prepare")
-    builder.add_edge("prepare", "execute")
-    builder.add_edge("execute", "upload")
-    builder.add_edge("upload", END)
-
-    return builder.compile()

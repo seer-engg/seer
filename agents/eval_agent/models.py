@@ -76,6 +76,8 @@ class EvalAgentState(BaseModel):
 
     # Core agent context (shared with Codex)
     context: AgentContext = Field(default_factory=AgentContext, description="Shared agent context")
+    # Working resources (aligned with execution subgraph expectations)
+    mcp_resources: Dict[str, Any] = Field(default_factory=dict, description="Working MCP resources for this run")
     
     # Agent-specific state
     messages: Annotated[list[BaseMessage], add_messages]
@@ -127,11 +129,17 @@ class TestExecutionState(BaseModel):
     """State for executing a single DatasetExample through provision → invoke → assert."""
     # Shared context
     context: AgentContext = Field(default_factory=AgentContext, description="Shared agent context")
+    # A batch of test cases to execute (aligned with EvalAgentState)
+    dataset_examples: List[DatasetExample] = Field(default_factory=list, description="Batch of dataset examples to execute")
     # The single test case being executed
-    dataset_example: DatasetExample = Field(..., description="Dataset example to execute")
+    dataset_example: Optional[DatasetExample] = Field(default=None, description="Dataset example to execute")
     # Working resources and cleanup
     mcp_resources: Dict[str, Any] = Field(default_factory=dict, description="Working MCP resources for this test")
     cleanup_stack: List[ActionStep] = Field(default_factory=list, description="Cleanup actions collected during execution (LIFO)")
+    # Batch execution helpers
+    pending_examples: List[DatasetExample] = Field(default_factory=list, description="Internal queue of pending examples (initialized from dataset_examples)")
+    accumulated_results: List[ExperimentResultContext] = Field(default_factory=list, description="Internal accumulator of per-example results")
+    latest_results: List[ExperimentResultContext] = Field(default_factory=list, description="Results from running the current batch, aligned with EvalAgentState")
     # Invocation outputs
     thread_id: Optional[str] = Field(default=None, description="Thread ID from target agent invocation")
     agent_output: str = Field(default="", description="Final text output from the target agent invocation")

@@ -9,9 +9,9 @@ from agents.eval_agent.nodes.finalize import build_finalize_subgraph
 from agents.eval_agent.models import EvalAgentState
 from agents.eval_agent.nodes.plan import build_plan_subgraph
 from agents.eval_agent.nodes.reflect.graph import reflect_node
-from agents.eval_agent.nodes.run import build_run_subgraph
 from shared.logger import get_logger
-from agents.eval_agent.nodes.run import _prepare_run_context, _execute_test_cases, _upload_run_results
+from agents.eval_agent.nodes.run import _prepare_run_context, _upload_run_results, _upload_results_to_neo4j
+from agents.eval_agent.nodes.execute import build_test_execution_subgraph
 
 
 logger = get_logger("eval_agent.graph")
@@ -85,13 +85,12 @@ def build_graph():
     """Build the evaluation agent graph."""
     workflow = StateGraph(EvalAgentState)
     plan_subgraph = build_plan_subgraph()
-    run_subgraph = build_run_subgraph()
     finalize_subgraph = build_finalize_subgraph()
 
     workflow.add_node("plan", plan_subgraph)
-    # workflow.add_node("run", run_subgraph)
     workflow.add_node("pre_run", _prepare_run_context)
-    workflow.add_node("execute", _execute_test_cases)
+    workflow.add_node("execute", build_test_execution_subgraph())
+    workflow.add_node("neo4j_upload", _upload_results_to_neo4j)
     workflow.add_node("upload", _upload_run_results)
     workflow.add_node("reflect", reflect_node)
     workflow.add_node("finalize", finalize_subgraph)
@@ -101,7 +100,8 @@ def build_graph():
     workflow.add_edge(START, "plan")
     workflow.add_edge("plan", "pre_run")
     workflow.add_edge("pre_run", "execute")
-    workflow.add_edge("execute", "upload")
+    workflow.add_edge("execute", "neo4j_upload")
+    workflow.add_edge("neo4j_upload", "upload")
     workflow.add_edge("upload", "reflect")
     workflow.add_conditional_edges("reflect", should_continue, {
         "plan": "plan",
