@@ -11,13 +11,16 @@ logger = get_logger("codex.test_server_ready")
 async def test_server_ready(state: CodexState) -> CodexState:
     """Test if the server is ready"""
     logger.info(f"Testing server readiness: {state}")
-    sbx: AsyncSandbox = await AsyncSandbox.connect(state.updated_sandbox_context.sandbox_id)
+    sandbox_context = state.context.sandbox_context
+    if not sandbox_context:
+        raise ValueError("No sandbox context found in state")
+    sbx: AsyncSandbox = await AsyncSandbox.connect(sandbox_context.sandbox_id)
 
     try:
         sb, handle = await deploy_server_and_confirm_ready(
             cmd=TARGET_AGENT_COMMAND,
             sb=sbx,
-            cwd=state.updated_sandbox_context.working_directory,
+            cwd=sandbox_context.working_directory,
             timeout_s=50
         )
         await kill_process_on_port(sbx, TARGET_AGENT_PORT)

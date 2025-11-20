@@ -7,11 +7,7 @@ from datetime import datetime
 from typing import List, Optional, Literal, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict, computed_field, model_validator
 from shared.tools import canonicalize_tool_name
-
-# Forward reference for AgentContext
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from shared.agent_context import AgentContext
+from shared.agent_context import AgentContext
 
 
 class FailureAnalysis(BaseModel):
@@ -220,3 +216,14 @@ class CodexOutput(BaseModel):
     agent_updated: bool = Field(False, description="Whether the agent was updated")
     new_branch_name: Optional[str] = Field(None, description="The name of the new branch")
     updated_context: Optional["AgentContext"] = Field(None, description="The updated agent context")
+
+
+# Resolve forward references now that AgentContext and context models are defined
+AgentContext.model_rebuild(_types_namespace={
+    "UserContext": UserContext,
+    "GithubContext": GithubContext,
+    "SandboxContext": SandboxContext,
+})
+
+CodexInput.model_rebuild(_types_namespace={"AgentContext": AgentContext})
+CodexOutput.model_rebuild(_types_namespace={"AgentContext": AgentContext})

@@ -4,7 +4,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
 
-from shared.tools import web_search, LANGCHAIN_MCP_TOOLS
+from shared.tools import web_search
 from shared.logger import get_logger
 from shared.llm import get_llm
 from agents.codex.state import CodexState, TaskPlan
@@ -57,24 +57,10 @@ async def coder(state: CodexState) -> CodexState:
     plan: TaskPlan | None = state.taskPlan
     if not plan:
         raise ValueError("No plan found")
-    updated_sandbox_context = state.updated_sandbox_context
-    if not updated_sandbox_context:
+    sandbox_context = state.context.sandbox_context
+    if not sandbox_context:
         raise ValueError("No sandbox context found in state")
 
-    # Ground the agent with the current directory structure
-    initial_context = await _inspect_directory_impl(
-        directory_path=".",
-        depth=2,
-        sandbox_context=updated_sandbox_context,
-    )
-    
-    # --- ADDED: Dynamically get MCP tools using ToolService ---
-    mcp_tools = []
-    if state.context.mcp_services:
-        logger.info(f"Coder agent loading MCP tools for: {state.context.mcp_services}")
-        # tool_service = get_tool_service()
-        # await tool_service.initialize(state.context.mcp_services)
-        # mcp_tools = list(tool_service.get_tools().values())
     
     all_tools = [
         run_command,
@@ -86,10 +72,9 @@ async def coder(state: CodexState) -> CodexState:
         write_file,
         patch_file,
         web_search,
-        *LANGCHAIN_MCP_TOOLS,
+        # TODO: ADD langchain and other mcp tools required for target agent documentations
         # *mcp_tools, # Add the dynamic tools
     ]
-    # --- End MCP Logic ---
 
     agent = create_agent(
         model=get_llm(model="codex"),
@@ -113,7 +98,7 @@ async def coder(state: CodexState) -> CodexState:
     result = await agent.ainvoke(
         input={"messages": messages}, 
         config=RunnableConfig(recursion_limit=100),
-        context=SandboxToolContext(sandbox_context=updated_sandbox_context)  # Pass sandbox context
+        context=SandboxToolContext(sandbox_context=sandbox_context)  # Pass sandbox context
     )
 
     pr_summary = ""

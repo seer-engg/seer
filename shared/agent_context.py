@@ -25,9 +25,11 @@ Usage:
         ...
     )
 """
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field
 
+if TYPE_CHECKING:
+    from shared.schema import UserContext, GithubContext, SandboxContext
 
 class AgentContext(BaseModel):
     """
@@ -84,13 +86,6 @@ class AgentContext(BaseModel):
         """Pydantic configuration."""
         arbitrary_types_allowed = True
         extra = "allow"  # Allow extra fields for extensibility
-
-
-# Import schemas to resolve forward references
-from shared.schema import UserContext, GithubContext, SandboxContext
-
-# Update forward references
-AgentContext.model_rebuild()
 
 
 __all__ = ["AgentContext"]

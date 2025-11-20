@@ -37,4 +37,4 @@ class CodexState(CodexInput, CodexOutput):
 
     attempt_number: int = Field(0, description="The number of attempts")
     max_attempts: int = Field(2, description="The maximum number of attempts")
-    latest_test_results: List[ExperimentResultContext] = Field(default_factory=list, description="Results from the most recent programmer test run")
+    latest_results: List[ExperimentResultContext] = Field(default_factory=list, description="Results from the most recent programmer test run")

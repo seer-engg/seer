@@ -17,12 +17,12 @@ async def initialize_project(state: CodexState) -> CodexState:
         branch_name=state.context.sandbox_context.working_branch,
     )
     await setup_project(sbx.sandbox_id, repo_dir, TARGET_AGENT_SETUP_SCRIPT)
-    updated_sandbox_context = SandboxContext(
+    state.context.sandbox_context = SandboxContext(
         sandbox_id=sbx.sandbox_id,
         working_directory=repo_dir,
         working_branch=branch_in_sandbox,
     )
     return {
-        "updated_sandbox_context": updated_sandbox_context,
+        "context": state.context,
     }
 
