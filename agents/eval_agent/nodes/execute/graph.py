@@ -12,7 +12,7 @@ from agents.eval_agent.nodes.execute.provision_env import provision_environment_
 from agents.eval_agent.nodes.execute.invoke_target import invoke_target_node
 from agents.eval_agent.nodes.execute.assert_state import assert_final_state_node
 from agents.eval_agent.nodes.execute.prepare_result import prepare_result_node
-from shared.parameter_population import extract_all_context_variables
+from agents.eval_agent.nodes.execute.initialize import initialize_node
 
 logger = get_logger("eval_agent.execute.graph")
 
@@ -22,32 +22,10 @@ async def dispatch_examples_node(state: TestExecutionState) -> dict:
     Initialize and dispatch the next dataset example into the per-example pipeline.
     Also enrich mcp_resources with github_owner and github_repo on first initialization.
     """
-    updates: dict = {}
-
-    # Initialize pending list and accumulator on first entry
-    if not state.pending_examples:
-        pending = list(state.dataset_examples or [])
-        updates["pending_examples"] = pending
-        updates["accumulated_results"] = []
-
-        # Enrich mcp_resources once using context variables (if github context is present)
-        enriched_resources = dict(state.mcp_resources or {})
-        if state.context.github_context and state.context.github_context.repo_url:
-            context_vars = extract_all_context_variables(
-                user_context=state.context.user_context,
-                github_context=state.context.github_context,
-                mcp_resources=enriched_resources,
-            )
-            if "github_owner" in context_vars:
-                enriched_resources["github_owner"] = {"id": context_vars["github_owner"]}
-                logger.info(f"Added github_owner to mcp_resources: {context_vars['github_owner']}")
-            if "github_repo" in context_vars:
-                enriched_resources["github_repo"] = {"id": context_vars["github_repo"]}
-                logger.info(f"Added github_repo to mcp_resources: {context_vars['github_repo']}")
-        updates["mcp_resources"] = enriched_resources
+    updates: dict = {}    
 
     # Pick next example if available
-    pending_examples = updates.get("pending_examples", state.pending_examples)
+    pending_examples =  state.pending_examples
     if pending_examples:
         next_example = pending_examples.pop(0)
         updates["dataset_example"] = next_example
@@ -96,6 +74,7 @@ def build_test_execution_subgraph():
     """Build the batch-aware test execution subgraph."""
     builder = StateGraph(TestExecutionState)
     # Batch routing
+    builder.add_node("initialize", initialize_node)
     builder.add_node("dispatch", dispatch_examples_node)
     builder.add_node("collect_result", collect_result_node)
     builder.add_node("finalize_batch", finalize_batch_node)
@@ -106,7 +85,8 @@ def build_test_execution_subgraph():
     builder.add_node("prepare_result", prepare_result_node)
 
     # Start by dispatching the first/next example
-    builder.add_edge(START, "dispatch")
+    builder.add_edge(START, "initialize")
+    builder.add_edge("initialize", "dispatch")
     builder.add_conditional_edges("dispatch", _route_from_dispatch, {
         "provision": "provision",
         "finalize_batch": "finalize_batch",

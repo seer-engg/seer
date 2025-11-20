@@ -91,7 +91,7 @@ def build_graph():
     workflow.add_node("pre_run", _prepare_run_context)
     workflow.add_node("execute", build_test_execution_subgraph())
     workflow.add_node("neo4j_upload", _upload_results_to_neo4j)
-    workflow.add_node("upload", _upload_run_results)
+    workflow.add_node("langsmith_upload", _upload_run_results)
     workflow.add_node("reflect", reflect_node)
     workflow.add_node("finalize", finalize_subgraph)
     workflow.add_node("update_state_from_handoff", update_state_from_handoff)
@@ -101,8 +101,8 @@ def build_graph():
     workflow.add_edge("plan", "pre_run")
     workflow.add_edge("pre_run", "execute")
     workflow.add_edge("execute", "neo4j_upload")
-    workflow.add_edge("neo4j_upload", "upload")
-    workflow.add_edge("upload", "reflect")
+    workflow.add_edge("neo4j_upload", "langsmith_upload")
+    workflow.add_edge("langsmith_upload", "reflect")
     workflow.add_conditional_edges("reflect", should_continue, {
         "plan": "plan",
         "finalize": "finalize"
