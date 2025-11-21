@@ -88,7 +88,7 @@ async def coder(state: CodexState) -> CodexState:
     messages = list(state.coder_thread or [])
     
     user_prompt_content = USER_PROMPT.format(
-        request=state.user_context.raw_request,
+        request=state.context.user_context.raw_request,
         task_plan=state.taskPlan,
     )
     # TODO: when coming from test_server_ready, do not add the user_prompt_content
