@@ -12,12 +12,12 @@ from langchain_core.messages import ToolMessage
 from langgraph.graph import END, START, StateGraph
 
 from langgraph.pregel.remote import RemoteGraph
-from agents.eval_agent.models import EvalAgentState
-from agents.eval_agent.constants import NEO4J_GRAPH
+from agents.eval_agent.models import EvalAgentState, TestExecutionState
 from langgraph_sdk import get_sync_client
 from shared.logger import get_logger
-from shared.schema import ExperimentContext, ExperimentResultContext
-from shared.test_runner import run_tests
+from shared.schema import ExperimentContext, ExperimentResultContext, FailureAnalysis
+from agents.eval_agent.nodes.execute import build_test_execution_subgraph
+from graph_db import NEO4J_GRAPH
 
 logger = get_logger("eval_agent.run")
 
@@ -54,21 +54,64 @@ async def _prepare_run_context(state: EvalAgentState) -> dict:
 async def _execute_test_cases(state: EvalAgentState) -> dict:
     """Execute the test cases and return the results."""
 
-    if not state.user_context or not state.user_context.user_id:
+    if not state.context.user_context or not state.context.user_context.user_id:
         raise ValueError("UserContext with user_id is required to log memories")
-    user_id = state.user_context.user_id
+    user_id = state.context.user_context.user_id
 
-    if not state.github_context or not state.github_context.agent_name:
+    if not state.context.github_context or not state.context.github_context.agent_name:
         raise ValueError("GithubContext with agent_name is required to log memories")
-    agent_name = state.github_context.agent_name
+    agent_name = state.context.github_context.agent_name
 
-    if not state.sandbox_context:
+    if not state.context.sandbox_context:
         raise RuntimeError("Sandbox context must be set before executing tests")
     if not state.active_experiment:
         raise RuntimeError("Active experiment missing before executing tests")
 
+    # Enrich mcp_resources with github_owner and github_repo for test execution
+    # This ensures tests can reference [resource:github_owner] and [resource:github_repo]
+    enriched_resources = dict(state.context.mcp_resources or {})
     
-    results: List[ExperimentResultContext] = await run_tests(state.dataset_examples, state.sandbox_context, state.github_context)
+    if state.context.github_context and state.context.github_context.repo_url:
+        from shared.parameter_population import extract_all_context_variables
+        
+        # Extract context variables including github_owner and github_repo
+        context_vars = extract_all_context_variables(
+            user_context=state.context.user_context,
+            github_context=state.context.github_context,
+            mcp_resources=enriched_resources,
+        )
+        
+        # Add github_owner and github_repo as resources if they were extracted
+        if 'github_owner' in context_vars:
+            enriched_resources['github_owner'] = {'id': context_vars['github_owner']}
+            logger.info(f"Added github_owner to mcp_resources: {context_vars['github_owner']}")
+        
+        if 'github_repo' in context_vars:
+            enriched_resources['github_repo'] = {'id': context_vars['github_repo']}
+            logger.info(f"Added github_repo to mcp_resources: {context_vars['github_repo']}")
+
+    # Build test execution subgraph (provision → invoke → assert)
+    test_graph = build_test_execution_subgraph()
+    results: List[ExperimentResultContext] = []
+
+    # Execute each dataset example through the execution subgraph
+    for idx, example in enumerate(state.dataset_examples, start=1):
+        logger.info(f"Executing test {idx}/{len(state.dataset_examples)}: {example.example_id}")
+        initial = TestExecutionState(
+            context=state.context,
+            dataset_example=example,
+            mcp_resources=dict(enriched_resources),
+            tool_selection_log=state.tool_selection_log,
+        )
+        final_state = await test_graph.ainvoke(initial)
+        # Support both dict and pydantic object returns
+        result_ctx = (
+            final_state.get("result") if isinstance(final_state, dict) else getattr(final_state, "result", None)
+        )
+        if not result_ctx:
+            raise RuntimeError(f"Test execution subgraph did not produce a result for {example.example_id}")
+        results.append(result_ctx)
+    
     cypher_params = []
     for res in results:
         # Flatten the analysis object for storage as node properties
@@ -82,7 +125,8 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
         result_node_props['passed'] = res.passed  # Add the computed 'passed' bool
 
         example_node_props = res.dataset_example.model_dump(exclude={'expected_output'})
-        example_node_props['expected_output'] = str(res.dataset_example.expected_output.hidden_unit_tests) + str(res.dataset_example.expected_output.candidate_code_solution)
+        # Serialize the entire expected_output (3-phase format: provision, expected, assert actions)
+        example_node_props['expected_output'] = json.dumps(res.dataset_example.expected_output.model_dump())
         
         cypher_params.append({
             "example": example_node_props,
@@ -146,6 +190,81 @@ async def _execute_test_cases(state: EvalAgentState) -> dict:
     }
 
 
+async def _upload_results_to_neo4j(state: EvalAgentState) -> dict:
+    """
+    Upload latest_results to Neo4j as nodes and relationships.
+    Separated from execution per requirements.
+    """
+    if not state.context.user_context or not state.context.user_context.user_id:
+        raise ValueError("UserContext with user_id is required to log memories")
+    user_id = state.context.user_context.user_id
+
+    if not state.context.github_context or not state.context.github_context.agent_name:
+        raise ValueError("GithubContext with agent_name is required to log memories")
+    agent_name = state.context.github_context.agent_name
+
+    results = list(state.latest_results or [])
+    if not results:
+        logger.warning("neo4j_upload: No latest_results to upload; skipping.")
+        return {}
+
+    cypher_params = []
+    for res in results:
+        # Flatten the analysis object for storage as node properties
+        analysis_props = res.analysis.model_dump()
+        
+        # Combine all properties for the result node
+        result_node_props = res.model_dump(
+            exclude={'dataset_example', 'analysis', 'passed'}
+        )
+        result_node_props.update(analysis_props)  # Add all analysis fields
+        result_node_props['passed'] = res.passed  # Add the computed 'passed' bool
+
+        example_node_props = res.dataset_example.model_dump(exclude={'expected_output'})
+        # Serialize expected_output (3-phase format: provision, expected, assert actions)
+        example_node_props['expected_output'] = json.dumps(res.dataset_example.expected_output.model_dump())
+        
+        cypher_params.append({
+            "example": example_node_props,
+            "result": result_node_props,
+        })
+
+    cypher_query = """
+    UNWIND $params as row
+
+    // Merge the TestCase node, now namespaced by user_id
+    MERGE (ex:DatasetExample {example_id: row.example.example_id, user_id: $user_id})
+    ON CREATE SET 
+        ex += row.example,
+        ex.status = 'active',
+        ex.agent_name = $agent_name 
+    ON MATCH SET 
+        ex += row.example,
+        ex.status = COALESCE(ex.status, 'active'),
+        ex.agent_name = $agent_name 
+
+    // Merge the Result node, now namespaced by user_id
+    MERGE (res:ExperimentResult {thread_id: row.result.thread_id, user_id: $user_id})
+
+    // Use SET to overwrite all properties, ensuring schema stays current
+    SET res += row.result
+
+    // Connect the TestCase to its Result
+    MERGE (ex)-[r:WAS_RUN_IN]->(res)
+
+    RETURN count(*)
+    """
+
+    query_result = await asyncio.to_thread(
+        NEO4J_GRAPH.query,
+        cypher_query,
+        params={"params": cypher_params, "user_id": user_id, "agent_name": agent_name}
+    )
+    logger.info(f"neo4j_upload: Neo4j query response: {query_result}")
+
+    return {}
+
+
 async def _upload_run_results(state: EvalAgentState) -> dict:
     experiment = state.active_experiment
     dataset = state.dataset_context
@@ -153,7 +272,8 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
     if not experiment or not dataset:
         raise RuntimeError("Cannot upload without dataset and experiment context")
 
-    results_payload = list(experiment.results)
+    # Prefer latest_results if present; otherwise fall back to experiment.results
+    results_payload = list(state.latest_results) if state.latest_results else list(experiment.results)
     failed_cases = list(experiment.failed_results)
 
     api_key = os.getenv("LANGSMITH_API_KEY")
@@ -168,7 +288,7 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
             "row_id": res.dataset_example.example_id,
             "thread_id": res.dataset_example.example_id,
             "inputs": {"question": res.dataset_example.input_message},
-            "expected_outputs": {"answer": str(res.dataset_example.expected_output.hidden_unit_tests) + str(res.dataset_example.expected_output.candidate_code_solution)},
+            "expected_outputs": {"answer": json.dumps(res.dataset_example.expected_output.model_dump())},
             "actual_outputs": {"answer": res.actual_output},
             "evaluation_scores": [
                 {
@@ -179,12 +299,18 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
             ],
             "start_time": res.started_at.isoformat(),
             "end_time": res.completed_at.isoformat(),
-            "run_name": state.github_context.agent_name if state.github_context else "",
+            "run_name": state.context.github_context.agent_name if state.context.github_context else "",
             "run_metadata": {"passed": res.passed},
         }
         for res in results_payload
     ]
 
+    # Compute experiment aggregates from results if missing or outdated
+    if results_payload:
+        experiment.results = results_payload
+        experiment.started_at = min(res.started_at for res in results_payload)
+        experiment.completed_at = max(res.completed_at for res in results_payload)
+        experiment.mean_score = round(sum(res.score for res in results_payload) / len(results_payload), 5)
     mean_score = experiment.mean_score
 
     upload_body = {
@@ -237,20 +363,5 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
         "latest_results": results_payload,
         "messages": [tool_message],
     }
-
-
-def build_run_subgraph():
-    """Build the run subgraph."""
-    builder = StateGraph(EvalAgentState)
-    builder.add_node("prepare", _prepare_run_context)
-    builder.add_node("execute", _execute_test_cases)
-    builder.add_node("upload", _upload_run_results)
-
-    builder.add_edge(START, "prepare")
-    builder.add_edge("prepare", "execute")
-    builder.add_edge("execute", "upload")
-    builder.add_edge("upload", END)
-
-    return builder.compile()
 
 

@@ -1,9 +1,6 @@
+"""Sandbox constants - imports from shared.config for consistency"""
 import re
-
-#target agent setup
 import textwrap
-import os
-
 
 async def _build_git_shell_script() -> str:
     # Sandbox shell script: try unauthenticated Git first (public repos), then fallback to Basic auth header if needed.
@@ -75,20 +72,6 @@ echo "SANDBOX_BRANCH=$BRANCH"
     return textwrap.dedent(script)
 
 
-TARGET_AGENT_LANGSMITH_PROJECT = 'target_agent'
-
-TARGET_AGENT_ENVS={
-    'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY'),
-    'LANGSMITH_API_KEY': os.getenv('LANGSMITH_API_KEY'),
-    'LANGSMITH_PROJECT': TARGET_AGENT_LANGSMITH_PROJECT,
-}
-
-
-# Target agent constants
-TARGET_AGENT_SETUP_SCRIPT = "pip install -e ."
-TARGET_AGENT_COMMAND = "langgraph dev --host 0.0.0.0"
-TARGET_AGENT_PORT = 2024
-
 SUCCESS_PAT = re.compile(r"Server started in \d+(\.\d+)?s")
 # Detect failures early by catching the actual error types that appear first
 FAIL_PATTERNS = [
@@ -98,10 +81,4 @@ FAIL_PATTERNS = [
     re.compile(r"ImportError"),
     re.compile(r"Application startup failed"),
 ]
-
-
-BASE_TEMPLATE_ALIAS = "seer-base"
-BASE_TEMPLATE_CPU_COUNT = 1
-BASE_TEMPLATE_MEMORY_MB = 1024
-
-
+TARGET_AGENT_PORT = 2024

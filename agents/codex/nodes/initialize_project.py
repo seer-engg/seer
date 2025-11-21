@@ -14,16 +14,16 @@ async def initialize_project(state: CodexState) -> CodexState:
     """If a remote repo URL is provided, initialize an E2B sandbox and clone/pull there."""
     logger.info("Skipping project initialization as it is already done")
     sbx, repo_dir, branch_in_sandbox = await initialize_e2b_sandbox(
-        repo_url=state.github_context.repo_url,
-        branch_name=state.sandbox_context.working_branch,
+        repo_url=state.context.github_context.repo_url,
+        branch_name=state.context.sandbox_context.working_branch,
     )
     await setup_project(sbx.sandbox_id, repo_dir, TARGET_AGENT_SETUP_SCRIPT)
-    updated_sandbox_context = SandboxContext(
+    state.context.sandbox_context = SandboxContext(
         sandbox_id=sbx.sandbox_id,
         working_directory=repo_dir,
         working_branch=branch_in_sandbox,
     )
     return {
-        "updated_sandbox_context": updated_sandbox_context,
+        "context": state.context,
     }
 

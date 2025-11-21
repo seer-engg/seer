@@ -7,10 +7,11 @@ requires-python = ">=3.12"
 dependencies = [
   "langchain>=1.0.3",
   "langchain-openai>=1.0.2",
-  "langgraph-api>=0.5.3",
-  "langgraph>=1.0.2",
+  "langgraph-api>=0.5.14",
+  "langgraph>=1.0.3",
   "langgraph-cli[inmem]>=0.4.7",
-  "pydantic>=2.12.3",
+  "pydantic>=2.12.4",
+  "pydantic-settings>=2.0.0",
   "httpx>=0.28.1",
   "requests>=2.32.3",
   "langsmith>=0.4.40",
@@ -26,6 +27,8 @@ dependencies = [
   "langchain-neo4j>=0.6.0",
   "langchain-mcp-adapters==0.1.12",
   "aiosqlite>=0.20.0"
+  "composio>=0.4.0",
+  "composio-langchain>=0.1.0"
 ]
 
 [build-system]
