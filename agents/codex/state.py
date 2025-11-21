@@ -7,6 +7,10 @@ from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field, ConfigDict
 from shared.schema import CodexInput, CodexOutput, ExperimentResultContext
 
+# TODO: move this to shared/schema.py
+from agents.eval_agent.nodes.plan.filter_tools import AVAILABLE_TOOLS
+from agents.eval_agent.models import ToolSelectionLog
+
 
 class TaskItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -36,5 +40,9 @@ class CodexState(CodexInput, CodexOutput):
     success: bool = Field(False, description="Whether the request was successful")    
 
     attempt_number: int = Field(0, description="The number of attempts")
-    max_attempts: int = Field(2, description="The maximum number of attempts")
+
+    #ATTENTION: This is the maximum number of attempts for the codex agent, will reflect on eval failures. default to 0.
+    max_attempts: int = Field(0, description="The maximum number of attempts")
     latest_results: List[ExperimentResultContext] = Field(default_factory=list, description="Results from the most recent programmer test run")
+
+    tool_selection_log: Optional[ToolSelectionLog] = Field(default=None, description="The tool selection log")
