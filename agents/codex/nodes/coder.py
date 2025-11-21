@@ -18,6 +18,13 @@ from sandbox.tools import (
     create_directory,
     write_file,
     patch_file,
+    apply_patch,    
+    search_code,
+    search_symbols,
+    semantic_search,
+    get_symbol_definition,
+    find_usages,
+    get_code_region,
     SandboxToolContext,
 )
 

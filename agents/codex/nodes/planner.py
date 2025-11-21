@@ -17,6 +17,12 @@ from sandbox.tools import (
     inspect_directory,
     read_file,
     grep,
+    search_code,
+    search_symbols,
+    semantic_search,
+    get_symbol_definition,
+    find_usages,
+    get_code_region,
     SandboxToolContext,
 )
 
@@ -80,6 +86,12 @@ async def planner(state: CodexState) -> CodexState:
             inspect_directory,
             read_file,
             grep,
+            search_code,
+            search_symbols,
+            semantic_search,
+            get_symbol_definition,
+            find_usages,
+            get_code_region,
             web_search,
             # TODO: ADD langchain and other mcp tools required for target agent documentations
         ],
