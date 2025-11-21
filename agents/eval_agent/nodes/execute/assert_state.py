@@ -1,0 +1,102 @@
+"""Assert final state for a single dataset example based on natural language instructions."""
+from datetime import datetime
+from typing import List, Optional
+
+from agents.eval_agent.models import TestExecutionState
+from shared.logger import get_logger
+from shared.resource_utils import format_resource_hints
+from shared.parameter_population import (
+    extract_all_context_variables,
+    format_context_variables_for_llm,
+)
+from langchain.agents import create_agent
+from langchain_core.messages import HumanMessage
+
+from langchain.agents.middleware import wrap_tool_call
+from langchain_core.messages import ToolMessage
+from .utils import COMMMON_TOOL_INSTRUCTIONS
+from .utils import get_tools, llm
+
+
+@wrap_tool_call
+async def handle_tool_errors(request, handler):
+    """Handle tool execution errors with custom messages."""
+    try:
+        return await handler(request)
+    except Exception as e:
+        # Return a custom error message to the model
+        return ToolMessage(
+            content=f"Tool error: Please check your input and try again. ({str(e)})",
+            tool_call_id=request.tool_call["id"]
+        )
+
+
+
+logger = get_logger("eval_agent.execute.assert")
+
+
+
+SYSTEM_PROMPT = """
+You are a helpful assistant that asserts the final state of the environment for the target agent. based on the specified criterias. you will use all the tools available to you to assert the final state.
+""" + COMMMON_TOOL_INSTRUCTIONS
+USER_PROMPT = """
+Assert the following criterias by using the tools available to you:
+{criterias}
+
+previously anothe agent has done provisioning and it's output is:
+<provisioning_output>
+{provisioning_output}
+</provisioning_output>
+"""
+
+
+async def assert_final_state_node(state: TestExecutionState) -> dict:
+    """Plan and execute assertion steps, then produce ExperimentResultContext."""
+    example = state.dataset_example
+    if not example:
+        raise ValueError("assert_final_state_node requires dataset_example in state")
+    provisioning_output = state.provisioning_output
+
+    # Initialize tools and tool entries
+
+    # Prepare prompt context
+    context_vars = extract_all_context_variables(
+        user_context=state.context.user_context,
+        github_context=state.context.github_context,
+        mcp_resources=state.mcp_resources,
+    )
+    formatted_context_vars = format_context_variables_for_llm(context_vars)
+    resource_hints = format_resource_hints(state.mcp_resources)
+
+    instructions: Optional[List[str]] = None
+    if example and example.expected_output:
+        instructions = example.expected_output.assert_final_state or []
+
+    if not instructions:
+        raise ValueError(
+            f"DatasetExample {example.example_id} has no assert_final_state instructions."
+        )
+
+    actual_tools = await get_tools(state)
+
+    assertion_agent = create_agent(
+        model=llm,
+        tools=actual_tools,
+        system_prompt=SYSTEM_PROMPT,
+        # response_format=FailureAnalysis,
+        middleware=[handle_tool_errors]
+    )
+
+    user_prompt = HumanMessage(content=USER_PROMPT.format(criterias=instructions, resources=resource_hints, context=formatted_context_vars, provisioning_output=provisioning_output))
+
+    result = await assertion_agent.ainvoke(input={"messages": [user_prompt]})
+    completed_at = datetime.utcnow()
+    assertion_output = result.get('messages')[-1].content
+    
+
+    return {
+        "assertion_output": assertion_output,
+        "completed_at": completed_at,
+    }
+
+

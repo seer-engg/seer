@@ -158,11 +158,6 @@ async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, 
     logger.info(repr(''.join(stderr_buffer)[-500:]))
     logger.info("="*80 + "\n")
     
-    # raise TimeoutError(
-    #     f"Server not healthy after {timeout_s}s (alive={alive}). "
-    #     f"on_stdout_calls={on_stdout_count[0]}, on_stderr_calls={on_stderr_count[0]}. "
-    #     f"stderr tail: {''.join(last_err)[-800:]}"
-    # )
     return sb, handle
 
 async def _probe_from_inside(sb: AsyncSandbox, url: str) -> bool:

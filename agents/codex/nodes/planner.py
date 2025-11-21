@@ -7,11 +7,11 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import HumanMessage, AIMessage
 
 from shared.logger import get_logger
-from shared.tools import web_search, LANGCHAIN_MCP_TOOLS
+from shared.tools import web_search
 from shared.llm import get_llm
 from agents.codex.state import CodexState, TaskPlan
 from agents.codex.format_thread import fetch_thread_timeline_as_string
-from sandbox.constants import TARGET_AGENT_LANGSMITH_PROJECT
+from shared.config import TARGET_AGENT_LANGSMITH_PROJECT
 from sandbox.tools import (
     run_command,
     inspect_directory,
@@ -67,8 +67,8 @@ async def planner(state: CodexState) -> CodexState:
     """Single ReAct agent that gathers repo context and returns a concrete plan."""
 
     # Extract sandbox context for tools
-    updated_sandbox_context = state.updated_sandbox_context
-    if not updated_sandbox_context:
+    sandbox_context = state.context.sandbox_context
+    if not sandbox_context:
         raise ValueError("No sandbox context found in state")
     
     experiment_results = state.experiment_context.results
@@ -81,7 +81,7 @@ async def planner(state: CodexState) -> CodexState:
             read_file,
             grep,
             web_search,
-            *LANGCHAIN_MCP_TOOLS,
+            # TODO: ADD langchain and other mcp tools required for target agent documentations
         ],
         system_prompt=SYSTEM_PROMPT,
         state_schema=CodexState,
@@ -91,7 +91,7 @@ async def planner(state: CodexState) -> CodexState:
     input_messages = list[BaseMessage](state.planner_thread or [])
     output_messages = []
 
-    if not state.latest_test_results:
+    if not state.latest_results:
         evals_and_thread_traces=[] 
         for eval in experiment_results:
             if eval.passed:
@@ -119,7 +119,7 @@ async def planner(state: CodexState) -> CodexState:
     result = await agent.ainvoke(
         input={"messages": input_messages},
         config=RunnableConfig(recursion_limit=100),
-        context=SandboxToolContext(sandbox_context=updated_sandbox_context)  # Pass sandbox context
+        context=SandboxToolContext(sandbox_context=sandbox_context)  # Pass sandbox context
     )
     logger.info(f"Result: {result.keys()}")
     logger.info(f"Result: {result.get('structured_response')}")

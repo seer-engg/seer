@@ -4,9 +4,10 @@ Please review each agents code before making any changes to this file.
 """
 import os
 from datetime import datetime
-from typing import List, Optional, Literal
-from pydantic import BaseModel, Field, ConfigDict, computed_field
-from agents.eval_agent.constants import EVAL_PASS_THRESHOLD
+from typing import List, Optional, Literal, Dict, Any
+from pydantic import BaseModel, Field, ConfigDict, computed_field, model_validator
+from shared.tools import canonicalize_tool_name
+from shared.agent_context import AgentContext
 
 
 class FailureAnalysis(BaseModel):
@@ -27,33 +28,79 @@ class FailureAnalysis(BaseModel):
         "instruction_following", 
         "structure_preservation",
         "completeness",
+        "assertion_error",
+        "runtime_error",
         "other"
     ]] = Field(
         default=None, 
         description="The primary category of the failure. Null if score is 1.0."
-    )
-    #TODO: Why do we need severity? when we already had score !
-    severity: Optional[int] = Field(
-        default=None, 
-        description="Severity of the failure from 1 (minor) to 10 (critical). Null if score is 1.0."
     )
     judge_reasoning: str = Field(
         ..., 
         description="Detailed explanation from the judge about the score and failure."
     )
 
+
+class ActionStep(BaseModel):
+    """Single action executed by the evaluator."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tool: str = Field(
+        ...,
+        description="Tool identifier (e.g., 'ASANA_CREATE_TASK', 'GITHUB_CREATE_PULL_REQUEST', 'system.wait').",
+    )
+    params: str = Field(
+        ...,
+        description="A JSON string containing the parameters for the tool (e.g., '{\"name\": \"Test\"}' or '{}').",
+    )
+    assign_to_var: str = Field(
+        ...,
+        description="Variable name used to store tool output. Use empty string \"\" if unused.",
+    )
+    assert_field: str = Field(
+        ...,
+        description="JSON path to assert against the tool output. Use empty string \"\" if unused.",
+    )
+    assert_expected: str = Field(
+        ...,
+        description="The expected value for the assertion, stored as a string. Use empty string \"\" if unused.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_tool(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(values, dict):
+            return values
+
+        service_hint = values.pop("service", None)
+        tool_name = values.get("tool")
+        if tool_name:
+            values["tool"] = canonicalize_tool_name(tool_name, service_hint=service_hint)
+        elif service_hint:
+            raise ValueError("'tool' must be provided when 'service' is specified.")
+        return values
+
+
 class ExpectedOutput(BaseModel):
     """
     The expected output of the target agent.
     """
     model_config = ConfigDict(extra="forbid")
-    candidate_code_solution: str = Field(..., description="The candidate code solution that should be produced by the target agent")
-    hidden_unit_tests: str = Field(..., description="The hidden unit tests that should be used to test the target agent, This should be a valid python code block. that can be executed to test the target agent's output code. It should start with importing target agent's from solution.py")
+    
+    create_test_data: List[str] = Field(
+        ...,
+        description="Prerequisite data/objects in external apps .Prior to target agent being invoked, the environment should be in this state. e.g. there should be a PR with a specific label."
+    )
+    assert_final_state: List[str] = Field(
+        ...,
+        description="Final state of the environements. After target has been invoked, the environment should be in this state. e.g. the asna ticket with name 'test' should be ccompleted."
+    )
 
 class DatasetExample(BaseModel):
     """Single example in a dataset."""
 
-    example_id: str = Field(..., description="UUID of the example. A hexadecimal string (e.g., 'a1b2c3d4...')")
+    example_id: str = Field(..., description="unique id for the test case")
     reasoning: str = Field(...,
         description="Why is this example important? What aspect of target agent will it be testing?"
     )
@@ -77,19 +124,16 @@ class ExperimentResultContext(BaseModel):
     @computed_field
     @property
     def score(self) -> float:
+        """The score from the analysis."""
         return self.analysis.score
 
     @computed_field
     @property
     def judge_reasoning(self) -> str:
+        """The judge's reasoning from the analysis."""
         return self.analysis.judge_reasoning
     
-    @computed_field
-    @property
-    def passed(self) -> bool:
-        """Whether the evaluator deemed this test successful."""
-        return self.analysis.score >= EVAL_PASS_THRESHOLD
-
+    passed: bool = Field(..., description="Whether the evaluator deemed this test successful.")
     started_at: datetime = Field(..., description="Timestamp when the execution started")
     completed_at: datetime = Field(..., description="Timestamp when the execution completed")
     model_config = ConfigDict(extra="allow")
@@ -150,8 +194,8 @@ class UserContext(BaseModel):
     """Context for the user."""
 
     user_id: str = Field(
-        default_factory=lambda: os.getenv("USER_ID"),
-        description=f"The ID of the user. Default is {os.getenv('USER_ID')} if not specified"
+        default_factory=lambda: os.getenv("USER_ID", ""),
+        description=f"The ID of the user. Default is {os.getenv('USER_ID', '')} if not specified"
     )
     raw_request: str = Field(..., description="The raw request from the user")
     model_config = ConfigDict(extra="forbid")
@@ -159,14 +203,11 @@ class UserContext(BaseModel):
 
 class CodexInput(BaseModel):
     """Input for the Codex agent"""
-
-    github_context: GithubContext = Field(..., description="The GitHub context")
-    sandbox_context: Optional[SandboxContext] = Field(None, description="The sandbox context")
-    user_context: UserContext = Field(..., description="The user context")
+    
+    context: "AgentContext" = Field(..., description="Shared agent context")
     dataset_context: DatasetContext = Field(..., description="The dataset context associated with the evaluation")
     experiment_context: ExperimentContext = Field(..., description="The experiment context associated with the evaluation")
     dataset_examples: List[DatasetExample] = Field(default_factory=list, description="Dataset examples used in the evaluation")
-    target_agent_version: int = Field(..., description="Version of the target agent")
 
 
 class CodexOutput(BaseModel):
@@ -174,5 +215,15 @@ class CodexOutput(BaseModel):
 
     agent_updated: bool = Field(False, description="Whether the agent was updated")
     new_branch_name: Optional[str] = Field(None, description="The name of the new branch")
-    updated_sandbox_context: Optional[SandboxContext] = Field(None, description="The updated sandbox context")
-    target_agent_version: int = Field(..., description="Version of the target agent")
+    updated_context: Optional["AgentContext"] = Field(None, description="The updated agent context")
+
+
+# Resolve forward references now that AgentContext and context models are defined
+AgentContext.model_rebuild(_types_namespace={
+    "UserContext": UserContext,
+    "GithubContext": GithubContext,
+    "SandboxContext": SandboxContext,
+})
+
+CodexInput.model_rebuild(_types_namespace={"AgentContext": AgentContext})
+CodexOutput.model_rebuild(_types_namespace={"AgentContext": AgentContext})

@@ -10,6 +10,7 @@ from langgraph_sdk import get_sync_client
 from agents.codex.state import CodexState
 from agents.eval_agent.constants import EVAL_REMOTE_URL, LANGSMITH_CLIENT, N_VERSIONS
 from shared.logger import get_logger
+from shared.config import DEFAULT_LLM_MODEL
 
 logger = get_logger("codex.finalize")
 
@@ -32,7 +33,7 @@ USER_PROMPT = """
 async def _handoff_to_eval(message_content:str, state: CodexState) -> dict:
     eval_payload: Dict[str, Any] = {
         "messages": [{"role": "user", "content": message_content}],
-        "target_agent_version": state.target_agent_version,
+        "target_agent_version": state.context.target_agent_version,
     }
 
 
@@ -69,10 +70,10 @@ async def _handoff_to_eval(message_content:str, state: CodexState) -> dict:
 
 async def finalize(state: CodexState) -> CodexState:
     logger.info(f"Finalizing state: {state}")
-    if os.getenv("EVAL_HANDOFF_ENABLED") == "true" and state.target_agent_version < N_VERSIONS:
-        llm = ChatOpenAI(model="gpt-4o-mini")
+    if os.getenv("EVAL_HANDOFF_ENABLED") == "true" and state.context.target_agent_version < N_VERSIONS:
+        llm = ChatOpenAI(model=DEFAULT_LLM_MODEL)
         input_messages = []
-        input_messages.append(HumanMessage(content=USER_PROMPT.format(request=state.user_context.raw_request, new_branch_name=state.new_branch_name)))
+        input_messages.append(HumanMessage(content=USER_PROMPT.format(request=state.context.user_context.raw_request, new_branch_name=state.new_branch_name)))
         response = await llm.ainvoke(input_messages)
         await _handoff_to_eval(response.content, state)
         return state

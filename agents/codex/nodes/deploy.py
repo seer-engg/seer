@@ -18,12 +18,15 @@ async def deploy_service(state: CodexState) -> CodexState:
     - deployment_port: preferred port
     - deployment_graph_name: desired graph to serve
     """
+    sandbox_context = state.context.sandbox_context
+    if not sandbox_context:
+        raise ValueError("No sandbox context found in state")
     try:
-        sbx: AsyncSandbox = await AsyncSandbox.connect(state.updated_sandbox_context.sandbox_id)
+        sbx: AsyncSandbox = await AsyncSandbox.connect(sandbox_context.sandbox_id)
         sb, handle = await deploy_server_and_confirm_ready(
             cmd=TARGET_AGENT_COMMAND,
             sb=sbx,
-            cwd=state.updated_sandbox_context.working_directory,
+            cwd=sandbox_context.working_directory,
             timeout_s=50
         )
         server_url = sb.get_host(TARGET_AGENT_PORT)

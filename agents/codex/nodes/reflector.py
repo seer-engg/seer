@@ -4,7 +4,7 @@ from agents.codex.state import CodexState
 from langchain_core.messages import HumanMessage
 from shared.llm import get_llm
 from agents.codex.format_thread import fetch_thread_timeline_as_string
-from sandbox.constants import TARGET_AGENT_LANGSMITH_PROJECT
+from shared.config import TARGET_AGENT_LANGSMITH_PROJECT
 from langchain_core.messages import SystemMessage
 
 logger = get_logger("codex.nodes.reflect")
@@ -48,7 +48,7 @@ Please provide a new, concrete set of implementation steps to fix the remaining 
 async def reflector(state: CodexState) -> CodexState:
     """Reflect on the latest test results and plan necessary fixes."""
     logger.info("Reflecting on failed implementation...")
-    if not state.latest_test_results:
+    if not state.latest_results:
         logger.warning("No test results available for reflection; skipping prompt generation")
         return {
             "messages": [HumanMessage(content="No test results found, attempting plan again.")]
@@ -56,7 +56,7 @@ async def reflector(state: CodexState) -> CodexState:
 
     llm = get_llm(model="codex")
     evals_and_thread_traces=[] 
-    for eval in state.latest_test_results:
+    for eval in state.latest_results:
         if eval.passed:
             continue
         x={

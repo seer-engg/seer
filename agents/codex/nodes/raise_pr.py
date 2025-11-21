@@ -78,17 +78,17 @@ async def raise_pr(state: CodexState) -> CodexState:
     if not github_token:
         raise RuntimeError("GITHUB_TOKEN not configured in environment")
 
-    sandbox_id = state.updated_sandbox_context.sandbox_id
-    repo_dir = state.updated_sandbox_context.working_directory
-    repo_url = state.github_context.repo_url
-    base_branch = state.github_context.branch_name or "main"
-    new_version = state.target_agent_version + 1
+    sandbox_id = state.context.sandbox_context.sandbox_id
+    repo_dir = state.context.sandbox_context.working_directory
+    repo_url = state.context.github_context.repo_url
+    base_branch = state.context.github_context.branch_name or "main"
+    new_version = state.context.target_agent_version + 1
 
     # Generate branch name and commit message
     ts = time.strftime("%Y%m%d-%H%M%S")
     short_id = uuid.uuid4().hex[:7]
     new_branch = f"seer/codex/{ts}-{short_id}/v{new_version}"
-    req_snippet = (state.user_context.raw_request or "Automated update").strip().replace("\n", " ")
+    req_snippet = (state.context.user_context.raw_request or "Automated update").strip().replace("\n", " ")
     if len(req_snippet) > 72:
         req_snippet = req_snippet[:69] + "..."
     commit_msg = f"chore(seer): {req_snippet}"
@@ -242,12 +242,12 @@ async def raise_pr(state: CodexState) -> CodexState:
             "content": f"Pushed branch '{new_branch}'. Please open a PR manually.",
         })
     
-    state.updated_sandbox_context.working_branch = new_branch
+    state.context.sandbox_context.working_branch = new_branch
 
     return {
         "messages": msgs,
         "new_branch_name": new_branch,
-        "updated_sandbox_context": state.updated_sandbox_context,
+        "context": state.context,
         'agent_updated': True,
         'target_agent_version': new_version,
     }

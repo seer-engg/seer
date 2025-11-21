@@ -77,7 +77,7 @@ async def reflect_node(state: EvalAgentState) -> dict:
     """
     logger.info("reflect_node: Starting Analyst Agent investigation...")
 
-    if not state.user_context or not state.user_context.user_id:
+    if not state.context.user_context or not state.context.user_context.user_id:
         raise ValueError("UserContext with user_id is required to reflect")
 
     if not state.latest_results:
@@ -110,11 +110,11 @@ async def reflect_node(state: EvalAgentState) -> dict:
 
     # Define the context we will pass to the agent's tools
     tool_context = ReflectionToolContext(
-        user_id=state.user_context.user_id,
-        agent_name=state.github_context.agent_name,
+        user_id=state.context.user_context.user_id,
+        agent_name=state.context.github_context.agent_name,
         attempts=state.attempts,
         latest_results=state.latest_results,
-        raw_request=state.user_context.raw_request,
+        raw_request=state.context.user_context.raw_request,
     )
     
     # Invoke the agent
