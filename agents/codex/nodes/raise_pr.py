@@ -88,7 +88,7 @@ async def raise_pr(state: CodexState) -> CodexState:
     ts = time.strftime("%Y%m%d-%H%M%S")
     short_id = uuid.uuid4().hex[:7]
     new_branch = f"seer/codex/{ts}-{short_id}/v{new_version}"
-    req_snippet = (state.user_context.raw_request or "Automated update").strip().replace("\n", " ")
+    req_snippet = (state.context.user_context.raw_request or "Automated update").strip().replace("\n", " ")
     if len(req_snippet) > 72:
         req_snippet = req_snippet[:69] + "..."
     commit_msg = f"chore(seer): {req_snippet}"
