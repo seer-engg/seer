@@ -7,6 +7,7 @@ from shared.logger import get_logger
 from e2b import CommandExitException
 from dataclasses import dataclass
 from shared.schema import SandboxContext
+from indexer.service import get_index_service
 
 logger = get_logger("sandbox.tools")
 
@@ -140,6 +141,12 @@ async def write_file(file_path: str, content: str, runtime: ToolRuntime[SandboxT
         # Construct full path
         full_path = f"{repo_path}/{file_path}" if not file_path.startswith("/") else file_path
         await sbx.files.write(full_path, content)
+        # Update index for this file
+        try:
+            service = get_index_service()
+            await service.update_files(runtime.context.sandbox_context, [file_path])
+        except Exception as e:
+            logger.warning(f"Index update failed after write_file: {e}")
         return f"Successfully wrote to {file_path}"
     except Exception as e:
         logger.error(f"Error writing file in sandbox: {e}")
@@ -215,6 +222,12 @@ async def patch_file(
         
         # Write the modified content back
         await sbx.files.write(full_path, new_content)
+        # Update index
+        try:
+            service = get_index_service()
+            await service.update_files(runtime.context.sandbox_context, [file_path])
+        except Exception as e:
+            logger.warning(f"Index update failed after patch_file: {e}")
         
         return f"Successfully patched {file_path}: replaced {replaced_count} occurrence(s)"
         
@@ -277,6 +290,20 @@ async def apply_patch(diff_content: str, runtime: ToolRuntime[SandboxToolContext
         await sbx.commands.run(cleanup_cmd, cwd=repo_path)
         
         if res.exit_code == 0:
+            # Best-effort: extract changed files from the diff headers and update index
+            try:
+                changed = []
+                for line in diff_content.splitlines():
+                    if line.startswith("+++ b/"):
+                        path = line[6:].strip()
+                        if path.startswith("./"):
+                            path = path[2:]
+                        changed.append(path)
+                if changed:
+                    service = get_index_service()
+                    await service.update_files(runtime.context.sandbox_context, changed)
+            except Exception as e:
+                logger.warning(f"Index update failed after apply_patch: {e}")
             return f"Successfully applied diff\nOutput: {res.stdout}"
         else:
             # Try to provide helpful error message
@@ -379,6 +406,12 @@ async def create_file(file_path: str, content: str , runtime: ToolRuntime[Sandbo
         
         # Create the file
         await sbx.files.write(full_path, content)
+        # Update index
+        try:
+            service = get_index_service()
+            await service.update_files(runtime.context.sandbox_context, [file_path])
+        except Exception as e:
+            logger.warning(f"Index update failed after create_file: {e}")
         return f"Successfully created file {file_path}"
     except Exception as e:
         logger.error(f"Error creating file in sandbox: {e}")
@@ -411,3 +444,121 @@ async def create_directory(directory_path: str, runtime: ToolRuntime[SandboxTool
     except Exception as e:
         logger.error(f"Error creating directory in sandbox: {e}")
         return f"Error creating directory: {e}"
+
+
+
+@tool
+async def search_code(query: str, top_k: int, runtime: ToolRuntime[SandboxToolContext]) -> str:
+    """
+    Lexical search over code chunks using FTS; returns file paths, line ranges, and snippets.
+    """
+    if top_k is None:
+        top_k = 10
+    try:
+        service = get_index_service()
+        results = await service.search_code_lexical(query, k=top_k)
+        if not results:
+            return "No results"
+        lines = []
+        for r in results:
+            lines.append(f"{r['path']}:{r['start_line']}-{r['end_line']} :: {r.get('snippet','')}")
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"Error lexical searching code: {e}")
+        return f"Error searching code: {e}"
+
+
+@tool
+async def search_symbols(query: str, top_k: int, runtime: ToolRuntime[SandboxToolContext]) -> str:
+    """
+    Search symbols (functions/classes/methods) by name or docstring. Returns definitions and line ranges.
+    """
+    if top_k is None:
+        top_k = 20
+    try:
+        service = get_index_service()
+        results = await service.search_symbols(query, k=top_k)
+        if not results:
+            return "No symbols found"
+        lines = []
+        for r in results:
+            lines.append(f"{r['type']} {r['qualname']} @ {r['path']}:{r['lineno']}-{r['end_lineno']}")
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"Error searching symbols: {e}")
+        return f"Error searching symbols: {e}"
+
+
+@tool
+async def semantic_search(query: str, top_k: int, runtime: ToolRuntime[SandboxToolContext]) -> str:
+    """
+    Semantic search over code chunks using embeddings. Returns top-k chunks with similarity scores.
+    """
+    if top_k is None:
+        top_k = 10
+    try:
+        service = get_index_service()
+        results = await service.semantic_search(query, k=top_k)
+        if not results:
+            return "No results"
+        lines = []
+        for r in results:
+            score = f"{r['score']:.3f}"
+            lines.append(f"{r['path']}:{r['start_line']}-{r['end_line']} :: score={score}")
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"Error semantic searching code: {e}")
+        return f"Error semantic searching code: {e}"
+
+
+@tool
+async def get_symbol_definition(qualname: str, runtime: ToolRuntime[SandboxToolContext]) -> str:
+    """
+    Fetch the file path and line range for a fully-qualified symbol name.
+    """
+    try:
+        service = get_index_service()
+        res = await service.get_symbol_definition(qualname)
+        if not res:
+            return "Symbol not found"
+        return f"{res['type']} {qualname} @ {res['path']}:{res['lineno']}-{res['end_lineno']}"
+    except Exception as e:
+        logger.error(f"Error getting symbol definition: {e}")
+        return f"Error getting symbol definition: {e}"
+
+
+@tool
+async def find_usages(symbol: str, top_k: int, runtime: ToolRuntime[SandboxToolContext]) -> str:
+    """
+    Find approximate call sites/usages for a symbol (by name or qualname).
+    """
+    if top_k is None:
+        top_k = 50
+    try:
+        service = get_index_service()
+        results = await service.find_usages(symbol, k=top_k)
+        if not results:
+            return "No usages found"
+        lines = []
+        for r in results:
+            lines.append(f"{r['path']}:{r['lineno']} :: {r['call_type']}")
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"Error finding usages: {e}")
+        return f"Error finding usages: {e}"
+
+
+@tool
+async def get_code_region(path: str, start_line: int, end_line: int, runtime: ToolRuntime[SandboxToolContext]) -> str:
+    """
+    Return the exact text for a file region by line numbers using the index's chunk store when available.
+    """
+    try:
+        service = get_index_service()
+        content = await service.get_file_region(path, start_line, end_line)
+        if content is None:
+            return "Region not found in index"
+        return content
+    except Exception as e:
+        logger.error(f"Error getting code region: {e}")
+        return f"Error getting code region: {e}"
