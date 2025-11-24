@@ -60,4 +60,6 @@ data/*
 data/seer.db
 *.db
 
+*.db-shm
+*.db-wal
 notebooks/

@@ -9,7 +9,7 @@ from agents.codex.nodes.deploy import deploy_service
 from agents.codex.nodes.test_server_ready import test_server_ready
 from agents.codex.nodes import (
     planner, coder, evaluator, reflector, finalize,
-    initialize_project
+    initialize_project, index
 )
 import os
 
@@ -19,7 +19,7 @@ logger = get_logger("codex.graph")
 def is_server_ready(state: CodexState) -> CodexState:
     """This router checks if the server is ready at the *start*"""
     if state.server_running:
-        return "planner"
+        return "index-codebase"
     else:
         # If server fails initial check, we can't proceed.
         logger.error("Initial server readiness check failed. Ending graph.")
@@ -56,6 +56,7 @@ def compile_codex_graph():
     # --- Add all nodes ---
     workflow.add_node("initialize-project", initialize_project)
     workflow.add_node("test-server-ready", test_server_ready) # Initial check
+    workflow.add_node("index-codebase", index)
     workflow.add_node("planner", planner)
     
     # --- implementation loop nodes ---
@@ -72,12 +73,13 @@ def compile_codex_graph():
     # --- Wire the graph ---
     workflow.add_edge(START, "initialize-project")
     workflow.add_edge("initialize-project", "test-server-ready")
-
+    workflow.add_edge("test-server-ready", "index-codebase")
     # 1. Initial server check
     workflow.add_conditional_edges("test-server-ready", is_server_ready, {
-        "planner": "planner",
+        "index-codebase": "index-codebase",
         "end": END
     })
+    workflow.add_edge("index-codebase", "planner")
 
     # 2. Plan, then Implement
     workflow.add_edge("planner", "coder")

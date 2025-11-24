@@ -17,9 +17,15 @@ from sandbox.tools import (
     inspect_directory,
     read_file,
     grep,
+    search_code,
+    search_symbols,
+    semantic_search,
+    get_symbol_definition,
+    find_usages,
+    get_code_region,
     SandboxToolContext,
 )
-
+from shared.tools.docs_tools import docs_tools
 logger = get_logger("codex.nodes.context_and_plan")
 
 
@@ -34,6 +40,7 @@ SYSTEM_PROMPT = """### PROMPT: SYSTEM_PROMPT (CODEX/PLANNER) ###
         - **You MUST start by exploring the repository files to understand the project structure before trying to read any specific file.**
         - Use the `inspect_directory` tool on the root ('.') to get a file listing first.
         - Based on the file listing, identify the most relevant files to read for your analysis.
+        - To give agent ability to interact with external services (like asana, github, jira, etc.) use composio tools only , we have already added the COMPOSIO_USER_ID and COMPOSIO_API_KEY in the environment variables.
         </important>
         <general>
         - use respective tools to gather context and plan the task.
@@ -80,8 +87,14 @@ async def planner(state: CodexState) -> CodexState:
             inspect_directory,
             read_file,
             grep,
+            search_code,
+            search_symbols,
+            semantic_search,
+            get_symbol_definition,
+            find_usages,
+            get_code_region,
             web_search,
-            # TODO: ADD langchain and other mcp tools required for target agent documentations
+            *docs_tools,
         ],
         system_prompt=SYSTEM_PROMPT,
         state_schema=CodexState,
