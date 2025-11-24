@@ -57,6 +57,13 @@ class SeerConfig(BaseSettings):
     use_genetic_test_generation: bool = Field(default=False, description="Use genetic algorithm for test generation")
     use_agentic_test_generation: bool = Field(default=False, description="Use agentic approach for test generation")
     eval_agent_load_default_mcps: bool = Field(default=True, description="Load default MCP services")
+
+    # ============================================================================
+    # Codex Agent Configuration
+    # ============================================================================
+    
+    docs_tools_enabled: bool = Field(default=True, description="Enable docs tools")
+    docs_tools_url: str = Field(default="https://docs.langchain.com/mcp", description="URL for docs tools")
     
     # ============================================================================
     # Sandbox & Target Agent Configuration
@@ -132,6 +139,8 @@ class SeerConfig(BaseSettings):
             'OPENAI_API_KEY': self.openai_api_key,
             'LANGSMITH_API_KEY': self.langsmith_api_key,
             'LANGSMITH_PROJECT': self.target_agent_langsmith_project,
+            'COMPOSIO_USER_ID': self.composio_user_id,
+            'COMPOSIO_API_KEY': self.composio_api_key,
         }
     
     def get_asana_workspace_gid(self) -> Optional[str]:

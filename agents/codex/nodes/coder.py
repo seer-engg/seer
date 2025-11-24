@@ -27,6 +27,7 @@ from sandbox.tools import (
     get_code_region,
     SandboxToolContext,
 )
+from shared.tools.docs_tools import docs_tools
 
 logger = get_logger("codex.implement_task_plan")
 
@@ -49,13 +50,11 @@ SYSTEM_PROMPT = """### PROMPT: SYSTEM_PROMPT (CODEX/CODER) ###
     When done, return a brief status summary. You just need to implement the task, you don't need to generate or run any test the implementation.
     You have been provided with following tools to do necessary operation in root directory of the codebase repository.
     
-    # ADDED:
-    You also have access to external service tools (like 'asana.create_task', 'github.update_pr').
-    Use these tools to write the logic for the agent you are building.
 
     # Important Notes:
     - use desired tools to implement the task.
     - for searching of packages, use the web_search tool, do not use pip search.
+    - To give agent ability to interact with external services (like asana, github, jira, etc.) use composio tools only , we have already added the COMPOSIO_USER_ID and COMPOSIO_API_KEY in the environment variables.
 """
 
 
@@ -86,7 +85,7 @@ async def coder(state: CodexState) -> CodexState:
         get_symbol_definition,
         find_usages,
         get_code_region,
-        # TODO: ADD langchain and other mcp tools required for target agent documentations
+        *docs_tools,
         # *mcp_tools, # Add the dynamic tools
     ]
 

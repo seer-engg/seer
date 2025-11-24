@@ -3,11 +3,8 @@ MCP tool loader.
 Handles loading tools from MCP services.
 """
 from typing import Dict, List, Sequence
-from langchain_core.tools import BaseTool
 
 from shared.logger import get_logger
-from shared.mcp_client import get_mcp_client_and_configs
-from shared.tools.registry import ToolEntry
 from shared.config import EVAL_AGENT_LOAD_DEFAULT_MCPS
 
 logger = get_logger("shared.tools.loader")
