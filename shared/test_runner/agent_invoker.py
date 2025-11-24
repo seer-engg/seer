@@ -27,10 +27,6 @@ logger = get_logger("test_runner.agent_invoker")
 class AgentInvocationResult(BaseModel):
     """Result of invoking the target agent."""
     
-    tool_calls: List[Dict[str, Any]] = Field(
-        default_factory=list,
-        description="List of tool calls made by the agent: [{'tool': '...', 'params': {...}, 'result': {...}}, ...]"
-    )
     final_output: Optional[str] = Field(
         None,
         description="The final text output from the agent, if any"
@@ -53,8 +49,6 @@ async def invoke_target_agent(
     sandbox_context: SandboxContext,
     github_context: GithubContext,
     input_message: str,
-    mcp_resources: Dict[str, Any],
-    mcp_configs: Optional[List[Dict[str, Any]]] = None,
     timeout_seconds: int = 300
 ) -> AgentInvocationResult:
     """
@@ -122,21 +116,6 @@ async def invoke_target_agent(
         
         logger.info(f"Thread created: {thread_id}")
         
-        # 4. Send MCP resources config (if any)
-        if mcp_resources or mcp_configs:
-            logger.info("Sending MCP resources/configs to agent...")
-            config_payload = {
-                "type": "config",
-                "mcp_resources": mcp_resources or {},
-                "mcp_configs": mcp_configs or []
-            }
-            
-            await asyncio.to_thread(
-                remote_graph.invoke,
-                {"messages": [{"role": "user", "content": json.dumps(config_payload)}]},
-                thread_cfg
-            )
-        
         # 5. Invoke agent with actual input_message
         logger.info(f"Sending input_message to agent: '{input_message[:100]}...'")
         
@@ -153,35 +132,15 @@ async def invoke_target_agent(
         execution_time = (end_time - start_time).total_seconds()
         
         logger.info(f"Agent responded in {execution_time:.2f} seconds")
-        
-        # 6. Extract tool calls from the result
-        # TODO: Parse result to extract actual tool calls
-        # For now, we'll capture the raw result
-        tool_calls = []
-        final_output = None
-        
-        if isinstance(result, dict):
-            # Extract messages from result
-            messages = result.get("messages", [])
-            
-            # Look for tool calls in AI messages
-            for msg in messages:
-                if hasattr(msg, "tool_calls") and msg.tool_calls:
-                    for tool_call in msg.tool_calls:
-                        tool_calls.append({
-                            "tool": tool_call.get("name"),
-                            "params": tool_call.get("args", {}),
-                            "result": None  # We don't have tool results here
-                        })
-                
-                # Extract final text output
-                if hasattr(msg, "content") and isinstance(msg.content, str):
-                    final_output = msg.content
-        
-        logger.info(f"Captured {len(tool_calls)} tool calls from agent")
+
+        try:
+            # TODO: This is not working , probably because of the 
+            final_output = result.get("messages", [])[-1].content
+        except Exception as e:
+            logger.error(f"Failed to extract final output from agent response: {e}")
+            final_output = ""
         
         return AgentInvocationResult(
-            tool_calls=tool_calls,
             final_output=final_output,
             error=None,
             thread_id=thread_id,

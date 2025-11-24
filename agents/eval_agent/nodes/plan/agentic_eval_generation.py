@@ -40,6 +40,7 @@ your task is to generate DatasetExample objects for the target agent:
 - `expected_output`: An `ExpectedOutput` object with:
   - `create_test_data`: List of strings describing the prerequisite data in external apps, prior to target agent being invoked.
   - `assert_final_state`: List of strings describing the final state of the environment, after target agent has been invoked.
+  - `expected_action`: The expected action that should be taken by the target agent. e.g. 'sync the asana tasks with the github PRs'.
 - `status`: "active"
 
 **MATHEMATICAL GUARANTEE**: 

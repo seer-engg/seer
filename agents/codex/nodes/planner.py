@@ -111,7 +111,7 @@ async def planner(state: CodexState) -> CodexState:
                 continue
             x={
                 "INPUT:": eval.dataset_example.input_message,
-                "EXPECTED OUTPUT:": eval.dataset_example.expected_output,
+                "EXPECTED OUTPUT:": eval.dataset_example.expected_output.expected_action,
                 "ACTUAL OUTPUT:": eval.actual_output,
                 "SCORE:": eval.score,
                 "JUDGE FEEDBACK:": eval.judge_reasoning

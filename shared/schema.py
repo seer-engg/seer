@@ -96,6 +96,10 @@ class ExpectedOutput(BaseModel):
         ...,
         description="Final state of the environements. After target has been invoked, the environment should be in this state. e.g. the asna ticket with name 'test' should be ccompleted."
     )
+    expected_action:str = Field(
+        ...,
+        description="Short description of the expected action that should be taken by the target agent. e.g. 'sync the asana tasks with the github PRs'."
+    )
 
 class DatasetExample(BaseModel):
     """Single example in a dataset."""
