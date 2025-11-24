@@ -6,7 +6,7 @@ async def index(state: CodexState) -> CodexState:
     """
     Index the codebase in the sandbox.
     """
-    result = await index_codebase(state.updated_sandbox_context)
+    result = await index_codebase(state.context.sandbox_context)
     return {
         "index_result": result,
     }

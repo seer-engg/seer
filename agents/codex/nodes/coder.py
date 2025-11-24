@@ -79,6 +79,13 @@ async def coder(state: CodexState) -> CodexState:
         write_file,
         patch_file,
         web_search,
+        apply_patch,    
+        search_code,
+        search_symbols,
+        semantic_search,
+        get_symbol_definition,
+        find_usages,
+        get_code_region,
         # TODO: ADD langchain and other mcp tools required for target agent documentations
         # *mcp_tools, # Add the dynamic tools
     ]

@@ -26,7 +26,7 @@ dependencies = [
   "tenacity>=9.1.2",
   "langchain-neo4j>=0.6.0",
   "langchain-mcp-adapters==0.1.12",
-  "aiosqlite>=0.20.0"
+  "aiosqlite>=0.20.0",
   "composio>=0.4.0",
   "composio-langchain>=0.1.0"
 ]
