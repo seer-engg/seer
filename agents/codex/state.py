@@ -37,12 +37,13 @@ class CodexState(CodexInput, CodexOutput):
     # Codex-specific state
     server_running: bool = Field(False, description="Whether the server is running")
     pr_summary: Optional[str] = Field(None, description="The summary of the PR")
-    success: bool = Field(False, description="Whether the request was successful")    
+    success: bool = Field(False, description="Whether the request was successful")
+    coder_attempt:int = Field(0, description="The number of attempts for the coder node")    
 
     attempt_number: int = Field(0, description="The number of attempts")
 
     #ATTENTION: This is the maximum number of attempts for the codex agent, will reflect on eval failures. default to 0.
-    max_attempts: int = Field(0, description="The maximum number of attempts")
+    max_attempts: int = Field(2, description="The maximum number of attempts")
     latest_results: List[ExperimentResultContext] = Field(default_factory=list, description="Results from the most recent programmer test run")
 
     tool_selection_log: Optional[ToolSelectionLog] = Field(default=None, description="The tool selection log")

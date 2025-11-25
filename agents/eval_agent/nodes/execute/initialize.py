@@ -16,7 +16,7 @@ async def initialize_node(state: TestExecutionState) -> dict:
     updates["accumulated_results"] = []
 
     # Enrich mcp_resources once using context variables (if github context is present)
-    enriched_resources = dict(state.mcp_resources or {})
+    enriched_resources = dict(state.context.mcp_resources or {})
     if state.context.github_context and state.context.github_context.repo_url:
         context_vars = extract_all_context_variables(
             user_context=state.context.user_context,

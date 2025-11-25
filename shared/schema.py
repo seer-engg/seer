@@ -96,6 +96,10 @@ class ExpectedOutput(BaseModel):
         ...,
         description="Final state of the environements. After target has been invoked, the environment should be in this state. e.g. the asna ticket with name 'test' should be ccompleted."
     )
+    expected_action:str = Field(
+        ...,
+        description="Short description of the expected action that should be taken by the target agent. e.g. 'sync the asana tasks with the github PRs'."
+    )
 
 class DatasetExample(BaseModel):
     """Single example in a dataset."""
@@ -104,7 +108,7 @@ class DatasetExample(BaseModel):
     reasoning: str = Field(...,
         description="Why is this example important? What aspect of target agent will it be testing?"
     )
-    input_message: str = Field(..., description="The input message that should be send to target agent. MUST NOT CONTAIN ANY HINTS. MUST NOT CONTAIN EXPECTED OUTPUT!")
+    input_message: str = Field(..., description="The input message that should be send to target agent. MUST NOT CONTAIN ANY HINTS. MUST NOT CONTAIN EXPECTED OUTPUT! MUST NOT CONTAIN ANY PLACEHOLDERS")
     expected_output: ExpectedOutput = Field(...)
     status: Literal["active", "retired"] = Field(
         ...,

@@ -28,7 +28,7 @@ from sandbox.tools import (
     SandboxToolContext,
 )
 from shared.tools.docs_tools import docs_tools
-
+from agents.codex.common_instructions import TARGET_AGENT_GUARDRAILS, COMPOSIO_LANGCHAIN_INTEGRATION
 logger = get_logger("codex.implement_task_plan")
 
 USER_PROMPT = """
@@ -45,7 +45,7 @@ USER_PROMPT = """
     After implementing the task plan, return a brief status summary.
 """
 
-SYSTEM_PROMPT = """### PROMPT: SYSTEM_PROMPT (CODEX/CODER) ###
+SYSTEM_PROMPT = """
     You are a software engineer. You have been given a task to implement. Implement the assigned task to the codebase in the sandbox.
     When done, return a brief status summary. You just need to implement the task, you don't need to generate or run any test the implementation.
     You have been provided with following tools to do necessary operation in root directory of the codebase repository.
@@ -54,8 +54,8 @@ SYSTEM_PROMPT = """### PROMPT: SYSTEM_PROMPT (CODEX/CODER) ###
     # Important Notes:
     - use desired tools to implement the task.
     - for searching of packages, use the web_search tool, do not use pip search.
-    - To give agent ability to interact with external services (like asana, github, jira, etc.) use composio tools only , we have already added the COMPOSIO_USER_ID and COMPOSIO_API_KEY in the environment variables.
-"""
+    - after adding any new package to pyproject.toml, always run command `pip install -e .` to install the new package.
+""" + TARGET_AGENT_GUARDRAILS + COMPOSIO_LANGCHAIN_INTEGRATION
 
 
 async def coder(state: CodexState) -> CodexState:
@@ -99,14 +99,13 @@ async def coder(state: CodexState) -> CodexState:
 
     # Prepare messages for the agent
     messages = list(state.coder_thread or [])
-    
-    user_prompt_content = USER_PROMPT.format(
-        request=state.context.user_context.raw_request,
-        task_plan=state.taskPlan,
-    )
-    # TODO: when coming from test_server_ready, do not add the user_prompt_content
 
-    messages.append(HumanMessage(content=user_prompt_content))
+    if state.coder_attempt == 0:    # only add the user prompt content on the first attempt
+        user_prompt_content = USER_PROMPT.format(
+            request=state.context.user_context.raw_request,
+            task_plan=state.taskPlan,
+        )
+        messages.append(HumanMessage(content=user_prompt_content))
 
     result = await agent.ainvoke(
         input={"messages": messages}, 
@@ -126,4 +125,5 @@ async def coder(state: CodexState) -> CodexState:
         "coder_thread": result.get("messages"),
         "planner_thread": [AIMessage(content=pr_summary)],
         "pr_summary": pr_summary,
+        "coder_attempt": state.coder_attempt + 1,
     }
