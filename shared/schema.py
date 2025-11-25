@@ -108,7 +108,7 @@ class DatasetExample(BaseModel):
     reasoning: str = Field(...,
         description="Why is this example important? What aspect of target agent will it be testing?"
     )
-    input_message: str = Field(..., description="The input message that should be send to target agent. MUST NOT CONTAIN ANY HINTS. MUST NOT CONTAIN EXPECTED OUTPUT!")
+    input_message: str = Field(..., description="The input message that should be send to target agent. MUST NOT CONTAIN ANY HINTS. MUST NOT CONTAIN EXPECTED OUTPUT! MUST NOT CONTAIN ANY PLACEHOLDERS")
     expected_output: ExpectedOutput = Field(...)
     status: Literal["active", "retired"] = Field(
         ...,

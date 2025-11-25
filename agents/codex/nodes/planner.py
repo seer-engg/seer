@@ -25,30 +25,24 @@ from sandbox.tools import (
     get_code_region,
     SandboxToolContext,
 )
+from agents.codex.common_instructions import TARGET_AGENT_GUARDRAILS
 from shared.tools.docs_tools import docs_tools
 logger = get_logger("codex.nodes.context_and_plan")
 
 
-SYSTEM_PROMPT = """### PROMPT: SYSTEM_PROMPT (CODEX/PLANNER) ###
+SYSTEM_PROMPT = """
     You are an Technical manager specializing in LLM based Agent development.
     Your role is to Create a plan for the Agent to be developed.
     Your task is to plan the next steps to be taken to improve the agent by analyzing the failed eval thread  of the agent  and understanding the current state of the agent through its code .
-    Create a plan with 3-7 concrete steps to fulfill the request.
     
-    <notes>
-        <important>
-        - **You MUST start by exploring the repository files to understand the project structure before trying to read any specific file.**
-        - Use the `inspect_directory` tool on the root ('.') to get a file listing first.
-        - Based on the file listing, identify the most relevant files to read for your analysis.
-        - To give agent ability to interact with external services (like asana, github, jira, etc.) use composio tools only , we have already added the COMPOSIO_USER_ID and COMPOSIO_API_KEY in the environment variables.
-        </important>
-        <general>
-        - use respective tools to gather context and plan the task.
-        - SearchDocsByLangChain tool is available to search the documentation of langchain & langgraph.
-        - You have to only plan the development task, No need to include any testing or evaluation tasks ( unit test or eval runs).
-        </general>
-    </notes>
-"""
+# IMPORTANT:
+    - **You MUST start by exploring the repository files to understand the project structure before trying to read any specific file.**
+    - Use the `inspect_directory` tool on the root ('.') to get a file listing first.
+    - Based on the file listing, identify the most relevant files to read for your analysis.
+    - use respective tools to gather context and plan the task.
+    - SearchDocsByLangChain tool is available to search the documentation of langchain & langgraph.
+    - You have to only plan the development task, No need to include any testing or evaluation tasks ( unit test or eval runs).
+""" + TARGET_AGENT_GUARDRAILS
 
 USER_PROMPT = """
     Analyse the following eval test cases and corresponding  thread trace of the agent .
