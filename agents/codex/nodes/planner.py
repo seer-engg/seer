@@ -45,6 +45,7 @@ SYSTEM_PROMPT = """
 """ + TARGET_AGENT_GUARDRAILS
 
 USER_PROMPT = """
+    user exectation with the agent is : {user_raw_request}
     Analyse the following eval test cases and corresponding  thread trace of the agent .
     <EVALS AND THREAD TRACES>
     {evals_and_thread_traces}
@@ -71,6 +72,7 @@ async def planner(state: CodexState) -> CodexState:
     sandbox_context = state.context.sandbox_context
     if not sandbox_context:
         raise ValueError("No sandbox context found in state")
+    user_raw_request = state.context.user_context.raw_request
     
     experiment_results = state.experiment_context.results
 
@@ -118,7 +120,7 @@ async def planner(state: CodexState) -> CodexState:
                 )
             )
         
-        task_message = HumanMessage(content=USER_PROMPT.format(evals_and_thread_traces=evals_and_thread_traces))
+        task_message = HumanMessage(content=USER_PROMPT.format(user_raw_request=user_raw_request, evals_and_thread_traces=evals_and_thread_traces))
         input_messages.append(task_message)
         output_messages.append(task_message)
 
@@ -139,4 +141,5 @@ async def planner(state: CodexState) -> CodexState:
     return {
         "taskPlan": taskPlan,
         "planner_thread": output_messages,
+        "attempt_number": state.attempt_number + 1,
     }
