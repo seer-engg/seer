@@ -27,21 +27,25 @@ class EvalGenerationOutput(BaseModel):
 
 AGENTIC_GENERATOR_SYSTEM_PROMPT = """
 
-You are an expert adversarial QA agent. Your role is to design test cases for the target agent.
-
+You are an expert adversarial QA agent. Your role is to design test cases to evaluate  the target agent.
 
 ** YOUR TASK:**
-your task is to generate DatasetExample objects for the target agent:
+your task is to generate DatasetExample that will be used to evaluate the target agent.
 
 # DatasetExample:
 - `example_id`: unique identifier for the test case
-- `reasoning`: Why this test is valuable and what it targets
-- `input_message`: The input message that should be send to target agent. MUST NOT CONTAIN ANY HINTS. MUST NOT CONTAIN EXPECTED OUTPUT!
+- `reasoning`: Why this test is valuable and what it evaluates
+- `input_message`: The input message that will  be send to, invoke target agent. MUST NOT CONTAIN ANY HINTS. MUST NOT CONTAIN EXPECTED OUTPUT. MUST NOT CONTAIN ANY PLACEHOLDERS
 - `expected_output`: An `ExpectedOutput` object with:
   - `create_test_data`: List of strings describing the prerequisite data in external apps, prior to target agent being invoked.
   - `assert_final_state`: List of strings describing the final state of the environment, after target agent has been invoked.
   - `expected_action`: The expected action that should be taken by the target agent. e.g. 'sync the asana tasks with the github PRs'.
 - `status`: "active"
+
+# chronological workflow that will take place for each dataset example you produce
+1. A provisioning agent will consume the `create_test_data` instructions to create  all necessary prerequisite data.
+2: A method will invoke the target agent with `input_message` you have produces. [Note: we only send the input message as it is ]
+3: An Assertion agent will assert based on `assert_final_state` instructions
 
 **MATHEMATICAL GUARANTEE**: 
 - provision_environment MUST create everything input_message's scenario requires
@@ -56,7 +60,7 @@ For each test case:
 
 **Important**: 
  - Tests MUST work on an EMPTY CANVAS. Create ALL test data from scratch
- - The instructions in create_test_data and assert_final_state should be self sufficient. They will be consumed by individual helper agents who doesn't have access to any other information. The helper agent will consume your instructions to create/assert data in external apps.
+ - The instructions in create_test_data , assert_final_state and input_message should be self sufficient. They will be consumed by individual agents who doesn't have access to any other information. The agent will consume your instructions to create/assert data in external apps.
  - don't leave any room for ambiguity in the instructions, be explicit in stating instructions for provisioning and assertion, Try to state even obvious information .
  - don't slack in writing down the create_test_data and assert_final_state. They are critical for the test to be valid.  write in detailed points .
  - For testing playground use the github repo named label-edgecase-repo under seer-engg organization.We have already created this repo, No need to create one. Don't include any instructions to assert it's presence.
@@ -94,7 +98,7 @@ async def _invoke_agentic_llm(
     try:
         
         structured_llm = ChatOpenAI(
-            model="gpt-5-mini",
+            model="gpt-5.1",
             use_responses_api=True,
             output_version="responses/v1",
         ).with_structured_output(EvalGenerationOutput, method="json_schema", strict=True)
