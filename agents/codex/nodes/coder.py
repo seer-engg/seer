@@ -54,6 +54,7 @@ SYSTEM_PROMPT = """
     # Important Notes:
     - use desired tools to implement the task.
     - for searching of packages, use the web_search tool, do not use pip search.
+    - after adding any new package to pyproject.toml, always run command `pip install -e .` to install the new package.
 """ + TARGET_AGENT_GUARDRAILS + COMPOSIO_LANGCHAIN_INTEGRATION
 
 
@@ -98,14 +99,13 @@ async def coder(state: CodexState) -> CodexState:
 
     # Prepare messages for the agent
     messages = list(state.coder_thread or [])
-    
-    user_prompt_content = USER_PROMPT.format(
-        request=state.context.user_context.raw_request,
-        task_plan=state.taskPlan,
-    )
-    # TODO: when coming from test_server_ready, do not add the user_prompt_content
 
-    messages.append(HumanMessage(content=user_prompt_content))
+    if state.coder_attempt == 0:    # only add the user prompt content on the first attempt
+        user_prompt_content = USER_PROMPT.format(
+            request=state.context.user_context.raw_request,
+            task_plan=state.taskPlan,
+        )
+        messages.append(HumanMessage(content=user_prompt_content))
 
     result = await agent.ainvoke(
         input={"messages": messages}, 
@@ -125,4 +125,5 @@ async def coder(state: CodexState) -> CodexState:
         "coder_thread": result.get("messages"),
         "planner_thread": [AIMessage(content=pr_summary)],
         "pr_summary": pr_summary,
+        "coder_attempt": state.coder_attempt + 1,
     }

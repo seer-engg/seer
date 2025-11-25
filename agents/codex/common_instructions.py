@@ -12,7 +12,7 @@ TARGET_AGENT_GUARDRAILS = """
 # TODO: Remove the following hardcoding with mcp tools or graph rag 
 COMPOSIO_LANGCHAIN_INTEGRATION = """
 
-# example implementation showing how can we use composio tools with langchain.
+# Example implementation showing how can we use composio tools with langchain.
 
 The LangChain Provider transforms Composio tools into a format compatible with LangChain's function calling capabilities.
 
@@ -55,7 +55,7 @@ COMPOSIO_USER_ID = os.getenv("COMPOSIO_USER_ID")
 
 composio = Composio(provider=LangchainProvider())
 
-### Get tools from Composio (include docs search)
+### Get tools from Composio for toolkits
 tools = composio.tools.get(
     user_id=COMPOSIO_USER_ID,
     toolkits=["ASANA","GITHUB"],
@@ -69,21 +69,39 @@ You are a helpful assistant that can help with tasks related to GitHub and Asana
 agent = create_agent(openai_client, tools, middleware=[handle_tool_errors], system_prompt=SYSTEM_PROMPT)
 
 task = "
-Provision the environment for the target agent based on the instructions provided.
-Resorces:
-- asana_project: id=1211928407052666 (use [resource:asana_project.id])
-- asana_workspace: id=1211928405122978 (use [resource:asana_workspace.id])
-- github_owner: id=seer-engg (use [resource:github_owner.id])
-- github_repo: id=buggy-coder (use [resource:github_repo.id])
-
-SHORT_UUID = e1a2b3c4
-Instructions:
-Create a Pull Request in seer-engg/label-edgecase-repo from "buggy-coder/test-sync-e1a2b3c4" into the default branch.\n      * PR title: "Sync Asana task  - test"\n     * PR body must contain exactly the text: "Asana Task:" 
+WHta are the open PRs in the repository?
 "
-
-
 result = await agent.ainvoke({"messages": [HumanMessage(content=task)]})
 
 </CodeGroup>
+
+# Composio Tools
+asana and github toolkit contains many useful tools some of them are :
+ "GITHUB_ACTIVITY_STAR_REPO_FOR_AUTHENTICATED_USER",
+    "GITHUB_CHECK_IF_A_PULL_REQUEST_HAS_BEEN_MERGED",
+    "GITHUB_CREATE_A_BLOB",
+    "GITHUB_CREATE_A_COMMIT",
+    "GITHUB_CREATE_A_COMMIT_COMMENT",
+    "GITHUB_CREATE_AN_ISSUE",
+    "GITHUB_CREATE_A_PULL_REQUEST",
+    "GITHUB_CREATE_A_REFERENCE",
+    "GITHUB_GET_A_REFERENCE",
+    "GITHUB_GET_A_COMMIT",
+    "GITHUB_CREATE_OR_UPDATE_FILE_CONTENTS",
+    "GITHUB_MERGE_A_PULL_REQUEST",
+    "GITHUB_FIND_PULL_REQUESTS",
+
+    "ASANA_ADD_TASK_TO_SECTION",
+    "ASANA_CREATE_A_PROJECT",
+    "ASANA_CREATE_A_TASK",
+    "ASANA_CREATE_CUSTOM_FIELD",
+    "ASANA_CREATE_PROJECT_STATUS_UPDATE",
+    "ASANA_CREATE_SECTION_IN_PROJECT",
+    "ASANA_CREATE_TASK_COMMENT",
+    "ASANA_GET_A_PROJECT",
+    "ASANA_GET_A_TASK",
+    "ASANA_UPDATE_A_TASK",
+    "ASANA_UPDATE_PROJECT",
+    "ASANA_GET_STORIES_FOR_TASK",
 
 """

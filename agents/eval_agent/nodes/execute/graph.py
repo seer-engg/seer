@@ -69,6 +69,13 @@ async def finalize_batch_node(state: TestExecutionState) -> dict:
         "latest_results": list(state.accumulated_results or []),
     }
 
+async def agent_invocation_route_node(state: TestExecutionState) -> dict:
+    """Route the agent invocation based on the assertion output."""
+    if state.assertion_output:
+        return "prepare_result"
+    else:
+        return "assert"
+
 
 def build_test_execution_subgraph():
     """Build the batch-aware test execution subgraph."""
@@ -93,7 +100,11 @@ def build_test_execution_subgraph():
     })
 
     builder.add_edge("provision", "invoke")
-    builder.add_edge("invoke", "assert")
+    builder.add_conditional_edges("invoke", agent_invocation_route_node, {
+        "prepare_result": "prepare_result",
+        "assert": "assert",
+    })
+
     builder.add_edge("assert", "prepare_result")
     builder.add_edge("prepare_result", "collect_result")
     builder.add_edge("collect_result", "dispatch")
