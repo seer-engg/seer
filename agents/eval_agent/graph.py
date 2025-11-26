@@ -1,8 +1,6 @@
 """overall graph for the eval agent"""
-import json
-from typing import Literal, Dict
+from typing import Literal
 from langgraph.graph import END, START, StateGraph
-from langchain_core.tools import BaseTool
 
 from agents.eval_agent.constants import N_ROUNDS, N_VERSIONS
 from agents.eval_agent.nodes.finalize import build_finalize_subgraph

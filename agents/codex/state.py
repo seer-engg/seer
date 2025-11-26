@@ -7,7 +7,6 @@ from langchain_core.messages import BaseMessage
 from pydantic import Field
 from shared.schema import CodexInput, CodexOutput, ExperimentResultContext
 
-from agents.eval_agent.models import ToolSelectionLog
 
 class CodexState(CodexInput, CodexOutput):
     # Agent-specific threading for different nodes
@@ -25,5 +24,3 @@ class CodexState(CodexInput, CodexOutput):
     #ATTENTION: This is the maximum number of attempts for the codex agent, will reflect on eval failures. default to 0.
     max_attempts: int = Field(2, description="The maximum number of attempts")
     latest_results: List[ExperimentResultContext] = Field(default_factory=list, description="Results from the most recent programmer test run")
-
-    tool_selection_log: Optional[ToolSelectionLog] = Field(default=None, description="The tool selection log")

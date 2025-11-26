@@ -10,7 +10,7 @@ Seer is a LangGraph-based multi-agent system that performance-tests autonomous s
 - **Graph-native workflows** – Both agents compile LangGraph state machines, making control flow explicit and observable.
 - **Sandbox-first execution** – Target repos run inside E2B code sandboxes with reusable helpers in `sandbox/`.
 - **Persistent memory** – Evaluation reflections and MCP tool embeddings are indexed in Neo4j (`graph_db/`), enabling cross-run learning.
-- **Configurable automation** – Feature flags (e.g., `CODEX_HANDOFF_ENABLED`, genetic/agentic test generation) live in `shared/config.py` so you can experiment without code changes.
+- **Configurable automation** – Feature flags (e.g., `CODEX_HANDOFF_ENABLED`) live in `shared/config.py` so you can experiment without code changes.
 
 ## Architecture Overview
 

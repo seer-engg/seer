@@ -3,20 +3,18 @@ Node for reflecting on the latest test results.
 This node is an "Analyst Agent" that investigates failures and flakiness.
 """
 from typing import List
-from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 
-from agents.eval_agent.constants import LLM
 from agents.eval_agent.models import EvalAgentState
 from agents.eval_agent.nodes.reflect.tools import (
-    get_latest_run_results,
-    get_historical_test_results,
-    save_reflection,
+    create_reflection_tools,
     ReflectionToolContext,
 )
 from shared.tools import think
+from shared.llm import get_llm
 from shared.logger import get_logger
+from agents.eval_agent.reflexion_factory import create_ephemeral_reflexion
 
 logger = get_logger("eval_agent.reflect")
 
@@ -52,22 +50,6 @@ Your goal is to:
 
 This is your final step. Do not add any more steps.
 """
-
-# 2. Create the Agent Runnable
-tools: List = [
-    think,
-    get_latest_run_results,
-    get_historical_test_results,
-    save_reflection,
-]
-
-# This creates the ReAct agent
-analyst_agent_runnable = create_agent(
-    model=LLM,
-    tools=tools,
-    system_prompt=ANALYST_AGENT_SYSTEM_PROMPT,
-    state_schema=EvalAgentState,
-)
 
 
 async def reflect_node(state: EvalAgentState) -> dict:
@@ -117,11 +99,22 @@ async def reflect_node(state: EvalAgentState) -> dict:
         raw_request=state.context.user_context.raw_request,
     )
     
+    # Create tools bound to the context
+    reflection_tools = create_reflection_tools(tool_context)
+    reflection_tools.append(think)
+
+    # Create the Reflexion Agent
+    analyst_graph = create_ephemeral_reflexion(
+        model=get_llm(model="gpt-4.1", temperature=0.0),
+        tools=reflection_tools,
+        prompt=ANALYST_AGENT_SYSTEM_PROMPT,
+        agent_id="eval_analyst_v1"
+    )
+    
     # Invoke the agent
-    _ = await analyst_agent_runnable.ainvoke(
-        {"messages": [HumanMessage(content=initial_prompt)]},
-        config=RunnableConfig(recursion_limit=100),
-        context=tool_context  # Pass the context for the tools
+    _ = await analyst_graph.ainvoke(
+        {"messages": [HumanMessage(content=initial_prompt)], "current_round": 0},
+        config=RunnableConfig(recursion_limit=100)
     )
 
     return {"attempts": state.attempts + 1}

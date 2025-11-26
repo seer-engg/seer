@@ -1,13 +1,9 @@
 from e2b import AsyncSandbox
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import HumanMessage
 
 from shared.logger import get_logger
-from sandbox import deploy_server_and_confirm_ready, TARGET_AGENT_COMMAND, kill_process_on_port, TARGET_AGENT_PORT
+from sandbox import deploy_server_and_confirm_ready, TARGET_AGENT_COMMAND
 from agents.codex.state import CodexState
-
-# TODO: move this to shared/schema.py
-from agents.eval_agent.nodes.plan.filter_tools import AVAILABLE_TOOLS
-from agents.eval_agent.models import ToolSelectionLog
 
 logger = get_logger("codex.test_server_ready")
 
@@ -39,13 +35,7 @@ async def test_server_ready(state: CodexState) -> CodexState:
         if state.developer_thread:
             return_state["developer_thread"] = [HumanMessage(content=error_message)]
         return return_state
-    
-    # TODO: This is a temporary solution to get the available tools. We need to find a better way to get the available tools.
-    tool_selection_log = ToolSelectionLog(
-        selection_context="",
-        selected_tools=AVAILABLE_TOOLS
-    )
+
     return {
         "server_running": True,
-        "tool_selection_log": tool_selection_log,
     }

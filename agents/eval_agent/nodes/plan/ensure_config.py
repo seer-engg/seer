@@ -2,9 +2,7 @@ import re
 from typing import Optional, Tuple, List 
 from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
-
-from agents.eval_agent.constants import LLM
+from shared.llm import get_llm
 from agents.eval_agent.models import EvalAgentPlannerState
 from shared.agent_context import AgentContext
 from shared.schema import GithubContext, UserContext
@@ -77,7 +75,7 @@ async def ensure_target_agent_config(state: EvalAgentPlannerState) -> dict:
             description="List of external MCP services mentioned, e.g., ['asana', 'github']"
         )
 
-    extractor = LLM.with_structured_output(TargetAgentExtractionContext)
+    extractor = get_llm(model="gpt-4.1", temperature=0.0).with_structured_output(TargetAgentExtractionContext)
     context: TargetAgentExtractionContext = await extractor.ainvoke(f"{instruction}\n\nUSER:\n{last_human.content}")
     context.user_context.raw_request = last_human.content
     

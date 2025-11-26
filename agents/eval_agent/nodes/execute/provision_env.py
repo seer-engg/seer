@@ -2,50 +2,31 @@
 from datetime import datetime
 from typing import List
 
+from langchain_core.messages import HumanMessage
 from agents.eval_agent.models import TestExecutionState
 from shared.logger import get_logger
 from shared.resource_utils import format_resource_hints
-from langchain_core.messages import HumanMessage
+from shared.llm import get_llm
+from agents.eval_agent.reflexion_factory import create_ephemeral_reflexion
+from langchain_core.runnables import RunnableConfig
+from .utils import get_tool_hub
 
 logger = get_logger("eval_agent.execute.provision")
 
 
-from langchain.agents import create_agent
-from langchain.agents.middleware import wrap_tool_call
-from langchain_core.messages import ToolMessage
-from langchain_core.runnables import RunnableConfig
-from .utils import COMMMON_TOOL_INSTRUCTIONS
-from .utils import get_tools, llm
-
-
-
-@wrap_tool_call
-async def handle_tool_errors(request, handler):
-    """Handle tool execution errors with custom messages."""
-    try:
-        return await handler(request)
-    except Exception as e:
-        # Return a custom error message to the model
-        return ToolMessage(
-            content=f"Tool error: Please check your input and try again. ({str(e)})",
-            tool_call_id=request.tool_call["id"]
-        )
-
-
-
-
 SYSTEM_PROMPT = """
-You are a helpful assistant that provisions the environment for the target agent. based on the instructions provided. you will use all the tools available to you to provision the environment.
-
-""" + COMMMON_TOOL_INSTRUCTIONS
+You are a helpful assistant that provisions the environment for the target agent based on the instructions provided.
+You will use all the tools available to you to provision the environment.
+"""
 USER_PROMPT = """
 Provision the environment for the target agent based on the instructions provided.
-Resorces:
+<resources>
 {resources}
+</resources>
 
-Instructions:
+<instructions>
 {instructions}
-
+</instructions>
 """
 
 
@@ -64,24 +45,32 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
     
     resource_hints = format_resource_hints(state.mcp_resources)
 
-    actual_tools = await get_tools(state)
+    tool_hub = await get_tool_hub(state)
     
-    provisioning_agent = create_agent(
-        model=llm,
-        tools=actual_tools,
-        system_prompt=SYSTEM_PROMPT,
-        middleware=[handle_tool_errors]
+    # Use Reflexion agent for provisioning
+    provisioning_agent = create_ephemeral_reflexion(
+        model=get_llm(model='gpt-4.1', temperature=0.0),
+        tool_hub=tool_hub,
+        prompt=SYSTEM_PROMPT,
+        agent_id="eval_provisioner_v1",
+        max_rounds=2  # Limit rounds for provisioning to avoid infinite loops
     )
     user_prompt = HumanMessage(content=USER_PROMPT.format(instructions=instructions, resources=resource_hints))
 
-    result = await provisioning_agent.ainvoke(input={"messages": [user_prompt]}, config=RunnableConfig(recursion_limit=75))
+    # Invoke with initial state
+    result = await provisioning_agent.ainvoke(
+        {"messages": [user_prompt], "current_round": 0}, 
+        config=RunnableConfig(recursion_limit=75)
+    )
 
-    provisioning_output = result.get('messages')[-1].content
+    # Extract output from Reflexion state
+    provisioning_output = result.get('candidate_response')
+    if not provisioning_output and result.get('messages'):
+        # Fallback to last message content if candidate_response is empty
+        provisioning_output = result['messages'][-1].content
 
     return {
         "mcp_resources": state.mcp_resources,
         "started_at": started_at,
         "provisioning_output": provisioning_output,
     }
-
-

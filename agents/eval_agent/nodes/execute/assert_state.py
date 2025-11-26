@@ -9,27 +9,12 @@ from shared.parameter_population import (
     extract_all_context_variables,
     format_context_variables_for_llm,
 )
-from langchain.agents import create_agent
+from shared.llm import get_llm
+from agents.eval_agent.reflexion_factory import create_ephemeral_reflexion
 from langchain_core.messages import HumanMessage
+from langchain_core.runnables import RunnableConfig
 
-from langchain.agents.middleware import wrap_tool_call
-from langchain_core.messages import ToolMessage
-from .utils import COMMMON_TOOL_INSTRUCTIONS
-from .utils import get_tools, llm
-
-
-@wrap_tool_call
-async def handle_tool_errors(request, handler):
-    """Handle tool execution errors with custom messages."""
-    try:
-        return await handler(request)
-    except Exception as e:
-        # Return a custom error message to the model
-        return ToolMessage(
-            content=f"Tool error: Please check your input and try again. ({str(e)})",
-            tool_call_id=request.tool_call["id"]
-        )
-
+from .utils import get_tool_hub
 
 
 logger = get_logger("eval_agent.execute.assert")
@@ -38,7 +23,7 @@ logger = get_logger("eval_agent.execute.assert")
 
 SYSTEM_PROMPT = """
 You are a helpful assistant that asserts the final state of the environment for the target agent. based on the specified criterias. you will use all the tools available to you to assert the final state.
-""" + COMMMON_TOOL_INSTRUCTIONS
+"""
 USER_PROMPT = """
 Assert the following criterias by using the tools available to you:
 {criterias}
@@ -77,26 +62,30 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
             f"DatasetExample {example.example_id} has no assert_final_state instructions."
         )
 
-    actual_tools = await get_tools(state)
+    tool_hub = await get_tool_hub(state)
 
-    assertion_agent = create_agent(
-        model=llm,
-        tools=actual_tools,
-        system_prompt=SYSTEM_PROMPT,
-        # response_format=FailureAnalysis,
-        middleware=[handle_tool_errors]
+    assertion_agent = create_ephemeral_reflexion(
+        model=get_llm(model='gpt-4.1', temperature=0.0),
+        tool_hub=tool_hub,
+        prompt=SYSTEM_PROMPT,
+        agent_id="eval_asserter_v1",
+        max_rounds=2 
     )
 
     user_prompt = HumanMessage(content=USER_PROMPT.format(criterias=instructions, resources=resource_hints, context=formatted_context_vars, provisioning_output=provisioning_output))
 
-    result = await assertion_agent.ainvoke(input={"messages": [user_prompt]})
+    result = await assertion_agent.ainvoke(
+        {"messages": [user_prompt], "current_round": 0},
+        config=RunnableConfig(recursion_limit=75)
+    )
     completed_at = datetime.utcnow()
-    assertion_output = result.get('messages')[-1].content
+    
+    assertion_output = result.get('candidate_response')
+    if not assertion_output and result.get('messages'):
+        assertion_output = result['messages'][-1].content
     
 
     return {
         "assertion_output": assertion_output,
         "completed_at": completed_at,
     }
-
-
