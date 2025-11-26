@@ -1,7 +1,6 @@
 """Constants for the eval agent - imports from shared.config for consistency"""
 from langgraph_sdk import get_client, get_sync_client
 from langsmith import Client
-from shared.llm import get_llm
 from shared.config import (
     OPENAI_API_KEY,
     LANGSMITH_API_KEY,
@@ -28,7 +27,6 @@ __all__ = [
     "LANGGRAPH_CLIENT",
     "LANGGRAPH_SYNC_CLIENT",
     "LANGSMITH_CLIENT",
-    "LLM",
 ]
 
 # Local LangGraph store used for eval reflections and metadata persistence
@@ -37,6 +35,3 @@ LANGGRAPH_SYNC_CLIENT = get_sync_client(url=LANGGRAPH_BASE_URL)
 
 # LangSmith client for experiment uploads and remote graph execution
 LANGSMITH_CLIENT = Client(api_key=LANGSMITH_API_KEY)
-
-# Shared LLM handles
-LLM = get_llm(temperature=0.0)

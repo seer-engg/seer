@@ -1,30 +1,78 @@
-from langchain_openai import ChatOpenAI
+import os
+from typing import Optional, List, Any
 from shared.mcp_client import ComposioMCPClient
-from shared.config import COMPOSIO_USER_ID
+from shared.config import COMPOSIO_USER_ID, config
 from agents.eval_agent.models import TestExecutionState
+from tool_hub import ToolHub
+from tool_hub.models import Tool, ToolFunction
 
-COMMMON_TOOL_INSTRUCTIONS = """
+# Cache the hub instance to avoid reloading index on every call
+_CACHED_HUB: Optional[ToolHub] = None
+TOOL_HUB_INDEX_DIR = config.tool_hub_index_dir
 
-# Important:
-- Asana expects no offset parameter at all on the first page. Sending offset="" (empty string) is treated as an invalid pagination token, so Asana returns:
-    offset: Your pagination token is invalid.
+def _convert_tools_for_ingestion(tools: List[Any]) -> List[Tool]:
+    """Converts LangChain tools to ToolHub schema."""
+    normalized = []
+    for t in tools:
+        try:
+            # Handle LangChain BaseTool
+            name = getattr(t, "name", None)
+            desc = getattr(t, "description", "")
+            args = getattr(t, "args", {})
+            
+            if name:
+                normalized.append(Tool(
+                    function=ToolFunction(
+                        name=name,
+                        description=desc,
+                        parameters=args
+                    ),
+                    executable=t
+                ))
+        except Exception as e:
+            print(f"Skipping tool conversion for {t}: {e}")
+    return normalized
 
-- When creating a github repository, do not pass 'team_id' parameter.
-"""
+async def get_tool_hub(state: TestExecutionState) -> ToolHub:
+    """
+    Returns a fully initialized and hydrated ToolHub.
+    """
+    global _CACHED_HUB
+    if _CACHED_HUB:
+        return _CACHED_HUB
 
+    # 1. Initialize Hub
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if not openai_key:
+        raise ValueError("OPENAI_API_KEY not found in environment")
+    
+    hub = ToolHub(openai_api_key=openai_key)
 
-llm = ChatOpenAI(
-    model="gpt-5",
-    # use_responses_api=True,
-    # output_version="responses/v1",
-    # reasoning={"effort": "medium"},
-)
-
-
-async def get_tools(state: TestExecutionState):
-    # Ensure tools initialized (for execution) and entries loaded (for parameter completion)
+    # 2. Fetch Executable Tools from Composio (Cached by MCP Client)
+    # We still need the executables, but we handle them smarter now
     tool_service = ComposioMCPClient(["GITHUB", "ASANA"], COMPOSIO_USER_ID)
-    tools = await tool_service.get_tools()
-    selected_tools = state.tool_selection_log.selected_tools
-    actual_tools = [tool for tool in tools if tool.name in selected_tools]
-    return actual_tools
+    all_tools = await tool_service.get_tools()
+
+    # 3. Load or Ingest
+    if os.path.exists(TOOL_HUB_INDEX_DIR) and os.path.exists(os.path.join(TOOL_HUB_INDEX_DIR, "metadata.json")):
+        # Load metadata/index from disk (Fast)
+        try:
+            hub.load(TOOL_HUB_INDEX_DIR)
+        except Exception as e:
+            print(f"Failed to load ToolHub index: {e}. Re-ingesting.")
+            ingest_tools = _convert_tools_for_ingestion(all_tools)
+            hub.ingest(ingest_tools)
+            hub.save(TOOL_HUB_INDEX_DIR)
+    else:
+        # First run: Ingest everything (Slow, but one-time)
+        print("Initializing ToolHub index (first run)...")
+        ingest_tools = _convert_tools_for_ingestion(all_tools)
+        hub.ingest(ingest_tools)
+        hub.save(TOOL_HUB_INDEX_DIR)
+
+    # 4. Bind Executables (Critical Step)
+    # Match the live functions to the loaded metadata
+    hub.bind_executables(all_tools)
+    
+    _CACHED_HUB = hub
+    return hub

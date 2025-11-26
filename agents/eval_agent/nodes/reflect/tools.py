@@ -1,11 +1,9 @@
 """Tools for the reflection agent inside the Eval Agent."""
 import asyncio
 import json
-from typing import List, Any
+from typing import List, Any, Optional
 from pydantic import BaseModel
-from langchain.tools import tool, ToolRuntime
-from langgraph.types import Command
-from langchain_core.messages import ToolMessage
+from langchain_core.tools import tool
 from langchain_openai import OpenAIEmbeddings 
 
 from agents.eval_agent.constants import OPENAI_API_KEY
@@ -13,7 +11,6 @@ from agents.eval_agent.models import EvalReflection, Hypothesis
 from shared.schema import ExperimentResultContext
 from shared.logger import get_logger
 from graph_db import NEO4J_GRAPH
-
 
 _embeddings_client = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
 logger = get_logger("eval_agent.reflection_tools")
@@ -26,72 +23,6 @@ class ReflectionToolContext(BaseModel):
     attempts: int
     latest_results: List[ExperimentResultContext]
     raw_request: str
-
-@tool
-async def get_latest_run_results(
-    runtime: ToolRuntime[ReflectionToolContext],
-) -> Command:
-    """
-    Gets the results from the test run that just completed.
-    This is the primary evidence to start the investigation.
-    """
-    logger.info("Tool: get_latest_run_results()")
-    if not runtime.context:
-        raise ValueError("Tool runtime context is missing.")
-        
-    results = []
-    for res in runtime.context.latest_results:
-        results.append({
-            "example_id": res.dataset_example.example_id,
-            "input": res.dataset_example.input_message,
-            "passed": res.passed,
-            "analysis": res.analysis.model_dump()
-        })
-    return Command(update={
-        "messages": [
-            ToolMessage(content=json.dumps(results, indent=2), tool_call_id=runtime.tool_call_id)
-        ]
-    })
-
-@tool
-async def get_historical_test_results(
-    example_id: str,
-    runtime: ToolRuntime[ReflectionToolContext],
-) -> Command:
-    """
-    Checks for flakiness by retrieving the full pass/fail history
-    for a single test case (specified by its example_id).
-    """
-    logger.info(f"Tool: get_historical_test_results(example_id={example_id})")
-    cypher_query = """
-    MATCH (ex:DatasetExample {example_id: $example_id})
-    MATCH (ex)-[:WAS_RUN_IN]->(res:ExperimentResult)
-    RETURN 
-        res.passed as passed,
-        res.score as score,
-        res.completed_at as timestamp
-    ORDER BY res.completed_at DESC
-    LIMIT 10
-    """
-    
-    results = await asyncio.to_thread(
-        NEO4J_GRAPH.query,
-        cypher_query,
-        params={"example_id": example_id}
-    )
-    # Convert datetime objects to strings for the LLM
-    results_for_llm = [
-        {
-            "passed": r["passed"],
-            "score": r["score"],
-            "timestamp": r["timestamp"].isoformat()
-        } for r in results
-    ]
-    return Command(update={
-        "messages": [
-            ToolMessage(content=json.dumps(results_for_llm, indent=2), tool_call_id=runtime.tool_call_id)
-        ]
-    })
 
 
 def persist_reflection(
@@ -202,47 +133,122 @@ def persist_reflection(
     logger.info(f"reflection_store: Atomically stored reflection {reflection.reflection_id} (ref_count: {ref_count}) and updated fitness for {len(all_run_example_ids)} tests.")
 
 
-@tool
-async def save_reflection(
-    hypothesis: Hypothesis,
-    runtime: ToolRuntime[ReflectionToolContext],
-) -> Command:
+def create_reflection_tools(context: ReflectionToolContext) -> List[Any]:
     """
-    Saves the final analysis (the hypothesis) to the graph database
-    and concludes the reflection step.
-    This is the *final* action the agent should take.
+    Creates tool instances bound to the provided context.
     """
-    logger.info(f"Tool: save_reflection(summary={hypothesis.summary})")
-    if not runtime.context:
-        raise ValueError("Tool runtime context is missing.")
-
-    # --- THIS IS THE "BRIDGE" ---
-    # We combine the LLM's hypothesis with the system's metadata
-    # to create the full database-ready object.
     
-    full_reflection = EvalReflection(
-        user_id=runtime.context.user_id,
-        hypothesis=hypothesis, 
-        # System-generated metadata
-        agent_name=runtime.context.agent_name,
-        latest_score=round(sum(r.score for r in runtime.context.latest_results) / len(runtime.context.latest_results), 5),
-        attempt=runtime.context.attempts,
-    )
-    
-    # Persist the complete EvalReflection object
-    await asyncio.to_thread(
-        persist_reflection,
-        user_id=runtime.context.user_id,
-        agent_name=runtime.context.agent_name,
-        reflection=full_reflection,
-        failed_evidence_results=[r for r in runtime.context.latest_results if not r.passed],
-        all_latest_results=runtime.context.latest_results,
-    )
+    @tool
+    def get_latest_run_results() -> str:
+        """
+        Gets the results from the test run that just completed.
+        This is the primary evidence to start the investigation.
+        """
+        logger.info("Tool: get_latest_run_results()")
+        
+        results = []
+        for res in context.latest_results:
+            results.append({
+                "example_id": res.dataset_example.example_id,
+                "input": res.dataset_example.input_message,
+                "passed": res.passed,
+                "analysis": res.analysis.model_dump()
+            })
+        return json.dumps(results, indent=2)
 
-    # Return a Command to update the main graph's state
-    return Command(update={
-        "messages": [
-            ToolMessage(content="Reflection saved successfully", tool_call_id=runtime.tool_call_id)
-        ],
-        "attempts": runtime.context.attempts + 1,
-    })
+    @tool
+    def get_historical_test_results(example_id: str) -> str:
+        """
+        Checks for flakiness by retrieving the full pass/fail history
+        for a single test case (specified by its example_id).
+        """
+        logger.info(f"Tool: get_historical_test_results(example_id={example_id})")
+        cypher_query = """
+        MATCH (ex:DatasetExample {example_id: $example_id})
+        MATCH (ex)-[:WAS_RUN_IN]->(res:ExperimentResult)
+        RETURN 
+            res.passed as passed,
+            res.score as score,
+            res.completed_at as timestamp
+        ORDER BY res.completed_at DESC
+        LIMIT 10
+        """
+        
+        # Synchronous execution using asyncio.run for the async DB call if needed, 
+        # but here we are inside a sync tool wrapper. 
+        # Ideally, keep these async and let LangGraph handle it, BUT LangGraph's prebuilt 
+        # React agent often struggles with async tools in sync workflows.
+        # For now, let's make them sync tools that run the async code internally.
+        
+        async def _query():
+            return NEO4J_GRAPH.query(
+                cypher_query,
+                params={"example_id": example_id}
+            )
+
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                 # We are already in a loop (LangGraph runner), so we can't use asyncio.run()
+                 # This is the tricky part. The tool execution is sync but needs async result.
+                 # Since we can't easily bridge this without nest_asyncio, the best bet is to 
+                 # rely on the fact that NEO4J_GRAPH.query might actually be sync or we fix the agent to be async.
+                 # Looking at graph_db/client.py would confirm.
+                 # Assuming NEO4J_GRAPH.query IS sync based on previous code usage (it wasn't awaited there).
+                 # Wait, the original code HAD await asyncio.to_thread(NEO4J_GRAPH.query...)
+                 # which implies NEO4J_GRAPH.query is blocking/sync.
+                 pass
+        except RuntimeError:
+             pass
+
+        results = NEO4J_GRAPH.query(
+            cypher_query,
+            params={"example_id": example_id}
+        )
+        
+        # Convert datetime objects to strings for the LLM
+        results_for_llm = [
+            {
+                "passed": r["passed"],
+                "score": r["score"],
+                "timestamp": r["timestamp"].isoformat()
+            } for r in results
+        ]
+        return json.dumps(results_for_llm, indent=2)
+
+    @tool
+    def save_reflection(hypothesis: Hypothesis) -> str:
+        """
+        Saves the final analysis (the hypothesis) to the graph database
+        and concludes the reflection step.
+        This is the *final* action the agent should take.
+        """
+        logger.info(f"Tool: save_reflection(summary={hypothesis.summary})")
+
+        # --- THIS IS THE "BRIDGE" ---
+        # We combine the LLM's hypothesis with the system's metadata
+        # to create the full database-ready object.
+        
+        full_reflection = EvalReflection(
+            user_id=context.user_id,
+            hypothesis=hypothesis, 
+            # System-generated metadata
+            agent_name=context.agent_name,
+            latest_score=round(sum(r.score for r in context.latest_results) / len(context.latest_results), 5),
+            attempt=context.attempts,
+        )
+        
+        # Persist the complete EvalReflection object
+        # Since persist_reflection is a sync function (def persist_reflection...), we call it directly.
+        # The previous code used await asyncio.to_thread(persist_reflection...), implying it is blocking.
+        persist_reflection(
+            user_id=context.user_id,
+            agent_name=context.agent_name,
+            reflection=full_reflection,
+            failed_evidence_results=[r for r in context.latest_results if not r.passed],
+            all_latest_results=context.latest_results,
+        )
+
+        return "Reflection saved successfully. You may now conclude."
+
+    return [get_latest_run_results, get_historical_test_results, save_reflection]

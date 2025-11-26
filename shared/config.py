@@ -54,8 +54,6 @@ class SeerConfig(BaseSettings):
     
     # Feature flags
     codex_handoff_enabled: bool = Field(default=False, description="Enable handoff to codex agent")
-    use_genetic_test_generation: bool = Field(default=False, description="Use genetic algorithm for test generation")
-    use_agentic_test_generation: bool = Field(default=False, description="Use agentic approach for test generation")
     eval_agent_load_default_mcps: bool = Field(default=True, description="Load default MCP services")
 
     # ============================================================================
@@ -99,6 +97,7 @@ class SeerConfig(BaseSettings):
     tool_node_label: str = Field(default="MCPTool", description="Neo4j node label for tools")
     tool_embed_prop: str = Field(default="embedding", description="Property name for tool embeddings")
     tool_vector_index: str = Field(default="mcp_tools_index", description="Neo4j index name for tools")
+    tool_hub_index_dir: str = Field(default="tool_hub_index", description="Directory for ToolHub index")
     
     # ============================================================================
     # MCP (Model Context Protocol) Configuration
@@ -184,8 +183,6 @@ EVAL_REMOTE_URL = config.eval_remote_url
 
 # Feature Flags
 CODEX_HANDOFF_ENABLED = config.codex_handoff_enabled
-USE_GENETIC_TEST_GENERATION = config.use_genetic_test_generation
-USE_AGENTIC_TEST_GENERATION = config.use_agentic_test_generation
 EVAL_AGENT_LOAD_DEFAULT_MCPS = config.eval_agent_load_default_mcps
 
 # Target Agent

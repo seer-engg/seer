@@ -6,17 +6,15 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, ConfigDict
 
 from agents.eval_agent.constants import (
-    LLM,
     N_TEST_CASES,
 )
 from agents.eval_agent.models import EvalAgentPlannerState
 from shared.logger import get_logger
 from shared.resource_utils import format_resource_hints
-from shared.tools import ToolEntry
 from shared.schema import (
     DatasetExample,
 )
-from langchain_openai import ChatOpenAI
+from shared.llm import get_llm
 
 logger = get_logger("eval_agent.plan.generate_evals")
 
@@ -87,8 +85,6 @@ async def _invoke_agentic_llm(
     raw_request: str,
     reflections_text: str,
     prev_dataset_examples: str, 
-    available_tool_names: List[str],
-    tool_entries: Dict[str, ToolEntry],
     resource_hints: str,
     n_tests: int,
 ) -> List[DatasetExample]:
@@ -97,10 +93,9 @@ async def _invoke_agentic_llm(
     
     try:
         
-        structured_llm = ChatOpenAI(
-            model="gpt-5.1",
-            use_responses_api=True,
-            output_version="responses/v1",
+        structured_llm = get_llm(
+            model="gpt-4.1",
+            temperature=0.0,
         ).with_structured_output(EvalGenerationOutput, method="json_schema", strict=True)
 
         user_prompt = USER_PROMPT.format(
@@ -143,8 +138,6 @@ async def agentic_eval_generation(state: EvalAgentPlannerState) -> dict:
         raw_request=state.context.user_context.raw_request,
         reflections_text=state.reflections_text,
         prev_dataset_examples=json.dumps(previous_inputs, indent=2),
-        available_tool_names=state.available_tools,
-        tool_entries=state.tool_entries,
         resource_hints=resource_hints,
         n_tests=N_TEST_CASES,
     )

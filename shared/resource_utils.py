@@ -25,6 +25,6 @@ def format_resource_hints(mcp_resources: Dict[str, Any]) -> str:
             if descriptor:
                 pretty += f" name={descriptor}"
             if identifier:
-                pretty += f" id={identifier} (use [resource:{name}.id])"
+                pretty += f" id={identifier}"
             lines.append(pretty)
     return "\n".join(lines) if lines else "Resources available but no IDs detected."

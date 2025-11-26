@@ -1,10 +1,12 @@
 """Context and plan step"""
 from __future__ import annotations
+import asyncio
 from langchain_core.messages.base import BaseMessage
 
 
 from langchain_core.runnables import RunnableConfig
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage
+from langchain_mcp_adapters.client import MultiServerMCPClient  
 
 from shared.logger import get_logger
 from shared.tools import web_search
@@ -31,17 +33,26 @@ from sandbox.tools import (
     read_file,
     grep,
     inspect_directory,
-    _inspect_directory_impl,
     create_file,
     create_directory,
     write_file,
     edit_file,
-    apply_patch,    
 )
 from pathlib import Path
-from shared.tools.docs_tools import docs_tools
 
 logger = get_logger("codex.nodes.developer")
+async def get_docs_tools():
+    docs_client = MultiServerMCPClient(  
+    {
+        "langchain_docs": {
+            "transport": "streamable_http",
+            "url": "https://docs.langchain.com/mcp",
+        }
+        }
+    )
+    return await docs_client.get_tools()
+
+docs_tools = asyncio.run(get_docs_tools())
 
 
 # NOTE:
