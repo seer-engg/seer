@@ -1,5 +1,4 @@
-from typing import List, Any, Dict, Optional
-from langchain_core.tools import BaseTool
+from typing import List, Any, Optional
 from shared.config import NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD
 from reflexion.core.agent.graph import create_reflexion
 from reflexion.core.memory.store import Neo4jMemoryStore
@@ -18,15 +17,16 @@ def get_memory_store():
         )
     return _memory_store
 
-def create_ephemeral_reflexion(model, tool_hub: ToolHub, prompt, agent_id, max_rounds=3):
+def create_ephemeral_reflexion(model, prompt, agent_id, tool_hub: Optional[ToolHub] = None, tools: Optional[List[Any]] = None, max_rounds=3):
     """
     Factory to create a reflexion graph with dynamic tools.
     
     Args:
         model: The LLM to use
-        tool_hub: A configured ToolHub instance
         prompt: System prompt for the agent
         agent_id: Unique ID for the agent
+        tool_hub: A configured ToolHub instance (optional)
+        tools: List of explicit tools (optional, alternative to tool_hub)
         max_rounds: Max reflection rounds
     """
     memory = get_memory_store()
@@ -35,6 +35,7 @@ def create_ephemeral_reflexion(model, tool_hub: ToolHub, prompt, agent_id, max_r
     graph = create_reflexion(
         model=model,
         tool_hub=tool_hub,
+        tools=tools,
         prompt=prompt,
         memory_store=memory,
         agent_id=agent_id,

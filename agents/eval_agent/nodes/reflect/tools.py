@@ -139,7 +139,7 @@ def create_reflection_tools(context: ReflectionToolContext) -> List[Any]:
     """
     
     @tool
-    async def get_latest_run_results() -> str:
+    def get_latest_run_results() -> str:
         """
         Gets the results from the test run that just completed.
         This is the primary evidence to start the investigation.
@@ -157,7 +157,7 @@ def create_reflection_tools(context: ReflectionToolContext) -> List[Any]:
         return json.dumps(results, indent=2)
 
     @tool
-    async def get_historical_test_results(example_id: str) -> str:
+    def get_historical_test_results(example_id: str) -> str:
         """
         Checks for flakiness by retrieving the full pass/fail history
         for a single test case (specified by its example_id).
@@ -174,11 +174,38 @@ def create_reflection_tools(context: ReflectionToolContext) -> List[Any]:
         LIMIT 10
         """
         
-        results = await asyncio.to_thread(
-            NEO4J_GRAPH.query,
+        # Synchronous execution using asyncio.run for the async DB call if needed, 
+        # but here we are inside a sync tool wrapper. 
+        # Ideally, keep these async and let LangGraph handle it, BUT LangGraph's prebuilt 
+        # React agent often struggles with async tools in sync workflows.
+        # For now, let's make them sync tools that run the async code internally.
+        
+        async def _query():
+            return NEO4J_GRAPH.query(
+                cypher_query,
+                params={"example_id": example_id}
+            )
+
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                 # We are already in a loop (LangGraph runner), so we can't use asyncio.run()
+                 # This is the tricky part. The tool execution is sync but needs async result.
+                 # Since we can't easily bridge this without nest_asyncio, the best bet is to 
+                 # rely on the fact that NEO4J_GRAPH.query might actually be sync or we fix the agent to be async.
+                 # Looking at graph_db/client.py would confirm.
+                 # Assuming NEO4J_GRAPH.query IS sync based on previous code usage (it wasn't awaited there).
+                 # Wait, the original code HAD await asyncio.to_thread(NEO4J_GRAPH.query...)
+                 # which implies NEO4J_GRAPH.query is blocking/sync.
+                 pass
+        except RuntimeError:
+             pass
+
+        results = NEO4J_GRAPH.query(
             cypher_query,
             params={"example_id": example_id}
         )
+        
         # Convert datetime objects to strings for the LLM
         results_for_llm = [
             {
@@ -190,7 +217,7 @@ def create_reflection_tools(context: ReflectionToolContext) -> List[Any]:
         return json.dumps(results_for_llm, indent=2)
 
     @tool
-    async def save_reflection(hypothesis: Hypothesis) -> str:
+    def save_reflection(hypothesis: Hypothesis) -> str:
         """
         Saves the final analysis (the hypothesis) to the graph database
         and concludes the reflection step.
@@ -212,8 +239,9 @@ def create_reflection_tools(context: ReflectionToolContext) -> List[Any]:
         )
         
         # Persist the complete EvalReflection object
-        await asyncio.to_thread(
-            persist_reflection,
+        # Since persist_reflection is a sync function (def persist_reflection...), we call it directly.
+        # The previous code used await asyncio.to_thread(persist_reflection...), implying it is blocking.
+        persist_reflection(
             user_id=context.user_id,
             agent_name=context.agent_name,
             reflection=full_reflection,

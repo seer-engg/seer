@@ -97,6 +97,7 @@ class SeerConfig(BaseSettings):
     tool_node_label: str = Field(default="MCPTool", description="Neo4j node label for tools")
     tool_embed_prop: str = Field(default="embedding", description="Property name for tool embeddings")
     tool_vector_index: str = Field(default="mcp_tools_index", description="Neo4j index name for tools")
+    tool_hub_index_dir: str = Field(default="tool_hub_index", description="Directory for ToolHub index")
     
     # ============================================================================
     # MCP (Model Context Protocol) Configuration

@@ -1,14 +1,14 @@
 import os
 from typing import Optional, List, Any
 from shared.mcp_client import ComposioMCPClient
-from shared.config import COMPOSIO_USER_ID
+from shared.config import COMPOSIO_USER_ID, config
 from agents.eval_agent.models import TestExecutionState
 from tool_hub import ToolHub
 from tool_hub.models import Tool, ToolFunction
 
 # Cache the hub instance to avoid reloading index on every call
 _CACHED_HUB: Optional[ToolHub] = None
-TOOL_HUB_INDEX_DIR = "tool_hub_index"
+TOOL_HUB_INDEX_DIR = config.tool_hub_index_dir
 
 def _convert_tools_for_ingestion(tools: List[Any]) -> List[Tool]:
     """Converts LangChain tools to ToolHub schema."""
