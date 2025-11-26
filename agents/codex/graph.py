@@ -8,7 +8,7 @@ from agents.codex.nodes.raise_pr import raise_pr
 from agents.codex.nodes.deploy import deploy_service
 from agents.codex.nodes.test_server_ready import test_server_ready
 from agents.codex.nodes import (
-    planner, coder, evaluator, reflector, finalize,
+    developer, evaluator, reflector, finalize,
     initialize_project, index
 )
 import os
@@ -46,7 +46,7 @@ def is_codeer_implementation_working(state: CodexState) -> CodexState:
     if state.server_running:
         return "evaluator"
     else:
-        return "coder"
+        return "developer"
 
 
 def compile_codex_graph():
@@ -57,10 +57,9 @@ def compile_codex_graph():
     workflow.add_node("initialize-project", initialize_project)
     workflow.add_node("test-server-ready", test_server_ready) # Initial check
     workflow.add_node("index-codebase", index)
-    workflow.add_node("planner", planner)
     
     # --- implementation loop nodes ---
-    workflow.add_node("coder", coder)
+    workflow.add_node("developer", developer)
     workflow.add_node("server-check", test_server_ready)
     workflow.add_node("evaluator", evaluator)
     workflow.add_node("reflector", reflector)
@@ -79,16 +78,13 @@ def compile_codex_graph():
         "index-codebase": "index-codebase",
         "end": END
     })
-    workflow.add_edge("index-codebase", "planner")
-
-    # 2. Plan, then Implement
-    workflow.add_edge("planner", "coder")
+    workflow.add_edge("index-codebase", "developer")
 
     # 3. After implement, always test
-    workflow.add_edge("coder", "server-check")
+    workflow.add_edge("developer", "server-check")
     workflow.add_conditional_edges("server-check", is_codeer_implementation_working, {
         "evaluator": "evaluator",
-        "coder": "coder",
+        "developer": "developer",
     })
 
     # 4. After testing, decide what's next (THE LOOP)
@@ -99,7 +95,7 @@ def compile_codex_graph():
     })
     
     # 5. If reflector, loop back to planner
-    workflow.add_edge("reflector", "planner")
+    workflow.add_edge("reflector", "developer")
 
     # 6. Final success path
     workflow.add_edge("raise-pr", "deploy-service")

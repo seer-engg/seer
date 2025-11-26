@@ -8,7 +8,6 @@ from agents.eval_agent.models import EvalAgentPlannerState
 from shared.logger import get_logger
 from agents.eval_agent.nodes.plan.ensure_config import ensure_target_agent_config
 from agents.eval_agent.nodes.plan.provision_target import provision_target_agent
-from agents.eval_agent.nodes.plan.configure_target import configure_target_agent
 from agents.eval_agent.nodes.plan.get_reflections import get_reflections
 from agents.eval_agent.nodes.plan.genetic_eval_generation import genetic_eval_generation
 from agents.eval_agent.nodes.plan.agentic_eval_generation import agentic_eval_generation
@@ -28,7 +27,6 @@ def build_plan_subgraph():
     builder = StateGraph(EvalAgentPlannerState)
     builder.add_node("ensure-config", ensure_target_agent_config)
     builder.add_node("provision-target", provision_target_agent)
-    builder.add_node("configure-target", configure_target_agent)
     builder.add_node("get-reflections", get_reflections)
     builder.add_node("genetic-eval-generation", genetic_eval_generation)
     builder.add_node("agentic-eval-generation", agentic_eval_generation)
@@ -36,8 +34,7 @@ def build_plan_subgraph():
     builder.add_node("filter-tools", filter_tools)
     builder.add_edge(START, "ensure-config")
     builder.add_edge("ensure-config", "provision-target")
-    builder.add_edge("provision-target", "configure-target")
-    builder.add_edge("configure-target", "get-reflections")
+    builder.add_edge("provision-target", "get-reflections")
     builder.add_conditional_edges("get-reflections", eval_generation, {
         "genetic-eval-generation": "genetic-eval-generation",
         "agentic-eval-generation": "agentic-eval-generation",

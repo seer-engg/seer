@@ -154,7 +154,7 @@ async def write_file(file_path: str, content: str, runtime: ToolRuntime[SandboxT
 
 
 @tool
-async def patch_file(
+async def edit_file(
     file_path: str,
     old_string: str,
     new_string: str,

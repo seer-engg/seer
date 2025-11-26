@@ -8,10 +8,6 @@ docs_client = MultiServerMCPClient(
         "langchain_docs": {
             "transport": "streamable_http",
             "url": "https://docs.langchain.com/mcp",
-        },
-        "langchain_docs": {
-            "transport": "streamable_http",
-            "url": "https://docs.composio.dev/_mcp/server",
         }
     }
 )

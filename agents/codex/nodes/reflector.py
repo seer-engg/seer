@@ -7,11 +7,13 @@ from agents.codex.format_thread import fetch_thread_timeline_as_string
 from shared.config import TARGET_AGENT_LANGSMITH_PROJECT
 from langchain_core.messages import SystemMessage
 
+
+
 logger = get_logger("codex.nodes.reflect")
 
-SYSTEM_PROMPT = """### PROMPT: SYSTEM_PROMPT (CODEX/REFLECTOR) ###
+SYSTEM_PROMPT = """
 You are a Refective person , part of an agent development team.
-Your team is trying to enhance an agent so that it can pass all the eval cases. Based on some failed eval cases your team devised a plan to fix the agent. A programmer implemented some code changes to the agent following the plan.
+Your team is trying to enhance an agent so that it can pass all the eval cases. Based on some failed eval cases your team tried to enhance the agent by implementing some code changes.
 But after the implementation, the agent is not passing all the eval cases. You are tasked to reflect on the latest test results and suggest necessary policy changes the plan should follow to fix the agent.
 Mention which evals are still failing after we have implemented the plan.
 """
@@ -27,11 +29,7 @@ EVALS_AND_THREAD_TRACE_TEMPLATE = """
 """
 
 USER_PROMPT = """
-Our Team Devised a Plan to fix the agent:
-<plan>
-{plan}
-</plan>
-
+Our Team Devised did some code changes to the agent to fix the failing evals:
 in order to pass these failing evals :
 <failing_evals>
 {originalfailing_evals}
@@ -89,7 +87,7 @@ async def reflector(state: CodexState) -> CodexState:
 
     input_messages = []
     input_messages.append(SystemMessage(content=SYSTEM_PROMPT))
-    input_messages.append(HumanMessage(content=USER_PROMPT.format(plan=state.taskPlan, originalfailing_evals=originalfailing_evals, latest_failed_evals_and_thread_traces=evals_and_thread_traces)))
+    input_messages.append(HumanMessage(content=USER_PROMPT.format(originalfailing_evals=originalfailing_evals, latest_failed_evals_and_thread_traces=evals_and_thread_traces)))
     response = await llm.ainvoke(input_messages)
 
     reflection = ""
@@ -104,5 +102,6 @@ async def reflector(state: CodexState) -> CodexState:
     
     # We return a HumanMessage, which will be the *input* for the implement_task_plan agent
     return {
-        "planner_thread": [HumanMessage(content=reflection)],
+        "developer_thread": [HumanMessage(content=reflection)],
+        "attempt_number": state.attempt_number + 1,
     }
