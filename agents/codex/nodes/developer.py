@@ -39,22 +39,19 @@ from sandbox.tools import (
     patch_file,
     apply_patch,    
 )
-from agents.codex.common_instructions import TARGET_AGENT_GUARDRAILS , COMPOSIO_LANGCHAIN_INTEGRATION
+from pathlib import Path
 from shared.tools.docs_tools import docs_tools
+
 logger = get_logger("codex.nodes.developer")
 
 
-SYSTEM_PROMPT = """
-    You are an Expert Software Engineer specializing in LLM based Agent development.
-    Your task is to understand current state of the agent , based on failed eval threads develop the agent to pass all the eval cases.
-    
-# IMPORTANT:
-    - for searching of packages, use the web_search tool, do not use pip search.
-    - after adding any new package to pyproject.toml, always run command `pip install -e .` to install the new package.
-    - relative imports often results in errors, use absolute imports whenever possible.
-    - For complex tasks, delegate to your subagents using the task() tool.
-    This keeps your context clean and improves results.
-""" + TARGET_AGENT_GUARDRAILS + COMPOSIO_LANGCHAIN_INTEGRATION
+# NOTE:
+# Using a relative path like Path("./developer_prompt.md") makes the import
+# depend on the current working directory, which can differ when LangGraph
+# loads the graph. To make this robust, we resolve the prompt path relative
+# to this file's directory.
+SYSTEM_PROMPT_PATH = Path(__file__).parent / "developer_prompt.md"
+SYSTEM_PROMPT = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
 
 USER_PROMPT = """
     user exectation with the agent is : {user_raw_request}
