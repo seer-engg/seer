@@ -29,16 +29,13 @@ class TaskPlan(BaseModel):
 class CodexState(CodexInput, CodexOutput):
     # Agent-specific threading for different nodes
     messages: Annotated[list[BaseMessage], add_messages] = Field(None, description="The message context for the codex agent")
-    planner_thread: Annotated[list[BaseMessage], add_messages] = Field(None, description="The message context for planner node")
-    coder_thread: Annotated[list[BaseMessage], add_messages] = Field(None, description="The message context for coder node")
+    developer_thread: Annotated[list[BaseMessage], add_messages] = Field(None, description="The message context for developer node")
     structured_response: Optional[dict] = Field(None, description="The structured response")
-    taskPlan: Optional[TaskPlan] = Field(None, description="The task plan")
 
     # Codex-specific state
     server_running: bool = Field(False, description="Whether the server is running")
     pr_summary: Optional[str] = Field(None, description="The summary of the PR")
-    success: bool = Field(False, description="Whether the request was successful")
-    coder_attempt:int = Field(0, description="The number of attempts for the coder node")    
+    success: bool = Field(False, description="Whether the request was successful") 
 
     attempt_number: int = Field(0, description="The number of attempts")
 

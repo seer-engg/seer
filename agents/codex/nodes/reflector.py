@@ -7,6 +7,8 @@ from agents.codex.format_thread import fetch_thread_timeline_as_string
 from shared.config import TARGET_AGENT_LANGSMITH_PROJECT
 from langchain_core.messages import SystemMessage
 
+
+
 logger = get_logger("codex.nodes.reflect")
 
 SYSTEM_PROMPT = """### PROMPT: SYSTEM_PROMPT (CODEX/REFLECTOR) ###
@@ -104,5 +106,5 @@ async def reflector(state: CodexState) -> CodexState:
     
     # We return a HumanMessage, which will be the *input* for the implement_task_plan agent
     return {
-        "planner_thread": [HumanMessage(content=reflection)],
+        "developer_thread": [HumanMessage(content=reflection)],
     }

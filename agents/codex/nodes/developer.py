@@ -2,7 +2,7 @@
 from __future__ import annotations
 from langchain_core.messages.base import BaseMessage
 
-from langchain.agents import create_agent
+
 from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -12,8 +12,10 @@ from shared.llm import get_llm
 from agents.codex.state import CodexState, TaskPlan
 from agents.codex.format_thread import fetch_thread_timeline_as_string
 from shared.config import TARGET_AGENT_LANGSMITH_PROJECT
+from deepagents import create_deep_agent
+
 from sandbox.tools import (
-    run_command,
+    run_command,    
     inspect_directory,
     read_file,
     grep,
@@ -24,25 +26,34 @@ from sandbox.tools import (
     find_usages,
     get_code_region,
     SandboxToolContext,
+    run_command,
+    read_file,
+    grep,
+    inspect_directory,
+    _inspect_directory_impl,
+    create_file,
+    create_directory,
+    write_file,
+    patch_file,
+    apply_patch,    
 )
-from agents.codex.common_instructions import TARGET_AGENT_GUARDRAILS
+from agents.codex.common_instructions import TARGET_AGENT_GUARDRAILS , COMPOSIO_LANGCHAIN_INTEGRATION
 from shared.tools.docs_tools import docs_tools
-logger = get_logger("codex.nodes.context_and_plan")
+logger = get_logger("codex.nodes.developer")
 
 
 SYSTEM_PROMPT = """
-    You are an Technical manager specializing in LLM based Agent development.
-    Your role is to Create a plan for the Agent to be developed.
-    Your task is to plan the next steps to be taken to improve the agent by analyzing the failed eval thread  of the agent  and understanding the current state of the agent through its code .
+    You are an Expert Software Engineer specializing in LLM based Agent development.
+    Your task is to understand current state of the agent , based on failed eval threads develop the agent to pass all the eval cases.
     
 # IMPORTANT:
     - **You MUST start by exploring the repository files to understand the project structure before trying to read any specific file.**
     - Use the `inspect_directory` tool on the root ('.') to get a file listing first.
-    - Based on the file listing, identify the most relevant files to read for your analysis.
     - use respective tools to gather context and plan the task.
     - SearchDocsByLangChain tool is available to search the documentation of langchain & langgraph.
-    - You have to only plan the development task, No need to include any testing or evaluation tasks ( unit test or eval runs).
-""" + TARGET_AGENT_GUARDRAILS
+    - for searching of packages, use the web_search tool, do not use pip search.
+    - after adding any new package to pyproject.toml, always run command `pip install -e .` to install the new package.
+""" + TARGET_AGENT_GUARDRAILS + COMPOSIO_LANGCHAIN_INTEGRATION
 
 USER_PROMPT = """
     user exectation with the agent is : {user_raw_request}
@@ -51,7 +62,7 @@ USER_PROMPT = """
     {evals_and_thread_traces}
     </EVALS AND THREAD TRACES>
 
-    Create a development plan with 3-7 concrete steps to improve the agent. Do not include any testing or evaluation tasks ( unit test or eval runs).
+    Develop the agent to pass all the eval cases.
 """
 
 EVALS_AND_THREAD_TRACE_TEMPLATE = """
@@ -65,7 +76,7 @@ EVALS_AND_THREAD_TRACE_TEMPLATE = """
 """
 
 
-async def planner(state: CodexState) -> CodexState:
+async def developer(state: CodexState) -> CodexState:
     """Single ReAct agent that gathers repo context and returns a concrete plan."""
 
     # Extract sandbox context for tools
@@ -76,7 +87,7 @@ async def planner(state: CodexState) -> CodexState:
     
     experiment_results = state.experiment_context.results
 
-    agent = create_agent(
+    agent = create_deep_agent(
         model=get_llm(reasoning_effort="high", model="codex"),
         tools=[
             run_command,
@@ -90,14 +101,17 @@ async def planner(state: CodexState) -> CodexState:
             find_usages,
             get_code_region,
             web_search,
+            apply_patch,
+            patch_file,
+            create_file,
+            create_directory,
+            write_file, 
             *docs_tools,
         ],
         system_prompt=SYSTEM_PROMPT,
-        state_schema=CodexState,
-        response_format=TaskPlan,
         context_schema=SandboxToolContext,  # Add context schema for sandbox tools
     )
-    input_messages = list[BaseMessage](state.planner_thread or [])
+    input_messages = list[BaseMessage](state.developer_thread or [])
     output_messages = []
 
     if not state.latest_results:
@@ -127,19 +141,16 @@ async def planner(state: CodexState) -> CodexState:
     # Pass context along with state
     result = await agent.ainvoke(
         input={"messages": input_messages},
-        config=RunnableConfig(recursion_limit=100),
+        config=RunnableConfig(recursion_limit=200),
         context=SandboxToolContext(sandbox_context=sandbox_context)  # Pass sandbox context
     )
-    logger.info(f"Result: {result.keys()}")
-    logger.info(f"Result: {result.get('structured_response')}")
-    taskPlan: TaskPlan = result.get("structured_response")
+    logger.info(f"developer completed successfully")
 
-    output_message = AIMessage(content=f"Development plan created successfully. {taskPlan.model_dump_json()}")
-    output_messages.append(output_message)
+    
+    output_messages.append(result.get("messages"))
 
 
     return {
-        "taskPlan": taskPlan,
-        "planner_thread": output_messages,
+        # "developer_thread": output_messages,
         "attempt_number": state.attempt_number + 1,
     }
