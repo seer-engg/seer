@@ -36,8 +36,8 @@ async def test_server_ready(state: CodexState) -> CodexState:
         return_state = {
             "server_running": False,
         }
-        if state.taskPlan:
-            return_state["coder_thread"] = [HumanMessage(content=error_message)]
+        if state.developer_thread:
+            return_state["developer_thread"] = [HumanMessage(content=error_message)]
         return return_state
     
     # TODO: This is a temporary solution to get the available tools. We need to find a better way to get the available tools.

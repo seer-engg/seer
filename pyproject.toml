@@ -28,7 +28,8 @@ dependencies = [
   "langchain-mcp-adapters==0.1.12",
   "aiosqlite>=0.20.0",
   "composio>=0.4.0",
-  "composio-langchain>=0.1.0"
+  "composio-langchain>=0.1.0",
+  "deepagents==0.2.8"
 ]
 
 [build-system]

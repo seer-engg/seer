@@ -21,7 +21,7 @@ python run.py
 ### Sample Eval Agent Input
 1. Evaluate my agent at buggy_coder at github https://github.com/seer-engg/buggy-coder. It should be fixing flawed python code correctly and sharing the fixed code too
 2. Evaluate my agent at buggy_coder at github https://github.com/seer-engg/buggy-coder/tree/seer/codex/20251108-125730-92e6b17/v1. It should be fixing flawed python code correctly and sharing the fixed code too
-3. Evaluate my buggy_coder at https://github.com/seer-engg/buggy-coder for syncing Asana ticket updates when a GitHub PR is merged
+3. Evaluate my agent buggy_coder at https://github.com/seer-engg/buggy-coder . The agent should sync Asana ticket updates when a GitHub PR is merged on it's own. Whenever i merge a PR it should search for realted asana tickets and update/close them.
 
 ## Notes
 - To enable codex handoff, set `CODEX_HANDOFF_ENABLED` to `true` in `.env` file.

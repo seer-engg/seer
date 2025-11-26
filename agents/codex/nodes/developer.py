@@ -2,7 +2,7 @@
 from __future__ import annotations
 from langchain_core.messages.base import BaseMessage
 
-from langchain.agents import create_agent
+
 from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -12,8 +12,12 @@ from shared.llm import get_llm
 from agents.codex.state import CodexState, TaskPlan
 from agents.codex.format_thread import fetch_thread_timeline_as_string
 from shared.config import TARGET_AGENT_LANGSMITH_PROJECT
+from deepagents import create_deep_agent, CompiledSubAgent
+from langchain_openai import ChatOpenAI
+from langchain.agents import create_agent
+
 from sandbox.tools import (
-    run_command,
+    run_command,    
     inspect_directory,
     read_file,
     grep,
@@ -24,25 +28,30 @@ from sandbox.tools import (
     find_usages,
     get_code_region,
     SandboxToolContext,
+    run_command,
+    read_file,
+    grep,
+    inspect_directory,
+    _inspect_directory_impl,
+    create_file,
+    create_directory,
+    write_file,
+    patch_file,
+    apply_patch,    
 )
-from agents.codex.common_instructions import TARGET_AGENT_GUARDRAILS
+from pathlib import Path
 from shared.tools.docs_tools import docs_tools
-logger = get_logger("codex.nodes.context_and_plan")
+
+logger = get_logger("codex.nodes.developer")
 
 
-SYSTEM_PROMPT = """
-    You are an Technical manager specializing in LLM based Agent development.
-    Your role is to Create a plan for the Agent to be developed.
-    Your task is to plan the next steps to be taken to improve the agent by analyzing the failed eval thread  of the agent  and understanding the current state of the agent through its code .
-    
-# IMPORTANT:
-    - **You MUST start by exploring the repository files to understand the project structure before trying to read any specific file.**
-    - Use the `inspect_directory` tool on the root ('.') to get a file listing first.
-    - Based on the file listing, identify the most relevant files to read for your analysis.
-    - use respective tools to gather context and plan the task.
-    - SearchDocsByLangChain tool is available to search the documentation of langchain & langgraph.
-    - You have to only plan the development task, No need to include any testing or evaluation tasks ( unit test or eval runs).
-""" + TARGET_AGENT_GUARDRAILS
+# NOTE:
+# Using a relative path like Path("./developer_prompt.md") makes the import
+# depend on the current working directory, which can differ when LangGraph
+# loads the graph. To make this robust, we resolve the prompt path relative
+# to this file's directory.
+SYSTEM_PROMPT_PATH = Path(__file__).parent / "developer_prompt.md"
+SYSTEM_PROMPT = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
 
 USER_PROMPT = """
     user exectation with the agent is : {user_raw_request}
@@ -51,7 +60,7 @@ USER_PROMPT = """
     {evals_and_thread_traces}
     </EVALS AND THREAD TRACES>
 
-    Create a development plan with 3-7 concrete steps to improve the agent. Do not include any testing or evaluation tasks ( unit test or eval runs).
+    Develop the agent to pass all the eval cases.
 """
 
 EVALS_AND_THREAD_TRACE_TEMPLATE = """
@@ -65,7 +74,45 @@ EVALS_AND_THREAD_TRACE_TEMPLATE = """
 """
 
 
-async def planner(state: CodexState) -> CodexState:
+codebase_explorer_subgraph = create_agent(
+    model=ChatOpenAI(model="gpt-5-codex", reasoning={"effort": "high"}),
+    tools=[
+        inspect_directory,
+        read_file,
+        grep,
+        search_code,
+        search_symbols,
+        semantic_search,
+        get_symbol_definition
+    ],
+    system_prompt=""" You are a great codebase explorer. based on the user request, you need to explore the codebase and provide the answer to the question, you are provided with the tools to explore the codebase""",
+    context_schema=SandboxToolContext,
+
+)
+codebase_explorer_subagent = CompiledSubAgent(
+    name="codebase-explorer-agent",
+    description="Used to explore the codebase and query the codebase",
+    runnable=codebase_explorer_subgraph,
+)
+
+documentation_explorer_subgraph = create_agent(
+    model=ChatOpenAI(model="gpt-5-codex", reasoning={"effort": "high"}),
+    tools=[
+        web_search,
+        *docs_tools,
+    ],
+    system_prompt="""Used to explore the documentation of langchain/langgraph , composio and any other relevant documentation, You are a great documentation explorer, you are given a question and you need to explore the documentation and provide the answer to the question""",
+    context_schema=SandboxToolContext,
+)
+documentation_explorer_subagent = CompiledSubAgent(
+    name="documentation-explorer-agent",
+    description="Used to explore the documentation of langchain/langgraph , composio and any other relevant documentation",
+    runnable=documentation_explorer_subgraph,
+)
+
+subagents = [codebase_explorer_subagent, documentation_explorer_subagent]
+
+async def developer(state: CodexState) -> CodexState:
     """Single ReAct agent that gathers repo context and returns a concrete plan."""
 
     # Extract sandbox context for tools
@@ -76,8 +123,10 @@ async def planner(state: CodexState) -> CodexState:
     
     experiment_results = state.experiment_context.results
 
-    agent = create_agent(
-        model=get_llm(reasoning_effort="high", model="codex"),
+    llm = ChatOpenAI(model="gpt-5-codex", reasoning={"effort": "high"})
+
+    agent = create_deep_agent(
+        model=llm,
         tools=[
             run_command,
             inspect_directory,
@@ -90,15 +139,18 @@ async def planner(state: CodexState) -> CodexState:
             find_usages,
             get_code_region,
             web_search,
+            apply_patch,
+            patch_file,
+            create_file,
+            create_directory,
+            write_file, 
             *docs_tools,
         ],
         system_prompt=SYSTEM_PROMPT,
-        state_schema=CodexState,
-        response_format=TaskPlan,
         context_schema=SandboxToolContext,  # Add context schema for sandbox tools
+        subagents=subagents,
     )
-    input_messages = list[BaseMessage](state.planner_thread or [])
-    output_messages = []
+    input_messages = list[BaseMessage](state.developer_thread or [])
 
     if not state.latest_results:
         evals_and_thread_traces=[] 
@@ -122,24 +174,16 @@ async def planner(state: CodexState) -> CodexState:
         
         task_message = HumanMessage(content=USER_PROMPT.format(user_raw_request=user_raw_request, evals_and_thread_traces=evals_and_thread_traces))
         input_messages.append(task_message)
-        output_messages.append(task_message)
 
     # Pass context along with state
     result = await agent.ainvoke(
         input={"messages": input_messages},
-        config=RunnableConfig(recursion_limit=100),
+        config=RunnableConfig(recursion_limit=200),
         context=SandboxToolContext(sandbox_context=sandbox_context)  # Pass sandbox context
     )
-    logger.info(f"Result: {result.keys()}")
-    logger.info(f"Result: {result.get('structured_response')}")
-    taskPlan: TaskPlan = result.get("structured_response")
-
-    output_message = AIMessage(content=f"Development plan created successfully. {taskPlan.model_dump_json()}")
-    output_messages.append(output_message)
+    logger.info(f"developer completed successfully")
 
 
     return {
-        "taskPlan": taskPlan,
-        "planner_thread": output_messages,
-        "attempt_number": state.attempt_number + 1,
+        "developer_thread": result.get("messages"),
     }
