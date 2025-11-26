@@ -1,30 +1,13 @@
 from __future__ import annotations
 
-from typing import Annotated, List, Literal, Optional
+from typing import Annotated, List, Optional
 
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import Field
 from shared.schema import CodexInput, CodexOutput, ExperimentResultContext
 
-# TODO: move this to shared/schema.py
-from agents.eval_agent.nodes.plan.filter_tools import AVAILABLE_TOOLS
 from agents.eval_agent.models import ToolSelectionLog
-
-
-class TaskItem(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    id:int = Field(..., description="The id of the task item")
-    description: str = Field(..., description="Concise action to perform")
-    context: str = Field(..., description="additional Context from codebase regarding the task item")
-    status: Literal["todo", "done"] = Field(..., description="Item status")
-
-
-class TaskPlan(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    title: str = Field(..., description="Short plan title")
-    items: List[TaskItem] = Field(..., description="Ordered plan steps")
-
 
 class CodexState(CodexInput, CodexOutput):
     # Agent-specific threading for different nodes

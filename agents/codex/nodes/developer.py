@@ -8,8 +8,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 from shared.logger import get_logger
 from shared.tools import web_search
-from shared.llm import get_llm
-from agents.codex.state import CodexState, TaskPlan
+from agents.codex.state import CodexState
 from agents.codex.format_thread import fetch_thread_timeline_as_string
 from shared.config import TARGET_AGENT_LANGSMITH_PROJECT
 from deepagents import create_deep_agent, CompiledSubAgent
@@ -36,7 +35,7 @@ from sandbox.tools import (
     create_file,
     create_directory,
     write_file,
-    patch_file,
+    edit_file,
     apply_patch,    
 )
 from pathlib import Path
@@ -139,8 +138,8 @@ async def developer(state: CodexState) -> CodexState:
             find_usages,
             get_code_region,
             web_search,
-            apply_patch,
-            patch_file,
+            # apply_patch,   # this tool call is often error prone, we have edit_file tool instead
+            edit_file,
             create_file,
             create_directory,
             write_file, 
