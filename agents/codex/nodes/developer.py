@@ -12,7 +12,9 @@ from shared.llm import get_llm
 from agents.codex.state import CodexState, TaskPlan
 from agents.codex.format_thread import fetch_thread_timeline_as_string
 from shared.config import TARGET_AGENT_LANGSMITH_PROJECT
-from deepagents import create_deep_agent
+from deepagents import create_deep_agent, CompiledSubAgent
+from langchain_openai import ChatOpenAI
+from langchain.agents import create_agent
 
 from sandbox.tools import (
     run_command,    
@@ -47,12 +49,11 @@ SYSTEM_PROMPT = """
     Your task is to understand current state of the agent , based on failed eval threads develop the agent to pass all the eval cases.
     
 # IMPORTANT:
-    - **You MUST start by exploring the repository files to understand the project structure before trying to read any specific file.**
-    - Use the `inspect_directory` tool on the root ('.') to get a file listing first.
-    - use respective tools to gather context and plan the task.
-    - SearchDocsByLangChain tool is available to search the documentation of langchain & langgraph.
     - for searching of packages, use the web_search tool, do not use pip search.
     - after adding any new package to pyproject.toml, always run command `pip install -e .` to install the new package.
+    - relative imports often results in errors, use absolute imports whenever possible.
+    - For complex tasks, delegate to your subagents using the task() tool.
+    This keeps your context clean and improves results.
 """ + TARGET_AGENT_GUARDRAILS + COMPOSIO_LANGCHAIN_INTEGRATION
 
 USER_PROMPT = """
@@ -76,6 +77,44 @@ EVALS_AND_THREAD_TRACE_TEMPLATE = """
 """
 
 
+codebase_explorer_subgraph = create_agent(
+    model=ChatOpenAI(model="gpt-5-codex", reasoning={"effort": "high"}),
+    tools=[
+        inspect_directory,
+        read_file,
+        grep,
+        search_code,
+        search_symbols,
+        semantic_search,
+        get_symbol_definition
+    ],
+    system_prompt=""" You are a great codebase explorer. based on the user request, you need to explore the codebase and provide the answer to the question, you are provided with the tools to explore the codebase""",
+    context_schema=SandboxToolContext,
+
+)
+codebase_explorer_subagent = CompiledSubAgent(
+    name="codebase-explorer-agent",
+    description="Used to explore the codebase and query the codebase",
+    runnable=codebase_explorer_subgraph,
+)
+
+documentation_explorer_subgraph = create_agent(
+    model=ChatOpenAI(model="gpt-5-codex", reasoning={"effort": "high"}),
+    tools=[
+        web_search,
+        *docs_tools,
+    ],
+    system_prompt="""Used to explore the documentation of langchain/langgraph , composio and any other relevant documentation, You are a great documentation explorer, you are given a question and you need to explore the documentation and provide the answer to the question""",
+    context_schema=SandboxToolContext,
+)
+documentation_explorer_subagent = CompiledSubAgent(
+    name="documentation-explorer-agent",
+    description="Used to explore the documentation of langchain/langgraph , composio and any other relevant documentation",
+    runnable=documentation_explorer_subgraph,
+)
+
+subagents = [codebase_explorer_subagent, documentation_explorer_subagent]
+
 async def developer(state: CodexState) -> CodexState:
     """Single ReAct agent that gathers repo context and returns a concrete plan."""
 
@@ -87,8 +126,10 @@ async def developer(state: CodexState) -> CodexState:
     
     experiment_results = state.experiment_context.results
 
+    llm = ChatOpenAI(model="gpt-5-codex", reasoning={"effort": "high"})
+
     agent = create_deep_agent(
-        model=get_llm(reasoning_effort="high", model="codex"),
+        model=llm,
         tools=[
             run_command,
             inspect_directory,
@@ -110,9 +151,9 @@ async def developer(state: CodexState) -> CodexState:
         ],
         system_prompt=SYSTEM_PROMPT,
         context_schema=SandboxToolContext,  # Add context schema for sandbox tools
+        subagents=subagents,
     )
     input_messages = list[BaseMessage](state.developer_thread or [])
-    output_messages = []
 
     if not state.latest_results:
         evals_and_thread_traces=[] 
@@ -136,7 +177,6 @@ async def developer(state: CodexState) -> CodexState:
         
         task_message = HumanMessage(content=USER_PROMPT.format(user_raw_request=user_raw_request, evals_and_thread_traces=evals_and_thread_traces))
         input_messages.append(task_message)
-        output_messages.append(task_message)
 
     # Pass context along with state
     result = await agent.ainvoke(
@@ -146,11 +186,7 @@ async def developer(state: CodexState) -> CodexState:
     )
     logger.info(f"developer completed successfully")
 
-    
-    output_messages.append(result.get("messages"))
-
 
     return {
-        # "developer_thread": output_messages,
-        "attempt_number": state.attempt_number + 1,
+        "developer_thread": result.get("messages"),
     }
