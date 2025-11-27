@@ -3,9 +3,9 @@ import asyncio
 from e2b import AsyncSandbox, AsyncCommandHandle
 from shared.logger import get_logger
 from sandbox.constants import SUCCESS_PAT, FAIL_PATTERNS, TARGET_AGENT_PORT
-logger = get_logger("sandbox.deploy_server")
-from .commands import kill_process_on_port, check_for_process_on_port
+from .commands import kill_process_on_port
 
+logger = get_logger("sandbox.deploy_server")
 
 async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, timeout_s: int = 40) -> tuple[AsyncSandbox, AsyncCommandHandle]:
     """Deploy a server and confirm it is ready.
@@ -93,7 +93,7 @@ async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, 
 
     try:
         # 2) wait for either explicit failure, explicit success, or timeout
-        done, _ = await asyncio.wait(
+        _, _ = await asyncio.wait(
             {
                 asyncio.create_task(ready_evt.wait()),
                 asyncio.create_task(failed_evt.wait()),
@@ -103,7 +103,6 @@ async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, 
         )
     except Exception as e:
         logger.info(f"Exception during wait: {e}")
-        done = set()
 
     if failed_evt.is_set():
         # process might still be running; kill and surface last logs
@@ -132,16 +131,8 @@ async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, 
                 logger.warning("External probe failed - server not accessible from outside")
                 # Fall through to liveness/diag
 
-    # 4) if no decisive log yet, poll health a few times (slow path)
-    # for _ in range(12):
-    #     ok = await _probe_from_inside(sb, READY_URL)
-    #     if ok:
-    #         return sb, handle
-    #     await asyncio.sleep(1.5)
-
-    # 5) final check: is process still alive?
-    procs = await sb.commands.list()
-    alive = any(p.pid == handle.pid for p in procs)
+    # 4) final check: is process still alive?
+    _ = await sb.commands.list()
     
     # Debug summary
     logger.info("\n" + "="*80)

@@ -46,7 +46,7 @@ from shared.tools.loader import (
 )
 from shared.tools.selector import select_relevant_tools
 from shared.tools.normalizer import canonicalize_tool_name
-from shared.tools.registry import ToolEntry, build_tool_name_set
+from shared.tools.registry import ToolEntry
 
 logger = get_logger("shared.tools")
 
@@ -120,20 +120,6 @@ def think(thought: str) -> str:
 
 
 # ============================================================================
-# Pre-loaded MCP Tools
-# ============================================================================
-
-async def _initialize_langchain_tools():
-    """Async helper to initialize default LangChain docs tools."""
-    from shared.mcp_client import get_mcp_tools
-    return await get_mcp_tools(["langchain_docs"])
-
-
-# This provides the LangChain tools to agents that need them by default
-# LANGCHAIN_MCP_TOOLS = asyncio.run(_initialize_langchain_tools())
-
-
-# ============================================================================
 # Public API
 # ============================================================================
 
@@ -150,12 +136,10 @@ __all__ = [
     
     # Registry
     "ToolEntry",
-    "build_tool_name_set",
     
     # General-purpose tools
     "web_search",
     "think",
-    # "LANGCHAIN_MCP_TOOLS",
 ]
 
 

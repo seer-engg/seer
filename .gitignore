@@ -63,3 +63,5 @@ data/seer.db
 *.db-shm
 *.db-wal
 notebooks/
+
+tool_hub_index/

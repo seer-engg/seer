@@ -2,7 +2,7 @@ from .base import (
     cd_and_run_in_sandbox,
     get_sandbox,
 )
-from .commands import kill_process_on_port, check_for_process_on_port
+from .commands import kill_process_on_port
 from .deploy import deploy_server_and_confirm_ready
 from .initialize import initialize_e2b_sandbox, setup_project
 from e2b import AsyncSandbox
@@ -19,7 +19,6 @@ __all__ = [
     "TARGET_AGENT_SETUP_SCRIPT",
     "prepare_target_agent",
     "kill_process_on_port",
-    "check_for_process_on_port",
 ]
 
 
@@ -33,12 +32,12 @@ async def prepare_target_agent(repo_url: str, setup_script: str, timeout: int = 
     Returns:
         A tuple containing the sandbox and the deployed URL.
     """
-    sbx, repo_dir, branch_in_sandbox = await initialize_e2b_sandbox(
+    sbx, repo_dir, _ = await initialize_e2b_sandbox(
         repo_url=repo_url,
     )
     await setup_project(sbx.sandbox_id, repo_dir, setup_script)
 
-    sbx, handle = await deploy_server_and_confirm_ready(
+    sbx, _ = await deploy_server_and_confirm_ready(
         cmd=TARGET_AGENT_COMMAND,
         sb=sbx,
         cwd=repo_dir,

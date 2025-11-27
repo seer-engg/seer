@@ -4,9 +4,8 @@ Please review each agents code before making any changes to this file.
 """
 import os
 from datetime import datetime
-from typing import List, Optional, Literal, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict, computed_field, model_validator
-from shared.tools import canonicalize_tool_name
+from typing import List, Optional, Literal
+from pydantic import BaseModel, Field, ConfigDict, computed_field
 from shared.agent_context import AgentContext
 
 
@@ -22,65 +21,10 @@ class FailureAnalysis(BaseModel):
         le=1.0, 
         description="The final numeric score from 0.0 (total failure) to 1.0 (perfect)."
     )
-    failure_type: Optional[Literal[
-        "syntax_error", 
-        "logical_error", 
-        "instruction_following", 
-        "structure_preservation",
-        "completeness",
-        "assertion_error",
-        "runtime_error",
-        "other"
-    ]] = Field(
-        default=None, 
-        description="The primary category of the failure. Null if score is 1.0."
-    )
     judge_reasoning: str = Field(
         ..., 
         description="Detailed explanation from the judge about the score and failure."
     )
-
-
-class ActionStep(BaseModel):
-    """Single action executed by the evaluator."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    tool: str = Field(
-        ...,
-        description="Tool identifier (e.g., 'ASANA_CREATE_TASK', 'GITHUB_CREATE_PULL_REQUEST', 'system.wait').",
-    )
-    params: str = Field(
-        ...,
-        description="A JSON string containing the parameters for the tool (e.g., '{\"name\": \"Test\"}' or '{}').",
-    )
-    assign_to_var: str = Field(
-        ...,
-        description="Variable name used to store tool output. Use empty string \"\" if unused.",
-    )
-    assert_field: str = Field(
-        ...,
-        description="JSON path to assert against the tool output. Use empty string \"\" if unused.",
-    )
-    assert_expected: str = Field(
-        ...,
-        description="The expected value for the assertion, stored as a string. Use empty string \"\" if unused.",
-    )
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_tool(cls, values: Dict[str, Any]) -> Dict[str, Any]:
-        if not isinstance(values, dict):
-            return values
-
-        service_hint = values.pop("service", None)
-        tool_name = values.get("tool")
-        if tool_name:
-            values["tool"] = canonicalize_tool_name(tool_name, service_hint=service_hint)
-        elif service_hint:
-            raise ValueError("'tool' must be provided when 'service' is specified.")
-        return values
-
 
 class ExpectedOutput(BaseModel):
     """
@@ -105,9 +49,6 @@ class DatasetExample(BaseModel):
     """Single example in a dataset."""
 
     example_id: str = Field(..., description="unique id for the test case")
-    reasoning: str = Field(...,
-        description="Why is this example important? What aspect of target agent will it be testing?"
-    )
     input_message: str = Field(..., description="The input message that should be send to target agent. MUST NOT CONTAIN ANY HINTS. MUST NOT CONTAIN EXPECTED OUTPUT! MUST NOT CONTAIN ANY PLACEHOLDERS")
     expected_output: ExpectedOutput = Field(...)
     status: Literal["active", "retired"] = Field(
@@ -146,9 +87,7 @@ class ExperimentResultContext(BaseModel):
 class ExperimentContext(BaseModel):
     """Aggregate metadata for a single experiment run."""
 
-    experiment_id: str = Field(..., description="Unique identifier for the experiment")
     experiment_name: str = Field(..., description="Human-readable experiment name")
-    attempt_index: int = Field(1, description="1-indexed attempt number within the dataset context")
     results: List[ExperimentResultContext] = Field(default_factory=list, description="Ordered test results")
     mean_score: float = Field(0.0, description="Mean score across results in this experiment")
     started_at: datetime = Field(default_factory=datetime.utcnow, description="Timestamp when the experiment started")

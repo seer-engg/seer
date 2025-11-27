@@ -17,15 +17,13 @@ async def test_server_ready(state: CodexState) -> CodexState:
     sbx: AsyncSandbox = await AsyncSandbox.connect(sandbox_context.sandbox_id)
 
     try:
-        sb, handle = await deploy_server_and_confirm_ready(
+        _, _ = await deploy_server_and_confirm_ready(
             cmd=TARGET_AGENT_COMMAND,
             sb=sbx,
             cwd=sandbox_context.working_directory,
             timeout_s=50
         )
         logger.warning("Server started successfully, not killed")
-        # WARNING: removed kill process on port to avoid stopping the server , as the eval runner is not starting one
-        # await kill_process_on_port(sbx, TARGET_AGENT_PORT)
     except RuntimeError as e:
         error_message = str(e)
         logger.error(f"Error starting server: {error_message}")

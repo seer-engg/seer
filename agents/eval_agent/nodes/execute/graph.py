@@ -41,32 +41,10 @@ def _route_from_dispatch(state: TestExecutionState):
     """Decide whether to run one example or finalize the batch."""
     return "provision" if state.dataset_example is not None else "finalize_batch"
 
-
-async def collect_result_node(state: TestExecutionState) -> dict:
-    """Append the per-example result to the accumulator and clear current example fields."""
-    if not state.result:
-        raise ValueError("collect_result_node expects a 'result' produced by prepare_result_node")
-    accumulated = list(state.accumulated_results or [])
-    accumulated.append(state.result)
-    # Clear per-example keys to prepare for next dispatch
-    return {
-        "accumulated_results": accumulated,
-        "dataset_example": None,
-        "thread_id": None,
-        "agent_output": "",
-        "analysis": None,
-        "assertion_output": None,
-        "provisioning_output": None,
-        "started_at": None,
-        "completed_at": None,
-        "result": None,
-    }
-
-
 async def finalize_batch_node(state: TestExecutionState) -> dict:
     """Emit latest_results aligned to EvalAgentState from the accumulated results."""
     return {
-        "latest_results": list(state.accumulated_results or []),
+        "latest_results": list([state.result]),
     }
 
 async def agent_invocation_route_node(state: TestExecutionState) -> dict:
@@ -83,7 +61,6 @@ def build_test_execution_subgraph():
     # Batch routing
     builder.add_node("initialize", initialize_node)
     builder.add_node("dispatch", dispatch_examples_node)
-    builder.add_node("collect_result", collect_result_node)
     builder.add_node("finalize_batch", finalize_batch_node)
     # Per-example pipeline
     builder.add_node("provision", provision_environment_node)
@@ -106,8 +83,7 @@ def build_test_execution_subgraph():
     })
 
     builder.add_edge("assert", "prepare_result")
-    builder.add_edge("prepare_result", "collect_result")
-    builder.add_edge("collect_result", "dispatch")
+    builder.add_edge("prepare_result", "dispatch")
 
     # Finish when dispatch decides no more examples remain
     builder.add_edge("finalize_batch", END)

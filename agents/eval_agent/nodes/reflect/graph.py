@@ -105,7 +105,7 @@ async def reflect_node(state: EvalAgentState) -> dict:
 
     # Create the Reflexion Agent
     analyst_graph = create_ephemeral_reflexion(
-        model=get_llm(model="gpt-4.1", temperature=0.0),
+        model=get_llm(model="gpt-5.1", temperature=0.0),
         tools=reflection_tools,
         prompt=ANALYST_AGENT_SYSTEM_PROMPT,
         agent_id="eval_analyst_v1"

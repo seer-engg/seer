@@ -24,9 +24,7 @@ async def _prepare_run_context(state: EvalAgentState) -> dict:
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     experiment = ExperimentContext(
-        experiment_id=f"seer-exp-{timestamp}",
         experiment_name=f"seer-eval-local-{timestamp}",
-        attempt_index=len(dataset.experiments) + 1,
         started_at=datetime.utcnow(),
     )
     dataset.experiments.append(experiment)

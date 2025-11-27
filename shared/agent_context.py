@@ -26,7 +26,7 @@ Usage:
     )
 """
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 if TYPE_CHECKING:
     from shared.schema import UserContext, GithubContext, SandboxContext
@@ -82,10 +82,7 @@ class AgentContext(BaseModel):
         description="MCP resources created during evaluation (for cleanup)"
     )
     
-    class Config:
-        """Pydantic configuration."""
-        arbitrary_types_allowed = True
-        extra = "allow"  # Allow extra fields for extensibility
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
 
 __all__ = ["AgentContext"]

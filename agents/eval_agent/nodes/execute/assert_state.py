@@ -4,11 +4,6 @@ from typing import List, Optional
 
 from agents.eval_agent.models import TestExecutionState
 from shared.logger import get_logger
-from shared.resource_utils import format_resource_hints
-from shared.parameter_population import (
-    extract_all_context_variables,
-    format_context_variables_for_llm,
-)
 from shared.llm import get_llm
 from agents.eval_agent.reflexion_factory import create_ephemeral_reflexion
 from langchain_core.messages import HumanMessage
@@ -21,18 +16,13 @@ logger = get_logger("eval_agent.execute.assert")
 
 
 
-SYSTEM_PROMPT = """
-You are a helpful assistant that asserts the final state of the environment for the target agent. based on the specified criterias. you will use all the tools available to you to assert the final state.
-"""
-USER_PROMPT = """
-Assert the following criterias by using the tools available to you:
-{criterias}
+from shared.prompt_loader import load_prompt
 
-previously anothe agent has done provisioning and it's output is:
-<provisioning_output>
-{provisioning_output}
-</provisioning_output>
-"""
+# Load prompts from YAML
+_PROMPT_CONFIG = load_prompt("eval_agent/assert.yaml")
+SYSTEM_PROMPT = _PROMPT_CONFIG.system
+USER_PROMPT = _PROMPT_CONFIG.user_template
+
 
 
 async def assert_final_state_node(state: TestExecutionState) -> dict:
@@ -41,17 +31,6 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
     if not example:
         raise ValueError("assert_final_state_node requires dataset_example in state")
     provisioning_output = state.provisioning_output
-
-    # Initialize tools and tool entries
-
-    # Prepare prompt context
-    context_vars = extract_all_context_variables(
-        user_context=state.context.user_context,
-        github_context=state.context.github_context,
-        mcp_resources=state.mcp_resources,
-    )
-    formatted_context_vars = format_context_variables_for_llm(context_vars)
-    resource_hints = format_resource_hints(state.mcp_resources)
 
     instructions: Optional[List[str]] = None
     if example and example.expected_output:
@@ -62,7 +41,7 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
             f"DatasetExample {example.example_id} has no assert_final_state instructions."
         )
 
-    tool_hub = await get_tool_hub(state)
+    tool_hub = await get_tool_hub()
     
     # Semantic Tool Selection: Use filtered tools if available
     tools_subset = None
@@ -73,7 +52,7 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
         logger.info("Using subset of %d tools for assertion", len(tools_subset))
 
     assertion_agent = create_ephemeral_reflexion(
-        model=get_llm(model='gpt-4.1', temperature=0.0),
+        model=get_llm(model='gpt-5.1', temperature=0.0),
         tool_hub=tool_hub,
         tools=tools_subset, # Pass subset if available
         prompt=SYSTEM_PROMPT,

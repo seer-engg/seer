@@ -14,20 +14,13 @@ from .utils import get_tool_hub
 logger = get_logger("eval_agent.execute.provision")
 
 
-SYSTEM_PROMPT = """
-You are a helpful assistant that provisions the environment for the target agent based on the instructions provided.
-You will use all the tools available to you to provision the environment.
-"""
-USER_PROMPT = """
-Provision the environment for the target agent based on the instructions provided.
-<resources>
-{resources}
-</resources>
+from shared.prompt_loader import load_prompt
 
-<instructions>
-{instructions}
-</instructions>
-"""
+# Load prompts from YAML
+_PROMPT_CONFIG = load_prompt("eval_agent/provision.yaml")
+SYSTEM_PROMPT = _PROMPT_CONFIG.system
+USER_PROMPT = _PROMPT_CONFIG.user_template
+
 
 
 async def provision_environment_node(state: TestExecutionState) -> dict:
@@ -45,7 +38,7 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
     
     resource_hints = format_resource_hints(state.mcp_resources)
 
-    tool_hub = await get_tool_hub(state)
+    tool_hub = await get_tool_hub()
     
     # Semantic Tool Selection: Use filtered tools if available
     tools_subset = None
@@ -57,7 +50,7 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
 
     # Use Reflexion agent for provisioning
     provisioning_agent = create_ephemeral_reflexion(
-        model=get_llm(model='gpt-4.1', temperature=0.0),
+        model=get_llm(model='gpt-5.1', temperature=0.0),
         tool_hub=tool_hub,
         tools=tools_subset, # Pass subset if available
         prompt=SYSTEM_PROMPT,

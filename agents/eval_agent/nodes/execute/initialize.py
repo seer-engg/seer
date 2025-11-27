@@ -13,7 +13,6 @@ async def initialize_node(state: TestExecutionState) -> dict:
     # Initialize pending list and accumulator on first entry
     pending = list(state.dataset_examples or [])
     updates["pending_examples"] = pending
-    updates["accumulated_results"] = []
 
     # Enrich mcp_resources once using context variables (if github context is present)
     enriched_resources = dict(state.context.mcp_resources or {})

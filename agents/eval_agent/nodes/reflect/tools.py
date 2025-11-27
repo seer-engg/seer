@@ -74,7 +74,7 @@ def link_evidence_and_update_fitness(
     with store.driver.session() as session:
         result = session.run(
             cypher_query,
-            params={
+            parameters={
                 "memory_id": memory_id,
                 "user_id": user_id,
                 "evidence_thread_ids": evidence_thread_ids,
@@ -132,7 +132,7 @@ def create_reflection_tools(context: ReflectionToolContext) -> List[Any]:
         with store.driver.session() as session:
             results = session.run(
                 cypher_query,
-                params={"example_id": example_id}
+                parameters={"example_id": example_id}
             )
             records = [record.data() for record in results]
         
@@ -158,7 +158,7 @@ def create_reflection_tools(context: ReflectionToolContext) -> List[Any]:
         # store = get_memory_store() # Already got at top of closure
 
         # 1. Create and Save Memory with Metadata
-        from reflexion.core.memory.models import Memory
+        from reflexion.memory.models import Memory
         
         memory = Memory(
             agent_id=context.agent_name,
