@@ -270,7 +270,7 @@ async def main():
     launcher = Launcher()
     
     # Set up signal handlers
-    def signal_handler(sig, frame):
+    def signal_handler(_sig, _frame):
         launcher.stop_all()
         sys.exit(0)
     

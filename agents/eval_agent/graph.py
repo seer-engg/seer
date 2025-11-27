@@ -14,32 +14,6 @@ from agents.eval_agent.nodes.execute import build_test_execution_subgraph
 
 logger = get_logger("eval_agent.graph")
 
-
-# _resolve_tool_key removed - no longer needed with dynamic cleanup
-
-
-async def cleanup_environment(state: EvalAgentState) -> dict:
-    """
-    Execute cleanup actions in reverse order (LIFO).
-    
-    This is fully dynamic - no hardcoded service logic. Cleanup actions
-    are generated automatically during provisioning as inverse operations.
-    """
-    if not state.cleanup_stack:
-        logger.info("cleanup_environment: No cleanup actions to execute.")
-        return {}
-
-    
-    # TODO: Implement cleanup
-    logger.warning(f"cleanup_environment: not implemented yet. ")
-    
-    # Clear both cleanup stack and resources
-    return {
-        "cleanup_stack": [],
-        "context": state.context.model_copy(update={"mcp_resources": {}})
-    }
-
-
 def update_state_from_handoff(state: EvalAgentState) -> dict:
     """
     Unpacks the codex_output handoff object into the main state for the next round.
@@ -93,7 +67,6 @@ def build_graph():
     workflow.add_node("reflect", reflect_node)
     workflow.add_node("finalize", finalize_subgraph)
     workflow.add_node("update_state_from_handoff", update_state_from_handoff)
-    workflow.add_node("cleanup", cleanup_environment) # ADDED
 
     workflow.add_edge(START, "plan")
     workflow.add_edge("plan", "pre_run")
@@ -106,11 +79,7 @@ def build_graph():
         "finalize": "finalize"
     })
     
-    # MODIFIED: Finalize now goes to cleanup
-    workflow.add_edge("finalize", "cleanup")
-    
-    # MODIFIED: Conditional logic moves to after cleanup
-    workflow.add_conditional_edges("cleanup", should_start_new_round, {
+    workflow.add_conditional_edges("finalize", should_start_new_round, {
         "update_state_from_handoff": "update_state_from_handoff",
         "__end__": END
     })

@@ -41,8 +41,6 @@ def _short(obj:dict):
         s = str(obj)
     return (s[:MAX_IO_CHARS] + "…") if s and len(s) > MAX_IO_CHARS else s
 
-def _fmt_time(dt):
-    return (dt or datetime.utcnow()).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 async def _collect_runs(client: AsyncClient, **kwargs) -> List[Run]:
     delay_seconds = 0.5

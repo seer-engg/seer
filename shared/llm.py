@@ -42,13 +42,3 @@ def get_llm(
             api_key=api_key
         )
 
-
-async def convert_response_v1_output_to_message_string(result: dict) -> str:
-    message_string = ""
-    last_message = result.get("messages", [])[-1].content
-    if isinstance(last_message, list):
-        for message in last_message:
-            if message.get("type") == "text":
-                message_string += message.get("text")
-    return message_string
-

@@ -29,7 +29,6 @@ async def deploy_service(state: CodexState) -> CodexState:
             cwd=sandbox_context.working_directory,
             timeout_s=50
         )
-        server_url = sb.get_host(TARGET_AGENT_PORT)
         return {
             "server_running": True,
             'agent_updated': True,

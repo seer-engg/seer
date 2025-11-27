@@ -1,4 +1,5 @@
-from typing import Dict, List
+import asyncio
+from typing import Dict
 from agents.eval_agent.models import EvalAgentPlannerState
 from agents.eval_agent.nodes.execute.utils import get_tool_hub
 from shared.logger import get_logger
@@ -35,14 +36,13 @@ async def filter_tools(state: EvalAgentPlannerState) -> dict:
         return {"tool_entries": {}}
 
     # 3. Query the Hub
-    # We ask for a generous number (e.g. 20) to cover multiple complex steps across examples
+    # We ask for a generous number to cover multiple complex steps across examples
     logger.info(f"Filtering tools for instruction set length: {len(query_text)}")
     
     # ToolHub.query performs semantic search + graph expansion (finding dependent tools)
     # It returns a list of dictionaries compatible with OpenAI tool schema
     # Wrapping in to_thread because hub.query performs blocking network calls (embeddings)
-    import asyncio
-    relevant_tool_dicts = await asyncio.to_thread(hub.query, query_text, top_k=20)
+    relevant_tool_dicts = await asyncio.to_thread(hub.query, query_text, top_k=5)
     
     # 4. Convert to ToolEntry format expected by the agent state
     tool_entries: Dict[str, ToolEntry] = {}
@@ -59,7 +59,6 @@ async def filter_tools(state: EvalAgentPlannerState) -> dict:
             name=name,
             description=t_dict.get("description", ""),
             service=service,
-            pydantic_schema=t_dict.get("parameters") # Maps JSON schema to pydantic_schema field
         )
 
     logger.info(f"Selected {len(tool_entries)} tools: {list(tool_entries.keys())}")

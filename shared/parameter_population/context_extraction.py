@@ -233,39 +233,3 @@ def _extract_environment_defaults() -> Dict[str, Any]:
         variables["github_repo"] = github_repo.strip()
     
     return variables
-
-
-def format_context_variables_for_llm(context_vars: Dict[str, Any]) -> str:
-    """
-    Format context variables for inclusion in LLM prompts.
-    
-    Returns:
-        Human-readable formatted string showing available variables
-    """
-    if not context_vars:
-        return "No context variables available."
-    
-    lines = ["**Available Context Variables:**"]
-    lines.append("These variables are pre-extracted and ready to use in your ActionStep params:")
-    lines.append("")
-    
-    # Group by service
-    services = {}
-    for key, value in sorted(context_vars.items()):
-        service = key.split('_')[0] if '_' in key else 'other'
-        if service not in services:
-            services[service] = []
-        services[service].append((key, value))
-    
-    for service, vars_list in sorted(services.items()):
-        lines.append(f"**{service.upper()}:**")
-        for key, value in vars_list:
-            # Truncate long values
-            value_str = str(value)
-            if len(value_str) > 50:
-                value_str = value_str[:47] + "..."
-            lines.append(f"  - {key}: {value_str}")
-        lines.append("")
-    
-    return "\n".join(lines)
-

@@ -23,62 +23,13 @@ class EvalGenerationOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-AGENTIC_GENERATOR_SYSTEM_PROMPT = """
+from shared.prompt_loader import load_prompt
 
-You are an expert adversarial QA agent. Your role is to design test cases to evaluate  the target agent.
+# Load prompts from YAML
+_PROMPT_CONFIG = load_prompt("eval_agent/generator.yaml")
+AGENTIC_GENERATOR_SYSTEM_PROMPT = _PROMPT_CONFIG.system
+USER_PROMPT = _PROMPT_CONFIG.user_template
 
-** YOUR TASK:**
-your task is to generate DatasetExample that will be used to evaluate the target agent.
-
-# DatasetExample:
-- `example_id`: unique identifier for the test case
-- `reasoning`: Why this test is valuable and what it evaluates
-- `input_message`: The input message that will  be send to, invoke target agent. MUST NOT CONTAIN ANY HINTS. MUST NOT CONTAIN EXPECTED OUTPUT. MUST NOT CONTAIN ANY PLACEHOLDERS
-- `expected_output`: An `ExpectedOutput` object with:
-  - `create_test_data`: List of strings describing the prerequisite data in external apps, prior to target agent being invoked.
-  - `assert_final_state`: List of strings describing the final state of the environment, after target agent has been invoked.
-  - `expected_action`: The expected action that should be taken by the target agent. e.g. 'sync the asana tasks with the github PRs'.
-- `status`: "active"
-
-# chronological workflow that will take place for each dataset example you produce
-1. A provisioning agent will consume the `create_test_data` instructions to create  all necessary prerequisite data.
-2: A method will invoke the target agent with `input_message` you have produces. [Note: we only send the input message as it is ]
-3: An Assertion agent will assert based on `assert_final_state` instructions
-
-**MATHEMATICAL GUARANTEE**: 
-- provision_environment MUST create everything input_message's scenario requires
-- assert_final_state MUST verify observable changes in the system
-
-For each test case:
-1.  **Reason:** What weakness are you exploiting? What edge case?
-2.  **Design input_message and expected_output:**
-    * create_test_data: What resources to create ? What all data should be present in external apps before we invoke target agent ?
-    * input_message: What scenario to send to agent?
-    * assert_final_state: What to verify? What state the external apps should be after target agent has been invoked.
-
-**Important**: 
- - Tests MUST work on an EMPTY CANVAS. Create ALL test data from scratch
- - The instructions in create_test_data , assert_final_state and input_message should be self sufficient. They will be consumed by individual agents who doesn't have access to any other information. The agent will consume your instructions to create/assert data in external apps.
- - don't leave any room for ambiguity in the instructions, be explicit in stating instructions for provisioning and assertion, Try to state even obvious information .
- - don't slack in writing down the create_test_data and assert_final_state. They are critical for the test to be valid.  write in detailed points .
- - For testing playground use the github repo named label-edgecase-repo under seer-engg organization.We have already created this repo, No need to create one. Don't include any instructions to assert it's presence.
-
-# thinking methodology for generating provision_environment and assert_final_state
-- for each instruction point write down explictly what all information is required to complete it.
-
-
-"""
-
-USER_PROMPT = """
-Based on the context of the target agent, generate {n_tests} test cases for the target agent.
-** CONTEXT of Target Agent:**
-* **System Goal:** {system_goal_description}
-* **Agent Weaknesses (from past reflections):** {reflections_text}
-* **Recently Run Tests (Do Not Repeat):** {prev_dataset_examples}
-* **Available Resources:** {resource_hints}
-
-
-"""
 
 
 async def _invoke_agentic_llm(

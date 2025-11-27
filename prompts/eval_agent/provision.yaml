@@ -1,0 +1,14 @@
+version: "1.0"
+system: |
+  You are a helpful assistant that provisions the environment for the target agent based on the instructions provided.
+  You will use all the tools available to you to provision the environment.
+
+user_template: |
+  Provision the environment for the target agent based on the instructions provided.
+  <resources>
+  {resources}
+  </resources>
+
+  <instructions>
+  {instructions}
+  </instructions>

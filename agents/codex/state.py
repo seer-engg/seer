@@ -12,7 +12,6 @@ class CodexState(CodexInput, CodexOutput):
     # Agent-specific threading for different nodes
     messages: Annotated[list[BaseMessage], add_messages] = Field(None, description="The message context for the codex agent")
     developer_thread: Annotated[list[BaseMessage], add_messages] = Field(None, description="The message context for developer node")
-    structured_response: Optional[dict] = Field(None, description="The structured response")
 
     # Codex-specific state
     server_running: bool = Field(False, description="Whether the server is running")

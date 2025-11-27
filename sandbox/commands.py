@@ -7,13 +7,3 @@ async def kill_process_on_port(sb: AsyncSandbox, port: int):
     if "not found" in kill_proc.stderr:
         raise RuntimeError(f"Cannot clear port {port}: lsof command not found.")
     return True
-
-
-async def check_for_process_on_port(sb: AsyncSandbox, port: int):
-    cmd = f"""if lsof -ti :{port} >/dev/null; then
-        echo "True"
-    else
-        echo "False"
-    fi"""
-    proc = await sb.commands.run(cmd)
-    return "True" in proc.stdout.lower()

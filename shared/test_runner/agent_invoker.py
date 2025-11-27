@@ -7,8 +7,7 @@ with the input_message and capturing its tool calls.
 This is Phase 2 of the 3-phase testing architecture.
 """
 import asyncio
-import json
-from typing import Dict, Any, List, Optional
+from typing import Optional
 from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
@@ -38,10 +37,6 @@ class AgentInvocationResult(BaseModel):
     thread_id: str = Field(
         ...,
         description="The thread ID used for this invocation"
-    )
-    execution_time_seconds: float = Field(
-        ...,
-        description="How long the agent took to respond"
     )
 
 
@@ -144,7 +139,6 @@ async def invoke_target_agent(
             final_output=final_output,
             error=None,
             thread_id=thread_id,
-            execution_time_seconds=execution_time
         )
         
     except asyncio.TimeoutError:

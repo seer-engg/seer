@@ -14,20 +14,13 @@ from .utils import get_tool_hub
 logger = get_logger("eval_agent.execute.provision")
 
 
-SYSTEM_PROMPT = """
-You are a helpful assistant that provisions the environment for the target agent based on the instructions provided.
-You will use all the tools available to you to provision the environment.
-"""
-USER_PROMPT = """
-Provision the environment for the target agent based on the instructions provided.
-<resources>
-{resources}
-</resources>
+from shared.prompt_loader import load_prompt
 
-<instructions>
-{instructions}
-</instructions>
-"""
+# Load prompts from YAML
+_PROMPT_CONFIG = load_prompt("eval_agent/provision.yaml")
+SYSTEM_PROMPT = _PROMPT_CONFIG.system
+USER_PROMPT = _PROMPT_CONFIG.user_template
+
 
 
 async def provision_environment_node(state: TestExecutionState) -> dict:

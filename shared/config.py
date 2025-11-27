@@ -11,7 +11,7 @@ Usage:
         ...
 """
 import os
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -53,19 +53,7 @@ class SeerConfig(BaseSettings):
     eval_remote_url: str = Field(default="http://127.0.0.1:8002", description="URL for eval agent LangGraph")
     
     # Feature flags
-    codex_handoff_enabled: bool = Field(default=False, description="Enable handoff to codex agent")
     eval_agent_load_default_mcps: bool = Field(default=True, description="Load default MCP services")
-
-    # ============================================================================
-    # Codex Agent Configuration
-    # ============================================================================
-    
-    docs_tools_enabled: bool = Field(default=True, description="Enable docs tools")
-    docs_tools_url: str = Field(default="https://docs.langchain.com/mcp", description="URL for docs tools")
-    
-    # ============================================================================
-    # Sandbox & Target Agent Configuration
-    # ============================================================================
     
     target_agent_langsmith_project: str = Field(default="target_agent", description="LangSmith project for target agent")
     target_agent_port: int = Field(default=2024, description="Port for target agent")
@@ -74,8 +62,6 @@ class SeerConfig(BaseSettings):
     
     # Base template for E2B sandbox
     base_template_alias: str = Field(default="seer-base", description="E2B template alias")
-    base_template_cpu_count: int = Field(default=1, description="CPU count for sandbox")
-    base_template_memory_mb: int = Field(default=1024, description="Memory in MB for sandbox")
     
     # ============================================================================
     # Neo4j Graph Database Configuration
@@ -103,8 +89,6 @@ class SeerConfig(BaseSettings):
     # MCP (Model Context Protocol) Configuration
     # ============================================================================
     
-    langchain_mcp_url: str = Field(default="https://docs.langchain.com/mcp", description="LangChain MCP documentation URL")
-    
     # Composio configuration
     composio_user_id: Optional[str] = Field(default=None, description="Composio user ID for tool access")
     composio_api_key: Optional[str] = Field(default=None, description="Composio API key (if required)")
@@ -112,8 +96,6 @@ class SeerConfig(BaseSettings):
     # ============================================================================
     # LangSmith Configuration
     # ============================================================================
-    
-    langsmith_api_url: str = Field(default="https://api.smith.langchain.com", description="LangSmith API base URL")
     
     # ============================================================================
     # Asana Configuration
@@ -182,7 +164,6 @@ CODEX_REMOTE_URL = config.codex_remote_url
 EVAL_REMOTE_URL = config.eval_remote_url
 
 # Feature Flags
-CODEX_HANDOFF_ENABLED = config.codex_handoff_enabled
 EVAL_AGENT_LOAD_DEFAULT_MCPS = config.eval_agent_load_default_mcps
 
 # Target Agent
@@ -194,8 +175,6 @@ TARGET_AGENT_ENVS = config.target_agent_envs
 
 # Sandbox
 BASE_TEMPLATE_ALIAS = config.base_template_alias
-BASE_TEMPLATE_CPU_COUNT = config.base_template_cpu_count
-BASE_TEMPLATE_MEMORY_MB = config.base_template_memory_mb
 
 # Neo4j
 NEO4J_URI = config.neo4j_uri
@@ -210,18 +189,9 @@ TOOL_EMBED_PROP = config.tool_embed_prop
 TOOL_VECTOR_INDEX = config.tool_vector_index
 
 # MCP
-LANGCHAIN_MCP_URL = config.langchain_mcp_url
 COMPOSIO_USER_ID = config.composio_user_id
-COMPOSIO_API_KEY = config.composio_api_key
 
 # LangSmith
-LANGSMITH_API_URL = config.langsmith_api_url
-
-# Asana
-ASANA_WORKSPACE_ID = config.asana_workspace_id
-ASANA_DEFAULT_WORKSPACE_GID = config.asana_default_workspace_gid
-ASANA_PROJECT_ID = config.asana_project_id
-ASANA_DEFAULT_PROJECT_GID = config.asana_default_project_gid
 
 
 # ============================================================================

@@ -1,7 +1,6 @@
 import os
 from typing import Dict, List, Any
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, ConfigDict
 
 from agents.eval_agent.models import EvalAgentPlannerState
 from sandbox import (
@@ -12,17 +11,11 @@ from sandbox import (
     deploy_server_and_confirm_ready,
 )
 from shared.agent_context import AgentContext
-from shared.schema import SandboxContext, ActionStep
+from shared.schema import SandboxContext
 from shared.logger import get_logger
 
 logger = get_logger("eval_agent.plan")
 
-
-class _ProvisioningPlan(BaseModel):
-    """Structured response describing the MCP tool calls to run."""
-
-    model_config = ConfigDict(extra="forbid")
-    actions: List[ActionStep]
 
 
 def _seed_default_resources(mcp_resources: Dict[str, Any]) -> None:
@@ -91,8 +84,6 @@ async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
             state.context.sandbox_context.sandbox_id,
         )
 
-    cleanup_stack = []
-
     # Update the AgentContext with new sandbox and resources
     updated_context = AgentContext(
         user_context=state.context.user_context,
@@ -103,4 +94,4 @@ async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
         mcp_resources=mcp_resources,
     )
     
-    return {"context": updated_context, "cleanup_stack": cleanup_stack}
+    return {"context": updated_context}
