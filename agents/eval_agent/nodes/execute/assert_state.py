@@ -41,7 +41,7 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
             f"DatasetExample {example.example_id} has no assert_final_state instructions."
         )
 
-    tool_hub = await get_tool_hub(state)
+    tool_hub = await get_tool_hub()
     
     # Semantic Tool Selection: Use filtered tools if available
     tools_subset = None

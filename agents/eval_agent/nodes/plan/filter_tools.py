@@ -17,7 +17,7 @@ async def filter_tools(state: EvalAgentPlannerState) -> dict:
     # 1. Get the Hub (reusing the cached instance logic from utils)
     # Note: get_tool_hub accepts state for context but doesn't strictly require TestExecutionState fields
     # We cast to any to avoid type checker complaints if strict checking were enabled
-    hub = await get_tool_hub(state)  # type: ignore
+    hub = await get_tool_hub()  # type: ignore
     
     # 2. Collect all instructions that need tool support from all examples
     all_instructions = []
@@ -42,7 +42,7 @@ async def filter_tools(state: EvalAgentPlannerState) -> dict:
     # ToolHub.query performs semantic search + graph expansion (finding dependent tools)
     # It returns a list of dictionaries compatible with OpenAI tool schema
     # Wrapping in to_thread because hub.query performs blocking network calls (embeddings)
-    relevant_tool_dicts = await asyncio.to_thread(hub.query, query_text, top_k=5)
+    relevant_tool_dicts = await asyncio.to_thread(hub.query, query_text, top_k=20)
     
     # 4. Convert to ToolEntry format expected by the agent state
     tool_entries: Dict[str, ToolEntry] = {}
