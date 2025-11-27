@@ -34,7 +34,7 @@ def _convert_tools_for_ingestion(tools: List[Any]) -> List[Tool]:
             print(f"Skipping tool conversion for {t}: {e}")
     return normalized
 
-async def get_tool_hub(state: TestExecutionState) -> ToolHub:
+async def get_tool_hub() -> ToolHub:
     """
     Returns a fully initialized and hydrated ToolHub.
     """

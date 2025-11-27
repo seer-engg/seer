@@ -158,7 +158,7 @@ def create_reflection_tools(context: ReflectionToolContext) -> List[Any]:
         # store = get_memory_store() # Already got at top of closure
 
         # 1. Create and Save Memory with Metadata
-        from reflexion.core.memory.models import Memory
+        from reflexion.memory.models import Memory
         
         memory = Memory(
             agent_id=context.agent_name,
