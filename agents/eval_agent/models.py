@@ -31,36 +31,6 @@ class Hypothesis(BaseModel):
         description="A critique of the test cases that were just run. Were they too easy? Did they find the *right* bugs? What could be improved for next time?"
     )
 
-class EvalReflection(BaseModel):
-    """A meta-evaluation insight to improve future eval generation only."""
-    user_id: str = Field(description="The user this reflection belongs to.")
-    reflection_id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()), 
-        description="Unique ID for this reflection."
-    )
-    agent_name: str = Field(description="Target agent/graph this reflection applies to")
-    hypothesis: Hypothesis = Field(description="Creative hypothesis about a failure mode in the latest attempt")
-
-    # Metadata
-    latest_score: Optional[float] = Field(
-        default=None,
-        description="Most recent aggregate score when this reflection was generated",
-    )
-    attempt: Optional[int] = Field(
-        default=None,
-        description="Eval attempt count (1-indexed) when this reflection was produced",
-    )
-    dataset_name: Optional[str] = Field(
-        default=None,
-        description="Dataset involved in the run that produced this reflection",
-    )
-    experiment_name: Optional[str] = Field(
-        default=None,
-        description="Experiment name involved in the run that produced this reflection",
-    )
-    created_at: datetime = Field(default_factory=datetime.now)
-
-
 class EvalAgentState(BaseModel):
     """State for the evaluation agent."""
 
@@ -87,12 +57,17 @@ class EvalAgentState(BaseModel):
         default_factory=list,
         description="Stack of inverse cleanup actions generated during provisioning. Executed in reverse order (LIFO)."
     )
+    
+    # Tools
+    tool_entries: Dict[str, ToolEntry] = Field(
+        default_factory=dict, 
+        description="Subset of tools selected for this evaluation run"
+    )
 
 
 class EvalAgentPlannerState(EvalAgentState):
     """State for the evaluation agent planner."""
     reflections_text: Optional[str] = Field(default=None, description="Text of the reflections to use for test generation")
-    tool_entries: Dict[str, ToolEntry] = Field(default_factory=dict, description="Tool entries to use for test generation")
     structured_response: Optional[dict] = Field(default=None, description="The structured response from the test generation agent")
 
 
@@ -124,6 +99,11 @@ class TestExecutionState(BaseModel):
     completed_at: Optional[datetime] = Field(default=None, description="End time of this example execution")
     assertion_output:Optional[str] = Field(default=None, description="The output from the assertion agent")
     provisioning_output:Optional[str] = Field(default=None, description="The output from the provisioning agent")
+    
+    tool_entries: Dict[str, ToolEntry] = Field(
+        default_factory=dict, 
+        description="Subset of tools selected for this evaluation run"
+    )
 
 
 # Rebuild models to resolve forward references

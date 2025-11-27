@@ -1,4 +1,5 @@
 """module for retrieving eval reflections"""
+import json
 import asyncio
 from typing import Any, List, Dict
 
@@ -14,26 +15,23 @@ _embeddings_client = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
 
 async def _find_relevant_reflections(embedding: List[float], agent_name: str, user_id: str, limit: int) -> List[Dict[str, Any]]:
     """
-    Step 2: Find matching EvalReflection nodes using vector search and metadata filters.
-    
-    This query is optimized to filter by metadata *before* calculating vector similarity.
+    Step 2: Find matching Memory nodes using vector search and metadata filters.
     """
     
     logger.info(f"Step 2: Searching vector index with params: user_id='{user_id}', agent_name='{agent_name}', pass_threshold<{EVAL_PASS_THRESHOLD}")
 
-    # This query finds all nodes matching the metadata filters first,
-    # then calculates vector similarity only on that subset.
     vector_search_query = """
-    MATCH (node:EvalReflection)
+    MATCH (node:Memory)
     WHERE node.user_id = $user_id 
-      AND node.agent_name = $agent_name 
-      AND node.latest_score < $pass_threshold
+      AND node.agent_id = $agent_name 
+      AND node.score < $pass_threshold
       AND node.embedding IS NOT NULL
+      AND node.context = 'eval_agent.reflection'
     WITH node, vector.similarity.cosine(node.embedding, $embedding) AS score
     RETURN 
-        node.reflection_id as reflection_id, 
-        node.summary as reflection_summary, 
-        node.test_generation_critique as test_generation_critique, 
+        node.memory_id as reflection_id, 
+        node.observation as reflection_summary, 
+        node.metadata as metadata,
         score
     ORDER BY score DESC
     LIMIT $limit
@@ -52,7 +50,26 @@ async def _find_relevant_reflections(embedding: List[float], agent_name: str, us
             }
         )
         logger.info(f"Step 2: Found {len(results)} candidate reflections from vector search.")
-        return results
+        
+        # Parse metadata to extract critique
+        processed_results = []
+        for r in results:
+            critique = None
+            if r.get("metadata"):
+                try:
+                    meta = json.loads(r["metadata"])
+                    critique = meta.get("test_generation_critique")
+                except:
+                    pass
+            
+            processed_results.append({
+                "reflection_id": r["reflection_id"],
+                "reflection_summary": r["reflection_summary"],
+                "test_generation_critique": critique,
+                "score": r["score"]
+            })
+            
+        return processed_results
     except Exception as e:
         logger.error(f"Step 2: Vector search query failed: {e}")
         return []
@@ -63,7 +80,7 @@ async def _get_evidence_for_reflection(reflection_id: str, user_id: str) -> List
     Step 3: Perform graph traversal to find evidence for a specific reflection.
     """
     graph_traversal_query = """
-    MATCH (node:EvalReflection {reflection_id: $reflection_id, user_id: $user_id})
+    MATCH (node:Memory {memory_id: $reflection_id, user_id: $user_id})
     MATCH (node)-[:GENERATED_FROM]->(res:ExperimentResult {passed: false, user_id: $user_id})
     MATCH (ex:DatasetExample {user_id: $user_id})-[:WAS_RUN_IN]->(res)
     RETURN 
@@ -173,13 +190,14 @@ async def get_latest_critique(query: str, agent_name: str, user_id: str) -> str:
         
         # 2. Run the manual Cypher query
         cypher_query = """
-        CALL db.index.vector.queryNodes("eval_reflections", 1, $embedding) YIELD node, score
+        CALL db.index.vector.queryNodes("memory_embeddings", 1, $embedding) YIELD node, score
         
         // Combine all filters into a single WHERE clause
         WHERE node.user_id = $user_id 
-          AND node.agent_name = $agent_name
+          AND node.agent_id = $agent_name
+          AND node.context = 'eval_agent.reflection'
         
-        RETURN score
+        RETURN node.metadata as metadata, score
         ORDER BY score DESC
         LIMIT 1
         """
@@ -198,7 +216,15 @@ async def get_latest_critique(query: str, agent_name: str, user_id: str) -> str:
             logger.info(f"reflection_store.get_latest_critique: No critiques found.")
             return ""
         
-        critique = result[0].get("critique")
+        metadata_str = result[0].get("metadata")
+        critique = ""
+        if metadata_str:
+            try:
+                meta = json.loads(metadata_str)
+                critique = meta.get("test_generation_critique", "")
+            except:
+                pass
+
         if critique:
             logger.info(f"reflection_store.get_latest_critique: Found critique: {critique[:50]}...")
             return critique

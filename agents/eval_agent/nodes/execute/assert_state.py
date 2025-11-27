@@ -63,19 +63,32 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
         )
 
     tool_hub = await get_tool_hub(state)
+    
+    # Semantic Tool Selection: Use filtered tools if available
+    tools_subset = None
+    if state.tool_entries:
+        # Resolve tool objects from the hub using the names selected in the plan phase
+        tools_subset = [tool_hub.get_tool(name) for name in state.tool_entries.keys()]
+        tools_subset = [t for t in tools_subset if t is not None]
+        logger.info("Using subset of %d tools for assertion", len(tools_subset))
 
     assertion_agent = create_ephemeral_reflexion(
         model=get_llm(model='gpt-4.1', temperature=0.0),
         tool_hub=tool_hub,
+        tools=tools_subset, # Pass subset if available
         prompt=SYSTEM_PROMPT,
         agent_id="eval_asserter_v1",
         max_rounds=2 
     )
 
-    user_prompt = HumanMessage(content=USER_PROMPT.format(criterias=instructions, resources=resource_hints, context=formatted_context_vars, provisioning_output=provisioning_output))
+    user_prompt = HumanMessage(content=USER_PROMPT.format(criterias=instructions, provisioning_output=provisioning_output))
 
     result = await assertion_agent.ainvoke(
-        {"messages": [user_prompt], "current_round": 0},
+        {
+            "messages": [user_prompt], 
+            "current_round": 0,
+            "rubric": str(instructions) # Pass the rubric to the state
+        },
         config=RunnableConfig(recursion_limit=75)
     )
     completed_at = datetime.utcnow()
