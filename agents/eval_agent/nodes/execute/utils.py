@@ -1,4 +1,5 @@
 import os
+import asyncio
 from typing import Optional, List, Any
 from shared.mcp_client import ComposioMCPClient
 from shared.config import COMPOSIO_USER_ID, config
@@ -61,14 +62,17 @@ async def get_tool_hub(state: TestExecutionState) -> ToolHub:
         except Exception as e:
             print(f"Failed to load ToolHub index: {e}. Re-ingesting.")
             ingest_tools = _convert_tools_for_ingestion(all_tools)
-            hub.ingest(ingest_tools)
-            hub.save(TOOL_HUB_INDEX_DIR)
+            # Run potentially blocking ingestion in a background thread to avoid
+            # blocking the LangGraph event loop (see blockbuster.BlockingError).
+            await asyncio.to_thread(hub.ingest, ingest_tools)
+            await asyncio.to_thread(hub.save, TOOL_HUB_INDEX_DIR)
     else:
         # First run: Ingest everything (Slow, but one-time)
         print("Initializing ToolHub index (first run)...")
         ingest_tools = _convert_tools_for_ingestion(all_tools)
-        hub.ingest(ingest_tools)
-        hub.save(TOOL_HUB_INDEX_DIR)
+        # Same as above: move blocking ingestion + disk I/O off the main loop.
+        await asyncio.to_thread(hub.ingest, ingest_tools)
+        await asyncio.to_thread(hub.save, TOOL_HUB_INDEX_DIR)
 
     # 4. Bind Executables (Critical Step)
     # Match the live functions to the loaded metadata
