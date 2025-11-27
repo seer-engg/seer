@@ -52,7 +52,7 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
         logger.info("Using subset of %d tools for assertion", len(tools_subset))
 
     assertion_agent = create_ephemeral_reflexion(
-        model=get_llm(model='gpt-4.1', temperature=0.0),
+        model=get_llm(model='gpt-5.1', temperature=0.0),
         tool_hub=tool_hub,
         tools=tools_subset, # Pass subset if available
         prompt=SYSTEM_PROMPT,

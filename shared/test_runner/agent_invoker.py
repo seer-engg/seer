@@ -128,12 +128,7 @@ async def invoke_target_agent(
         
         logger.info(f"Agent responded in {execution_time:.2f} seconds")
 
-        try:
-            # TODO: This is not working , probably because of the 
-            final_output = result.get("messages", [])[-1].content
-        except Exception as e:
-            logger.error(f"Failed to extract final output from agent response: {e}")
-            final_output = ""
+        final_output = result.get("messages", [])[-1].content
         
         return AgentInvocationResult(
             final_output=final_output,

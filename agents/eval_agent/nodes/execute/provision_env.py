@@ -50,7 +50,7 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
 
     # Use Reflexion agent for provisioning
     provisioning_agent = create_ephemeral_reflexion(
-        model=get_llm(model='gpt-4.1', temperature=0.0),
+        model=get_llm(model='gpt-5.1', temperature=0.0),
         tool_hub=tool_hub,
         tools=tools_subset, # Pass subset if available
         prompt=SYSTEM_PROMPT,

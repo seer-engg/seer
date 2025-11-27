@@ -45,7 +45,7 @@ async def _invoke_agentic_llm(
     try:
         
         structured_llm = get_llm(
-            model="gpt-4.1",
+            model="gpt-5.1",
             temperature=0.0,
         ).with_structured_output(EvalGenerationOutput, method="json_schema", strict=True)
 
