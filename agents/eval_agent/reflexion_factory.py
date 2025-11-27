@@ -10,6 +10,7 @@ _memory_store = None
 def get_memory_store():
     global _memory_store
     if _memory_store is None:
+        # OPTIMIZATION: Use Singleton pattern for DB connection
         _memory_store = Neo4jMemoryStore(
             uri=NEO4J_URI,
             username=NEO4J_USERNAME,
@@ -17,6 +18,8 @@ def get_memory_store():
         )
     return _memory_store
 
+# OPTIMIZATION: Add caching for the ephemeral agent if tools don't change often
+# For now, we keep creation dynamic but ensure we don't recreate the store.
 def create_ephemeral_reflexion(model, prompt, agent_id, tool_hub: Optional[ToolHub] = None, tools: Optional[List[Any]] = None, max_rounds=3):
     """
     Factory to create a reflexion graph with dynamic tools.

@@ -47,10 +47,19 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
 
     tool_hub = await get_tool_hub(state)
     
+    # Semantic Tool Selection: Use filtered tools if available
+    tools_subset = None
+    if state.tool_entries:
+        # Resolve tool objects from the hub using the names selected in the plan phase
+        tools_subset = [tool_hub.get_tool(name) for name in state.tool_entries.keys()]
+        tools_subset = [t for t in tools_subset if t is not None]
+        logger.info("Using subset of %d tools for provisioning", len(tools_subset))
+
     # Use Reflexion agent for provisioning
     provisioning_agent = create_ephemeral_reflexion(
         model=get_llm(model='gpt-4.1', temperature=0.0),
         tool_hub=tool_hub,
+        tools=tools_subset, # Pass subset if available
         prompt=SYSTEM_PROMPT,
         agent_id="eval_provisioner_v1",
         max_rounds=2  # Limit rounds for provisioning to avoid infinite loops
