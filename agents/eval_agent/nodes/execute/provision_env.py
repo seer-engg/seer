@@ -38,7 +38,7 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
     
     resource_hints = format_resource_hints(state.mcp_resources)
 
-    tool_hub = await get_tool_hub(state)
+    tool_hub = await get_tool_hub()
     
     # Semantic Tool Selection: Use filtered tools if available
     tools_subset = None

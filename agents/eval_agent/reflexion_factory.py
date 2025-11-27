@@ -1,7 +1,7 @@
 from typing import List, Any, Optional
 from shared.config import NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD
-from reflexion.core.agent.graph import create_reflexion
-from reflexion.core.memory.store import Neo4jMemoryStore
+from reflexion.agent.graph import create_reflexion
+from reflexion.memory.store import Neo4jMemoryStore
 from tool_hub import ToolHub
 
 # Global memory store instance
