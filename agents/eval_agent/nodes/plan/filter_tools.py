@@ -4,8 +4,19 @@ from agents.eval_agent.models import EvalAgentPlannerState
 from agents.eval_agent.nodes.execute.utils import get_tool_hub
 from shared.logger import get_logger
 from shared.tools import ToolEntry
+from pydantic import BaseModel
+from typing import List
+from langchain_openai import ChatOpenAI
+from pydantic import Field
+from shared.mcp_client import ComposioMCPClient
+from shared.config import COMPOSIO_USER_ID, config
 
 logger = get_logger("eval_agent.plan.filter_tools")
+
+
+class SelectedTool(BaseModel):
+    selected_tools: List[str] = Field(description="list of tools that are required to complete the instructions")
+    simulation_steps: List[str] = Field(description="list of steps to complete the instructions")
 
 
 async def filter_tools(state: EvalAgentPlannerState) -> dict:
@@ -14,52 +25,51 @@ async def filter_tools(state: EvalAgentPlannerState) -> dict:
     This reduces the context window and noise for the execution agents.
     """
     
-    # 1. Get the Hub (reusing the cached instance logic from utils)
-    # Note: get_tool_hub accepts state for context but doesn't strictly require TestExecutionState fields
-    # We cast to any to avoid type checker complaints if strict checking were enabled
-    hub = await get_tool_hub()  # type: ignore
-    
-    # 2. Collect all instructions that need tool support from all examples
-    all_instructions = []
-    for example in state.dataset_examples:
-        if example.expected_output:
-            # Combine phase 1 (provision) and phase 3 (assert) instructions
-            # The planner generates these as lists of strings
-            if example.expected_output.create_test_data:
-                all_instructions.extend(example.expected_output.create_test_data)
-            if example.expected_output.assert_final_state:
-                all_instructions.extend(example.expected_output.assert_final_state)
+    # TODO: cache all the tools so that we don't need to fetch them every time
+    tool_service = ComposioMCPClient(["GITHUB", "ASANA"], COMPOSIO_USER_ID)
+    all_tools = await tool_service.get_tools()
+    llm = ChatOpenAI(model="gpt-5.1", reasoning_effort="medium")
+    st = llm.with_structured_output(SelectedTool)
+    tool_names = [{t.name,t.description} for t in all_tools]
+    prompt = """
+    basen on the instructions filter the tools that are required to complete the instructions.
 
-    query_text = "\n".join(all_instructions)
-    if not query_text:
-        logger.warning("No instructions found to filter tools against.")
-        return {"tool_entries": {}}
+    # Instructions
+    {create_test_data}
 
-    # 3. Query the Hub
-    # We ask for a generous number to cover multiple complex steps across examples
-    logger.info(f"Filtering tools for instruction set length: {len(query_text)}")
-    
-    # ToolHub.query performs semantic search + graph expansion (finding dependent tools)
-    # It returns a list of dictionaries compatible with OpenAI tool schema
-    # Wrapping in to_thread because hub.query performs blocking network calls (embeddings)
-    relevant_tool_dicts = await asyncio.to_thread(hub.query, query_text, top_k=20)
-    
-    # 4. Convert to ToolEntry format expected by the agent state
+    {assert_final_state}
+
+    # Available tools
+    {all_tools}
+
+    # Important:
+    - You should do a mental simlutaion to judge all tools that are required to complete the instructions.
+    - you should include all the tools that are required to complete the instructions.
+    - wtite down the simulation steps to complete the instructions.
+    - always include some extra tools that may come handy, in case there isan issue
+    - MUST include extra tools that can be used to fullfill the instructions in a different way than you have planned. There can always be a different way to fullfill the instructions.
+
+    # Steps you should follow:
+    1. Read the instructions carefully and understand the goal.
+    2. Write down the simulation steps to complete the instructions one by one along with the tools that are required to complete those steps.
+    3. think of other ways to fullfill the request that you have planned , for each step think of alternate ways to fullfill the request, with different tools.
+    """
+    create_test_data = state.dataset_examples[0].expected_output.create_test_data
+    assert_final_state = state.dataset_examples[0].expected_output.assert_final_state
+
+    input_message = prompt.format(create_test_data=create_test_data, assert_final_state=assert_final_state, all_tools=tool_names)
+    output = await st.ainvoke(input=input_message)
+    selected_tools = output.selected_tools
+
     tool_entries: Dict[str, ToolEntry] = {}
-    for t_dict in relevant_tool_dicts:
-        name = t_dict.get("name")
-        if not name:
-            continue
-            
-        # Infer service from name (e.g. 'github_create_issue' -> 'github')
-        # This is a heuristic; ideally ToolHub would return this metadata
-        service = name.split("_")[0] if "_" in name else "general"
-        
-        tool_entries[name] = ToolEntry(
-            name=name,
-            description=t_dict.get("description", ""),
-            service=service,
-        )
+    for tool in all_tools:
+        if tool.name in selected_tools:
+            service = tool.name.split("_")[0]
+            tool_entries[tool.name] = ToolEntry(
+                name=tool.name,
+                description=tool.description,
+                service=service,
+            )
 
     logger.info(f"Selected {len(tool_entries)} tools: {list(tool_entries.keys())}")
 

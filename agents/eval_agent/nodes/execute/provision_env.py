@@ -10,7 +10,10 @@ from shared.llm import get_llm
 from agents.eval_agent.reflexion_factory import create_ephemeral_reflexion
 from langchain_core.runnables import RunnableConfig
 from .utils import get_tool_hub
-
+from langchain.agents import create_agent
+from shared.mcp_client import ComposioMCPClient
+from shared.config import COMPOSIO_USER_ID, config
+from .utils import handle_tool_errors
 logger = get_logger("eval_agent.execute.provision")
 
 
@@ -20,6 +23,7 @@ from shared.prompt_loader import load_prompt
 _PROMPT_CONFIG = load_prompt("eval_agent/provision.yaml")
 SYSTEM_PROMPT = _PROMPT_CONFIG.system
 USER_PROMPT = _PROMPT_CONFIG.user_template
+
 
 
 
@@ -38,38 +42,45 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
     
     resource_hints = format_resource_hints(state.mcp_resources)
 
-    tool_hub = await get_tool_hub()
-    
+    # tool_hub = await get_tool_hub()    
     # Semantic Tool Selection: Use filtered tools if available
-    tools_subset = None
-    if state.tool_entries:
-        # Resolve tool objects from the hub using the names selected in the plan phase
-        tools_subset = [tool_hub.get_tool(name) for name in state.tool_entries.keys()]
-        tools_subset = [t for t in tools_subset if t is not None]
-        logger.info("Using subset of %d tools for provisioning", len(tools_subset))
+    # tools_subset = None
+    # if state.tool_entries:
+    #     # Resolve tool objects from the hub using the names selected in the plan phase
+    #     tools_subset = [tool_hub.get_tool(name) for name in state.tool_entries.keys()]
+    #     tools_subset = [t for t in tools_subset if t is not None]
+    #     logger.info("Using subset of %d tools for provisioning", len(tools_subset))
 
     # Use Reflexion agent for provisioning
-    provisioning_agent = create_ephemeral_reflexion(
-        model=get_llm(model='gpt-5.1', temperature=0.0),
-        tool_hub=tool_hub,
-        tools=tools_subset, # Pass subset if available
-        prompt=SYSTEM_PROMPT,
-        agent_id="eval_provisioner_v1",
-        max_rounds=2  # Limit rounds for provisioning to avoid infinite loops
+    # provisioning_agent = create_ephemeral_reflexion(
+    #     model=get_llm(model='gpt-5.1', temperature=0.0),
+    #     tool_hub=tool_hub,
+    #     tools=tools_subset, # Pass subset if available
+    #     prompt=SYSTEM_PROMPT,
+    #     agent_id="eval_provisioner_v1",
+    #     max_rounds=2  # Limit rounds for provisioning to avoid infinite loops
+    # )
+
+    tool_service = ComposioMCPClient(["GITHUB", "ASANA"], COMPOSIO_USER_ID)
+    all_tools = await tool_service.get_tools()
+
+    llm = get_llm(model='gpt-5.1', temperature=0.0)
+    actual_tools = []
+    for tool in all_tools:
+        if tool.name in state.tool_entries.keys():
+            actual_tools.append(tool)
+ 
+    provisioning_agent = create_agent(
+        model=llm,
+        tools=actual_tools,
+        system_prompt=SYSTEM_PROMPT,
+        middleware=[handle_tool_errors]
     )
     user_prompt = HumanMessage(content=USER_PROMPT.format(instructions=instructions, resources=resource_hints))
 
-    # Invoke with initial state
-    result = await provisioning_agent.ainvoke(
-        {"messages": [user_prompt], "current_round": 0}, 
-        config=RunnableConfig(recursion_limit=75)
-    )
+    result = await provisioning_agent.ainvoke(input={"messages": [user_prompt]}, config=RunnableConfig(recursion_limit=75))
 
-    # Extract output from Reflexion state
-    provisioning_output = result.get('candidate_response')
-    if not provisioning_output and result.get('messages'):
-        # Fallback to last message content if candidate_response is empty
-        provisioning_output = result['messages'][-1].content
+    provisioning_output = result.get('messages')[-1].content
 
     return {
         "mcp_resources": state.mcp_resources,

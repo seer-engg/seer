@@ -35,6 +35,12 @@ def get_llm(
             output_version="responses/v1",     
             reasoning={"effort": reasoning_effort},
         )
+    elif 'gpt-5' in model:
+        return ChatOpenAI(
+            model=model,
+            api_key=api_key,
+            reasoning={"effort": reasoning_effort}
+        )
     else:
         return ChatOpenAI(
             model=model,
