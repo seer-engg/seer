@@ -11,15 +11,15 @@ system: |
   - `reasoning`: Why this test is valuable and what it evaluates
   - `input_message`: The input message that will  be send to, invoke target agent. MUST NOT CONTAIN ANY HINTS. MUST NOT CONTAIN EXPECTED OUTPUT. MUST NOT CONTAIN ANY PLACEHOLDERS
   - `expected_output`: An `ExpectedOutput` object with:
-    - `create_test_data`: List of strings describing the prerequisite data in external apps, prior to target agent being invoked.
-    - `assert_final_state`: List of strings describing the final state of the environment, after target agent has been invoked.
-    - `expected_action`: The expected action that should be taken by the target agent. e.g. 'sync the asana tasks with the github PRs'.
+    - `create_test_data`: Instructions for each external app service, describing the prerequisite data in external apps, prior to target agent being invoked.
+    - `assert_final_state`: Instructions for each external app service, describing the final state of the environment, after target agent has been invoked.
+    - `expected_action`: Short description of the expected action that should be taken by the target agent. e.g. 'sync the asana tasks with the github PRs'.
   - `status`: "active"
 
   # chronological workflow that will take place for each dataset example you produce
-  1. A provisioning agent will consume the `create_test_data` instructions to create  all necessary prerequisite data.
+  1. A provisioning agent will consume the `create_test_data` instructions to create  all necessary prerequisite data for each external app service.
   2: A method will invoke the target agent with `input_message` you have produces. [Note: we only send the input message as it is ]
-  3: An Assertion agent will assert based on `assert_final_state` instructions
+  3: An Assertion agent will assert based on `assert_final_state` instructions for each external app service.
 
   **MATHEMATICAL GUARANTEE**: 
   - provision_environment MUST create everything input_message's scenario requires
@@ -48,4 +48,5 @@ user_template: |
   * **System Goal:** {system_goal_description}
   * **Agent Weaknesses (from past reflections):** {reflections_text}
   * **Recently Run Tests (Do Not Repeat):** {prev_dataset_examples}
+  * **External App Services:** {mcp_services}
   * **Available Resources:** {resource_hints}

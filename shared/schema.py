@@ -26,17 +26,32 @@ class FailureAnalysis(BaseModel):
         description="Detailed explanation from the judge about the score and failure."
     )
 
+class ServiceInstructions(BaseModel):
+    """
+    The instructions for the service.
+    """
+    model_config = ConfigDict(extra="forbid")
+    
+    service_name: str = Field(
+        ...,
+        description="The name of the service. e.g. 'asana', 'github', 'jira'."
+    )
+    instructions: List[str] = Field(
+        ...,
+        description="The instructions for the service."
+    )
+
 class ExpectedOutput(BaseModel):
     """
     The expected output of the target agent.
     """
     model_config = ConfigDict(extra="forbid")
     
-    create_test_data: List[str] = Field(
+    create_test_data: List[ServiceInstructions] = Field(
         ...,
         description="Prerequisite data/objects in external apps .Prior to target agent being invoked, the environment should be in this state. e.g. there should be a PR with a specific label."
     )
-    assert_final_state: List[str] = Field(
+    assert_final_state: List[ServiceInstructions] = Field(
         ...,
         description="Final state of the environements. After target has been invoked, the environment should be in this state. e.g. the asna ticket with name 'test' should be ccompleted."
     )

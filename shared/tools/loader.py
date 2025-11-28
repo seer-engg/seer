@@ -9,7 +9,7 @@ from shared.config import EVAL_AGENT_LOAD_DEFAULT_MCPS
 
 logger = get_logger("shared.tools.loader")
 
-DEFAULT_MCP_SERVICES: Sequence[str] = ("asana", "github", "langchain_docs")
+DEFAULT_MCP_SERVICES: Sequence[str] = ("asana", "github")
 
 
 def resolve_mcp_services(requested_services: List[str]) -> List[str]:
