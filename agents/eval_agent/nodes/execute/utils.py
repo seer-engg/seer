@@ -6,6 +6,8 @@ from shared.config import COMPOSIO_USER_ID, config
 from agents.eval_agent.models import TestExecutionState
 from tool_hub import ToolHub
 from tool_hub.models import Tool, ToolFunction
+from langchain.agents.middleware import wrap_tool_call
+from langchain_core.messages import ToolMessage
 
 # Cache the hub instance to avoid reloading index on every call
 _CACHED_HUB: Optional[ToolHub] = None
@@ -80,3 +82,17 @@ async def get_tool_hub() -> ToolHub:
     
     _CACHED_HUB = hub
     return hub
+
+
+
+@wrap_tool_call
+async def handle_tool_errors(request, handler):
+    """Handle tool execution errors with custom messages."""
+    try:
+        return await handler(request)
+    except Exception as e:
+        # Return a custom error message to the model
+        return ToolMessage(
+            content=f"Tool error: Please check your input and try again. ({str(e)})",
+            tool_call_id=request.tool_call["id"]
+        )
