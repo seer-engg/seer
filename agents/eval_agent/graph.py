@@ -2,7 +2,6 @@
 from typing import Literal
 from langgraph.graph import END, START, StateGraph
 
-from agents.eval_agent.constants import N_ROUNDS, N_VERSIONS
 from agents.eval_agent.nodes.finalize import build_finalize_subgraph
 from agents.eval_agent.models import EvalAgentState
 from agents.eval_agent.nodes.plan import build_plan_subgraph
@@ -10,7 +9,7 @@ from agents.eval_agent.nodes.reflect.graph import reflect_node
 from shared.logger import get_logger
 from agents.eval_agent.nodes.run import _prepare_run_context, _upload_run_results, _upload_results_to_neo4j
 from agents.eval_agent.nodes.execute import build_test_execution_subgraph
-
+from shared.config import config
 
 logger = get_logger("eval_agent.graph")
 
@@ -33,7 +32,7 @@ def update_state_from_handoff(state: EvalAgentState) -> dict:
 
 def should_continue(state: EvalAgentState) -> Literal["plan", "finalize"]:
     """Determine if the eval loop should continue plan or finalize."""
-    return "plan" if state.attempts < N_ROUNDS else "finalize"
+    return "plan" if state.attempts < config.eval_n_rounds else "finalize"
 
 
 def should_start_new_round(state: EvalAgentState) -> Literal["update_state_from_handoff", "__end__"]:
@@ -42,14 +41,14 @@ def should_start_new_round(state: EvalAgentState) -> Literal["update_state_from_
     If a valid handoff exists and we haven't hit the version limit, route to update state.
     """
     codex_handoff = state.codex_output
-    if codex_handoff and codex_handoff.agent_updated and codex_handoff.target_agent_version < N_VERSIONS:
+    if codex_handoff and codex_handoff.agent_updated and codex_handoff.target_agent_version < config.eval_n_versions:
         logger.info(f"Codex provided an update to v{codex_handoff.target_agent_version}. Starting new evaluation round.")
         return "update_state_from_handoff"
     else:
         if not codex_handoff or not codex_handoff.agent_updated:
             logger.info("Codex did not provide an update. Ending workflow.")
         else:
-            logger.info(f"Reached max versions ({N_VERSIONS}). Ending workflow.")
+            logger.info(f"Reached max versions ({config.eval_n_versions}). Ending workflow.")
         return "__end__"
 
 

@@ -6,8 +6,6 @@ from agents.eval_agent.models import EvalAgentPlannerState
 from sandbox import (
     initialize_e2b_sandbox,
     setup_project,
-    TARGET_AGENT_COMMAND,
-    TARGET_AGENT_PORT,
     deploy_server_and_confirm_ready,
 )
 from shared.agent_context import AgentContext
@@ -62,12 +60,12 @@ async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
         await setup_project(sandbox_id, repo_dir, "pip install -e .")
 
         sandbox, _ = await deploy_server_and_confirm_ready(
-            cmd=TARGET_AGENT_COMMAND,
+            cmd=config.target_agent_command,
             sb=sbx,
             cwd=repo_dir,
         )
 
-        deployment_url = sandbox.get_host(TARGET_AGENT_PORT)
+        deployment_url = sandbox.get_host(config.target_agent_port)
         if not deployment_url.startswith("http"):
             deployment_url = f"https://{deployment_url}"
 

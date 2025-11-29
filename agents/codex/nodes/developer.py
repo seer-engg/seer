@@ -12,7 +12,7 @@ from shared.logger import get_logger
 from shared.tools import web_search
 from agents.codex.state import CodexState
 from agents.codex.format_thread import fetch_thread_timeline_as_string
-from shared.config import TARGET_AGENT_LANGSMITH_PROJECT
+from shared.config import config
 from deepagents import create_deep_agent, CompiledSubAgent
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
@@ -174,7 +174,7 @@ async def developer(state: CodexState) -> CodexState:
                 "SCORE:": eval.score,
                 "JUDGE FEEDBACK:": eval.judge_reasoning
             }
-            thread_trace = await fetch_thread_timeline_as_string(eval.thread_id, TARGET_AGENT_LANGSMITH_PROJECT)
+            thread_trace = await fetch_thread_timeline_as_string(eval.thread_id, config.target_agent_langsmith_project)
             evals_and_thread_traces.append(
                 EVALS_AND_THREAD_TRACE_TEMPLATE.format(
                     eval=x,

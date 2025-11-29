@@ -8,14 +8,14 @@ from typing import List, Dict, Any
 from langchain_openai import OpenAIEmbeddings
 
 from shared.logger import get_logger
-from shared.config import OPENAI_API_KEY
+from shared.config import config
 from shared.tools.registry import ToolEntry
 from shared.tools.normalizer import canonicalize_tool_name
 
 logger = get_logger("shared.tools.vector_store")
 
 # Import graph_db with fallback
-from graph_db import NEO4J_GRAPH, TOOL_NODE_LABEL, TOOL_EMBED_PROP, TOOL_VECTOR_INDEX
+from graph_db import NEO4J_GRAPH
 GRAPH_AVAILABLE = True
 
 
@@ -27,10 +27,10 @@ def _get_embeddings() -> OpenAIEmbeddings | None:
     global _embeddings
     if _embeddings is not None:
         return _embeddings
-    if not OPENAI_API_KEY:
+    if not config.openai_api_key:
         logger.info("OPENAI_API_KEY missing; vector search unavailable.")
         return None
-    _embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+    _embeddings = OpenAIEmbeddings(openai_api_key=config.openai_api_key)
     return _embeddings
 
 
@@ -77,11 +77,11 @@ async def sync_tools_to_vector_index(entries: Dict[str, ToolEntry]) -> None:
         NEO4J_GRAPH.query,
         f"""
         UNWIND $rows AS row
-        MERGE (t:{TOOL_NODE_LABEL} {{tool_id: row.tool_id}})
+        MERGE (t:{config.tool_node_label} {{tool_id: row.tool_id}})
         SET t.name = row.name,
             t.service = row.service,
             t.description = row.description,
-            t.{TOOL_EMBED_PROP} = row.embedding
+            t.{config.tool_embed_prop} = row.embedding
         RETURN count(*) AS upserts
         """,
         params={"rows": rows},
@@ -122,7 +122,7 @@ async def semantic_select_tools(
     results = await asyncio.to_thread(
         NEO4J_GRAPH.query,
         f"""
-        CALL db.index.vector.queryNodes("{TOOL_VECTOR_INDEX}", $k, $embedding)
+        CALL db.index.vector.queryNodes("{config.tool_vector_index}", $k, $embedding)
         YIELD node, score
         RETURN node.name AS name, node.service AS service, score
         ORDER BY score DESC

@@ -5,12 +5,12 @@ from typing import Any, List, Dict
 
 from shared.logger import get_logger
 from langchain_openai import OpenAIEmbeddings
-from shared.config import EVAL_PASS_THRESHOLD, OPENAI_API_KEY
+from shared.config import config
 from graph_db import NEO4J_GRAPH
 
 logger = get_logger("eval_agent.reflection_store")
 
-_embeddings_client = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+_embeddings_client = OpenAIEmbeddings(openai_api_key=config.openai_api_key)
 
 
 async def _find_relevant_reflections(embedding: List[float], agent_name: str, user_id: str, limit: int) -> List[Dict[str, Any]]:
@@ -18,7 +18,7 @@ async def _find_relevant_reflections(embedding: List[float], agent_name: str, us
     Step 2: Find matching Memory nodes using vector search and metadata filters.
     """
     
-    logger.info(f"Step 2: Searching vector index with params: user_id='{user_id}', agent_name='{agent_name}', pass_threshold<{EVAL_PASS_THRESHOLD}")
+    logger.info(f"Step 2: Searching vector index with params: user_id='{user_id}', agent_name='{agent_name}', pass_threshold<{config.eval_pass_threshold}")
 
     vector_search_query = """
     MATCH (node:Memory)
@@ -46,7 +46,7 @@ async def _find_relevant_reflections(embedding: List[float], agent_name: str, us
                 "limit": limit,
                 "user_id": user_id,
                 "agent_name": agent_name,
-                "pass_threshold": EVAL_PASS_THRESHOLD
+                "pass_threshold": config.eval_pass_threshold
             }
         )
         logger.info(f"Step 2: Found {len(results)} candidate reflections from vector search.")

@@ -12,7 +12,7 @@ from langchain_core.runnables import RunnableConfig
 from .utils import get_tool_hub
 from langchain.agents import create_agent
 from shared.mcp_client import ComposioMCPClient
-from shared.config import COMPOSIO_USER_ID, config
+from shared.config import config
 from .utils import handle_tool_errors
 logger = get_logger("eval_agent.execute.provision")
 
@@ -63,7 +63,7 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
     #     max_rounds=2  # Limit rounds for provisioning to avoid infinite loops
     # )
 
-    tool_service = ComposioMCPClient(["GITHUB", "ASANA"], COMPOSIO_USER_ID)
+    tool_service = ComposioMCPClient(["GITHUB", "ASANA"], config.composio_user_id)
     all_tools = await tool_service.get_tools()
 
     llm = get_llm(model='gpt-5.1', temperature=0.0)

@@ -159,60 +159,6 @@ config = SeerConfig()
 
 
 # ============================================================================
-# Backward Compatibility Exports (ALL_CAPS style)
-# These are kept for backward compatibility with existing code.
-# New code should use `config.field_name` instead of `FIELD_NAME`.
-# ============================================================================
-
-# API Keys
-OPENAI_API_KEY = config.openai_api_key
-LANGSMITH_API_KEY = config.langsmith_api_key
-TAVILY_API_KEY = config.tavily_api_key
-DEFAULT_LLM_MODEL = config.default_llm_model
-
-# Eval Configuration
-N_ROUNDS = config.eval_n_rounds
-N_TEST_CASES = config.eval_n_test_cases
-N_VERSIONS = config.eval_n_versions
-EVAL_PASS_THRESHOLD = config.eval_pass_threshold
-
-# URLs
-LANGGRAPH_BASE_URL = config.langgraph_base_url
-CODEX_REMOTE_URL = config.codex_remote_url
-EVAL_REMOTE_URL = config.eval_remote_url
-
-# Feature Flags
-EVAL_AGENT_LOAD_DEFAULT_MCPS = config.eval_agent_load_default_mcps
-
-# Target Agent
-TARGET_AGENT_LANGSMITH_PROJECT = config.target_agent_langsmith_project
-TARGET_AGENT_PORT = config.target_agent_port
-TARGET_AGENT_SETUP_SCRIPT = config.target_agent_setup_script
-TARGET_AGENT_COMMAND = config.target_agent_command
-TARGET_AGENT_ENVS = config.target_agent_envs
-
-# Sandbox
-BASE_TEMPLATE_ALIAS = config.base_template_alias
-
-# Neo4j
-NEO4J_URI = config.neo4j_uri
-NEO4J_USERNAME = config.neo4j_username
-NEO4J_PASSWORD = config.neo4j_password
-EMBEDDING_DIMS = config.embedding_dims
-EVAL_REFLECTIONS_INDEX_NAME = config.eval_reflections_index_name
-EVAL_REFLECTIONS_NODE_LABEL = config.eval_reflections_node_label
-EVAL_REFLECTIONS_EMBEDDING_PROPERTY = config.eval_reflections_embedding_property
-TOOL_NODE_LABEL = config.tool_node_label
-TOOL_EMBED_PROP = config.tool_embed_prop
-TOOL_VECTOR_INDEX = config.tool_vector_index
-
-# MCP
-COMPOSIO_USER_ID = config.composio_user_id
-
-# LangSmith
-
-
-# ============================================================================
 # Helper Functions (for backward compatibility)
 # ============================================================================
 

@@ -1,5 +1,5 @@
 from typing import List, Any, Optional
-from shared.config import NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD
+from shared.config import config
 from reflexion.agent.graph import create_reflexion
 from reflexion.memory.store import Neo4jMemoryStore
 from tool_hub import ToolHub
@@ -12,9 +12,9 @@ def get_memory_store():
     if _memory_store is None:
         # OPTIMIZATION: Use Singleton pattern for DB connection
         _memory_store = Neo4jMemoryStore(
-            uri=NEO4J_URI,
-            username=NEO4J_USERNAME,
-            password=NEO4J_PASSWORD
+            uri=config.neo4j_uri,
+            username=config.neo4j_username,
+            password=config.neo4j_password
         )
     return _memory_store
 

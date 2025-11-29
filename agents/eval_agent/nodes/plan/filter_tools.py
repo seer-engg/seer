@@ -9,7 +9,7 @@ from typing import List
 from langchain_openai import ChatOpenAI
 from pydantic import Field
 from shared.mcp_client import ComposioMCPClient
-from shared.config import COMPOSIO_USER_ID, config
+from shared.config import  config
 
 logger = get_logger("eval_agent.plan.filter_tools")
 
@@ -30,7 +30,7 @@ async def filter_tools(state: EvalAgentPlannerState) -> dict:
     
     for service in state.context.mcp_services:
         # TODO: cache all the tools so that we don't need to fetch them every time
-        tool_service = ComposioMCPClient([service.upper()], COMPOSIO_USER_ID)
+        tool_service = ComposioMCPClient([service.upper()], config.composio_user_id)
         all_tools = await tool_service.get_tools()
         all_tools = [t for t in all_tools if 'deprecated' not in t.description.lower()]
         llm = ChatOpenAI(model="gpt-5", reasoning_effort="minimal")

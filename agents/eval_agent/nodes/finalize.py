@@ -8,7 +8,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.pregel.remote import RemoteGraph
 from langgraph_sdk import get_sync_client
 
-from agents.eval_agent.constants import CODEX_REMOTE_URL, LANGSMITH_CLIENT
+from agents.eval_agent.constants import LANGSMITH_CLIENT
 from agents.eval_agent.models import EvalAgentState
 from shared.logger import get_logger
 from shared.schema import (
@@ -56,13 +56,13 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
     logger.info("Codex payload: %s", codex_payload)
 
     # create a new thread for the Codex agent
-    codex_sync_client = get_sync_client(url=CODEX_REMOTE_URL)
+    codex_sync_client = get_sync_client(url=config.codex_remote_url)
     thread = await asyncio.to_thread(codex_sync_client.threads.create)
 
     codex_thread_cfg = {"configurable": {"thread_id": thread["thread_id"]}}
     codex_remote = RemoteGraph(
         "codex",
-        url=CODEX_REMOTE_URL,
+        url=config.codex_remote_url,
         client=LANGSMITH_CLIENT,
         sync_client=codex_sync_client,
         distributed_tracing=True,

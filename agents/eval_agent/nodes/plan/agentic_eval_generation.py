@@ -4,10 +4,6 @@ from uuid import uuid4
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, ConfigDict
-
-from agents.eval_agent.constants import (
-    N_TEST_CASES,
-)
 from agents.eval_agent.models import EvalAgentPlannerState
 from shared.logger import get_logger
 from shared.resource_utils import format_resource_hints
@@ -15,6 +11,7 @@ from shared.schema import (
     DatasetExample,
 )
 from shared.llm import get_llm
+from shared.config import config
 
 logger = get_logger("eval_agent.plan.generate_evals")
 
@@ -52,7 +49,7 @@ async def agentic_eval_generation(state: EvalAgentPlannerState) -> dict:
         ).with_structured_output(EvalGenerationOutput, method="json_schema", strict=True)
 
     user_prompt = USER_PROMPT.format(
-        n_tests=N_TEST_CASES,
+        n_tests=config.eval_n_test_cases,
         system_goal_description=raw_request,
         reflections_text=reflections_text,
         prev_dataset_examples=prev_dataset_examples,
@@ -73,7 +70,7 @@ async def agentic_eval_generation(state: EvalAgentPlannerState) -> dict:
         
         dataset_examples.append(example)
         
-    dataset_examples = dataset_examples[:N_TEST_CASES]
+    dataset_examples = dataset_examples[:config.eval_n_test_cases]
 
     logger.info("plan.generate: produced %d tests (agent=%s)", len(dataset_examples), agent_name)
     return {

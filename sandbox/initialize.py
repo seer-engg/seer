@@ -7,7 +7,6 @@ from typing import Optional
 from e2b import AsyncSandbox, CommandResult
 
 from .constants import _build_git_shell_script
-from shared.config import TARGET_AGENT_ENVS, BASE_TEMPLATE_ALIAS
 from shared.logger import get_logger
 from shared.config import config
 
@@ -36,9 +35,9 @@ async def initialize_e2b_sandbox(
 
     logger.info("Creating E2B sandbox for codex...")
     sbx: AsyncSandbox = await AsyncSandbox.beta_create(
-      template=BASE_TEMPLATE_ALIAS,
+      template=config.base_template_alias,
       auto_pause=True,
-      envs=TARGET_AGENT_ENVS,
+      envs=config.target_agent_envs,
       timeout=60*30, # 30 minutes
     )
     sandbox_id = sbx.sandbox_id

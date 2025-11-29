@@ -2,7 +2,8 @@ from __future__ import annotations
 from e2b_code_interpreter import AsyncSandbox
 from agents.codex.state import CodexState
 from shared.logger import get_logger
-from sandbox import deploy_server_and_confirm_ready, TARGET_AGENT_COMMAND, TARGET_AGENT_PORT
+from sandbox import deploy_server_and_confirm_ready
+from shared.config import config
 
 logger = get_logger("codex.nodes.deploy")
 
@@ -24,7 +25,7 @@ async def deploy_service(state: CodexState) -> CodexState:
     try:
         sbx: AsyncSandbox = await AsyncSandbox.connect(sandbox_context.sandbox_id)
         sb, handle = await deploy_server_and_confirm_ready(
-            cmd=TARGET_AGENT_COMMAND,
+            cmd=config.target_agent_command,
             sb=sbx,
             cwd=sandbox_context.working_directory,
             timeout_s=50
