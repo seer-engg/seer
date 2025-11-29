@@ -6,7 +6,7 @@ from .commands import kill_process_on_port
 from .deploy import deploy_server_and_confirm_ready
 from .initialize import initialize_e2b_sandbox, setup_project
 from e2b import AsyncSandbox
-from shared.config import TARGET_AGENT_COMMAND, TARGET_AGENT_PORT, TARGET_AGENT_SETUP_SCRIPT
+from shared.config import config
 
 __all__ = [
     "cd_and_run_in_sandbox",
@@ -14,9 +14,6 @@ __all__ = [
     "deploy_server_and_confirm_ready",
     "initialize_e2b_sandbox",
     "setup_project",
-    "TARGET_AGENT_COMMAND",
-    "TARGET_AGENT_PORT",
-    "TARGET_AGENT_SETUP_SCRIPT",
     "prepare_target_agent",
     "kill_process_on_port",
 ]
@@ -38,11 +35,11 @@ async def prepare_target_agent(repo_url: str, setup_script: str, timeout: int = 
     await setup_project(sbx.sandbox_id, repo_dir, setup_script)
 
     sbx, _ = await deploy_server_and_confirm_ready(
-        cmd=TARGET_AGENT_COMMAND,
+        cmd=config.target_agent_command,
         sb=sbx,
         cwd=repo_dir,
         timeout_s=60
     )
 
-    deployed_url = sbx.get_host(TARGET_AGENT_PORT)
+    deployed_url = sbx.get_host(config.target_agent_port)
     return sbx, deployed_url

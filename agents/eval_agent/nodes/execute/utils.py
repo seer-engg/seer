@@ -2,7 +2,7 @@ import os
 import asyncio
 from typing import Optional, List, Any
 from shared.mcp_client import ComposioMCPClient
-from shared.config import COMPOSIO_USER_ID, config
+from shared.config import config
 from agents.eval_agent.models import TestExecutionState
 from tool_hub import ToolHub
 from tool_hub.models import Tool, ToolFunction
@@ -45,7 +45,7 @@ async def get_tool_hub() -> ToolHub:
         return _CACHED_HUB
 
     # 1. Initialize Hub
-    openai_key = os.getenv("OPENAI_API_KEY")
+    openai_key = config.openai_api_key
     if not openai_key:
         raise ValueError("OPENAI_API_KEY not found in environment")
     
@@ -53,7 +53,7 @@ async def get_tool_hub() -> ToolHub:
 
     # 2. Fetch Executable Tools from Composio (Cached by MCP Client)
     # We still need the executables, but we handle them smarter now
-    tool_service = ComposioMCPClient(["GITHUB", "ASANA"], COMPOSIO_USER_ID)
+    tool_service = ComposioMCPClient(["GITHUB", "ASANA"], config.composio_user_id)
     all_tools = await tool_service.get_tools()
 
     # 3. Load or Ingest

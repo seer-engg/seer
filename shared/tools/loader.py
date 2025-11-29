@@ -5,7 +5,7 @@ Handles loading tools from MCP services.
 from typing import Dict, List, Sequence
 
 from shared.logger import get_logger
-from shared.config import EVAL_AGENT_LOAD_DEFAULT_MCPS
+from shared.config import config
 
 logger = get_logger("shared.tools.loader")
 
@@ -30,7 +30,7 @@ def resolve_mcp_services(requested_services: List[str]) -> List[str]:
         if normalized_name and normalized_name not in normalized:
             normalized.append(normalized_name)
 
-    if not EVAL_AGENT_LOAD_DEFAULT_MCPS:
+    if not config.eval_agent_load_default_mcps:
         return normalized
 
     combined: List[str] = list(DEFAULT_MCP_SERVICES)

@@ -11,6 +11,7 @@ from agents.codex.nodes import (
     developer, evaluator, reflector, finalize,
     initialize_project, index
 )
+from shared.config import config
 import os
 
 logger = get_logger("codex.graph")
@@ -33,10 +34,10 @@ def should_reflect_or_raise_pr(state: CodexState) -> CodexState:
     
     if state.attempt_number >= state.max_attempts:
         logger.warning(f"Max attempts ({state.max_attempts}) reached. Ending run.")
-        if os.getenv("ALLOW_PR","true") == "false":            
-            return "end"
-        else:
+        if config.allow_pr:            
             return "raise-pr"
+        else:
+            return "end"
         
     logger.info(f"Implementation failed (Attempt {state.attempt_number}). Reflecting.")
     return "reflector"

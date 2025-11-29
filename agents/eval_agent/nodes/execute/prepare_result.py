@@ -3,8 +3,7 @@ from shared.logger import get_logger
 from shared.schema import ExperimentResultContext, FailureAnalysis
 from shared.llm import get_llm
 from langchain_core.messages import HumanMessage
-from datetime import datetime
-from shared.config import EVAL_PASS_THRESHOLD
+from shared.config import config
 
 
 logger = get_logger("eval_agent.execute.prepare_result")
@@ -39,7 +38,7 @@ async def prepare_result_node(state: TestExecutionState) -> dict:
         dataset_example=example,
         actual_output=(state.agent_output or ""),
         analysis=failure_analysis,
-        passed=(failure_analysis.score >= EVAL_PASS_THRESHOLD),
+        passed=(failure_analysis.score >= config.eval_pass_threshold),
         started_at=started_at,
         completed_at=completed_at,
     )

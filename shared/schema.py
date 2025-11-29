@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import List, Optional, Literal
 from pydantic import BaseModel, Field, ConfigDict, computed_field
 from shared.agent_context import AgentContext
-
+from shared.config import config
 
 class FailureAnalysis(BaseModel):
     """
@@ -152,8 +152,8 @@ class UserContext(BaseModel):
     """Context for the user."""
 
     user_id: str = Field(
-        default_factory=lambda: os.getenv("USER_ID", ""),
-        description=f"The ID of the user. Default is {os.getenv('USER_ID', '')} if not specified"
+        default_factory=lambda: config.user_id,
+        description=f"The ID of the user. Default is {config.user_id} if not specified"
     )
     raw_request: str = Field(..., description="The raw request from the user")
     model_config = ConfigDict(extra="forbid")

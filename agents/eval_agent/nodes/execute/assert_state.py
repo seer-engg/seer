@@ -9,7 +9,7 @@ from agents.eval_agent.reflexion_factory import create_ephemeral_reflexion
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from shared.mcp_client import ComposioMCPClient
-from shared.config import COMPOSIO_USER_ID, config
+from shared.config import config
 from .utils import get_tool_hub, handle_tool_errors
 from langchain.agents import create_agent
 
@@ -63,7 +63,7 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
     #     max_rounds=2 
     # )
 
-    tool_service = ComposioMCPClient(["GITHUB", "ASANA"], COMPOSIO_USER_ID)
+    tool_service = ComposioMCPClient(["GITHUB", "ASANA"], config.composio_user_id)
     all_tools = await tool_service.get_tools()
 
     actual_tools = []

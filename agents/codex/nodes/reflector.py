@@ -4,10 +4,8 @@ from agents.codex.state import CodexState
 from langchain_core.messages import HumanMessage
 from shared.llm import get_llm
 from agents.codex.format_thread import fetch_thread_timeline_as_string
-from shared.config import TARGET_AGENT_LANGSMITH_PROJECT
 from langchain_core.messages import SystemMessage
-
-
+from shared.config import config
 
 logger = get_logger("codex.nodes.reflect")
 
@@ -64,7 +62,7 @@ async def reflector(state: CodexState) -> CodexState:
             "SCORE:": eval.score,
             "JUDGE FEEDBACK:": eval.judge_reasoning
         }
-        thread_trace = await fetch_thread_timeline_as_string(eval.thread_id, TARGET_AGENT_LANGSMITH_PROJECT)
+        thread_trace = await fetch_thread_timeline_as_string(eval.thread_id, config.target_agent_langsmith_project)
         evals_and_thread_traces.append(
             EVALS_AND_THREAD_TRACE_TEMPLATE.format(
                 eval=x,

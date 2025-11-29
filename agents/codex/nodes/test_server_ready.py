@@ -2,7 +2,8 @@ from e2b import AsyncSandbox
 from langchain_core.messages import HumanMessage
 
 from shared.logger import get_logger
-from sandbox import deploy_server_and_confirm_ready, TARGET_AGENT_COMMAND
+from sandbox import deploy_server_and_confirm_ready
+from shared.config import config
 from agents.codex.state import CodexState
 
 logger = get_logger("codex.test_server_ready")
@@ -18,7 +19,7 @@ async def test_server_ready(state: CodexState) -> CodexState:
 
     try:
         _, _ = await deploy_server_and_confirm_ready(
-            cmd=TARGET_AGENT_COMMAND,
+            cmd=config.target_agent_command,
             sb=sbx,
             cwd=sandbox_context.working_directory,
             timeout_s=50

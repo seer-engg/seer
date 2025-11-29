@@ -1,30 +1,19 @@
 
 from langchain_neo4j import Neo4jGraph
-from shared.config import (
-    NEO4J_URI,
-    NEO4J_USERNAME,
-    NEO4J_PASSWORD,
-    EMBEDDING_DIMS,
-    EVAL_REFLECTIONS_INDEX_NAME,
-    EVAL_REFLECTIONS_NODE_LABEL,
-    EVAL_REFLECTIONS_EMBEDDING_PROPERTY,
-    TOOL_NODE_LABEL,
-    TOOL_EMBED_PROP,
-    TOOL_VECTOR_INDEX,
-)
+from shared.config import config
 from shared.logger import get_logger
 
 logger = get_logger("graph_db.client")
 
-INDEX_NAME = EVAL_REFLECTIONS_INDEX_NAME
-NODE_LABEL = EVAL_REFLECTIONS_NODE_LABEL
-EMBEDDING_PROPERTY = EVAL_REFLECTIONS_EMBEDDING_PROPERTY
+INDEX_NAME = config.eval_reflections_index_name
+NODE_LABEL = config.eval_reflections_node_label
+EMBEDDING_PROPERTY = config.eval_reflections_embedding_property
 
 # Client for factual graph operations (Cypher queries)
 NEO4J_GRAPH = Neo4jGraph(
-    url=NEO4J_URI,
-    username=NEO4J_USERNAME,
-    password=NEO4J_PASSWORD,
+    url=config.neo4j_uri,
+    username=config.neo4j_username,
+    password=config.neo4j_password,
 )
 logger.info(f"Successfully created Neo4j graph client.")
 
@@ -40,7 +29,7 @@ def ensure_eval_reflections_setup():
         ON (n.{EMBEDDING_PROPERTY})
         OPTIONS {{ 
             indexConfig: {{
-                `vector.dimensions`: {EMBEDDING_DIMS},
+                `vector.dimensions`: {config.embedding_dims},
                 `vector.similarity_function`: 'cosine'
             }}
         }}
@@ -66,12 +55,12 @@ def ensure_tool_vector_index():
     """
     NEO4J_GRAPH.query(
         f"""
-        CREATE VECTOR INDEX {TOOL_VECTOR_INDEX} IF NOT EXISTS
-        FOR (t:{TOOL_NODE_LABEL})
-        ON (t.{TOOL_EMBED_PROP})
+        CREATE VECTOR INDEX {config.tool_vector_index} IF NOT EXISTS
+        FOR (t:{config.tool_node_label})
+        ON (t.{config.tool_embed_prop})
         OPTIONS {{
             indexConfig: {{
-                `vector.dimensions`: {EMBEDDING_DIMS},
+                `vector.dimensions`: {config.embedding_dims},
                 `vector.similarity_function`: 'cosine'
             }}
         }}

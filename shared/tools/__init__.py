@@ -37,7 +37,7 @@ import asyncio
 from langchain.tools import tool
 from tavily import TavilyClient
 from shared.logger import get_logger
-from shared.config import TAVILY_API_KEY
+from shared.config import config
 
 # Public API exports
 from shared.tools.loader import (
@@ -73,11 +73,11 @@ async def web_search(query: str, max_results: int = 5) -> str:
     Note:
         Requires TAVILY_API_KEY environment variable to be set.
     """
-    if not TAVILY_API_KEY:
+    if not config.tavily_api_key:
         return "Error: TAVILY_API_KEY not configured"
     
     try:
-        client = TavilyClient(api_key=TAVILY_API_KEY)
+        client = TavilyClient(api_key=config.tavily_api_key)
         # Offload the blocking Tavily client call to a thread
         response = await asyncio.to_thread(client.search, query, max_results=max_results)
         results = response.get("results", [])

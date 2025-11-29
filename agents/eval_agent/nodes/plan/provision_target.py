@@ -6,25 +6,24 @@ from agents.eval_agent.models import EvalAgentPlannerState
 from sandbox import (
     initialize_e2b_sandbox,
     setup_project,
-    TARGET_AGENT_COMMAND,
-    TARGET_AGENT_PORT,
     deploy_server_and_confirm_ready,
 )
 from shared.agent_context import AgentContext
 from shared.schema import SandboxContext
 from shared.logger import get_logger
+from shared.config import config
 
 logger = get_logger("eval_agent.plan")
 
 
 
 def _seed_default_resources(mcp_resources: Dict[str, Any]) -> None:
-    workspace_id = os.getenv("ASANA_WORKSPACE_ID") or os.getenv("ASANA_DEFAULT_WORKSPACE_GID")
+    workspace_id = config.asana_workspace_id
     if workspace_id and "asana_workspace" not in mcp_resources:
         mcp_resources["asana_workspace"] = {"id": workspace_id, "gid": workspace_id}
         logger.info("Seeded Asana workspace from environment: %s", workspace_id)
 
-    project_id = os.getenv("ASANA_PROJECT_ID") or os.getenv("ASANA_DEFAULT_PROJECT_GID")
+    project_id = config.asana_project_id
     if project_id and "asana_project" not in mcp_resources:
         mcp_resources["asana_project"] = {"id": project_id, "gid": project_id}
         logger.info("Seeded Asana project from environment: %s", project_id)
@@ -43,7 +42,7 @@ async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
     updates: Dict[str, Any] = {}
 
     if not state.context.sandbox_context:
-        github_token = os.getenv("GITHUB_TOKEN")
+        github_token = config.github_token
         logger.info(
             "plan.provision: provisioning sandbox (repo=%s branch=%s)",
             repo_url,
@@ -61,12 +60,12 @@ async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
         await setup_project(sandbox_id, repo_dir, "pip install -e .")
 
         sandbox, _ = await deploy_server_and_confirm_ready(
-            cmd=TARGET_AGENT_COMMAND,
+            cmd=config.target_agent_command,
             sb=sbx,
             cwd=repo_dir,
         )
 
-        deployment_url = sandbox.get_host(TARGET_AGENT_PORT)
+        deployment_url = sandbox.get_host(config.target_agent_port)
         if not deployment_url.startswith("http"):
             deployment_url = f"https://{deployment_url}"
 

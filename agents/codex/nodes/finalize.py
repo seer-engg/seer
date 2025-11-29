@@ -8,9 +8,9 @@ from langchain_core.messages import HumanMessage
 from langgraph.pregel.remote import RemoteGraph
 from langgraph_sdk import get_sync_client
 from agents.codex.state import CodexState
-from agents.eval_agent.constants import EVAL_REMOTE_URL, LANGSMITH_CLIENT, N_VERSIONS
+from agents.eval_agent.constants import LANGSMITH_CLIENT
 from shared.logger import get_logger
-from shared.config import DEFAULT_LLM_MODEL
+from shared.config import config
 
 logger = get_logger("codex.finalize")
 
@@ -40,13 +40,13 @@ async def _handoff_to_eval(message_content:str, state: CodexState) -> dict:
     logger.info("Eval payload: %s", eval_payload)
 
     # create a new thread for the Eval agent
-    eval_sync_client = get_sync_client(url=EVAL_REMOTE_URL)
+    eval_sync_client = get_sync_client(url=config.eval_remote_url)
     thread = await asyncio.to_thread(eval_sync_client.threads.create)
 
     eval_thread_cfg = {"configurable": {"thread_id": thread["thread_id"]}}
     eval_remote = RemoteGraph(
         "eval_agent",
-        url=EVAL_REMOTE_URL,
+        url=config.eval_remote_url,
         client=LANGSMITH_CLIENT,
         sync_client=eval_sync_client,
         distributed_tracing=True,
@@ -70,8 +70,8 @@ async def _handoff_to_eval(message_content:str, state: CodexState) -> dict:
 
 async def finalize(state: CodexState) -> CodexState:
     logger.info(f"Finalizing state: {state}")
-    if os.getenv("EVAL_HANDOFF_ENABLED") == "true" and state.context.target_agent_version < N_VERSIONS:
-        llm = ChatOpenAI(model=DEFAULT_LLM_MODEL)
+    if config.eval_agent_handoff_enabled and state.context.target_agent_version < config.eval_n_versions:
+        llm = ChatOpenAI(model=config.default_llm_model)
         input_messages = []
         input_messages.append(HumanMessage(content=USER_PROMPT.format(request=state.context.user_context.raw_request, new_branch_name=state.new_branch_name)))
         response = await llm.ainvoke(input_messages)
