@@ -45,7 +45,7 @@ async def get_tool_hub() -> ToolHub:
         return _CACHED_HUB
 
     # 1. Initialize Hub
-    openai_key = os.getenv("OPENAI_API_KEY")
+    openai_key = config.openai_api_key
     if not openai_key:
         raise ValueError("OPENAI_API_KEY not found in environment")
     

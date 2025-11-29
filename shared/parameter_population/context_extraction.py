@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 
 from shared.schema import UserContext, GithubContext
 from shared.logger import get_logger
+from shared.config import config
 
 logger = get_logger("parameter_population.context_extraction")
 
@@ -208,27 +209,25 @@ def _extract_environment_defaults() -> Dict[str, Any]:
     
     # Asana defaults
     asana_workspace = (
-        os.getenv("ASANA_WORKSPACE_ID") or 
-        os.getenv("ASANA_DEFAULT_WORKSPACE_GID") or
-        os.getenv("ASANA_WORKSPACE_GID")
+        config.asana_workspace_id or 
+        config.asana_default_workspace_gid
     )
     if asana_workspace:
         variables["asana_workspace_gid"] = asana_workspace.strip()
     
     asana_project = (
-        os.getenv("ASANA_PROJECT_ID") or
-        os.getenv("ASANA_DEFAULT_PROJECT_GID") or
-        os.getenv("ASANA_PROJECT_GID")
+        config.asana_project_id or
+        config.asana_default_project_gid
     )
     if asana_project:
         variables["asana_project_gid"] = asana_project.strip()
     
     # GitHub defaults (less common, but possible)
-    github_owner = os.getenv("GITHUB_DEFAULT_OWNER")
+    github_owner = config.github_default_owner
     if github_owner:
         variables["github_owner"] = github_owner.strip()
     
-    github_repo = os.getenv("GITHUB_DEFAULT_REPO")
+    github_repo = config.github_default_repo
     if github_repo:
         variables["github_repo"] = github_repo.strip()
     

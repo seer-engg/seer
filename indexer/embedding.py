@@ -8,7 +8,7 @@ from langchain_openai import OpenAIEmbeddings
 
 from shared.logger import get_logger
 import traceback
-
+from shared.config import config
 logger = get_logger("indexer.embedding")
 
 
@@ -49,8 +49,8 @@ class HashingEmbedder:
 class OpenAIEmbedder:
     def __init__(self, model: Optional[str] = None, api_key: Optional[str] = None):
         # Default to text-embedding-3-small; allow override to -large via env or param
-        self.model = model or os.getenv("SEER_EMBEDDING_MODEL", "text-embedding-3-small")
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.model = model or config.embedding_model
+        self.api_key = api_key or config.openai_api_key
         if not self.api_key:
             raise ValueError("OPENAI_API_KEY not set for OpenAI embeddings")
         self.client = OpenAIEmbeddings(model=self.model, api_key=self.api_key)
@@ -67,7 +67,7 @@ class OpenAIEmbedder:
         # Synchronous path (may trigger blocking warnings); prefer using aencode in async contexts
         texts_list = list(texts)
         vectors: List[List[float]] = []
-        batch_size = int(os.getenv("SEER_EMBED_BATCH", "128"))
+        batch_size = config.embedding_batch_size
         for i in range(0, len(texts_list), batch_size):
             chunk = texts_list[i : i + batch_size]
             try:
@@ -87,7 +87,7 @@ class OpenAIEmbedder:
     async def aencode(self, texts: Iterable[str]) -> np.ndarray:
         texts_list = list(texts)
         vectors: List[List[float]] = []
-        batch_size = int(os.getenv("SEER_EMBED_BATCH", "128"))
+        batch_size = config.embedding_batch_size
         for i in range(0, len(texts_list), batch_size):
             chunk = texts_list[i : i + batch_size]
             try:

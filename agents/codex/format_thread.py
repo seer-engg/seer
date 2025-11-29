@@ -8,6 +8,7 @@ import os
 import asyncio
 import random
 from langsmith.schemas import Run
+from shared.config import config
 
 MAX_IO_CHARS = 10000  # keep console readable
 
@@ -66,7 +67,7 @@ async def fetch_thread_runs(thread_id: str, project_name: str | None = None):
 
     # Ensure we scope the query to a project to satisfy LangSmith API requirements
     if project_name is None:
-        project_name = os.getenv("LANGSMITH_PROJECT") or None
+        project_name = config.target_agent_langsmith_project
         if not project_name:
             raise ValueError(
                 "LangSmith project not set. Pass project_name or set LANGSMITH_PROJECT."

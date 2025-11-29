@@ -15,7 +15,7 @@ from shared.schema import (
     CodexInput,
     CodexOutput,
 )
-
+from shared.config import config
 
 logger = get_logger("eval_agent.finalize")
 
@@ -130,7 +130,7 @@ def build_finalize_subgraph():
     builder.add_node("summarize", _summarize_finalize)
     builder.add_edge("summarize", END)
     
-    if os.getenv("CODEX_HANDOFF_ENABLED") == "true":
+    if config.codex_handoff_enabled:
         builder.add_node("handoff", _handoff_to_codex)
         builder.add_edge(START, "handoff")
         builder.add_edge("handoff", "summarize")

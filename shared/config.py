@@ -37,6 +37,7 @@ class SeerConfig(BaseSettings):
     openai_api_key: str = Field(description="OpenAI API key for LLM and embeddings")
     langsmith_api_key: Optional[str] = Field(default=None, description="LangSmith API key for tracing")
     tavily_api_key: Optional[str] = Field(default=None, description="Tavily API key for web search")
+    github_token: Optional[str] = Field(default=None, description="GitHub token for sandbox provisioning")
     
     # ============================================================================
     # Evaluation Agent Configuration
@@ -59,9 +60,17 @@ class SeerConfig(BaseSettings):
     target_agent_port: int = Field(default=2024, description="Port for target agent")
     target_agent_setup_script: str = Field(default="pip install -e .", description="Setup script for target agent")
     target_agent_command: str = Field(default="langgraph dev --host 0.0.0.0", description="Command to run target agent")
+    codex_handoff_enabled: bool = Field(default=True, description="Enable handoff to codex agent")
     
     # Base template for E2B sandbox
     base_template_alias: str = Field(default="seer-base", description="E2B template alias")
+
+
+    # ============================================================================
+    # Codex Agent Configuration
+    # ============================================================================
+    allow_pr: bool = Field(default=True, description="Allow PR creation even if eval  fails")
+    eval_agent_handoff_enabled: bool = Field(default=False, description="Enable handoff to eval agent")
     
     # ============================================================================
     # Neo4j Graph Database Configuration
@@ -73,6 +82,8 @@ class SeerConfig(BaseSettings):
     
     # Vector embeddings configuration
     embedding_dims: int = Field(default=1536, description="OpenAI embedding dimensions")
+    embedding_model: str = Field(default="text-embedding-3-small", description="OpenAI embedding model")
+    embedding_batch_size: int = Field(default=128, description="OpenAI embedding batch size")
     
     # Eval reflections index
     eval_reflections_index_name: str = Field(default="eval_reflections", description="Neo4j index name for eval reflections")
@@ -84,6 +95,11 @@ class SeerConfig(BaseSettings):
     tool_embed_prop: str = Field(default="embedding", description="Property name for tool embeddings")
     tool_vector_index: str = Field(default="mcp_tools_index", description="Neo4j index name for tools")
     tool_hub_index_dir: str = Field(default="tool_hub_index", description="Directory for ToolHub index")
+
+    # user
+    user_id: str = Field(default="", description="User ID")
+    github_default_owner: str = Field(default="", description="GitHub default owner")
+    github_default_repo: str = Field(default="", description="GitHub default repo")
     
     # ============================================================================
     # MCP (Model Context Protocol) Configuration
@@ -96,6 +112,8 @@ class SeerConfig(BaseSettings):
     # ============================================================================
     # LangSmith Configuration
     # ============================================================================
+    
+    langsmith_api_url: str = Field(default="https://api.smith.langchain.com", description="LangSmith API URL")
     
     # ============================================================================
     # Asana Configuration

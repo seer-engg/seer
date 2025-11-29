@@ -14,6 +14,7 @@ from urllib.parse import quote as urlquote
 from shared.logger import get_logger
 from e2b_code_interpreter import AsyncSandbox, CommandResult
 from agents.codex.state import CodexState
+from shared.config import config
 
 logger = get_logger("codex.nodes.raise_pr")
 
@@ -58,7 +59,7 @@ async def _run_in_sandbox(sbx: AsyncSandbox, command: str, repo_dir: str) -> Com
 
 
 def _masked(s: str) -> str:
-    token = os.getenv("GITHUB_TOKEN") or ""
+    token = config.github_token or ""
     if not token:
         return s
     return s.replace(token, "***")
@@ -74,7 +75,7 @@ async def raise_pr(state: CodexState) -> CodexState:
     - branch_name: base branch name (defaults to main)
     """
 
-    github_token = os.getenv("GITHUB_TOKEN")
+    github_token = config.github_token
     if not github_token:
         raise RuntimeError("GITHUB_TOKEN not configured in environment")
 

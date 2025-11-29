@@ -9,11 +9,12 @@ from e2b import AsyncSandbox, CommandResult
 from .constants import _build_git_shell_script
 from shared.config import TARGET_AGENT_ENVS, BASE_TEMPLATE_ALIAS
 from shared.logger import get_logger
+from shared.config import config
 
 logger = get_logger("sandbox.initialize")
 
 def _masked(s: str) -> str:
-    token = os.getenv("GITHUB_TOKEN") or ""
+    token = config.github_token or ""
     if not token:
         return s
     return s.replace(token, "***")
@@ -22,7 +23,7 @@ def _masked(s: str) -> str:
 async def initialize_e2b_sandbox(
     repo_url: str,
     branch_name: str = "main",
-    github_token: Optional[str] = os.getenv("GITHUB_TOKEN"),
+    github_token: Optional[str] = config.github_token,
 ) -> tuple[AsyncSandbox, str, str]:
     """
     Create (or resume) an E2B sandbox and ensure the GitHub repository is cloned

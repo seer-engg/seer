@@ -11,6 +11,7 @@ from agents.eval_agent.models import EvalAgentState
 from shared.logger import get_logger
 from shared.schema import ExperimentContext
 from graph_db import NEO4J_GRAPH
+from shared.config import config
 
 logger = get_logger("eval_agent.run")
 
@@ -128,11 +129,11 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
     results_payload = list(state.latest_results) if state.latest_results else list(experiment.results)
     failed_cases = list(experiment.failed_results)
 
-    api_key = os.getenv("LANGSMITH_API_KEY")
+    api_key = config.langsmith_api_key
     if not api_key:
         raise ValueError("LANGSMITH_API_KEY environment variable is required for experiment upload.")
 
-    endpoint_base = os.getenv("LANGSMITH_API_URL", "https://api.smith.langchain.com")
+    endpoint_base = config.langsmith_api_url
     endpoint = f"{endpoint_base.rstrip('/')}/api/v1/datasets/upload-experiment"
 
     serialised_results = [
