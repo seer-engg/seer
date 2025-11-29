@@ -128,7 +128,15 @@ async def invoke_target_agent(
         
         logger.info(f"Agent responded in {execution_time:.2f} seconds")
 
-        final_output = result.get("messages", [])[-1].content
+        # output can be open ai legacy format or responses api format
+        output = result.get("messages", [])[-1].get("content")
+        final_output=""
+        if isinstance(output, str):
+            final_output = output
+        elif isinstance(output, list):
+            for content_block in output:
+                if content_block.get("type") == "text":
+                    final_output += content_block.get("text")
         
         return AgentInvocationResult(
             final_output=final_output,
