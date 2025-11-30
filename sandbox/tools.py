@@ -475,3 +475,19 @@ async def get_code_region(path: str, start_line: int, end_line: int, runtime: To
     except Exception as e:
         logger.error(f"Error getting code region: {e}")
         return f"Error getting code region: {e}"
+
+
+@tool
+async def ls(directory_path: str, runtime: ToolRuntime[SandboxToolContext]) -> str:
+    """
+    List the contents of a directory path relative to the repository root.
+    """
+    sandbox_id, repo_path = vaildate_sandbox_tool_call(runtime)
+    sbx: AsyncSandbox = await get_sandbox(sandbox_id)
+    try:
+        command = f"ls -la {directory_path}"
+        res: CommandResult = await sbx.commands.run(command, cwd=repo_path)
+        return res.stdout
+    except Exception as e:
+        logger.error(f"Error listing directory: {e}")
+        return f"Error listing directory: {e}"
