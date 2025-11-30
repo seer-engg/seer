@@ -22,7 +22,7 @@ class Launcher:
         self.project_root = Path(__file__).parent
         self.python_exe = self._find_python_executable()
         self.langgraph_exe = self._find_langgraph_executable()
-        self.logs_dir = self.project_root / "logs"
+        self.logs_dir = self.project_root.parent / "seer-logs"
         self.logs_dir.mkdir(exist_ok=True)
     
     def _find_python_executable(self):
@@ -164,8 +164,8 @@ class Launcher:
             eval_port = 8002
             self.start_process(
                 "Eval Agent (LangGraph)",
-                [self.langgraph_exe, "dev", "--port", str(eval_port), "--host", "127.0.0.1"],
-                cwd=str(self.project_root / "agents" / "eval_agent")
+                [self.langgraph_exe, "dev", "--port", str(eval_port), "--host", "127.0.0.1", "--config", "agents/eval_agent/langgraph.json"],
+                cwd=str(self.project_root)
             )
             if not self.check_port_listening(eval_port, timeout=15):
                 raise Exception(f"Eval agent failed to start on port {eval_port}")
@@ -177,8 +177,8 @@ class Launcher:
                 coding_port = 8003
                 self.start_process(
                     "Coding Agent (LangGraph)",
-                    [self.langgraph_exe, "dev", "--port", str(coding_port), "--host", "127.0.0.1"],
-                    cwd=str(self.project_root / "agents" / "codex")
+                    [self.langgraph_exe, "dev", "--port", str(coding_port), "--host", "127.0.0.1", "--config", "agents/codex/langgraph.json"],
+                    cwd=str(self.project_root)
                 )
                 if not self.check_port_listening(coding_port, timeout=15):
                     raise Exception(f"Coding agent failed to start on port {coding_port}")
