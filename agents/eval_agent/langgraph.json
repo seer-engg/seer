@@ -1,9 +1,11 @@
 {
-  "dependencies": ["../.."],
+  "dependencies": [
+    "."
+  ],
   "graphs": {
-    "eval_agent": "./graph.py:graph"
+    "eval_agent": "./agents/eval_agent/graph.py:graph"
   },
-  "env": "../../.env",
+  "env": ".env",
   "store": {
     "index": {
       "embed": "openai:text-embedding-3-small",
