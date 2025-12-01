@@ -37,6 +37,7 @@ from sandbox.tools import (
     create_directory,
     write_file,
     edit_file,
+    ls,
 )
 from pathlib import Path
 
@@ -93,7 +94,8 @@ codebase_explorer_subgraph = create_agent(
         search_code,
         search_symbols,
         semantic_search,
-        get_symbol_definition
+        get_symbol_definition,
+        ls,
     ],
     system_prompt=""" You are a great codebase explorer. based on the user request, you need to explore the codebase and provide the answer to the question, you are provided with the tools to explore the codebase""",
     context_schema=SandboxToolContext,
@@ -155,6 +157,7 @@ async def developer(state: CodexState) -> CodexState:
             create_directory,
             write_file, 
             *docs_tools,
+            ls,
         ],
         system_prompt=SYSTEM_PROMPT,
         context_schema=SandboxToolContext,  # Add context schema for sandbox tools
