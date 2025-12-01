@@ -120,10 +120,7 @@ class SeerConfig(BaseSettings):
     # ============================================================================
     
     asana_workspace_id: Optional[str] = Field(default=None, description="Asana workspace ID")
-    asana_default_workspace_gid: Optional[str] = Field(default=None, description="Asana default workspace GID")
-    asana_project_id: Optional[str] = Field(default=None, description="Asana project ID")
-    asana_default_project_gid: Optional[str] = Field(default=None, description="Asana default project GID")
-    
+    asana_team_gid: Optional[str] = Field(default=None, description="Asana default team GID")
     # ============================================================================
     # Computed Properties
     # ============================================================================
@@ -144,11 +141,7 @@ class SeerConfig(BaseSettings):
     
     def get_asana_workspace_gid(self) -> Optional[str]:
         """Get Asana workspace GID from environment."""
-        return self.asana_workspace_id or self.asana_default_workspace_gid
-    
-    def get_asana_project_gid(self) -> Optional[str]:
-        """Get Asana project GID from environment."""
-        return self.asana_project_id or self.asana_default_project_gid
+        return self.asana_workspace_id 
 
 
 # ============================================================================
@@ -165,8 +158,3 @@ config = SeerConfig()
 def get_asana_workspace_gid() -> Optional[str]:
     """Get Asana workspace GID from environment."""
     return config.get_asana_workspace_gid()
-
-
-def get_asana_project_gid() -> Optional[str]:
-    """Get Asana project GID from environment."""
-    return config.get_asana_project_gid()

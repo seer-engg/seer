@@ -12,22 +12,16 @@ from shared.agent_context import AgentContext
 from shared.schema import SandboxContext
 from shared.logger import get_logger
 from shared.config import config
+from shared.integrations.main import get_provider
 
 logger = get_logger("eval_agent.plan")
 
 
 
-def _seed_default_resources(mcp_resources: Dict[str, Any]) -> None:
-    workspace_id = config.asana_workspace_id
-    if workspace_id and "asana_workspace" not in mcp_resources:
-        mcp_resources["asana_workspace"] = {"id": workspace_id, "gid": workspace_id}
-        logger.info("Seeded Asana workspace from environment: %s", workspace_id)
-
-    project_id = config.asana_project_id
-    if project_id and "asana_project" not in mcp_resources:
-        mcp_resources["asana_project"] = {"id": project_id, "gid": project_id}
-        logger.info("Seeded Asana project from environment: %s", project_id)
-
+async def _seed_default_resources(mcp_resources: Dict[str, Any], mcp_services: List[str]) -> None:
+    for service in mcp_services:
+        provider = await get_provider(service)
+        mcp_resources[service] = provider.persistent_resource
 
 
 async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
@@ -37,7 +31,7 @@ async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
     repo_url = state.context.github_context.repo_url
     branch_name = state.context.github_context.branch_name
     mcp_resources = dict(state.context.mcp_resources or {})
-    _seed_default_resources(mcp_resources)
+    await _seed_default_resources(mcp_resources, state.context.mcp_services)
 
     updates: Dict[str, Any] = {}
 

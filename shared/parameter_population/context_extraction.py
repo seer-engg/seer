@@ -209,18 +209,10 @@ def _extract_environment_defaults() -> Dict[str, Any]:
     
     # Asana defaults
     asana_workspace = (
-        config.asana_workspace_id or 
-        config.asana_default_workspace_gid
+        config.asana_workspace_id 
     )
     if asana_workspace:
         variables["asana_workspace_gid"] = asana_workspace.strip()
-    
-    asana_project = (
-        config.asana_project_id or
-        config.asana_default_project_gid
-    )
-    if asana_project:
-        variables["asana_project_gid"] = asana_project.strip()
     
     # GitHub defaults (less common, but possible)
     github_owner = config.github_default_owner

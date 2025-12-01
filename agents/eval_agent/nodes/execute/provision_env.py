@@ -5,7 +5,6 @@ from typing import List
 from langchain_core.messages import HumanMessage
 from agents.eval_agent.models import TestExecutionState
 from shared.logger import get_logger
-from shared.resource_utils import format_resource_hints
 from shared.llm import get_llm
 from agents.eval_agent.reflexion_factory import create_ephemeral_reflexion
 from langchain_core.runnables import RunnableConfig
@@ -42,7 +41,7 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
         logger.error("No provisioning instructions or MCP services; skipping provisioning phase.")
         return {}
     
-    resource_hints = format_resource_hints(state.mcp_resources)
+    resource_hints = state.mcp_resources
 
     # tool_hub = await get_tool_hub()    
     # Semantic Tool Selection: Use filtered tools if available

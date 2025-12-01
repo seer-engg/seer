@@ -13,6 +13,8 @@ from agents.eval_agent.nodes.execute.invoke_target import invoke_target_node
 from agents.eval_agent.nodes.execute.assert_state import assert_final_state_node
 from agents.eval_agent.nodes.execute.prepare_result import prepare_result_node
 from agents.eval_agent.nodes.execute.initialize import initialize_node
+from agents.eval_agent.nodes.execute.seed_mcp_resources import seed_mcp_resources
+from agents.eval_agent.nodes.execute.clean_mcp_resources import clean_mcp_resources
 
 logger = get_logger("eval_agent.execute.graph")
 
@@ -63,6 +65,8 @@ def build_test_execution_subgraph():
     builder.add_node("dispatch", dispatch_examples_node)
     builder.add_node("finalize_batch", finalize_batch_node)
     # Per-example pipeline
+    builder.add_node("seed_mcp_resources", seed_mcp_resources)
+    builder.add_node("clean_mcp_resources", clean_mcp_resources)
     builder.add_node("provision", provision_environment_node)
     builder.add_node("invoke", invoke_target_node)
     builder.add_node("assert", assert_final_state_node)
@@ -70,7 +74,8 @@ def build_test_execution_subgraph():
 
     # Start by dispatching the first/next example
     builder.add_edge(START, "initialize")
-    builder.add_edge("initialize", "dispatch")
+    builder.add_edge("initialize", "seed_mcp_resources")
+    builder.add_edge("seed_mcp_resources", "dispatch")
     builder.add_conditional_edges("dispatch", _route_from_dispatch, {
         "provision": "provision",
         "finalize_batch": "finalize_batch",
@@ -86,8 +91,8 @@ def build_test_execution_subgraph():
     builder.add_edge("prepare_result", "dispatch")
 
     # Finish when dispatch decides no more examples remain
-    builder.add_edge("finalize_batch", END)
-
+    builder.add_edge("finalize_batch", "clean_mcp_resources")
+    builder.add_edge("clean_mcp_resources", END)
     return builder.compile()
 
 

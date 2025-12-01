@@ -33,14 +33,18 @@ system: |
       * assert_final_state: What to verify? What state the external apps should be after target agent has been invoked.
 
   **Important**: 
-   - Tests MUST work on an EMPTY CANVAS. Create ALL test data from scratch
+   - Tests MUST work on the Given Resources. Create Any/ALL additional data required for the test case from scratch.
    - The instructions in create_test_data , assert_final_state and input_message should be self sufficient. They will be consumed by individual agents who doesn't have access to any other information. The agent will consume your instructions to create/assert data in external apps.
    - don't leave any room for ambiguity in the instructions, be explicit in stating instructions for provisioning and assertion, Try to state even obvious information .
    - don't slack in writing down the create_test_data and assert_final_state. They are critical for the test to be valid.  write in detailed points .
-   - For testing playground use the github repo named label-edgecase-repo under seer-engg organization.We have already created this repo, No need to create one. Don't include any instructions to assert it's presence.
 
   # thinking methodology for generating provision_environment and assert_final_state
   - for each instruction point write down explictly what all information is required to complete it.
+
+  ** Available Resources:**
+  For your tests following resources are already available:
+  - {resource_hints}
+  ...
 
 user_template: |
   Based on the context of the target agent, generate {n_tests} test cases for the target agent.
@@ -49,4 +53,11 @@ user_template: |
   * **Agent Weaknesses (from past reflections):** {reflections_text}
   * **Recently Run Tests (Do Not Repeat):** {prev_dataset_examples}
   * **External App Services:** {mcp_services}
-  * **Available Resources:** {resource_hints}
+
+asana: |
+  # ASANA
+  - We have already created an asana project for testing . Use a placeholder to refrence  this asana project <asana_project_gid>.
+
+github: |
+  # GITHUB
+  - Use the github repo named label-edgecase-repo under seer-engg organization.We have already created this repo, No need to create one. Don't include any instructions to assert it's presence.

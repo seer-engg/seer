@@ -2,7 +2,7 @@ import os
 import yaml
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict
 
 # Base directory for prompts
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
@@ -11,6 +11,7 @@ PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 class PromptConfig:
     system: str
     user_template: str
+    all_prompts: Dict[str, str]
 
 def load_prompt(relative_path: str) -> PromptConfig:
     """
@@ -32,5 +33,6 @@ def load_prompt(relative_path: str) -> PromptConfig:
         
     return PromptConfig(
         system=data.get("system", "").strip(),
-        user_template=data.get("user_template", "").strip()
+        user_template=data.get("user_template", "").strip(),
+        all_prompts=data
     )
