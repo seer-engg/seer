@@ -84,9 +84,6 @@ def _extract_github_variables(github_context: GithubContext) -> Dict[str, Any]:
     if github_context.branch_name:
         variables["github_branch"] = github_context.branch_name
     
-    if github_context.agent_name:
-        variables["github_agent_name"] = github_context.agent_name
-    
     return variables
 
 

@@ -28,7 +28,7 @@ ALL_PROMPTS = _PROMPT_CONFIG.all_prompts
 
 
 async def agentic_eval_generation(state: EvalAgentPlannerState) -> dict:
-    agent_name = state.context.github_context.agent_name
+    agent_name = state.context.agent_name
     
     # Get just the inputs from the most recent run
     previous_inputs = [res.dataset_example.input_message for res in state.latest_results]

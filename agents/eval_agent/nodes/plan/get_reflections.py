@@ -9,7 +9,7 @@ logger = get_logger("eval_agent.plan.get_reflections")
 async def get_reflections(state: EvalAgentPlannerState) -> dict:
     """Get the reflections for the test generation."""
     # Get top 3 most relevant reflections + their evidence using GraphRAG
-    agent_name = state.context.github_context.agent_name
+    agent_name = state.context.agent_name
     user_id = state.context.user_context.user_id
 
     reflections_text = await graph_rag_retrieval(

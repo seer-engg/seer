@@ -128,7 +128,6 @@ class DatasetContext(BaseModel):
 class GithubContext(BaseModel):
     """Context for the active GitHub repository"""
 
-    agent_name: str = Field(description="The name of the agent")
     repo_url: str = Field(description="The URL of the repository")
     branch_name: str = Field(description="The name of the branch. Default is main if not specified")
     model_config = ConfigDict(extra="forbid")

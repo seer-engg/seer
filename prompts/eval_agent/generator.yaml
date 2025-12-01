@@ -57,6 +57,7 @@ user_template: |
 asana: |
   # ASANA
   - We have already created an asana project for testing . Use a placeholder to refrence  this asana project <asana_project_gid>.
+  - asana task gids are returned after creation, so it is better to refrence them by name only
 
 github: |
   # GITHUB

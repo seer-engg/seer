@@ -85,6 +85,7 @@ async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
         target_agent_version=state.context.target_agent_version,
         mcp_services=state.context.mcp_services,
         mcp_resources=mcp_resources,
+        agent_name=state.context.agent_name,
     )
     
     return {"context": updated_context}

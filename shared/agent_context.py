@@ -64,6 +64,11 @@ class AgentContext(BaseModel):
         default=None,
         description="E2B sandbox connection details"
     )
+
+    agent_name: str = Field(
+        default="",
+        description="The name of the agent"
+    )
     
     # Target agent version tracking
     target_agent_version: int = Field(
