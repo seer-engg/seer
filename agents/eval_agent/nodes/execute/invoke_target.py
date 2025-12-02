@@ -4,6 +4,8 @@ from datetime import datetime
 from agents.eval_agent.models import TestExecutionState
 from shared.logger import get_logger
 from shared.test_runner.agent_invoker import invoke_target_agent
+from shared.message_formatter import format_target_agent_message
+from shared.config import config
 
 logger = get_logger("eval_agent.execute.invoke")
 
@@ -13,11 +15,29 @@ async def invoke_target_node(state: TestExecutionState) -> dict:
     example = state.dataset_example
     if not example:
         raise ValueError("invoke_target_node requires dataset_example in state")
+    
+    # Format message with appropriate context level
+    context_level = config.target_agent_context_level
+    base_message = example.input_message
+    
+    formatted_message = format_target_agent_message(
+        example=example,
+        context=state.context,
+        context_level=context_level
+    )
+    
+    # Strategic logging: Log what we're sending to target agent
+    logger.info(
+        f"🎯 Invoking target agent: context_level={context_level}, "
+        f"base_msg_len={len(base_message)}, formatted_msg_len={len(formatted_message)}, "
+        f"msg_preview={formatted_message[:100]}..."
+    )
+    
     try:
         result = await invoke_target_agent(
             sandbox_context=state.context.sandbox_context,
             github_context=state.context.github_context,
-            input_message=example.input_message,
+            input_message=formatted_message,
             timeout_seconds=600,
         )
 
