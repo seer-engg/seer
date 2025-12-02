@@ -37,7 +37,6 @@ def create_ephemeral_reflexion(model, prompt, agent_id, tool_hub: Optional[ToolH
     # Create the graph
     graph = create_reflexion(
         model=model,
-        tool_hub=tool_hub,
         tools=tools,
         prompt=prompt,
         memory_store=memory,
