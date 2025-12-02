@@ -1,21 +1,24 @@
 """Context and plan step"""
 from __future__ import annotations
-import asyncio
+from pathlib import Path
+
+
 from langchain_core.messages.base import BaseMessage
-
-
 from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import HumanMessage
-
-from shared.logger import get_logger
-from shared.tools import web_search
-from agents.codex.state import CodexState
-from agents.codex.format_thread import fetch_thread_timeline_as_string
-from shared.config import config
-from deepagents import create_deep_agent, CompiledSubAgent
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
-from shared.tools import LANGCHAIN_DOCS_TOOLS, search_composio_documentation
+from langchain.agents.middleware import HumanInTheLoopMiddleware, InterruptOnConfig, TodoListMiddleware
+from langchain.tools import tool
+from langchain.tools import ToolRuntime
+
+from shared.logger import get_logger
+from shared.config import config
+from shared.tools import LANGCHAIN_DOCS_TOOLS, search_composio_documentation, web_search
+
+from agents.codex.state import CodexState
+from agents.codex.format_thread import fetch_thread_timeline_as_string
+
 
 from sandbox.tools import (
     run_command,    
@@ -29,23 +32,25 @@ from sandbox.tools import (
     find_usages,
     get_code_region,
     SandboxToolContext,
-    run_command,
-    read_file,
-    grep,
-    inspect_directory,
     create_file,
     create_directory,
     write_file,
     edit_file,
-    ls,
 )
-from pathlib import Path
 
 logger = get_logger("codex.nodes.developer")
 
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent / "developer_prompt.md"
 SYSTEM_PROMPT = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+
+CODEBASE_VIEW_TOOLS = [
+    inspect_directory, read_file, grep, search_code, search_symbols, semantic_search, get_symbol_definition, find_usages, get_code_region
+]
+
+CODEBASE_EDIT_TOOLS = [
+    create_file, create_directory, write_file, edit_file
+]
 
 USER_PROMPT = """
     user exectation with the agent is : {user_raw_request}
@@ -67,46 +72,94 @@ EVALS_AND_THREAD_TRACE_TEMPLATE = """
     </THREAD TRACE>
 """
 
+TODOS_TOOL_SYSTEM_PROMPT = """
+## `write_todos`
+You have access to the `write_todos` tool to help you manage and plan agent development objectives into smaller steps.
+
+-It is critical that you mark todos as completed as soon as you are done with a step.
+-For simple objectives that only require a few steps, it is better to just complete the objective directly and NOT use this tool.
+- The `write_todos` tool should never be called multiple times in parallel.
+- Don't be afraid to revise the To-Do list as you go. New information may reveal new tasks that need to be done, or old tasks that are irrelevant.
+"""
+
+llm = ChatOpenAI(model="gpt-5-codex", reasoning={"effort": "high"})
+
+
+CODEBASE_EXPLORER_SYSTEM_PROMPT = """
+You are a helpful  coding assistant that can help explore the codebase and return detailed necessary information.
+
+You should carefully consider every aspect of the querry, thoroughly inspect the codebase and return the relevant information.
+
+while returning the information don't miss any details, include file paths, code snippets, etc.
+"""
 
 codebase_explorer_subgraph = create_agent(
-    model=ChatOpenAI(model="gpt-5-codex", reasoning={"effort": "high"}),
+    model=llm,
     tools=[
-        inspect_directory,
-        read_file,
-        grep,
-        search_code,
-        search_symbols,
-        semantic_search,
-        get_symbol_definition,
-        ls,
-    ],
-    system_prompt=""" You are a great codebase explorer. based on the user request, you need to explore the codebase and provide the answer to the question, you are provided with the tools to explore the codebase""",
-    context_schema=SandboxToolContext,
-
-)
-codebase_explorer_subagent = CompiledSubAgent(
-    name="codebase-explorer-agent",
-    description="Used to explore the codebase and query the codebase",
-    runnable=codebase_explorer_subgraph,
-)
-
-documentation_explorer_subgraph = create_agent(
-    model=ChatOpenAI(model="gpt-5-codex", reasoning={"effort": "high"}),
-    tools=[
+        *CODEBASE_VIEW_TOOLS,
         web_search,
+        search_composio_documentation,
+    ],
+    system_prompt=CODEBASE_EXPLORER_SYSTEM_PROMPT,
+    context_schema=SandboxToolContext,
+)
+
+@tool
+async def codebase_explorer_subagent(query: str, runtime: ToolRuntime[SandboxToolContext]) -> str:
+    """
+    Explore the codebase and return the relevant information. This tool is an agent that can be used to explore the codebase and return the relevant information.
+    Args:
+        query: The query to explore the codebase.
+    Returns:
+        The relevant information from the codebase.
+    """
+    return await codebase_explorer_subgraph.ainvoke({"messages": [HumanMessage(content=query)]}, config=RunnableConfig(context=runtime.context))
+
+
+
+EXPERIMENTATION_SYSTEM_PROMPT = """
+You are a helpful assistant that can help with tasks related to experimentaion.
+"""
+
+experimantation_subgraph = create_agent(
+    model=llm,
+    tools=[
+        *CODEBASE_VIEW_TOOLS,
+        *CODEBASE_EDIT_TOOLS,
+    ],
+    system_prompt=EXPERIMENTATION_SYSTEM_PROMPT,
+    context_schema=SandboxToolContext,
+)
+
+@tool
+async def experimentaion_subagent(query: str, runtime: ToolRuntime[SandboxToolContext]) -> str:
+    """
+    Experiment with the codebase and return the relevant information. This tool is an agent that can be used to experiment with the codebase and return the relevant information.
+    Args:
+        query: The query to experiment with the codebase.
+    Returns:
+        The relevant information from the codebase.
+    """
+    return await experimantation_subgraph.ainvoke({"messages": [HumanMessage(content=query)]}, config=RunnableConfig(context=runtime.context))
+
+agent = create_agent(
+    model=llm,
+    tools=[
+        run_command,
+        web_search,
+        codebase_explorer_subagent,
+        experimentaion_subagent,
+        *CODEBASE_VIEW_TOOLS,
+        *CODEBASE_EDIT_TOOLS,
         *LANGCHAIN_DOCS_TOOLS,
         search_composio_documentation,
     ],
-    system_prompt="""Used to explore the documentation of langchain/langgraph , composio and any other relevant documentation, You are a great documentation explorer, you are given a question and you need to explore the documentation and provide the answer to the question""",
-    context_schema=SandboxToolContext,
+    system_prompt=SYSTEM_PROMPT,
+    context_schema=SandboxToolContext,  # Add context schema for sandbox tools
+    middleware=[
+        TodoListMiddleware(system_prompt=TODOS_TOOL_SYSTEM_PROMPT),
+    ],
 )
-documentation_explorer_subagent = CompiledSubAgent(
-    name="documentation-explorer-agent",
-    description="Used to explore the documentation of langchain/langgraph , composio and any other relevant documentation",
-    runnable=documentation_explorer_subgraph,
-)
-
-subagents = [codebase_explorer_subagent, documentation_explorer_subagent]
 
 async def developer(state: CodexState) -> CodexState:
     """Single ReAct agent that gathers repo context and returns a concrete plan."""
@@ -119,35 +172,7 @@ async def developer(state: CodexState) -> CodexState:
     
     experiment_results = state.experiment_context.results
 
-    llm = ChatOpenAI(model="gpt-5-codex", reasoning={"effort": "high"})
 
-    agent = create_agent(
-        model=llm,
-        tools=[
-            run_command,
-            inspect_directory,
-            read_file,
-            grep,
-            search_code,
-            search_symbols,
-            semantic_search,
-            get_symbol_definition,
-            find_usages,
-            get_code_region,
-            web_search,
-            # apply_patch,   # this tool call is often error prone, we have edit_file tool instead
-            edit_file,
-            create_file,
-            create_directory,
-            write_file, 
-            ls,
-            *LANGCHAIN_DOCS_TOOLS,
-            search_composio_documentation,
-        ],
-        system_prompt=SYSTEM_PROMPT,
-        context_schema=SandboxToolContext,  # Add context schema for sandbox tools
-        # subagents=subagents,
-    )
     input_messages = list[BaseMessage](state.developer_thread or [])
 
     if not state.latest_results:
