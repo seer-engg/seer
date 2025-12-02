@@ -16,7 +16,7 @@ from shared.schema import (
 from shared.tools import ToolEntry
 
 # Import AgentContext after schema to avoid circular imports
-from shared.agent_context import AgentContext
+from shared.schema import AgentContext
 
 class Hypothesis(BaseModel):
     """
@@ -50,11 +50,6 @@ class EvalAgentState(BaseModel):
     # Handoff from Codex
     codex_output: Optional[CodexOutput] = Field(default=None, description="Output from the codex agent, used for handoff.")
     
-    # Tools
-    tool_entries: Dict[str, ToolEntry] = Field(
-        default_factory=dict, 
-        description="Subset of tools selected for this evaluation run"
-    )
 
 
 class EvalAgentPlannerState(EvalAgentState):
@@ -82,11 +77,8 @@ class TestExecutionState(BaseModel):
     completed_at: Optional[datetime] = Field(default=None, description="End time of this example execution")
     assertion_output:Optional[str] = Field(default=None, description="The output from the assertion agent")
     provisioning_output:Optional[str] = Field(default=None, description="The output from the provisioning agent")
-    
-    tool_entries: Dict[str, ToolEntry] = Field(
-        default_factory=dict, 
-        description="Subset of tools selected for this evaluation run"
-    )
+    current_seed: Optional[str] = Field(default=None, description="The current seed for the test execution")
+
 
 
 # Rebuild models to resolve forward references

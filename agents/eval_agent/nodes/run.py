@@ -51,9 +51,9 @@ async def _upload_results_to_neo4j(state: EvalAgentState) -> dict:
         raise ValueError("UserContext with user_id is required to log memories")
     user_id = state.context.user_context.user_id
 
-    if not state.context.github_context or not state.context.github_context.agent_name:
-        raise ValueError("GithubContext with agent_name is required to log memories")
-    agent_name = state.context.github_context.agent_name
+    if not state.context.agent_name:
+        raise ValueError("AgentContext with agent_name is required to log memories")
+    agent_name = state.context.agent_name
 
     results = list(state.latest_results or [])
     if not results:
@@ -152,7 +152,7 @@ async def _upload_run_results(state: EvalAgentState) -> dict:
             ],
             "start_time": res.started_at.isoformat(),
             "end_time": res.completed_at.isoformat(),
-            "run_name": state.context.github_context.agent_name if state.context.github_context else "",
+            "run_name": state.context.agent_name if state.context.agent_name else "",
             "run_metadata": {"passed": res.passed},
         }
         for res in results_payload

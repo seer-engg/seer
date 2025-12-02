@@ -5,13 +5,11 @@ from typing import List
 from langchain_core.messages import HumanMessage
 from agents.eval_agent.models import TestExecutionState
 from shared.logger import get_logger
-from shared.resource_utils import format_resource_hints
 from shared.llm import get_llm
 from agents.eval_agent.reflexion_factory import create_ephemeral_reflexion
 from langchain_core.runnables import RunnableConfig
-from .utils import get_tool_hub
 from langchain.agents import create_agent
-from shared.mcp_client import ComposioMCPClient
+from shared.tools import ComposioMCPClient
 from shared.config import config
 from .utils import handle_tool_errors
 logger = get_logger("eval_agent.execute.provision")
@@ -42,7 +40,7 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
         logger.error("No provisioning instructions or MCP services; skipping provisioning phase.")
         return {}
     
-    resource_hints = format_resource_hints(state.mcp_resources)
+    resource_hints = state.mcp_resources
 
     # tool_hub = await get_tool_hub()    
     # Semantic Tool Selection: Use filtered tools if available
@@ -66,10 +64,10 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
     tool_service = ComposioMCPClient(["GITHUB", "ASANA"], config.composio_user_id)
     all_tools = await tool_service.get_tools()
 
-    llm = get_llm(model='gpt-5.1', temperature=0.0)
+    llm = get_llm(model='gpt-5.1', reasoning_effort='high')
     actual_tools = []
     for tool in all_tools:
-        if tool.name in state.tool_entries.keys():
+        if tool.name in state.context.tool_entries.keys():
             actual_tools.append(tool)
  
     provisioning_agent = create_agent(

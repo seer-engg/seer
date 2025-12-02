@@ -6,12 +6,12 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, ConfigDict
 from agents.eval_agent.models import EvalAgentPlannerState
 from shared.logger import get_logger
-from shared.resource_utils import format_resource_hints
 from shared.schema import (
     DatasetExample,
 )
 from shared.llm import get_llm
 from shared.config import config
+from shared.prompt_loader import load_prompt
 
 logger = get_logger("eval_agent.plan.generate_evals")
 
@@ -20,16 +20,15 @@ class EvalGenerationOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-from shared.prompt_loader import load_prompt
 
-# Load prompts from YAML
 _PROMPT_CONFIG = load_prompt("eval_agent/generator.yaml")
 AGENTIC_GENERATOR_SYSTEM_PROMPT = _PROMPT_CONFIG.system
 USER_PROMPT = _PROMPT_CONFIG.user_template
+ALL_PROMPTS = _PROMPT_CONFIG.all_prompts
 
 
 async def agentic_eval_generation(state: EvalAgentPlannerState) -> dict:
-    agent_name = state.context.github_context.agent_name
+    agent_name = state.context.agent_name
     
     # Get just the inputs from the most recent run
     previous_inputs = [res.dataset_example.input_message for res in state.latest_results]
@@ -39,13 +38,14 @@ async def agentic_eval_generation(state: EvalAgentPlannerState) -> dict:
     prev_dataset_examples = json.dumps(previous_inputs, indent=2)
     mcp_services = state.context.mcp_services
 
-    resource_hints = format_resource_hints(state.context.mcp_resources)
+    resource_hints = state.context.mcp_resources
 
     logger.info("Using 'agentic' (structured output) test generation.")
 
     structured_llm = get_llm(
             model="gpt-5.1",
             temperature=0.0,
+            reasoning_effort='medium',
         ).with_structured_output(EvalGenerationOutput, method="json_schema", strict=True)
 
     user_prompt = USER_PROMPT.format(
@@ -56,10 +56,15 @@ async def agentic_eval_generation(state: EvalAgentPlannerState) -> dict:
         resource_hints=resource_hints,
         mcp_services=mcp_services,
     )
+
+    SYSTEM_PROMPT = AGENTIC_GENERATOR_SYSTEM_PROMPT.format(resource_hints=resource_hints)
+
+    for service in mcp_services:
+        SYSTEM_PROMPT += ALL_PROMPTS[service]
     
     # Single LLM call with system prompt + user message
     output: EvalGenerationOutput = await structured_llm.ainvoke([
-        SystemMessage(content=AGENTIC_GENERATOR_SYSTEM_PROMPT),
+        SystemMessage(content=SYSTEM_PROMPT),
         HumanMessage(content=user_prompt)
     ])
     

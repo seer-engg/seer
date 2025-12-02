@@ -15,14 +15,8 @@ from shared.logger import get_logger
 from composio import Composio
 from composio_langchain import LangchainProvider
 
-logger = get_logger("shared.mcp_client")
+logger = get_logger("shared.tools.composio")
 
-# Cache for service definitions
-_service_definitions: List[Dict[str, Any]] = []
-
-# Cache for MCP clients and tools (keyed by frozenset of service names)
-_client_cache: Dict[frozenset, Tuple[Any, Dict[str, Dict[str, Any]]]] = {}
-_tools_cache: Dict[frozenset, List[BaseTool]] = {}
 
 class ComposioMCPClient:
     """
@@ -51,3 +45,6 @@ class ComposioMCPClient:
             limit=2000
         )
         return tools
+    
+    def get_client(self) -> Composio:
+        return self._composio

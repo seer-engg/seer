@@ -18,7 +18,6 @@ async def invoke_target_node(state: TestExecutionState) -> dict:
     
     # Format message with appropriate context level
     context_level = config.target_agent_context_level
-    base_message = example.input_message
     
     formatted_message = format_target_agent_message(
         example=example,
@@ -29,7 +28,7 @@ async def invoke_target_node(state: TestExecutionState) -> dict:
     # Strategic logging: Log what we're sending to target agent
     logger.info(
         f"🎯 Invoking target agent: context_level={context_level}, "
-        f"base_msg_len={len(base_message)}, formatted_msg_len={len(formatted_message)}, "
+        f"base_msg_len={len(example.input_message)}, formatted_msg_len={len(formatted_message)}, "
         f"msg_preview={formatted_message[:100]}..."
     )
     
@@ -38,6 +37,7 @@ async def invoke_target_node(state: TestExecutionState) -> dict:
             sandbox_context=state.context.sandbox_context,
             github_context=state.context.github_context,
             input_message=formatted_message,
+            agent_name=state.context.agent_name,
             timeout_seconds=600,
         )
 

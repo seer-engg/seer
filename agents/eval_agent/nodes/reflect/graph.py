@@ -93,7 +93,7 @@ async def reflect_node(state: EvalAgentState) -> dict:
     # Define the context we will pass to the agent's tools
     tool_context = ReflectionToolContext(
         user_id=state.context.user_context.user_id,
-        agent_name=state.context.github_context.agent_name,
+        agent_name=state.context.agent_name,
         attempts=state.attempts,
         latest_results=state.latest_results,
         raw_request=state.context.user_context.raw_request,

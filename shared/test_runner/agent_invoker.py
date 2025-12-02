@@ -15,7 +15,7 @@ from langgraph.pregel.remote import RemoteGraph
 from langgraph_sdk import get_sync_client
 from e2b import AsyncSandbox
 
-from shared.schema import SandboxContext, GithubContext
+from shared.schema import SandboxContext
 from shared.logger import get_logger
 from sandbox.constants import TARGET_AGENT_PORT
 
@@ -42,7 +42,7 @@ class AgentInvocationResult(BaseModel):
 
 async def invoke_target_agent(
     sandbox_context: SandboxContext,
-    github_context: GithubContext,
+    agent_name: str,
     input_message: str,
     timeout_seconds: int = 300
 ) -> AgentInvocationResult:
@@ -53,7 +53,7 @@ async def invoke_target_agent(
     
     Args:
         sandbox_context: The sandbox where the agent is running
-        github_context: Context about the agent being tested
+        agent_name: The name of the agent being tested
         input_message: The human-readable scenario to send to the agent
         mcp_resources: Resources provisioned in Phase 1 (e.g., {"test_pr": {...}})
         mcp_configs: MCP server configurations to send to the agent
@@ -63,7 +63,7 @@ async def invoke_target_agent(
         AgentInvocationResult with tool_calls, output, and any errors
         
     Raises:
-        ValueError: If sandbox_context or github_context is invalid
+        ValueError: If sandbox_context or agent_name is invalid
         RuntimeError: If agent invocation fails
         asyncio.TimeoutError: If agent exceeds timeout
     """
@@ -73,13 +73,13 @@ async def invoke_target_agent(
             "Cannot invoke agent without sandbox."
         )
     
-    if not github_context or not github_context.agent_name:
+    if not agent_name:
         raise ValueError(
-            "github_context with valid agent_name is required. "
+            "agent_name with valid name is required. "
             "Cannot invoke agent without knowing which agent to test."
         )
     
-    logger.info(f"Invoking target agent '{github_context.agent_name}' with message: {input_message[:100]}...")
+    logger.info(f"Invoking target agent '{agent_name}' with message: {input_message[:100]}...")
     start_time = datetime.now(timezone.utc)
     
     try:
@@ -99,7 +99,7 @@ async def invoke_target_agent(
         # 2. Set up RemoteGraph client
         sync_client = get_sync_client(url=deployment_url)
         remote_graph = RemoteGraph(
-            github_context.agent_name,
+            agent_name,
             sync_client=sync_client,
         )
         
@@ -151,7 +151,7 @@ async def invoke_target_agent(
         logger.error(error_msg)
         
         raise RuntimeError(
-            f"Agent '{github_context.agent_name}' exceeded timeout of {timeout_seconds}s. "
+            f"Agent '{agent_name}' exceeded timeout of {timeout_seconds}s. "
             f"The agent may be stuck, hanging, or taking too long to respond. "
             f"Actual execution time: {execution_time:.2f}s"
         )

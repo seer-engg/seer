@@ -1,14 +1,12 @@
-import asyncio
 from typing import Dict
 from agents.eval_agent.models import EvalAgentPlannerState
-from agents.eval_agent.nodes.execute.utils import get_tool_hub
 from shared.logger import get_logger
 from shared.tools import ToolEntry
 from pydantic import BaseModel
 from typing import List
 from langchain_openai import ChatOpenAI
 from pydantic import Field
-from shared.mcp_client import ComposioMCPClient
+from shared.tools import ComposioMCPClient
 from shared.config import  config
 
 logger = get_logger("eval_agent.plan.filter_tools")
@@ -87,6 +85,9 @@ async def filter_tools(state: EvalAgentPlannerState) -> dict:
 
     logger.info(f"Selected {len(tool_entries)} tools: {list(tool_entries.keys())}")
 
+    context = state.context
+    context.tool_entries = tool_entries
+
     return {
-        "tool_entries": tool_entries,
+        "context": context,
     }
