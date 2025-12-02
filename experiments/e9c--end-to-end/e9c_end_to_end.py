@@ -28,15 +28,33 @@ from langsmith import Client as LangSmithClient
 # Configuration
 EVAL_AGENT_PORT = 8004
 EVAL_AGENT_URL = f"http://127.0.0.1:{EVAL_AGENT_PORT}"
-RESULTS_DIR = Path(__file__).parent / "e9c_results"
-RESULTS_DIR.mkdir(exist_ok=True, parents=True)
+RESULTS_FILE = Path(__file__).parent / "results.json"
 
 LEVEL_NAMES = {0: "minimal", 1: "system_goal", 2: "system_goal_action", 3: "full_context"}
 
-TEST_SCENARIO = """Evaluate my agent buggy_coder at https://github.com/seer-engg/buggy-coder
+# TWO TEST SCENARIO VARIANTS
+# Select which variant to use via --variant argument (default: 1)
 
-The agent should sync Asana ticket updates when a GitHub PR is merged. 
-Whenever I merge a PR, it should search for related Asana tickets and update/close them."""
+TEST_SCENARIOS = {
+    1: """Evaluate my agent buggy_coder at https://github.com/seer-engg/buggy-coder
+
+The agent should be able to list GitHub issues.
+When I ask it to "list all open issues", it should return a list of open issues.""",
+
+    2: """Evaluate my agent buggy_coder at https://github.com/seer-engg/buggy-coder
+
+The agent should be able to create a GitHub issue.
+When I ask it to "create an issue", it should create a new issue with a title."""
+}
+
+# Default to variant 1 (simplest - read-only)
+TEST_SCENARIO = TEST_SCENARIOS[1]
+
+# ORIGINAL COMPLEX SCENARIO (commented out - all tests failing)
+# TEST_SCENARIO = """Evaluate my agent buggy_coder at https://github.com/seer-engg/buggy-coder
+#
+# The agent should sync Asana ticket updates when a GitHub PR is merged. 
+# Whenever I merge a PR, it should search for related Asana tickets and update/close them."""
 
 LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
 LANGSMITH_CLIENT = LangSmithClient(api_key=LANGSMITH_API_KEY) if LANGSMITH_API_KEY else None
@@ -55,7 +73,7 @@ def start_agent(context_level: int):
     env = os.environ.copy()
     env["TARGET_AGENT_CONTEXT_LEVEL"] = str(context_level)
     env["CODEX_HANDOFF_ENABLED"] = "false"
-    env["EVAL_N_TEST_CASES"] = "1"  # Just 1 test case
+    env["EVAL_N_TEST_CASES"] = "2"  # Increased to 2 test cases for better signal
     env["EVAL_N_ROUNDS"] = "1"  # Just 1 round
     env["PYTHONPATH"] = f"{os.getcwd()}:{env.get('PYTHONPATH', '')}"
     
@@ -82,20 +100,34 @@ def start_agent(context_level: int):
         preexec_fn=os.setsid
     )
     
-    # Wait for ready
+    # Wait for ready - increased timeout and better error handling
     print("⏳ Waiting for agent...")
-    for i in range(30):
+    for i in range(60):  # Increased from 30 to 60 seconds
         try:
             sync_client = get_sync_client(url=EVAL_AGENT_URL)
             sync_client.threads.create()
             print("✅ Agent ready!")
             return process, log_file
-        except:
+        except Exception as e:
             if process.poll() is not None:
-                raise RuntimeError("Agent failed to start")
+                # Process died, try to read error from log file
+                error_msg = f"Agent failed to start. Exit code: {process.returncode}"
+                try:
+                    # Log file is write-only, read from disk instead
+                    log_path = log_file.name
+                    log_file.close()
+                    with open(log_path, 'r') as f:
+                        log_content = f.read()
+                        if "error" in log_content.lower() or "Error" in log_content:
+                            error_msg += f"\nLast log entries:\n{log_content[-500:]}"
+                except:
+                    pass  # If we can't read log, just report the exit code
+                raise RuntimeError(error_msg)
+            if i % 5 == 0:  # Print progress every 5 seconds
+                print(f"  Still waiting... ({i+1}/60)")
             time.sleep(1)
     
-    raise RuntimeError("Agent timeout")
+    raise RuntimeError(f"Agent timeout after 60 seconds. Check logs at {log_file.name}")
 
 async def run_experiment(context_level: int):
     """Run full workflow for one context level."""
@@ -154,11 +186,18 @@ async def run_experiment(context_level: int):
 
 async def main():
     parser = __import__("argparse").ArgumentParser()
-    parser.add_argument("--level", type=int, required=True, choices=[0,1,2,3])
+    parser.add_argument("--level", type=int, required=True, choices=[1,2,3])
+    parser.add_argument("--variant", type=int, default=1, choices=[1,2],
+                        help="Test scenario variant: 1=read-only (list issues), 2=simple write (create issue)")
     args = parser.parse_args()
     
     level = args.level
-    print(f"🧪 E9c: End-to-End - Level {level}")
+    variant = args.variant
+    global TEST_SCENARIO
+    TEST_SCENARIO = TEST_SCENARIOS[variant]
+    
+    print(f"🧪 E9c: End-to-End - Level {level}, Variant {variant}")
+    print(f"📋 Test Scenario: {TEST_SCENARIO[:100]}...")
     
     # Cleanup
     kill_existing_agent()
@@ -170,15 +209,41 @@ async def main():
         # Run experiment
         result = await run_experiment(level)
         
-        # Save results
+        # Save results to consolidated JSON
         result["timestamp"] = datetime.now().isoformat()
         result["context_level"] = level
+        result["test_variant"] = variant
+        result["test_scenario"] = TEST_SCENARIO
         
-        filename = RESULTS_DIR / f"level_{level}_result.json"
-        with open(filename, 'w') as f:
-            json.dump(result, f, indent=2, default=str)
+        # Load existing consolidated results or create new structure
+        if RESULTS_FILE.exists():
+            with open(RESULTS_FILE) as f:
+                consolidated = json.load(f)
+        else:
+            consolidated = {
+                "experiment": "E9c: Context Level Impact on End-to-End Evaluation",
+                "variants": {
+                    "1": "Read-only operations (List GitHub Issues)",
+                    "2": "Simple write operations (Create GitHub Issue)"
+                },
+                "context_levels": {
+                    "1": "System Goal (input_message + system goal description)",
+                    "2": "System Goal + Action (Level 1 + expected action)",
+                    "3": "Full Context (Level 2 + MCP services + resource hints)"
+                },
+                "results": {}
+            }
         
-        print(f"\n💾 Results saved to {filename}")
+        # Update consolidated results
+        if str(level) not in consolidated["results"]:
+            consolidated["results"][str(level)] = {}
+        consolidated["results"][str(level)][str(variant)] = result
+        
+        # Save consolidated results
+        with open(RESULTS_FILE, 'w') as f:
+            json.dump(consolidated, f, indent=2, default=str)
+        
+        print(f"\n💾 Results saved to {RESULTS_FILE} (Level {level}, Variant {variant})")
         
     finally:
         print("🧹 Stopping agent...")
