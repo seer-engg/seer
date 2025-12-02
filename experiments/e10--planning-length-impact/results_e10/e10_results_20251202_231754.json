@@ -1,0 +1,196 @@
+{
+  "experiment": "e10_reasoning_effort",
+  "timestamp": "20251202_231754",
+  "task": "Get all Asana tasks from the project. List all tasks with their names and statuses.",
+  "results": {
+    "minimal": {
+      "reasoning_effort": "minimal",
+      "num_tests": 1,
+      "time": 179.32993721961975,
+      "plan": [
+        {
+          "example_id": "ed47d825-83d0-44b9-8512-58a9270d5db0",
+          "input_message": "List every task that currently exists in the configured Asana project, and for each task tell me its name and whether it is completed or not. If there are no tasks at all in the project, say clearly that the project has no tasks instead of failing or returning an error. Your answer should be based on what you actually see in the project right now.",
+          "expected_output": {
+            "create_test_data": [
+              {
+                "service_name": "asana",
+                "instructions": [
+                  "In Asana workspace with id 1211928405122978, locate the existing project identified in this test environment as <asana_project_gid>. This project is assumed to already exist; do not create a new project.",
+                  "Ensure the project is active (not archived). If it is archived, unarchive it for the duration of this test.",
+                  "Create exactly three tasks in this project with the following properties:\n1) Task name: \"AT Basic Task 1 - Incomplete\"\n   - Notes/description: \"Test task 1 for basic listing, should remain incomplete.\"\n   - Completed status: false (task must be marked as not completed).\n   - Assignee: leave unassigned.\n   - Due date: leave empty.\n\n2) Task name: \"AT Basic Task 2 - Completed\"\n   - Notes/description: \"Test task 2 for basic listing, should be completed.\"\n   - Completed status: true (explicitly mark the task as completed).\n   - Assignee: leave unassigned.\n   - Due date: leave empty.\n\n3) Task name: \"AT Basic Task 3 - Incomplete\"\n   - Notes/description: \"Test task 3 for basic listing, should remain incomplete.\"\n   - Completed status: false (task must be marked as not completed).\n   - Assignee: leave unassigned.\n   - Due date: leave empty.",
+                  "Verify that these three tasks are all in the same Asana project <asana_project_gid> and that there are no other tasks whose names start with \"AT Basic Task\" in this project. If any pre-existing tasks have names beginning with \"AT Basic Task\", either delete them or rename them so they do not start with this prefix. This ensures the test validation can unambiguously reason about the three created tasks."
+                ]
+              }
+            ],
+            "assert_final_state": [
+              {
+                "service_name": "asana",
+                "instructions": [
+                  "In Asana workspace 1211928405122978, open the project referred to as <asana_project_gid>.",
+                  "Confirm that the following three tasks exist in this project:\n- A task named \"AT Basic Task 1 - Incomplete\".\n- A task named \"AT Basic Task 2 - Completed\".\n- A task named \"AT Basic Task 3 - Incomplete\".",
+                  "For each of these tasks, verify their completion status:\n- \"AT Basic Task 1 - Incomplete\" must have completed = false.\n- \"AT Basic Task 2 - Completed\" must have completed = true.\n- \"AT Basic Task 3 - Incomplete\" must have completed = false.",
+                  "Verify that the target agent did not create, delete, or rename any of these three tasks. The task names must remain exactly as provisioned, and the completion status of each task must be unchanged from the initial setup.",
+                  "Also verify that there are still no additional tasks in this project whose names start with \"AT Basic Task\" beyond the three specified tasks. If any such extra tasks exist, then the agent has incorrectly modified the project state."
+                ]
+              }
+            ],
+            "expected_action": "Call the Asana-enabled capability to retrieve all tasks in the configured project and respond with a list of each task\u2019s name and whether it is completed, while not modifying any tasks."
+          },
+          "status": "active"
+        }
+      ],
+      "metrics": {
+        "num_test_cases": 1,
+        "total_instructions_create": 4,
+        "total_instructions_assert": 5,
+        "total_instructions": 9,
+        "num_services": 1,
+        "plan_text_length": 3291,
+        "plan_token_count": 774,
+        "avg_instructions_per_test": 9.0
+      }
+    },
+    "medium": {
+      "reasoning_effort": "medium",
+      "num_tests": 1,
+      "time": 743.157110452652,
+      "plan": [
+        {
+          "example_id": "57fa413b-fee0-4f93-96a5-2e8ecc28198d",
+          "input_message": "Please get all tasks from the configured Asana project and list each one with its name and whether it is completed or not. If there are no tasks in the project, clearly state that the project has no tasks instead of failing or returning an error. Your answer should reflect the actual current tasks in the project when you run this.",
+          "expected_output": {
+            "create_test_data": [
+              {
+                "service_name": "asana",
+                "instructions": [
+                  "Use the existing Asana workspace with id 1211928405122978.",
+                  "Within this workspace, locate the existing test project identified by the placeholder <asana_project_gid>. This project already exists and must not be created anew.",
+                  "In the project <asana_project_gid>, create exactly three tasks with the following properties:\n  1) Task name: \"Setup CI pipeline\"\n     - Notes/description: \"Configure CI workflow for automated tests.\"\n     - Completion status: incomplete (mark it as not completed).\n     - Ensure this task is added to the project <asana_project_gid>.\n  2) Task name: \"Write API documentation\"\n     - Notes/description: \"Draft initial API reference for internal services.\"\n     - Completion status: completed (explicitly mark it as completed).\n     - Ensure this task is added to the project <asana_project_gid>.\n  3) Task name: \"Security review\"\n     - Notes/description: \"Perform security assessment for the new release.\"\n     - Completion status: incomplete (mark it as not completed).\n     - Ensure this task is added to the project <asana_project_gid>.\n\nFor each of the three tasks, there is no need to set assignees, due dates, or custom fields beyond what is specified above. The important attributes are: task name, inclusion in project <asana_project_gid>, and completion status exactly as described.\n\nConfirm that, AFTER creation, the project <asana_project_gid> contains at least these three tasks with the exact names specified. It is acceptable if the project also contains older pre-existing tasks from earlier tests; do NOT delete or modify any pre-existing tasks. Just ensure the three new tasks are present with the correct completion states."
+                ]
+              }
+            ],
+            "assert_final_state": [
+              {
+                "service_name": "asana",
+                "instructions": [
+                  "In the Asana workspace with id 1211928405122978, access the existing project identified by the placeholder <asana_project_gid>.",
+                  "Verify that the project <asana_project_gid> still contains all three specifically created tasks with the exact names:\n  - \"Setup CI pipeline\"\n  - \"Write API documentation\"\n  - \"Security review\"\nDo NOT require the absence of any other tasks; additional tasks are allowed.",
+                  "For each of these three tasks, verify the completion status:\n  - The task named \"Setup CI pipeline\" MUST be marked as incomplete (not completed).\n  - The task named \"Write API documentation\" MUST be marked as completed.\n  - The task named \"Security review\" MUST be marked as incomplete (not completed).",
+                  "Confirm that none of the three tasks has been deleted, renamed, or had its completion status changed by the target agent. The target agent is expected only to read/list tasks, not to mutate them. Therefore, the final state of these tasks (names and completion flags) must match exactly what was set during create_test_data."
+                ]
+              }
+            ],
+            "expected_action": "Call the Asana-enabled agent endpoint to read all tasks from the configured project and return a list of task names with their completion statuses, without modifying any tasks."
+          },
+          "status": "active"
+        }
+      ],
+      "metrics": {
+        "num_test_cases": 1,
+        "total_instructions_create": 3,
+        "total_instructions_assert": 4,
+        "total_instructions": 7,
+        "num_services": 1,
+        "plan_text_length": 3405,
+        "plan_token_count": 740,
+        "avg_instructions_per_test": 7.0
+      }
+    },
+    "high": {
+      "reasoning_effort": "high",
+      "num_tests": 1,
+      "time": 556.4089577198029,
+      "plan": [
+        {
+          "example_id": "291c67e7-b0d1-49cc-b65e-79e5b5b0397b",
+          "input_message": "List every task in the configured Asana project, and for each one, tell me its name and whether it is completed or not. If there are no tasks in the project, say clearly that the project currently has no tasks.",
+          "expected_output": {
+            "create_test_data": [
+              {
+                "service_name": "asana",
+                "instructions": [
+                  "Use the Asana workspace with id 1211928405122978.",
+                  "Within this workspace, use the existing Asana project identified in this environment as <asana_project_gid>. Do NOT create a new project; use the existing one referenced by <asana_project_gid>.",
+                  "Ensure this project has exactly three tasks before the target agent is invoked:\n1) Create a task with:\n   - name: \"Onboard new developer\"\n   - notes/description: any non-empty text\n   - completed: false (task must be explicitly marked as incomplete)\n   - project: add it to the project <asana_project_gid>.\n2) Create a task with:\n   - name: \"Prepare sprint demo slides\"\n   - notes/description: any non-empty text\n   - completed: true (task must be explicitly marked as completed)\n   - project: add it to the project <asana_project_gid>.\n3) Create a task with:\n   - name: \"Update API documentation\"\n   - notes/description: any non-empty text\n   - completed: false (task must be explicitly marked as incomplete)\n   - project: add it to the project <asana_project_gid>.\nMake sure there are no other tasks in project <asana_project_gid> besides these three at the time of invocation, so that the target agent\u2019s listing can be deterministically verified."
+                ]
+              },
+              {
+                "service_name": "github",
+                "instructions": [
+                  "No GitHub data is required for this test case. Do not create or modify any repositories, issues, pull requests, or labels."
+                ]
+              }
+            ],
+            "assert_final_state": [
+              {
+                "service_name": "asana",
+                "instructions": [
+                  "Use the Asana workspace with id 1211928405122978 and the existing project <asana_project_gid>.",
+                  "Verify that the project <asana_project_gid> still contains exactly the three tasks created in the preconditions and that none of them were modified or deleted by the target agent:\n1) A task named \"Onboard new developer\" that is in project <asana_project_gid> and is incomplete (completed = false).\n2) A task named \"Prepare sprint demo slides\" that is in project <asana_project_gid> and is complete (completed = true).\n3) A task named \"Update API documentation\" that is in project <asana_project_gid> and is incomplete (completed = false).\nConfirm that no additional tasks have been created in project <asana_project_gid> by the target agent. The expected behavior is read-only listing; the target agent should not change any task fields such as name, completion status, or project membership."
+                ]
+              },
+              {
+                "service_name": "github",
+                "instructions": [
+                  "Confirm that no GitHub data was created or modified by this test. There should be no new issues, pull requests, comments, or labels in the repository seer-engg/label-edgecase-repo as a result of running the target agent for this test case."
+                ]
+              }
+            ],
+            "expected_action": "Call the Asana-enabled agent endpoint to read all tasks from the configured Asana project and return a textual list of each task\u2019s name and completion status, without modifying any Asana or GitHub data."
+          },
+          "status": "active"
+        }
+      ],
+      "metrics": {
+        "num_test_cases": 1,
+        "total_instructions_create": 4,
+        "total_instructions_assert": 3,
+        "total_instructions": 7,
+        "num_services": 2,
+        "plan_text_length": 3150,
+        "plan_token_count": 728,
+        "avg_instructions_per_test": 7.0
+      }
+    }
+  },
+  "ranking": {
+    "ranking": [
+      "high",
+      "medium",
+      "minimal"
+    ],
+    "reasoning": "All three plans satisfy the basic requirement: call the Asana-enabled capability to list all tasks in the configured project with name and completion status, and avoid mutating data. The differences lie in test-data setup constraints, handling of pre-existing data, and determinism of verification.\n\n1) HIGH (best)\n- Completeness: Explicitly constrains the project to have exactly three tasks and forbids any others. This allows deterministic verification that the agent truly listed *all* tasks and did not skip or filter anything. It also explicitly ensures read-only behavior and includes a negative requirement for GitHub (no cross-service side effects).\n- Quality: Very strong: it defines concrete task names, completion states, and requires notes to be non-empty, ensuring the tasks are clearly recognizable. By forcing the project to contain only those three tasks, the test detects agents that only list partial results, or that mis-handle pagination, because any discrepancy becomes obvious.\n- Feasibility: Entirely feasible in a controlled test environment where we are allowed to delete/ensure absence of other tasks in the project. The instructions for the GitHub service are simple and purely observational.\n- Edge Cases: Covers the edge case of unintended side effects (no new tasks, no modifications, no GitHub activity). It does not directly exercise the \u201cno tasks in project\u201d scenario, but ensures strong validation for correct listing and read-only behavior, which is more important for this core task.\n- Clarity: Very clear, well-structured, and unambiguous about project identity, number of tasks, and verification expectations.\n\n2) MEDIUM\n- Completeness: Also calls for listing all tasks with name and completion status and checking that no mutations occur. It respects the requirement to handle empty-project scenarios, though the specific test data it provisions ensures there are at least three tasks.\n- Quality: Good but weaker than HIGH. It permits pre-existing tasks to remain and does not limit the project to only the three created tasks. This means that verification is less strict: the validator only needs to see that the three specific tasks with correct statuses exist, but cannot easily assert that the agent listed *every* task in the project. As a result, an agent that lists only some tasks could still pass if it happens to include these three.\n- Feasibility: Very feasible\u2014does not require cleaning existing data, just appends three tasks. This is friendly to shared environments but compromises determinism.\n- Edge Cases: Allows additional tasks and doesn\u2019t verify behavior in a fully empty project. It also does not probe pagination or maximum result size, though it\u2019s still sufficient for a baseline test.\n- Clarity: Clear instructions, but less strict language about project contents makes the test less powerful.\n\n3) MINIMAL (worst)\n- Completeness: Meets the basic goal of read-only listing but is more brittle. It additionally constrains that there must be *no other tasks whose names start with* a specific prefix and requires exactly three such tasks. However, it does *not* restrict the total number of tasks in the project, only those with that prefix.\n- Quality: Weaker and more idiosyncratic than MEDIUM and HIGH. The focus on a name prefix rather than the whole project content complicates the mental model and validation. There could be many other tasks in the project, and the test then mainly confirms listing of these three specially named tasks. As with MEDIUM, an under-listing agent might still pass if it happens to return just these tasks.\n- Feasibility: Potentially more intrusive than MEDIUM because it may require deleting or renaming pre-existing tasks that share the prefix, which could be more disruptive in a shared environment than simply adding new uniquely named tasks.\n- Edge Cases: Like MEDIUM, it does not meaningfully probe the \u201cno tasks at all\u201d path in practice, since it deliberately creates tasks. Its special treatment of the name prefix is an unnecessary complexity and does not improve edge-case coverage.\n- Clarity: Somewhat less clear due to the prefix-based constraint and the requirement to manipulate or rename pre-existing tasks with that prefix; this introduces ambiguity and extra steps without clear benefit.\n\nOverall ranking based on the combined criteria and higher reasoning effort level is: HIGH as 1st, MEDIUM as 2nd, MINIMAL as 3rd.",
+    "best_plan_qualities": "Constrains the project to exactly three known tasks so verification of completeness is deterministic; explicitly checks read-only behavior and forbids creation/modification of tasks or cross-service (GitHub) side effects; uses clear, concrete instructions for both setup and final-state checks; and provides unambiguous criteria for a correct listing of all tasks with their names and completion statuses.",
+    "worst_plan_weaknesses": "Relies on a name-prefix convention rather than total project contents, which complicates validation; does not ensure that *all* tasks are verifiably listed, only that three specially named tasks exist and are unmodified; may require deleting or renaming pre-existing tasks that share the prefix, which is more intrusive and less feasible in shared environments; and adds complexity without improving coverage of edge cases such as empty projects or pagination."
+  },
+  "execution": {
+    "minimal": {
+      "num_tests": 1,
+      "provisioning_succeeded": 1,
+      "provisioning_failed": 0,
+      "provisioning_success_rate": 100.0,
+      "passed": 1,
+      "failed": 0,
+      "success_rate": 100.0
+    },
+    "medium": {
+      "num_tests": 1,
+      "provisioning_succeeded": 0,
+      "provisioning_failed": 1,
+      "provisioning_success_rate": 0.0,
+      "passed": 0,
+      "failed": 1,
+      "success_rate": 0.0
+    },
+    "high": {
+      "num_tests": 1,
+      "provisioning_succeeded": 1,
+      "provisioning_failed": 0,
+      "provisioning_success_rate": 100.0,
+      "passed": 1,
+      "failed": 0,
+      "success_rate": 100.0
+    }
+  }
+}
