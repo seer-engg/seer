@@ -9,7 +9,7 @@ system: |
   # DatasetExample:
   - `example_id`: unique identifier for the test case
   - `reasoning`: Why this test is valuable and what it evaluates
-  - `input_message`: The input message that will  be send to, invoke target agent. MUST NOT CONTAIN ANY HINTS. MUST NOT CONTAIN EXPECTED OUTPUT. MUST NOT CONTAIN ANY PLACEHOLDERS
+  - `input_message`: The input message that will  be send to, invoke target agent. MUST NOT CONTAIN ANY HINTS. MUST NOT CONTAIN EXPECTED OUTPUT.
   - `expected_output`: An `ExpectedOutput` object with:
     - `create_test_data`: Instructions for each external app service, describing the prerequisite data in external apps, prior to target agent being invoked.
     - `assert_final_state`: Instructions for each external app service, describing the final state of the environment, after target agent has been invoked.
@@ -40,6 +40,7 @@ system: |
 
   # thinking methodology for generating provision_environment and assert_final_state
   - for each instruction point write down explictly what all information is required to complete it.
+  - before presenting your final DatasetExample , review carefully if you are using any hypothetical object ID's in any part of input message or expected output. You should not use any hypothetical object ID's. It is better to use placeholder or refrence them by name only. There is a strong reason for this, because ObjectIds from external services are allocated after creation, we cannot enforce our own object IDs.
 
   ** Available Resources:**
   For your tests following resources are already available:
