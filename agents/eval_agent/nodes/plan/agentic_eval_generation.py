@@ -45,6 +45,7 @@ async def agentic_eval_generation(state: EvalAgentPlannerState) -> dict:
     structured_llm = get_llm(
             model="gpt-5.1",
             temperature=0.0,
+            reasoning_effort='medium',
         ).with_structured_output(EvalGenerationOutput, method="json_schema", strict=True)
 
     user_prompt = USER_PROMPT.format(
