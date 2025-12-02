@@ -6,7 +6,6 @@ enabling experiments on how context comprehensiveness impacts evaluation quality
 """
 from typing import Optional
 from shared.schema import DatasetExample, AgentContext
-from shared.resource_utils import format_resource_hints
 from shared.logger import get_logger
 
 logger = get_logger("shared.message_formatter")
@@ -62,7 +61,7 @@ def format_target_agent_message(
             parts.append(", ".join(context.mcp_services))
         
         if context.mcp_resources:
-            resource_hints = format_resource_hints(context.mcp_resources)
+            resource_hints = str(context.mcp_resources)
             if resource_hints and resource_hints != "None provided. Prefer using [var:...] or [resource:...] tokens for runtime values.":
                 parts.append("\n\n--- Available Resources ---")
                 parts.append(resource_hints)
