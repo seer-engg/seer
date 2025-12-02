@@ -65,6 +65,7 @@ class SeerConfig(BaseSettings):
     target_agent_command: str = Field(default="langgraph dev --host 0.0.0.0", description="Command to run target agent")
     codex_handoff_enabled: bool = Field(default=True, description="Enable handoff to codex agent")
     eval_plan_only_mode: bool = Field(default=False, description="Plan-only mode: skip execution, return after plan generation")
+    eval_reasoning_effort: str = Field(default="medium", description="Reasoning effort for eval agent planning: 'minimal', 'medium', or 'high'")
     
     # Base template for E2B sandbox
     base_template_alias: str = Field(default="seer-base", description="E2B template alias")
@@ -75,6 +76,7 @@ class SeerConfig(BaseSettings):
     # ============================================================================
     allow_pr: bool = Field(default=True, description="Allow PR creation even if eval  fails")
     eval_agent_handoff_enabled: bool = Field(default=False, description="Enable handoff to eval agent")
+    codex_reasoning_effort: str = Field(default="high", description="Reasoning effort for Codex developer node: 'minimal', 'medium', or 'high'")
     
     # ============================================================================
     # Neo4j Graph Database Configuration
@@ -125,6 +127,7 @@ class SeerConfig(BaseSettings):
     
     asana_workspace_id: Optional[str] = Field(default=None, description="Asana workspace ID")
     asana_team_gid: Optional[str] = Field(default=None, description="Asana default team GID")
+    asana_project_id: Optional[str] = Field(default=None, description="Asana project ID to reuse (for free plans without teams)")
     # ============================================================================
     # Computed Properties
     # ============================================================================

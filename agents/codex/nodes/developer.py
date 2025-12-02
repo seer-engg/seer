@@ -119,7 +119,9 @@ async def developer(state: CodexState) -> CodexState:
     
     experiment_results = state.experiment_context.results
 
-    llm = ChatOpenAI(model="gpt-5-codex", reasoning={"effort": "high"})
+    # Use configurable reasoning effort from config
+    reasoning_effort = config.codex_reasoning_effort
+    llm = ChatOpenAI(model="gpt-5-codex", reasoning={"effort": reasoning_effort})
 
     agent = create_agent(
         model=llm,

@@ -91,18 +91,34 @@ async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, 
     EXTERNAL_URL = f"https://{url}/docs"
     INTERNAL_URL = f"http://0.0.0.0:{TARGET_AGENT_PORT}/docs"
 
+    # 2) wait for either explicit failure, explicit success, or timeout
+    ready_task = asyncio.create_task(ready_evt.wait())
+    failed_task = asyncio.create_task(failed_evt.wait())
+    tasks = {ready_task, failed_task}
+    
     try:
-        # 2) wait for either explicit failure, explicit success, or timeout
-        _, _ = await asyncio.wait(
-            {
-                asyncio.create_task(ready_evt.wait()),
-                asyncio.create_task(failed_evt.wait()),
-            },
+        done, pending = await asyncio.wait(
+            tasks,
             timeout=timeout_s,
             return_when=asyncio.FIRST_COMPLETED,
         )
+        # Cancel any remaining pending tasks to prevent "Task was destroyed but it is pending" error
+        for task in pending:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
     except Exception as e:
         logger.info(f"Exception during wait: {e}")
+        # Ensure all tasks are cancelled on exception
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
     if failed_evt.is_set():
         # process might still be running; kill and surface last logs

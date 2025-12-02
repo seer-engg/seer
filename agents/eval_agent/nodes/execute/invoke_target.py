@@ -35,9 +35,8 @@ async def invoke_target_node(state: TestExecutionState) -> dict:
     try:
         result = await invoke_target_agent(
             sandbox_context=state.context.sandbox_context,
-            github_context=state.context.github_context,
-            input_message=formatted_message,
             agent_name=state.context.agent_name,
+            input_message=formatted_message,
             timeout_seconds=600,
         )
 

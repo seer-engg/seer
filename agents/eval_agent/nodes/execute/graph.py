@@ -9,6 +9,7 @@ from langgraph.graph import END, START, StateGraph
 from agents.eval_agent.models import TestExecutionState
 from shared.logger import get_logger
 from agents.eval_agent.nodes.execute.provision_env import provision_environment_node
+from agents.eval_agent.nodes.execute.verify_provisioning import verify_provisioning_node
 from agents.eval_agent.nodes.execute.invoke_target import invoke_target_node
 from agents.eval_agent.nodes.execute.assert_state import assert_final_state_node
 from agents.eval_agent.nodes.execute.prepare_result import prepare_result_node
@@ -68,6 +69,7 @@ def build_test_execution_subgraph():
     builder.add_node("seed_mcp_resources", seed_mcp_resources)
     builder.add_node("clean_mcp_resources", clean_mcp_resources)
     builder.add_node("provision", provision_environment_node)
+    builder.add_node("verify_provisioning", verify_provisioning_node)
     builder.add_node("invoke", invoke_target_node)
     builder.add_node("assert", assert_final_state_node)
     builder.add_node("prepare_result", prepare_result_node)
@@ -81,7 +83,23 @@ def build_test_execution_subgraph():
         "finalize_batch": "finalize_batch",
     })
 
-    builder.add_edge("provision", "invoke")
+    builder.add_edge("provision", "verify_provisioning")
+    
+    def route_after_verification(state: TestExecutionState):
+        """Route based on provisioning verification result."""
+        verification = state.provisioning_verification
+        if verification and verification.get("provisioning_succeeded", False):
+            return "invoke"  # Proceed to target agent
+        else:
+            # Provisioning failed - skip target agent, go straight to prepare_result
+            logger.warning(f"Provisioning verification failed - skipping target agent invocation")
+            return "prepare_result"
+    
+    builder.add_conditional_edges("verify_provisioning", route_after_verification, {
+        "invoke": "invoke",
+        "prepare_result": "prepare_result",
+    })
+    
     builder.add_conditional_edges("invoke", agent_invocation_route_node, {
         "prepare_result": "prepare_result",
         "assert": "assert",

@@ -42,10 +42,14 @@ async def agentic_eval_generation(state: EvalAgentPlannerState) -> dict:
 
     logger.info("Using 'agentic' (structured output) test generation.")
 
+    # Get reasoning effort from config (can be overridden via env var)
+    reasoning_effort = config.eval_reasoning_effort
+    logger.info(f"Using reasoning_effort: {reasoning_effort}")
+
     structured_llm = get_llm(
             model="gpt-5.1",
             temperature=0.0,
-            reasoning_effort='medium',
+            reasoning_effort=reasoning_effort,
         ).with_structured_output(EvalGenerationOutput, method="json_schema", strict=True)
 
     user_prompt = USER_PROMPT.format(

@@ -64,7 +64,8 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
     tool_service = ComposioMCPClient(["GITHUB", "ASANA"], config.composio_user_id)
     all_tools = await tool_service.get_tools()
 
-    llm = get_llm(model='gpt-5.1', reasoning_effort='high')
+    # Use high reasoning effort for provisioning (provisioning should be thorough)
+    llm = get_llm(model='gpt-5.1', reasoning_effort='high')  # Hardcoded to 'high' for thorough provisioning
     actual_tools = []
     for tool in all_tools:
         if tool.name in state.context.tool_entries.keys():
