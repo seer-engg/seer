@@ -21,6 +21,21 @@ logger = get_logger("eval_agent.finalize")
 
 
 async def _handoff_to_codex(state: EvalAgentState) -> dict:
+    # Runtime check: skip handoff if disabled (even if node was added to graph)
+    # Check both config and env var directly (env var takes precedence)
+    env_var = os.environ.get("CODEX_HANDOFF_ENABLED", "").lower()
+    codex_disabled = (
+        not config.codex_handoff_enabled 
+        or env_var in ("false", "0", "no", "off")
+    )
+    
+    if codex_disabled:
+        logger.info(
+            f"⏭️  Codex handoff disabled at runtime - skipping handoff "
+            f"(config={config.codex_handoff_enabled}, env_var={env_var})"
+        )
+        return {"codex_output": None}
+    
     if not state.context.github_context or not state.context.user_context:
         raise RuntimeError("GitHub and user context are required for Codex handoff")
     if not state.dataset_context or not state.active_experiment:
@@ -130,11 +145,20 @@ def build_finalize_subgraph():
     builder.add_node("summarize", _summarize_finalize)
     builder.add_edge("summarize", END)
     
-    if config.codex_handoff_enabled:
+    # Strategic logging: Log config and decision
+    codex_enabled = config.codex_handoff_enabled
+    logger.info(
+        f"🔧 Building finalize subgraph: CODEX_HANDOFF_ENABLED={codex_enabled}, "
+        f"env_var={os.environ.get('CODEX_HANDOFF_ENABLED', 'not_set')}"
+    )
+    
+    if codex_enabled:
+        logger.info("📤 Codex handoff ENABLED - will attempt handoff after evaluation")
         builder.add_node("handoff", _handoff_to_codex)
         builder.add_edge(START, "handoff")
         builder.add_edge("handoff", "summarize")
     else:
+        logger.info("⏭️  Codex handoff DISABLED - skipping handoff, summarizing results only")
         # just summarize the results
         builder.add_edge(START, "summarize")
     

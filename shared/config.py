@@ -56,12 +56,15 @@ class SeerConfig(BaseSettings):
     
     # Feature flags
     eval_agent_load_default_mcps: bool = Field(default=True, description="Load default MCP services")
+    eval_agent_architecture: str = Field(default="reflexion", description="Architecture for eval agent reflect node: 'react' or 'reflexion'")
+    target_agent_context_level: int = Field(default=0, ge=0, le=3, description="Context level for target agent messages: 0=minimal, 1=system_goal, 2=system_goal+action, 3=full_context")
     
     target_agent_langsmith_project: str = Field(default="target_agent", description="LangSmith project for target agent")
     target_agent_port: int = Field(default=2024, description="Port for target agent")
     target_agent_setup_script: str = Field(default="pip install -e .", description="Setup script for target agent")
     target_agent_command: str = Field(default="langgraph dev --host 0.0.0.0", description="Command to run target agent")
     codex_handoff_enabled: bool = Field(default=True, description="Enable handoff to codex agent")
+    eval_plan_only_mode: bool = Field(default=False, description="Plan-only mode: skip execution, return after plan generation")
     
     # Base template for E2B sandbox
     base_template_alias: str = Field(default="seer-base", description="E2B template alias")

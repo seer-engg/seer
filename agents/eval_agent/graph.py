@@ -35,6 +35,33 @@ def should_continue(state: EvalAgentState) -> Literal["plan", "finalize"]:
     return "plan" if state.attempts < config.eval_n_rounds else "finalize"
 
 
+def should_execute_or_finalize(state: EvalAgentState) -> Literal["pre_run", "plan_summary"]:
+    """After plan generation, decide: execute tests or return plan summary (plan-only mode)."""
+    if config.eval_plan_only_mode:
+        logger.info("📋 Plan-only mode enabled - skipping execution, returning plan summary")
+        return "plan_summary"
+    return "pre_run"
+
+
+def plan_summary_node(state: EvalAgentState) -> dict:
+    """Return plan summary in plan-only mode. Preserves dataset_examples in state."""
+    from langchain_core.messages import AIMessage
+    
+    num_tests = len(state.dataset_examples or [])
+    summary = (
+        f"Plan generation complete: {num_tests} test cases generated. "
+        f"Plan-only mode enabled - execution skipped."
+    )
+    
+    logger.info(f"📋 Plan summary: {num_tests} test cases")
+    
+    # Preserve all state, just add summary message
+    return {
+        "messages": [AIMessage(content=summary)]
+        # dataset_examples and other state fields are preserved automatically
+    }
+
+
 def should_start_new_round(state: EvalAgentState) -> Literal["update_state_from_handoff", "__end__"]:
     """
     Decision node based on the codex handoff object.
@@ -59,6 +86,7 @@ def build_graph():
     finalize_subgraph = build_finalize_subgraph()
 
     workflow.add_node("plan", plan_subgraph)
+    workflow.add_node("plan_summary", plan_summary_node)
     workflow.add_node("pre_run", _prepare_run_context)
     workflow.add_node("execute", build_test_execution_subgraph())
     workflow.add_node("neo4j_upload", _upload_results_to_neo4j)
@@ -68,7 +96,12 @@ def build_graph():
     workflow.add_node("update_state_from_handoff", update_state_from_handoff)
 
     workflow.add_edge(START, "plan")
-    workflow.add_edge("plan", "pre_run")
+    # Conditional: plan-only mode skips execution
+    workflow.add_conditional_edges("plan", should_execute_or_finalize, {
+        "pre_run": "pre_run",
+        "plan_summary": "plan_summary"
+    })
+    workflow.add_edge("plan_summary", END)  # Plan-only mode ends here
     workflow.add_edge("pre_run", "execute")
     workflow.add_edge("execute", "neo4j_upload")
     workflow.add_edge("neo4j_upload", "langsmith_upload")
