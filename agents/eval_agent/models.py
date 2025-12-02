@@ -16,7 +16,7 @@ from shared.schema import (
 from shared.tools import ToolEntry
 
 # Import AgentContext after schema to avoid circular imports
-from shared.agent_context import AgentContext
+from shared.schema import AgentContext
 
 class Hypothesis(BaseModel):
     """

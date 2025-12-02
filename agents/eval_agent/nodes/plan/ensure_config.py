@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage
 from shared.llm import get_llm
 from agents.eval_agent.models import EvalAgentPlannerState
-from shared.agent_context import AgentContext
+from shared.schema import AgentContext
 from shared.schema import GithubContext, UserContext
 from shared.logger import get_logger
 from shared.tools import resolve_mcp_services

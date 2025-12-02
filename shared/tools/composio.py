@@ -15,7 +15,7 @@ from shared.logger import get_logger
 from composio import Composio
 from composio_langchain import LangchainProvider
 
-logger = get_logger("shared.mcp_client")
+logger = get_logger("shared.tools.composio")
 
 
 class ComposioMCPClient:

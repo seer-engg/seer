@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 from typing import List, Optional, Literal
 from pydantic import BaseModel, Field, ConfigDict, computed_field
-from shared.agent_context import AgentContext
+from .agent_context import AgentContext
 from shared.config import config
 
 class FailureAnalysis(BaseModel):

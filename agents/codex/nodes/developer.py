@@ -6,7 +6,6 @@ from langchain_core.messages.base import BaseMessage
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import HumanMessage
-from langchain_mcp_adapters.client import MultiServerMCPClient  
 
 from shared.logger import get_logger
 from shared.tools import web_search
@@ -16,6 +15,7 @@ from shared.config import config
 from deepagents import create_deep_agent, CompiledSubAgent
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
+from shared.tools import LANGCHAIN_DOCS_TOOLS, search_composio_documentation
 
 from sandbox.tools import (
     run_command,    
@@ -42,18 +42,6 @@ from sandbox.tools import (
 from pathlib import Path
 
 logger = get_logger("codex.nodes.developer")
-async def get_docs_tools():
-    docs_client = MultiServerMCPClient(  
-    {
-        "langchain_docs": {
-            "transport": "streamable_http",
-            "url": "https://docs.langchain.com/mcp",
-        }
-        }
-    )
-    return await docs_client.get_tools()
-
-docs_tools = asyncio.run(get_docs_tools())
 
 
 # NOTE:
@@ -111,7 +99,8 @@ documentation_explorer_subgraph = create_agent(
     model=ChatOpenAI(model="gpt-5-codex", reasoning={"effort": "high"}),
     tools=[
         web_search,
-        *docs_tools,
+        *LANGCHAIN_DOCS_TOOLS,
+        search_composio_documentation,
     ],
     system_prompt="""Used to explore the documentation of langchain/langgraph , composio and any other relevant documentation, You are a great documentation explorer, you are given a question and you need to explore the documentation and provide the answer to the question""",
     context_schema=SandboxToolContext,
@@ -156,8 +145,9 @@ async def developer(state: CodexState) -> CodexState:
             create_file,
             create_directory,
             write_file, 
-            *docs_tools,
             ls,
+            *LANGCHAIN_DOCS_TOOLS,
+            search_composio_documentation,
         ],
         system_prompt=SYSTEM_PROMPT,
         context_schema=SandboxToolContext,  # Add context schema for sandbox tools

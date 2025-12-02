@@ -32,6 +32,7 @@ from langchain.tools import tool
 from tavily import TavilyClient
 from shared.logger import get_logger
 from shared.config import config
+from .composio import ComposioMCPClient
 
 # Public API exports
 from shared.tools.loader import (
@@ -39,6 +40,8 @@ from shared.tools.loader import (
     DEFAULT_MCP_SERVICES,
 )
 from shared.tools.registry import ToolEntry
+from .mcp_client import LANGCHAIN_DOCS_TOOLS, CONTEXT7_TOOLS
+from .general import search_composio_documentation
 
 logger = get_logger("shared.tools")
 
@@ -126,6 +129,10 @@ __all__ = [
     # General-purpose tools
     "web_search",
     "think",
+    "LANGCHAIN_DOCS_TOOLS",
+    "CONTEXT7_TOOLS",
+    "search_composio_documentation",
+    "ComposioMCPClient",
 ]
 
 

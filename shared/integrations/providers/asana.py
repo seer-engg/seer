@@ -2,7 +2,7 @@ from .base import BaseProvider
 from typing import Dict, Any
 from shared.config import config
 from shared.logger import get_logger
-from shared.mcp_client import ComposioMCPClient
+from shared.tools import ComposioMCPClient
 import asyncio
 
 

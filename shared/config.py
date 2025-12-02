@@ -38,6 +38,7 @@ class SeerConfig(BaseSettings):
     langsmith_api_key: Optional[str] = Field(default=None, description="LangSmith API key for tracing")
     tavily_api_key: Optional[str] = Field(default=None, description="Tavily API key for web search")
     github_token: Optional[str] = Field(default=None, description="GitHub token for sandbox provisioning")
+    CONTEXT7_API_KEY: Optional[str] = Field(default=None, description="Context7 API key for MCP tools")
     
     # ============================================================================
     # Evaluation Agent Configuration

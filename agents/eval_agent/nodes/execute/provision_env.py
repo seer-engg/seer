@@ -8,9 +8,8 @@ from shared.logger import get_logger
 from shared.llm import get_llm
 from agents.eval_agent.reflexion_factory import create_ephemeral_reflexion
 from langchain_core.runnables import RunnableConfig
-from .utils import get_tool_hub
 from langchain.agents import create_agent
-from shared.mcp_client import ComposioMCPClient
+from shared.tools import ComposioMCPClient
 from shared.config import config
 from .utils import handle_tool_errors
 logger = get_logger("eval_agent.execute.provision")

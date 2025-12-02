@@ -8,7 +8,7 @@ from shared.llm import get_llm
 from agents.eval_agent.reflexion_factory import create_ephemeral_reflexion
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
-from shared.mcp_client import ComposioMCPClient
+from shared.tools import ComposioMCPClient
 from shared.config import config
 from .utils import get_tool_hub, handle_tool_errors
 from langchain.agents import create_agent
