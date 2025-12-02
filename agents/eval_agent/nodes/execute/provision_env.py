@@ -67,7 +67,7 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
     llm = get_llm(model='gpt-5.1', temperature=0.0)
     actual_tools = []
     for tool in all_tools:
-        if tool.name in state.tool_entries.keys():
+        if tool.name in state.context.tool_entries.keys():
             actual_tools.append(tool)
  
     provisioning_agent = create_agent(

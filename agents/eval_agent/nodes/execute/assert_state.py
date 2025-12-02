@@ -68,7 +68,7 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
 
     actual_tools = []
     for tool in all_tools:
-        if tool.name in state.tool_entries.keys():
+        if tool.name in state.context.tool_entries.keys():
             actual_tools.append(tool)
 
     assertion_agent = create_agent(

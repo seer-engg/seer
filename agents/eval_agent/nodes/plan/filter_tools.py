@@ -85,6 +85,9 @@ async def filter_tools(state: EvalAgentPlannerState) -> dict:
 
     logger.info(f"Selected {len(tool_entries)} tools: {list(tool_entries.keys())}")
 
+    context = state.context
+    context.tool_entries = tool_entries
+
     return {
-        "tool_entries": tool_entries,
+        "context": context,
     }

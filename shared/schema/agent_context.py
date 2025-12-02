@@ -27,6 +27,8 @@ Usage:
 """
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field, ConfigDict
+from shared.tools import ToolEntry
+
 
 if TYPE_CHECKING:
     from shared.schema import UserContext, GithubContext, SandboxContext
@@ -85,6 +87,12 @@ class AgentContext(BaseModel):
     mcp_resources: Dict[str, Any] = Field(
         default_factory=dict,
         description="MCP resources created during evaluation (for cleanup)"
+    )
+
+    # Tools
+    tool_entries: Dict[str, ToolEntry] = Field(
+        default_factory=dict, 
+        description="Subset of tools selected for this evaluation run"
     )
     
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
