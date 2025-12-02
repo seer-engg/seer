@@ -44,11 +44,6 @@ from pathlib import Path
 logger = get_logger("codex.nodes.developer")
 
 
-# NOTE:
-# Using a relative path like Path("./developer_prompt.md") makes the import
-# depend on the current working directory, which can differ when LangGraph
-# loads the graph. To make this robust, we resolve the prompt path relative
-# to this file's directory.
 SYSTEM_PROMPT_PATH = Path(__file__).parent / "developer_prompt.md"
 SYSTEM_PROMPT = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
 
@@ -126,7 +121,7 @@ async def developer(state: CodexState) -> CodexState:
 
     llm = ChatOpenAI(model="gpt-5-codex", reasoning={"effort": "high"})
 
-    agent = create_deep_agent(
+    agent = create_agent(
         model=llm,
         tools=[
             run_command,
@@ -151,7 +146,7 @@ async def developer(state: CodexState) -> CodexState:
         ],
         system_prompt=SYSTEM_PROMPT,
         context_schema=SandboxToolContext,  # Add context schema for sandbox tools
-        subagents=subagents,
+        # subagents=subagents,
     )
     input_messages = list[BaseMessage](state.developer_thread or [])
 

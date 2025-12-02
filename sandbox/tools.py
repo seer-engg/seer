@@ -482,12 +482,23 @@ async def ls(directory_path: str, runtime: ToolRuntime[SandboxToolContext]) -> s
     """
     List the contents of a directory path relative to the repository root.
     """
-    sandbox_id, repo_path = vaildate_sandbox_tool_call(runtime)
-    sbx: AsyncSandbox = await get_sandbox(sandbox_id)
-    try:
-        command = f"ls -la {directory_path}"
-        res: CommandResult = await sbx.commands.run(command, cwd=repo_path)
-        return res.stdout
-    except Exception as e:
-        logger.error(f"Error listing directory: {e}")
-        return f"Error listing directory: {e}"
+    """
+    List files and directories in the repository.
+    
+    Args:
+        directory_path: Path to the directory relative to the repository root. Use '.' for repo root.
+
+    Returns:
+        A tree of the directory structure including files and directories, or an error message if the directory could not be inspected
+    """
+    if not runtime.context:
+        raise ValueError(
+            "Runtime context not found. Make sure context is passed when invoking the agent."
+        )
+    depth = 1
+
+    return await _inspect_directory_impl(
+        directory_path=directory_path,
+        sandbox_context=runtime.context.sandbox_context,
+        depth=depth,
+    )
