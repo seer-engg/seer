@@ -1,6 +1,5 @@
 from agents.eval_agent.models import TestExecutionState
 from shared.logger import get_logger
-from shared.parameter_population import extract_all_context_variables
 
 
 logger = get_logger("eval_agent.execute.initialize")
