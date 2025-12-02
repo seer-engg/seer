@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 from typing import List, Optional, Literal
 from pydantic import BaseModel, Field, ConfigDict, computed_field
-from shared.agent_context import AgentContext
+from .agent_context import AgentContext
 from shared.config import config
 
 class FailureAnalysis(BaseModel):
@@ -128,7 +128,6 @@ class DatasetContext(BaseModel):
 class GithubContext(BaseModel):
     """Context for the active GitHub repository"""
 
-    agent_name: str = Field(description="The name of the agent")
     repo_url: str = Field(description="The URL of the repository")
     branch_name: str = Field(description="The name of the branch. Default is main if not specified")
     model_config = ConfigDict(extra="forbid")

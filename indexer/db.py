@@ -1,15 +1,17 @@
-import os
+
 from typing import Optional
 
 import aiosqlite
 
 from shared.logger import get_logger
+from pathlib import Path
 
 logger = get_logger("indexer.db")
 
-DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "code_index.db")
+PROJECT_ROOT = Path(__file__).parent.parent
+DEFAULT_DB_PATH = PROJECT_ROOT.parent / "code_index.db"
 
-os.makedirs(os.path.dirname(DEFAULT_DB_PATH), exist_ok=True)
+DEFAULT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 async def get_db_connection(db_path: Optional[str] = None) -> aiosqlite.Connection:
     path = db_path or DEFAULT_DB_PATH

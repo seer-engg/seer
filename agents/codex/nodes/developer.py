@@ -6,7 +6,6 @@ from langchain_core.messages.base import BaseMessage
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import HumanMessage
-from langchain_mcp_adapters.client import MultiServerMCPClient  
 
 from shared.logger import get_logger
 from shared.tools import web_search
@@ -16,6 +15,7 @@ from shared.config import config
 from deepagents import create_deep_agent, CompiledSubAgent
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
+from shared.tools import LANGCHAIN_DOCS_TOOLS, search_composio_documentation
 
 from sandbox.tools import (
     run_command,    
@@ -37,29 +37,13 @@ from sandbox.tools import (
     create_directory,
     write_file,
     edit_file,
+    ls,
 )
 from pathlib import Path
 
 logger = get_logger("codex.nodes.developer")
-async def get_docs_tools():
-    docs_client = MultiServerMCPClient(  
-    {
-        "langchain_docs": {
-            "transport": "streamable_http",
-            "url": "https://docs.langchain.com/mcp",
-        }
-        }
-    )
-    return await docs_client.get_tools()
-
-docs_tools = asyncio.run(get_docs_tools())
 
 
-# NOTE:
-# Using a relative path like Path("./developer_prompt.md") makes the import
-# depend on the current working directory, which can differ when LangGraph
-# loads the graph. To make this robust, we resolve the prompt path relative
-# to this file's directory.
 SYSTEM_PROMPT_PATH = Path(__file__).parent / "developer_prompt.md"
 SYSTEM_PROMPT = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
 
@@ -93,7 +77,8 @@ codebase_explorer_subgraph = create_agent(
         search_code,
         search_symbols,
         semantic_search,
-        get_symbol_definition
+        get_symbol_definition,
+        ls,
     ],
     system_prompt=""" You are a great codebase explorer. based on the user request, you need to explore the codebase and provide the answer to the question, you are provided with the tools to explore the codebase""",
     context_schema=SandboxToolContext,
@@ -109,7 +94,8 @@ documentation_explorer_subgraph = create_agent(
     model=ChatOpenAI(model="gpt-5-codex", reasoning={"effort": "high"}),
     tools=[
         web_search,
-        *docs_tools,
+        *LANGCHAIN_DOCS_TOOLS,
+        search_composio_documentation,
     ],
     system_prompt="""Used to explore the documentation of langchain/langgraph , composio and any other relevant documentation, You are a great documentation explorer, you are given a question and you need to explore the documentation and provide the answer to the question""",
     context_schema=SandboxToolContext,
@@ -135,7 +121,7 @@ async def developer(state: CodexState) -> CodexState:
 
     llm = ChatOpenAI(model="gpt-5-codex", reasoning={"effort": "high"})
 
-    agent = create_deep_agent(
+    agent = create_agent(
         model=llm,
         tools=[
             run_command,
@@ -154,11 +140,13 @@ async def developer(state: CodexState) -> CodexState:
             create_file,
             create_directory,
             write_file, 
-            *docs_tools,
+            ls,
+            *LANGCHAIN_DOCS_TOOLS,
+            search_composio_documentation,
         ],
         system_prompt=SYSTEM_PROMPT,
         context_schema=SandboxToolContext,  # Add context schema for sandbox tools
-        subagents=subagents,
+        # subagents=subagents,
     )
     input_messages = list[BaseMessage](state.developer_thread or [])
 

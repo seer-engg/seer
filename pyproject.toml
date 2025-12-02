@@ -30,6 +30,8 @@ dependencies = [
   "composio>=0.4.0",
   "composio-langchain>=0.1.0",
   "deepagents==0.2.8",
+  "coolname==2.2.0",
+
   "reflexion @ git+https://github.com/seer-engg/reflexion.git",
   "tool-hub @ git+https://github.com/seer-engg/tool_hub.git"
 ]

@@ -1,7 +1,7 @@
 import os
 import asyncio
 from typing import Optional, List, Any
-from shared.mcp_client import ComposioMCPClient
+from shared.tools import ComposioMCPClient
 from shared.config import config
 from agents.eval_agent.models import TestExecutionState
 from tool_hub import ToolHub

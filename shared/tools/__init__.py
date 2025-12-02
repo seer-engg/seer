@@ -11,7 +11,6 @@ This module provides a clean API for working with MCP tools:
 Public API:
 -----------
 - load_tool_entries: Load tool metadata from MCP services
-- select_relevant_tools: Select relevant tools by context
 - canonicalize_tool_name: Normalize tool names
 - resolve_mcp_services: Resolve service names with defaults
 - ToolEntry: Tool metadata dataclass
@@ -21,32 +20,28 @@ Public API:
 
 Example:
 --------
-    from shared.tools import load_tool_entries, select_relevant_tools
+
     
     # Load tools
     entries = await load_tool_entries(["asana", "github"])
     
     # Select relevant tools for context
-    tool_names = await select_relevant_tools(
-        entries, 
-        "create a task and assign it",
-        max_total=10
-    )
 """
 import asyncio
 from langchain.tools import tool
 from tavily import TavilyClient
 from shared.logger import get_logger
 from shared.config import config
+from .composio import ComposioMCPClient
 
 # Public API exports
 from shared.tools.loader import (
     resolve_mcp_services,
     DEFAULT_MCP_SERVICES,
 )
-from shared.tools.selector import select_relevant_tools
-from shared.tools.normalizer import canonicalize_tool_name
 from shared.tools.registry import ToolEntry
+from .mcp_client import LANGCHAIN_DOCS_TOOLS, CONTEXT7_TOOLS
+from .general import search_composio_documentation
 
 logger = get_logger("shared.tools")
 
@@ -128,18 +123,16 @@ __all__ = [
     "resolve_mcp_services",
     "DEFAULT_MCP_SERVICES",
     
-    # Selector
-    "select_relevant_tools",
-    
-    # Normalizer
-    "canonicalize_tool_name",
-    
     # Registry
     "ToolEntry",
     
     # General-purpose tools
     "web_search",
     "think",
+    "LANGCHAIN_DOCS_TOOLS",
+    "CONTEXT7_TOOLS",
+    "search_composio_documentation",
+    "ComposioMCPClient",
 ]
 
 

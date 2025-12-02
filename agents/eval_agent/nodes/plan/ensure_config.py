@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage
 from shared.llm import get_llm
 from agents.eval_agent.models import EvalAgentPlannerState
-from shared.agent_context import AgentContext
+from shared.schema import AgentContext
 from shared.schema import GithubContext, UserContext
 from shared.logger import get_logger
 from shared.tools import resolve_mcp_services
@@ -74,6 +74,10 @@ async def ensure_target_agent_config(state: EvalAgentPlannerState) -> dict:
             default_factory=list, 
             description="List of external MCP services mentioned, e.g., ['asana', 'github']"
         )
+        agent_name: str = Field(
+            default="agent",
+            description="The name of the agent"
+        )
 
     extractor = get_llm(model="gpt-4.1", temperature=0.0).with_structured_output(TargetAgentExtractionContext)
     context: TargetAgentExtractionContext = await extractor.ainvoke(f"{instruction}\n\nUSER:\n{last_human.content}")
@@ -103,6 +107,7 @@ async def ensure_target_agent_config(state: EvalAgentPlannerState) -> dict:
         target_agent_version=agent_context.target_agent_version,
         mcp_services=resolved_services,
         mcp_resources=agent_context.mcp_resources,
+        agent_name=context.agent_name,
     )
 
     return {
