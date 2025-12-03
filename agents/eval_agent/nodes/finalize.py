@@ -89,14 +89,14 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
         codex_thread_cfg,
     )
 
-    codex_response_payload: CodexOutput = CodexOutput.model_validate(codex_response)
-    logger.info("Codex response payload: %s", codex_response_payload)
+    codex_response: CodexOutput = CodexOutput.model_validate(codex_response)
+    logger.info("Codex response: %s", codex_response)
 
     # if the target agent was updated, store the handoff and reset the state for a new round
-    if codex_response_payload.target_agent_version > state.context.target_agent_version:
+    if codex_response.updated_context.target_agent_version > state.context.target_agent_version:
         # Pass the handoff object and reset the loop state
         return {
-            "codex_output": codex_response_payload,
+            "codex_output": codex_response,
             "attempts": 0,
             "dataset_examples": [],
             "latest_results": [],
