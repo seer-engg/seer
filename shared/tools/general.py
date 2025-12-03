@@ -4,7 +4,8 @@ from .mcp_client import CONTEXT7_LIBRARY_TOOL
 @tool
 async def search_composio_documentation(query: str) -> str:
     """
-    Search the Composio documentation for the given query. Use this tool to search for any documentation in composio libraries. e.g 'asana create project', 'github create a pull request'
+    Search the Composio documentation for the given query. Use this tool to search for any documentation in composio libraries. e.g 'asana create project', 'github create a pull request'.
+    
     Args:
         query: The query to search for.
     Returns:
