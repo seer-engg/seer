@@ -43,18 +43,6 @@ def format_target_agent_message(
     parts = [base_message]
     
     if context_level >= 1:
-        # Add system goal
-        if context.user_context and context.user_context.raw_request:
-            parts.append("\n\n--- System Goal ---")
-            parts.append(context.user_context.raw_request)
-    
-    if context_level >= 2:
-        # Add expected action
-        if example.expected_output and example.expected_output.expected_action:
-            parts.append("\n\n--- Expected Action ---")
-            parts.append(example.expected_output.expected_action)
-    
-    if context_level >= 3:
         # Add MCP services and resource hints
         if context.mcp_services:
             parts.append("\n\n--- Available Services ---")
@@ -65,6 +53,21 @@ def format_target_agent_message(
             if resource_hints and resource_hints != "None provided. Prefer using [var:...] or [resource:...] tokens for runtime values.":
                 parts.append("\n\n--- Available Resources ---")
                 parts.append(resource_hints)
+        
+    
+    if context_level >= 2:
+        # Add system goal
+        if context.user_context and context.user_context.raw_request:
+            parts.append("\n\n--- System Goal ---")
+            parts.append(context.user_context.raw_request)
+        
+    
+    if context_level >= 3:
+        # Add expected action
+        if example.expected_output and example.expected_output.expected_action:
+            parts.append("\n\n--- Expected Action ---")
+            parts.append(example.expected_output.expected_action)
+        
     
     enriched_message = "\n".join(parts)
     
