@@ -28,17 +28,14 @@ EVALS_AND_THREAD_TRACE_TEMPLATE = """
 
 USER_PROMPT = """
 Our Team Devised did some code changes to the agent to fix the failing evals:
-in order to pass these failing evals :
-<failing_evals>
-{originalfailing_evals}
-</failing_evals>
+in order to pass some evals.
 
 But after the implementation, the agent is not passing all the eval cases. You are tasked to reflect on the latest test results and suggest necessary changes. Below are the lates failed evals and their thread traces:
 <LATEST FAILED EVALS AND THREAD TRACES>
 {latest_failed_evals_and_thread_traces}
 </LATEST FAILED EVALS AND THREAD TRACES>
 
-Please provide a new, concrete set of implementation steps to fix the remaining issues.
+Please provide a short sumaary of errors and instructing the developer to fix the errors.
 """
 
 async def reflector(state: CodexState) -> CodexState:
@@ -85,7 +82,7 @@ async def reflector(state: CodexState) -> CodexState:
 
     input_messages = []
     input_messages.append(SystemMessage(content=SYSTEM_PROMPT))
-    input_messages.append(HumanMessage(content=USER_PROMPT.format(originalfailing_evals=originalfailing_evals, latest_failed_evals_and_thread_traces=evals_and_thread_traces)))
+    input_messages.append(HumanMessage(content=USER_PROMPT.format(latest_failed_evals_and_thread_traces=evals_and_thread_traces)))
     response = await llm.ainvoke(input_messages)
 
     reflection = ""
@@ -97,6 +94,7 @@ async def reflector(state: CodexState) -> CodexState:
         reflection = response.content
         
     logger.info(f"Reflection complete. New instruction: {reflection[:100]}...")
+    reflection += "\n below are the evals which are still failing after the implementation: " + ",".join(evals_and_thread_traces)
     
     # We return a HumanMessage, which will be the *input* for the implement_task_plan agent
     return {
