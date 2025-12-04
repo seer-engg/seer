@@ -4,7 +4,7 @@ async def get_agent_final_respone(result: dict) -> str:
     """
     Get the final response from the agent.
     """
-    output = result.get("messages", [])[-1].get("content")
+    output = result.get("messages", [])[-1].content
     final_output=""
     if isinstance(output, str):
         final_output = output

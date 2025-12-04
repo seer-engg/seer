@@ -12,7 +12,7 @@ from agents.eval_agent.nodes.reflect.tools import (
     ReflectionToolContext,
 )
 from shared.tools import think
-from shared.llm import get_llm
+from shared.llm import get_llm_without_responses_api
 from shared.logger import get_logger
 from agents.eval_agent.reflexion_factory import create_ephemeral_reflexion
 
@@ -102,10 +102,11 @@ async def reflect_node(state: EvalAgentState) -> dict:
     # Create tools bound to the context
     reflection_tools = create_reflection_tools(tool_context)
     reflection_tools.append(think)
+    llm = get_llm_without_responses_api()
 
     # Create the Reflexion Agent
     analyst_graph = create_ephemeral_reflexion(
-        model=get_llm(model="gpt-5.1", temperature=0.0),
+        model=llm,
         tools=reflection_tools,
         prompt=ANALYST_AGENT_SYSTEM_PROMPT,
         agent_id="eval_analyst_v1"

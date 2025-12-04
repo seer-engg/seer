@@ -53,13 +53,97 @@ CODEBASE_EDIT_TOOLS = [
 ]
 
 USER_PROMPT = """
-    user exectation with the agent is : {user_raw_request}
-    Analyse the following eval test cases and corresponding  thread trace of the agent .
-    <EVALS AND THREAD TRACES>
-    {evals_and_thread_traces}
-    </EVALS AND THREAD TRACES>
+# CONTEXT
 
-    Develop the agent to pass all the eval cases.
+Here are the evaluation test cases and the failed thread traces from the target agent:
+
+<eval_data>
+{evals_and_thread_traces}
+</eval_data>
+
+Here is what the user expects from the target agent:
+
+<user_expectations>
+{user_raw_request}
+</user_expectations>
+
+Develop the agent to pass all the eval cases.
+
+# Example implementation showing how can we use composio tools with langchain.
+
+The LangChain Provider transforms Composio tools into a format compatible with LangChain's function calling capabilities.
+
+## Setup
+<CodeGroup>
+```bash title="Python" for="python"
+pip install composio_langchain==0.8.0 langchain
+```
+</CodeGroup>
+
+## Usage
+
+<CodeGroup>
+
+```python title="Python" maxLines=400
+import os
+
+from composio import Composio
+from composio_langchain import LangchainProvider
+from langchain.agents import create_agent
+from langchain_openai import ChatOpenAI
+from langchain.messages import HumanMessage
+from langchain.agents.middleware import wrap_tool_call
+from langchain_core.messages import ToolMessage
+
+# handle error middleware
+@wrap_tool_call
+async def handle_tool_errors(request, handler):
+    "Handle tool execution errors with custom messages."
+    try:
+        return await handler(request)
+    except Exception as e:
+        # Return a custom error message to the model
+        error = str(e)
+        return ToolMessage(
+            content="Tool error: Please check your input and try again. (str(e))",
+            tool_call_id=request.tool_call["id"],
+        )
+
+# openai client
+openai_client = ChatOpenAI(model="gpt-5")
+
+# composio user id
+COMPOSIO_USER_ID = os.getenv("COMPOSIO_USER_ID")
+
+composio = Composio(provider=LangchainProvider())
+
+# Get tools from Composio for toolkits
+tools = composio.tools.get(
+    user_id=COMPOSIO_USER_ID,
+    toolkits=["ASANA", "GITHUB"],
+    limit=1000,
+)
+
+SYSTEM_PROMPT = "
+You are a helpful assistant that can help with tasks related to GitHub and Asana.
+"
+
+# Define agent
+agent = create_agent(
+    openai_client,
+    tools,
+    middleware=[handle_tool_errors],
+    system_prompt=SYSTEM_PROMPT,
+)
+
+task = "What are the open PRs in the repository?"
+input = Dict(messages=[HumanMessage(content=task)])
+
+result = await agent.ainvoke(input)
+```
+</CodeGroup>
+
+
 """
 
 EVALS_AND_THREAD_TRACE_TEMPLATE = """
@@ -72,17 +156,11 @@ EVALS_AND_THREAD_TRACE_TEMPLATE = """
     </THREAD TRACE>
 """
 
-TODOS_TOOL_SYSTEM_PROMPT = """
-## `write_todos`
-You have access to the `write_todos` tool to help you manage and plan agent development objectives into smaller steps.
-
--It is critical that you mark todos as completed as soon as you are done with a step.
--For simple objectives that only require a few steps, it is better to just complete the objective directly and NOT use this tool.
-- The `write_todos` tool should never be called multiple times in parallel.
-- Don't be afraid to revise the To-Do list as you go. New information may reveal new tasks that need to be done, or old tasks that are irrelevant.
-"""
+# Intentionaly left blank to use the developer_prompt.md file as system prompt.
+TODOS_TOOL_SYSTEM_PROMPT = " "
 
 llm = ChatOpenAI(model="gpt-5-codex", reasoning={"effort": "high"})
+low_reasoning_llm = ChatOpenAI(model="gpt-5-mini", reasoning={"effort": "medium"})
 
 
 CODEBASE_EXPLORER_SYSTEM_PROMPT = """
@@ -94,7 +172,7 @@ while returning the information don't miss any details, include file paths, code
 """
 
 codebase_explorer_subgraph = create_agent(
-    model=llm,
+    model=low_reasoning_llm,
     tools=[
         *CODEBASE_VIEW_TOOLS,
         web_search,
@@ -118,7 +196,7 @@ async def codebase_explorer_subagent(query: str, runtime: ToolRuntime[SandboxToo
         The relevant information from the codebase.
     """
     result = await codebase_explorer_subgraph.ainvoke({"messages": [HumanMessage(content=query)]}, config=RunnableConfig(context=runtime.context))
-    return get_agent_final_respone(result)
+    return await get_agent_final_respone(result)
 
 
 
@@ -169,9 +247,9 @@ experimantation_subgraph = create_agent(
 )
 
 @tool
-async def experimentaion_subagent(query: str, runtime: ToolRuntime[SandboxToolContext]) -> str:
+async def junior_programmer_subagent(query: str, runtime: ToolRuntime[SandboxToolContext]) -> str:
     """
-    Experiment with the codebase and return the relevant results. This tool is an agent that can be used to experiment with the codebase and return the relevant information.
+    Experiment with the codebase, implement small scale coding tasks and return the relevant results. This tool is an agent that can be used to experiment with the codebase or implement small scale coding tasks and return the relevant information.
     Capabilities:
         - Read and Write access to codebase 
         - run commands in the working directory of codebase
@@ -186,17 +264,64 @@ async def experimentaion_subagent(query: str, runtime: ToolRuntime[SandboxToolCo
     result = await experimantation_subgraph.ainvoke({"messages": [HumanMessage(content=query)]}, config=RunnableConfig(context=runtime.context))
     return get_agent_final_respone(result)
 
+
+SEARCH_DOCUMENTATION_SYSTEM_PROMPT = """
+You are a helpful documentation assistant that can help search the documentation and return the relevant information.
+
+You should carefully consider every aspect of the querry, thoroughly inspect the documentation and return the relevant information.
+
+while returning the information don't miss any details, include code snippets, etc.
+- Do not include any web urls in the response.
+"""
+
+SEARCH_DOCUMENTATION_USER_PROMPT = """
+Search for  these queries in the documentation: {query_list}
+
+Here is the meta context for the search:
+{meta_context}
+
+Return the relevant information for each query in the list.
+"""
+
+search_documentation_subgraph = create_agent(
+    model=low_reasoning_llm,
+    tools=[
+        search_composio_documentation,
+        web_search,
+    ],
+    system_prompt=SEARCH_DOCUMENTATION_SYSTEM_PROMPT,
+    context_schema=SandboxToolContext,
+)
+
+@tool
+async def search_documentation_subagent(query_list: list[str],meta_context: str, runtime: ToolRuntime[SandboxToolContext]) -> str:
+    """
+    Search the documentation and return the relevant information. This tool is an agent that can be used to search the documentation and return the relevant information. It will use the meta context to help it search the documentation.
+    Capabilities:
+        - Search the documentation
+        - web search
+    Args:
+        query_list: list of detailed queries to search the documentation for.
+        meta_context: The meta context of the search.
+    Returns:
+        The relevant information from the documentation.
+    """
+    user_prompt = SEARCH_DOCUMENTATION_USER_PROMPT.format(query_list=query_list, meta_context=meta_context)
+    result = await search_documentation_subgraph.ainvoke({"messages": [HumanMessage(content=user_prompt)]}, config=RunnableConfig(context=runtime.context))
+    return await get_agent_final_respone(result)
+
 agent = create_agent(
     model=llm,
     tools=[
         run_command,
-        web_search,
+        # web_search,
         codebase_explorer_subagent,
-        experimentaion_subagent,
+        junior_programmer_subagent,
         *CODEBASE_VIEW_TOOLS,
         *CODEBASE_EDIT_TOOLS,
         *LANGCHAIN_DOCS_TOOLS,
-        search_composio_documentation,
+        # search_composio_documentation,
+        search_documentation_subagent,
     ],
     system_prompt=SYSTEM_PROMPT,
     context_schema=SandboxToolContext,  # Add context schema for sandbox tools

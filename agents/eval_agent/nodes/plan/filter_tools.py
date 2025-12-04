@@ -31,7 +31,7 @@ async def filter_tools(state: EvalAgentPlannerState) -> dict:
         tool_service = ComposioMCPClient([service.upper()], config.composio_user_id)
         all_tools = await tool_service.get_tools()
         all_tools = [t for t in all_tools if 'deprecated' not in t.description.lower()]
-        llm = ChatOpenAI(model="gpt-5", reasoning_effort="minimal")
+        llm = ChatOpenAI(model="gpt-5-mini", reasoning_effort="minimal")
         st = llm.with_structured_output(Task)
         tool_names = [{t.name,t.description} for t in all_tools]
         prompt = """
