@@ -1,0 +1,184 @@
+{
+  "experiment": "E14 Codex vs Predictive Reflexion",
+  "timestamp": "20251203_234703",
+  "model": "gpt-5-mini",
+  "codex_model": "gpt-5-mini",
+  "num_tasks": 2,
+  "codex_results": [
+    {
+      "task_id": "HumanEval/0",
+      "agent_type": "codex",
+      "success": true,
+      "eval_score": 1.0,
+      "execution_time": 38.361368,
+      "rounds_or_attempts": 1,
+      "tool_calls": 6,
+      "code_generated": "def has_close_elements(numbers, threshold):\n    \"\"\" Check if in given list of numbers, are there any two numbers closer to each other than\n    given threshold.\n    >>> has_close_elements([1.0, 2.0, 3.0], 0.5)\n    False\n    >>> has_close_elements([1.0, 2.8, 3.0, 4.0, 5.0, 2.0], 0.3)\n    True\n    \"\"\"\n    if threshold < 0:\n        raise ValueError(\"threshold must be non-negative\")\n    if len(numbers) < 2:\n        return False\n    sorted_nums = sorted(numbers)\n    for a, b in zip(sorted_nums, sorted",
+      "metrics": {
+        "task_id": "HumanEval/0",
+        "agent_type": "codex",
+        "success": true,
+        "eval_score": 1.0,
+        "execution_time": 38.361368,
+        "rounds_or_attempts": 1,
+        "tool_calls_count": 6,
+        "tool_calls_by_name": {
+          "write_python_file": 2,
+          "test_code_with_humaneval": 3,
+          "execute_python_code": 1
+        },
+        "input_tokens": 14050,
+        "output_tokens": 2714,
+        "total_tokens": 16764,
+        "code_generated": "def has_close_elements(numbers, threshold):\n    \"\"\" Check if in given list of numbers, are there any two numbers closer to each other than\n    given threshold.\n    >>> has_close_elements([1.0, 2.0, 3.0], 0.5)\n    False\n    >>> has_close_elements([1.0, 2.8, 3.0, 4.0, 5.0, 2.0], 0.3)\n    True\n    \"\"\"\n    if threshold < 0:\n        raise ValueError(\"threshold must be non-negative\")\n    if len(numbers) < 2:\n        return False\n    sorted_nums = sorted(numbers)\n    for a, b in zip(sorted_nums, sorted",
+        "test_pass_rate": 1.0,
+        "calibration_error": null,
+        "brier_score": null,
+        "memory_retrievals": 0,
+        "memory_creations": 0,
+        "memory_retrieval_queries": [],
+        "memory_created_contexts": []
+      }
+    },
+    {
+      "task_id": "HumanEval/1",
+      "agent_type": "codex",
+      "success": true,
+      "eval_score": 1.0,
+      "execution_time": 35.271118,
+      "rounds_or_attempts": 1,
+      "tool_calls": 5,
+      "code_generated": "def find_farthest_pair(numbers):\n    \"\"\" Find the two numbers in the list that are farthest apart.\n    Return a tuple of (min_value, max_value).\n    >>> find_farthest_pair([1.0, 2.0, 3.0, 4.0])\n    (1.0, 4.0)\n    >>> find_farthest_pair([5.5, 2.1, 8.9, 1.2])\n    (1.2, 8.9)\n    \"\"\"\n    if not numbers:\n        raise ValueError(\"numbers list must not be empty\")\n    it = iter(numbers)\n    try:\n        first = next(it)\n    except StopIteration:\n        raise ValueError(\"numbers list must not be empty\"",
+      "metrics": {
+        "task_id": "HumanEval/1",
+        "agent_type": "codex",
+        "success": true,
+        "eval_score": 1.0,
+        "execution_time": 35.271118,
+        "rounds_or_attempts": 1,
+        "tool_calls_count": 5,
+        "tool_calls_by_name": {
+          "write_python_file": 2,
+          "test_code_with_humaneval": 2,
+          "execute_python_code": 1
+        },
+        "input_tokens": 9270,
+        "output_tokens": 2669,
+        "total_tokens": 11939,
+        "code_generated": "def find_farthest_pair(numbers):\n    \"\"\" Find the two numbers in the list that are farthest apart.\n    Return a tuple of (min_value, max_value).\n    >>> find_farthest_pair([1.0, 2.0, 3.0, 4.0])\n    (1.0, 4.0)\n    >>> find_farthest_pair([5.5, 2.1, 8.9, 1.2])\n    (1.2, 8.9)\n    \"\"\"\n    if not numbers:\n        raise ValueError(\"numbers list must not be empty\")\n    it = iter(numbers)\n    try:\n        first = next(it)\n    except StopIteration:\n        raise ValueError(\"numbers list must not be empty\"",
+        "test_pass_rate": 1.0,
+        "calibration_error": null,
+        "brier_score": null,
+        "memory_retrievals": 0,
+        "memory_creations": 0,
+        "memory_retrieval_queries": [],
+        "memory_created_contexts": []
+      }
+    }
+  ],
+  "reflexion_results": [
+    {
+      "task_id": "HumanEval/0",
+      "agent_type": "reflexion",
+      "success": true,
+      "eval_score": 1.0,
+      "execution_time": 46.888221,
+      "rounds_or_attempts": 1,
+      "tool_calls": 0,
+      "code_generated": "from typing import List\n\ndef has_close_elements(numbers: List[float], threshold: float) -> bool:\n    \"\"\" Check if in given list of numbers, are there any two numbers closer to each other than\n    given threshold.\n    >>> has_close_elements([1.0, 2.0, 3.0], 0.5)\n    False\n    >>> has_close_elements([1.0, 2.8, 3.0, 4.0, 5.0, 2.0], 0.3)\n    True\n    \"\"\"\n\nCRITICAL: You must generate a complete Python function named 'has_close_elements' that passes these tests.\n\nTest cases:\ndef check(candidate):\n    ",
+      "metrics": {
+        "task_id": "HumanEval/0",
+        "agent_type": "reflexion",
+        "success": true,
+        "eval_score": 1.0,
+        "execution_time": 46.888221,
+        "rounds_or_attempts": 1,
+        "tool_calls_count": 0,
+        "tool_calls_by_name": {},
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "code_generated": "from typing import List\n\ndef has_close_elements(numbers: List[float], threshold: float) -> bool:\n    \"\"\" Check if in given list of numbers, are there any two numbers closer to each other than\n    given threshold.\n    >>> has_close_elements([1.0, 2.0, 3.0], 0.5)\n    False\n    >>> has_close_elements([1.0, 2.8, 3.0, 4.0, 5.0, 2.0], 0.3)\n    True\n    \"\"\"\n\nCRITICAL: You must generate a complete Python function named 'has_close_elements' that passes these tests.\n\nTest cases:\ndef check(candidate):\n    ",
+        "test_pass_rate": 1.0,
+        "calibration_error": 0.09999999999999998,
+        "brier_score": 0.009999999999999995,
+        "memory_retrievals": 0,
+        "memory_creations": 1,
+        "memory_retrieval_queries": [],
+        "memory_created_contexts": [
+          "prediction.task_completion.round.0"
+        ]
+      }
+    },
+    {
+      "task_id": "HumanEval/1",
+      "agent_type": "reflexion",
+      "success": false,
+      "eval_score": 0.0,
+      "execution_time": 68.140837,
+      "rounds_or_attempts": 2,
+      "tool_calls": 0,
+      "code_generated": "from typing import List\n\ndef find_farthest_pair(numbers: List[float]) -> tuple:\n    \"\"\" Find the two numbers in the list that are farthest apart.\n    Return a tuple of (min_value, max_value).\n    >>> find_farthest_pair([1.0, 2.0, 3.0, 4.0])\n    (1.0, 4.0)\n    >>> find_farthest_pair([5.5, 2.1, 8.9, 1.2])\n    (1.2, 8.9)\n    \"\"\"\n\nCRITICAL: You must generate a complete Python function named 'find_farthest_pair' that passes these tests.\n\nTest cases:\ndef check(candidate):\n    assert candidate([1.0, 2.",
+      "metrics": {
+        "task_id": "HumanEval/1",
+        "agent_type": "reflexion",
+        "success": false,
+        "eval_score": 0.0,
+        "execution_time": 68.140837,
+        "rounds_or_attempts": 2,
+        "tool_calls_count": 0,
+        "tool_calls_by_name": {},
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "code_generated": "from typing import List\n\ndef find_farthest_pair(numbers: List[float]) -> tuple:\n    \"\"\" Find the two numbers in the list that are farthest apart.\n    Return a tuple of (min_value, max_value).\n    >>> find_farthest_pair([1.0, 2.0, 3.0, 4.0])\n    (1.0, 4.0)\n    >>> find_farthest_pair([5.5, 2.1, 8.9, 1.2])\n    (1.2, 8.9)\n    \"\"\"\n\nCRITICAL: You must generate a complete Python function named 'find_farthest_pair' that passes these tests.\n\nTest cases:\ndef check(candidate):\n    assert candidate([1.0, 2.",
+        "test_pass_rate": 0.0,
+        "calibration_error": 0.19999999999999996,
+        "brier_score": 0.03999999999999998,
+        "memory_retrievals": 0,
+        "memory_creations": 3,
+        "memory_retrieval_queries": [],
+        "memory_created_contexts": [
+          "prediction.task_completion.round.0",
+          "reflexion.round.0",
+          "prediction.task_completion.round.1"
+        ]
+      }
+    }
+  ],
+  "summary": {
+    "codex": {
+      "success_rate": 1.0,
+      "avg_score": 1.0,
+      "avg_time": 36.816243,
+      "avg_rounds": 1.0,
+      "total_tasks": 2,
+      "avg_memory_retrievals": 0.0,
+      "total_memory_retrievals": 0,
+      "avg_memory_creations": 0.0,
+      "total_memory_creations": 0
+    },
+    "reflexion": {
+      "success_rate": 0.5,
+      "avg_score": 0.5,
+      "avg_time": 57.514529,
+      "avg_rounds": 1.5,
+      "total_tasks": 2,
+      "avg_memory_retrievals": 0.0,
+      "total_memory_retrievals": 0,
+      "avg_memory_creations": 2.0,
+      "total_memory_creations": 4
+    }
+  },
+  "_consolidation": {
+    "consolidated_at": "2025-12-03T23:50:45.306107",
+    "source_files": [
+      "results_20251203_234703.json",
+      "results_20251203_234650.json",
+      "results_20251203_234336.json",
+      "results_20251203_234015.json",
+      "results_20251203_233722.json"
+    ],
+    "total_files_consolidated": 5
+  }
+}
