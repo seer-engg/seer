@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from agents.eval_agent.models import TestExecutionState
 from shared.logger import get_logger
-from shared.llm import get_llm
+from shared.llm import get_llm_without_responses_api
 from agents.eval_agent.reflexion_factory import create_ephemeral_reflexion
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
@@ -44,24 +44,7 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
             f"DatasetExample {example.example_id} has no assert_final_state instructions."
         )
 
-    # tool_hub = await get_tool_hub()
-    
-    # # Semantic Tool Selection: Use filtered tools if available
-    # tools_subset = None
-    # if state.tool_entries:
-    #     # Resolve tool objects from the hub using the names selected in the plan phase
-    #     tools_subset = [tool_hub.get_tool(name) for name in state.tool_entries.keys()]
-    #     tools_subset = [t for t in tools_subset if t is not None]
-    #     logger.info("Using subset of %d tools for assertion", len(tools_subset))
-
-    # assertion_agent = create_ephemeral_reflexion(
-    #     model=get_llm(model='gpt-5.1', temperature=0.0),
-    #     tool_hub=tool_hub,
-    #     tools=tools_subset, # Pass subset if available
-    #     prompt=SYSTEM_PROMPT,
-    #     agent_id="eval_asserter_v1",
-    #     max_rounds=2 
-    # )
+    llm = get_llm_without_responses_api()
 
     tool_service = ComposioMCPClient(["GITHUB", "ASANA"], config.composio_user_id)
     all_tools = await tool_service.get_tools()
@@ -72,7 +55,7 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
             actual_tools.append(tool)
 
     assertion_agent = create_agent(
-        model=get_llm(model='gpt-5.1'),
+        model=llm,
         tools=actual_tools,
         system_prompt=SYSTEM_PROMPT,
         middleware=[handle_tool_errors]

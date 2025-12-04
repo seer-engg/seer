@@ -5,7 +5,7 @@ from typing import List
 from langchain_core.messages import HumanMessage
 from agents.eval_agent.models import TestExecutionState
 from shared.logger import get_logger
-from shared.llm import get_llm
+from shared.llm import get_llm_without_responses_api
 from agents.eval_agent.reflexion_factory import create_ephemeral_reflexion
 from langchain_core.runnables import RunnableConfig
 from langchain.agents import create_agent
@@ -41,30 +41,10 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
         return {}
     
     resource_hints = state.mcp_resources
-
-    # tool_hub = await get_tool_hub()    
-    # Semantic Tool Selection: Use filtered tools if available
-    # tools_subset = None
-    # if state.tool_entries:
-    #     # Resolve tool objects from the hub using the names selected in the plan phase
-    #     tools_subset = [tool_hub.get_tool(name) for name in state.tool_entries.keys()]
-    #     tools_subset = [t for t in tools_subset if t is not None]
-    #     logger.info("Using subset of %d tools for provisioning", len(tools_subset))
-
-    # Use Reflexion agent for provisioning
-    # provisioning_agent = create_ephemeral_reflexion(
-    #     model=get_llm(model='gpt-5.1', temperature=0.0),
-    #     tool_hub=tool_hub,
-    #     tools=tools_subset, # Pass subset if available
-    #     prompt=SYSTEM_PROMPT,
-    #     agent_id="eval_provisioner_v1",
-    #     max_rounds=2  # Limit rounds for provisioning to avoid infinite loops
-    # )
-
+    llm = get_llm_without_responses_api()
     tool_service = ComposioMCPClient(["GITHUB", "ASANA"], config.composio_user_id)
     all_tools = await tool_service.get_tools()
 
-    llm = get_llm(model='gpt-5.1', reasoning_effort='high')
     actual_tools = []
     for tool in all_tools:
         if tool.name in state.context.tool_entries.keys():
