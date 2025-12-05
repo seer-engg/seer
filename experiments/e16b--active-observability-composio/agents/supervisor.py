@@ -99,7 +99,7 @@ After EVERY tool call (except 'think'), call `think()` to reason. ALWAYS referen
     
     # 3. Define Model & Middleware
     model = ChatOpenAI(model="gpt-5-mini", temperature=0.0)
-    model = wrap_model_with_retry(model, max_retries=2)  # Retry on invalid_prompt errors
+    model = wrap_model_with_retry(model, max_retries=3)  # Retry on invalid_prompt errors (total 4 attempts)
     
     middleware = [
         ToolCallLimitMiddleware(thread_limit=30, run_limit=10),

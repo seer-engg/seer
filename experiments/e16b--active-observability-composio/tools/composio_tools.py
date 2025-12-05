@@ -144,6 +144,10 @@ def search_tools(query: str, reasoning: str) -> str:
             )
             matches_dict_list.append(tool_def.model_dump())
             
+            # Store tool schema in runtime store (global, no worker ID)
+            from tools.runtime_tool_store import _runtime_tool_store
+            _runtime_tool_store.store_tool_schema(tool_def)
+            
         # Return JSON string directly - no memory I/O needed
         json_content = json.dumps(matches_dict_list, indent=2)
         return json_content
@@ -225,11 +229,35 @@ def _validate_tool_args(tool_obj, args: dict) -> Tuple[bool, Optional[str]]:
     except Exception as e:
         return False, f"Validation error: {str(e)}"
 
+def _validate_required_params(tool_def: ToolDefinition, args: dict) -> Tuple[bool, str]:
+    """Validate that required params are present and non-empty."""
+    missing = []
+    empty = []
+    
+    for param in tool_def.parameters:
+        if param.required:
+            if param.name not in args:
+                missing.append(f"{param.name} ({param.type})")
+            elif param.type == 'string' and isinstance(args[param.name], str) and args[param.name].strip() == "":
+                empty.append(f"{param.name} ({param.type})")
+    
+    if missing or empty:
+        error_msg = []
+        if missing:
+            error_msg.append(f"Missing required params: {', '.join(missing)}")
+        if empty:
+            error_msg.append(f"Empty required string params: {', '.join(empty)}")
+        return False, "\n".join(error_msg)
+    
+    return True, ""
+
 @tool
 async def execute_tool(tool_name: str, params: str, store: Annotated[BaseStore, InjectedStore] = None) -> str:
     """
     Execute a specific tool by name.
     params must be a JSON string of arguments.
+    
+    **REQUIREMENT:** You MUST call think() before calling this tool to plan your execution.
     
     Returns the full tool output. Workers see all outputs in their isolated, ephemeral context.
     No memory saving needed - worker's context is destroyed after completion.
@@ -242,6 +270,27 @@ async def execute_tool(tool_name: str, params: str, store: Annotated[BaseStore, 
     
     # Normalize nested JSON strings (e.g., {"data": "{\"completed\":true}"} -> {"data": {"completed":true}})
     args = _normalize_nested_json_strings(args)
+    
+    # **VALIDATE AGAINST PLANNED EXECUTION AND SCHEMA:**
+    from tools.runtime_tool_store import _runtime_tool_store
+    
+    planned_execution = _runtime_tool_store.get_planned_execution(clean_name)
+    tool_schema = _runtime_tool_store.get_tool_schema(clean_name)
+    
+    # Validate required params are present and non-empty
+    if tool_schema:
+        is_valid, validation_error = _validate_required_params(tool_schema, args)
+        if not is_valid:
+            planned_info = ""
+            if planned_execution:
+                planned_info = f"\n\nPlanned execution reasoning: {planned_execution.reasoning}"
+            return (
+                f"❌ Parameter validation error:\n{validation_error}{planned_info}\n\n"
+                f"Please review the tool schema and ensure all required parameters are provided with non-empty values."
+            )
+    
+    # Clear planned execution after use
+    _runtime_tool_store.clear_planned_execution(clean_name)
         
     client = Composio(provider=LangchainProvider())
     user_id = os.getenv("COMPOSIO_USER_ID", "default")
@@ -253,7 +302,7 @@ async def execute_tool(tool_name: str, params: str, store: Annotated[BaseStore, 
         
         tool_to_use = tools[0]
         
-        # Validate arguments against tool schema
+        # Validate arguments against tool schema (Pydantic validation)
         is_valid, validation_error = _validate_tool_args(tool_to_use, args)
         if not is_valid:
             return validation_error or "Tool input validation error"

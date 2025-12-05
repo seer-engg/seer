@@ -3,7 +3,7 @@ Pydantic models for E16B experiment.
 Replaces string checks, dict access, and regex parsing with type-safe models.
 """
 from enum import Enum
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict, Any
 from pydantic import BaseModel, Field
 from langchain_core.messages import BaseMessage
 
@@ -97,3 +97,13 @@ class ToolDefinition(BaseModel):
     description: str
     parameters: List[ToolParameter] = Field(default_factory=list)
 
+# ============================================================================
+# Tool Execution Planning Models
+# ============================================================================
+
+class ToolExecutionPlanBase(BaseModel):
+    """Base model for tool execution plan - extracted from think() scratchpad."""
+    tool_name: str = Field(description="Name of the tool to execute")
+    reasoning: str = Field(description="Why this tool is needed and what it will accomplish")
+    params: Dict[str, Any] = Field(default_factory=dict, description="Tool parameters")
+    param_reasoning: Dict[str, str] = Field(default_factory=dict, description="Reasoning for each parameter")

@@ -9,6 +9,7 @@ from agents.state import WorkerState
 from tools.composio_tools import search_tools, execute_tool
 from tools.openai_retry_middleware import wrap_model_with_retry
 from tools.think_tool import think
+from tools.secrets_store import _secrets_store
 from langgraph.store.base import BaseStore
 
 def create_generic_worker(role_name: str, specific_instructions: str, store: BaseStore = None):
@@ -32,11 +33,20 @@ def create_generic_worker(role_name: str, specific_instructions: str, store: Bas
         execute_tool, 
     ]
     
+    # Check if this is an Asana-related task and inject secrets
+    secrets_context = ""
+    if "asana" in specific_instructions.lower() or "asana" in role_name.lower():
+        secrets = _secrets_store.get_all()
+        if secrets:
+            secrets_context = "\n\n**ASANA CONFIGURATION:**\n"
+            secrets_context += _secrets_store.format_for_prompt()
+            secrets_context += "\nUse these IDs when calling Asana tools that require workspace_gid or project_gid parameters.\n"
+    
     # 2. System Prompt (PRUNED - ~500 chars vs ~1200)
-    system_prompt = f"""You are {role_name}. Mission: {specific_instructions}
+    system_prompt = f"""You are {role_name}. Mission: {specific_instructions}{secrets_context}
 
-**PROTOCOL:**
-1. Search for tools using `search_tools(query, reasoning)`.
+**CRITICAL WORKFLOW:**
+1. Search for tools: `search_tools(query, reasoning)`
    - **MANDATORY**: Always provide `reasoning` explaining:
      * What capability you need (e.g., "search tasks", "create task", "find PR")
      * Why you need it (context from your task/instructions)
@@ -45,11 +55,26 @@ def create_generic_worker(role_name: str, specific_instructions: str, store: Bas
    - GOOD: search_tools("search Asana tasks by title", "I need to find existing tasks matching the PR title to avoid duplicates")
    - BAD: search_tools("search Asana tasks by title 'Seer: Evaluate my agent'", "...") ❌ (includes actual data in query)
    - BAD: search_tools("Asana", "...") ❌ (too vague)
-2. Execute tools with `execute_tool(name, params)` where params includes actual data.
-3. After EVERY tool call, call `think()` with:
-   - What tool was called and what it returned
-   - What tool you'll call next and why
-   - Any errors or issues encountered
+   - Tool schemas are returned - note which params are REQUIRED
+   
+2. **PLAN execution**: `think(scratchpad, last_tool_call)`
+   - BEFORE calling `execute_tool`, ALWAYS call `think()` to plan
+   - In scratchpad, explicitly state:
+     * Tool name you'll call (e.g., "I will call GITHUB_FIND_PULL_REQUESTS")
+     * ALL parameters with reasoning for each:
+       - "repo='seer-engg/buggy-coder' - because I need to search this specific repository"
+       - "state='closed' - because I need closed/merged PRs"
+       - "query='...' - because I need to search for..."
+     * Verify required params are provided with non-empty values
+   
+3. Execute: `execute_tool(name, params)` - use exact params from your thinking
+
+4. Reflect: `think(scratchpad, last_tool_call)` - analyze results
+
+**THINKING REQUIREMENTS:**
+- After EVERY tool call, call `think()` to reflect
+- BEFORE `execute_tool`, call `think()` to plan with explicit tool name and params
+- Never call `execute_tool` with empty required string parameters
 
 **FAILURE HANDLING:**
 - If a tool fails or hits limits, explain why in `think()` and consider alternatives
@@ -64,14 +89,13 @@ def create_generic_worker(role_name: str, specific_instructions: str, store: Bas
     # 3. Model with retry wrapper
     # We use a capable model since it needs to reason about tool discovery
     model = ChatOpenAI(model="gpt-5-mini", temperature=0.0)
-    model = wrap_model_with_retry(model, max_retries=2)  # Retry on invalid_prompt errors
+    model = wrap_model_with_retry(model, max_retries=3)  # Retry on invalid_prompt errors (total 4 attempts)
     
     # Tool call limits middleware - INCREASED LIMITS for better worker autonomy
     middleware = [
         ToolCallLimitMiddleware(thread_limit=20, run_limit=8),  # Increased global limit
         ToolCallLimitMiddleware(tool_name="search_tools", thread_limit=5, run_limit=3),
         ToolCallLimitMiddleware(tool_name="execute_tool", thread_limit=10, run_limit=5),
-        # Note: force_reasoning_after_tools removed - think tool + prompt is sufficient
     ]
     
     # 4. Create agent using create_agent

@@ -10,19 +10,20 @@ from openai import OpenAIError
 logger = logging.getLogger(__name__)
 
 
-def wrap_model_with_retry(model, max_retries: int = 2, base_delay: float = 1.0):
+def wrap_model_with_retry(model, max_retries: int = 3, base_delay: float = 2.0):
     """
     Wrap a ChatOpenAI model with simple retry logic and exponential backoff.
     
     Usage:
         model = ChatOpenAI(model="gpt-5-mini")
-        model = wrap_model_with_retry(model, max_retries=2)
+        model = wrap_model_with_retry(model, max_retries=3)
         agent = create_agent(model, tools)
     
     Args:
         model: ChatOpenAI model instance
-        max_retries: Maximum number of retry attempts (default: 2)
-        base_delay: Base delay in seconds for exponential backoff (default: 1.0)
+        max_retries: Maximum number of retry attempts (default: 3, total attempts = 4)
+        base_delay: Base delay in seconds for exponential backoff (default: 2.0)
+                    Delays: 2s, 4s, 8s, 16s
     
     Returns:
         Wrapped model using RunnableLambda
