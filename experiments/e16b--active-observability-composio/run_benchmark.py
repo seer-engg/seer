@@ -50,7 +50,8 @@ from agents.supervisor import create_supervisor
 # Import Models
 from models import EvaluationResult, BenchmarkResult
 
-# Task Definition
+# Task Definitions
+# Original E16B task (GitHub ↔ Asana)
 GITHUB_ASANA_TASK = """ACTION REQUIRED: Sync a GitHub PR to Asana.
 
 EXECUTE THESE STEPS IN ORDER:
@@ -65,16 +66,96 @@ EXECUTE THESE STEPS IN ORDER:
 NOTE: Searching for existing tasks is OPTIONAL. If search fails or exhausts tool calls, proceed directly to creating a new task with PR details.
 """
 
-async def evaluate_success(messages: list, output: str) -> EvaluationResult:
+# Tasks from older experiments (E6, E7) for comparison
+TEST_TASKS = [
+    {
+        "task_id": "github_asana",
+        "name": "GitHub ↔ Asana Integration",
+        "instruction": GITHUB_ASANA_TASK,
+        "metric": "PR found and details extracted; Asana task found/created and updated with PR details; Task closed successfully",
+        "services": ["GITHUB", "ASANA"],
+        "complexity": "complex"
+    },
+    {
+        "task_id": "weekly_summary",
+        "name": "Weekly Work Summary",
+        "instruction": """Create a weekly work summary: 
+1. Get my Google Calendar events for next week
+2. Get my GitHub pull requests from last week (all repos)
+3. Get my Slack messages from #engineering channel from last week
+4. Combine all information into a structured Google Doc
+5. Share the document with my manager (look up their email)
+6. Send them a Slack notification with the doc link""",
+        "metric": "Check for: (1) Google Doc created with all data, (2) Doc shared with manager, (3) Slack notification sent",
+        "services": ["GOOGLECALENDAR", "GITHUB", "SLACK", "GOOGLEDOCS"],
+        "complexity": "complex"
+    },
+    {
+        "task_id": "email_task_list",
+        "name": "Email Task List",
+        "instruction": """Find all unread emails from last month that contain 'meeting' or 'urgent', extract any action items or deadlines mentioned, create a prioritized task list in Google Sheets with columns: Task, Deadline, Priority, and send me a summary email with the sheet link.""",
+        "metric": "Google Sheet created with tasks and summary email sent",
+        "services": ["GMAIL", "GOOGLESHEETS"],
+        "complexity": "complex"
+    },
+    {
+        "task_id": "bug_summary",
+        "name": "GitHub Bug Summary",
+        "instruction": """Find all GitHub issues assigned to me that mention 'bug' or 'error',
+check if any have related Slack discussions in #bugs channel,
+create a summary document with: issue title, description, and related Slack context,
+and post it to #engineering channel with priority tags based on issue labels""",
+        "metric": "Check for: (1) Summary doc created, (2) Message posted to #engineering with doc link",
+        "services": ["GITHUB", "SLACK", "GOOGLEDOCS"],
+        "complexity": "complex"
+    },
+    {
+        "task_id": "telegram_simple",
+        "name": "Telegram Message",
+        "instruction": "send good morning message to +1 646-371-6198 via telegram",
+        "metric": "Check API response 200 OK from Telegram.",
+        "services": ["TELEGRAM"],
+        "complexity": "simple"
+    },
+    {
+        "task_id": "twitter_trends",
+        "name": "Twitter Trends",
+        "instruction": "what are the latest trends going on twitter",
+        "metric": "Check Twitter API for post results.",
+        "services": ["TWITTER"],
+        "complexity": "simple"
+    },
+    {
+        "task_id": "meeting_summary",
+        "name": "Meeting Summary Document",
+        "instruction": "Create a meeting summary document. Get all attendees from my last Google Calendar meeting, fetch their GitHub activity from the past week, create a Google Doc summarizing the meeting and their contributions, and share it with all attendees via email.",
+        "metric": "Google Doc created with meeting summary and shared via email with all attendees",
+        "services": ["GOOGLECALENDAR", "GITHUB", "GOOGLEDOCS", "GMAIL"],
+        "complexity": "complex"
+    },
+    {
+        "task_id": "deployment_summary",
+        "name": "Deployment Summary",
+        "instruction": "Find all Slack messages in #engineering from last week that mention 'deploy' or 'release', check corresponding GitHub pull requests, create a deployment summary in Google Sheets with columns: Date, PR, Author, Status, and notify the team in Slack.",
+        "metric": "Google Sheet created with deployment summary and Slack notification sent",
+        "services": ["SLACK", "GITHUB", "GOOGLESHEETS"],
+        "complexity": "complex"
+    }
+]
+
+async def evaluate_success(messages: list, output: str, task: dict) -> EvaluationResult:
     """Evaluate success using an LLM with structured output."""
     evaluator = ChatOpenAI(model="gpt-5-mini", temperature=0.0)
     
     tool_calls_made = any(isinstance(m, AIMessage) and m.tool_calls for m in messages)
     
-    prompt = f"""You are evaluating whether an agent successfully completed a GitHub->Asana sync task.
+    prompt = f"""You are evaluating whether an agent successfully completed an integration task.
 
 TASK:
-{GITHUB_ASANA_TASK}
+{task['instruction']}
+
+SUCCESS METRIC:
+{task.get('metric', 'Task completed successfully')}
 
 AGENT'S EXECUTION OUTPUT:
 {output[:5000]}
@@ -82,9 +163,11 @@ AGENT'S EXECUTION OUTPUT:
 TOOL CALLS MADE: {tool_calls_made}
 
 CRITICAL EVALUATION RULES:
-1. The agent MUST have performed actions (found PR, created/updated task).
-2. The final output must indicate success.
-3. If the agent asks for user input or says "I cannot", it failed.
+1. The agent MUST have performed actions using tools (not just planning or asking questions).
+2. The final output must indicate success or completion.
+3. Check if the success metric criteria are met based on the agent's actions.
+4. If the agent asks for user input or says "I cannot" without attempting actions, it failed.
+5. Consider partial success if some steps were completed but not all.
 """
 
     try:
@@ -103,7 +186,7 @@ CRITICAL EVALUATION RULES:
 
 from langgraph.store.memory import InMemoryStore
 
-async def run_condition(condition: str, task: str) -> BenchmarkResult:
+async def run_condition(condition: str, task: dict) -> BenchmarkResult:
     # 1. Setup Agent
     logger.info("Setting up agent...")
     if condition == "baseline":
@@ -145,8 +228,9 @@ async def run_condition(condition: str, task: str) -> BenchmarkResult:
         
         # Initialize state with todos and tool call counters
         logger.info("Initializing agent state...")
+        task_instruction = task['instruction'] if isinstance(task, dict) else task
         initial_state = {
-            "messages": [HumanMessage(content=task)],
+            "messages": [HumanMessage(content=task_instruction)],
             "todos": [],
             "tool_call_counts": {"_total": 0}
         }
@@ -187,7 +271,8 @@ async def run_condition(condition: str, task: str) -> BenchmarkResult:
         # 5. Evaluation
         logger.info("🔍 Evaluating Success...")
         print("\n🔍 Evaluating Success...")
-        eval_result = await evaluate_success(messages, final_output)
+        task_dict = task if isinstance(task, dict) else {"instruction": task, "metric": "Task completed successfully"}
+        eval_result = await evaluate_success(messages, final_output, task_dict)
         
         logger.info(f"Evaluation result: success={eval_result.success}, confidence={eval_result.confidence:.2f}")
         print(f"   Result: {'✅ Success' if eval_result.success else '❌ Failed'}")
@@ -226,16 +311,33 @@ async def run_condition(condition: str, task: str) -> BenchmarkResult:
 
 async def main():
     logger.info("="*60)
-    logger.info("🚀 Starting E16B Experiment: Baseline Delegate Only")
+    logger.info("🚀 Starting E16B Experiment: Baseline Delegate with Multiple Tasks")
     logger.info("="*60)
-    print("🚀 Starting E16B Experiment: Baseline Delegate Only")
+    print("🚀 Starting E16B Experiment: Baseline Delegate with Multiple Tasks")
+    print(f"📋 Running {len(TEST_TASKS)} tasks")
     
     results = []
     
-    # Run Baseline Delegate only
-    logger.info("Starting baseline_delegate condition...")
-    results.append(await run_condition("baseline_delegate", GITHUB_ASANA_TASK))
-    logger.info("✓ Baseline delegate condition completed")
+    # Run Baseline Delegate on all tasks
+    for i, task in enumerate(TEST_TASKS, 1):
+        logger.info(f"\n{'='*60}")
+        logger.info(f"Task {i}/{len(TEST_TASKS)}: {task['name']} ({task['task_id']})")
+        logger.info(f"{'='*60}")
+        print(f"\n{'='*60}")
+        print(f"Task {i}/{len(TEST_TASKS)}: {task['name']} ({task['task_id']})")
+        print(f"Complexity: {task['complexity']}")
+        print(f"{'='*60}")
+        
+        result = await run_condition("baseline_delegate", task)
+        # Add task metadata to result
+        result_dict = result.model_dump()
+        result_dict['task_id'] = task['task_id']
+        result_dict['task_name'] = task['name']
+        result_dict['task_complexity'] = task['complexity']
+        results.append(result_dict)
+        
+        logger.info(f"✓ Task {i} completed: {'✅ Success' if result.success else '❌ Failed'}")
+        print(f"\n✓ Task {i} completed: {'✅ Success' if result.success else '❌ Failed'}")
     
     # Save Results
     timestamp = int(time.time())
@@ -243,21 +345,48 @@ async def main():
     results_file.parent.mkdir(parents=True, exist_ok=True)
     
     with open(results_file, 'w') as f:
-        json.dump([r.model_dump() for r in results], f, indent=2)
+        json.dump(results, f, indent=2)
         
     print(f"\n💾 Results saved to: {results_file}")
     
     # Results Summary
-    print("\n📊 RESULTS SUMMARY:")
-    result = results[0]
-    print(f"   Condition: {result.condition}")
-    print(f"   Success: {'✅ Yes' if result.success else '❌ No'}")
-    print(f"   Execution Time: {result.execution_time:.2f}s")
-    print(f"   Context Size: ~{result.context_size_estimate} chars (~{result.total_tokens_estimate} tokens)")
-    print(f"   Tool Calls: {result.tool_calls}")
-    print(f"   Trace ID: {result.trace_id}")
-    if result.reasoning:
-        print(f"   Reasoning: {result.reasoning[:200]}...")
+    print("\n" + "="*60)
+    print("📊 RESULTS SUMMARY")
+    print("="*60)
+    
+    total_tasks = len(results)
+    successful_tasks = sum(1 for r in results if r.get('success', False))
+    success_rate = (successful_tasks / total_tasks * 100) if total_tasks > 0 else 0
+    
+    print(f"\nOverall: {successful_tasks}/{total_tasks} tasks succeeded ({success_rate:.1f}%)")
+    
+    # Group by complexity
+    complex_results = [r for r in results if r.get('task_complexity') == 'complex']
+    simple_results = [r for r in results if r.get('task_complexity') == 'simple']
+    
+    if complex_results:
+        complex_success = sum(1 for r in complex_results if r.get('success', False))
+        print(f"Complex tasks: {complex_success}/{len(complex_results)} succeeded ({complex_success/len(complex_results)*100:.1f}%)")
+    
+    if simple_results:
+        simple_success = sum(1 for r in simple_results if r.get('success', False))
+        print(f"Simple tasks: {simple_success}/{len(simple_results)} succeeded ({simple_success/len(simple_results)*100:.1f}%)")
+    
+    # Per-task summary
+    print("\nPer-task results:")
+    for r in results:
+        status = "✅" if r.get('success', False) else "❌"
+        print(f"  {status} {r.get('task_name', 'Unknown')}: {r.get('execution_time', 0):.2f}s, {r.get('tool_calls', 0)} tool calls")
+    
+    # Average metrics
+    if results:
+        avg_time = sum(r.get('execution_time', 0) for r in results) / len(results)
+        avg_tool_calls = sum(r.get('tool_calls', 0) for r in results) / len(results)
+        avg_context = sum(r.get('context_size_estimate', 0) for r in results) / len(results)
+        print(f"\nAverage metrics:")
+        print(f"  Execution Time: {avg_time:.2f}s")
+        print(f"  Tool Calls: {avg_tool_calls:.1f}")
+        print(f"  Context Size: ~{int(avg_context)} chars (~{int(avg_context/4)} tokens)")
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -2,7 +2,7 @@
 
 **Date:** 2025-01-XX  
 **Status:** ✅ Ready to Run  
-**Task:** GitHub ↔ Asana Integration (Sync PRs to Tasks)
+**Tasks:** 8 integration tasks (GitHub ↔ Asana, Google Docs/Sheets, Slack, Telegram, Twitter, Gmail, Calendar)
 
 ## Core Hypothesis
 
@@ -25,16 +25,19 @@
 
 ## Experimental Setup
 
-**Task:**  
+This experiment tests the baseline delegate orchestrator on **8 integration tasks** from previous experiments (E6, E7) to compare performance across different task types and complexities.
+
+### Task 1: GitHub ↔ Asana Integration (Original E16B Task)
+**Instruction:**  
 "ACTION REQUIRED: Sync a GitHub PR to Asana.
 
 EXECUTE THESE STEPS IN ORDER:
 1. Search GitHub for the most recently merged/closed PR in repository 'seer-engg/buggy-coder'.
 2. Extract PR details: title, URL, author, merge/close date.
-3. Search Asana for tasks matching the PR title or keywords.
+3. OPTIONALLY search Asana for tasks matching the PR title or keywords (if search fails or finds nothing, proceed to step 4).
 4. DECISION:
-   - IF task EXISTS: Update the task with PR details (add comment with PR URL, author, date).
-   - IF task DOES NOT EXIST: Create a new Asana task with PR title and details.
+   - IF task EXISTS (from step 3): Update the task with PR details (add comment with PR URL, author, date).
+   - IF task DOES NOT EXIST (search found nothing or search was skipped): Create a new Asana task with PR title and details.
 5. Close the Asana task (whether it was updated or newly created)."
 
 **Success Criteria:**
@@ -42,6 +45,94 @@ EXECUTE THESE STEPS IN ORDER:
 - Asana task found/created and updated with PR details
 - Task closed successfully
 - All steps completed without errors
+
+**Services:** GitHub, Asana  
+**Complexity:** Complex
+
+### Task 2: Weekly Work Summary
+**Instruction:**  
+Create a weekly work summary: 
+1. Get my Google Calendar events for next week
+2. Get my GitHub pull requests from last week (all repos)
+3. Get my Slack messages from #engineering channel from last week
+4. Combine all information into a structured Google Doc
+5. Share the document with my manager (look up their email)
+6. Send them a Slack notification with the doc link
+
+**Success Criteria:**
+- Google Doc created with all data
+- Doc shared with manager
+- Slack notification sent
+
+**Services:** Google Calendar, GitHub, Slack, Google Docs  
+**Complexity:** Complex
+
+### Task 3: Email Task List
+**Instruction:**  
+Find all unread emails from last month that contain 'meeting' or 'urgent', extract any action items or deadlines mentioned, create a prioritized task list in Google Sheets with columns: Task, Deadline, Priority, and send me a summary email with the sheet link.
+
+**Success Criteria:**
+- Google Sheet created with tasks
+- Summary email sent
+
+**Services:** Gmail, Google Sheets  
+**Complexity:** Complex
+
+### Task 4: GitHub Bug Summary
+**Instruction:**  
+Find all GitHub issues assigned to me that mention 'bug' or 'error',
+check if any have related Slack discussions in #bugs channel,
+create a summary document with: issue title, description, and related Slack context,
+and post it to #engineering channel with priority tags based on issue labels
+
+**Success Criteria:**
+- Summary doc created
+- Message posted to #engineering with doc link
+
+**Services:** GitHub, Slack, Google Docs  
+**Complexity:** Complex
+
+### Task 5: Telegram Message (Simple)
+**Instruction:**  
+send good morning message to +1 646-371-6198 via telegram
+
+**Success Criteria:**
+- Check API response 200 OK from Telegram
+
+**Services:** Telegram  
+**Complexity:** Simple
+
+### Task 6: Twitter Trends (Simple)
+**Instruction:**  
+what are the latest trends going on twitter
+
+**Success Criteria:**
+- Check Twitter API for post results
+
+**Services:** Twitter  
+**Complexity:** Simple
+
+### Task 7: Meeting Summary Document
+**Instruction:**  
+Create a meeting summary document. Get all attendees from my last Google Calendar meeting, fetch their GitHub activity from the past week, create a Google Doc summarizing the meeting and their contributions, and share it with all attendees via email.
+
+**Success Criteria:**
+- Google Doc created with meeting summary
+- Shared via email with all attendees
+
+**Services:** Google Calendar, GitHub, Google Docs, Gmail  
+**Complexity:** Complex
+
+### Task 8: Deployment Summary
+**Instruction:**  
+Find all Slack messages in #engineering from last week that mention 'deploy' or 'release', check corresponding GitHub pull requests, create a deployment summary in Google Sheets with columns: Date, PR, Author, Status, and notify the team in Slack.
+
+**Success Criteria:**
+- Google Sheet created with deployment summary
+- Slack notification sent
+
+**Services:** Slack, GitHub, Google Sheets  
+**Complexity:** Complex
 
 **Conditions:**
 1. **Baseline:** Single ReAct agent with ToolHub (dynamic tool discovery)
@@ -109,9 +200,10 @@ python3 run_benchmark.py
 ```
 
 **Output:**
-- Results saved to `results/benchmark_TIMESTAMP.json`
-- LangFuse traces for both conditions
-- Comparative metrics and analysis
+- Results saved to `results/benchmark_TIMESTAMP.json` (includes all 8 tasks)
+- LangFuse traces for each task execution
+- Per-task metrics and overall summary statistics
+- Success rates by complexity (simple vs complex tasks)
 
 ## Key Innovations
 
