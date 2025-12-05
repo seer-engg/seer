@@ -104,7 +104,7 @@ After EVERY tool call (except 'think'), call `think()` to reason. ALWAYS referen
     middleware = [
         ToolCallLimitMiddleware(thread_limit=30, run_limit=10),
         ToolCallLimitMiddleware(tool_name="write_todos", thread_limit=5, run_limit=3),
-        ToolCallLimitMiddleware(tool_name="spawn_worker", thread_limit=10, run_limit=3),
+        ToolCallLimitMiddleware(tool_name="spawn_worker", thread_limit=10, run_limit=4),  # Increased: allow one more worker spawn
     ]
     
     # 4. Create the Agent

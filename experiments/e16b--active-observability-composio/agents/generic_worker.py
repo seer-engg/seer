@@ -91,11 +91,11 @@ def create_generic_worker(role_name: str, specific_instructions: str, store: Bas
     model = ChatOpenAI(model="gpt-5-mini", temperature=0.0)
     model = wrap_model_with_retry(model, max_retries=3)  # Retry on invalid_prompt errors (total 4 attempts)
     
-    # Tool call limits middleware - INCREASED LIMITS for better worker autonomy
+    # Tool call limits middleware - DOUBLED LIMITS for better worker autonomy
     middleware = [
-        ToolCallLimitMiddleware(thread_limit=20, run_limit=8),  # Increased global limit
-        ToolCallLimitMiddleware(tool_name="search_tools", thread_limit=5, run_limit=3),
-        ToolCallLimitMiddleware(tool_name="execute_tool", thread_limit=10, run_limit=5),
+        ToolCallLimitMiddleware(thread_limit=40, run_limit=16),  # Doubled global limit
+        ToolCallLimitMiddleware(tool_name="search_tools", thread_limit=10, run_limit=6),  # Doubled
+        ToolCallLimitMiddleware(tool_name="execute_tool", thread_limit=20, run_limit=10),  # Doubled
     ]
     
     # 4. Create agent using create_agent
