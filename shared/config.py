@@ -132,7 +132,7 @@ class SeerConfig(BaseSettings):
     # Computed Properties
     # ============================================================================
 
-    default_llm_model: str = Field(default="gpt-5.1", description="Default LLM model")
+    default_llm_model: str = Field(default="gpt-5-mini", description="Default LLM model")
     
     @computed_field
     @property

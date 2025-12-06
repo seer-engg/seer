@@ -8,6 +8,7 @@ from shared.schema import AgentContext
 from shared.schema import GithubContext, UserContext
 from shared.logger import get_logger
 from shared.tools import resolve_mcp_services
+from langchain_openai import ChatOpenAI
 
 
 logger = get_logger("eval_agent.plan")
@@ -79,7 +80,9 @@ async def ensure_target_agent_config(state: EvalAgentPlannerState) -> dict:
             description="The name of the agent"
         )
 
-    extractor = get_llm(model="gpt-4.1", temperature=0.0).with_structured_output(TargetAgentExtractionContext)
+    # using 4.1 mini without response api  to avoid json schema error 
+    # TODO: find out how to adapt schea with responses api
+    extractor = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0).with_structured_output(TargetAgentExtractionContext)
     context: TargetAgentExtractionContext = await extractor.ainvoke(f"{instruction}\n\nUSER:\n{last_human.content}")
     context.user_context.raw_request = last_human.content
     
