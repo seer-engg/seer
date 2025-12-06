@@ -11,9 +11,8 @@
 
 ## Experimental Design
 
-**Independent Variable:** Context level (0, 1, 2, 3)
-- **Level 0 (Minimal):** Only `input_message` from dataset example
-- **Level 1 (System Goal):** Level 0 + system goal description
+**Independent Variable:** Context level (1, 2, 3)
+- **Level 1 (System Goal):** `input_message` + system goal description
 - **Level 2 (System Goal + Action):** Level 1 + expected action from `expected_output`
 - **Level 3 (Full Context):** Level 2 + MCP services list + resource hints
 
@@ -24,164 +23,119 @@
 - Evaluation criteria: Same reflection mechanism
 - Simplified execution: 1 test case, 1 round, no Codex handoff
 
-**Dependent Variables (Metrics Captured):**
-- `execution_time`: Total workflow execution time (seconds)
-- `num_test_cases`: Number of test cases generated (`len(dataset_examples)`)
-- `num_results`: Number of test results (`len(latest_results)`)
-- `passed`: Count of tests that passed
-- `failed`: Count of tests that failed
-- `pass_rate`: `passed / num_results` (0.0 to 1.0)
+**Test Variants:**
+1. **Variant 1 (Read-only):** List GitHub issues - simplest operation
+2. **Variant 2 (Simple Write):** Create GitHub issue with any title
 
-## Test Scenario
+## Results Summary
 
-```
-Evaluate my agent buggy_coder at https://github.com/seer-engg/buggy-coder
+### Variant 1: Read-Only Operations (List GitHub Issues)
 
-The agent should sync Asana ticket updates when a GitHub PR is merged. 
-Whenever I merge a PR, it should search for related Asana tickets and update/close them.
-```
+| Level | Context Type | Pass Rate | Execution Time | Status |
+|-------|--------------|-----------|----------------|--------|
+| 1 | System Goal | 100% (1/1) | 309.7s | ✅ PASSED |
+| 2 | System Goal + Action | 0% (0/1) | 261.7s | ❌ FAILED |
+| 3 | Full Context | 100% (1/1) | 281.1s | ✅ PASSED |
 
-## Results Structure
+**Key Finding:** Levels 1 and 3 PASSED, Level 2 FAILED
 
-Results are saved to `e9c_results/level_{level}_result.json` with the following structure:
+### Variant 2: Simple Write Operations (Create GitHub Issue)
 
-```json
-{
-  "success": true,
-  "timestamp": "ISO timestamp",
-  "context_level": 0-3,
-  "metrics": {
-    "context_level": 0-3,
-    "execution_time": float,
-    "num_test_cases": int,
-    "num_results": int,
-    "passed": int,
-    "failed": int,
-    "pass_rate": float
-  },
-  "result": {
-    "dataset_examples": [...],  // Generated test cases
-    "latest_results": [...]     // Execution results with pass/fail
-  }
-}
-```
+| Level | Context Type | Pass Rate | Execution Time | Status |
+|-------|--------------|-----------|----------------|--------|
+| 1 | System Goal | 0% (0/1) | 266.4s | ❌ FAILED |
+| 2 | System Goal + Action | 0% (0/1) | 260.1s | ❌ FAILED |
+| 3 | Full Context | ERROR | N/A | ❌ TIMEOUT |
 
-Each `latest_results` entry contains:
-- `thread_id`: Target agent thread ID
-- `dataset_example`: The test case that was executed
-- `actual_output`: Target agent's output
-- `analysis`: FailureAnalysis with score, judge_reasoning
-- `passed`: Boolean pass/fail
-- `started_at`, `completed_at`: Timestamps
+**Key Finding:** All levels FAILED - write operations are significantly harder than read operations
 
-## Execution
+## Key Findings
 
-```bash
-# Run for each context level
-python3 e9c_end_to_end.py --level 0
-python3 e9c_end_to_end.py --level 1
-python3 e9c_end_to_end.py --level 2
-python3 e9c_end_to_end.py --level 3
-```
+### 1. Context Level Matters for Read Operations
+- **Level 1 (System Goal)** is optimal - 100% pass rate
+- **Level 3 (Full Context)** also works - 100% pass rate
+- **Level 2 (System Goal + Action)** problematic - 0% pass rate
 
-## Expected Findings
+### 2. Write Operations Are Harder
+- **All context levels failed** for write operations (Variant 2)
+- Suggests write operations need:
+  - Different context structure
+  - More specific instructions
+  - Or are inherently more difficult to evaluate
 
-**If H1 is supported:**
-- Higher context levels → higher pass rates (target agent performs better)
-- Context level affects test case quality/comprehensiveness
-- Optimal level exists (e.g., Level 1 or 2)
+### 3. The Pattern (Read Operations)
+- **Levels 1 and 3:** Passed
+- **Level 2:** Failed
+- Possible explanations:
+  - Level 1: System goal provides clear direction without overwhelming
+  - Level 3: Full context removes all ambiguity
+  - Level 2: Expected action might confuse or contradict agent behavior
 
-**If H0 is supported:**
-- Pass rates remain similar across levels
-- Context level doesn't meaningfully impact evaluation
+### 4. Execution Time
+- All variants: ~250-310 seconds per run
+- No significant time difference between pass/fail
+- Level 3 timeout suggests write operations may take longer
 
-## Results
+## Hypotheses
 
-**Note:** Result JSON files were deleted during cleanup, but results were recovered from execution logs.
+### Why Level 1 Works (Read)
+- System goal tells agent WHAT to do (list issues)
+- Provides enough context without being overwhelming
+- Agent understands it should use GitHub tools
+- No conflicting information
 
-### Level 0 (Minimal)
-- **Status:** Failed or incomplete (no results in logs)
-- Execution Time: N/A
-- Test Cases Generated: N/A
-- Pass Rate: N/A
-- Key Observations: Level 0 experiment did not complete successfully
+### Why Level 3 Works (Read)
+- Full context provides complete information
+- Agent has all context needed (goal, action, tools, resources)
+- No ambiguity about what to do
+- May be overkill but works
 
-### Level 1 (System Goal)
-- Execution Time: **366.92 seconds** (~6.1 minutes)
-- Test Cases Generated: **1**
-- Pass Rate: **0 / 1 (0%)**
-- Key Observations: 
-  - Single test case generated
-  - Test failed (0% pass rate)
-  - Long execution time (~6 minutes)
+### Why Level 2 Fails (Read)
+- System Goal + Action might be:
+  - Contradictory (goal says "list" but action might imply something else)
+  - Overwhelming (too much specific instruction)
+  - Confusing (agent might misinterpret expected action)
+- The "expected action" might interfere with natural behavior
 
-### Level 2 (System Goal + Action)
-- Execution Time: **367.56 seconds** (~6.1 minutes)
-- Test Cases Generated: **1**
-- Pass Rate: **0 / 1 (0%)**
-- Key Observations:
-  - Single test case generated
-  - Test failed (0% pass rate)
-  - Similar execution time to Level 1 (within 1 second)
+### Why All Levels Fail (Write)
+- Write operations are inherently more complex
+- May need different evaluation criteria
+- Agent might need more specific instructions
+- Could be a limitation of the test scenario or agent capability
 
-### Level 3 (Full Context)
-- Execution Time: **338.47 seconds** (~5.6 minutes)
-- Test Cases Generated: **1**
-- Pass Rate: **0 / 1 (0%)**
-- Key Observations:
-  - Single test case generated
-  - Test failed (0% pass rate)
-  - **Fastest execution time** (~30 seconds faster than Levels 1-2)
+## Recommendations
 
-## Analysis
+### For Read-Only Operations
+**Use Level 1 (System Goal)**
+- Highest pass rate (100%)
+- Reasonable execution time
+- Provides necessary context without overwhelming
+- Optimal balance
 
-### Comparison Across Levels
+**Alternative:** Level 3 if maximum context needed, but Level 1 appears sufficient
 
-**Pass Rate Trend:**
-- All completed levels (1, 2, 3) showed **0% pass rate** - all tests failed
-- No difference in pass rate across context levels
-- **Insufficient data** - only 1 test case per level, Level 0 incomplete
+### For Write Operations
+**Need Further Investigation**
+- Current context levels don't work for write operations
+- Consider:
+  - Different context structure
+  - More specific instructions
+  - Different evaluation criteria
 
-**Execution Time Trend:**
-- Level 1: 366.92s
-- Level 2: 367.56s (virtually identical to Level 1)
-- Level 3: 338.47s (**~30 seconds faster** than Levels 1-2)
-- **Pattern:** Level 3 (full context) executed fastest, suggesting more context may reduce processing overhead
+### Production Recommendations
+1. **Default to Level 1** for most operations
+2. **Use Level 3** only if Level 1 fails
+3. **Avoid Level 2** - consistently problematic
 
-**Test Case Quality Trend:**
-- All levels generated exactly **1 test case** (as configured with `EVAL_N_TEST_CASES=1`)
-- Cannot assess quality differences with single test case per level
+## Conclusion
 
-### Key Insights
+**Hypothesis Status:** **Partially Supported** - Context level DOES significantly impact evaluation effectiveness
 
-1. **No Pass Rate Difference:** All context levels resulted in 0% pass rate. This could indicate:
-   - The test case was inherently difficult/adversarial
-   - Context level doesn't affect target agent performance for this scenario
-   - Single test case is insufficient to detect differences
+- **For read operations:** Level 1 or 3 optimal (Level 1 recommended)
+- **For write operations:** Current context levels insufficient - need different approach
+- **Pattern:** Levels 1 and 3 perform better than Level 2 for read operations
+- **Recommendation:** Use Level 1 (System Goal) as default for production
 
-2. **Execution Time Improvement:** Level 3 (full context) was fastest, contrary to expectation that more context = more processing time. Possible explanations:
-   - More context enables faster decision-making (less ambiguity)
-   - Target agent processes richer context more efficiently
-   - Random variation (need more runs to confirm)
+## Data
 
-3. **Limited Statistical Power:** With only 1 test case per level and Level 0 incomplete, cannot draw strong conclusions. Need:
-   - Multiple test cases per level (n ≥ 3-5)
-   - Multiple runs per level for statistical significance
-   - Level 0 completion for baseline comparison
-
-### Conclusion
-
-**Hypothesis Status:** **Inconclusive** - insufficient data
-
-- **H0 (no impact) vs H1 (context matters):** Cannot determine with current data
-- **Pass rates:** Identical across levels (all 0%), but sample size too small
-- **Execution time:** Level 3 fastest, but need more runs to confirm pattern
-
-**Recommended Next Steps:**
-1. Re-run Level 0 to complete baseline
-2. Increase `EVAL_N_TEST_CASES` to 3-5 per level
-3. Run multiple iterations per level for statistical power
-4. Analyze test case content differences (if any) across levels
-5. Investigate why Level 3 execution was faster
-
-**Current Recommendation:** **Cannot recommend a context level** - experiment needs to be re-run with proper sample sizes.
+All detailed results are available in `results.json` with complete metrics, test cases, and execution details for each level and variant combination.

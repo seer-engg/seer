@@ -1,0 +1,50 @@
+[
+  {
+    "task_id": "HumanEval/0",
+    "prompt": "from typing import List\n\ndef has_close_elements(numbers: List[float], threshold: float) -> bool:\n    \"\"\" Check if in given list of numbers, are there any two numbers closer to each other than\n    given threshold.\n    >>> has_close_elements([1.0, 2.0, 3.0], 0.5)\n    False\n    >>> has_close_elements([1.0, 2.8, 3.0, 4.0, 5.0, 2.0], 0.3)\n    True\n    \"\"\"\n",
+    "entry_point": "has_close_elements",
+    "test": "def check(candidate):\n    assert candidate([1.0, 2.0, 3.0], 0.5) == False\n    assert candidate([1.0, 2.8, 3.0, 4.0, 5.0, 2.0], 0.3) == True\n    assert candidate([1.0, 2.0, 3.9], 0.3) == False\n    assert candidate([1.0, 2.0, 3.0], 0.1) == False\n",
+    "category": "list_manipulation",
+    "difficulty": "easy"
+  },
+  {
+    "task_id": "HumanEval/1",
+    "prompt": "from typing import List\n\ndef find_farthest_pair(numbers: List[float]) -> tuple:\n    \"\"\" Find the two numbers in the list that are farthest apart.\n    Return a tuple of (min_value, max_value).\n    >>> find_farthest_pair([1.0, 2.0, 3.0, 4.0])\n    (1.0, 4.0)\n    >>> find_farthest_pair([5.5, 2.1, 8.9, 1.2])\n    (1.2, 8.9)\n    \"\"\"\n",
+    "entry_point": "find_farthest_pair",
+    "test": "def check(candidate):\n    assert candidate([1.0, 2.0, 3.0, 4.0]) == (1.0, 4.0)\n    assert candidate([5.5, 2.1, 8.9, 1.2]) == (1.2, 8.9)\n    assert candidate([10.0]) == (10.0, 10.0)\n",
+    "category": "list_manipulation",
+    "difficulty": "easy"
+  },
+  {
+    "task_id": "HumanEval/3",
+    "prompt": "from typing import List, Tuple\n\ndef find_longest_subsequence(strings: List[str]) -> Tuple[int, int]:\n    \"\"\" Find the longest subsequence of strings where each string starts with the last character of the previous string.\n    Return a tuple of (start_index, length) of the longest such subsequence.\n    If multiple subsequences have the same length, return the one that starts earliest.\n    >>> find_longest_subsequence(['abc', 'cde', 'efg', 'ghi'])\n    (0, 4)\n    >>> find_longest_subsequence(['abc', 'def', 'ghi'])\n    (0, 1)\n    \"\"\"\n",
+    "entry_point": "find_longest_subsequence",
+    "test": "def check(candidate):\n    assert candidate(['abc', 'cde', 'efg', 'ghi']) == (0, 4)\n    assert candidate(['abc', 'def', 'ghi']) == (0, 1)\n    assert candidate(['abc', 'cba', 'abc']) == (0, 2)\n    assert candidate(['a', 'b', 'c', 'd']) == (0, 1)\n",
+    "category": "string_manipulation",
+    "difficulty": "medium"
+  },
+  {
+    "task_id": "HumanEval/4",
+    "prompt": "from typing import List, Dict\n\ndef group_by_common_prefix(strings: List[str], min_length: int = 2) -> Dict[str, List[str]]:\n    \"\"\" Group strings by their common prefix of at least min_length characters.\n    Return a dictionary where keys are the common prefixes and values are lists of strings sharing that prefix.\n    >>> group_by_common_prefix(['apple', 'apricot', 'banana', 'band', 'bandana'])\n    {'ap': ['apple', 'apricot'], 'ban': ['banana', 'band', 'bandana']}\n    >>> group_by_common_prefix(['abc', 'def', 'ghi'], min_length=3)\n    {'abc': ['abc'], 'def': ['def'], 'ghi': ['ghi']}\n    \"\"\"\n",
+    "entry_point": "group_by_common_prefix",
+    "test": "def check(candidate):\n    result = candidate(['apple', 'apricot', 'banana', 'band', 'bandana'])\n    assert set(result.keys()) == {'ap', 'ban'}\n    assert set(result['ap']) == {'apple', 'apricot'}\n    assert set(result['ban']) == {'banana', 'band', 'bandana'}\n    result2 = candidate(['abc', 'def', 'ghi'], min_length=3)\n    assert len(result2) == 3\n    assert result2['abc'] == ['abc']\n",
+    "category": "string_manipulation",
+    "difficulty": "medium"
+  },
+  {
+    "task_id": "HumanEval/5",
+    "prompt": "from typing import List, Set, Tuple\n\ndef find_longest_common_subsequence(seq1: List[int], seq2: List[int]) -> List[int]:\n    \"\"\" Find the longest common subsequence (LCS) between two sequences.\n    A subsequence is a sequence that appears in the same relative order, but not necessarily contiguous.\n    Return the LCS as a list.\n    >>> find_longest_common_subsequence([1, 2, 3, 4, 5], [2, 4, 5, 6])\n    [2, 4, 5]\n    >>> find_longest_common_subsequence([1, 2, 3], [4, 5, 6])\n    []\n    >>> find_longest_common_subsequence([1, 2, 3, 4], [1, 2, 3, 4])\n    [1, 2, 3, 4]\n    \"\"\"\n",
+    "entry_point": "find_longest_common_subsequence",
+    "test": "def check(candidate):\n    assert candidate([1, 2, 3, 4, 5], [2, 4, 5, 6]) == [2, 4, 5]\n    assert candidate([1, 2, 3], [4, 5, 6]) == []\n    assert candidate([1, 2, 3, 4], [1, 2, 3, 4]) == [1, 2, 3, 4]\n    assert candidate([1, 3, 5, 7, 9], [2, 3, 5, 8, 9]) == [3, 5, 9]\n    assert candidate([10, 20, 30], [10, 20, 30, 40]) == [10, 20, 30]\n",
+    "category": "dynamic_programming",
+    "difficulty": "hard"
+  },
+  {
+    "task_id": "HumanEval/6",
+    "prompt": "from typing import List, Dict, Optional\n\ndef solve_sudoku(grid: List[List[Optional[int]]]) -> List[List[int]]:\n    \"\"\" Solve a 9x9 Sudoku puzzle using backtracking.\n    The grid is represented as a list of lists, where 0 or None represents an empty cell.\n    Return the solved grid.\n    >>> grid = [\n    ...     [5, 3, None, None, 7, None, None, None, None],\n    ...     [6, None, None, 1, 9, 5, None, None, None],\n    ...     [None, 9, 8, None, None, None, None, 6, None],\n    ...     [8, None, None, None, 6, None, None, None, 3],\n    ...     [4, None, None, 8, None, 3, None, None, 1],\n    ...     [7, None, None, None, 2, None, None, None, 6],\n    ...     [None, 6, None, None, None, None, 2, 8, None],\n    ...     [None, None, None, 4, 1, 9, None, None, 5],\n    ...     [None, None, None, None, 8, None, None, 7, 9]\n    ... ]\n    >>> result = solve_sudoku(grid)\n    >>> all(1 <= result[i][j] <= 9 for i in range(9) for j in range(9))\n    True\n    \"\"\"\n",
+    "entry_point": "solve_sudoku",
+    "test": "def check(candidate):\n    grid = [\n        [5, 3, None, None, 7, None, None, None, None],\n        [6, None, None, 1, 9, 5, None, None, None],\n        [None, 9, 8, None, None, None, None, 6, None],\n        [8, None, None, None, 6, None, None, None, 3],\n        [4, None, None, 8, None, 3, None, None, 1],\n        [7, None, None, None, 2, None, None, None, 6],\n        [None, 6, None, None, None, None, 2, 8, None],\n        [None, None, None, 4, 1, 9, None, None, 5],\n        [None, None, None, None, 8, None, None, 7, 9]\n    ]\n    result = candidate(grid)\n    # Check all cells are filled\n    assert all(result[i][j] is not None for i in range(9) for j in range(9))\n    # Check all values are 1-9\n    assert all(1 <= result[i][j] <= 9 for i in range(9) for j in range(9))\n    # Check rows\n    for i in range(9):\n        assert len(set(result[i])) == 9\n    # Check columns\n    for j in range(9):\n        assert len(set(result[i][j] for i in range(9))) == 9\n    # Check 3x3 boxes\n    for box_row in range(3):\n        for box_col in range(3):\n            box_values = [result[box_row*3 + i][box_col*3 + j] for i in range(3) for j in range(3)]\n            assert len(set(box_values)) == 9\n",
+    "category": "backtracking",
+    "difficulty": "hard"
+  }
+]

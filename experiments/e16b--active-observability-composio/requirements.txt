@@ -1,0 +1,9 @@
+langchain>=1.1.2
+langchain-core>=1.1.1
+langchain-openai>=1.1.0
+langgraph>=1.0.4
+composio-core>=0.3.0
+composio-langchain>=0.3.0
+langfuse>=2.0.0
+pydantic>=2.0.0
+python-dotenv>=1.0.0

@@ -23,12 +23,30 @@ class AsanaProvider(BaseProvider):
     async def provision_resources(self, seed:str) -> Dict[str, Any]:
         
         logger.info(f"Provisioning ASANA resources with seed {seed}")
+        
+        # For free plans without Teams, reuse existing project if configured
+        if config.asana_project_id:
+            logger.info(f"Reusing existing Asana project: {config.asana_project_id} (free plan - no teams)")
+            return {
+                "project_gid": config.asana_project_id,
+            }
+        
+        # Try to create a new project (requires Teams on paid plans)
+        logger.info("Attempting to create new Asana project...")
+        team_gid = config.asana_team_gid
+        
+        # Asana API requires 'workspace' or 'team' (not 'workspace_id' or 'team_id')
+        # Note: Free plans don't have Teams, so project creation will likely fail
+        data_payload = {"name": seed}
+        if team_gid:
+            data_payload["team"] = team_gid
+        elif config.asana_workspace_id:
+            data_payload["workspace"] = config.asana_workspace_id
+        else:
+            raise ValueError("Either asana_workspace_id, asana_team_gid, or asana_project_id must be configured")
+        
         payload = {
-            "data": {
-                "name": seed,
-                "workspace_id": config.asana_workspace_id,
-                "team":config.asana_team_gid
-            },
+            "data": data_payload,
             "opt_pretty": True,
         }
         result = await asyncio.to_thread(self.mcp_client.tools.execute,
@@ -37,7 +55,20 @@ class AsanaProvider(BaseProvider):
             arguments=payload,
             version=self.version
         )
-        project_gid = result.get('data').get('data').get('gid')
+        # Handle different response structures
+        if result and result.get('data'):
+            data = result.get('data')
+            if isinstance(data, dict):
+                project_gid = data.get('data', {}).get('gid') or data.get('gid')
+            else:
+                project_gid = None
+        else:
+            logger.error(f"Asana project creation failed: {result}")
+            project_gid = None
+        
+        if not project_gid:
+            raise ValueError(f"Failed to create Asana project. Response: {result}. For free plans, set ASANA_PROJECT_ID in .env to reuse an existing project.")
+        
         logger.info(f"Project GID: {project_gid}")
         return {
             "project_gid": project_gid,

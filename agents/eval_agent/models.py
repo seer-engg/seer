@@ -77,6 +77,7 @@ class TestExecutionState(BaseModel):
     completed_at: Optional[datetime] = Field(default=None, description="End time of this example execution")
     assertion_output:Optional[str] = Field(default=None, description="The output from the assertion agent")
     provisioning_output:Optional[str] = Field(default=None, description="The output from the provisioning agent")
+    provisioning_verification: Optional[Dict[str, Any]] = Field(default=None, description="Verification result of provisioning success (before target agent invocation)")
     current_seed: Optional[str] = Field(default=None, description="The current seed for the test execution")
 
 
