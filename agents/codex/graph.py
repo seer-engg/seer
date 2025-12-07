@@ -73,13 +73,13 @@ def compile_codex_graph():
     # --- Wire the graph ---
     workflow.add_edge(START, "initialize-project")
     workflow.add_edge("initialize-project", "test-server-ready")
-    workflow.add_edge("test-server-ready", "index-codebase")
     # 1. Initial server check
     workflow.add_conditional_edges("test-server-ready", is_server_ready, {
         "index-codebase": "index-codebase",
         "end": END
     })
-    workflow.add_edge("index-codebase", "developer")
+    workflow.add_edge("index-codebase", "reflector")
+    workflow.add_edge("reflector", "developer")
 
     # 3. After implement, always test
     workflow.add_edge("developer", "server-check")
@@ -95,9 +95,6 @@ def compile_codex_graph():
         "end": END
     })
     
-    # 5. If reflector, loop back to planner
-    workflow.add_edge("reflector", "developer")
-
     # 6. Final success path
     workflow.add_edge("raise-pr", "deploy-service")
     workflow.add_edge("deploy-service", "finalize")
