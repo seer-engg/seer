@@ -21,7 +21,7 @@ class CodexState(CodexInput, CodexOutput):
     attempt_number: int = Field(0, description="The number of attempts")
 
     #ATTENTION: This is the maximum number of attempts for the codex agent, will reflect on eval failures. default to 0.
-    max_attempts: int = Field(2, description="The maximum number of attempts")
+    max_attempts: int = Field(4, description="The maximum number of attempts")
     latest_results: List[ExperimentResultContext] = Field(default_factory=list, description="Results from the most recent programmer test run")
 
     @property

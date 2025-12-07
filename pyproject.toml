@@ -5,7 +5,7 @@ description = "Seer - Multi-Agent System for Evaluating AI Agents"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-  "langchain>=1.0.3",
+  "langchain>=1.1.2",
   "langchain-openai>=1.0.2",
   "langgraph-api>=0.5.14",
   "langgraph>=1.0.3",
