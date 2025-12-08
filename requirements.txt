@@ -2,6 +2,7 @@
 langchain>=1.0.3
 langchain-openai>=1.0.2
 langgraph>=1.0.3
+langgraph-api>=0.5.14
 langserve[all]>=0.3.3
 
 # FastAPI and server
@@ -27,6 +28,9 @@ tenacity>=9.1.2
 tavily-python>=0.7.12
 composio>=0.4.0
 composio-langchain>=0.1.0
+pinecone>=5.0.0
+pandas>=2.3.3
+coolname==2.2.0
 
 # Git dependencies
 tool-hub @ git+https://github.com/seer-engg/tool_hub.git
