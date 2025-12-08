@@ -1,6 +1,6 @@
 # LangGraph Standalone Server Dockerfile for Railway
 # Based on official LangGraph API image
-FROM langchain/langgraph-api:3.11
+FROM langchain/langgraph-api:3.13
 
 # Set working directory
 WORKDIR /app

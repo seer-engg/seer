@@ -3,6 +3,7 @@ langchain>=1.0.3
 langchain-openai>=1.0.2
 langgraph>=1.0.4
 langgraph-api==0.5.33
+langgraph-cli[inmem]>=0.4.7
 langgraph-checkpoint>=3.0.1,<4.0.0
 langgraph-checkpoint-postgres>=3.0.1,<4.0.0
 
