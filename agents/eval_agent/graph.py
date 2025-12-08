@@ -10,8 +10,11 @@ from shared.logger import get_logger
 from agents.eval_agent.nodes.run import _prepare_run_context, _upload_run_results, _upload_results_to_neo4j
 from agents.eval_agent.nodes.execute import build_test_execution_subgraph
 from shared.config import config
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 logger = get_logger("eval_agent.graph")
+
+print(f"eval_plan_only_mode: {config.eval_plan_only_mode}")
 
 def update_state_from_handoff(state: EvalAgentState) -> dict:
     """
@@ -79,7 +82,7 @@ def should_start_new_round(state: EvalAgentState) -> Literal["update_state_from_
         return "__end__"
 
 
-def build_graph():
+def build_graph(checkpointer=None):
     """Build the evaluation agent graph."""
     workflow = StateGraph(EvalAgentState)
     plan_subgraph = build_plan_subgraph()
@@ -117,7 +120,8 @@ def build_graph():
     })
     workflow.add_edge("update_state_from_handoff", "plan")
 
-    return workflow.compile(debug=True)
+    checkpointer = checkpointer or SqliteSaver("memory.sqlite")
+    return workflow.compile(checkpointer=checkpointer)
 
 
 graph = build_graph()

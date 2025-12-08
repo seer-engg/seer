@@ -4,6 +4,11 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from shared.config import config
 import asyncio
 from typing import Optional, Any
+import threading
+from concurrent.futures import Future
+from typing import Callable, Coroutine, TypeVar, Any
+
+_T = TypeVar("_T")
 
 client = MultiServerMCPClient(
     {
@@ -22,7 +27,49 @@ client = MultiServerMCPClient(
 )
 
 # In Jupyter notebook, we need to comment out the asyncio.run() to avoid blocking the event loop
-LANGCHAIN_DOCS_TOOLS = asyncio.run(client.get_tools(server_name="langchain"))
-CONTEXT7_TOOLS = asyncio.run(client.get_tools(server_name="context7"))
+# LANGCHAIN_DOCS_TOOLS = asyncio.run(client.get_tools(server_name="langchain"))
+# CONTEXT7_TOOLS = asyncio.run(client.get_tools(server_name="context7"))
+
+
+def _run_coro_safely(factory: Callable[[], Coroutine[Any, Any, _T]]) -> _T:
+    """
+    Run the coroutine returned by `factory` even if we're currently inside an event loop.
+    When there is no running loop this simply delegates to asyncio.run; otherwise it spins
+    up a background thread so we don't trip over "asyncio.run() cannot be called" errors.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(factory())
+
+    future: Future[_T] = Future()
+
+    def _runner() -> None:
+        try:
+            result = asyncio.run(factory())
+        except BaseException as exc:  # propagate original failure
+            future.set_exception(exc)
+        else:
+            future.set_result(result)
+
+    thread = threading.Thread(
+        target=_runner,
+        name="mcp-client-loader",
+        daemon=True,
+    )
+    thread.start()
+    try:
+        return future.result()
+    finally:
+        thread.join()
+
+
+def _load_tools(server_name: str):
+    return _run_coro_safely(lambda: client.get_tools(server_name=server_name))
+
+
+# Preload the MCP tools without assuming we control the active event loop
+LANGCHAIN_DOCS_TOOLS = _load_tools("langchain")
+CONTEXT7_TOOLS = _load_tools("context7")
 
 CONTEXT7_LIBRARY_TOOL = [tool for tool in CONTEXT7_TOOLS if tool.name == "get-library-docs"][0]
