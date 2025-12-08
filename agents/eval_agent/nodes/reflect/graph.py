@@ -6,15 +6,16 @@ from typing import List
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 
-from agents.eval_agent.models import EvalAgentState
+from agents.eval_agent.models import EvalAgentState, Hypothesis
 from agents.eval_agent.nodes.reflect.tools import (
     create_reflection_tools,
     ReflectionToolContext,
 )
+from agents.eval_agent.nodes.reflect.agent_factory import create_reflection_agent
 from shared.tools import think
 from shared.llm import get_llm_without_responses_api
 from shared.logger import get_logger
-from agents.eval_agent.reflexion_factory import create_ephemeral_reflexion
+from langchain_core.messages import ToolMessage, AIMessage
 
 logger = get_logger("eval_agent.reflect")
 
@@ -102,20 +103,59 @@ async def reflect_node(state: EvalAgentState) -> dict:
     # Create tools bound to the context
     reflection_tools = create_reflection_tools(tool_context)
     reflection_tools.append(think)
-    llm = get_llm_without_responses_api()
 
-    # Create the Reflexion Agent
-    analyst_graph = create_ephemeral_reflexion(
-        model=llm,
+    # Create the Supervisor-style reflection agent
+    analyst_agent = create_reflection_agent(
         tools=reflection_tools,
-        prompt=ANALYST_AGENT_SYSTEM_PROMPT,
-        agent_id="eval_analyst_v1"
+        system_prompt=ANALYST_AGENT_SYSTEM_PROMPT
     )
     
     # Invoke the agent
-    _ = await analyst_graph.ainvoke(
-        {"messages": [HumanMessage(content=initial_prompt)], "current_round": 0},
+    result = await analyst_agent.ainvoke(
+        input={"messages": [HumanMessage(content=initial_prompt)]},
         config=RunnableConfig(recursion_limit=100)
     )
 
+    # Extract hypothesis from save_reflection tool call (for logging)
+    hypothesis = extract_hypothesis_from_tool_calls(result.get("messages", []))
+    if hypothesis:
+        logger.info(f"Reflection complete. Hypothesis: {hypothesis.summary}")
+        if hypothesis.test_generation_critique:
+            logger.info(f"Test generation critique: {hypothesis.test_generation_critique}")
+        # Don't store in state - ephemeral only
+
     return {"attempts": state.attempts + 1}
+
+
+def extract_hypothesis_from_tool_calls(messages: List) -> Hypothesis | None:
+    """Extract hypothesis from save_reflection tool call."""
+    import json
+    from langchain_core.messages import AIMessage, ToolMessage
+    
+    # Look for save_reflection tool call in messages
+    for i, msg in enumerate(messages):
+        if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
+            for tool_call in msg.tool_calls:
+                if tool_call.get("name") == "save_reflection":
+                    # Get the arguments from the tool call
+                    args = tool_call.get("args", {})
+                    if "hypothesis" in args:
+                        try:
+                            hypothesis_dict = args["hypothesis"]
+                            if isinstance(hypothesis_dict, dict):
+                                return Hypothesis(**hypothesis_dict)
+                            elif isinstance(hypothesis_dict, str):
+                                # Try to parse JSON string
+                                hypothesis_dict = json.loads(hypothesis_dict)
+                                return Hypothesis(**hypothesis_dict)
+                        except Exception as e:
+                            logger.warning(f"Failed to extract hypothesis from tool call: {e}")
+    
+    # Fallback: try to find in tool message responses
+    for msg in messages:
+        if isinstance(msg, ToolMessage) and msg.name == "save_reflection":
+            # Tool already executed, hypothesis was passed in the call
+            # We need to look backwards for the AIMessage with the tool call
+            pass
+    
+    return None

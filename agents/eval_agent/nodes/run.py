@@ -10,7 +10,6 @@ from langchain_core.messages import ToolMessage
 from agents.eval_agent.models import EvalAgentState
 from shared.logger import get_logger
 from shared.schema import ExperimentContext
-from graph_db import NEO4J_GRAPH
 from shared.config import config
 
 logger = get_logger("eval_agent.run")
@@ -41,81 +40,6 @@ async def _prepare_run_context(state: EvalAgentState) -> dict:
         "active_experiment": experiment,
         "latest_results": [],
     }
-
-async def _upload_results_to_neo4j(state: EvalAgentState) -> dict:
-    """used in eval_agent.run node to upload results to Neo4j.
-    Upload latest_results to Neo4j as nodes and relationships.
-    Separated from execution per requirements.
-    """
-    if not state.context.user_context or not state.context.user_context.user_id:
-        raise ValueError("UserContext with user_id is required to log memories")
-    user_id = state.context.user_context.user_id
-
-    if not state.context.agent_name:
-        raise ValueError("AgentContext with agent_name is required to log memories")
-    agent_name = state.context.agent_name
-
-    results = list(state.latest_results or [])
-    if not results:
-        logger.warning("neo4j_upload: No latest_results to upload; skipping.")
-        return {}
-
-    cypher_params = []
-    for res in results:
-        # Flatten the analysis object for storage as node properties
-        analysis_props = res.analysis.model_dump()
-        
-        # Combine all properties for the result node
-        result_node_props = res.model_dump(
-            exclude={'dataset_example', 'analysis', 'passed'}
-        )
-        result_node_props.update(analysis_props)  # Add all analysis fields
-        result_node_props['passed'] = res.passed  # Add the computed 'passed' bool
-
-        example_node_props = res.dataset_example.model_dump(exclude={'expected_output'})
-        # Serialize expected_output (3-phase format: provision, expected, assert actions)
-        example_node_props['expected_output'] = json.dumps(res.dataset_example.expected_output.model_dump())
-        
-        cypher_params.append({
-            "example": example_node_props,
-            "result": result_node_props,
-        })
-
-    cypher_query = """
-    UNWIND $params as row
-
-    // Merge the TestCase node, now namespaced by user_id
-    MERGE (ex:DatasetExample {example_id: row.example.example_id, user_id: $user_id})
-    ON CREATE SET 
-        ex += row.example,
-        ex.status = 'active',
-        ex.agent_name = $agent_name 
-    ON MATCH SET 
-        ex += row.example,
-        ex.status = COALESCE(ex.status, 'active'),
-        ex.agent_name = $agent_name 
-
-    // Merge the Result node, now namespaced by user_id
-    MERGE (res:ExperimentResult {thread_id: row.result.thread_id, user_id: $user_id})
-
-    // Use SET to overwrite all properties, ensuring schema stays current
-    SET res += row.result
-
-    // Connect the TestCase to its Result
-    MERGE (ex)-[r:WAS_RUN_IN]->(res)
-
-    RETURN count(*)
-    """
-
-    query_result = await asyncio.to_thread(
-        NEO4J_GRAPH.query,
-        cypher_query,
-        params={"params": cypher_params, "user_id": user_id, "agent_name": agent_name}
-    )
-    logger.info(f"neo4j_upload: Neo4j query response: {query_result}")
-
-    return {}
-
 
 async def _upload_run_results(state: EvalAgentState) -> dict:
     """used in eval_agent.run node to upload results to LangSmith"""

@@ -6,8 +6,11 @@ from agents.eval_agent.nodes.finalize import build_finalize_subgraph
 from agents.eval_agent.models import EvalAgentState
 from agents.eval_agent.nodes.plan import build_plan_subgraph
 from agents.eval_agent.nodes.reflect.graph import reflect_node
+from agents.eval_agent.nodes.alignment import alignment_node
+from agents.eval_agent.nodes.intent.classify import classify_user_intent
+from agents.eval_agent.nodes.intent.answer import answer_informational_query
 from shared.logger import get_logger
-from agents.eval_agent.nodes.run import _prepare_run_context, _upload_run_results, _upload_results_to_neo4j
+from agents.eval_agent.nodes.run import _prepare_run_context, _upload_run_results
 from agents.eval_agent.nodes.execute import build_test_execution_subgraph
 from shared.config import config
 
@@ -43,22 +46,51 @@ def should_execute_or_finalize(state: EvalAgentState) -> Literal["pre_run", "pla
     return "pre_run"
 
 
-def plan_summary_node(state: EvalAgentState) -> dict:
-    """Return plan summary in plan-only mode. Preserves dataset_examples in state."""
+def should_show_alignment(state: EvalAgentState) -> Literal["alignment", "__end__"]:
+    """After plan summary, check if alignment questions need to be shown."""
+    if state.alignment_state and state.alignment_state.questions and not state.alignment_state.is_complete:
+        logger.info("📋 Alignment questions present - routing to alignment node")
+        return "alignment"
+    logger.info("📋 No alignment questions or already complete - ending")
+    return "__end__"
+
+
+async def plan_summary_node(state: EvalAgentState) -> dict:
+    """Return plan summary in plan-only mode. Generates AgentSpec and alignment questions."""
     from langchain_core.messages import AIMessage
+    from agents.eval_agent.nodes.plan.generate_spec import generate_agent_spec_and_alignment
     
     num_tests = len(state.dataset_examples or [])
-    summary = (
-        f"Plan generation complete: {num_tests} test cases generated. "
-        f"Plan-only mode enabled - execution skipped."
-    )
+    logger.info("📋 Plan summary: %d test cases", num_tests)
     
-    logger.info(f"📋 Plan summary: {num_tests} test cases")
+    # Generate agent spec and alignment questions
+    spec_data = await generate_agent_spec_and_alignment(state)
     
-    # Preserve all state, just add summary message
+    # Format summary message
+    agent_spec = spec_data["agent_spec"]
+    alignment_state = spec_data["alignment_state"]
+    
+    summary_parts = [
+        f"Plan generation complete: {num_tests} test cases generated.",
+        f"\nAgent Specification:",
+        f"- Name: {agent_spec.agent_name}",
+        f"- Primary Goal: {agent_spec.primary_goal}",
+        f"- Key Capabilities: {', '.join(agent_spec.key_capabilities[:3])}",
+        f"- Confidence Score: {agent_spec.confidence_score:.2f}",
+    ]
+    
+    if alignment_state.questions:
+        summary_parts.append(f"\nAlignment Questions ({len(alignment_state.questions)}):")
+        for i, q in enumerate(alignment_state.questions, 1):
+            summary_parts.append(f"{i}. {q.question}")
+            summary_parts.append(f"   Context: {q.context}")
+    
+    summary = "\n".join(summary_parts)
+    
     return {
-        "messages": [AIMessage(content=summary)]
-        # dataset_examples and other state fields are preserved automatically
+        "messages": [AIMessage(content=summary)],
+        "agent_spec": spec_data["agent_spec"],
+        "alignment_state": spec_data["alignment_state"],
     }
 
 
@@ -79,32 +111,64 @@ def should_start_new_round(state: EvalAgentState) -> Literal["update_state_from_
         return "__end__"
 
 
+def route_by_intent(state: EvalAgentState) -> Literal["answer_informational", "plan"]:
+    """Route based on user intent."""
+    intent = state.user_intent
+    if not intent:
+        # Default to plan if intent not classified
+        logger.warning("No user intent found, defaulting to plan")
+        return "plan"
+    
+    if intent.intent_type == "informational":
+        logger.info(f"📋 Informational query detected (confidence: {intent.confidence:.2f}) - answering directly")
+        return "answer_informational"
+    else:
+        logger.info(f"📋 Evaluation request detected (confidence: {intent.confidence:.2f}) - proceeding to plan")
+        return "plan"
+
+
 def build_graph():
     """Build the evaluation agent graph."""
     workflow = StateGraph(EvalAgentState)
     plan_subgraph = build_plan_subgraph()
     finalize_subgraph = build_finalize_subgraph()
 
+    # Intent classification nodes
+    workflow.add_node("classify_intent", classify_user_intent)
+    workflow.add_node("answer_informational", answer_informational_query)
+    
+    # Existing nodes
     workflow.add_node("plan", plan_subgraph)
     workflow.add_node("plan_summary", plan_summary_node)
+    workflow.add_node("alignment", alignment_node)
     workflow.add_node("pre_run", _prepare_run_context)
     workflow.add_node("execute", build_test_execution_subgraph())
-    workflow.add_node("neo4j_upload", _upload_results_to_neo4j)
     workflow.add_node("langsmith_upload", _upload_run_results)
     workflow.add_node("reflect", reflect_node)
     workflow.add_node("finalize", finalize_subgraph)
     workflow.add_node("update_state_from_handoff", update_state_from_handoff)
 
-    workflow.add_edge(START, "plan")
+    # Start with intent classification, then route
+    workflow.add_edge(START, "classify_intent")
+    workflow.add_conditional_edges("classify_intent", route_by_intent, {
+        "answer_informational": "answer_informational",
+        "plan": "plan"
+    })
+    workflow.add_edge("answer_informational", END)
     # Conditional: plan-only mode skips execution
     workflow.add_conditional_edges("plan", should_execute_or_finalize, {
         "pre_run": "pre_run",
         "plan_summary": "plan_summary"
     })
-    workflow.add_edge("plan_summary", END)  # Plan-only mode ends here
+    # Conditional: after plan_summary, check if alignment needed
+    workflow.add_conditional_edges("plan_summary", should_show_alignment, {
+        "alignment": "alignment",
+        "__end__": END
+    })
+    # After alignment, end (user can continue conversation to refine further)
+    workflow.add_edge("alignment", END)
     workflow.add_edge("pre_run", "execute")
-    workflow.add_edge("execute", "neo4j_upload")
-    workflow.add_edge("neo4j_upload", "langsmith_upload")
+    workflow.add_edge("execute", "langsmith_upload")
     workflow.add_edge("langsmith_upload", "reflect")
     workflow.add_conditional_edges("reflect", should_continue, {
         "plan": "plan",

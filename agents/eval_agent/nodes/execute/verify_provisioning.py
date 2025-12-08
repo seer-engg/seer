@@ -94,7 +94,7 @@ Use the tools available to you to inspect the actual state of the environment an
     
     # Use high reasoning effort for verification (verification should be thorough)
     verification_agent = create_agent(
-        model=get_llm(model='gpt-5.1', reasoning_effort='high'),  # Hardcoded to 'high' for thorough verification
+        model=get_llm(model='gpt-5-mini'),  # Hardcoded to 'high' for thorough verification
         tools=actual_tools,
         system_prompt="You are a verification agent. Your job is to verify that provisioning succeeded by comparing the actual environment state to the plan requirements. Use tools to inspect the environment and provide a clear verdict.",
         middleware=[handle_tool_errors]
@@ -108,9 +108,8 @@ Use the tools available to you to inspect the actual state of the environment an
         
         # Use structured LLM to parse verification result
         verification_llm = get_llm(
-            model="gpt-5.1",
+            model="gpt-5-mini",
             temperature=0.0,
-            reasoning_effort="medium"
         ).with_structured_output(ProvisioningVerification, method="function_calling", strict=True)
         
         # Create a summary prompt for structured parsing

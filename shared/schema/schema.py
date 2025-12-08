@@ -2,7 +2,6 @@
 This file contains the schemas for the shared data between the agents.
 Please review each agents code before making any changes to this file.
 """
-import os
 from datetime import datetime
 from typing import List, Optional, Literal
 from pydantic import BaseModel, Field, ConfigDict, computed_field
@@ -39,6 +38,67 @@ class ServiceInstructions(BaseModel):
     instructions: List[str] = Field(
         ...,
         description="The instructions for the service."
+    )
+
+
+class TestCaseIntent(BaseModel):
+    """High-level intent of a test case (not exact instructions)."""
+    model_config = ConfigDict(extra="forbid")
+    
+    intent_id: str = Field(..., description="Unique identifier for this test intent")
+    description: str = Field(..., description="Human-readable description of what this test validates")
+    expected_behavior: str = Field(..., description="What the agent should do")
+    validation_criteria: List[str] = Field(..., description="Key things to check")
+    complexity: Literal["simple", "moderate", "complex"] = Field(..., description="Complexity level of the test")
+    estimated_duration: Optional[str] = Field(None, description="Estimated duration for this test")
+
+
+class AgentSpec(BaseModel):
+    """Agent specification derived from user request."""
+    model_config = ConfigDict(extra="forbid")
+    
+    agent_name: str = Field(..., description="Name of the agent being evaluated")
+    primary_goal: str = Field(..., description="Primary goal of the agent")
+    key_capabilities: List[str] = Field(..., description="Key capabilities the agent should have")
+    required_integrations: List[str] = Field(..., description="MCP services/integrations needed")
+    test_scenarios: List[TestCaseIntent] = Field(..., description="Test scenarios/intents to validate")
+    assumptions: List[str] = Field(..., description="What the LLM assumes about the agent")
+    confidence_score: float = Field(..., ge=0.0, le=1.0, description="How confident the LLM is about the spec (0-1)")
+
+
+class AlignmentQuestion(BaseModel):
+    """A single alignment question with metadata."""
+    model_config = ConfigDict(extra="forbid")
+    
+    question_id: str = Field(..., description="Unique identifier for tracking this question")
+    question: str = Field(..., description="The actual question text")
+    context: str = Field(..., description="Why this question is being asked")
+    answer: Optional[str] = Field(None, description="User's answer (if provided)")
+
+
+class AlignmentState(BaseModel):
+    """State for user alignment workflow."""
+    model_config = ConfigDict(extra="forbid")
+    
+    questions: List[AlignmentQuestion] = Field(default_factory=list, description="Exactly 3 alignment questions")
+    answers: dict[str, str] = Field(default_factory=dict, description="question_id -> answer mapping")
+    is_complete: bool = Field(default=False, description="True when all questions answered (or skipped)")
+    # TODO: Add persistence backend for alignment history (future feature)
+
+
+class UserIntent(BaseModel):
+    """Classification of user's intent."""
+    model_config = ConfigDict(extra="forbid")
+    
+    intent_type: Literal["informational", "evaluation_request"] = Field(
+        description="Type of user intent"
+    )
+    confidence: float = Field(
+        ge=0.0, le=1.0,
+        description="Confidence score (0-1)"
+    )
+    reasoning: str = Field(
+        description="Why this intent was chosen"
     )
 
 class ExpectedOutput(BaseModel):

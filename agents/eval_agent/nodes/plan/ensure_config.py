@@ -8,6 +8,7 @@ from shared.schema import AgentContext
 from shared.schema import GithubContext, UserContext
 from shared.logger import get_logger
 from shared.tools import resolve_mcp_services
+from shared.config import config
 from langchain_openai import ChatOpenAI
 
 
@@ -69,7 +70,10 @@ async def ensure_target_agent_config(state: EvalAgentPlannerState) -> dict:
 
     class TargetAgentExtractionContext(BaseModel):
         """Context for extracting the target agent's GitHub and user context."""
-        github_context: GithubContext
+        github_context: Optional[GithubContext] = Field(
+            default=None,
+            description="GitHub context if a repository URL is mentioned. Can be None in plan-only mode."
+        )
         user_context: UserContext
         mcp_services: List[str] = Field(
             default_factory=list, 
@@ -80,19 +84,36 @@ async def ensure_target_agent_config(state: EvalAgentPlannerState) -> dict:
             description="The name of the agent"
         )
 
-    # using 4.1 mini without response api  to avoid json schema error 
+    # using gpt-5-mini without response api  to avoid json schema error 
     # TODO: find out how to adapt schea with responses api
-    extractor = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0).with_structured_output(TargetAgentExtractionContext)
+    extractor = ChatOpenAI(model="gpt-5-mini", temperature=0.0).with_structured_output(TargetAgentExtractionContext)
     context: TargetAgentExtractionContext = await extractor.ainvoke(f"{instruction}\n\nUSER:\n{last_human.content}")
     context.user_context.raw_request = last_human.content
     
-    # Normalize the GitHub URL in case it's a web URL with /tree/ in it
-    normalized_repo_url, normalized_branch = _parse_github_url(
-        context.github_context.repo_url, 
-        context.github_context.branch_name
-    )
-    context.github_context.repo_url = normalized_repo_url
-    context.github_context.branch_name = normalized_branch
+    # Handle GitHub context - normalize if present, create default if missing (for plan-only mode)
+    if context.github_context and context.github_context.repo_url and context.github_context.repo_url.strip():
+        # Normalize the GitHub URL in case it's a web URL with /tree/ in it
+        normalized_repo_url, normalized_branch = _parse_github_url(
+            context.github_context.repo_url, 
+            context.github_context.branch_name
+        )
+        context.github_context.repo_url = normalized_repo_url
+        context.github_context.branch_name = normalized_branch
+    elif not context.github_context or not context.github_context.repo_url or not context.github_context.repo_url.strip():
+        # No GitHub URL found
+        if config.eval_plan_only_mode:
+            # In plan-only mode, GitHub context is optional - create a default one
+            logger.info("plan.ensure_config: No GitHub URL found, but plan-only mode - creating default GitHub context")
+            context.github_context = GithubContext(
+                repo_url="",  # Empty - will be skipped in provision_target_agent
+                branch_name="main"
+            )
+        else:
+            # In execution mode, GitHub context is required
+            raise ValueError(
+                "GitHub repository URL is required but was not found in the user's message. "
+                "Please include a GitHub URL in your request (e.g., 'Evaluate my agent at https://github.com/owner/repo')."
+            )
     
     resolved_services = resolve_mcp_services(context.mcp_services)
     logger.info(
@@ -103,9 +124,18 @@ async def ensure_target_agent_config(state: EvalAgentPlannerState) -> dict:
     agent_context = state.context if state.context else AgentContext()
     
     # Update the context with extracted values
+    # Ensure github_context is set (should be set above, but handle None case)
+    github_ctx = context.github_context
+    if not github_ctx:
+        if config.eval_plan_only_mode:
+            # Plan-only mode: create empty GitHub context
+            github_ctx = GithubContext(repo_url="", branch_name="main")
+        else:
+            raise ValueError("GitHub context is required for execution mode")
+    
     updated_context = AgentContext(
         user_context=context.user_context,
-        github_context=context.github_context,
+        github_context=github_ctx,
         sandbox_context=agent_context.sandbox_context,  # Preserve existing sandbox
         target_agent_version=agent_context.target_agent_version,
         mcp_services=resolved_services,
