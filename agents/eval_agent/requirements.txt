@@ -3,11 +3,6 @@ langchain>=1.0.3
 langchain-openai>=1.0.2
 langgraph>=1.0.3
 langgraph-cli[inmem]>=0.4.7
-langserve[all]>=0.3.3
-
-# FastAPI and server
-fastapi>=0.124.0
-uvicorn[standard]>=0.38.0
 
 # Core dependencies
 pydantic>=2.12.4

@@ -159,7 +159,21 @@ class Launcher:
         self.cleanup_existing_processes()
         
         try:
-            # 1. Start Eval Agent (LangGraph)
+            # 1. Start Supervisor (LangGraph) - replaces LangServe on port 8000
+            logger.info("\n1️⃣  Supervisor (LangGraph)")
+            supervisor_port = 8000
+            supervisor_path = self.project_root.parent / "supervisor"
+            if not supervisor_path.exists():
+                raise Exception(f"Supervisor directory not found at {supervisor_path}")
+            self.start_process(
+                "Supervisor (LangGraph)",
+                [self.langgraph_exe, "dev", "--port", str(supervisor_port), "--host", "127.0.0.1", "--config", "langgraph.json"],
+                cwd=str(supervisor_path)
+            )
+            if not self.check_port_listening(supervisor_port, timeout=15):
+                raise Exception(f"Supervisor failed to start on port {supervisor_port}")
+
+            # 2. Start Eval Agent (LangGraph)
             logger.info("\n2️⃣  Eval Agent (LangGraph)")
             eval_port = 8002
             self.start_process(

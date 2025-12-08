@@ -2,22 +2,13 @@
 Planning phase tools for eval agent Supervisor pattern.
 """
 import json
-from typing import Optional, Dict, Any
 from langchain_core.tools import tool
 from langchain.tools import ToolRuntime
 from langchain_core.messages import HumanMessage
 
-from shared.llm import get_llm
-from shared.schema import UserIntent, AgentContext, GithubContext, UserContext
-from shared.tools import resolve_mcp_services
+from shared.schema import UserIntent, AgentContext
 from shared.logger import get_logger
 from shared.config import config
-from agents.eval_agent.state_store import (
-    get_user_intent_from_state,
-    set_user_intent_in_state,
-    get_agent_context_from_state,
-    set_agent_context_in_state,
-)
 
 logger = get_logger("eval_agent.tools.planning")
 
@@ -158,7 +149,7 @@ async def provision_target_sandbox(runtime: ToolRuntime = None) -> str:
     """
     from agents.eval_agent.nodes.plan.provision_target import provision_target_agent
     from agents.eval_agent.models import EvalAgentPlannerState
-    from langchain_core.messages import HumanMessage
+    from langchain_core.messages import HumanMessage, ToolMessage
     import json
     
     # Check plan-only mode
@@ -173,10 +164,29 @@ async def provision_target_sandbox(runtime: ToolRuntime = None) -> str:
         return json.dumps({"status": "error", "error": "No runtime state available"})
     
     state = runtime.state if isinstance(runtime.state, dict) else {}
+    
+    # Try to get agent_context from state first
     agent_context_dict = state.get("agent_context")
     
+    # If agent_context not in state, try to extract from previous tool messages
     if not agent_context_dict:
-        return json.dumps({"status": "error", "error": "agent_context not found in state"})
+        messages = state.get("messages", [])
+        # Look for agent_context in previous tool results (from extract_agent_config)
+        for msg in reversed(messages):
+            if isinstance(msg, ToolMessage):
+                content = msg.content if hasattr(msg, "content") else str(msg)
+                try:
+                    if isinstance(content, str) and (content.startswith("{") or content.startswith("[")):
+                        parsed = json.loads(content)
+                        if "agent_context" in parsed:
+                            agent_context_dict = parsed["agent_context"]
+                            logger.info("✅ Found agent_context in previous tool result")
+                            break
+                except json.JSONDecodeError:
+                    continue
+    
+    if not agent_context_dict:
+        return json.dumps({"status": "error", "error": "agent_context not found in state or previous tool results. Please call extract_agent_config first."})
     
     try:
         # Reconstruct AgentContext from dict
@@ -219,6 +229,7 @@ async def generate_agent_spec(runtime: ToolRuntime = None) -> str:
     """
     from agents.eval_agent.nodes.plan.generate_spec import generate_agent_spec_and_alignment
     from agents.eval_agent.models import EvalAgentState
+    from langchain_core.messages import ToolMessage
     import json
     
     # Get state
@@ -226,11 +237,30 @@ async def generate_agent_spec(runtime: ToolRuntime = None) -> str:
         return json.dumps({"status": "error", "error": "No runtime state available"})
     
     state = runtime.state if isinstance(runtime.state, dict) else {}
+    
+    # Try to get agent_context from state first
     agent_context_dict = state.get("agent_context")
     dataset_examples_dicts = state.get("dataset_examples", [])
     
+    # If agent_context not in state, try to extract from previous tool messages
     if not agent_context_dict:
-        return json.dumps({"status": "error", "error": "agent_context not found in state"})
+        messages = state.get("messages", [])
+        # Look for agent_context in previous tool results (from extract_agent_config)
+        for msg in reversed(messages):
+            if isinstance(msg, ToolMessage):
+                content = msg.content if hasattr(msg, "content") else str(msg)
+                try:
+                    if isinstance(content, str) and (content.startswith("{") or content.startswith("[")):
+                        parsed = json.loads(content)
+                        if "agent_context" in parsed:
+                            agent_context_dict = parsed["agent_context"]
+                            logger.info("✅ Found agent_context in previous tool result")
+                            break
+                except json.JSONDecodeError:
+                    continue
+    
+    if not agent_context_dict:
+        return json.dumps({"status": "error", "error": "agent_context not found in state or previous tool results. Please call extract_agent_config first."})
     
     try:
         # Reconstruct objects from dicts
@@ -285,7 +315,7 @@ async def generate_test_cases(runtime: ToolRuntime = None) -> str:
     """
     from agents.eval_agent.nodes.plan.agentic_eval_generation import agentic_eval_generation
     from agents.eval_agent.models import EvalAgentPlannerState
-    from langchain_core.messages import HumanMessage
+    from langchain_core.messages import HumanMessage, ToolMessage
     import json
     
     # Get state
@@ -293,10 +323,29 @@ async def generate_test_cases(runtime: ToolRuntime = None) -> str:
         return json.dumps({"status": "error", "error": "No runtime state available"})
     
     state = runtime.state if isinstance(runtime.state, dict) else {}
+    
+    # Try to get agent_context from state first
     agent_context_dict = state.get("agent_context")
     
+    # If agent_context not in state, try to extract from previous tool messages
     if not agent_context_dict:
-        return json.dumps({"status": "error", "error": "agent_context not found in state"})
+        messages = state.get("messages", [])
+        # Look for agent_context in previous tool results (from extract_agent_config)
+        for msg in reversed(messages):
+            if isinstance(msg, ToolMessage):
+                content = msg.content if hasattr(msg, "content") else str(msg)
+                try:
+                    if isinstance(content, str) and (content.startswith("{") or content.startswith("[")):
+                        parsed = json.loads(content)
+                        if "agent_context" in parsed:
+                            agent_context_dict = parsed["agent_context"]
+                            logger.info("✅ Found agent_context in previous tool result")
+                            break
+                except json.JSONDecodeError:
+                    continue
+    
+    if not agent_context_dict:
+        return json.dumps({"status": "error", "error": "agent_context not found in state or previous tool results. Please call extract_agent_config first."})
     
     try:
         # Reconstruct AgentContext
