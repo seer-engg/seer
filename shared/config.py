@@ -34,7 +34,7 @@ class SeerConfig(BaseSettings):
     # API Keys & Authentication
     # ============================================================================
     
-    openai_api_key: str = Field(description="OpenAI API key for LLM and embeddings")
+    openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key for LLM and embeddings")
     langsmith_api_key: Optional[str] = Field(default=None, description="LangSmith API key for tracing")
     tavily_api_key: Optional[str] = Field(default=None, description="Tavily API key for web search")
     github_token: Optional[str] = Field(default=None, description="GitHub token for sandbox provisioning")
