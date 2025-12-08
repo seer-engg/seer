@@ -8,8 +8,37 @@ from e2b import CommandExitException
 from dataclasses import dataclass
 from shared.schema import SandboxContext
 from indexer.service import get_index_service
+import os 
 
 logger = get_logger("sandbox.tools")
+
+def _summarize_stream(stream: str, label: str, head: int = 10, tail: int = 10) -> str:
+    """
+    Return a truncated summary of long command output to keep tool responses concise.
+
+    Args:
+        stream: Full stdout/stderr string.
+        label: Label to include in the formatted output.
+        head: Number of lines to include from the start of the stream.
+        tail: Number of lines to include from the end of the stream.
+    """
+    safe_stream = stream or ""
+    lines = safe_stream.splitlines()
+    total = len(lines)
+
+    if total == 0:
+        return f"{label}: <empty>"
+
+    if total <= head + tail:
+        header = f"{label} (total {total} lines):"
+        body = "\n".join(lines)
+    else:
+        omitted = total - head - tail
+        header = (
+            f"{label} (showing first {head} + last {tail} of {total} lines; {omitted} omitted):"
+        )
+        body = "\n".join(lines[:head] + ["..."] + lines[-tail:])
+    return f"{header}\n{body}"
 
 @dataclass
 class SandboxToolContext:
@@ -38,15 +67,15 @@ def vaildate_sandbox_tool_call(runtime: ToolRuntime[SandboxToolContext]) -> tupl
     return sandbox_id, repo_path
 
 @tool
-async def run_command(command: str, runtime: ToolRuntime[SandboxToolContext]) -> str:
+async def run_command(command: str,context: str, runtime: ToolRuntime[SandboxToolContext]) -> str:
     """
-    Run a shell command in working directory of the repository.
+    Run a shell command in working directory of the repository. return truncated output of the command [first 10 + last 10 lines] including exit code, stdout, and stderr
     
     Args:
         command: The command to run
-    
+        context: The context of the command ( Why you are running this command)
     Returns:
-        The output of the command including exit code, stdout, and stderr
+        The truncated output of the command [first 10 + last 10 lines] including exit code, stdout, and stderr
     """
     sandbox_id, repo_path = vaildate_sandbox_tool_call(runtime)
 
@@ -55,36 +84,47 @@ async def run_command(command: str, runtime: ToolRuntime[SandboxToolContext]) ->
         res: CommandResult = await sbx.commands.run(command, cwd=repo_path)
     except CommandExitException as e:
         logger.error(f"Error running command in sandbox: {e}")
-        return f"Error: {e.stderr} \n {e.error} {e.stdout}"
+        stdout_summary = _summarize_stream(getattr(e, "stdout", ""), "Stdout")
+        stderr_summary = _summarize_stream(getattr(e, "stderr", ""), "Stderr")
+        details = getattr(e, "error", "")
+        return (
+            f"Command failed with exit code {getattr(e, 'exit_code', 'unknown')}:\n"
+            f"{stdout_summary}\n{stderr_summary}\nDetails: {details}"
+        )
 
-    result = f"Exit code: {res.exit_code}\nStdout: {res.stdout}\nStderr: {res.stderr}"
-    if hasattr(res, "error"):
-        result += f"\nError: {res.error}"
+    stdout_summary = _summarize_stream(res.stdout, "Stdout")
+    stderr_summary = _summarize_stream(res.stderr, "Stderr")
+    result = f"Exit code: {res.exit_code}\n{stdout_summary}\n{stderr_summary}"
+    if hasattr(res, "error") and res.error:
+        result += f"\n{_summarize_stream(res.error, 'Error')}"
     return result
 
 
 @tool
-async def read_file(file_path: str, runtime: ToolRuntime[SandboxToolContext]) -> str:
+async def read_files(file_paths: list[str], runtime: ToolRuntime[SandboxToolContext]) -> str:
     """
-    Read a file from the repository.
+    Read multiple files from the repository.
 
     Args:
-        file_path: Path to the file relative to the repository root
+        file_paths: List of paths to the files relative to the repository root
 
     Returns:
-        The content of the file, or an error message if the file does not exist
+        The content of the files, or an error message if the files do not exist
     """
     sandbox_id, repo_path = vaildate_sandbox_tool_call(runtime)
     
     sbx: AsyncSandbox = await get_sandbox(sandbox_id)
-    try:
-        # Construct full path
-        full_path = f"{repo_path}/{file_path}" if not file_path.startswith("/") else file_path
-        content = await sbx.files.read(full_path)
-        return content
-    except Exception as e:
-        logger.error(f"Error reading file in sandbox: {e}")
-        return f"Error reading file: {e}"
+    contents = []
+    for file_path in file_paths:
+        try:
+            # Construct full path
+            full_path = os.path.join(repo_path, file_path)
+            content = await sbx.files.read(full_path)
+            contents.append(f"{file_path}:\n{content}")
+        except Exception as e:
+            logger.error(f"Error reading file in sandbox: {e}")
+            return f"Error reading file: {e}"
+    return "\n".join(contents)
 
 
 @tool

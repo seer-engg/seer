@@ -41,7 +41,7 @@ from shared.tools.loader import (
 )
 from shared.tools.registry import ToolEntry
 from .mcp_client import LANGCHAIN_DOCS_TOOLS, CONTEXT7_TOOLS
-from .general import search_composio_documentation
+from .general import search_composio_documentation, search_langchain_documentation
 
 logger = get_logger("shared.tools")
 
@@ -99,17 +99,14 @@ async def web_search(query: str, max_results: int = 5) -> str:
 
 
 @tool
-def think(thought: str) -> str:
-    """Use the tool to think about something.
-        This is perfect to start your workflow.
-        It will not obtain new information or take any actions, but just append the thought to the log and return the result.
-        Use it when complex reasoning or some cache memory or a scratchpad is needed.
-    
-    Args:
-        thought: Intermediate reasoning to log
-        
-    Returns:
-        the thought
+def think(scratchpad: str) -> str:
+    """
+    Use the tool to think about something. It will not obtain new information or change the database, but just append the thought to the log. Use it when complex reasoning or some cache memory is needed.
+    Before starting any step, use the think tool as a scratchpad to:
+    1. Analyze what just happened (last tool call and its result)
+    2. Consider what this means for the current task/plan
+    3. Decide what to do next (if planning execute_tool, state tool name and params with reasoning)
+
     """
     # Try to stream thinking output if in streaming context
     try:
@@ -147,6 +144,7 @@ __all__ = [
     "CONTEXT7_TOOLS",
     "search_composio_documentation",
     "ComposioMCPClient",
+    "search_langchain_documentation",
 ]
 
 
