@@ -21,33 +21,25 @@ from tool_hub import ToolHub
 from models import ToolParameter, ToolDefinition
 
 # Global ToolHub instance
-_toolhub_instance = None
+_TOOLHUB_INSTANCE = None
 _toolhub_index_dir = "/home/akshay/tool_hub/examples/github_tool_index"
-
-NAMESPACE = ("artifacts",)
-
-async def _save_to_memory(content: str, store: BaseStore) -> str:
-    """Helper to save content to shared memory."""
-    key = str(uuid.uuid4())[:8]
-    await store.aput(NAMESPACE, key, {"data": content})
-    return key
 
 def _get_toolhub():
     """Get or create ToolHub instance."""
-    global _toolhub_instance
-    if _toolhub_instance is None:
-        openai_key = os.getenv("OPENAI_API_KEY")
-        if not openai_key:
+    global _TOOLHUB_INSTANCE
+    if _TOOLHUB_INSTANCE is None:
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if not openai_api_key:
             raise ValueError("OPENAI_API_KEY required")
             
-        _toolhub_instance = ToolHub(openai_api_key=openai_key)
+        _TOOLHUB_INSTANCE = ToolHub(openai_api_key=openai_api_key)
         # Load existing index
         if os.path.exists(os.path.join(_toolhub_index_dir, "tools.index")):
             try:
-                _toolhub_instance.load(_toolhub_index_dir)
+                _TOOLHUB_INSTANCE.load(_toolhub_index_dir)
             except:
                 pass  # Rebuild if needed
-    return _toolhub_instance
+    return _TOOLHUB_INSTANCE
 
 @tool
 def search_tools(query: str, reasoning: str) -> str:

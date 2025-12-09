@@ -25,11 +25,39 @@ async def _seed_default_resources(mcp_resources: Dict[str, Any], mcp_services: L
 
 
 async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
+    # Skip sandbox provisioning in plan-only mode (not needed for plan generation)
+    if config.eval_plan_only_mode:
+        logger.info("plan.provision: Plan-only mode enabled - skipping sandbox provisioning")
+        mcp_resources = dict(state.context.mcp_resources or {})
+        await _seed_default_resources(mcp_resources, state.context.mcp_services)
+        # Create updated context with mcp_resources but no sandbox
+        updated_context = AgentContext(
+            user_context=state.context.user_context,
+            github_context=state.context.github_context,
+            sandbox_context=None,  # No sandbox in plan-only mode
+            target_agent_version=state.context.target_agent_version,
+            mcp_services=state.context.mcp_services,
+            mcp_resources=mcp_resources,
+            agent_name=state.context.agent_name,
+            tool_entries=state.context.tool_entries,
+        )
+        return {
+            "context": updated_context,
+        }
+    
     if not state.context.github_context:
         raise ValueError("GitHub context is required to provision the target agent.")
 
     repo_url = state.context.github_context.repo_url
     branch_name = state.context.github_context.branch_name
+    
+    # Validate repo_url is not empty
+    if not repo_url or not repo_url.strip():
+        raise ValueError(
+            "GitHub repository URL is required but was not found in the user's message. "
+            "Please include a GitHub URL in your request (e.g., 'Evaluate my agent at https://github.com/owner/repo')."
+        )
+    
     mcp_resources = dict(state.context.mcp_resources or {})
     await _seed_default_resources(mcp_resources, state.context.mcp_services)
 

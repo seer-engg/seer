@@ -108,7 +108,21 @@ def think(scratchpad: str) -> str:
     3. Decide what to do next (if planning execute_tool, state tool name and params with reasoning)
 
     """
-    return scratchpad
+    # Try to stream thinking output if in streaming context
+    try:
+        from langgraph.config import get_stream_writer
+        writer = get_stream_writer()
+        if writer:
+            # Stream the thinking output
+            writer(f"💭 Thought: {thought}")
+    except ImportError:
+        # langgraph.config not available, skip streaming
+        pass
+    except Exception:
+        # get_stream_writer() failed (not in streaming context), skip streaming
+        pass
+    
+    return thought
 
 
 # ============================================================================

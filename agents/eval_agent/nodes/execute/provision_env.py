@@ -6,7 +6,6 @@ from langchain_core.messages import HumanMessage
 from agents.eval_agent.models import TestExecutionState
 from shared.logger import get_logger
 from shared.llm import get_llm_without_responses_api
-from agents.eval_agent.reflexion_factory import create_ephemeral_reflexion
 from langchain_core.runnables import RunnableConfig
 from langchain.agents import create_agent
 from shared.tools import ComposioMCPClient

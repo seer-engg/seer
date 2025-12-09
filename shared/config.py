@@ -86,6 +86,15 @@ class SeerConfig(BaseSettings):
     neo4j_username: Optional[str] = Field(default=None, description="Neo4j username")
     neo4j_password: Optional[str] = Field(default=None, description="Neo4j password")
     
+    # ============================================================================
+    # LangGraph Checkpointer Configuration
+    # ============================================================================
+    
+    database_uri: Optional[str] = Field(
+        default=None,
+        description="PostgreSQL connection string for LangGraph checkpointer (e.g., postgresql://user:pass@host:port/db). Required for human-in-the-loop interrupts."
+    )
+    
     # Vector embeddings configuration
     embedding_dims: int = Field(default=1536, description="OpenAI embedding dimensions")
     embedding_model: str = Field(default="text-embedding-3-small", description="OpenAI embedding model")

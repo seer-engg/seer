@@ -12,8 +12,10 @@ from shared.schema import (
     ExperimentResultContext,
     FailureAnalysis,
     CodexOutput,
+    AgentSpec,
+    AlignmentState,
+    UserIntent,
 )
-from shared.tools import ToolEntry
 
 # Import AgentContext after schema to avoid circular imports
 from shared.schema import AgentContext
@@ -49,6 +51,13 @@ class EvalAgentState(BaseModel):
     
     # Handoff from Codex
     codex_output: Optional[CodexOutput] = Field(default=None, description="Output from the codex agent, used for handoff.")
+    
+    # Agent specification and alignment (for plan-only mode)
+    agent_spec: Optional[AgentSpec] = Field(default=None, description="Agent specification derived from user request")
+    alignment_state: Optional[AlignmentState] = Field(default=None, description="State for user alignment workflow")
+    
+    # Intent classification
+    user_intent: Optional[UserIntent] = Field(default=None, description="Classification of user's intent")
     
 
 

@@ -1,13 +1,13 @@
 [project]
 name = "seer"
-version = "0.1.1"
+version = "0.1.2"
 description = "Seer - Multi-Agent System for Evaluating AI Agents"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "langchain>=1.1.2",
   "langchain-openai>=1.0.2",
-  "langgraph-api>=0.5.14",
+  "langgraph-api==0.5.33",
   "langgraph>=1.0.3",
   "langgraph-cli[inmem]>=0.4.7",
   "pydantic>=2.12.4",

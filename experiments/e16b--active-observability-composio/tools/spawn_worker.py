@@ -16,8 +16,7 @@ logger = logging.getLogger(__name__)
 @tool
 async def spawn_worker(
     task_instruction: str,
-    reasoning: str,  # MANDATORY: Why this worker is needed, what service/domain it handles
-    step_id: Optional[int] = None, 
+    reasoning: str,
     runtime: ToolRuntime = None,
     store: Annotated[BaseStore, InjectedStore] = None
 ) -> str:
@@ -31,7 +30,6 @@ async def spawn_worker(
         reasoning: **MANDATORY** - Explanation of why this worker is needed and what service/domain it handles.
                    Example: "GitHub domain: Finding and extracting PR information"
                    Must explain: (1) Which service/domain, (2) Why this worker is needed
-        step_id: Optional ID for tracking/debugging (used in thread_id generation)
         runtime: ToolRuntime (automatically provided by LangGraph)
         store: Shared In-Memory Store (automatically provided)
     
@@ -51,7 +49,7 @@ async def spawn_worker(
     worker = create_generic_worker("Task Executor", task_instruction, store=store)
     
     # Extract callbacks from runtime to propagate to worker
-    thread_id = f"worker-{step_id or 'dynamic'}-{hashlib.md5(task_instruction.encode()).hexdigest()[:8]}"
+    thread_id = f"worker-{hashlib.md5(task_instruction.encode()).hexdigest()[:8]}"
     config = {"configurable": {"thread_id": thread_id}}
     
     # CRITICAL: Propagate LangFuse callbacks from orchestrator to worker
