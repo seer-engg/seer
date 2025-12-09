@@ -75,7 +75,11 @@ async def reflector(state: CodexState) -> CodexState:
             "SCORE:": eval.score,
             "JUDGE FEEDBACK:": eval.judge_reasoning
         }
-        thread_trace = await fetch_thread_timeline_as_string(eval.thread_id, config.target_agent_langsmith_project)
+        try:
+            thread_trace = await fetch_thread_timeline_as_string(eval.thread_id, config.target_agent_langsmith_project)
+        except Exception as e:
+            logger.error(f"Error fetching thread trace: {e}")
+            thread_trace = "Error fetching thread trace"
         evals_and_thread_traces.append(
             EVALS_AND_THREAD_TRACE_TEMPLATE.format(
                 eval=x,
