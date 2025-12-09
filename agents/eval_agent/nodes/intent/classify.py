@@ -1,5 +1,5 @@
 """Classify user intent from their message."""
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_openai import ChatOpenAI
 from agents.eval_agent.models import EvalAgentState
 from shared.schema import UserIntent
@@ -45,10 +45,11 @@ USER MESSAGE:
 
 Classify the intent and provide reasoning.""".format(message=last_human.content)
     
-    intent = await classifier.ainvoke(prompt)
+    intent:UserIntent = await classifier.ainvoke(prompt)
     logger.info(f"Intent classified: {intent.intent_type} (confidence: {intent.confidence:.2f}) - {intent.reasoning}")
     
     return {
-        "user_intent": intent
+        "user_intent": intent,
+        "messages": [AIMessage(content=intent.reasoning)]
     }
 

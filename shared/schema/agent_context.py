@@ -94,6 +94,21 @@ class AgentContext(BaseModel):
         default_factory=dict, 
         description="Subset of tools selected for this evaluation run"
     )
+
+    #integrations is a dictionary of integration names and their corresponding context eg 
+    # {
+    #     "sandbox": null,
+    #     "github": {
+    #         "id": "1098514231",
+    #         "name": "seer-engg/reflexion"
+    #     },
+    #     "googledrive": null,
+    #     "asana": null
+    # }
+    integrations: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Integrations for the agent"
+    )
     
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 

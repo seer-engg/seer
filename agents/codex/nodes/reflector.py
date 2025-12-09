@@ -4,7 +4,7 @@ from agents.codex.state import CodexState
 from langchain_core.messages import HumanMessage, BaseMessage
 from shared.llm import get_llm, get_agent_final_respone
 from agents.codex.format_thread import fetch_thread_timeline_as_string
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, AIMessage
 from shared.config import config
 from langchain_core.messages import (
     AnyMessage,
@@ -61,7 +61,7 @@ async def reflector(state: CodexState) -> CodexState:
     """Reflect on the latest test results and plan necessary fixes."""
     logger.info("Reflecting on failed implementation...")
     
-    experiment_results = state.latest_results or state.experiment_context.results
+    experiment_results = state.latest_results or state.active_experiment.results
 
     llm = get_llm().with_structured_output(FailureAnalysis)
     evals_and_thread_traces=[] 
@@ -113,4 +113,5 @@ async def reflector(state: CodexState) -> CodexState:
             RemoveMessage(id=REMOVE_ALL_MESSAGES), 
             HumanMessage(content=reflection)],
         "attempt_number": state.attempt_number + 1,
+        "messages": [AIMessage(content=reflection)],
     }

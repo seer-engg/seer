@@ -99,16 +99,18 @@ def should_start_new_round(state: EvalAgentState) -> Literal["update_state_from_
     Decision node based on the codex handoff object.
     If a valid handoff exists and we haven't hit the version limit, route to update state.
     """
-    codex_handoff = state.codex_output
-    if codex_handoff and codex_handoff.agent_updated and codex_handoff.target_agent_version < config.eval_n_versions:
-        logger.info(f"Codex provided an update to v{codex_handoff.target_agent_version}. Starting new evaluation round.")
-        return "update_state_from_handoff"
-    else:
-        if not codex_handoff or not codex_handoff.agent_updated:
-            logger.info("Codex did not provide an update. Ending workflow.")
-        else:
-            logger.info(f"Reached max versions ({config.eval_n_versions}). Ending workflow.")
-        return "__end__"
+    # Temporary REmoval
+    return "__end__"
+    # codex_handoff = state.codex_output
+    # if codex_handoff and codex_handoff.agent_updated and codex_handoff.target_agent_version < config.eval_n_versions:
+    #     logger.info(f"Codex provided an update to v{codex_handoff.target_agent_version}. Starting new evaluation round.")
+    #     return "update_state_from_handoff"
+    # else:
+    #     if not codex_handoff or not codex_handoff.agent_updated:
+    #         logger.info("Codex did not provide an update. Ending workflow.")
+    #     else:
+    #         logger.info(f"Reached max versions ({config.eval_n_versions}). Ending workflow.")
+    #     return "__end__"
 
 
 def route_by_intent(state: EvalAgentState) -> Literal["answer_informational", "plan"]:

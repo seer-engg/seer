@@ -4,7 +4,7 @@ from agents.codex.state import CodexState
 from shared.logger import get_logger
 from sandbox import deploy_server_and_confirm_ready
 from shared.config import config
-
+from langchain_core.messages import AIMessage
 logger = get_logger("codex.nodes.deploy")
 
 
@@ -33,6 +33,7 @@ async def deploy_service(state: CodexState) -> CodexState:
         return {
             "server_running": True,
             'agent_updated': True,
+            "messages": [AIMessage(content="Service deployed successfully")],
         }
     except Exception as e:
         logger.error(f"Error deploying service: {e}")

@@ -6,7 +6,7 @@ from shared.logger import get_logger
 from shared.test_runner.agent_invoker import invoke_target_agent
 from shared.message_formatter import format_target_agent_message
 from shared.config import config
-
+from langchain_core.messages import AIMessage
 logger = get_logger("eval_agent.execute.invoke")
 
 
@@ -43,6 +43,7 @@ async def invoke_target_node(state: TestExecutionState) -> dict:
         return {
             "thread_id": result.thread_id,
             "agent_output": result.final_output or "",
+            "messages": [AIMessage(content=result.final_output or "")],
         }
     except Exception as e:
         logger.error(f"Error invoking target agent: {e}")

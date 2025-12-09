@@ -52,7 +52,7 @@ def is_codeer_implementation_working(state: CodexState) -> CodexState:
 
 def compile_codex_graph():
     """Compile the codex graph"""
-    workflow = StateGraph(state_schema=CodexState, input=CodexInput, output=CodexOutput)
+    workflow = StateGraph(state_schema=CodexState, input=CodexInput, output=CodexState)
     
     # --- Add all nodes ---
     workflow.add_node("initialize-project", initialize_project)

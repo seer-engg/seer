@@ -16,6 +16,7 @@ from agents.eval_agent.nodes.execute.prepare_result import prepare_result_node
 from agents.eval_agent.nodes.execute.initialize import initialize_node
 from agents.eval_agent.nodes.execute.seed_mcp_resources import seed_mcp_resources
 from agents.eval_agent.nodes.execute.clean_mcp_resources import clean_mcp_resources
+from shared.schema import ExperimentResultContext, FailureAnalysis
 
 logger = get_logger("eval_agent.execute.graph")
 
@@ -114,3 +115,42 @@ def build_test_execution_subgraph():
     return builder.compile()
 
 
+
+# # def build_test_execution_subgraph():
+#     """Build the test execution subgraph."""
+#     workflow = StateGraph(TestExecutionState)
+#     from shared.schema import DatasetExample, ExpectedOutput
+#     async def test(state: TestExecutionState) -> dict:
+#         from datetime import datetime   
+#         started_at = datetime.utcnow()
+#         completed_at = datetime.utcnow()
+#         import uuid
+#         result = ExperimentResultContext(
+#             thread_id=str(uuid.uuid4()),
+#             dataset_example=DatasetExample(
+#                 example_id=str(uuid.uuid4()),
+#                 input_message="test input message",
+#                 expected_output=ExpectedOutput(
+#                     expected_action="test expected action",
+#                     create_test_data=[],
+#                     assert_final_state=[],
+#                 ),
+#                 status="active",
+#             ),
+#             passed=True,
+#             actual_output="test output",
+#             analysis=FailureAnalysis(
+#                 score=1.0,
+#                 judge_reasoning="test judge reasoning",
+#             ),
+#             started_at=started_at,
+#             completed_at=completed_at,
+#         )
+#         return {
+#             "latest_results": [result],
+#             "result": result,
+#         }
+#     workflow.add_node("test", test)
+#     workflow.add_edge(START, "test")
+#     workflow.add_edge("test", END)
+#     return workflow.compile()

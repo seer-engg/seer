@@ -3,7 +3,7 @@ from agents.eval_agent.models import TestExecutionState
 from shared.logger import get_logger
 from shared.schema import ExperimentResultContext, FailureAnalysis
 from shared.llm import get_llm, get_agent_final_respone
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from shared.config import config
 
 
@@ -46,6 +46,7 @@ async def prepare_result_node(state: TestExecutionState) -> dict:
         
         return {
             "result": result,
+            "messages": [AIMessage(content=failure_analysis.judge_reasoning)],
         }
     
     # Normal path: provisioning succeeded, proceed with assertion analysis
@@ -71,4 +72,5 @@ async def prepare_result_node(state: TestExecutionState) -> dict:
 
     return {
         "result": result,
+        "messages": [AIMessage(content=failure_analysis.judge_reasoning)],
     }

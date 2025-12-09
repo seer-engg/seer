@@ -420,9 +420,6 @@ async def developer(state: CodexState) -> CodexState:
     sandbox_context = state.context.sandbox_context
     if not sandbox_context:
         raise ValueError("No sandbox context found in state")
-    user_raw_request = state.context.user_context.raw_request
-    
-    experiment_results = state.experiment_context.results
 
 
     input_messages = list[BaseMessage](state.developer_thread or [])
@@ -461,4 +458,5 @@ async def developer(state: CodexState) -> CodexState:
 
     return {
         "developer_thread": result.get("messages"),
+        "messages": result.get("messages"),
     }

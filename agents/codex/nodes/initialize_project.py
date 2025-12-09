@@ -7,7 +7,7 @@ logger = get_logger("codex.nodes.initialize_project")
 from sandbox import initialize_e2b_sandbox, setup_project
 from shared.config import config
 from shared.schema import SandboxContext
-
+from langchain_core.messages import AIMessage
 
 
 async def initialize_project(state: CodexState) -> CodexState:
@@ -25,5 +25,6 @@ async def initialize_project(state: CodexState) -> CodexState:
     )
     return {
         "context": state.context,
+        "messages": [AIMessage(content="Project initialized")],
     }
 

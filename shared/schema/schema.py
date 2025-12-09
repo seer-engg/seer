@@ -223,7 +223,7 @@ class CodexInput(BaseModel):
     
     context: "AgentContext" = Field(..., description="Shared agent context")
     dataset_context: DatasetContext = Field(..., description="The dataset context associated with the evaluation")
-    experiment_context: ExperimentContext = Field(..., description="The experiment context associated with the evaluation")
+    active_experiment: ExperimentContext = Field(..., description="The experiment context associated with the evaluation")
     dataset_examples: List[DatasetExample] = Field(default_factory=list, description="Dataset examples used in the evaluation")
 
 

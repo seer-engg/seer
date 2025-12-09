@@ -114,7 +114,7 @@ def think(scratchpad: str) -> str:
         writer = get_stream_writer()
         if writer:
             # Stream the thinking output
-            writer(f"💭 Thought: {thought}")
+            writer(f"💭 Thought: {scratchpad}")
     except ImportError:
         # langgraph.config not available, skip streaming
         pass
@@ -122,7 +122,7 @@ def think(scratchpad: str) -> str:
         # get_stream_writer() failed (not in streaming context), skip streaming
         pass
     
-    return thought
+    return scratchpad
 
 
 # ============================================================================

@@ -8,6 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, ConfigDict
 
 from agents.eval_agent.models import EvalAgentState
+from agents.eval_agent.utils import normalize_raw_request
 from shared.logger import get_logger
 from shared.schema import (
     AgentSpec,
@@ -38,7 +39,7 @@ async def generate_agent_spec_and_alignment(state: EvalAgentState) -> dict:
     2. Generates an AgentSpec summarizing the agent's understanding
     3. Generates exactly 3 alignment questions to clarify ambiguities
     """
-    raw_request = state.context.user_context.raw_request
+    raw_request = normalize_raw_request(state.context.user_context.raw_request)
     agent_name = state.context.agent_name
     dataset_examples = state.dataset_examples or []
     mcp_services = state.context.mcp_services or []

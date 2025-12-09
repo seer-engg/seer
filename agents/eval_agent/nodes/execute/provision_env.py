@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import List
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from agents.eval_agent.models import TestExecutionState
 from shared.logger import get_logger
 from shared.llm import get_llm_without_responses_api
@@ -65,4 +65,5 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
         "mcp_resources": state.mcp_resources,
         "started_at": started_at,
         "provisioning_output": provisioning_output,
+        "messages": [AIMessage(content=provisioning_output)],
     }
