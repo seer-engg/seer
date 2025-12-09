@@ -99,6 +99,9 @@ class SeerConfig(BaseSettings):
     embedding_dims: int = Field(default=1536, description="OpenAI embedding dimensions")
     embedding_model: str = Field(default="text-embedding-3-small", description="OpenAI embedding model")
     embedding_batch_size: int = Field(default=128, description="OpenAI embedding batch size")
+
+    pinecone_api_key: Optional[str] = Field(default=None, description="Pinecone API key")
+    pinecone_index_name: str = Field(default="seer-index", description="Pinecone index name")
     
     # Eval reflections index
     eval_reflections_index_name: str = Field(default="eval_reflections", description="Neo4j index name for eval reflections")
