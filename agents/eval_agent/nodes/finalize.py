@@ -17,7 +17,6 @@ from shared.schema import (
 )
 from shared.config import config
 from agents.codex.graph import graph as codex_graph
-from agents.test.graph import graph as test_graph
 from agents.codex.state import CodexState
 logger = get_logger("eval_agent.finalize")
 
@@ -77,8 +76,7 @@ async def remote_handoff(state: EvalAgentState, codex_input: CodexInput) -> dict
         }
 
 async def local_handoff(state: EvalAgentState, codex_input: CodexInput) -> dict:
-    # codex_response: CodexState = await codex_graph.ainvoke(codex_input)
-    codex_response: CodexState = await test_graph.ainvoke(codex_input)
+    codex_response: CodexState = await codex_graph.ainvoke(codex_input)
 
     if codex_response.success:
         # Pass the handoff object and reset the loop state
