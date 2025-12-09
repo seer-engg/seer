@@ -2,7 +2,6 @@ import re
 from typing import Optional, Tuple, List 
 from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage
-from shared.llm import get_llm
 from agents.eval_agent.models import EvalAgentPlannerState
 from shared.schema import AgentContext
 from shared.schema import GithubContext, UserContext
@@ -13,6 +12,48 @@ from langchain_openai import ChatOpenAI
 
 
 logger = get_logger("eval_agent.plan")
+
+def _is_valid_github_url(url: str) -> bool:
+    """
+    Validate that a string is a valid GitHub URL format.
+    
+    Args:
+        url: The string to validate
+    
+    Returns:
+        True if it looks like a valid GitHub URL, False otherwise
+    """
+    if not url or not isinstance(url, str):
+        return False
+    
+    url = url.strip()
+    
+    # Check for error indicators
+    error_indicators = [
+        "Error requesting user input",
+        "Error:",
+        "Exception:",
+        "Traceback",
+        "Interrupt(value=",
+        "fatal:",
+    ]
+    url_lower = url.lower()
+    for indicator in error_indicators:
+        if indicator.lower() in url_lower:
+            return False
+    
+    # Check for valid GitHub URL patterns
+    github_patterns = [
+        r'^https?://github\.com/[^/]+/[^/]+',  # Basic GitHub URL
+        r'^git@github\.com:[^/]+/[^/]+',  # SSH format
+    ]
+    
+    for pattern in github_patterns:
+        if re.match(pattern, url):
+            return True
+    
+    return False
+
 
 def _parse_github_url(url: str, branch_name: Optional[str] = None) -> Tuple[str, str]:
     """
@@ -28,7 +69,14 @@ def _parse_github_url(url: str, branch_name: Optional[str] = None) -> Tuple[str,
     
     Returns:
         Tuple of (repo_url, branch_name)
+    
+    Raises:
+        ValueError: If the URL is not a valid GitHub URL format
     """
+    # Validate URL first
+    if not _is_valid_github_url(url):
+        raise ValueError(f"Invalid GitHub URL format: '{url[:100]}...' (appears to be an error message or invalid format)")
+    
     # Pattern to match GitHub web URLs with /tree/ path
     # The branch name can contain slashes, so we match everything after /tree/ 
     # up to an optional trailing slash or path
@@ -109,10 +157,11 @@ async def ensure_target_agent_config(state: EvalAgentPlannerState) -> dict:
                 branch_name="main"
             )
         else:
-            # In execution mode, GitHub context is required
+            # In execution mode, GitHub context is required - raise error asking user to provide it
             raise ValueError(
-                "GitHub repository URL is required but was not found in the user's message. "
-                "Please include a GitHub URL in your request (e.g., 'Evaluate my agent at https://github.com/owner/repo')."
+                "GitHub repository URL is required to evaluate your agent. "
+                "Please provide a GitHub repository URL in your next message. "
+                "Example: https://github.com/owner/repo"
             )
     
     resolved_services = resolve_mcp_services(context.mcp_services)

@@ -1,5 +1,5 @@
 """overall graph for the eval agent"""
-from typing import Literal
+from typing import Literal, Optional
 from langgraph.graph import END, START, StateGraph
 
 from agents.eval_agent.nodes.finalize import build_finalize_subgraph
@@ -181,7 +181,28 @@ def build_graph():
     })
     workflow.add_edge("update_state_from_handoff", "plan")
 
-    return workflow.compile(debug=True)
+    # Initialize checkpointer for human-in-the-loop interrupts
+    checkpointer = None
+    if config.database_uri:
+        try:
+            from langgraph.checkpoint.postgres import PostgresSaver
+            logger.info(f"Initializing PostgresSaver checkpointer with database URI")
+            checkpointer = PostgresSaver.from_conn_string(config.database_uri)
+            # Setup tables on first run (idempotent)
+            try:
+                checkpointer.setup()
+                logger.info("PostgresSaver checkpointer setup complete")
+            except Exception as e:
+                # Tables might already exist, which is fine
+                logger.debug(f"PostgresSaver setup (tables may already exist): {e}")
+        except Exception as e:
+            logger.warning(f"Failed to initialize PostgresSaver checkpointer: {e}. Interrupts will not work.")
+            logger.warning("Set DATABASE_URI environment variable to enable human-in-the-loop interrupts.")
+    else:
+        logger.warning("DATABASE_URI not set. Human-in-the-loop interrupts will not work.")
+        logger.warning("Set DATABASE_URI environment variable to enable interrupts.")
+
+    return workflow.compile(debug=True, checkpointer=checkpointer)
 
 
 graph = build_graph()
