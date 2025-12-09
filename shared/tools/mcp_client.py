@@ -4,18 +4,20 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from shared.config import config
 import asyncio
 from typing import Optional, Any
+import threading
+from concurrent.futures import Future
+from typing import Callable, Coroutine, TypeVar, Any
 
-# Build headers dict, filtering out None values
-context7_headers = {}
-if config.CONTEXT7_API_KEY:
-    context7_headers["CONTEXT7_API_KEY"] = config.CONTEXT7_API_KEY
+_T = TypeVar("_T")
 
 client = MultiServerMCPClient(
     {
         "context7": {
             "transport": "streamable_http",
             "url": "https://mcp.context7.com/mcp",
-            "headers": context7_headers if context7_headers else None,
+            "headers": {
+                "CONTEXT7_API_KEY": config.CONTEXT7_API_KEY,
+            },
         },
         "langchain": {
             "transport": "streamable_http",
@@ -25,26 +27,49 @@ client = MultiServerMCPClient(
 )
 
 # In Jupyter notebook, we need to comment out the asyncio.run() to avoid blocking the event loop
-# Load tools with error handling - allow server to start even if some tools fail
-try:
-    LANGCHAIN_DOCS_TOOLS = asyncio.run(client.get_tools(server_name="langchain"))
-except Exception as e:
-    import logging
-    logging.warning(f"Failed to load LangChain docs tools: {e}")
-    LANGCHAIN_DOCS_TOOLS = []
+# LANGCHAIN_DOCS_TOOLS = asyncio.run(client.get_tools(server_name="langchain"))
+# CONTEXT7_TOOLS = asyncio.run(client.get_tools(server_name="context7"))
 
-try:
-    if config.CONTEXT7_API_KEY:
-        CONTEXT7_TOOLS = asyncio.run(client.get_tools(server_name="context7"))
-    else:
-        CONTEXT7_TOOLS = []
-except Exception as e:
-    import logging
-    logging.warning(f"Failed to load Context7 tools: {e}")
-    CONTEXT7_TOOLS = []
 
-CONTEXT7_LIBRARY_TOOL = None
-if CONTEXT7_TOOLS:
-    library_tools = [tool for tool in CONTEXT7_TOOLS if tool.name == "get-library-docs"]
-    if library_tools:
-        CONTEXT7_LIBRARY_TOOL = library_tools[0]
+def _run_coro_safely(factory: Callable[[], Coroutine[Any, Any, _T]]) -> _T:
+    """
+    Run the coroutine returned by `factory` even if we're currently inside an event loop.
+    When there is no running loop this simply delegates to asyncio.run; otherwise it spins
+    up a background thread so we don't trip over "asyncio.run() cannot be called" errors.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(factory())
+
+    future: Future[_T] = Future()
+
+    def _runner() -> None:
+        try:
+            result = asyncio.run(factory())
+        except BaseException as exc:  # propagate original failure
+            future.set_exception(exc)
+        else:
+            future.set_result(result)
+
+    thread = threading.Thread(
+        target=_runner,
+        name="mcp-client-loader",
+        daemon=True,
+    )
+    thread.start()
+    try:
+        return future.result()
+    finally:
+        thread.join()
+
+
+def _load_tools(server_name: str):
+    return _run_coro_safely(lambda: client.get_tools(server_name=server_name))
+
+
+# Preload the MCP tools without assuming we control the active event loop
+LANGCHAIN_DOCS_TOOLS = _load_tools("langchain")
+CONTEXT7_TOOLS = _load_tools("context7")
+
+CONTEXT7_LIBRARY_TOOL = [tool for tool in CONTEXT7_TOOLS if tool.name == "get-library-docs"][0]

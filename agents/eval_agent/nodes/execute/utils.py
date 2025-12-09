@@ -49,7 +49,7 @@ async def get_tool_hub() -> ToolHub:
     if not openai_key:
         raise ValueError("OPENAI_API_KEY not found in environment")
     
-    hub = ToolHub(openai_api_key=openai_key)
+    hub = ToolHub(openai_api_key=openai_key, pinecone_api_key=config.pinecone_api_key, pinecone_index_name=config.pinecone_index_name)
 
     # 2. Fetch Executable Tools from Composio (Cached by MCP Client)
     # We still need the executables, but we handle them smarter now
