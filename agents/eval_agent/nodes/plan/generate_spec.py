@@ -8,6 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, ConfigDict
 
 from agents.eval_agent.models import EvalAgentState
+from agents.eval_agent.utils import normalize_raw_request
 from shared.logger import get_logger
 from shared.schema import (
     AgentSpec,
@@ -19,31 +20,6 @@ from shared.llm import get_llm
 from shared.config import config
 
 logger = get_logger("eval_agent.plan.generate_spec")
-
-
-def _normalize_raw_request(raw_request) -> str:
-    """
-    Ensure the raw request is a plain string.
-    Handles cases where the request is stored as a list of message chunks.
-    """
-    if not raw_request:
-        return ""
-    if isinstance(raw_request, str):
-        return raw_request
-    if isinstance(raw_request, list):
-        parts = []
-        for chunk in raw_request:
-            if isinstance(chunk, dict):
-                if "text" in chunk:
-                    parts.append(chunk["text"])
-                elif "content" in chunk and isinstance(chunk["content"], str):
-                    parts.append(chunk["content"])
-                else:
-                    parts.append(str(chunk))
-            else:
-                parts.append(str(chunk))
-        return "\n".join(filter(None, parts))
-    return str(raw_request)
 
 
 class SpecGenerationOutput(BaseModel):
@@ -63,7 +39,7 @@ async def generate_agent_spec_and_alignment(state: EvalAgentState) -> dict:
     2. Generates an AgentSpec summarizing the agent's understanding
     3. Generates exactly 3 alignment questions to clarify ambiguities
     """
-    raw_request = _normalize_raw_request(state.context.user_context.raw_request)
+    raw_request = normalize_raw_request(state.context.user_context.raw_request)
     agent_name = state.context.agent_name
     dataset_examples = state.dataset_examples or []
     mcp_services = state.context.mcp_services or []

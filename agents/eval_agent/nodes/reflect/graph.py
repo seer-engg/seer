@@ -12,6 +12,7 @@ from agents.eval_agent.nodes.reflect.tools import (
     ReflectionToolContext,
 )
 from agents.eval_agent.nodes.reflect.agent_factory import create_reflection_agent
+from agents.eval_agent.utils import normalize_raw_request
 from shared.tools import think
 from shared.llm import get_llm_without_responses_api
 from shared.logger import get_logger
@@ -97,7 +98,7 @@ async def reflect_node(state: EvalAgentState) -> dict:
         agent_name=state.context.agent_name,
         attempts=state.attempts,
         latest_results=state.latest_results,
-        raw_request=state.context.user_context.raw_request,
+        raw_request=normalize_raw_request(state.context.user_context.raw_request),
     )
     
     # Create tools bound to the context
