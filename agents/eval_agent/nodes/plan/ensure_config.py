@@ -190,6 +190,7 @@ async def ensure_target_agent_config(state: EvalAgentPlannerState) -> dict:
         mcp_services=resolved_services,
         mcp_resources=agent_context.mcp_resources,
         agent_name=context.agent_name,
+        integrations=agent_context.integrations,
     )
 
     return {
