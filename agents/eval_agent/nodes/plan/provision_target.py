@@ -1,7 +1,7 @@
 import os
 from typing import Dict, List, Any
 from langchain_openai import ChatOpenAI
-
+from langchain_core.messages import AIMessage
 from agents.eval_agent.models import EvalAgentPlannerState
 from sandbox import (
     initialize_e2b_sandbox,
@@ -118,4 +118,7 @@ async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
         integrations=state.context.integrations,
     )
     
-    return {"context": updated_context}
+    return {
+        "context": updated_context,
+        "messages": [AIMessage(content=f"Provisioned sandbox: {sandbox_ctx.sandbox_id}")]
+    }

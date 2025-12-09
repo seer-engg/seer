@@ -4,7 +4,7 @@ import asyncio
 from typing import Dict, Any
 
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.pregel.remote import RemoteGraph
 from langgraph_sdk import get_sync_client
 from agents.codex.state import CodexState

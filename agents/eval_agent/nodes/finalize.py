@@ -16,48 +16,13 @@ from shared.schema import (
     CodexOutput,
 )
 from shared.config import config
-
+from agents.codex.graph import graph as codex_graph
+from agents.test.graph import graph as test_graph
+from agents.codex.state import CodexState
 logger = get_logger("eval_agent.finalize")
 
 
-async def _handoff_to_codex(state: EvalAgentState) -> dict:
-    # Runtime check: skip handoff if disabled (even if node was added to graph)
-    # Check both config and env var directly (env var takes precedence)
-    env_var = os.environ.get("CODEX_HANDOFF_ENABLED", "").lower()
-    codex_disabled = (
-        not config.codex_handoff_enabled 
-        or env_var in ("false", "0", "no", "off")
-    )
-    
-    if codex_disabled:
-        logger.info(
-            f"⏭️  Codex handoff disabled at runtime - skipping handoff "
-            f"(config={config.codex_handoff_enabled}, env_var={env_var})"
-        )
-        return {"codex_output": None}
-    
-    if not state.context.github_context or not state.context.user_context:
-        raise RuntimeError("GitHub and user context are required for Codex handoff")
-    if not state.dataset_context or not state.active_experiment:
-        raise RuntimeError("Dataset and experiment context are required for Codex handoff")
-    
-    is_any_eval_failed = False
-    for result in state.active_experiment.results:
-        if not result.passed:
-            is_any_eval_failed = True
-            break
-    
-    if not is_any_eval_failed:
-        logger.warning("No eval failed, skipping Codex handoff")
-        return {"codex_output": None}
-
-    codex_input = CodexInput(
-        context=state.context,
-        dataset_context=state.dataset_context.model_copy(deep=True),
-        experiment_context=state.active_experiment.model_copy(deep=True),
-        dataset_examples=list(state.dataset_examples or []),
-    )
-
+async def remote_handoff(state: EvalAgentState, codex_input: CodexInput) -> dict:
     codex_input_payload: Dict[str, Any] = codex_input.model_dump()
 
     codex_request = state.messages[0].content
@@ -111,6 +76,68 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
             "context": state.context.model_copy(update={"mcp_resources": {}}),
         }
 
+async def local_handoff(state: EvalAgentState, codex_input: CodexInput) -> dict:
+    # codex_response: CodexState = await codex_graph.ainvoke(codex_input)
+    codex_response: CodexState = await test_graph.ainvoke(codex_input)
+
+    if codex_response.success:
+        # Pass the handoff object and reset the loop state
+        return {
+            "codex_output": codex_response,
+            "attempts": 0,
+            "dataset_examples": [],
+            "latest_results": [],
+            "context": state.context.model_copy(update={"mcp_resources": {}}),
+        }
+    else:
+        # Agent was not updated, clear any potential stale handoff object
+        return {
+            "codex_output": None,
+            "context": state.context.model_copy(update={"mcp_resources": {}}),
+        }
+
+
+# async def _handoff_to_codex(state: EvalAgentState) -> dict:
+#     # Runtime check: skip handoff if disabled (even if node was added to graph)
+#     # Check both config and env var directly (env var takes precedence)
+#     env_var = os.environ.get("CODEX_HANDOFF_ENABLED", "").lower()
+#     codex_disabled = (
+#         not config.codex_handoff_enabled 
+#         or env_var in ("false", "0", "no", "off")
+#     )
+    
+#     if codex_disabled:
+#         logger.info(
+#             f"⏭️  Codex handoff disabled at runtime - skipping handoff "
+#             f"(config={config.codex_handoff_enabled}, env_var={env_var})"
+#         )
+#         return {"codex_output": None}
+    
+#     if not state.context.github_context or not state.context.user_context:
+#         raise RuntimeError("GitHub and user context are required for Codex handoff")
+#     if not state.dataset_context or not state.active_experiment:
+#         raise RuntimeError("Dataset and experiment context are required for Codex handoff")
+    
+#     is_any_eval_failed = False
+#     for result in state.active_experiment.results:
+#         if not result.passed:
+#             is_any_eval_failed = True
+#             break
+    
+#     if not is_any_eval_failed:
+#         logger.warning("No eval failed, skipping Codex handoff")
+#         return {"codex_output": None}
+
+#     codex_input = CodexInput(
+#         context=state.context,
+#         dataset_context=state.dataset_context.model_copy(deep=True),
+#         experiment_context=state.active_experiment.model_copy(deep=True),
+#         dataset_examples=list(state.dataset_examples or []),
+#     )
+
+#     result = await local_handoff(state, codex_input)
+
+    
 
 def _summarize_finalize(state: EvalAgentState) -> dict:
     experiment = state.active_experiment
@@ -154,7 +181,7 @@ def build_finalize_subgraph():
     
     if codex_enabled:
         logger.info("📤 Codex handoff ENABLED - will attempt handoff after evaluation")
-        builder.add_node("handoff", _handoff_to_codex)
+        builder.add_node("handoff", codex_graph)
         builder.add_edge(START, "handoff")
         builder.add_edge("handoff", "summarize")
     else:

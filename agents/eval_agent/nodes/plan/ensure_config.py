@@ -1,7 +1,7 @@
 import re
 from typing import Optional, Tuple, List 
 from pydantic import BaseModel, Field
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
 from agents.eval_agent.models import EvalAgentPlannerState
 from shared.schema import AgentContext
 from shared.schema import GithubContext, UserContext
@@ -195,4 +195,5 @@ async def ensure_target_agent_config(state: EvalAgentPlannerState) -> dict:
 
     return {
         "context": updated_context,
+        "messages": [AIMessage(content=f"Extracted agent config: {context.model_dump_json()}")]
     }

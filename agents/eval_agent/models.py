@@ -58,6 +58,7 @@ class EvalAgentState(BaseModel):
     
     # Intent classification
     user_intent: Optional[UserIntent] = Field(default=None, description="Classification of user's intent")
+
     
 
 
@@ -88,6 +89,8 @@ class TestExecutionState(BaseModel):
     provisioning_output:Optional[str] = Field(default=None, description="The output from the provisioning agent")
     provisioning_verification: Optional[Dict[str, Any]] = Field(default=None, description="Verification result of provisioning success (before target agent invocation)")
     current_seed: Optional[str] = Field(default=None, description="The current seed for the test execution")
+
+    messages: Annotated[list[BaseMessage], add_messages]
 
 
 
