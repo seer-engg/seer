@@ -8,12 +8,9 @@ WORKDIR /app
 # Copy project files
 COPY . /app
 
-# Install Python dependencies
-COPY requirements.txt /app/
-RUN pip install --no-cache-dir -r /app/requirements.txt
-
-# Install project in editable mode (if pyproject.toml exists)
-RUN if [ -f pyproject.toml ]; then pip install --no-cache-dir -e .; fi
+# Install project and dependencies from pyproject.toml
+# This installs all dependencies listed in [project] dependencies section
+RUN pip install --no-cache-dir -e .
 
 # Expose the default LangGraph API port
 EXPOSE 8000
