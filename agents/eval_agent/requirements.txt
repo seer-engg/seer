@@ -15,7 +15,6 @@ pyyaml>=6.0.3
 # Seer-specific dependencies
 e2b==2.4.0
 e2b-code-interpreter==2.2.0
-langsmith>=0.4.40
 langchain-mcp-adapters==0.1.12
 langfuse>=3.10.5
 aiosqlite>=0.20.0

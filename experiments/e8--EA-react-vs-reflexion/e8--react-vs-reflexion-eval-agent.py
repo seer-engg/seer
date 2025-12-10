@@ -10,7 +10,7 @@ import asyncio
 import time
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from dotenv import load_dotenv
 
 # Add parent directory to path for imports
@@ -18,7 +18,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from langgraph_sdk import get_sync_client
 from langgraph.pregel.remote import RemoteGraph
-from langsmith import Client as LangSmithClient
+from langfuse import Langfuse
+from langfuse.langchain import CallbackHandler
+from shared.config import config
 
 load_dotenv()
 
@@ -60,8 +62,11 @@ if not OPENAI_API_KEY:
     print("❌ OPENAI_API_KEY not set in environment")
     sys.exit(1)
 
-LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
-LANGSMITH_CLIENT = LangSmithClient(api_key=LANGSMITH_API_KEY) if LANGSMITH_API_KEY else None
+# Initialize Langfuse client for distributed tracing
+LANGFUSE_CLIENT = Langfuse(
+    secret_key=config.langfuse_secret_key,
+    host=config.langfuse_base_url
+) if config.langfuse_secret_key else None
 
 # ============================================================================
 # Helper Functions
@@ -200,11 +205,15 @@ async def invoke_eval_agent(
                 sync_client = get_sync_client(url=EVAL_AGENT_URL)
                 # Test connection by creating a thread
                 test_thread = await asyncio.to_thread(sync_client.threads.create)
+                trace_id = None
+                langfuse_handler = None
+                if LANGFUSE_CLIENT:
+                    trace_id = Langfuse.create_trace_id(seed=test_thread["thread_id"])
+                    langfuse_handler = CallbackHandler()
+                
                 remote_graph = RemoteGraph(
                     "eval_agent",
                     sync_client=sync_client,
-                    client=LANGSMITH_CLIENT,
-                    distributed_tracing=bool(LANGSMITH_CLIENT)
                 )
                 break
             except Exception as e:
@@ -218,6 +227,15 @@ async def invoke_eval_agent(
         thread = await asyncio.to_thread(sync_client.threads.create)
         thread_id = thread["thread_id"]
         thread_cfg = {"configurable": {"thread_id": thread_id}}
+        
+        # Setup Langfuse trace context for distributed tracing
+        trace_id = None
+        langfuse_handler = None
+        if LANGFUSE_CLIENT:
+            trace_id = Langfuse.create_trace_id(seed=thread_id)
+            langfuse_handler = CallbackHandler()
+            thread_cfg["metadata"] = thread_cfg.get("metadata", {})
+            thread_cfg["metadata"]["langfuse_trace_id"] = trace_id
         
         print(f"📝 Thread ID: {thread_id}", flush=True)
         print(f"🚀 Invoking eval agent with architecture: {architecture}", flush=True)
@@ -239,7 +257,12 @@ async def invoke_eval_agent(
                     """Collect all stream events and return final state."""
                     events = []
                     try:
-                        for event in remote_graph.stream(input_payload, thread_cfg):
+                        # Add Langfuse callback handler if available
+                        stream_cfg = thread_cfg.copy()
+                        if langfuse_handler:
+                            stream_cfg["callbacks"] = [langfuse_handler]
+                        
+                        for event in remote_graph.stream(input_payload, stream_cfg):
                             events.append(event)
                             # Print progress for long operations
                             if len(events) % 10 == 0:
@@ -292,11 +315,13 @@ async def invoke_eval_agent(
                     # Reconnect
                     try:
                         sync_client = get_sync_client(url=EVAL_AGENT_URL)
+                        # Recreate trace context for reconnection
+                        if LANGFUSE_CLIENT:
+                            trace_id = Langfuse.create_trace_id(seed=thread_id)
+                            langfuse_handler = CallbackHandler()
                         remote_graph = RemoteGraph(
                             "eval_agent",
                             sync_client=sync_client,
-                            client=LANGSMITH_CLIENT,
-                            distributed_tracing=bool(LANGSMITH_CLIENT)
                         )
                     except Exception as reconnect_error:
                         raise Exception(f"Failed to reconnect after connection loss: {reconnect_error}")

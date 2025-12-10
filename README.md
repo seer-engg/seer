@@ -2,7 +2,7 @@
 
 Seer is a LangGraph-based multi-agent system that performance-tests autonomous software agents, repairs them when possible, and records the full lifecycle of each evaluation. Two graphs collaborate:
 
-- **Eval Agent** plans and executes black-box test suites, uploads traces (LangSmith + Neo4j), and decides when to stop.
+- **Eval Agent** plans and executes black-box test suites, uploads traces (Langfuse + Neo4j), and decides when to stop.
 - **Codex Agent** (optional) accepts handoffs from the eval loop to triage failures, modify the target repo inside an E2B sandbox, and raise deployment artifacts when fixes land.
 
 ## Why Seer?
@@ -29,7 +29,7 @@ Seer is a LangGraph-based multi-agent system that performance-tests autonomous s
 - Python 3.12+
 - [LangGraph CLI](https://python.langchain.com/docs/langgraph) (installed into your virtualenv)
 - Neo4j instance (local or remote) if you want persistence for reflections/tools
-- Valid API keys: OpenAI (required), plus Tavily, LangSmith, E2B, Pinecone, etc., depending on enabled features
+- Valid API keys: OpenAI (required), plus Tavily, Langfuse, E2B, Pinecone, etc., depending on enabled features
 
 ## Setup
 
@@ -51,9 +51,8 @@ All settings flow through `shared/config.py` (Pydantic). Frequently used variabl
 | Variable | Purpose |
 | --- | --- |
 | `OPENAI_API_KEY` | Required for every LangChain/LangGraph call. |
-| `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT` | Trace eval + codex runs. |
+| `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, `LANGFUSE_PROJECT_NAME` | Trace eval + codex runs (Langfuse self-hosted). |
 | `CODEX_HANDOFF_ENABLED` | `true` enables the codex graph + port 8003 launch. |
-| `LANGSMITH_TRACING` | Enable LangSmith tracing without code changes. |
 | `E2B_API_KEY` | Required to spin up sandboxes for repo manipulation. |
 | `NEO4J_*` | Connect Seer to a Neo4j instance for reflections + tool indexes. |
 | `TAVILY_API_KEY`, `PINECONE_API_KEY` | Optional retrieval + tool features. |
@@ -79,7 +78,7 @@ Logs per service live under `logs/*.log`.
 ## Evaluation Flow
 
 1. **Planning** – `agents/eval_agent/nodes/plan` configures test cases, tool access, and provisioning steps.
-2. **Execution** – `agents/eval_agent/nodes/execute` provisions environments, invokes target agents, and uploads telemetry to LangSmith + Neo4j.
+2. **Execution** – `agents/eval_agent/nodes/execute` provisions environments, invokes target agents, and uploads telemetry to Langfuse + Neo4j.
 3. **Reflection / Finalization** – Failures trigger reflection tooling to decide whether to stop or request a new target-agent version. Successful runs finalize and clean up resources before either ending or starting another round.
 4. **Codex handoff (optional)** – If the eval loop needs fixes, it passes context + repo metadata to the Codex graph. Codex runs an initialize → plan → code → test → reflect loop (`agents/codex/graph.py`) and can raise PRs/deploy artifacts on success.
 

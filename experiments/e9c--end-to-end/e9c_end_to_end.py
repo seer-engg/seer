@@ -23,7 +23,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from langgraph_sdk import get_sync_client
 from langgraph.pregel.remote import RemoteGraph
-from langsmith import Client as LangSmithClient
+from langfuse import Langfuse
+from langfuse.langchain import CallbackHandler
+from shared.config import config
 
 # Configuration
 EVAL_AGENT_PORT = 8004
@@ -56,8 +58,11 @@ TEST_SCENARIO = TEST_SCENARIOS[1]
 # The agent should sync Asana ticket updates when a GitHub PR is merged. 
 # Whenever I merge a PR, it should search for related Asana tickets and update/close them."""
 
-LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
-LANGSMITH_CLIENT = LangSmithClient(api_key=LANGSMITH_API_KEY) if LANGSMITH_API_KEY else None
+# Initialize Langfuse client for distributed tracing
+LANGFUSE_CLIENT = Langfuse(
+    secret_key=config.langfuse_secret_key,
+    host=config.langfuse_base_url
+) if config.langfuse_secret_key else None
 
 def kill_existing_agent():
     try:
@@ -145,13 +150,40 @@ async def run_experiment(context_level: int):
         
         input_payload = {"messages": [{"role": "user", "content": TEST_SCENARIO}]}
         
-        remote_graph = RemoteGraph("eval_agent", sync_client=sync_client, client=LANGSMITH_CLIENT)
+        # Setup Langfuse trace context for distributed tracing
+        trace_id = None
+        langfuse_handler = None
+        if LANGFUSE_CLIENT:
+            trace_id = Langfuse.create_trace_id(seed=thread_id)
+            langfuse_handler = CallbackHandler()
+            thread_cfg["metadata"] = thread_cfg.get("metadata", {})
+            thread_cfg["metadata"]["langfuse_trace_id"] = trace_id
+        
+        remote_graph = RemoteGraph("eval_agent", sync_client=sync_client)
         
         print("🚀 Running full workflow...")
-        result = await asyncio.wait_for(
-            asyncio.to_thread(remote_graph.invoke, input_payload, thread_cfg),
-            timeout=600  # 10 min timeout
-        )
+        # Wrap invocation with Langfuse trace context if available
+        if LANGFUSE_CLIENT and trace_id:
+            def invoke_with_tracing():
+                with LANGFUSE_CLIENT.start_as_current_observation(
+                    as_type="span",
+                    name="eval-remote-invocation",
+                    trace_context={"trace_id": trace_id}
+                ) as span:
+                    span.update_trace(input=input_payload)
+                    invoke_cfg = {**thread_cfg, "callbacks": [langfuse_handler]} if langfuse_handler else thread_cfg
+                    result = remote_graph.invoke(input_payload, invoke_cfg)
+                    span.update_trace(output=result)
+                    return result
+            result = await asyncio.wait_for(
+                asyncio.to_thread(invoke_with_tracing),
+                timeout=600  # 10 min timeout
+            )
+        else:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(remote_graph.invoke, input_payload, thread_cfg),
+                timeout=600  # 10 min timeout
+            )
         
         execution_time = time.time() - start_time
         

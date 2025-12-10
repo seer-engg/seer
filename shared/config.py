@@ -35,7 +35,8 @@ class SeerConfig(BaseSettings):
     # ============================================================================
     
     openai_api_key: str = Field(description="OpenAI API key for LLM and embeddings")
-    langsmith_api_key: Optional[str] = Field(default=None, description="LangSmith API key for tracing")
+    langfuse_secret_key: Optional[str] = Field(default=None, description="Langfuse secret key for API access")
+    langfuse_public_key: Optional[str] = Field(default=None, description="Langfuse public key for SDK (optional)")
     tavily_api_key: Optional[str] = Field(default=None, description="Tavily API key for web search")
     github_token: Optional[str] = Field(default=None, description="GitHub token for sandbox provisioning")
     CONTEXT7_API_KEY: Optional[str] = Field(default=None, description="Context7 API key for MCP tools")
@@ -59,7 +60,7 @@ class SeerConfig(BaseSettings):
     eval_agent_architecture: str = Field(default="reflexion", description="Architecture for eval agent reflect node: 'react' or 'reflexion'")
     target_agent_context_level: int = Field(default=0, ge=0, le=3, description="Context level for target agent messages: 0=minimal, 1=system_goal, 2=system_goal+action, 3=full_context")
     
-    target_agent_langsmith_project: str = Field(default="target_agent", description="LangSmith project for target agent")
+    langfuse_project_name: str = Field(default="target_agent", description="Langfuse project name for target agent")
     target_agent_port: int = Field(default=2024, description="Port for target agent")
     target_agent_setup_script: str = Field(default="pip install -e .", description="Setup script for target agent")
     target_agent_command: str = Field(default="langgraph dev --host 0.0.0.0", description="Command to run target agent")
@@ -125,10 +126,10 @@ class SeerConfig(BaseSettings):
     composio_api_key: Optional[str] = Field(default=None, description="Composio API key (if required)")
     
     # ============================================================================
-    # LangSmith Configuration
+    # Langfuse Configuration
     # ============================================================================
     
-    langsmith_api_url: str = Field(default="https://api.smith.langchain.com", description="LangSmith API URL")
+    langfuse_base_url: str = Field(default="http://localhost:3000", description="Langfuse host URL (self-hosted instance)")
     
     # ============================================================================
     # Asana Configuration
@@ -147,13 +148,21 @@ class SeerConfig(BaseSettings):
     @property
     def target_agent_envs(self) -> Dict[str, Any]:
         """Environment variables for target agent."""
-        return {
+        envs = {
             'OPENAI_API_KEY': self.openai_api_key,
-            'LANGSMITH_API_KEY': self.langsmith_api_key,
-            'LANGSMITH_PROJECT': self.target_agent_langsmith_project,
             'COMPOSIO_USER_ID': self.composio_user_id,
             'COMPOSIO_API_KEY': self.composio_api_key,
         }
+        # Add Langfuse environment variables if configured
+        if self.langfuse_secret_key:
+            envs['LANGFUSE_SECRET_KEY'] = self.langfuse_secret_key
+        if self.langfuse_public_key:
+            envs['LANGFUSE_PUBLIC_KEY'] = self.langfuse_public_key
+        if self.langfuse_base_url:
+            envs['LANGFUSE_BASE_URL'] = self.langfuse_base_url
+        if self.langfuse_project_name:
+            envs['LANGFUSE_PROJECT_NAME'] = self.langfuse_project_name
+        return envs
     
     def get_asana_workspace_gid(self) -> Optional[str]:
         """Get Asana workspace GID from environment."""

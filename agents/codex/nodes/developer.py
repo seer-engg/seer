@@ -8,16 +8,15 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
-from langchain.agents.middleware import HumanInTheLoopMiddleware, InterruptOnConfig, TodoListMiddleware
+from langchain.agents.middleware import TodoListMiddleware
 from langchain.tools import tool
 from langchain.tools import ToolRuntime
 
 from shared.logger import get_logger
 from shared.config import config
-from shared.tools import LANGCHAIN_DOCS_TOOLS, search_composio_documentation, web_search, search_langchain_documentation, think
+from shared.tools import search_composio_documentation, web_search, search_langchain_documentation, think
 
 from agents.codex.state import CodexState
-from agents.codex.format_thread import fetch_thread_timeline_as_string
 from shared.llm import get_agent_final_respone
 
 from sandbox.tools import (
@@ -25,12 +24,6 @@ from sandbox.tools import (
     inspect_directory,
     read_files,
     grep,
-    search_code,
-    search_symbols,
-    semantic_search,
-    get_symbol_definition,
-    find_usages,
-    get_code_region,
     SandboxToolContext,
     create_file,
     create_directory,
@@ -41,8 +34,7 @@ from sandbox.tools import (
 from langchain.agents import create_agent
 from langchain.agents.middleware import ToolRetryMiddleware
 from langchain.agents import create_agent
-from langchain.agents.middleware import SummarizationMiddleware
-from agents.eval_agent.nodes.execute.utils import get_tool_hub, handle_tool_errors
+from agents.eval_agent.nodes.execute.utils import get_tool_hub
 from shared.tools import ToolEntry
 logger = get_logger("codex.nodes.developer")
 
@@ -420,35 +412,8 @@ async def developer(state: CodexState) -> CodexState:
     sandbox_context = state.context.sandbox_context
     if not sandbox_context:
         raise ValueError("No sandbox context found in state")
-    user_raw_request = state.context.user_context.raw_request
-    
-    experiment_results = state.experiment_context.results
-
 
     input_messages = list[BaseMessage](state.developer_thread or [])
-
-    # if not state.latest_results and state.server_running is True:
-    #     evals_and_thread_traces=[] 
-    #     for eval in experiment_results:
-    #         if eval.passed:
-    #             continue
-    #         x={
-    #             "INPUT:": eval.dataset_example.input_message,
-    #             "EXPECTED OUTPUT:": eval.dataset_example.expected_output.expected_action,
-    #             "ACTUAL OUTPUT:": eval.actual_output,
-    #             "SCORE:": eval.score,
-    #             "JUDGE FEEDBACK:": eval.judge_reasoning
-    #         }
-    #         thread_trace = await fetch_thread_timeline_as_string(eval.thread_id, config.target_agent_langsmith_project)
-    #         evals_and_thread_traces.append(
-    #             EVALS_AND_THREAD_TRACE_TEMPLATE.format(
-    #                 eval=x,
-    #                 thread_trace=thread_trace
-    #             )
-    #         )
-        
-    #     task_message = HumanMessage(content=USER_PROMPT.format(user_raw_request=user_raw_request, evals_and_thread_traces=evals_and_thread_traces))
-    #     input_messages.append(task_message)
 
     # Pass context along with state
     result = await agent.ainvoke(
@@ -457,7 +422,6 @@ async def developer(state: CodexState) -> CodexState:
         context=SandboxToolContext(sandbox_context=sandbox_context)  # Pass sandbox context
     )
     logger.info(f"developer completed successfully")
-
 
     return {
         "developer_thread": result.get("messages"),

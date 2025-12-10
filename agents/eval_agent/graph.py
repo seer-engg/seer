@@ -143,7 +143,7 @@ def build_graph():
     workflow.add_node("alignment", alignment_node)
     workflow.add_node("pre_run", _prepare_run_context)
     workflow.add_node("execute", build_test_execution_subgraph())
-    workflow.add_node("langsmith_upload", _upload_run_results)
+    workflow.add_node("langfuse_upload", _upload_run_results)
     workflow.add_node("reflect", reflect_node)
     workflow.add_node("finalize", finalize_subgraph)
     workflow.add_node("update_state_from_handoff", update_state_from_handoff)
@@ -168,8 +168,8 @@ def build_graph():
     # After alignment, end (user can continue conversation to refine further)
     workflow.add_edge("alignment", END)
     workflow.add_edge("pre_run", "execute")
-    workflow.add_edge("execute", "langsmith_upload")
-    workflow.add_edge("langsmith_upload", "reflect")
+    workflow.add_edge("execute", "langfuse_upload")
+    workflow.add_edge("langfuse_upload", "reflect")
     workflow.add_conditional_edges("reflect", should_continue, {
         "plan": "plan",
         "finalize": "finalize"

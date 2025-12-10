@@ -20,5 +20,5 @@ EXPOSE 8000
 # Environment variables needed:
 # - DATABASE_URI: Postgres connection string for checkpoints (e.g., postgresql://user:pass@host:port/db)
 # - REDIS_URI: Optional Redis connection string for async tasks
-# - LANGSMITH_API_KEY: Optional for tracing
+# - LANGFUSE_SECRET_KEY: Optional for tracing (Langfuse self-hosted)
 

@@ -1,13 +1,12 @@
-# pip install langsmith
+# Uses Langfuse API for fetching thread timelines
 from __future__ import annotations
-from langsmith import AsyncClient
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Any
 import json
 import os
 import asyncio
 import random
-from langsmith.schemas import Run
+import httpx
 from shared.config import config
 
 MAX_IO_CHARS = 10000  # keep console readable
@@ -43,88 +42,176 @@ def _short(obj:dict):
     return (s[:MAX_IO_CHARS] + "…") if s and len(s) > MAX_IO_CHARS else s
 
 
-async def _collect_runs(client: AsyncClient, **kwargs) -> List[Run]:
+async def _fetch_langfuse_traces(
+    session_id: str | None = None,
+    trace_id: str | None = None,
+    project_name: str | None = None,
+    limit: int = 1000
+) -> List[Dict[str, Any]]:
+    """Fetch traces from Langfuse API"""
+    if not config.langfuse_secret_key:
+        raise ValueError("LANGFUSE_SECRET_KEY not configured")
+    
+    headers = {
+        "Authorization": f"Bearer {config.langfuse_secret_key}",
+        "Content-Type": "application/json"
+    }
+    
+    filter_dict: Dict[str, Any] = {}
+    if session_id:
+        filter_dict["sessionId"] = {"$eq": session_id}
+    if trace_id:
+        filter_dict["id"] = {"$eq": trace_id}
+    if project_name:
+        # Langfuse uses tags or project name - we'll use tags
+        filter_dict["tags"] = {"$contains": project_name}
+    
+    params = {"limit": limit, "page": 1}
+    if filter_dict:
+        import json as json_lib
+        params["filter"] = json_lib.dumps(filter_dict)
+    
     delay_seconds = 0.5
     max_attempts = 6
-    for attempt in range(max_attempts):
-        try:
-            return [r async for r in client.list_runs(**kwargs)]
-        except Exception as e:
-            msg = str(e)
-            is_rate_limited = "Rate limit" in msg or "429" in msg
-            if not is_rate_limited or attempt == max_attempts - 1:
+    
+    async with httpx.AsyncClient() as client:
+        for attempt in range(max_attempts):
+            try:
+                response = await client.get(
+                    f"{config.langfuse_base_url}/api/public/traces",
+                    headers=headers,
+                    params=params,
+                    timeout=30.0
+                )
+                
+                if response.status_code == 429:  # Rate limited
+                    if attempt < max_attempts - 1:
+                        await asyncio.sleep(delay_seconds + random.random() * 0.25)
+                        delay_seconds *= 2
+                        continue
+                
+                response.raise_for_status()
+                data = response.json()
+                return data.get("traces", [])
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429 and attempt < max_attempts - 1:
+                    await asyncio.sleep(delay_seconds + random.random() * 0.25)
+                    delay_seconds *= 2
+                    continue
                 raise
-            await asyncio.sleep(delay_seconds + random.random() * 0.25)
-            delay_seconds *= 2
+            except Exception as e:
+                if attempt == max_attempts - 1:
+                    raise
+                await asyncio.sleep(delay_seconds + random.random() * 0.25)
+                delay_seconds *= 2
 
 
 async def fetch_thread_runs(thread_id: str, project_name: str | None = None):
     """
     Returns a dict: {run_id: run} and a parent->children index for the whole thread.
     """
-    client = AsyncClient()
-    # 1) Find root runs that belong to this conversational thread
-
-    # Ensure we scope the query to a project to satisfy LangSmith API requirements
     if project_name is None:
-        project_name = config.target_agent_langsmith_project
+        project_name = config.langfuse_project_name
         if not project_name:
             raise ValueError(
-                "LangSmith project not set. Pass project_name or set LANGSMITH_PROJECT."
+                "Langfuse project not set. Pass project_name or set LANGFUSE_PROJECT_NAME."
             )
 
-    group_key = thread_id
-    filter_string = f'and(in(metadata_key, ["session_id","conversation_id","thread_id"]), eq(metadata_value, "{group_key}"))'
-    roots = await _collect_runs(
-        client,
+    # Fetch traces by session_id (thread_id maps to session_id in Langfuse)
+    root_traces = await _fetch_langfuse_traces(
+        session_id=thread_id,
         project_name=project_name,
-        filter=filter_string,
-        is_root=True,
-        limit=1000,
-        select=[
-            "id",
-            "run_type",
-            "name",
-            "start_time",
-            "end_time",
-            "inputs",
-            "outputs",
-            "error",
-            "parent_run_id",
-        ],
+        limit=1000
     )
 
-    # 2) Walk the tree to get every descendant
-    all_runs: Dict[str, Run] = {}
+    # Fetch observations for each trace to build the tree
+    all_runs: Dict[str, Dict[str, Any]] = {}
     children_index: Dict[str, List[str]] = {}
+    root_ids: List[str] = []
 
-    for root in roots:
-        runs_in_trace = await _collect_runs(
-            client,
-            project_name=project_name,
-            trace_id=root.id,
-            limit=1000,
-            select=[
-                "id",
-                "run_type",
-                "name",
-                "start_time",
-                "end_time",
-                "inputs",
-                "outputs",
-                "error",
-                "parent_run_id",
-            ],
-        )
-        for run in runs_in_trace:
-            rid = str(run.id)
-            all_runs[rid] = run
-            if run.parent_run_id:
-                pid = str(run.parent_run_id)
-                children_index.setdefault(pid, []).append(rid)
-            children_index.setdefault(rid, [])
+    if not config.langfuse_secret_key:
+        raise ValueError("LANGFUSE_SECRET_KEY not configured")
+    
+    headers = {
+        "Authorization": f"Bearer {config.langfuse_secret_key}",
+        "Content-Type": "application/json"
+    }
 
-    return all_runs, children_index, [str(r.id) for r in roots]
+    async with httpx.AsyncClient() as client:
+        for trace in root_traces:
+            trace_id = trace.get("id", "")
+            if not trace_id:
+                continue
+            
+            root_ids.append(trace_id)
+            
+            # Fetch observations for this trace
+            try:
+                obs_response = await client.get(
+                    f"{config.langfuse_base_url}/api/public/traces/{trace_id}/observations",
+                    headers=headers,
+                    params={"limit": 1000},
+                    timeout=30.0
+                )
+                
+                if obs_response.status_code == 200:
+                    obs_data = obs_response.json()
+                    observations = obs_data.get("observations", [])
+                    
+                    # Add trace as root run
+                    all_runs[trace_id] = {
+                        "id": trace_id,
+                        "run_type": "trace",
+                        "name": trace.get("name", "Unnamed"),
+                        "start_time": datetime.fromisoformat(trace["startTime"].replace('Z', '+00:00')) if trace.get("startTime") else None,
+                        "end_time": datetime.fromisoformat(trace["endTime"].replace('Z', '+00:00')) if trace.get("endTime") else None,
+                        "inputs": trace.get("input"),
+                        "outputs": trace.get("output"),
+                        "error": trace.get("error"),
+                        "parent_run_id": None,
+                    }
+                    children_index[trace_id] = []
+                    
+                    # Add observations as child runs
+                    for obs in observations:
+                        obs_id = obs.get("id", "")
+                        if not obs_id:
+                            continue
+                        
+                        parent_id = obs.get("parentObservationId") or trace_id
+                        
+                        all_runs[obs_id] = {
+                            "id": obs_id,
+                            "run_type": obs.get("type", "span").lower(),
+                            "name": obs.get("name", "Unnamed"),
+                            "start_time": datetime.fromisoformat(obs["startTime"].replace('Z', '+00:00')) if obs.get("startTime") else None,
+                            "end_time": datetime.fromisoformat(obs["endTime"].replace('Z', '+00:00')) if obs.get("endTime") else None,
+                            "inputs": obs.get("input"),
+                            "outputs": obs.get("output"),
+                            "error": obs.get("error"),
+                            "parent_run_id": parent_id,
+                        }
+                        
+                        if parent_id not in children_index:
+                            children_index[parent_id] = []
+                        children_index[parent_id].append(obs_id)
+                        children_index.setdefault(obs_id, [])
+            except Exception as e:
+                # If we can't fetch observations, at least include the trace
+                all_runs[trace_id] = {
+                    "id": trace_id,
+                    "run_type": "trace",
+                    "name": trace.get("name", "Unnamed"),
+                    "start_time": datetime.fromisoformat(trace["startTime"].replace('Z', '+00:00')) if trace.get("startTime") else None,
+                    "end_time": datetime.fromisoformat(trace["endTime"].replace('Z', '+00:00')) if trace.get("endTime") else None,
+                    "inputs": trace.get("input"),
+                    "outputs": trace.get("output"),
+                    "error": trace.get("error"),
+                    "parent_run_id": None,
+                }
+                children_index[trace_id] = []
+
+    return all_runs, children_index, root_ids
 
 async def fetch_thread_timeline_as_string(thread_id: str, project_name: str | None = None):
     runs, children, root_ids = await fetch_thread_runs(thread_id, project_name)
@@ -135,19 +222,21 @@ async def fetch_thread_timeline_as_string(thread_id: str, project_name: str | No
     def walk(run_id: str, depth=0):
         r = runs[run_id]
         indent = "  " * depth
-        lines.append(f"{indent}-{r.name or r.run_type} (type={r.run_type})")
-        if r.inputs:
-            lines.append(f"{indent}    ↳ in : {_short(r.inputs)}")
-        if r.outputs:
-            lines.append(f"{indent}    ↳ out: {_short(r.outputs)}")
-        for kid in sorted(children[run_id], key=lambda k: (runs[k].start_time or runs[k].end_time)):
+        run_name = r.get("name") or r.get("run_type", "unknown")
+        run_type = r.get("run_type", "unknown")
+        lines.append(f"{indent}-{run_name} (type={run_type})")
+        if r.get("inputs"):
+            lines.append(f"{indent}    ↳ in : {_short(r['inputs'])}")
+        if r.get("outputs"):
+            lines.append(f"{indent}    ↳ out: {_short(r['outputs'])}")
+        for kid in sorted(children[run_id], key=lambda k: (runs[k].get("start_time") or runs[k].get("end_time") or datetime.min)):
             walk(kid, depth + 1)
 
     if not root_ids:
         lines.append(f"(no runs found for thread: {thread_id})")
         return "\n".join(lines)
 
-    for root in sorted(root_ids, key=lambda k: (runs[k].start_time or runs[k].end_time)):
+    for root in sorted(root_ids, key=lambda k: (runs[k].get("start_time") or runs[k].get("end_time") or datetime.min)):
         walk(root, 0)
 
     return "\n".join(lines)
