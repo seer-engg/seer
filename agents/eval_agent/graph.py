@@ -202,7 +202,34 @@ def build_graph():
         logger.warning("DATABASE_URI not set. Human-in-the-loop interrupts will not work.")
         logger.warning("Set DATABASE_URI environment variable to enable interrupts.")
 
-    return workflow.compile(debug=True, checkpointer=checkpointer)
+    compiled_graph = workflow.compile(debug=True, checkpointer=checkpointer)
+    
+    # Configure Langfuse callbacks at graph compilation time for LangGraph dev server
+    # This ensures traces are created even when graph is invoked via HTTP
+    # CRITICAL: For LangGraph dev server, callbacks MUST be configured at compile time
+    # using .with_config(), not just passed when invoking via RemoteGraph
+    # See: https://langfuse.com/guides/cookbook/integration_langgraph
+    from agents.eval_agent.constants import LANGFUSE_CLIENT
+    if LANGFUSE_CLIENT and config.langfuse_public_key:
+        try:
+            from langfuse.langchain import CallbackHandler
+            
+            langfuse_handler = CallbackHandler(
+                public_key=config.langfuse_public_key
+            )
+            
+            # Use with_config to attach callbacks at compile time
+            # This is required for LangGraph dev server to capture traces
+            # Metadata will be set via propagate_attributes in nodes that invoke RemoteGraph
+            compiled_graph = compiled_graph.with_config({
+                "callbacks": [langfuse_handler]
+            })
+            
+            logger.info(f"📊 Langfuse tracing configured at graph compilation time with project_name={config.langfuse_project_name}")
+        except Exception as e:
+            logger.warning(f"Failed to configure Langfuse callbacks at graph compilation: {e}")
+    
+    return compiled_graph
 
 
 graph = build_graph()

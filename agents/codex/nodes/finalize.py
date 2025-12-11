@@ -58,7 +58,7 @@ async def _handoff_to_eval(message_content:str, state: CodexState) -> dict:
         # Add trace context and metadata to config
         eval_thread_cfg["metadata"] = eval_thread_cfg.get("metadata", {})
         eval_thread_cfg["metadata"]["langfuse_trace_id"] = trace_id
-        eval_thread_cfg["metadata"]["project_name"] = config.project_name  # Add project_name for filtering
+        eval_thread_cfg["metadata"]["project_name"] = config.codex_project_name  # Add project_name for filtering (codex uses separate project name)
     
     eval_remote = RemoteGraph(
         "eval_agent",
@@ -70,23 +70,27 @@ async def _handoff_to_eval(message_content:str, state: CodexState) -> dict:
     # Wrap with Langfuse trace context if available
     async def invoke_with_tracing():
         if LANGFUSE_CLIENT and trace_id:
-            with LANGFUSE_CLIENT.start_as_current_observation(
-                as_type="span",
-                name="eval-remote-invocation",
-                trace_context={"trace_id": trace_id}
-            ) as span:
-                span.update_trace(input=eval_payload)
-                # Pass metadata via config to ensure it's attached to the root trace
-                invoke_config = {**eval_thread_cfg}
-                if langfuse_handler:
-                    invoke_config["callbacks"] = [langfuse_handler]
-                # Metadata is already in eval_thread_cfg["metadata"] from above
-                result = await asyncio.to_thread(
-                    eval_remote.invoke,
-                    eval_payload,
-                    invoke_config,
-                )
-                span.update_trace(output=result)
+            from langfuse import propagate_attributes
+            # Use propagate_attributes to ensure metadata is attached to root trace
+            # This wraps the invocation to propagate metadata to all observations
+            with propagate_attributes(metadata={"project_name": config.codex_project_name}):
+                with LANGFUSE_CLIENT.start_as_current_observation(
+                    as_type="span",
+                    name="eval-remote-invocation",
+                    trace_context={"trace_id": trace_id}
+                ) as span:
+                    span.update_trace(input=eval_payload)
+                    # Pass metadata via config to ensure it's attached to the root trace
+                    invoke_config = {**eval_thread_cfg}
+                    if langfuse_handler:
+                        invoke_config["callbacks"] = [langfuse_handler]
+                    # Metadata is already in eval_thread_cfg["metadata"] from above
+                    result = await asyncio.to_thread(
+                        eval_remote.invoke,
+                        eval_payload,
+                        invoke_config,
+                    )
+                    span.update_trace(output=result)
         else:
             await asyncio.to_thread(
                 eval_remote.invoke,
