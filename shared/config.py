@@ -61,6 +61,7 @@ class SeerConfig(BaseSettings):
     target_agent_context_level: int = Field(default=0, ge=0, le=3, description="Context level for target agent messages: 0=minimal, 1=system_goal, 2=system_goal+action, 3=full_context")
     
     langfuse_project_name: str = Field(default="target_agent", description="Langfuse project name for target agent")
+    project_name: str = Field(default="seer-v1", description="Project name for metadata filtering (used in trace metadata)")
     target_agent_port: int = Field(default=2024, description="Port for target agent")
     target_agent_setup_script: str = Field(default="pip install -e .", description="Setup script for target agent")
     target_agent_command: str = Field(default="langgraph dev --host 0.0.0.0", description="Command to run target agent")

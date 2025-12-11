@@ -63,8 +63,8 @@ async def _fetch_langfuse_traces(
     if trace_id:
         filter_dict["id"] = {"$eq": trace_id}
     if project_name:
-        # Langfuse uses tags or project name - we'll use tags
-        filter_dict["tags"] = {"$contains": project_name}
+        # Filter by metadata.project_name for metadata-based filtering
+        filter_dict["metadata"] = {"project_name": {"$eq": project_name}}
     
     params = {"limit": limit, "page": 1}
     if filter_dict:

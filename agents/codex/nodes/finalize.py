@@ -8,6 +8,7 @@ from langgraph.pregel.remote import RemoteGraph
 from langgraph_sdk import get_sync_client
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
+from langfuse.types import TraceContext
 from agents.codex.state import CodexState
 from agents.eval_agent.constants import LANGFUSE_CLIENT
 from shared.logger import get_logger
@@ -51,7 +52,11 @@ async def _handoff_to_eval(message_content:str, state: CodexState) -> dict:
     langfuse_handler = None
     if LANGFUSE_CLIENT:
         trace_id = Langfuse.create_trace_id(seed=thread["thread_id"])
-        langfuse_handler = CallbackHandler()
+        # Add project_name metadata to trace context
+        trace_context = TraceContext(
+            metadata={"project_name": config.project_name}
+        )
+        langfuse_handler = CallbackHandler(trace_context=trace_context)
         # Add trace context to config
         eval_thread_cfg["metadata"] = eval_thread_cfg.get("metadata", {})
         eval_thread_cfg["metadata"]["langfuse_trace_id"] = trace_id
