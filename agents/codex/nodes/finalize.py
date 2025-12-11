@@ -8,7 +8,6 @@ from langgraph.pregel.remote import RemoteGraph
 from langgraph_sdk import get_sync_client
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
-from langfuse.types import TraceContext
 from agents.codex.state import CodexState
 from agents.eval_agent.constants import LANGFUSE_CLIENT
 from shared.logger import get_logger
@@ -52,14 +51,14 @@ async def _handoff_to_eval(message_content:str, state: CodexState) -> dict:
     langfuse_handler = None
     if LANGFUSE_CLIENT:
         trace_id = Langfuse.create_trace_id(seed=thread["thread_id"])
-        # Add project_name metadata to trace context
-        trace_context = TraceContext(
-            metadata={"project_name": config.project_name}
-        )
-        langfuse_handler = CallbackHandler(trace_context=trace_context)
-        # Add trace context to config
+        # Initialize CallbackHandler with public_key (required for proper tracing)
+        langfuse_handler = CallbackHandler(
+            public_key=config.langfuse_public_key
+        ) if config.langfuse_public_key else CallbackHandler()
+        # Add trace context and metadata to config
         eval_thread_cfg["metadata"] = eval_thread_cfg.get("metadata", {})
         eval_thread_cfg["metadata"]["langfuse_trace_id"] = trace_id
+        eval_thread_cfg["metadata"]["project_name"] = config.project_name  # Add project_name for filtering
     
     eval_remote = RemoteGraph(
         "eval_agent",
@@ -77,10 +76,15 @@ async def _handoff_to_eval(message_content:str, state: CodexState) -> dict:
                 trace_context={"trace_id": trace_id}
             ) as span:
                 span.update_trace(input=eval_payload)
+                # Pass metadata via config to ensure it's attached to the root trace
+                invoke_config = {**eval_thread_cfg}
+                if langfuse_handler:
+                    invoke_config["callbacks"] = [langfuse_handler]
+                # Metadata is already in eval_thread_cfg["metadata"] from above
                 result = await asyncio.to_thread(
                     eval_remote.invoke,
                     eval_payload,
-                    {**eval_thread_cfg, "callbacks": [langfuse_handler]} if langfuse_handler else eval_thread_cfg,
+                    invoke_config,
                 )
                 span.update_trace(output=result)
         else:
