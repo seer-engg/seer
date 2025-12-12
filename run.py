@@ -159,19 +159,6 @@ class Launcher:
         self.cleanup_existing_processes()
         
         try:
-            # 1. Start Supervisor (LangGraph) - replaces LangServe on port 8000
-            logger.info("\n1️⃣  Supervisor (LangGraph)")
-            supervisor_port = 8000
-            supervisor_path = self.project_root.parent / "supervisor"
-            if not supervisor_path.exists():
-                raise Exception(f"Supervisor directory not found at {supervisor_path}")
-            self.start_process(
-                "Supervisor (LangGraph)",
-                [self.langgraph_exe, "dev", "--port", str(supervisor_port), "--host", "127.0.0.1", "--config", "langgraph.json"],
-                cwd=str(supervisor_path)
-            )
-            if not self.check_port_listening(supervisor_port, timeout=15):
-                raise Exception(f"Supervisor failed to start on port {supervisor_port}")
 
             # 2. Start Eval Agent (LangGraph)
             logger.info("\n2️⃣  Eval Agent (LangGraph)")
@@ -185,24 +172,24 @@ class Launcher:
                 raise Exception(f"Eval agent failed to start on port {eval_port}")
 
 
-            if os.getenv("CODEX_HANDOFF_ENABLED") == "true":
-                # 2. Start Coding Agent (langgraph dev)
-                logger.info("\n3️⃣  Coding Agent (LangGraph)")
-                coding_port = 8003
-                self.start_process(
-                    "Coding Agent (LangGraph)",
-                    [self.langgraph_exe, "dev", "--port", str(coding_port), "--host", "127.0.0.1", "--config", "agents/codex/langgraph.json"],
-                    cwd=str(self.project_root)
-                )
-                if not self.check_port_listening(coding_port, timeout=15):
-                    raise Exception(f"Coding agent failed to start on port {coding_port}")
+            # if os.getenv("CODEX_HANDOFF_ENABLED") == "true":
+            #     # 2. Start Coding Agent (langgraph dev)
+            #     logger.info("\n3️⃣  Coding Agent (LangGraph)")
+            #     coding_port = 8003
+            #     self.start_process(
+            #         "Coding Agent (LangGraph)",
+            #         [self.langgraph_exe, "dev", "--port", str(coding_port), "--host", "127.0.0.1", "--config", "agents/codex/langgraph.json"],
+            #         cwd=str(self.project_root)
+            #     )
+            #     if not self.check_port_listening(coding_port, timeout=15):
+            #         raise Exception(f"Coding agent failed to start on port {coding_port}")
             
             logger.info("\n" + "=" * 60)
             logger.info("✅ All components started!\n")
             logger.info("🔮 Seer Agents are running:")
             logger.info(f"   - Eval Agent:        http://127.0.0.1:{eval_port}")
-            if os.getenv("CODEX_HANDOFF_ENABLED") == "true":
-                logger.info(f"   - Coding Agent:      http://127.0.0.1:{coding_port}")
+            # if os.getenv("CODEX_HANDOFF_ENABLED") == "true":
+            #     logger.info(f"   - Coding Agent:      http://127.0.0.1:{coding_port}")
             logger.info("=" * 60)
             logger.info("Press Ctrl+C to stop all components\n")
             
