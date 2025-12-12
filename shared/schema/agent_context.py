@@ -94,7 +94,14 @@ class AgentContext(BaseModel):
         default_factory=dict, 
         description="Subset of tools selected for this evaluation run"
     )
-    
+    integrations: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Integrations selected for this evaluation run"
+    )
+    user_id: str = Field(
+        default="",
+        description="The ID of the user"
+    )
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
 

@@ -15,7 +15,7 @@ async def seed_mcp_resources(state: TestExecutionState) -> None:
     for service in state.context.mcp_services:
         provider = await get_provider(service)
         logger.info(f"Seeding MCP resources for {service} with seed {seed}")
-        resources = await provider.provision_resources(seed=seed)
+        resources = await provider.provision_resources(seed=seed, user_id=state.context.user_id)
         if resources:
             updates["mcp_resources"][service].update(resources)
         logger.info(f"Seeded MCP resources for {service} with seed {seed}")

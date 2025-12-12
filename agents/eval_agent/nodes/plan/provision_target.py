@@ -70,11 +70,15 @@ async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
             repo_url,
             branch_name,
         )
+        env_vars = {
+            "COMPOSIO_USER_ID": state.context.user_id,
+        }
 
         sbx, repo_dir, resolved_branch = await initialize_e2b_sandbox(
             repo_url=repo_url,
             branch_name=branch_name,
             github_token=github_token,
+            ßenv_vars=env_vars,
         )
         sandbox_branch = resolved_branch or branch_name
         sandbox_id = sbx.sandbox_id

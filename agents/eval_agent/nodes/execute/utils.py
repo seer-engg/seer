@@ -51,8 +51,8 @@ async def get_tool_hub() -> ToolHub:
     
     hub = ToolHub(openai_api_key=openai_key)
 
-    # 2. Fetch Executable Tools from Composio (Cached by MCP Client)
-    # We still need the executables, but we handle them smarter now
+
+    # TODO: replace with vector index search
     tool_service = ComposioMCPClient(["GITHUB", "ASANA"], config.composio_user_id)
     all_tools = await tool_service.get_tools()
 

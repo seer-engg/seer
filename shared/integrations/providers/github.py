@@ -16,10 +16,10 @@ class GithubProvider(BaseProvider):
         }
 
 
-    async def provision_resources(self, seed: str) -> Dict[str, Any]:
+    async def provision_resources(self, seed: str, user_id:str) -> Dict[str, Any]:
         logger.warning("Provisioning GitHub resources is not implemented")
         pass
 
-    async def cleanup_resources(self, resources: Dict[str, Any]) -> None:
+    async def cleanup_resources(self, resources: Dict[str, Any], user_id:str) -> None:
         logger.warning("Cleaning up GitHub resources is not implemented")
         pass

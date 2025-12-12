@@ -246,13 +246,15 @@ async def get_tool_schema_from_composio(tool_names: list[str]) -> dict:
     Returns:
         The schema of the tools in a dictionary format.
     """
-    tool_service = ComposioMCPClient([], config.composio_user_id)
-    client = tool_service.get_client()
-    tools = await asyncio.to_thread(client.tools.get,
-        user_id=config.composio_user_id,
-        tools=tool_names,
-    )
-    tools  = [{'name': t.name,'schema': t.args_schema.model_json_schema()} for t in tools]
+    #TODO: replcae with tool hub search 
+    # tool_service = ComposioMCPClient([], config.composio_user_id)
+    # client = tool_service.get_client()
+    # tools = await asyncio.to_thread(client.tools.get,
+    #     user_id=config.composio_user_id,
+    #     tools=tool_names,
+    # )
+    # tools  = [{'name': t.name,'schema': t.args_schema.model_json_schema()} for t in tools]
+    tools = []
     return tools
 
 from typing import Dict

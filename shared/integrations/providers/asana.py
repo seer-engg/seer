@@ -20,7 +20,7 @@ class AsanaProvider(BaseProvider):
             "team_id":config.asana_team_gid
         }
 
-    async def provision_resources(self, seed:str) -> Dict[str, Any]:
+    async def provision_resources(self, seed:str, user_id:str) -> Dict[str, Any]:
         
         logger.info(f"Provisioning ASANA resources with seed {seed}")
         
@@ -51,7 +51,7 @@ class AsanaProvider(BaseProvider):
         }
         result = await asyncio.to_thread(self.mcp_client.tools.execute,
             "ASANA_CREATE_A_PROJECT",
-            user_id=config.composio_user_id,
+            user_id=user_id,
             arguments=payload,
             version=self.version
         )
@@ -74,7 +74,7 @@ class AsanaProvider(BaseProvider):
             "project_gid": project_gid,
         }
 
-    async def cleanup_resources(self, resources: Dict[str, Any]) -> None:
+    async def cleanup_resources(self, resources: Dict[str, Any], user_id:str) -> None:
 
         project_gid = resources.get('project_gid')
         logger.info(f"Cleaning up ASANA resources with project id ")
@@ -83,7 +83,7 @@ class AsanaProvider(BaseProvider):
         }
         result = await asyncio.to_thread(self.mcp_client.tools.execute,
             "ASANA_DELETE_PROJECT",
-            user_id=config.composio_user_id,
+            user_id=user_id,
             arguments=payload,
             version=self.version
         )
