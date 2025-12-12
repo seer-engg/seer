@@ -33,6 +33,24 @@ from shared.tools import ToolEntry
 if TYPE_CHECKING:
     from shared.schema import UserContext, GithubContext, SandboxContext
 
+class IntegrationItem(BaseModel):
+    """
+    Integration item information
+    """
+
+    id: str
+    name: str
+    mode: str
+class Integration(BaseModel):
+    """
+    Integration information
+    """
+    github: Optional[IntegrationItem] = None
+    googledrive: Optional[IntegrationItem] = None
+    asana: Optional[IntegrationItem] = None
+    gmail: Optional[IntegrationItem] = None
+    sandbox: Optional[IntegrationItem] = None
+
 class AgentContext(BaseModel):
     """
     Immutable shared context for all agents.
@@ -94,8 +112,8 @@ class AgentContext(BaseModel):
         default_factory=dict, 
         description="Subset of tools selected for this evaluation run"
     )
-    integrations: Dict[str, Any] = Field(
-        default_factory=dict,
+    integrations: Integration = Field(
+        default=Integration(),
         description="Integrations selected for this evaluation run"
     )
     user_id: str = Field(

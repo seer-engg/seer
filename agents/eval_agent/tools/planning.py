@@ -83,7 +83,7 @@ async def extract_agent_config(runtime: ToolRuntime = None) -> str:
     Returns:
         JSON string with extracted config (supervisor node will parse and update state)
     """
-    from agents.eval_agent.nodes.plan.ensure_config import ensure_target_agent_config, _parse_github_url
+    from agents.eval_agent.nodes.plan.ensure_config import ensure_target_agent_config
     from agents.eval_agent.models import EvalAgentPlannerState
     from langchain_core.messages import HumanMessage
     import json

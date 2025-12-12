@@ -45,7 +45,7 @@ USER MESSAGE:
 
 Classify the intent and provide reasoning.""".format(message=last_human.content)
     
-    intent = await classifier.ainvoke(prompt)
+    intent: UserIntent = await classifier.ainvoke(prompt)
     logger.info(f"Intent classified: {intent.intent_type} (confidence: {intent.confidence:.2f}) - {intent.reasoning}")
     
     return {
