@@ -33,6 +33,24 @@ from shared.tools import ToolEntry
 if TYPE_CHECKING:
     from shared.schema import UserContext, GithubContext, SandboxContext
 
+class IntegrationItem(BaseModel):
+    """
+    Integration item information
+    """
+
+    id: str
+    name: str
+    mode: str
+class Integration(BaseModel):
+    """
+    Integration information
+    """
+    github: Optional[IntegrationItem] = None
+    googledrive: Optional[IntegrationItem] = None
+    asana: Optional[IntegrationItem] = None
+    gmail: Optional[IntegrationItem] = None
+    sandbox: Optional[IntegrationItem] = None
+
 class AgentContext(BaseModel):
     """
     Immutable shared context for all agents.
@@ -89,12 +107,25 @@ class AgentContext(BaseModel):
         description="MCP resources created during evaluation (for cleanup)"
     )
 
+    # Functional requirements for the target agent
+    functional_requirements: List[str] = Field(
+        default_factory=list,
+        description="Functional requirements for the target agent, aligned with the user"
+    )
+
     # Tools
     tool_entries: Dict[str, ToolEntry] = Field(
         default_factory=dict, 
         description="Subset of tools selected for this evaluation run"
     )
-    
+    integrations: Integration = Field(
+        default=Integration(),
+        description="Integrations selected for this evaluation run"
+    )
+    user_id: str = Field(
+        default="",
+        description="The ID of the user"
+    )
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
 

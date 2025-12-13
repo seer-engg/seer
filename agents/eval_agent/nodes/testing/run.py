@@ -14,7 +14,7 @@ from shared.config import config
 
 logger = get_logger("eval_agent.run")
 
-async def _prepare_run_context(state: EvalAgentState) -> dict:
+async def prepare_run_context(state: EvalAgentState) -> dict:
     dataset = state.dataset_context
 
     if not dataset.dataset_name:
@@ -41,7 +41,7 @@ async def _prepare_run_context(state: EvalAgentState) -> dict:
         "latest_results": [],
     }
 
-async def _upload_run_results(state: EvalAgentState) -> dict:
+async def upload_run_results(state: EvalAgentState) -> dict:
     """used in eval_agent.run node to upload results to Langfuse"""
     experiment = state.active_experiment
     dataset = state.dataset_context

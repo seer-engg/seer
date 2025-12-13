@@ -28,7 +28,7 @@ async def filter_tools(state: EvalAgentPlannerState) -> dict:
     
     for service in state.context.mcp_services:
         # TODO: cache all the tools so that we don't need to fetch them every time
-        tool_service = ComposioMCPClient([service.upper()], config.composio_user_id)
+        tool_service = ComposioMCPClient([service.upper()], state.context.user_id)
         all_tools = await tool_service.get_tools()
         all_tools = [t for t in all_tools if 'deprecated' not in t.description.lower()]
         llm = ChatOpenAI(model="gpt-5-mini", reasoning_effort="minimal")

@@ -7,7 +7,7 @@ from .deploy import deploy_server_and_confirm_ready
 from .initialize import initialize_e2b_sandbox, setup_project
 from e2b import AsyncSandbox
 from shared.config import config
-
+from typing import Optional, Dict
 __all__ = [
     "cd_and_run_in_sandbox",
     "get_sandbox",
@@ -19,7 +19,7 @@ __all__ = [
 ]
 
 
-async def prepare_target_agent(repo_url: str, setup_script: str, timeout: int = 900) -> tuple[AsyncSandbox, str]:
+async def prepare_target_agent(repo_url: str, setup_script: str,env_vars: Optional[Dict[str, str]] = None, timeout: int = 900) -> tuple[AsyncSandbox, str]:
     """
     Prepare the target agent by initializing the sandbox, setting up the project, and deploying the server.
     Args:
@@ -31,6 +31,7 @@ async def prepare_target_agent(repo_url: str, setup_script: str, timeout: int = 
     """
     sbx, repo_dir, _ = await initialize_e2b_sandbox(
         repo_url=repo_url,
+        env_vars=env_vars,
     )
     await setup_project(sbx.sandbox_id, repo_dir, setup_script)
 

@@ -124,7 +124,6 @@ class SeerConfig(BaseSettings):
     # ============================================================================
     
     # Composio configuration
-    composio_user_id: Optional[str] = Field(default=None, description="Composio user ID for tool access")
     composio_api_key: Optional[str] = Field(default=None, description="Composio API key (if required)")
     
     # ============================================================================
@@ -152,7 +151,6 @@ class SeerConfig(BaseSettings):
         """Environment variables for target agent."""
         envs = {
             'OPENAI_API_KEY': self.openai_api_key,
-            'COMPOSIO_USER_ID': self.composio_user_id,
             'COMPOSIO_API_KEY': self.composio_api_key,
         }
         # Add Langfuse environment variables if configured

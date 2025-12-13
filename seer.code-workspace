@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../seer-backend"
+		},
+		{
+			"path": "../seer-sparkle-dash"
+		},
+		{
+			"path": "../supervisor"
+		}
+	],
+	"settings": {}
+}

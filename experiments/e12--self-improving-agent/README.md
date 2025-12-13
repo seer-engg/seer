@@ -90,7 +90,6 @@ Results are archived in `archive/results_e12/e12_results_TIMESTAMP.json` with:
 Uses Seer root `.env` file for:
 - `OPENAI_API_KEY` - For GPT-5.1
 - `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD` - For persistent memory
-- `COMPOSIO_USER_ID` - For GitHub/Asana tools
 
 ## Memory Optimizations Implemented
 

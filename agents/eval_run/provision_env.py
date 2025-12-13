@@ -41,7 +41,8 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
     
     resource_hints = state.mcp_resources
     llm = get_llm_without_responses_api()
-    tool_service = ComposioMCPClient(["GITHUB", "ASANA"], config.composio_user_id)
+    # TODO: replace hardcoded asana services
+    tool_service = ComposioMCPClient(["GITHUB", "ASANA"], state.context.user_id)
     all_tools = await tool_service.get_tools()
 
     actual_tools = []

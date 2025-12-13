@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import base64
 import shlex
-from typing import Optional
+from typing import Optional, Dict
 from e2b import AsyncSandbox, CommandResult
 
 from .constants import _build_git_shell_script
@@ -23,6 +23,7 @@ async def initialize_e2b_sandbox(
     repo_url: str,
     branch_name: str = "main",
     github_token: Optional[str] = config.github_token,
+    env_vars: Optional[Dict[str, str]] = None,
 ) -> tuple[AsyncSandbox, str, str]:
     """
     Create (or resume) an E2B sandbox and ensure the GitHub repository is cloned
@@ -34,10 +35,13 @@ async def initialize_e2b_sandbox(
         raise RuntimeError("E2B_API_KEY not configured in environment")
 
     logger.info("Creating E2B sandbox for codex...")
+    envs = config.target_agent_envs
+    if env_vars:
+        envs.update(env_vars)
     sbx: AsyncSandbox = await AsyncSandbox.beta_create(
       template=config.base_template_alias,
       auto_pause=True,
-      envs=config.target_agent_envs,
+      envs=envs,
       timeout=60*30, # 30 minutes
     )
     sandbox_id = sbx.sandbox_id
