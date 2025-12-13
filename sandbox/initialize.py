@@ -63,7 +63,7 @@ async def initialize_e2b_sandbox(
 B64EOF
 chmod +x "$TMP"; bash "$TMP"'"""
 
-    execution: CommandResult = await sbx.commands.run(cmd)
+    execution: CommandResult = await sbx.commands.run(cmd, timeout=60*5) # 5 minutes
 
     exit_code = execution.exit_code
     stdout = execution.stdout

@@ -2,7 +2,7 @@ import json
 from typing import Dict, List
 from uuid import uuid4
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from pydantic import BaseModel, Field, ConfigDict
 from agents.eval_agent.models import EvalAgentPlannerState
 from shared.logger import get_logger
@@ -12,6 +12,7 @@ from shared.schema import (
 from shared.llm import get_llm
 from shared.config import config
 from shared.prompt_loader import load_prompt
+import uuid
 
 logger = get_logger("eval_agent.plan.generate_evals")
 
@@ -80,6 +81,8 @@ async def agentic_eval_generation(state: EvalAgentPlannerState) -> dict:
     dataset_examples = dataset_examples[:config.eval_n_test_cases]
 
     logger.info("plan.generate: produced %d tests (agent=%s)", len(dataset_examples), agent_name)
+    output_messages = [ToolMessage(content=dataset_examples, tool_call_id=str(uuid.uuid4()))]
     return {
         "dataset_examples": dataset_examples,
+        "messages": output_messages,
     }

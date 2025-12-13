@@ -10,6 +10,14 @@ from agents.eval_agent.nodes.plan.get_reflections import get_reflections
 from agents.eval_agent.nodes.plan.agentic_eval_generation import agentic_eval_generation
 from agents.eval_agent.nodes.plan.validate_generated_actions import validate_generated_actions
 from agents.eval_agent.nodes.plan.filter_tools import filter_tools
+from langchain_core.messages import AIMessage
+
+async def generate_response(state: EvalAgentPlannerState) -> dict:
+    """Generate a response for the target agent."""
+    output_messages = [AIMessage(content=f"created {len(state.dataset_examples)} test cases and selected {len(state.context.tool_entries)} tools")]
+    return {
+        "messages": output_messages,
+    }
 
 logger = get_logger("eval_agent.plan")
 
@@ -24,6 +32,7 @@ def build_plan_subgraph():
     builder.add_edge("get-reflections", "eval-gen")
     builder.add_edge("eval-gen", "filter-tools")
     builder.add_edge("filter-tools", "validate-generated-actions")
-    builder.add_edge("validate-generated-actions", END)
+    builder.add_edge("validate-generated-actions", "generate-response")
+    builder.add_edge("generate-response", END)
 
     return builder.compile()
