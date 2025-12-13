@@ -8,14 +8,14 @@ from langgraph.graph import END, START, StateGraph
 
 from agents.eval_agent.models import TestExecutionState
 from shared.logger import get_logger
-from agents.eval_agent.nodes.execute.provision_env import provision_environment_node
-from agents.eval_agent.nodes.execute.verify_provisioning import verify_provisioning_node
-from agents.eval_agent.nodes.execute.invoke_target import invoke_target_node
-from agents.eval_agent.nodes.execute.assert_state import assert_final_state_node
-from agents.eval_agent.nodes.execute.prepare_result import prepare_result_node
-from agents.eval_agent.nodes.execute.initialize import initialize_node
-from agents.eval_agent.nodes.execute.seed_mcp_resources import seed_mcp_resources
-from agents.eval_agent.nodes.execute.clean_mcp_resources import clean_mcp_resources
+from agents.eval_run.provision_env import provision_environment_node
+from agents.eval_run.verify_provisioning import verify_provisioning_node
+from agents.eval_run.invoke_target import invoke_target_node
+from agents.eval_run.assert_state import assert_final_state_node
+from agents.eval_run.prepare_result import prepare_result_node
+from agents.eval_run.initialize import initialize_node
+from agents.eval_run.seed_mcp_resources import seed_mcp_resources
+from agents.eval_run.clean_mcp_resources import clean_mcp_resources
 
 logger = get_logger("eval_agent.execute.graph")
 

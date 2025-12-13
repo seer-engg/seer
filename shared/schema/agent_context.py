@@ -107,6 +107,12 @@ class AgentContext(BaseModel):
         description="MCP resources created during evaluation (for cleanup)"
     )
 
+    # Functional requirements for the target agent
+    functional_requirements: List[str] = Field(
+        default_factory=list,
+        description="Functional requirements for the target agent, aligned with the user"
+    )
+
     # Tools
     tool_entries: Dict[str, ToolEntry] = Field(
         default_factory=dict, 

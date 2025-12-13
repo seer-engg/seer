@@ -18,12 +18,6 @@ from agents.eval_agent.models import EvalAgentPlannerState
 from shared.logger import get_logger
 from shared.schema import AgentContext, GithubContext
 
-try:
-    # LangGraph v1: interrupt() is the canonical HITL API for Python graphs
-    from langgraph.types import interrupt  # type: ignore
-except Exception:  # pragma: no cover - graceful fallback if library shape changes
-    interrupt = None  # type: ignore
-
 
 logger = get_logger("eval_agent.agent_spec.generate_spec")
 
@@ -114,75 +108,8 @@ async def generate_target_agent_spec(state: EvalAgentPlannerState) -> Dict[str, 
     mcp_services = context.mcp_services or []
     agent_name = context.agent_name or "agent"
 
-    spec_payload: Dict[str, Any] = {
-        "agent_name": agent_name,
-        "github_repo_url": github_repo,
-        "github_branch": github_branch,
-        "mcp_services": mcp_services,
-        "functional_requirements": proposed_requirements,
-    }
 
     final_requirements = list(proposed_requirements)
-
-    # Step 2: HITL interrupt for confirmation / edits using LangGraph v1 interrupt()
-    if interrupt is not None:
-        hitl_request: Dict[str, Any] = {
-            "action_requests": [
-                {
-                    "name": "review_agent_spec",
-                    "args": spec_payload,
-                    "description": (
-                        "Review and optionally edit the generated agent spec for the target agent. "
-                        "You may adjust github_repo_url, github_branch, mcp_services, or "
-                        "functional_requirements. Approve to accept as-is; edit to modify fields."
-                    ),
-                }
-            ],
-            "review_configs": [
-                {
-                    "action_name": "review_agent_spec",
-                    "allowed_decisions": ["approve", "edit", "reject"],
-                }
-            ],
-        }
-
-        logger.info("Pausing for human review of agent spec via interrupt")
-        # First run: this call will pause the graph and surface the HITL request in the UI.
-        # After the human responds with Command(resume={...}), this node will be re-run and
-        # interrupt(...) will immediately return the provided resume value.
-        resume_value: Any = interrupt(hitl_request)  # type: ignore[call-arg]
-
-        # On resume, we expect either a raw list of decisions or {"decisions": [...]}.
-        if isinstance(resume_value, dict) and "decisions" in resume_value:
-            raw_decisions: Any = resume_value.get("decisions")
-        else:
-            raw_decisions = resume_value
-
-        if isinstance(raw_decisions, list) and raw_decisions:
-            decision: Dict[str, Any] = raw_decisions[0] or {}
-        elif isinstance(raw_decisions, dict):
-            decision = raw_decisions
-        else:
-            decision = {}
-
-        decision_type = decision.get("type")
-        if decision_type == "edit":
-            edited_action = decision.get("edited_action") or {}
-            edited_args = edited_action.get("args") or {}
-            # Overlay edited args on top of original spec payload
-            merged = {**spec_payload, **edited_args}
-            updated_reqs = merged.get("functional_requirements") or final_requirements
-            if isinstance(updated_reqs, list):
-                final_requirements = [str(item) for item in updated_reqs]
-            github_repo = str(merged.get("github_repo_url", github_repo))
-            github_branch = str(merged.get("github_branch", github_branch))
-            mcp_services = list(merged.get("mcp_services", mcp_services) or [])
-            logger.info("Agent spec updated based on human edits")
-        elif decision_type == "reject":
-            logger.warning(
-                "Agent spec was rejected by human reviewer; keeping initial proposal but "
-                "logging rejection for visibility."
-            )
 
     # Step 3: persist final spec back into AgentContext
     # If the human edited the repo/branch, reflect that in GithubContext too.
