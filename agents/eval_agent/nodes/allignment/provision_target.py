@@ -35,11 +35,14 @@ async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
             user_context=state.context.user_context,
             github_context=state.context.github_context,
             sandbox_context=None,  # No sandbox in plan-only mode
+            agent_name=state.context.agent_name,
             target_agent_version=state.context.target_agent_version,
             mcp_services=state.context.mcp_services,
             mcp_resources=mcp_resources,
-            agent_name=state.context.agent_name,
+            functional_requirements=state.context.functional_requirements,
             tool_entries=state.context.tool_entries,
+            integrations=state.context.integrations,
+            user_id=state.context.user_id,
         )
         return {
             "context": updated_context,
@@ -78,7 +81,7 @@ async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
             repo_url=repo_url,
             branch_name=branch_name,
             github_token=github_token,
-            ßenv_vars=env_vars,
+            env_vars=env_vars,
         )
         sandbox_branch = resolved_branch or branch_name
         sandbox_id = sbx.sandbox_id
@@ -114,10 +117,14 @@ async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
         user_context=state.context.user_context,
         github_context=state.context.github_context,
         sandbox_context=updates.get("sandbox_context", state.context.sandbox_context),
+        agent_name=state.context.agent_name,
         target_agent_version=state.context.target_agent_version,
         mcp_services=state.context.mcp_services,
         mcp_resources=mcp_resources,
-        agent_name=state.context.agent_name,
+        functional_requirements=state.context.functional_requirements,
+        tool_entries=state.context.tool_entries,
+        integrations=state.context.integrations,
+        user_id=state.context.user_id,
     )
     
     return {"context": updated_context}

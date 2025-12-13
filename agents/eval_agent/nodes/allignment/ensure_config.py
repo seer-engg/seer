@@ -65,10 +65,14 @@ async def ensure_target_agent_config(state: EvalAgentPlannerState) -> dict:
         user_context=context.user_context,
         github_context=github_ctx,
         sandbox_context=agent_context.sandbox_context,  # Preserve existing sandbox
+        agent_name=context.agent_name,
         target_agent_version=agent_context.target_agent_version,
         mcp_services=resolved_services,
         mcp_resources=agent_context.mcp_resources,
-        agent_name=context.agent_name,
+        functional_requirements=agent_context.functional_requirements,
+        tool_entries=agent_context.tool_entries,
+        integrations=agent_context.integrations,
+        user_id=agent_context.user_id,
     )
 
     return {
