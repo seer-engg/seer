@@ -28,6 +28,7 @@ def build_plan_subgraph():
     builder.add_node("eval-gen", agentic_eval_generation)
     builder.add_node("validate-generated-actions", validate_generated_actions)
     builder.add_node("filter-tools", filter_tools)
+    builder.add_node("generate-response", generate_response)
     builder.add_edge(START, "get-reflections")
     builder.add_edge("get-reflections", "eval-gen")
     builder.add_edge("eval-gen", "filter-tools")
