@@ -85,7 +85,7 @@ Logs per service live under `logs/*.log`.
 ## Sample Eval Agent Request
 
 ### Sample Eval Agent Input
-Evaluate my agent buggy_coder at https://github.com/seer-engg/buggy-coder
+Evaluate my agent buggy_coder
 1. The agent should sync Asana ticket updates when a GitHub PR is merged on it's own. Whenever i merge a PR it should search for realted asana tickets and update/close them.
 2. I wanna turn Buggy Coder into an agent that can keep Asana tickets and project status in sync. For example, whenever an Asana ticket is opened or closed, the project description must be appropriately updated.
 3. I want to turn buggycoder into a GitHub PR review bot. For example, whenever a new pull request is created, it should check if the pull request has a summary and a title. And if it doesn't, then it should try to understand the contents of the pull request and update the summary and title accordingly. This should also include edge cases where developer just enters One or two words such as bug fix or hotfix or feature, etc.
