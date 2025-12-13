@@ -1,7 +1,7 @@
 import re
 from typing import Optional, Tuple, List 
 from pydantic import BaseModel, Field
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage,AIMessage,ToolMessage
 from agents.eval_agent.models import EvalAgentPlannerState
 from shared.schema import AgentContext
 from shared.schema import GithubContext, UserContext
@@ -9,7 +9,7 @@ from shared.logger import get_logger
 from shared.tools import resolve_mcp_services
 from shared.config import config
 from langchain_openai import ChatOpenAI
-
+import uuid
 
 logger = get_logger("eval_agent.plan")
 
@@ -75,6 +75,9 @@ async def ensure_target_agent_config(state: EvalAgentPlannerState) -> dict:
         user_id=agent_context.user_id,
     )
 
+    output_messages = [ToolMessage(content=context, tool_call_id=str(uuid.uuid4()))]
+
     return {
         "context": updated_context,
+        "messages": output_messages,
     }

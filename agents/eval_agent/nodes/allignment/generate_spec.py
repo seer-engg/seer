@@ -148,11 +148,13 @@ async def generate_target_agent_spec(state: EvalAgentPlannerState) -> Dict[str, 
     for idx, req in enumerate(final_requirements, 1):
         summary_lines.append(f"{idx}. {req}")
 
-    summary_message = AIMessage(content="\n".join(summary_lines))
+    summary_message = AIMessage(
+        content="\n".join(summary_lines),
+        additional_kwargs={"internal_thinking": True})
 
     return {
         "context": updated_context,
-        "messages": state.messages + [summary_message],
+        "messages": [summary_message],
     }
 
 

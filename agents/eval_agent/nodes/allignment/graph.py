@@ -14,8 +14,7 @@ def build_alignment_subgraph():
     builder.add_node("generate-agent-spec", generate_target_agent_spec)
     builder.add_node("provision-target", provision_target_agent)
     builder.add_edge(START, "ensure-config")
-    builder.add_edge("ensure-config", "generate-agent-spec")
-    builder.add_edge("generate-agent-spec", "provision-target")
-    builder.add_edge("provision-target", END)
-
+    builder.add_edge("ensure-config", "provision-target")
+    builder.add_edge("provision-target", "generate-agent-spec")
+    builder.add_edge("generate-agent-spec", END)
     return builder.compile()

@@ -95,7 +95,7 @@ def build_graph():
         logger.warning("DATABASE_URI not set. Human-in-the-loop interrupts will not work.")
         logger.warning("Set DATABASE_URI environment variable to enable interrupts.")
 
-    compiled_graph = workflow.compile(debug=True, checkpointer=checkpointer)
+    compiled_graph = workflow.compile(checkpointer=checkpointer)
     
     # Configure Langfuse callbacks at graph compilation time for LangGraph dev server
     # This ensures traces are created even when graph is invoked via HTTP

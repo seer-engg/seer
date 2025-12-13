@@ -13,23 +13,19 @@ from shared.schema import SandboxContext
 from shared.logger import get_logger
 from shared.config import config
 from shared.integrations.main import get_provider
+from langgraph.config import get_stream_writer
 
 logger = get_logger("eval_agent.plan")
 
 
 
-async def _seed_default_resources(mcp_resources: Dict[str, Any], mcp_services: List[str]) -> None:
-    for service in mcp_services:
-        provider = await get_provider(service)
-        mcp_resources[service] = provider.persistent_resource
-
 
 async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
     # Skip sandbox provisioning in plan-only mode (not needed for plan generation)
+    writer = get_stream_writer()
     if config.eval_plan_only_mode:
         logger.info("plan.provision: Plan-only mode enabled - skipping sandbox provisioning")
         mcp_resources = dict(state.context.mcp_resources or {})
-        await _seed_default_resources(mcp_resources, state.context.mcp_services)
         # Create updated context with mcp_resources but no sandbox
         updated_context = AgentContext(
             user_context=state.context.user_context,
@@ -62,7 +58,6 @@ async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
         )
     
     mcp_resources = dict(state.context.mcp_resources or {})
-    await _seed_default_resources(mcp_resources, state.context.mcp_services)
 
     updates: Dict[str, Any] = {}
 
@@ -76,6 +71,7 @@ async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
         env_vars = {
             "COMPOSIO_USER_ID": state.context.user_id,
         }
+        writer({"progress":f"Provisioning sandbox (repo={repo_url} branch={branch_name}) ..."})
 
         sbx, repo_dir, resolved_branch = await initialize_e2b_sandbox(
             repo_url=repo_url,
@@ -85,19 +81,21 @@ async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
         )
         sandbox_branch = resolved_branch or branch_name
         sandbox_id = sbx.sandbox_id
-
+        writer({"progress":f"Sandbox created: {sandbox_id}"})
+        writer({"progress":f"Setting up project (repo={repo_dir}) ..."})
         await setup_project(sandbox_id, repo_dir, "pip install -e .")
-
+        writer({"progress":f"Project setup complete"    })
         sandbox, _ = await deploy_server_and_confirm_ready(
             cmd=config.target_agent_command,
             sb=sbx,
             cwd=repo_dir,
         )
+        writer({"progress":f"Testing server deployment (cmd={config.target_agent_command}) ..."})
 
         deployment_url = sandbox.get_host(config.target_agent_port)
         if not deployment_url.startswith("http"):
             deployment_url = f"https://{deployment_url}"
-
+        writer({"progress":f"Server deployment successful: {deployment_url}"})
         logger.info("plan.provision: sandbox ready at %s", deployment_url)
 
         sandbox_ctx = SandboxContext(
