@@ -7,10 +7,10 @@
 			"path": "../seer-backend"
 		},
 		{
-			"path": "../seer-sparkle-dash"
+			"path": "../supervisor"
 		},
 		{
-			"path": "../supervisor"
+			"path": "../seer-frontend"
 		}
 	],
 	"settings": {}
