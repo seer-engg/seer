@@ -8,7 +8,8 @@ from langchain_openai import ChatOpenAI
 from pydantic import Field
 from shared.tools import ComposioMCPClient
 from shared.config import  config
-
+import uuid
+from langchain_core.messages import ToolMessage
 logger = get_logger("eval_agent.plan.filter_tools")
 
 class Step(BaseModel):
@@ -87,7 +88,9 @@ async def filter_tools(state: EvalAgentPlannerState) -> dict:
 
     context = state.context
     context.tool_entries = tool_entries
+    output_messages = [ToolMessage(content=tool_entries, tool_call_id=str(uuid.uuid4()))]
 
     return {
         "context": context,
+        "messages": output_messages,
     }

@@ -10,7 +10,7 @@ from shared.logger import get_logger
 from agents.eval_agent.nodes.testing.graph import build_testing_subgraph
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 from shared.config import config
 
@@ -44,7 +44,12 @@ async def supervisor(state: EvalAgentState) -> dict:
     """Supervisor node for the evaluation agent."""
     llm = ChatOpenAI(model="gpt-5-mini")
     llm = llm.with_structured_output(SupervisorDecision)
-    input_messages = [SystemMessage(content=SYSTEM_PROMPT)] + state.messages
+    # Only pass through conversational turns; tool chatter can bias routing decisions.
+    filtered_messages = [
+        m for m in state.messages
+        if isinstance(m, (HumanMessage, AIMessage))
+    ]
+    input_messages = [SystemMessage(content=SYSTEM_PROMPT)] + filtered_messages
     response: SupervisorDecision = await llm.ainvoke(input_messages)
     return response.next_step
 
