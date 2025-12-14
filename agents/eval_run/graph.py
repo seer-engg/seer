@@ -16,6 +16,8 @@ from agents.eval_run.prepare_result import prepare_result_node
 from agents.eval_run.initialize import initialize_node
 from agents.eval_run.seed_mcp_resources import seed_mcp_resources
 from agents.eval_run.clean_mcp_resources import clean_mcp_resources
+from langchain_core.messages import AIMessage
+import uuid
 
 logger = get_logger("eval_agent.execute.graph")
 
@@ -57,6 +59,12 @@ async def agent_invocation_route_node(state: TestExecutionState) -> dict:
     else:
         return "assert"
 
+async def generate_response(state: TestExecutionState) -> dict:
+    """Generate a response for the test execution."""
+    output_messages = [AIMessage(content=f"test execution completed with {len(state.latest_results)} results")]
+    return {
+        "messages": output_messages,
+    }
 
 def build_test_execution_subgraph():
     """Build the batch-aware test execution subgraph."""
@@ -73,6 +81,7 @@ def build_test_execution_subgraph():
     builder.add_node("invoke", invoke_target_node)
     builder.add_node("assert", assert_final_state_node)
     builder.add_node("prepare_result", prepare_result_node)
+    builder.add_node("generate_response", generate_response)
 
     # Start by dispatching the first/next example
     builder.add_edge(START, "initialize")
@@ -110,7 +119,8 @@ def build_test_execution_subgraph():
 
     # Finish when dispatch decides no more examples remain
     builder.add_edge("finalize_batch", "clean_mcp_resources")
-    builder.add_edge("clean_mcp_resources", END)
+    builder.add_edge("clean_mcp_resources", "generate_response")
+    builder.add_edge("generate_response", END)
     return builder.compile()
 
 

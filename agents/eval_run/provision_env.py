@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import List
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from agents.eval_agent.models import TestExecutionState
 from shared.logger import get_logger
 from shared.llm import get_llm_without_responses_api
@@ -11,6 +11,7 @@ from langchain.agents import create_agent
 from shared.tools import ComposioMCPClient
 from shared.config import config
 from .utils import handle_tool_errors
+import uuid
 logger = get_logger("eval_agent.execute.provision")
 
 
@@ -62,8 +63,11 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
 
     provisioning_output = result.get('messages')[-1].content
 
+    output_messages = [ToolMessage(content=provisioning_output, tool_call_id=str(uuid.uuid4()))]
+
     return {
         "mcp_resources": state.mcp_resources,
         "started_at": started_at,
         "provisioning_output": provisioning_output,
+        "messages": output_messages,
     }

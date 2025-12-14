@@ -132,6 +132,49 @@ class DatasetExample(BaseModel):
     )
     model_config = ConfigDict(extra="forbid")
 
+    def to_markdown(self) -> str:
+        """
+        Render this dataset example as a human-friendly Markdown string.
+
+        Intended for UIs/logs/debugging; it does not affect serialization.
+        """
+
+        def _as_code_block(text: str) -> str:
+            # Avoid breaking markdown when the content itself contains fenced blocks.
+            if "```" in text:
+                indented = "\n".join(("    " + line) if line else "" for line in text.splitlines())
+                return f"\n{indented}\n"
+            return f"\n```\n{text}\n```\n"
+
+        def _render_service_instructions(title: str, items: List[ServiceInstructions]) -> str:
+            if not items:
+                return f"- **{title}**: (none)\n"
+            lines: List[str] = [f"- **{title}**:"]
+            for si in items:
+                lines.append(f"  - **{si.service_name}**")
+                if si.instructions:
+                    for inst in si.instructions:
+                        lines.append(f"    - {inst}")
+                else:
+                    lines.append("    - (none)")
+            return "\n".join(lines) + "\n"
+
+        parts: List[str] = []
+        parts.append(f"### Dataset Example `{self.example_id}`\n")
+        parts.append(f"- **Status**: `{self.status}`\n")
+
+        parts.append("#### Input Message")
+        parts.append(_as_code_block(self.input_message))
+
+        parts.append("#### Expected Output\n")
+        parts.append(f"- **Expected action**: {self.expected_output.expected_action}\n")
+        parts.append(_render_service_instructions("Create test data", self.expected_output.create_test_data))
+        parts.append(_render_service_instructions("Assert final state", self.expected_output.assert_final_state))
+
+        return "\n".join(parts).rstrip() + "\n"
+
+    
+
 
 class ExperimentResultContext(BaseModel):
     """Full record of a single test execution."""
