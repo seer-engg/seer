@@ -22,8 +22,10 @@ async def ensure_target_agent_config(state: EvalAgentPlannerState) -> dict:
             break
     if last_human is None:
         raise ValueError("No human message to extract from")
-    
-    human_message = last_human.content[0].get('text', '')
+    try:
+        human_message = last_human.content[0].get('text', '')
+    except Exception as e:
+        human_message = last_human.content
 
     instruction = """
         Extract the following fields from the user's latest message about the target agent:

@@ -14,7 +14,8 @@ from langchain_core.messages import AIMessage
 
 async def generate_response(state: EvalAgentPlannerState) -> dict:
     """Generate a response for the target agent."""
-    output_messages = [AIMessage(content=f"created {len(state.dataset_examples)} test cases and selected {len(state.context.tool_entries)} tools")]
+    dataset_examples_markdown = "\n".join([example.to_markdown() for example in state.dataset_examples])
+    output_messages = [AIMessage(content=f"### Test Cases\n{dataset_examples_markdown}")]
     return {
         "messages": output_messages,
     }

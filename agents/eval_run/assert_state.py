@@ -5,13 +5,13 @@ from typing import List, Optional
 from agents.eval_agent.models import TestExecutionState
 from shared.logger import get_logger
 from shared.llm import get_llm_without_responses_api
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from shared.tools import ComposioMCPClient
 from shared.config import config
 from .utils import get_tool_hub, handle_tool_errors
 from langchain.agents import create_agent
-
+import uuid
 
 logger = get_logger("eval_agent.execute.assert")
 
@@ -67,8 +67,10 @@ async def assert_final_state_node(state: TestExecutionState) -> dict:
     completed_at = datetime.utcnow()
     assertion_output = result.get('messages')[-1].content
     
+    output_messages = [ToolMessage(content=assertion_output, tool_call_id=str(uuid.uuid4()))]
 
     return {
         "assertion_output": assertion_output,
         "completed_at": completed_at,
+        "messages": output_messages,
     }

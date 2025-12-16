@@ -6,7 +6,8 @@ from shared.logger import get_logger
 from shared.test_runner.agent_invoker import invoke_target_agent
 from shared.message_formatter import format_target_agent_message
 from shared.config import config
-
+from langchain_core.messages import ToolMessage
+import uuid
 logger = get_logger("eval_agent.execute.invoke")
 
 
@@ -40,9 +41,12 @@ async def invoke_target_node(state: TestExecutionState) -> dict:
             timeout_seconds=600,
         )
 
+        output_messages = [ToolMessage(content=result.final_output or "", tool_call_id=str(uuid.uuid4()))]
+
         return {
             "thread_id": result.thread_id,
             "agent_output": result.final_output or "",
+            "messages": output_messages,
         }
     except Exception as e:
         logger.error(f"Error invoking target agent: {e}")

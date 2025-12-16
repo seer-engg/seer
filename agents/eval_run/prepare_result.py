@@ -3,8 +3,9 @@ from agents.eval_agent.models import TestExecutionState
 from shared.logger import get_logger
 from shared.schema import ExperimentResultContext, FailureAnalysis
 from shared.llm import get_llm, get_agent_final_respone
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage   
 from shared.config import config
+import uuid
 
 
 logger = get_logger("eval_agent.execute.prepare_result")
@@ -69,6 +70,9 @@ async def prepare_result_node(state: TestExecutionState) -> dict:
         completed_at=completed_at,
     )
 
+    output_messages = [ToolMessage(content=failure_analysis.model_dump_json(), tool_call_id=str(uuid.uuid4()))]
+
     return {
         "result": result,
+        "messages": output_messages,
     }
