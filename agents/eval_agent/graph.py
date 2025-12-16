@@ -42,16 +42,17 @@ class SupervisorDecision(BaseModel):
 
 async def supervisor(state: EvalAgentState) -> dict:
     """Supervisor node for the evaluation agent."""
-    llm = ChatOpenAI(model="gpt-5-mini")
-    llm = llm.with_structured_output(SupervisorDecision)
-    # Only pass through conversational turns; tool chatter can bias routing decisions.
-    filtered_messages = [
-        m for m in state.messages
-        if isinstance(m, (HumanMessage, AIMessage))
-    ]
-    input_messages = [SystemMessage(content=SYSTEM_PROMPT)] + filtered_messages
-    response: SupervisorDecision = await llm.ainvoke(input_messages)
-    return response.next_step
+    # llm = ChatOpenAI(model="gpt-5-mini")
+    # llm = llm.with_structured_output(SupervisorDecision)
+    # # Only pass through conversational turns; tool chatter can bias routing decisions.
+    # filtered_messages = [
+    #     m for m in state.messages
+    #     if isinstance(m, (HumanMessage, AIMessage))
+    # ]
+    # input_messages = [SystemMessage(content=SYSTEM_PROMPT)] + filtered_messages
+    # response: SupervisorDecision = await llm.ainvoke(input_messages)
+    next_step = state.step
+    return next_step
 
 def build_graph():
     """Build the evaluation agent graph."""

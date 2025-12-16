@@ -60,6 +60,8 @@ class EvalAgentState(BaseModel):
     user_intent: Optional[UserIntent] = Field(default=None, description="Classification of user's intent")
 
     input_context:Optional[Dict[Any, Any]] = Field(default=None, description="Input context for the evaluation agent")
+
+    step: Optional[str] = Field(default=None, description="The step to execute next")
     
 
 
