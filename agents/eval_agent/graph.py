@@ -54,7 +54,7 @@ async def supervisor(state: EvalAgentState) -> dict:
     next_step = state.step
     return next_step
 
-def build_graph():
+def build_graph() -> StateGraph:
     """Build the evaluation agent graph."""
     workflow = StateGraph(EvalAgentState)
     plan_subgraph = build_plan_subgraph()
@@ -80,6 +80,10 @@ def build_graph():
     workflow.add_edge("testing", END)
     workflow.add_edge("finalize", END)
 
+    return workflow
+
+   
+def compile_graph(workflow: StateGraph):
     # Initialize checkpointer for human-in-the-loop interrupts
     checkpointer = None
     if config.database_uri:
@@ -166,4 +170,4 @@ def build_graph():
     return compiled_graph
 
 
-graph = build_graph()
+graph = compile_graph(build_graph())

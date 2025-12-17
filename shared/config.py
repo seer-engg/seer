@@ -51,18 +51,15 @@ class SeerConfig(BaseSettings):
     eval_pass_threshold: float = Field(default=0.8, ge=0.0, le=1.0, description="Minimum score to pass evaluation")
     
     # LangGraph URLs
-    langgraph_base_url: str = Field(default="http://127.0.0.1:8002", description="Base URL for eval agent LangGraph")
     codex_remote_url: str = Field(default="http://127.0.0.1:8003", description="URL for codex agent LangGraph")
-    eval_remote_url: str = Field(default="http://127.0.0.1:8002", description="URL for eval agent LangGraph")
     
     # Feature flags
-    eval_agent_load_default_mcps: bool = Field(default=True, description="Load default MCP services")
-    eval_agent_architecture: str = Field(default="reflexion", description="Architecture for eval agent reflect node: 'react' or 'reflexion'")
     target_agent_context_level: int = Field(default=0, ge=0, le=3, description="Context level for target agent messages: 0=minimal, 1=system_goal, 2=system_goal+action, 3=full_context")
     
     langfuse_project_name: str = Field(default="target_agent", description="Langfuse project name for target agent")
     project_name: str = Field(default="eval-v1", description="Project name for metadata filtering (used in eval agent trace metadata)")
     codex_project_name: str = Field(default="codex-v1", description="Project name for metadata filtering (used in codex agent trace metadata)")
+
     target_agent_port: int = Field(default=2024, description="Port for target agent")
     target_agent_setup_script: str = Field(default="pip install -e .", description="Setup script for target agent")
     target_agent_command: str = Field(default="langgraph dev --host 0.0.0.0", description="Command to run target agent")
@@ -163,12 +160,12 @@ class SeerConfig(BaseSettings):
         if self.langfuse_project_name:
             envs['LANGFUSE_PROJECT_NAME'] = self.langfuse_project_name
         return envs
+
     
-    def get_asana_workspace_gid(self) -> Optional[str]:
-        """Get Asana workspace GID from environment."""
-        return self.asana_workspace_id 
-
-
+    @property
+    def is_langfuse_configured(self) -> bool:
+        """Check if Langfuse is configured."""
+        return self.langfuse_secret_key is not None and self.langfuse_base_url is not None
 # ============================================================================
 # Global Config Instance
 # ============================================================================
@@ -176,10 +173,3 @@ class SeerConfig(BaseSettings):
 config = SeerConfig()
 
 
-# ============================================================================
-# Helper Functions (for backward compatibility)
-# ============================================================================
-
-def get_asana_workspace_gid() -> Optional[str]:
-    """Get Asana workspace GID from environment."""
-    return config.get_asana_workspace_gid()

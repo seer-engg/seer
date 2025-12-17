@@ -2,14 +2,12 @@
 MCP tool loader.
 Handles loading tools from MCP services.
 """
-from typing import Dict, List, Sequence
+from typing import List
 
 from shared.logger import get_logger
-from shared.config import config
 
 logger = get_logger("shared.tools.loader")
 
-DEFAULT_MCP_SERVICES: Sequence[str] = ("asana", "github")
 
 
 def resolve_mcp_services(requested_services: List[str]) -> List[str]:
@@ -30,12 +28,5 @@ def resolve_mcp_services(requested_services: List[str]) -> List[str]:
         if normalized_name and normalized_name not in normalized:
             normalized.append(normalized_name)
 
-    if not config.eval_agent_load_default_mcps:
-        return normalized
-
-    combined: List[str] = list(DEFAULT_MCP_SERVICES)
-    for service in normalized:
-        if service not in combined:
-            combined.append(service)
-    return combined
+    return normalized
 

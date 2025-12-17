@@ -36,8 +36,7 @@ from .composio import ComposioMCPClient
 
 # Public API exports
 from shared.tools.loader import (
-    resolve_mcp_services,
-    DEFAULT_MCP_SERVICES,
+    resolve_mcp_services 
 )
 from shared.tools.registry import ToolEntry
 from .mcp_client import LANGCHAIN_DOCS_TOOLS, CONTEXT7_TOOLS
@@ -114,7 +113,7 @@ def think(scratchpad: str) -> str:
         writer = get_stream_writer()
         if writer:
             # Stream the thinking output
-            writer(f"💭 Thought: {thought}")
+            writer(f"💭 Thought: {scratchpad}")
     except ImportError:
         # langgraph.config not available, skip streaming
         pass
@@ -122,7 +121,7 @@ def think(scratchpad: str) -> str:
         # get_stream_writer() failed (not in streaming context), skip streaming
         pass
     
-    return thought
+    return scratchpad
 
 
 # ============================================================================
@@ -132,7 +131,6 @@ def think(scratchpad: str) -> str:
 __all__ = [
     # Loader
     "resolve_mcp_services",
-    "DEFAULT_MCP_SERVICES",
     
     # Registry
     "ToolEntry",

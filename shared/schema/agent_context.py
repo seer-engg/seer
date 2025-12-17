@@ -38,9 +38,9 @@ class IntegrationItem(BaseModel):
     Integration item information
     """
 
-    id: str
+    id: Optional[str] = None
     name: str
-    mode: str
+    mode: Optional[str] = None
 class Integration(BaseModel):
     """
     Integration information
