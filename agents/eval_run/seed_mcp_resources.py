@@ -21,6 +21,7 @@ async def seed_mcp_resources(state: TestExecutionState) -> None:
         provider = await get_provider(service)
         writer({"progress": f"Seeding MCP resources for {service} with seed {seed}"})
         logger.info(f"Seeding MCP resources for {service} with seed {seed}")
+        updates["mcp_resources"][service] = provider.persistent_resource
         resources = await provider.provision_resources(seed=seed, user_id=state.context.user_id)
         if resources:
             updates["mcp_resources"][service].update(resources)
