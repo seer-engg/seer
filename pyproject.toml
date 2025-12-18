@@ -1,8 +1,16 @@
+[build-system]
+requires = ["setuptools>=80", "wheel", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "seer"
-version = "0.1.4"
+name = "seeragents"
+dynamic = ["version"]
 description = "Seer - Multi-Agent System for Evaluating AI Agents"
 readme = "README.md"
+authors = [
+  { name = "Lokesh Danu", email = "lokesh@getseer.dev" },
+  { name = "Akshay Sharma", email = "akshay@getseer.dev" }
+]
 requires-python = ">=3.12"
 dependencies = [
   "langchain>=1.1.2",
@@ -33,18 +41,12 @@ dependencies = [
   "composio-langchain==0.9.4",
 
   "coolname==2.2.0",
-
-  "reflexion @ git+https://github.com/seer-engg/reflexion.git",
-  "tool-hub @ git+https://github.com/seer-engg/tool_hub.git",
+  "seer-tool-hub==0.0.3",
 
   # CLI dependencies
   "click>=8.1.0",
   "rich>=13.0.0",
 ]
-
-[build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = [
@@ -59,6 +61,19 @@ packages = [
 [tool.setuptools.package-data]
 "*" = ["**/*.json", "**/*.txt"]
 
+[dependency-groups]
+dev = [
+    "ipykernel>=7.1.0",
+]
+
+
 [project.scripts]
 seer = "run:cli"
 seer-eval = "cli.main:main"
+
+
+[project.urls]
+Homepage = "https://www.getseer.dev"
+Documentation = "https://github.com/seer-engg/seer#readme"
+Repository = "https://github.com/seer-engg/seer"
+Issues = "https://github.com/seer-engg/seer/issues"
