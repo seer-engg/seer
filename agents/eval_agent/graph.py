@@ -4,7 +4,7 @@ from langgraph.graph import END, START, StateGraph
 
 from agents.eval_agent.models import EvalAgentState
 from agents.eval_agent.nodes.plan import build_plan_subgraph
-from agents.eval_agent.nodes.reflect.graph import reflect_node
+from agents.eval_agent.nodes.reflect.graph import build_reflect_subgraph
 from agents.eval_agent.nodes.allignment.graph import build_alignment_subgraph
 from shared.logger import get_logger
 from agents.eval_agent.nodes.testing.graph import build_testing_subgraph
@@ -60,13 +60,14 @@ def build_graph() -> StateGraph:
     plan_subgraph = build_plan_subgraph()
     alignment_subgraph = build_alignment_subgraph()
     testing_subgraph = build_testing_subgraph()
+    reflect_subgraph = build_reflect_subgraph()
 
     # Intent classification nodes
     workflow.add_node("alignment", alignment_subgraph)
     workflow.add_node("plan", plan_subgraph)
 
     workflow.add_node("testing", testing_subgraph)
-    workflow.add_node("finalize", reflect_node)
+    workflow.add_node("finalize", reflect_subgraph)
 
     # Start with intent classification, then route
     workflow.add_conditional_edges(START, supervisor, {

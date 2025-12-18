@@ -11,7 +11,7 @@ def get_llm(
     model: str = config.default_llm_model,
     temperature: float = 0.2,
     reasoning_effort: str = "minimal",
-    api_key: Optional[str] = config.openai_api_key,
+    api_key: Optional[str] = None,
 ) -> ChatOpenAI:
     """
     Get a configured LLM instance.
@@ -24,12 +24,15 @@ def get_llm(
     Returns:
         Configured ChatOpenAI instance
     """
+    if api_key is None:
+        api_key = config.openai_api_key
     if api_key is None or api_key == "":
         raise ValueError("OPENAI_API_KEY not found in environment")
 
     # Always use responses API for consistent output
     return ChatOpenAI(
         model=model,
+        api_key=api_key,
         use_responses_api=True,                
         reasoning={"effort": reasoning_effort},
     )
@@ -58,7 +61,7 @@ async def get_agent_final_respone(result: dict) -> str:
 
 def get_llm_without_responses_api(
     model: str = config.default_llm_model,
-    api_key: Optional[str] = config.openai_api_key,
+    api_key: Optional[str] = None,
 ) -> ChatOpenAI:
     """
     Get a configured LLM instance without responses API.
@@ -70,6 +73,8 @@ def get_llm_without_responses_api(
     Returns:
         Configured ChatOpenAI instance without responses API
     """
+    if api_key is None:
+        api_key = config.openai_api_key
     if api_key is None or api_key == "":
         raise ValueError("OPENAI_API_KEY not found in environment")
 

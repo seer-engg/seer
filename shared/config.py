@@ -34,7 +34,7 @@ class SeerConfig(BaseSettings):
     # API Keys & Authentication
     # ============================================================================
     
-    openai_api_key: str = Field(description="OpenAI API key for LLM and embeddings")
+    openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key for LLM and embeddings")
     langfuse_secret_key: Optional[str] = Field(default=None, description="Langfuse secret key for API access")
     langfuse_public_key: Optional[str] = Field(default=None, description="Langfuse public key for SDK (optional)")
     tavily_api_key: Optional[str] = Field(default=None, description="Tavily API key for web search")
@@ -146,10 +146,11 @@ class SeerConfig(BaseSettings):
     @property
     def target_agent_envs(self) -> Dict[str, Any]:
         """Environment variables for target agent."""
-        envs = {
-            'OPENAI_API_KEY': self.openai_api_key,
-            'COMPOSIO_API_KEY': self.composio_api_key,
-        }
+        envs: Dict[str, Any] = {}
+        if self.openai_api_key:
+            envs["OPENAI_API_KEY"] = self.openai_api_key
+        if self.composio_api_key:
+            envs["COMPOSIO_API_KEY"] = self.composio_api_key
         # Add Langfuse environment variables if configured
         if self.langfuse_secret_key:
             envs['LANGFUSE_SECRET_KEY'] = self.langfuse_secret_key
