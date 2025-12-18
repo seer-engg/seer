@@ -33,6 +33,7 @@ from tavily import TavilyClient
 from shared.logger import get_logger
 from shared.config import config
 from .composio import ComposioMCPClient
+from .postgres import PostgresClient, PostgresProvider, get_postgres_tools
 
 # Public API exports
 from shared.tools.loader import (
@@ -143,6 +144,11 @@ __all__ = [
     "search_composio_documentation",
     "ComposioMCPClient",
     "search_langchain_documentation",
+    
+    # PostgreSQL tools
+    "PostgresClient",
+    "PostgresProvider",
+    "get_postgres_tools",
 ]
 
 
