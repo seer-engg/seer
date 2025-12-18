@@ -177,16 +177,21 @@ def make_config_preflight_node(
                     if not hasattr(config, field_name) or _is_missing(getattr(config, field_name, None)):
                         missing.append(field_name)
 
-            msg = (
-                f"Missing required config for `{subgraph_name}`: {', '.join(sorted(set(missing)))}. "
-                f"Set the corresponding environment variables (or .env) and retry."
-            )
-            logger.warning(msg)
-            return {
-                "should_exit": True,
-                "missing_config": sorted(set(missing)),
-                "messages": [AIMessage(content=msg)],
-            }
+            # If still missing after interactive prompts, exit
+            if missing:
+                msg = (
+                    f"Missing required config for `{subgraph_name}`: {', '.join(sorted(set(missing)))}. "
+                    f"Set the corresponding environment variables (or .env) and retry."
+                )
+                logger.warning(msg)
+                return {
+                    "should_exit": True,
+                    "missing_config": sorted(set(missing)),
+                    "messages": [AIMessage(content=msg)],
+                }
+            
+            # All config provided interactively - continue!
+            logger.info(f"All required config for `{subgraph_name}` provided interactively. Continuing...")
 
         return {
             "should_exit": False,
