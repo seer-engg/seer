@@ -12,8 +12,9 @@ import asyncio
 import json
 import sys
 import uuid
+import traceback
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 import click
 from dotenv import load_dotenv
@@ -24,14 +25,121 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from rich.syntax import Syntax
 from rich import box
+from rich.prompt import Prompt
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import Command
 
 # Load .env before importing seer modules
 load_dotenv()
 
 console = Console()
+
+# Global verbose flag
+VERBOSE = False
+
+
+async def handle_interrupts(
+    graph,
+    config: RunnableConfig,
+    progress=None,
+    task=None,
+) -> dict:
+    """
+    Handle LangGraph interrupts in a loop.
+    
+    When the graph encounters an interrupt(), it pauses and returns.
+    This function checks for pending interrupts, prompts the user,
+    and resumes the graph until completion.
+    
+    Returns the final state when no more interrupts are pending.
+    """
+    while True:
+        # Check the current state for interrupts
+        state = graph.get_state(config)
+        
+        # Check if there are pending interrupts
+        # Interrupts are stored in state.tasks with interrupts field
+        has_interrupt = False
+        interrupt_payload = None
+        
+        for task_state in state.tasks:
+            if hasattr(task_state, 'interrupts') and task_state.interrupts:
+                has_interrupt = True
+                # Get the first interrupt payload
+                interrupt_payload = task_state.interrupts[0].value if task_state.interrupts else None
+                break
+        
+        if not has_interrupt:
+            # No more interrupts, return the final values
+            return state.values
+        
+        # Stop the progress spinner while prompting
+        # Note: task can be 0 (first task ID), so check `is not None`
+        if progress is not None and task is not None:
+            progress.stop()
+        
+        # Display the interrupt to the user
+        if interrupt_payload and isinstance(interrupt_payload, dict):
+            interrupt_type = interrupt_payload.get('type', 'input_required')
+            
+            if interrupt_type == 'missing_config':
+                field = interrupt_payload.get('field', 'unknown')
+                env_var = interrupt_payload.get('env_var', field.upper())
+                instructions = interrupt_payload.get('instructions', f'Please provide a value for {field}')
+                
+                console.print(f"\n[bold yellow]⚠ Missing Configuration[/bold yellow]")
+                console.print(Panel(
+                    f"[bold]{env_var}[/bold] is required but not set.\n\n"
+                    f"[dim]{instructions}[/dim]",
+                    border_style="yellow",
+                    box=box.ROUNDED
+                ))
+                console.print()  # Extra newline for visibility
+                
+                user_input = Prompt.ask(
+                    f"[bold]Enter value for [cyan]{env_var}[/cyan][/bold] (or 'exit' to quit)",
+                    console=console
+                )
+                console.print()  # Newline after input
+            else:
+                # Generic interrupt
+                console.print(f"\n[bold yellow]Input Required[/bold yellow]")
+                if isinstance(interrupt_payload, dict):
+                    console.print(Panel(
+                        json.dumps(interrupt_payload, indent=2, default=str),
+                        border_style="yellow",
+                        box=box.ROUNDED
+                    ))
+                else:
+                    console.print(f"[dim]{interrupt_payload}[/dim]")
+                
+                user_input = Prompt.ask("Your response (or 'exit' to quit)", console=console)
+        else:
+            # Unknown interrupt format
+            console.print(f"\n[bold yellow]Input Required[/bold yellow]")
+            console.print(f"[dim]Payload: {interrupt_payload}[/dim]")
+            user_input = Prompt.ask("Your response (or 'exit' to quit)", console=console)
+        
+        # Check for exit
+        if user_input.lower() in ('exit', 'quit', 'stop', 'cancel'):
+            console.print("[yellow]Exiting...[/yellow]")
+            return state.values
+        
+        # Restart progress if it was running
+        if progress is not None and task is not None:
+            progress.start()
+        
+        # Resume the graph with the user's input
+        try:
+            await graph.ainvoke(Command(resume=user_input), config=config)
+        except Exception as e:
+            if VERBOSE:
+                console.print(f"\n[bold red]Error during resume:[/bold red] {e}")
+                console.print(traceback.format_exc())
+            raise
+
 
 # Lazy imports to avoid import errors when displaying help
 def get_graph():
@@ -69,7 +177,8 @@ def format_dataset_example(example) -> str:
 
 @click.group()
 @click.version_option(version="0.1.4", prog_name="seer-eval")
-def cli():
+@click.option('--verbose', '-v', is_flag=True, help='Show full error tracebacks for debugging')
+def cli(verbose: bool):
     """
     🔮 Seer Eval Agent CLI
     
@@ -92,8 +201,12 @@ def cli():
       
       # Or run the full pipeline
       seer-eval run "Evaluate my bot" --repo owner/repo --user-id me@example.com
+      
+      # Debug with full tracebacks
+      seer-eval -v run "My agent" --repo owner/repo
     """
-    pass
+    global VERBOSE
+    VERBOSE = verbose
 
 
 @cli.command()
@@ -146,22 +259,37 @@ async def _align(description: str, repo: str, user_id: Optional[str], thread_id:
         inputs["input_context"]["user_id"] = user_id
     
     # Run alignment
+    memory = MemorySaver()
+    eval_agent = create_compiled_graph(memory)
+    runnable_config = RunnableConfig(configurable={"thread_id": thread_id})
+    
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-        task = progress.add_task("Running alignment...", total=None)
+        prog_task = progress.add_task("Running alignment...", total=None)
         
         try:
-            memory = MemorySaver()
-            eval_agent = create_compiled_graph(memory)
-            config = RunnableConfig(configurable={"thread_id": thread_id})
-            results = await eval_agent.ainvoke(inputs, config=config)
-            progress.update(task, completed=True)
+            # Initial invocation
+            await eval_agent.ainvoke(inputs, config=runnable_config)
+            
+            # Handle any interrupts (prompts for missing config, etc.)
+            results = await handle_interrupts(
+                eval_agent,
+                runnable_config,
+                progress=progress,
+                task=prog_task,
+            )
+            progress.update(prog_task, completed=True)
         except Exception as e:
             progress.stop()
             console.print(f"[bold red]Error:[/bold red] {e}")
+            if VERBOSE:
+                console.print("\n[bold red]Full Traceback:[/bold red]")
+                console.print(traceback.format_exc())
+            else:
+                console.print("[dim]Use -v flag for full traceback: seer-eval -v align ...[/dim]")
             sys.exit(1)
     
     # Display results
@@ -217,23 +345,37 @@ async def _plan(thread_id: str, output: Optional[str]):
     ))
     
     inputs = {"step": "plan"}
+    memory = MemorySaver()
+    eval_agent = create_compiled_graph(memory)
+    runnable_config = RunnableConfig(configurable={"thread_id": thread_id})
     
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-        task = progress.add_task("Generating test cases...", total=None)
+        prog_task = progress.add_task("Generating test cases...", total=None)
         
         try:
-            memory = MemorySaver()
-            eval_agent = create_compiled_graph(memory)
-            config = RunnableConfig(configurable={"thread_id": thread_id})
-            results = await eval_agent.ainvoke(inputs, config=config)
-            progress.update(task, completed=True)
+            # Initial invocation
+            await eval_agent.ainvoke(inputs, config=runnable_config)
+            
+            # Handle any interrupts
+            results = await handle_interrupts(
+                eval_agent,
+                runnable_config,
+                progress=progress,
+                task=prog_task,
+            )
+            progress.update(prog_task, completed=True)
         except Exception as e:
             progress.stop()
             console.print(f"[bold red]Error:[/bold red] {e}")
+            if VERBOSE:
+                console.print("\n[bold red]Full Traceback:[/bold red]")
+                console.print(traceback.format_exc())
+            else:
+                console.print("[dim]Use -v flag for full traceback: seer-eval -v plan ...[/dim]")
             sys.exit(1)
     
     console.print("\n[bold green]✓ Planning Complete[/bold green]\n")
@@ -292,23 +434,37 @@ async def _test(thread_id: str, output: Optional[str]):
     ))
     
     inputs = {"step": "testing"}
+    memory = MemorySaver()
+    eval_agent = create_compiled_graph(memory)
+    runnable_config = RunnableConfig(configurable={"thread_id": thread_id})
     
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-        task = progress.add_task("Running tests...", total=None)
+        prog_task = progress.add_task("Running tests...", total=None)
         
         try:
-            memory = MemorySaver()
-            eval_agent = create_compiled_graph(memory)
-            config = RunnableConfig(configurable={"thread_id": thread_id})
-            results = await eval_agent.ainvoke(inputs, config=config)
-            progress.update(task, completed=True)
+            # Initial invocation
+            await eval_agent.ainvoke(inputs, config=runnable_config)
+            
+            # Handle any interrupts
+            results = await handle_interrupts(
+                eval_agent,
+                runnable_config,
+                progress=progress,
+                task=prog_task,
+            )
+            progress.update(prog_task, completed=True)
         except Exception as e:
             progress.stop()
             console.print(f"[bold red]Error:[/bold red] {e}")
+            if VERBOSE:
+                console.print("\n[bold red]Full Traceback:[/bold red]")
+                console.print(traceback.format_exc())
+            else:
+                console.print("[dim]Use -v flag for full traceback: seer-eval -v test ...[/dim]")
             sys.exit(1)
     
     console.print("\n[bold green]✓ Testing Complete[/bold green]\n")
@@ -398,7 +554,7 @@ async def _run(description: str, repo: str, user_id: Optional[str], thread_id: O
     
     memory = MemorySaver()
     eval_agent = create_compiled_graph(memory)
-    config = RunnableConfig(configurable={"thread_id": thread_id})
+    runnable_config = RunnableConfig(configurable={"thread_id": thread_id})
     
     all_results = {}
     
@@ -423,13 +579,27 @@ async def _run(description: str, repo: str, user_id: Optional[str], thread_id: O
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-        task = progress.add_task("Running alignment...", total=None)
+        prog_task = progress.add_task("Running alignment...", total=None)
         try:
-            alignment_results = await eval_agent.ainvoke(alignment_inputs, config=config)
-            progress.update(task, completed=True)
+            # Initial invocation
+            await eval_agent.ainvoke(alignment_inputs, config=runnable_config)
+            
+            # Handle any interrupts (prompts for missing config, etc.)
+            alignment_results = await handle_interrupts(
+                eval_agent,
+                runnable_config,
+                progress=progress,
+                task=prog_task,
+            )
+            progress.update(prog_task, completed=True)
         except Exception as e:
             progress.stop()
             console.print(f"[bold red]Error in alignment:[/bold red] {e}")
+            if VERBOSE:
+                console.print("\n[bold red]Full Traceback:[/bold red]")
+                console.print(traceback.format_exc())
+            else:
+                console.print("[dim]Use -v flag for full traceback: seer-eval -v run ...[/dim]")
             sys.exit(1)
     
     context = alignment_results.get('context')
@@ -438,6 +608,11 @@ async def _run(description: str, repo: str, user_id: Optional[str], thread_id: O
         if hasattr(context, 'mcp_services') and context.mcp_services:
             console.print(f"[green]✓[/green] Services: {', '.join(context.mcp_services)}")
     all_results['alignment'] = alignment_results
+    
+    # Check if user exited during alignment
+    if alignment_results.get('should_exit'):
+        console.print("\n[yellow]Pipeline stopped due to missing configuration.[/yellow]")
+        return
     
     # Step 2: Planning
     console.print("\n[bold]Step 2/3: Planning[/bold]")
@@ -450,18 +625,37 @@ async def _run(description: str, repo: str, user_id: Optional[str], thread_id: O
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-        task = progress.add_task("Generating test cases...", total=None)
+        prog_task = progress.add_task("Generating test cases...", total=None)
         try:
-            plan_results = await eval_agent.ainvoke(plan_inputs, config=config)
-            progress.update(task, completed=True)
+            # Initial invocation
+            await eval_agent.ainvoke(plan_inputs, config=runnable_config)
+            
+            # Handle any interrupts
+            plan_results = await handle_interrupts(
+                eval_agent,
+                runnable_config,
+                progress=progress,
+                task=prog_task,
+            )
+            progress.update(prog_task, completed=True)
         except Exception as e:
             progress.stop()
             console.print(f"[bold red]Error in planning:[/bold red] {e}")
+            if VERBOSE:
+                console.print("\n[bold red]Full Traceback:[/bold red]")
+                console.print(traceback.format_exc())
+            else:
+                console.print("[dim]Use -v flag for full traceback: seer-eval -v run ...[/dim]")
             sys.exit(1)
     
     examples = plan_results.get('dataset_examples', [])
     console.print(f"[green]✓[/green] Generated {len(examples)} test case(s)")
     all_results['plan'] = plan_results
+    
+    # Check if user exited during planning
+    if plan_results.get('should_exit'):
+        console.print("\n[yellow]Pipeline stopped due to missing configuration.[/yellow]")
+        return
     
     if skip_testing:
         console.print("\n[yellow]Skipping testing (--skip-testing flag set)[/yellow]")
@@ -477,13 +671,27 @@ async def _run(description: str, repo: str, user_id: Optional[str], thread_id: O
             TextColumn("[progress.description]{task.description}"),
             console=console,
         ) as progress:
-            task = progress.add_task("Running tests...", total=None)
+            prog_task = progress.add_task("Running tests...", total=None)
             try:
-                test_results = await eval_agent.ainvoke(test_inputs, config=config)
-                progress.update(task, completed=True)
+                # Initial invocation
+                await eval_agent.ainvoke(test_inputs, config=runnable_config)
+                
+                # Handle any interrupts
+                test_results = await handle_interrupts(
+                    eval_agent,
+                    runnable_config,
+                    progress=progress,
+                    task=prog_task,
+                )
+                progress.update(prog_task, completed=True)
             except Exception as e:
                 progress.stop()
                 console.print(f"[bold red]Error in testing:[/bold red] {e}")
+                if VERBOSE:
+                    console.print("\n[bold red]Full Traceback:[/bold red]")
+                    console.print(traceback.format_exc())
+                else:
+                    console.print("[dim]Use -v flag for full traceback: seer-eval -v run ...[/dim]")
                 sys.exit(1)
         
         latest_results = test_results.get('latest_results', [])
