@@ -78,7 +78,7 @@ async def ensure_target_agent_config(state: EvalAgentPlannerState) -> dict:
         functional_requirements=agent_context.functional_requirements,
         tool_entries=agent_context.tool_entries,
         integrations=input_context.get('integrations', agent_context.integrations),
-        user_id=input_context.get('user_id'),
+        user_id=input_context.get('user_id') or config.user_id , 
     )
 
     output_messages = [ToolMessage(content=context, tool_call_id=str(uuid.uuid4()))]

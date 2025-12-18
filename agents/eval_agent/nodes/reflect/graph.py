@@ -5,8 +5,10 @@ This node is an "Analyst Agent" that investigates failures and flakiness.
 from typing import List
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
+from langgraph.graph import END, START, StateGraph
 
 from agents.eval_agent.models import EvalAgentState, Hypothesis
+from agents.eval_agent.nodes.preflight import make_config_preflight_node, route_after_preflight
 from agents.eval_agent.nodes.reflect.tools import (
     create_reflection_tools,
     ReflectionToolContext,
@@ -159,3 +161,23 @@ def extract_hypothesis_from_tool_calls(messages: List) -> Hypothesis | None:
             pass
     
     return None
+
+
+def build_reflect_subgraph():
+    """Build the reflect subgraph (used as the 'finalize' step in eval_agent/graph.py)."""
+    builder = StateGraph(EvalAgentState)
+    builder.add_node(
+        "config-preflight",
+        make_config_preflight_node(
+            subgraph_name="reflect",
+            required=["openai_api_key"],
+        ),
+    )
+    builder.add_node("reflect", reflect_node)
+    builder.add_edge(START, "config-preflight")
+    builder.add_conditional_edges("config-preflight", route_after_preflight, {
+        "continue": "reflect",
+        "exit": END,
+    })
+    builder.add_edge("reflect", END)
+    return builder.compile()

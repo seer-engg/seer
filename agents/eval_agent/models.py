@@ -62,6 +62,10 @@ class EvalAgentState(BaseModel):
     input_context:Optional[Dict[Any, Any]] = Field(default=None, description="Input context for the evaluation agent")
 
     step: Optional[str] = Field(default=None, description="The step to execute next")
+
+    # Preflight config checks (used to early-exit subgraphs cleanly)
+    should_exit: bool = Field(default=False, description="Whether the current graph/subgraph should early-exit")
+    missing_config: List[str] = Field(default_factory=list, description="Missing required config keys detected by preflight")
     
 
 

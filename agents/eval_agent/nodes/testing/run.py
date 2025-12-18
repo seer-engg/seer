@@ -53,9 +53,10 @@ async def upload_run_results(state: EvalAgentState) -> dict:
     results_payload = list(state.latest_results) if state.latest_results else list(experiment.results)
     failed_cases = list(experiment.failed_results)
 
-    # Initialize Langfuse client
-    if not config.langfuse_secret_key:
-        raise ValueError("LANGFUSE_SECRET_KEY environment variable is required for experiment upload.")
+    if not config.is_langfuse_configured:
+        logger.warning("run.upload: Langfuse is not configured, skipping upload")
+        return {
+        }
     
     # Initialize Langfuse client with config
     from langfuse import Langfuse

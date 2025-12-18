@@ -5,13 +5,6 @@
   "graphs": {
     "eval_agent": "./agents/eval_agent/graph.py:graph"
   },
-  "env": ".env",
-  "store": {
-    "index": {
-      "embed": "openai:text-embedding-3-small",
-      "dims": 1536,
-      "fields": ["$"]
-    }
-  }
+  "env": ".env"
 }
 

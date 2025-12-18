@@ -48,7 +48,7 @@ async def agentic_eval_generation(state: EvalAgentPlannerState) -> dict:
     logger.info(f"Using reasoning_effort: {reasoning_effort}")
 
     structured_llm = get_llm(
-            reasoning_effort='medium',
+            reasoning_effort=reasoning_effort,
         ).with_structured_output(EvalGenerationOutput, method="json_schema", strict=True)
 
     user_prompt = USER_PROMPT.format(
