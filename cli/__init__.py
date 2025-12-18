@@ -1,0 +1,2 @@
+"""Seer CLI module."""
+

@@ -35,7 +35,11 @@ dependencies = [
   "coolname==2.2.0",
 
   "reflexion @ git+https://github.com/seer-engg/reflexion.git",
-  "tool-hub @ git+https://github.com/seer-engg/tool_hub.git"
+  "tool-hub @ git+https://github.com/seer-engg/tool_hub.git",
+
+  # CLI dependencies
+  "click>=8.1.0",
+  "rich>=13.0.0",
 ]
 
 [build-system]
@@ -44,6 +48,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = [
+  "cli",
   "shared",
   "agents",
   "sandbox",
@@ -56,3 +61,4 @@ packages = [
 
 [project.scripts]
 seer = "run:cli"
+seer-eval = "cli.main:main"
