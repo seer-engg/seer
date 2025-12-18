@@ -58,6 +58,7 @@ packages = [
   "agents.codex",
 ]
 [tool.setuptools_scm]
+fallback_version = "0.0.0"
 #just for versioning
 
 [tool.setuptools.package-data]
