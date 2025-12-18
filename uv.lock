@@ -2344,7 +2344,22 @@ wheels = [
 ]
 
 [[package]]
-name = "seer"
+name = "seer-tool-hub"
+version = "0.0.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "openai" },
+    { name = "pydantic" },
+    { name = "python-dotenv" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/76/67/99cd65635d77f64da33a3bb2f282e70fe25048a6e6c6bdfe0a1d85a6b5c0/seer_tool_hub-0.0.3.tar.gz", hash = "sha256:501c9dbca5b4e63104f74da636d99a869d50ec79b8fec5143544a041c6e58bb7", size = 1576838, upload-time = "2025-12-18T12:55:41.849Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a4/9f/69d4e399bd8c670e394b67507934294a605893f9095af919850ae478bca6/seer_tool_hub-0.0.3-py3-none-any.whl", hash = "sha256:203410274bd2dc04c8b258ec4f70ffd7e2125fcf3dee2af9cd5257a6ea4a3383", size = 9806, upload-time = "2025-12-18T12:55:38.293Z" },
+]
+
+[[package]]
+name = "seeragents"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
@@ -2417,25 +2432,9 @@ requires-dist = [
     { name = "tavily-python", specifier = ">=0.7.12" },
     { name = "tenacity", specifier = ">=9.1.2" },
 ]
-provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "ipykernel", specifier = ">=7.1.0" }]
-
-[[package]]
-name = "seer-tool-hub"
-version = "0.0.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "openai" },
-    { name = "pydantic" },
-    { name = "python-dotenv" },
-    { name = "tqdm" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/76/67/99cd65635d77f64da33a3bb2f282e70fe25048a6e6c6bdfe0a1d85a6b5c0/seer_tool_hub-0.0.3.tar.gz", hash = "sha256:501c9dbca5b4e63104f74da636d99a869d50ec79b8fec5143544a041c6e58bb7", size = 1576838, upload-time = "2025-12-18T12:55:41.849Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/9f/69d4e399bd8c670e394b67507934294a605893f9095af919850ae478bca6/seer_tool_hub-0.0.3-py3-none-any.whl", hash = "sha256:203410274bd2dc04c8b258ec4f70ffd7e2125fcf3dee2af9cd5257a6ea4a3383", size = 9806, upload-time = "2025-12-18T12:55:38.293Z" },
-]
 
 [[package]]
 name = "setuptools"
