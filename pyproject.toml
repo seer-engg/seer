@@ -57,6 +57,8 @@ packages = [
   "agents.eval_agent",
   "agents.codex",
 ]
+[tool.setuptools_scm]
+#just for versioning
 
 [tool.setuptools.package-data]
 "*" = ["**/*.json", "**/*.txt"]
