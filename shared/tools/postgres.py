@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional, Union
 from langchain.tools import tool
 from langchain_core.tools import BaseTool
+from langgraph.errors import GraphInterrupt
 from pydantic import BaseModel, Field
 from shared.logger import get_logger
 
@@ -471,6 +472,9 @@ def _create_tools_for_client(client: PostgresClient) -> List[BaseTool]:
             result = await client.execute(statement, *params)
             return f"Statement executed successfully: {result}"
             
+        except GraphInterrupt:
+            # Re-raise GraphInterrupt for LangGraph human-in-the-loop handling
+            raise
         except Exception as e:
             logger.error(f"PostgreSQL execute error: {e}")
             return f"Execution error: {str(e)}"
@@ -567,6 +571,9 @@ def _create_tools_for_client(client: PostgresClient) -> List[BaseTool]:
             await client.execute_many(statement, args_list)
             return f"Batch executed successfully: {len(args_list)} operations completed."
             
+        except GraphInterrupt:
+            # Re-raise GraphInterrupt for LangGraph human-in-the-loop handling
+            raise
         except Exception as e:
             logger.error(f"PostgreSQL batch execute error: {e}")
             return f"Batch execution error: {str(e)}"
