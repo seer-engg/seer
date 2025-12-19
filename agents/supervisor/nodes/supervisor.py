@@ -29,9 +29,22 @@ SYSTEM_PROMPT_PATH = Path(__file__).parent / "supervisor_prompt.md"
 SYSTEM_PROMPT = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
 
 # LLM configuration
-llm = ChatOpenAI(model="gpt-5-mini", reasoning={"effort": "medium"})
-low_reasoning_llm = ChatOpenAI(model="gpt-5-mini", reasoning={"effort": "low"})
-
+# llm = ChatOpenAI(
+#     model="gpt-5-mini",
+#     reasoning={"effort": "medium"}
+# )
+# low_reasoning_llm = ChatOpenAI(
+#     model="gpt-5-mini",
+#     reasoning={"effort": "low"}
+# )
+import os
+llm = ChatOpenAI(
+    model="gpt-oss-120b",
+    api_key=os.environ["CEREBRAS_API_KEY"],
+    base_url="https://api.cerebras.ai/v1",
+    temperature=0.2,
+)
+low_reasoning_llm = llm
 
 # ============================================================================
 # Database Explorer Subagent
