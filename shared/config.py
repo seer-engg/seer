@@ -95,6 +95,15 @@ class SeerConfig(BaseSettings):
         description="PostgreSQL connection string for LangGraph checkpointer (e.g., postgresql://user:pass@host:port/db). Required for human-in-the-loop interrupts."
     )
     
+    # ============================================================================
+    # PostgreSQL Tool Autonomy Configuration
+    # ============================================================================
+    
+    postgres_write_requires_approval: bool = Field(
+        default=True,
+        description="If True, PostgreSQL write operations (INSERT, UPDATE, DELETE, DDL) require human approval via interrupt before execution. Read operations are always allowed."
+    )
+    
     # Vector embeddings configuration
     embedding_dims: int = Field(default=1536, description="OpenAI embedding dimensions")
     embedding_model: str = Field(default="text-embedding-3-small", description="OpenAI embedding model")

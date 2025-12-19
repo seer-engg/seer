@@ -39,13 +39,12 @@ dependencies = [
   "aiosqlite>=0.20.0",
   "composio==0.9.4",
   "composio-langchain==0.9.4",
-
   "coolname==2.2.0",
   "seer-tool-hub==0.0.3",
-
   # CLI dependencies
   "click>=8.1.0",
   "rich>=13.0.0",
+  "asyncpg>=0.31.0",
 ]
 
 [tool.setuptools]
