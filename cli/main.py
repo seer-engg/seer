@@ -3,11 +3,9 @@
 CLI for the Seer Eval Agent and Supervisor Agent.
 
 Usage:
-    seer-eval align "Evaluate my agent that syncs GitHub PRs to Asana" --repo seer-engg/my-agent
-    seer-eval plan --thread-id <uuid>
-    seer-eval test --thread-id <uuid>
-    seer-eval run "Evaluate my agent..." --repo seer-engg/my-agent  # Full pipeline
-    seer-eval new-supervisor  # Start interactive supervisor chat
+    seer-eval run                    # Start interactive eval agent loop
+    seer-eval run --thread-id <uuid> # Resume existing thread
+    seer-eval new-supervisor         # Start interactive supervisor chat
 """
 import asyncio
 import base64
@@ -280,569 +278,279 @@ def cli(verbose: bool):
     
     \b
     Commands:
-      align          - Align agent expectations with user requirements
-      plan           - Generate test cases based on aligned expectations
-      test           - Execute generated test cases
-      run            - Full pipeline: align → plan → test
+      run            - Start interactive eval agent loop (continuous)
       new-supervisor - Start interactive supervisor chat for database operations
     
     \b
     Examples:
-      # Start with alignment
-      seer-eval align "Evaluate my GitHub-Asana bot" --repo owner/repo
+      # Start the interactive eval agent loop
+      seer-eval run
       
-      # Continue with planning (use thread-id from previous step)
-      seer-eval plan --thread-id <uuid>
-      
-      # Or run the full pipeline
-      seer-eval run "Evaluate my bot" --repo owner/repo --user-id me@example.com
+      # Resume an existing thread
+      seer-eval run --thread-id <uuid>
       
       # Start a supervisor chat session
       seer-eval new-supervisor
       
       # Debug with full tracebacks
-      seer-eval -v run "My agent" --repo owner/repo
+      seer-eval -v run
     """
     global VERBOSE
     VERBOSE = verbose
 
 
 @cli.command()
-@click.argument('description', required=True)
-@click.option('--repo', '-r', help='GitHub repository (owner/repo format)', required=True)
-@click.option('--user-id', '-u', default=None, help='User ID for authentication context')
 @click.option('--thread-id', '-t', default=None, help='Thread ID (auto-generated if not provided)')
-@click.option('--output', '-o', type=click.Path(), help='Output file for results (JSON)')
-def align(description: str, repo: str, user_id: Optional[str], thread_id: Optional[str], output: Optional[str]):
+def run(thread_id: Optional[str]):
     """
-    Align agent expectations with user requirements.
+    Start an interactive eval agent loop.
     
-    This step analyzes your description and generates functional requirements
-    and identifies required MCP services (GitHub, Asana, etc.).
+    This is a continuous agent loop that runs until you type 'exit'.
+    Each iteration asks for a step (alignment, plan, testing, finalize).
+    
+    \b
+    Steps:
+      alignment - Align agent expectations with user requirements
+                  (prompts for description, repo, and user-id)
+      plan      - Generate test cases based on aligned expectations
+      testing   - Execute generated test cases
+      finalize  - Finalize the evaluation
+    
+    \b
+    Commands during session:
+      exit, quit, bye  - Exit the session
+      clear            - Clear the screen
     
     \b
     Example:
-      seer-eval align "My agent syncs GitHub PRs to Asana tickets" --repo seer-engg/my-agent
+      seer-eval run
+      seer-eval run --thread-id <uuid>  # Resume existing thread
     """
-    asyncio.run(_align(description, repo, user_id, thread_id, output))
+    asyncio.run(_run(thread_id))
 
 
-async def _align(description: str, repo: str, user_id: Optional[str], thread_id: Optional[str], output: Optional[str]):
-    """Async implementation of align command."""
+async def _run(thread_id: Optional[str]):
+    """Async implementation of run command (continuous agent loop)."""
     thread_id = thread_id or str(uuid.uuid4())
     
     console.print(Panel.fit(
-        "[bold cyan]🔮 Seer Eval Agent - Alignment[/bold cyan]\n\n"
-        f"[dim]Thread ID: {thread_id}[/dim]",
+        "[bold cyan]🔮 Seer Eval Agent - Interactive Loop[/bold cyan]\n\n"
+        f"[dim]Thread ID: {thread_id}[/dim]\n"
+        "[dim]Type 'exit' to quit, 'clear' to clear screen[/dim]",
         border_style="cyan"
     ))
-    
-    console.print(f"\n[bold]Description:[/bold] {description}")
-    console.print(f"[bold]Repository:[/bold] {repo}")
-    if user_id:
-        console.print(f"[bold]User ID:[/bold] {user_id}")
     console.print()
     
-    # Build input
-    inputs = {
-        "messages": [{"type": "human", "content": description}],
-        "step": "alignment",
-        "input_context": {
-            "integrations": {
-                "github": {"name": repo}
-            }
-        }
-    }
-    if user_id:
-        inputs["input_context"]["user_id"] = user_id
-    
-    # Run alignment
+    # Create the eval agent with checkpointer
     memory = MemorySaver()
     eval_agent = create_compiled_graph(memory)
     runnable_config = RunnableConfig(configurable={"thread_id": thread_id})
     
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        prog_task = progress.add_task("Running alignment...", total=None)
-        
+    valid_steps = ['alignment', 'plan', 'testing', 'finalize']
+    
+    # Continuous agent loop
+    while True:
         try:
-            # Initial invocation
-            await eval_agent.ainvoke(inputs, config=runnable_config)
-            
-            # Handle any interrupts (prompts for missing config, etc.)
-            results = await handle_interrupts(
-                eval_agent,
-                runnable_config,
-                progress=progress,
-                task=prog_task,
+            # Ask for step (mandatory)
+            console.print("[bold]Available steps:[/bold] alignment, plan, testing, finalize")
+            step = Prompt.ask(
+                "[bold cyan]Select step[/bold cyan]",
+                console=console,
+                choices=valid_steps + ['exit', 'quit', 'bye', 'clear'],
+                show_choices=False
             )
-            progress.update(prog_task, completed=True)
-        except Exception as e:
-            progress.stop()
-            console.print(f"[bold red]Error:[/bold red] {e}")
-            if VERBOSE:
-                console.print("\n[bold red]Full Traceback:[/bold red]")
-                console.print(traceback.format_exc())
-            else:
-                console.print("[dim]Use -v flag for full traceback: seer-eval -v align ...[/dim]")
-            sys.exit(1)
-    
-    # Display results
-    console.print("\n[bold green]✓ Alignment Complete[/bold green]\n")
-    
-    context = results.get('context')
-    if context:
-        console.print(Panel(
-            Markdown(format_context(context)),
-            title="[bold]Agent Context[/bold]",
-            border_style="green",
-            box=box.ROUNDED
-        ))
-    
-    # Show thread ID for next steps
-    console.print(f"\n[bold cyan]Next Steps:[/bold cyan]")
-    console.print(f"  Continue with planning:")
-    console.print(f"  [dim]seer-eval plan --thread-id {thread_id}[/dim]\n")
-    
-    # Save output if requested
-    if output:
-        output_data = {
-            "thread_id": thread_id,
-            "step": "alignment",
-            "context": context.model_dump() if context else None
-        }
-        Path(output).write_text(json.dumps(output_data, indent=2, default=str))
-        console.print(f"[dim]Results saved to {output}[/dim]")
-
-
-@cli.command()
-@click.option('--thread-id', '-t', required=True, help='Thread ID from alignment step')
-@click.option('--output', '-o', type=click.Path(), help='Output file for results (JSON)')
-def plan(thread_id: str, output: Optional[str]):
-    """
-    Generate test cases based on aligned expectations.
-    
-    Requires a thread-id from a previous alignment step.
-    
-    \b
-    Example:
-      seer-eval plan --thread-id <uuid-from-align>
-    """
-    asyncio.run(_plan(thread_id, output))
-
-
-async def _plan(thread_id: str, output: Optional[str]):
-    """Async implementation of plan command."""
-    console.print(Panel.fit(
-        "[bold cyan]🔮 Seer Eval Agent - Planning[/bold cyan]\n\n"
-        f"[dim]Thread ID: {thread_id}[/dim]",
-        border_style="cyan"
-    ))
-    
-    inputs = {"step": "plan"}
-    memory = MemorySaver()
-    eval_agent = create_compiled_graph(memory)
-    runnable_config = RunnableConfig(configurable={"thread_id": thread_id})
-    
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        prog_task = progress.add_task("Generating test cases...", total=None)
-        
-        try:
-            # Initial invocation
-            await eval_agent.ainvoke(inputs, config=runnable_config)
             
-            # Handle any interrupts
-            results = await handle_interrupts(
-                eval_agent,
-                runnable_config,
-                progress=progress,
-                task=prog_task,
-            )
-            progress.update(prog_task, completed=True)
-        except Exception as e:
-            progress.stop()
-            console.print(f"[bold red]Error:[/bold red] {e}")
-            if VERBOSE:
-                console.print("\n[bold red]Full Traceback:[/bold red]")
-                console.print(traceback.format_exc())
-            else:
-                console.print("[dim]Use -v flag for full traceback: seer-eval -v plan ...[/dim]")
-            sys.exit(1)
-    
-    console.print("\n[bold green]✓ Planning Complete[/bold green]\n")
-    
-    # Display generated test cases
-    examples = results.get('dataset_examples', [])
-    if examples:
-        console.print(f"[bold]Generated {len(examples)} test case(s):[/bold]\n")
-        for example in examples:
+            # Handle special commands
+            if step.lower().strip() in ('exit', 'quit', 'bye', 'q'):
+                console.print("\n[cyan]👋 Goodbye![/cyan]")
+                break
+            
+            if step.lower().strip() == 'clear':
+                console.clear()
+                console.print(Panel.fit(
+                    "[bold cyan]🔮 Seer Eval Agent - Interactive Loop[/bold cyan]\n\n"
+                    f"[dim]Thread ID: {thread_id}[/dim]\n"
+                    "[dim]Type 'exit' to quit, 'clear' to clear screen[/dim]",
+                    border_style="cyan"
+                ))
+                continue
+            
+            # Prepare inputs based on step
+            inputs = {"step": step}
+            
+            # For alignment step, ask for additional inputs
+            if step == 'alignment':
+                console.print("\n[bold]Alignment Configuration[/bold]")
+                console.print("─" * 40)
+                
+                description = Prompt.ask(
+                    "[bold]Description[/bold] (what does your agent do?)",
+                    console=console
+                )
+                if description.lower().strip() in ('exit', 'quit', 'bye'):
+                    console.print("\n[cyan]👋 Goodbye![/cyan]")
+                    break
+                
+                repo = Prompt.ask(
+                    "[bold]GitHub Repository[/bold] (owner/repo format)",
+                    console=console
+                )
+                if repo.lower().strip() in ('exit', 'quit', 'bye'):
+                    console.print("\n[cyan]👋 Goodbye![/cyan]")
+                    break
+                
+                user_id = Prompt.ask(
+                    "[bold]User ID[/bold] (for authentication context, press Enter to skip)",
+                    console=console,
+                    default=""
+                )
+                if user_id.lower().strip() in ('exit', 'quit', 'bye'):
+                    console.print("\n[cyan]👋 Goodbye![/cyan]")
+                    break
+                
+                inputs["messages"] = [{"type": "human", "content": description}]
+                inputs["input_context"] = {
+                    "integrations": {
+                        "github": {"name": repo}
+                    }
+                }
+                if user_id.strip():
+                    inputs["input_context"]["user_id"] = user_id.strip()
+                
+                console.print()
+                console.print(f"[dim]Description: {description}[/dim]")
+                console.print(f"[dim]Repository: {repo}[/dim]")
+                if user_id.strip():
+                    console.print(f"[dim]User ID: {user_id}[/dim]")
+            
+            console.print()
+            console.print(f"[bold]Running step: {step}[/bold]")
+            console.print("─" * 40)
+            
+            # Run the eval agent
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console,
+                transient=True,
+            ) as progress:
+                prog_task = progress.add_task(f"Running {step}...", total=None)
+                
+                try:
+                    # Initial invocation
+                    await eval_agent.ainvoke(inputs, config=runnable_config)
+                    
+                    # Handle any interrupts
+                    results = await handle_interrupts(
+                        eval_agent,
+                        runnable_config,
+                        progress=progress,
+                        task=prog_task,
+                    )
+                    progress.update(prog_task, completed=True)
+                except KeyboardInterrupt:
+                    progress.stop()
+                    console.print("\n[yellow]Interrupted. Type 'exit' to quit.[/yellow]")
+                    continue
+                except Exception as e:
+                    progress.stop()
+                    console.print(f"\n[bold red]Error in {step}:[/bold red] {e}")
+                    if VERBOSE:
+                        console.print("\n[bold red]Full Traceback:[/bold red]")
+                        console.print(traceback.format_exc())
+                    else:
+                        console.print("[dim]Use -v flag for full traceback: seer-eval -v run[/dim]")
+                    continue
+            
+            # Display results based on step
+            console.print()
+            _display_step_results(step, results)
+            console.print()
+            
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Interrupted. Type 'exit' to quit.[/yellow]")
+            continue
+        except EOFError:
+            console.print("\n[cyan]👋 Goodbye![/cyan]")
+            break
+
+
+def _display_step_results(step: str, results: dict):
+    """Display results based on the step that was run."""
+    if step == 'alignment':
+        context = results.get('context')
+        if context:
+            # Build display content
+            content_lines = [
+                f"[bold]Agent:[/bold] {context.agent_name if hasattr(context, 'agent_name') else 'Unknown'}",
+                f"[bold]Services:[/bold] {', '.join(context.mcp_services) if hasattr(context, 'mcp_services') and context.mcp_services else 'None'}"
+            ]
+            
+            # Add functional requirements if available
+            if hasattr(context, 'functional_requirements') and context.functional_requirements:
+                content_lines.append("")
+                content_lines.append("[bold]Functional Requirements:[/bold]")
+                for i, req in enumerate(context.functional_requirements, 1):
+                    content_lines.append(f"  {i}. {req}")
+            
             console.print(Panel(
-                Markdown(format_dataset_example(example)),
-                border_style="blue",
+                "\n".join(content_lines),
+                title="[bold green]✓ Alignment Complete[/bold green]",
+                border_style="green",
                 box=box.ROUNDED
             ))
-    else:
-        console.print("[yellow]No test cases generated.[/yellow]")
+        else:
+            console.print("[green]✓ Alignment step completed[/green]")
     
-    # Show next steps
-    console.print(f"\n[bold cyan]Next Steps:[/bold cyan]")
-    console.print(f"  Continue with testing:")
-    console.print(f"  [dim]seer-eval test --thread-id {thread_id}[/dim]\n")
-    
-    # Save output if requested
-    if output:
-        output_data = {
-            "thread_id": thread_id,
-            "step": "plan",
-            "dataset_examples": [e.model_dump() for e in examples]
-        }
-        Path(output).write_text(json.dumps(output_data, indent=2, default=str))
-        console.print(f"[dim]Results saved to {output}[/dim]")
-
-
-@cli.command()
-@click.option('--thread-id', '-t', required=True, help='Thread ID from planning step')
-@click.option('--output', '-o', type=click.Path(), help='Output file for results (JSON)')
-def test(thread_id: str, output: Optional[str]):
-    """
-    Execute generated test cases against the target agent.
-    
-    Requires a thread-id from a previous planning step.
-    
-    \b
-    Example:
-      seer-eval test --thread-id <uuid-from-plan>
-    """
-    asyncio.run(_test(thread_id, output))
-
-
-async def _test(thread_id: str, output: Optional[str]):
-    """Async implementation of test command."""
-    console.print(Panel.fit(
-        "[bold cyan]🔮 Seer Eval Agent - Testing[/bold cyan]\n\n"
-        f"[dim]Thread ID: {thread_id}[/dim]",
-        border_style="cyan"
-    ))
-    
-    inputs = {"step": "testing"}
-    memory = MemorySaver()
-    eval_agent = create_compiled_graph(memory)
-    runnable_config = RunnableConfig(configurable={"thread_id": thread_id})
-    
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        prog_task = progress.add_task("Running tests...", total=None)
+    elif step == 'plan':
+        examples = results.get('dataset_examples', [])
+        console.print(f"[green]✓[/green] Generated {len(examples)} test case(s)")
         
-        try:
-            # Initial invocation
-            await eval_agent.ainvoke(inputs, config=runnable_config)
-            
-            # Handle any interrupts
-            results = await handle_interrupts(
-                eval_agent,
-                runnable_config,
-                progress=progress,
-                task=prog_task,
-            )
-            progress.update(prog_task, completed=True)
-        except Exception as e:
-            progress.stop()
-            console.print(f"[bold red]Error:[/bold red] {e}")
-            if VERBOSE:
-                console.print("\n[bold red]Full Traceback:[/bold red]")
-                console.print(traceback.format_exc())
-            else:
-                console.print("[dim]Use -v flag for full traceback: seer-eval -v test ...[/dim]")
-            sys.exit(1)
+        if examples:
+            for example in examples:
+                console.print(Panel(
+                    Markdown(format_dataset_example(example)),
+                    border_style="blue",
+                    box=box.ROUNDED
+                ))
     
-    console.print("\n[bold green]✓ Testing Complete[/bold green]\n")
-    
-    # Display results
-    latest_results = results.get('latest_results', [])
-    if latest_results:
-        table = Table(title="Test Results", box=box.ROUNDED)
-        table.add_column("Test ID", style="cyan")
-        table.add_column("Score", justify="center")
-        table.add_column("Passed", justify="center")
-        table.add_column("Reasoning")
-        
-        for result in latest_results:
-            score = result.score if hasattr(result, 'score') else 0.0
-            passed = result.passed if hasattr(result, 'passed') else False
-            reasoning = result.judge_reasoning[:50] + "..." if hasattr(result, 'judge_reasoning') and len(result.judge_reasoning) > 50 else (result.judge_reasoning if hasattr(result, 'judge_reasoning') else "N/A")
-            
-            score_style = "green" if score >= 0.8 else ("yellow" if score >= 0.5 else "red")
-            passed_icon = "✓" if passed else "✗"
-            passed_style = "green" if passed else "red"
-            
-            table.add_row(
-                result.dataset_example.example_id if hasattr(result, 'dataset_example') else "N/A",
-                f"[{score_style}]{score:.2f}[/{score_style}]",
-                f"[{passed_style}]{passed_icon}[/{passed_style}]",
-                reasoning
-            )
-        
-        console.print(table)
-    else:
-        console.print("[yellow]No test results available.[/yellow]")
-    
-    # Check for missing config
-    missing_config = results.get('missing_config', [])
-    if missing_config:
-        console.print(f"\n[bold yellow]⚠ Missing Configuration:[/bold yellow]")
-        for config_key in missing_config:
-            console.print(f"  • {config_key}")
-        console.print("\n[dim]Set these in your .env file or as environment variables.[/dim]")
-    
-    # Save output if requested
-    if output:
-        output_data = {
-            "thread_id": thread_id,
-            "step": "testing",
-            "results": [r.model_dump() for r in latest_results] if latest_results else []
-        }
-        Path(output).write_text(json.dumps(output_data, indent=2, default=str))
-        console.print(f"\n[dim]Results saved to {output}[/dim]")
-
-
-@cli.command()
-@click.argument('description', required=True)
-@click.option('--repo', '-r', help='GitHub repository (owner/repo format)', required=True)
-@click.option('--user-id', '-u', default=None, help='User ID for authentication context')
-@click.option('--thread-id', '-t', default=None, help='Thread ID (auto-generated if not provided)')
-@click.option('--output', '-o', type=click.Path(), help='Output file for results (JSON)')
-@click.option('--skip-testing', is_flag=True, help='Stop after planning (don\'t run tests)')
-def run(description: str, repo: str, user_id: Optional[str], thread_id: Optional[str], output: Optional[str], skip_testing: bool):
-    """
-    Run the full evaluation pipeline: align → plan → test.
-    
-    \b
-    Example:
-      seer-eval run "Evaluate my GitHub-Asana sync bot" --repo seer-engg/my-agent
-      seer-eval run "Test my agent" --repo owner/repo --skip-testing  # Stop after plan
-    """
-    asyncio.run(_run(description, repo, user_id, thread_id, output, skip_testing))
-
-
-async def _run(description: str, repo: str, user_id: Optional[str], thread_id: Optional[str], output: Optional[str], skip_testing: bool):
-    """Async implementation of run command (full pipeline)."""
-    thread_id = thread_id or str(uuid.uuid4())
-    
-    console.print(Panel.fit(
-        "[bold cyan]🔮 Seer Eval Agent - Full Pipeline[/bold cyan]\n\n"
-        f"[dim]Thread ID: {thread_id}[/dim]",
-        border_style="cyan"
-    ))
-    
-    console.print(f"\n[bold]Description:[/bold] {description}")
-    console.print(f"[bold]Repository:[/bold] {repo}")
-    if user_id:
-        console.print(f"[bold]User ID:[/bold] {user_id}")
-    console.print()
-    
-    memory = MemorySaver()
-    eval_agent = create_compiled_graph(memory)
-    runnable_config = RunnableConfig(configurable={"thread_id": thread_id})
-    
-    all_results = {}
-    
-    # Step 1: Alignment
-    console.print("\n[bold]Step 1/3: Alignment[/bold]")
-    console.print("─" * 40)
-    
-    alignment_inputs = {
-        "messages": [{"type": "human", "content": description}],
-        "step": "alignment",
-        "input_context": {
-            "integrations": {
-                "github": {"name": repo}
-            }
-        }
-    }
-    if user_id:
-        alignment_inputs["input_context"]["user_id"] = user_id
-    
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        prog_task = progress.add_task("Running alignment...", total=None)
-        try:
-            # Initial invocation
-            await eval_agent.ainvoke(alignment_inputs, config=runnable_config)
-            
-            # Handle any interrupts (prompts for missing config, etc.)
-            alignment_results = await handle_interrupts(
-                eval_agent,
-                runnable_config,
-                progress=progress,
-                task=prog_task,
-            )
-            progress.update(prog_task, completed=True)
-        except Exception as e:
-            progress.stop()
-            console.print(f"[bold red]Error in alignment:[/bold red] {e}")
-            if VERBOSE:
-                console.print("\n[bold red]Full Traceback:[/bold red]")
-                console.print(traceback.format_exc())
-            else:
-                console.print("[dim]Use -v flag for full traceback: seer-eval -v run ...[/dim]")
-            sys.exit(1)
-    
-    context = alignment_results.get('context')
-    if context:
-        console.print(f"[green]✓[/green] Agent: {context.agent_name if hasattr(context, 'agent_name') else 'Unknown'}")
-        if hasattr(context, 'mcp_services') and context.mcp_services:
-            console.print(f"[green]✓[/green] Services: {', '.join(context.mcp_services)}")
-    all_results['alignment'] = alignment_results
-    
-    # Check if user exited during alignment
-    if alignment_results.get('should_exit'):
-        console.print("\n[yellow]Pipeline stopped due to missing configuration.[/yellow]")
-        return
-    
-    # Step 2: Planning
-    console.print("\n[bold]Step 2/3: Planning[/bold]")
-    console.print("─" * 40)
-    
-    plan_inputs = {"step": "plan"}
-    
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        prog_task = progress.add_task("Generating test cases...", total=None)
-        try:
-            # Initial invocation
-            await eval_agent.ainvoke(plan_inputs, config=runnable_config)
-            
-            # Handle any interrupts
-            plan_results = await handle_interrupts(
-                eval_agent,
-                runnable_config,
-                progress=progress,
-                task=prog_task,
-            )
-            progress.update(prog_task, completed=True)
-        except Exception as e:
-            progress.stop()
-            console.print(f"[bold red]Error in planning:[/bold red] {e}")
-            if VERBOSE:
-                console.print("\n[bold red]Full Traceback:[/bold red]")
-                console.print(traceback.format_exc())
-            else:
-                console.print("[dim]Use -v flag for full traceback: seer-eval -v run ...[/dim]")
-            sys.exit(1)
-    
-    examples = plan_results.get('dataset_examples', [])
-    console.print(f"[green]✓[/green] Generated {len(examples)} test case(s)")
-    all_results['plan'] = plan_results
-    
-    # Check if user exited during planning
-    if plan_results.get('should_exit'):
-        console.print("\n[yellow]Pipeline stopped due to missing configuration.[/yellow]")
-        return
-    
-    if skip_testing:
-        console.print("\n[yellow]Skipping testing (--skip-testing flag set)[/yellow]")
-    else:
-        # Step 3: Testing
-        console.print("\n[bold]Step 3/3: Testing[/bold]")
-        console.print("─" * 40)
-        
-        test_inputs = {"step": "testing"}
-        
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            prog_task = progress.add_task("Running tests...", total=None)
-            try:
-                # Initial invocation
-                await eval_agent.ainvoke(test_inputs, config=runnable_config)
-                
-                # Handle any interrupts
-                test_results = await handle_interrupts(
-                    eval_agent,
-                    runnable_config,
-                    progress=progress,
-                    task=prog_task,
-                )
-                progress.update(prog_task, completed=True)
-            except Exception as e:
-                progress.stop()
-                console.print(f"[bold red]Error in testing:[/bold red] {e}")
-                if VERBOSE:
-                    console.print("\n[bold red]Full Traceback:[/bold red]")
-                    console.print(traceback.format_exc())
-                else:
-                    console.print("[dim]Use -v flag for full traceback: seer-eval -v run ...[/dim]")
-                sys.exit(1)
-        
-        latest_results = test_results.get('latest_results', [])
+    elif step == 'testing':
+        latest_results = results.get('latest_results', [])
         passed = sum(1 for r in latest_results if hasattr(r, 'passed') and r.passed)
         total = len(latest_results)
         
         if total > 0:
-            console.print(f"[green]✓[/green] Tests complete: {passed}/{total} passed")
+            status_color = "green" if passed == total else "yellow" if passed > 0 else "red"
+            console.print(Panel(
+                f"[bold]Tests Passed:[/bold] {passed}/{total}",
+                title=f"[bold {status_color}]Testing Results[/bold {status_color}]",
+                border_style=status_color,
+                box=box.ROUNDED
+            ))
+        else:
+            console.print("[green]✓ Testing step completed[/green]")
         
         # Check for missing config
-        missing_config = test_results.get('missing_config', [])
+        missing_config = results.get('missing_config', [])
         if missing_config:
             console.print(f"\n[bold yellow]⚠ Missing Configuration:[/bold yellow]")
             for config_key in missing_config:
                 console.print(f"  • {config_key}")
+    
+    elif step == 'finalize':
+        console.print("[green]✓ Finalize step completed[/green]")
         
-        all_results['testing'] = test_results
-    
-    # Summary
-    console.print("\n" + "═" * 50)
-    console.print("[bold green]✓ Pipeline Complete[/bold green]")
-    console.print("═" * 50)
-    console.print(f"\n[dim]Thread ID: {thread_id}[/dim]")
-    
-    # Show test cases
-    if examples:
-        console.print(f"\n[bold]Generated Test Cases:[/bold]")
-        for example in examples:
+        # Display any final summary if available
+        if results.get('summary'):
             console.print(Panel(
-                Markdown(format_dataset_example(example)),
-                border_style="blue",
+                Markdown(results['summary']),
+                title="[bold green]Evaluation Summary[/bold green]",
+                border_style="green",
                 box=box.ROUNDED
             ))
     
-    # Save output if requested
-    if output:
-        output_data = {
-            "thread_id": thread_id,
-            "alignment": {
-                "context": all_results.get('alignment', {}).get('context').model_dump() if all_results.get('alignment', {}).get('context') else None
-            },
-            "plan": {
-                "dataset_examples": [e.model_dump() for e in examples]
-            }
-        }
-        if not skip_testing and 'testing' in all_results:
-            latest = all_results['testing'].get('latest_results', [])
-            output_data["testing"] = {
-                "results": [r.model_dump() for r in latest] if latest else []
-            }
-        
-        Path(output).write_text(json.dumps(output_data, indent=2, default=str))
-        console.print(f"\n[dim]Results saved to {output}[/dim]")
+    else:
+        console.print(f"[green]✓ Step '{step}' completed[/green]")
 
 
 @cli.command('new-supervisor')
