@@ -59,23 +59,53 @@ Seer validates many keys up-front, and **`seer-eval` will prompt you interactive
 
 ### Usage: CLI (fastest path)
 
-#### Run the full eval pipeline
+#### Start the interactive eval agent
 
 ```bash
-seer-eval run "Evaluate my agent that syncs GitHub PR merges to Asana tasks" \
-  --repo owner/repo \
-  --user-id you@example.com
+seer-eval run
 ```
 
-#### Run step-by-step (alignment → plan → test)
+This launches an interactive loop where you select steps (`alignment`, `plan`, `testing`, `finalize`) and provide inputs when prompted. The CLI will ask for:
+- **Description** – what does your agent do?
+- **GitHub Repository** – in `owner/repo` format
+- **User ID** – optional, for authentication context
+
+To resume an existing session:
 
 ```bash
-seer-eval align "Evaluate my agent..." --repo owner/repo
-# copy the printed thread id
-
-seer-eval plan --thread-id <thread-id>
-seer-eval test --thread-id <thread-id>
+seer-eval run --thread-id <uuid>
 ```
+
+#### Start the supervisor agent (database operations)
+
+```bash
+seer-eval new-supervisor
+```
+
+The Supervisor agent helps with PostgreSQL database operations, schema exploration, and related tasks. You can optionally provide a connection string:
+
+```bash
+seer-eval new-supervisor --db-uri "postgresql://user:pass@host/db"
+```
+
+#### Other commands
+
+```bash
+# Show current configuration
+seer-eval config
+
+# Export results from a previous run (requires DATABASE_URI for persistence)
+seer-eval export <thread-id>
+
+# Enable verbose mode (full tracebacks for debugging)
+seer-eval -v run
+```
+
+#### Interactive session commands
+
+While in a session (`run` or `new-supervisor`), you can use:
+- `exit`, `quit`, `bye` – Exit the session
+- `clear` – Clear the screen
 
 #### About interactive prompts
 
