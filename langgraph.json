@@ -3,7 +3,8 @@
     "."
   ],
   "graphs": {
-    "eval_agent": "./agents/eval_agent/graph.py:graph"
+    "eval_agent": "./agents/eval_agent/graph.py:graph",
+    "supervisor": "./agents/supervisor/graph.py:graph"
   },
   "env": ".env"
 }

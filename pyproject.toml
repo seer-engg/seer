@@ -45,6 +45,7 @@ dependencies = [
   "click>=8.1.0",
   "rich>=13.0.0",
   "asyncpg>=0.31.0",
+  "mlflow>=3.7.0",
 ]
 
 [tool.setuptools]

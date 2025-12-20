@@ -11,11 +11,13 @@ from agents.eval_agent.nodes.testing.graph import build_testing_subgraph
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+import mlflow
 
+mlflow.langchain.autolog()
 from shared.config import config
 
-logger = get_logger("eval_agent.graph")
 
+logger = get_logger("eval_agent.graph")
 
 def should_continue(state: EvalAgentState) -> Literal["plan", "finalize"]:
     """Determine if the eval loop should continue plan or finalize."""
@@ -98,7 +100,7 @@ def compile_graph(workflow: StateGraph):
                 logger.info("PostgresSaver checkpointer setup complete")
             except Exception as e:
                 # Tables might already exist, which is fine
-                logger.debug(f"PostgresSaver setup (tables may already exist): {e}")
+                logger.warning(f"PostgresSaver setup (tables may already exist): {e}")
         except Exception as e:
             logger.warning(f"Failed to initialize PostgresSaver checkpointer: {e}. Interrupts will not work.")
             logger.warning("Set DATABASE_URI environment variable to enable human-in-the-loop interrupts.")

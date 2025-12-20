@@ -5,7 +5,9 @@ from shared.logger import get_logger
 from shared.config import config
 from agents.supervisor.state import SupervisorState, SupervisorInput, SupervisorOutput
 from agents.supervisor.nodes import supervisor
+import mlflow
 
+mlflow.langchain.autolog()
 logger = get_logger("supervisor.graph")
 
 
