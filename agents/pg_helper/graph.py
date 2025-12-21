@@ -5,9 +5,12 @@ from shared.logger import get_logger
 from shared.config import config
 from agents.supervisor.state import SupervisorState, SupervisorInput, SupervisorOutput
 from agents.supervisor.nodes import supervisor
-import mlflow
 
-mlflow.langchain.autolog()
+# Enable MLflow tracing only if configured as the active provider
+if config.is_mlflow_tracing_enabled:
+    import mlflow
+    mlflow.langchain.autolog()
+
 logger = get_logger("supervisor.graph")
 
 
@@ -65,7 +68,7 @@ def compile_graph(workflow: StateGraph):
     
     # Configure Langfuse callbacks at graph compilation time
     # This ensures traces are created even when graph is invoked via HTTP
-    if config.langfuse_public_key:
+    if config.is_langfuse_tracing_enabled and config.langfuse_public_key:
         try:
             from langfuse.langchain import CallbackHandler
             

@@ -11,8 +11,8 @@ Usage:
         ...
 """
 import os
-from typing import Optional, Dict, Any
-from pydantic import Field, computed_field
+from typing import Optional, Dict, Any, Literal
+from pydantic import Field, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -139,6 +139,22 @@ class SeerConfig(BaseSettings):
     langfuse_base_url: str = Field(default="http://localhost:3000", description="Langfuse host URL (self-hosted instance)")
     
     # ============================================================================
+    # MLflow Configuration
+    # ============================================================================
+    
+    mlflow_tracking_uri: Optional[str] = Field(default=None, description="MLflow tracking server URI (e.g., http://localhost:5000)")
+    mlflow_experiment_name: Optional[str] = Field(default=None, description="MLflow experiment name for organizing runs")
+    
+    # ============================================================================
+    # Tracing Provider Configuration
+    # ============================================================================
+    
+    tracing_provider: Optional[Literal["langfuse", "mlflow"]] = Field(
+        default=None, 
+        description="Tracing provider to use: 'langfuse' or 'mlflow'. If not set, auto-detected from env vars. Only one can be active."
+    )
+    
+    # ============================================================================
     # Asana Configuration
     # ============================================================================
     
@@ -180,6 +196,73 @@ class SeerConfig(BaseSettings):
     def is_langfuse_configured(self) -> bool:
         """Check if Langfuse is configured."""
         return self.langfuse_secret_key is not None and self.langfuse_base_url is not None
+    
+    @property
+    def is_mlflow_configured(self) -> bool:
+        """Check if MLflow is configured."""
+        return self.mlflow_tracking_uri is not None
+    
+    @computed_field
+    @property
+    def active_tracing_provider(self) -> Optional[Literal["langfuse", "mlflow"]]:
+        """
+        Get the active tracing provider.
+        
+        Returns the explicitly set tracing_provider, or auto-detects based on 
+        configured env vars. Returns None if no tracing is configured.
+        """
+        if self.tracing_provider:
+            return self.tracing_provider
+        
+        # Auto-detect based on configured env vars
+        if self.is_langfuse_configured:
+            return "langfuse"
+        if self.is_mlflow_configured:
+            return "mlflow"
+        return None
+    
+    @property
+    def is_langfuse_tracing_enabled(self) -> bool:
+        """Check if Langfuse tracing is enabled."""
+        return self.active_tracing_provider == "langfuse"
+    
+    @property
+    def is_mlflow_tracing_enabled(self) -> bool:
+        """Check if MLflow tracing is enabled."""
+        return self.active_tracing_provider == "mlflow"
+    
+    @model_validator(mode="after")
+    def validate_tracing_provider(self) -> "SeerConfig":
+        """
+        Validate that only one tracing provider is configured.
+        
+        Raises:
+            ValueError: If both Langfuse and MLflow are configured without 
+                        explicitly setting tracing_provider to choose one.
+        """
+        langfuse_configured = self.langfuse_secret_key is not None
+        mlflow_configured = self.mlflow_tracking_uri is not None
+        
+        if langfuse_configured and mlflow_configured:
+            if self.tracing_provider is None:
+                raise ValueError(
+                    "Both Langfuse and MLflow tracing are configured. "
+                    "Set TRACING_PROVIDER='langfuse' or TRACING_PROVIDER='mlflow' "
+                    "to explicitly choose one tracing provider."
+                )
+        
+        # Validate that if tracing_provider is set, the corresponding config exists
+        if self.tracing_provider == "langfuse" and not langfuse_configured:
+            raise ValueError(
+                "TRACING_PROVIDER is set to 'langfuse' but LANGFUSE_SECRET_KEY is not configured."
+            )
+        if self.tracing_provider == "mlflow" and not mlflow_configured:
+            raise ValueError(
+                "TRACING_PROVIDER is set to 'mlflow' but MLFLOW_TRACKING_URI is not configured."
+            )
+        
+        return self
+
 # ============================================================================
 # Global Config Instance
 # ============================================================================

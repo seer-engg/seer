@@ -11,10 +11,12 @@ from agents.eval_agent.nodes.testing.graph import build_testing_subgraph
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-import mlflow
-
-mlflow.langchain.autolog()
 from shared.config import config
+
+# Enable MLflow tracing only if configured as the active provider
+if config.is_mlflow_tracing_enabled:
+    import mlflow
+    mlflow.langchain.autolog()
 
 
 logger = get_logger("eval_agent.graph")
@@ -94,7 +96,7 @@ def compile_graph_with_langfuse(workflow: StateGraph):
     # using .with_config(), not just passed when invoking via RemoteGraph
     # See: https://langfuse.com/guides/cookbook/integration_langgraph
     from agents.eval_agent.constants import LANGFUSE_CLIENT
-    if LANGFUSE_CLIENT and config.langfuse_public_key:
+    if config.is_langfuse_tracing_enabled and LANGFUSE_CLIENT and config.langfuse_public_key:
         try:
             from langfuse.langchain import CallbackHandler
             
