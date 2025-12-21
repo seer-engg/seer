@@ -7,7 +7,7 @@ from shared.logger import get_logger
 from e2b import CommandExitException
 from dataclasses import dataclass
 from shared.schema import SandboxContext
-from indexer.service import get_index_service
+from shared.indexer.service import get_index_service
 import os 
 
 logger = get_logger("sandbox.tools")

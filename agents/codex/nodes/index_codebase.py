@@ -1,5 +1,5 @@
 from shared.schema import SandboxContext
-from indexer.service import index_codebase
+from shared.indexer.service import index_codebase
 from agents.codex.state import CodexState   
 
 async def index(state: CodexState) -> CodexState:
