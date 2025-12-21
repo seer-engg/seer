@@ -150,6 +150,10 @@ class SeerConfig(BaseSettings):
     # ============================================================================
 
     default_llm_model: str = Field(default="gpt-5-mini", description="Default LLM model")
+
+
+    PINECONE_INDEX_NAME: str = Field(default="", description="Pinecone index name")
+    PINECONE_API_KEY: str = Field(default="", description="Pinecone API key")
     
     @computed_field
     @property

@@ -86,30 +86,8 @@ def build_graph() -> StateGraph:
     return workflow
 
    
-def compile_graph(workflow: StateGraph):
-    # Initialize checkpointer for human-in-the-loop interrupts
-    checkpointer = None
-    if config.database_uri:
-        try:
-            from langgraph.checkpoint.postgres import PostgresSaver
-            logger.info(f"Initializing PostgresSaver checkpointer with database URI")
-            checkpointer = PostgresSaver.from_conn_string(config.database_uri)
-            # Setup tables on first run (idempotent)
-            try:
-                checkpointer.setup()
-                logger.info("PostgresSaver checkpointer setup complete")
-            except Exception as e:
-                # Tables might already exist, which is fine
-                logger.warning(f"PostgresSaver setup (tables may already exist): {e}")
-        except Exception as e:
-            logger.warning(f"Failed to initialize PostgresSaver checkpointer: {e}. Interrupts will not work.")
-            logger.warning("Set DATABASE_URI environment variable to enable human-in-the-loop interrupts.")
-    else:
-        logger.warning("DATABASE_URI not set. Human-in-the-loop interrupts will not work.")
-        logger.warning("Set DATABASE_URI environment variable to enable interrupts.")
-
-    compiled_graph = workflow.compile(checkpointer=checkpointer)
-    
+def compile_graph_with_langfuse(workflow: StateGraph):
+    compiled_graph = workflow.compile()
     # Configure Langfuse callbacks at graph compilation time for LangGraph dev server
     # This ensures traces are created even when graph is invoked via HTTP
     # CRITICAL: For LangGraph dev server, callbacks MUST be configured at compile time
@@ -119,7 +97,6 @@ def compile_graph(workflow: StateGraph):
     if LANGFUSE_CLIENT and config.langfuse_public_key:
         try:
             from langfuse.langchain import CallbackHandler
-            from langfuse import propagate_attributes
             
             # Create a custom wrapper that adds metadata to the root trace
             # CRITICAL: For LangGraph dev server, metadata must be set when the root chain starts
@@ -173,4 +150,4 @@ def compile_graph(workflow: StateGraph):
     return compiled_graph
 
 
-graph = compile_graph(build_graph())
+graph = build_graph().compile() # graph object for langgraph dev server
