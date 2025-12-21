@@ -2,7 +2,7 @@ from e2b import AsyncSandbox
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 from shared.logger import get_logger
-from sandbox import deploy_server_and_confirm_ready
+from shared.sandbox import deploy_server_and_confirm_ready
 from shared.config import config
 from agents.codex.state import CodexState
 from shared.llm import get_llm

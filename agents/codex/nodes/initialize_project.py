@@ -4,7 +4,7 @@ from agents.codex.state import CodexState
 from shared.logger import get_logger
 logger = get_logger("codex.nodes.initialize_project")
 
-from sandbox import initialize_e2b_sandbox, setup_project
+from shared.sandbox import initialize_e2b_sandbox, setup_project
 from shared.config import config
 from shared.schema import SandboxContext
 

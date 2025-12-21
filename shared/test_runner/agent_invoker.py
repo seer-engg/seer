@@ -17,7 +17,7 @@ from e2b import AsyncSandbox
 
 from shared.schema import SandboxContext
 from shared.logger import get_logger
-from sandbox.constants import TARGET_AGENT_PORT
+from shared.sandbox.constants import TARGET_AGENT_PORT
 
 
 logger = get_logger("test_runner.agent_invoker")

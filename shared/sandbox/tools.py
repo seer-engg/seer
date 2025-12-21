@@ -1,7 +1,7 @@
 from langchain.tools import tool
 from langchain.tools import ToolRuntime
 
-from sandbox.base import get_sandbox
+from shared.sandbox.base import get_sandbox
 from e2b_code_interpreter import CommandResult, AsyncSandbox
 from shared.logger import get_logger
 from e2b import CommandExitException

@@ -12,7 +12,7 @@ import numpy as np
 from shared.logger import get_logger
 from shared.schema import SandboxContext
 from e2b_code_interpreter import AsyncSandbox, CommandResult
-from sandbox.base import get_sandbox
+from shared.sandbox.base import get_sandbox
 
 from .db import get_db_connection, init_db
 from .embedding import get_embedder

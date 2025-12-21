@@ -2,7 +2,7 @@ from __future__ import annotations
 from e2b_code_interpreter import AsyncSandbox
 from agents.codex.state import CodexState
 from shared.logger import get_logger
-from sandbox import deploy_server_and_confirm_ready
+from shared.sandbox import deploy_server_and_confirm_ready
 from shared.config import config
 
 logger = get_logger("codex.nodes.deploy")
