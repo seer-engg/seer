@@ -46,6 +46,7 @@ dependencies = [
   "asyncpg>=0.31.0",
   "mlflow>=3.7.0",
   "tortoise-orm[asyncpg]>=0.25.2",
+  "authlib>=1.6.6",
 ]
 
 [tool.setuptools]

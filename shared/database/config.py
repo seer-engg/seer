@@ -68,6 +68,7 @@ TORTOISE_ORM: Dict[str, Any] = {
                 "src.users.models",
                 "src.agents.models",
                 "aerich.models",
+                "shared.database.models_oauth",
             ],
             "default_connection": "default",
         },

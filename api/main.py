@@ -12,8 +12,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
+import os
 from shared.logger import get_logger
 from api.router import router
+from api.integrations.router import router as integrations_router
 from api.agents.checkpointer import checkpointer_lifespan
 from shared.database import db_lifespan
 logger = get_logger("api.main")
@@ -41,6 +44,7 @@ app = FastAPI(
 )
 
 app.include_router(router)
+app.include_router(integrations_router)
 
 # CORS middleware for development
 app.add_middleware(
@@ -50,6 +54,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(SessionMiddleware, secret_key=os.getenv("SECRET_KEY", "dev_secret_key"))
 
 
 # =============================================================================
