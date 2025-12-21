@@ -3,7 +3,7 @@ from typing import Dict, List, Any
 from langchain_openai import ChatOpenAI
 
 from agents.eval_agent.models import EvalAgentPlannerState
-from sandbox import (
+from shared.sandbox import (
     initialize_e2b_sandbox,
     setup_project,
     deploy_server_and_confirm_ready,
@@ -12,7 +12,6 @@ from shared.schema import AgentContext
 from shared.schema import SandboxContext
 from shared.logger import get_logger
 from shared.config import config
-from shared.integrations.main import get_provider
 from langgraph.config import get_stream_writer
 
 logger = get_logger("eval_agent.plan")
