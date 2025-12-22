@@ -24,6 +24,7 @@ class GmailReadTool(BaseTool):
     name = "gmail_read_emails"
     description = "Read emails from Gmail inbox. Supports filtering by labels, query, and max results."
     required_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
+    integration_type = "gmail"
     
     def get_parameters_schema(self) -> Dict[str, Any]:
         """Get JSON schema for Gmail read tool parameters."""

@@ -9,7 +9,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/integrations", tags=["integrations"])
+router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
@@ -132,6 +132,7 @@ async def delete_connection(connection_id: str, user_id: str = Query(...)):
 
 @router.get("/")
 async def list_integrations(user_id: str = Query(...)):
+    logger.info(f"Listing integrations for user {user_id}")
     connections = await list_connections(user_id)
     res = []
     for conn in connections:

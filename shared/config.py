@@ -122,15 +122,6 @@ class SeerConfig(BaseSettings):
     github_default_owner: str = Field(default="", description="GitHub default owner")
     github_default_repo: str = Field(default="", description="GitHub default repo")
     
-    # ============================================================================
-    # MCP (Model Context Protocol) Configuration
-    # ============================================================================
-    
-    # OAuth Client Credentials (for token refresh)
-    google_client_id: Optional[str] = Field(default=None, description="Google OAuth client ID")
-    google_client_secret: Optional[str] = Field(default=None, description="Google OAuth client secret")
-    github_client_id: Optional[str] = Field(default=None, description="GitHub OAuth client ID")
-    github_client_secret: Optional[str] = Field(default=None, description="GitHub OAuth client secret")
     
     # ============================================================================
     # MLflow Configuration
@@ -161,15 +152,18 @@ class SeerConfig(BaseSettings):
     clerk_issuer: Optional[str] = Field(default=None, description="Clerk JWT issuer (e.g., https://clerk.your-domain.com)")
     clerk_audience: Optional[str] = Field(default=None, description="Clerk JWT audience (e.g., ['api.your-domain.com'])")
     
+    default_llm_model: str = Field(default="gpt-5-mini", description="Default LLM model")
+    PINECONE_INDEX_NAME: str = Field(default="", description="Pinecone index name")
+    PINECONE_API_KEY: str = Field(default="", description="Pinecone API key")
+
+    GOOGLE_CLIENT_ID: str = Field(default="", description="Google OAuth client ID")
+    GOOGLE_CLIENT_SECRET: str = Field(default="", description="Google OAuth client secret")
     # ============================================================================
     # Computed Properties
     # ============================================================================
 
-    default_llm_model: str = Field(default="gpt-5-mini", description="Default LLM model")
 
 
-    PINECONE_INDEX_NAME: str = Field(default="", description="Pinecone index name")
-    PINECONE_API_KEY: str = Field(default="", description="Pinecone API key")
     
     @computed_field
     @property

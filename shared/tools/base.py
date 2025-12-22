@@ -18,12 +18,14 @@ class BaseTool(ABC):
     - name: Tool identifier
     - description: Human-readable description
     - required_scopes: List of OAuth scopes needed (empty for non-OAuth tools)
+    - integration_type: Integration type (gmail, github, googledrive, etc.)
     - execute(): Tool execution logic
     """
     
     name: str
     description: str
     required_scopes: List[str] = []
+    integration_type: Optional[str] = None  # e.g., 'gmail', 'github', 'googledrive'
     
     @abstractmethod
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
@@ -69,6 +71,7 @@ class BaseTool(ABC):
             "name": self.name,
             "description": self.description,
             "required_scopes": self.required_scopes,
+            "integration_type": self.integration_type,
             "parameters": self.get_parameters_schema()
         }
 

@@ -1,5 +1,6 @@
 from authlib.integrations.starlette_client import OAuth
 import os
+from shared.config import config
 
 oauth = OAuth()
 
@@ -7,8 +8,8 @@ oauth = OAuth()
 # Scopes are controlled by frontend - minimal default for identity only
 oauth.register(
     name='google',
-    client_id=os.getenv('GOOGLE_CLIENT_ID'),
-    client_secret=os.getenv('GOOGLE_CLIENT_SECRET'),
+    client_id=config.GOOGLE_CLIENT_ID,
+    client_secret=config.GOOGLE_CLIENT_SECRET,
     server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
     client_kwargs={
         'scope': 'openid email profile'  # Minimal default - frontend will override with specific scopes

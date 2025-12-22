@@ -96,8 +96,10 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
             last_name=claims.get("last_name"),
             claims=claims,
         )
+        logger.info(f"Authenticated user: {auth_user}")
         try:
             db_user = await User.get_or_create_from_auth(auth_user)
+            logger.info(f"Persisted user: {db_user}")
         except Exception:  # pragma: no cover - defensive
             logger.exception("Failed to persist authenticated user")
             return JSONResponse(
@@ -133,3 +135,16 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
         raise InvalidTokenError("Token missing subject identifier")
 
 
+
+class AddDefaultUserMiddleware(BaseHTTPMiddleware):
+    """Adds a default user to the request if no user is authenticated."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        super().__init__(app)
+
+    async def dispatch(self, request: Request, call_next):
+        auth_user = AuthenticatedUser(user_id="default", email="default@example.com", first_name="Default", last_name="User", claims={})
+        db_user = await User.get_or_create_from_auth(auth_user)
+        request.state.user = auth_user
+        request.state.db_user = db_user
+        return await call_next(request)

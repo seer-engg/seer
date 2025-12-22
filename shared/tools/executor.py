@@ -45,15 +45,15 @@ async def refresh_oauth_token(connection: OAuthConnection) -> OAuthConnection:
     
     # Provider-specific refresh endpoints
     if connection.provider in ['google', 'googledrive', 'gmail']:
-        if not config.google_client_id or not config.google_client_secret:
+        if not config.GOOGLE_CLIENT_ID or not config.GOOGLE_CLIENT_SECRET:
             raise HTTPException(
                 status_code=500,
                 detail="Google OAuth client credentials not configured"
             )
         refresh_url = "https://oauth2.googleapis.com/token"
         refresh_data = {
-            "client_id": config.google_client_id,
-            "client_secret": config.google_client_secret,
+            "client_id": config.GOOGLE_CLIENT_ID,
+            "client_secret": config.GOOGLE_CLIENT_SECRET,
             "refresh_token": connection.refresh_token_enc,
             "grant_type": "refresh_token"
         }
