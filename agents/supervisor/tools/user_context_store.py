@@ -1,5 +1,5 @@
 """
-User context store - stores user_id and connected_account_ids per thread.
+User context store - stores user_id and connection_ids per thread.
 Thread-scoped storage for user credentials from LangGraph context.
 """
 from typing import Dict, Optional, Any
@@ -51,11 +51,8 @@ class UserContextStore:
                 account_id = selection.get("id")
                 logger.info("[UserContextStore] Integration %s - mode: %s, id: %s", integration_type, mode, account_id)
                 
-                # CRITICAL: Check if account_id looks like a Composio connected_account_id (starts with 'ca_')
-                # If not, it might be a workspace GID or other resource ID - skip it
-                if account_id and not account_id.startswith('ca_'):
-                    logger.warning("[UserContextStore] Integration %s has non-Composio ID '%s' (expected ca_* format). Skipping.", integration_type, account_id)
-                    continue
+                # account_id is now OAuthConnection.id (format: "provider:id" or just "id")
+                # No need to validate format - accept any ID
                 
                 if mode == "sandbox" or account_id == "sandbox":
                     # Don't add to connected_accounts - Supervisor will use default/sandbox account
@@ -120,7 +117,7 @@ class UserContextStore:
         Returns:
             dict with:
             - user_id: str (from context or env var fallback)
-            - connected_accounts: Dict[str, str] (maps integration_type -> connected_account_id)
+            - connected_accounts: Dict[str, str] (maps integration_type -> connection_id)
         """
         # Try to get thread_id from context variable (set by worker invocation)
         if thread_id is None:

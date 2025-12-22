@@ -6,8 +6,10 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from tortoise import Tortoise
 
-from src.core.config import logger
-from src.db.config import DB_GENERATE_SCHEMAS, TORTOISE_ORM
+from shared.logger import get_logger
+from shared.database.config import DB_GENERATE_SCHEMAS, TORTOISE_ORM
+
+logger = get_logger("shared.database")
 
 
 async def init_db() -> None:

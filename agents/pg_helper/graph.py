@@ -66,54 +66,6 @@ def compile_graph(workflow: StateGraph):
     # Compile the graph with checkpointer
     compiled_graph = workflow.compile(checkpointer=checkpointer)
     
-    # Configure Langfuse callbacks at graph compilation time
-    # This ensures traces are created even when graph is invoked via HTTP
-    if config.is_langfuse_tracing_enabled and config.langfuse_public_key:
-        try:
-            from langfuse.langchain import CallbackHandler
-            
-            class MetadataCallbackHandler(CallbackHandler):
-                """Custom callback handler that adds metadata to traces."""
-                
-                def __init__(self, *args, metadata=None, **kwargs):
-                    super().__init__(*args, **kwargs)
-                    self.metadata = metadata or {}
-                    self._root_chain_started = False
-                
-                def on_chain_start(self, serialized, inputs, **kwargs):
-                    """Override to add metadata when LangGraph root chain starts."""
-                    result = super().on_chain_start(serialized, inputs, **kwargs)
-                    
-                    parent_run_id = kwargs.get("parent_run_id")
-                    
-                    # Root chain has no parent_run_id
-                    if not self._root_chain_started and parent_run_id is None:
-                        self._root_chain_started = True
-                        try:
-                            from langfuse import get_client, propagate_attributes
-                            langfuse = get_client()
-                            with propagate_attributes(metadata=self.metadata):
-                                langfuse.update_current_trace(metadata=self.metadata)
-                                logger.debug(f"Added metadata to root trace: {self.metadata}")
-                        except Exception as e:
-                            logger.warning(f"Failed to add metadata to root trace: {e}")
-                    
-                    return result
-            
-            langfuse_handler = MetadataCallbackHandler(
-                public_key=config.langfuse_public_key,
-                metadata={"agent": "supervisor"}
-            )
-            
-            compiled_graph = compiled_graph.with_config({
-                "callbacks": [langfuse_handler]
-            })
-            
-            logger.info("Langfuse tracing configured for supervisor agent")
-            
-        except Exception as e:
-            logger.warning(f"Failed to configure Langfuse callbacks: {e}")
-    
     return compiled_graph
 
 

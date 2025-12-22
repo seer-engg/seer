@@ -40,10 +40,6 @@ RequiredSpec = Union[Sequence[str], Callable[[TState], Sequence[str]]]
 _ENV_BY_CONFIG_FIELD = {
     "openai_api_key": "OPENAI_API_KEY",
     "github_token": "GITHUB_TOKEN",
-    "composio_api_key": "COMPOSIO_API_KEY",
-    "langfuse_secret_key": "LANGFUSE_SECRET_KEY",
-    "langfuse_public_key": "LANGFUSE_PUBLIC_KEY",
-    "langfuse_base_url": "LANGFUSE_BASE_URL",
     "tavily_api_key": "TAVILY_API_KEY",
     "database_uri": "DATABASE_URI",
 }

@@ -1,13 +1,13 @@
 import os
 import asyncio
 from typing import Optional, List, Any
-from shared.tools import ComposioMCPClient
 from shared.config import config
 from agents.eval_agent.models import TestExecutionState
 from tool_hub import ToolHub
 from tool_hub.models import Tool, ToolFunction
 from langchain.agents.middleware import wrap_tool_call
 from langchain_core.messages import ToolMessage
+from shared.tools.langchain_adapter import get_langchain_tools_from_registry
 
 # Cache the hub instance to avoid reloading index on every call
 _CACHED_HUB: Optional[ToolHub] = None
@@ -51,10 +51,10 @@ async def get_tool_hub() -> ToolHub:
     
     hub = ToolHub(openai_api_key=openai_key)
 
-
-    # TODO: replace with vector index search
-    tool_service = ComposioMCPClient(["GITHUB", "ASANA"], config.composio_user_id)
-    all_tools = await tool_service.get_tools()
+    # Get tools from registered tool registry
+    # Note: Currently only gmail and model_block are implemented
+    # GitHub and Asana tools need to be implemented as custom tools
+    all_tools = get_langchain_tools_from_registry(user_id=config.user_id)
 
     # 3. Load or Ingest
     if os.path.exists(TOOL_HUB_INDEX_DIR) and os.path.exists(os.path.join(TOOL_HUB_INDEX_DIR, "metadata.json")):

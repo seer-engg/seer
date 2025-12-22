@@ -6,10 +6,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 from langgraph.pregel.remote import RemoteGraph
 from langgraph_sdk import get_sync_client
-from langfuse import Langfuse
-from langfuse.langchain import CallbackHandler
 from agents.codex.state import CodexState
-from agents.eval_agent.constants import LANGFUSE_CLIENT
 from shared.logger import get_logger
 from shared.config import config
 

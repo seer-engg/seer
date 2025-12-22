@@ -75,7 +75,7 @@ class ToolHub:
                 if "function" in t:
                     normalized_tools.append(Tool.from_dict(t))
                 elif "parameters" in t:
-                    # Direct function/action definition (e.g., from Composio's ActionModel)
+                    # Direct function/action definition
                     normalized_tools.append(Tool(function=ToolFunction(**t)))
                 else:
                     try:
@@ -398,7 +398,7 @@ class ToolHub:
             Analyze this tool definition:
             Name: {tool.function.name}
             Description: {tool.function.description}
-            Parameters Schema: EMPTY - schema not provided by Composio
+            Parameters Schema: EMPTY - schema not provided
 
             I need to build a smart retrieval index. Provide the following in JSON format:
             1. "use_cases": List of 3-5 specific user intent questions this tool solves (e.g. "How do I delete a file?").

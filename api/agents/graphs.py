@@ -2,7 +2,7 @@
 from typing import Dict
 from langgraph.graph import StateGraph
 
-from api.checkpointer import get_checkpointer
+from api.agents.checkpointer import get_checkpointer
 from shared.logger import get_logger
 
 logger = get_logger("api.graphs")

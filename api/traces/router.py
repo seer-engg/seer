@@ -2,8 +2,8 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Query
 
-from src.traces.models import TraceDetail, TraceSummary
-from src.traces.services import get_trace_detail, list_traces
+from api.traces.models import TraceDetail, TraceSummary
+from api.traces.services import get_trace_detail, list_traces
 
 
 router = APIRouter(prefix="/api/traces", tags=["traces"])

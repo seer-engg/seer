@@ -20,26 +20,6 @@ async def get_context7_results(owner: str, repo: str, mode: str = 'code', topic:
     return result
 
 @tool
-async def search_composio_documentation(keywords: list[str]) -> str:
-    """
-    Tool to search the Composio documentation for the given keywords. Use When you need to search for any documentation in composio libraries.
-    e.g keywords = ['composio', 'langchain', 'provider']
-    Args:
-        keywords: The keywords to search for.
-    Returns:
-        The result of the search.
-    """
-    OWNER = 'websites'
-    REPO = 'composio_dev'
-    query = ' '.join(keywords)
-    if 'python' not in query:
-        query = f'python {query}'
-
-    result = await get_context7_results(OWNER, REPO, 'code', query)
-    return result
-
-
-@tool
 async def search_langchain_documentation(keywords: list[str]) -> str:
     """
     Tool to search the Langchain documentation for the given keywords. Use When you need to search for any documentation in langchain/langgraph libraries.

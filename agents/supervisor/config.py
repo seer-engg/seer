@@ -14,10 +14,8 @@ load_dotenv()
 # Required environment variables
 _REQUIRED_VARS = {
     "OPENAI_API_KEY": "OpenAI API key for LLM calls",
-    "COMPOSIO_USER_ID": "Composio user ID for tool integration",
     "PINECONE_API_KEY": "Pinecone API key for vector search",
     "PINECONE_INDEX_NAME": "Pinecone index name for tool search",
-    "COMPOSIO_API_KEY": "Composio API key for tool integration",
 }
 
 def _validate_environment():
@@ -41,10 +39,8 @@ _validate_environment()
 
 # Export validated environment variables as module-level constants
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY")  # type: ignore
-COMPOSIO_USER_ID: str = os.getenv("COMPOSIO_USER_ID")  # type: ignore
 PINECONE_API_KEY: str = os.getenv("PINECONE_API_KEY")  # type: ignore
 PINECONE_INDEX_NAME: str = os.getenv("PINECONE_INDEX_NAME")  # type: ignore
-COMPOSIO_API_KEY: str = os.getenv("COMPOSIO_API_KEY")  # type: ignore
 
 def get_env_summary() -> dict:
     """Get a summary of environment variable status (for health checks)."""

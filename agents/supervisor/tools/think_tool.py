@@ -2,7 +2,7 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from agents.supervisor.tools.runtime_tool_store import _runtime_tool_store
-from agents.supervisor.tools.composio_tools import get_available_integrations
+from agents.supervisor.tools.integration_tools import get_available_integrations
 from agents.supervisor.models import ToolDefinition
 from pydantic import BaseModel, Field, create_model
 import re

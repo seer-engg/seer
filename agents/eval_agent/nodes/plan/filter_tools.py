@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from typing import List
 from langchain_openai import ChatOpenAI
 from pydantic import Field
-from shared.tools import ComposioMCPClient
+from shared.tools.registry import get_tools_by_integration
 from shared.config import  config
 import uuid
 from langchain_core.messages import ToolMessage
@@ -28,10 +28,22 @@ async def filter_tools(state: EvalAgentPlannerState) -> dict:
     tool_entries: Dict[str, ToolEntry] = {}
     
     for service in state.context.mcp_services:
-        # TODO: cache all the tools so that we don't need to fetch them every time
-        tool_service = ComposioMCPClient([service.upper()], state.context.user_id)
-        all_tools = await tool_service.get_tools()
-        all_tools = [t for t in all_tools if 'deprecated' not in t.description.lower()]
+        # Get tools from registry by integration type (convert uppercase service name to lowercase)
+        integration_type = service.lower()
+        tools_meta = get_tools_by_integration(integration_type=integration_type)
+        
+        # Convert tool metadata to a format compatible with the filtering logic
+        # Create mock tool objects with name and description attributes
+        class MockTool:
+            def __init__(self, name: str, description: str):
+                self.name = name
+                self.description = description
+        
+        all_tools = [
+            MockTool(name=tool_meta["name"], description=tool_meta.get("description", ""))
+            for tool_meta in tools_meta
+            if 'deprecated' not in tool_meta.get("description", "").lower()
+        ]
         llm = ChatOpenAI(model="gpt-5-mini", reasoning_effort="minimal")
         st = llm.with_structured_output(Task)
         tool_names = [{t.name,t.description} for t in all_tools]

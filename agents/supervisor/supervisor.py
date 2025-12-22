@@ -9,31 +9,11 @@ from langgraph.graph import StateGraph, END, START
 from .state import SupervisorState
 from .tools.spawn_worker import spawn_worker
 from .tools.think_tool import think
-from .tools.composio_tools import get_available_integrations
+from .tools.integration_tools import get_available_integrations
 from .models import WorkerResponse, WorkerStatus
 from .tools.user_context_store import get_user_context_store
   
 logger = logging.getLogger(__name__)
-
-# Langfuse integration (optional)
-try:
-    from langfuse.langchain import CallbackHandler
-    from langfuse import get_client
-    import os
-    
-    # Initialize global Langfuse client if credentials are available
-    # This satisfies @observe decorators in dependencies that expect a client
-    if os.getenv("LANGFUSE_PUBLIC_KEY"):
-        try:
-            _ = get_client()  # Initialize singleton client
-        except Exception:
-            pass  # Client initialization failed, will rely on CallbackHandler only
-    
-    LANGFUSE_AVAILABLE = True
-except ImportError:
-    LANGFUSE_AVAILABLE = False
-    CallbackHandler = None
-    get_client = None
 
 
 @tool
@@ -251,44 +231,19 @@ def create_supervisor():
         # Invoke the agent
         logger.info(f"Invoking Supervisor (Todos: {len(todos)} items)")
         
-        # Extract callbacks from state if available (for Langfuse tracing)
+        # Extract callbacks from state if available
         callbacks = state.get("callbacks", [])
-        
-        # Auto-initialize Langfuse callback if env vars are set and no callbacks provided
-        if not callbacks and LANGFUSE_AVAILABLE and CallbackHandler:
-            import os
-            from langfuse import propagate_attributes
-            langfuse_public = os.getenv("LANGFUSE_PUBLIC_KEY")
-            project_name = os.getenv("PROJECT_NAME", "supervisor-v1")
-            if langfuse_public:
-                try:
-                    langfuse_handler = CallbackHandler(
-                        public_key=langfuse_public
-                    )
-                    callbacks = [langfuse_handler]
-                    logger.info(f"📊 Auto-initialized Langfuse tracing with project_name={project_name}")
-                except Exception as e:
-                    logger.warning(f"Langfuse callback initialization failed: {e}")
-            else:
-                logger.debug("Langfuse env vars not set - skipping tracing")
         
         agent_input = dict(state)
         agent_input["messages"] = messages
         
-        # Pass callbacks and metadata to agent invocation if available
+        # Pass callbacks to agent invocation if available
         invoke_kwargs = {}
         if callbacks:
-            import os
-            from langfuse import propagate_attributes
-            project_name = os.getenv("PROJECT_NAME", "supervisor-v1")
             invoke_kwargs["config"] = {"callbacks": callbacks}
-            logger.debug(f"📊 Passing {len(callbacks)} callback(s) to agent with project_name={project_name}")
-            # Use propagate_attributes to ensure metadata is attached to root trace
-            # This wraps the invocation to propagate metadata to all observations
-            with propagate_attributes(metadata={"project_name": project_name}):
-                result = await agent_runnable.ainvoke(agent_input, **invoke_kwargs)
-        else:
-            result = await agent_runnable.ainvoke(agent_input, **invoke_kwargs)
+            logger.debug(f"📊 Passing {len(callbacks)} callback(s) to agent")
+        
+        result = await agent_runnable.ainvoke(agent_input, **invoke_kwargs)
         
         # DEBUG: Log agent response
         agent_messages = result.get("messages", [])

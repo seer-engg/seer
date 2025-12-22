@@ -41,56 +41,6 @@ async def prepare_run_context(state: EvalAgentState) -> dict:
         "latest_results": [],
     }
 
-async def _upload_to_langfuse(
-    dataset_name: str,
-    experiment_name: str,
-    results_payload: List[ExperimentResultContext],
-) -> str:
-    """Upload experiment results to Langfuse."""
-    from langfuse import Langfuse
-    
-    langfuse = Langfuse(
-        secret_key=config.langfuse_secret_key,
-        host=config.langfuse_base_url
-    )
-
-    logger.info("run.upload: uploading experiment to Langfuse: dataset=%s experiment=%s", 
-                dataset_name, experiment_name)
-
-    # Get or create dataset
-    try:
-        langfuse_dataset = await asyncio.to_thread(langfuse.get_dataset, dataset_name)
-    except Exception:
-        # Dataset doesn't exist, create it
-        langfuse_dataset = await asyncio.to_thread(
-            langfuse.create_dataset,
-            name=dataset_name,
-            description="Evaluation dataset created by Seer eval_agent"
-        )
-
-    # Create dataset items for each result (if they don't exist)
-    # Note: Langfuse uses upsert by ID, so we'll use example_id as the item ID
-    for res in results_payload:
-        item_id = res.dataset_example.example_id
-        try:
-            await asyncio.to_thread(
-                langfuse.create_dataset_item,
-                id=item_id,
-                dataset_name=dataset_name,
-                input={"question": res.dataset_example.input_message},
-                expected_output={"answer": json.dumps(res.dataset_example.expected_output.model_dump())},
-                metadata={"example_id": item_id}
-            )
-        except Exception as e:
-            # Item might already exist, that's okay
-            logger.debug("Dataset item %s might already exist: %s", item_id, str(e))
-
-    logger.info("run.upload: Successfully created dataset and prepared experiment run in Langfuse")
-    
-    # Return the normalized dataset name from Langfuse
-    return langfuse_dataset.name if hasattr(langfuse_dataset, 'name') else dataset_name
-
-
 async def _upload_to_mlflow(
     dataset_name: str,
     experiment_name: str,
@@ -153,7 +103,7 @@ async def _upload_to_mlflow(
 
 
 async def upload_run_results(state: EvalAgentState) -> dict:
-    """Upload evaluation results to the configured tracing provider (Langfuse or MLflow)."""
+    """Upload evaluation results to MLflow."""
     experiment = state.active_experiment
     dataset = state.dataset_context
 
@@ -172,20 +122,8 @@ async def upload_run_results(state: EvalAgentState) -> dict:
         experiment.mean_score = round(sum(res.score for res in results_payload) / len(results_payload), 5)
     mean_score = experiment.mean_score
 
-    # Upload to the active tracing provider
-    if config.is_langfuse_tracing_enabled:
-        try:
-            updated_dataset_name = await _upload_to_langfuse(
-                dataset.dataset_name,
-                experiment.experiment_name,
-                results_payload,
-            )
-            dataset.dataset_name = updated_dataset_name
-        except Exception as e:
-            logger.error("run.upload: Failed to upload to Langfuse: %s", str(e))
-            raise RuntimeError(f"Langfuse upload failed: {str(e)}")
-            
-    elif config.is_mlflow_tracing_enabled:
+    # Upload to MLflow if configured
+    if config.is_mlflow_tracing_enabled:
         try:
             await _upload_to_mlflow(
                 dataset.dataset_name,
@@ -197,7 +135,7 @@ async def upload_run_results(state: EvalAgentState) -> dict:
             logger.error("run.upload: Failed to upload to MLflow: %s", str(e))
             raise RuntimeError(f"MLflow upload failed: {str(e)}")
     else:
-        logger.warning("run.upload: No tracing provider configured, skipping upload")
+        logger.warning("run.upload: MLflow not configured, skipping upload")
         return {
             "dataset_context": dataset,
             "active_experiment": experiment,
@@ -210,7 +148,7 @@ async def upload_run_results(state: EvalAgentState) -> dict:
         "latest_score": mean_score,
         "failed_tests": len(failed_cases),
         "codex_handoff_status": "pending",
-        "tracing_provider": config.active_tracing_provider,
+        "tracing_provider": "mlflow",
     }
 
     tool_message = ToolMessage(content=json.dumps(tool_payload), tool_call_id="run_node")

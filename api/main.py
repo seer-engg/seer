@@ -10,12 +10,22 @@ Usage:
 """
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.sessions import SessionMiddleware
+import os
 from shared.logger import get_logger
+from shared.config import config
 from api.router import router
+from api.integrations.router import router as integrations_router
+from api.tools.router import router as tools_router
 from api.agents.checkpointer import checkpointer_lifespan
 from shared.database import db_lifespan
+
+# Import tools to register them
+from shared.tools import gmail, model_block  # noqa: F401
+
 logger = get_logger("api.main")
 
 
@@ -41,15 +51,70 @@ app = FastAPI(
 )
 
 app.include_router(router)
+app.include_router(integrations_router)
+app.include_router(tools_router)
 
-# CORS middleware for development
+# Authentication middleware - register BEFORE CORS to ensure user is set
+if config.is_cloud_mode:
+    if not config.is_clerk_configured:
+        raise ValueError("Cloud mode requires Clerk configuration. Set CLERK_JWKS_URL and CLERK_ISSUER environment variables.")
+    logger.info("🔐 Cloud mode: Using Clerk authentication")
+    from api.middleware.auth import ClerkAuthMiddleware
+    
+    app.add_middleware(
+        ClerkAuthMiddleware,
+        jwks_url=config.clerk_jwks_url,
+        issuer=config.clerk_issuer,
+        audience=config.clerk_audience.split(",") if config.clerk_audience else None,
+        allow_unauthenticated_paths=[
+            "/health",
+            "/ok",
+            "/info",
+            "/api/tools",  # Tools endpoints don't require auth
+            "/api/integrations",  # OAuth endpoints handle their own auth
+        ],
+    )
+else:
+    from api.middleware.auth import AddDefaultUserMiddleware
+    app.add_middleware(AddDefaultUserMiddleware)
+    logger.info("🔧 Self-hosted mode: Authentication disabled")
+
+# CORS middleware for development - must be AFTER auth middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
+app.add_middleware(SessionMiddleware, secret_key=os.getenv("SECRET_KEY", "dev_secret_key"))
+
+# Exception handler to ensure CORS headers on errors
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Global exception handler that ensures CORS headers are included."""
+    error_logger = get_logger("api.main.errors")
+    error_logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    
+    # Create error response with CORS headers
+    response = JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
+    
+    # Add CORS headers manually
+    origin = request.headers.get("origin")
+    if origin:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+    else:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+    
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    
+    return response
 
 
 # =============================================================================
@@ -60,6 +125,30 @@ app.add_middleware(
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+
+@app.get("/ok", tags=["System"])
+async def ok_check():
+    """
+    LangGraph Server health check endpoint.
+    Required by @langchain/langgraph-sdk for server compatibility.
+    Returns {"ok": true} as per LangGraph Server API specification.
+    """
+    return {"ok": True}
+
+
+@app.get("/info", tags=["System"])
+async def info():
+    """
+    LangGraph Server info endpoint.
+    Used by frontend to verify server connectivity.
+    Returns basic server information.
+    """
+    return {
+        "status": "ok",
+        "server": "Seer LangGraph API",
+        "version": "1.0.0"
+    }
 
 
 

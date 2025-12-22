@@ -1,13 +1,14 @@
-# Uses Langfuse API for fetching thread timelines
 from __future__ import annotations
-from datetime import datetime
-from typing import Dict, List, Any
+from datetime import datetime, timezone
+from typing import Dict, List, Any, Optional
 import json
 import os
 import asyncio
-import random
-import httpx
+import mlflow
 from shared.config import config
+from shared.logger import get_logger
+
+logger = get_logger("codex.format_thread")
 
 MAX_IO_CHARS = 10000  # keep console readable
 
@@ -42,174 +43,220 @@ def _short(obj:dict):
     return (s[:MAX_IO_CHARS] + "…") if s and len(s) > MAX_IO_CHARS else s
 
 
-async def _fetch_langfuse_traces(
+async def _fetch_mlflow_traces(
     session_id: str | None = None,
     trace_id: str | None = None,
     project_name: str | None = None,
     limit: int = 1000
-) -> List[Dict[str, Any]]:
-    """Fetch traces from Langfuse API"""
-    if not config.langfuse_secret_key:
-        raise ValueError("LANGFUSE_SECRET_KEY not configured")
+) -> List[Any]:
+    """
+    Fetch traces from MLflow using the MLflow SDK.
     
-    headers = {
-        "Authorization": f"Bearer {config.langfuse_secret_key}",
-        "Content-Type": "application/json"
-    }
+    Args:
+        session_id: Thread/session ID to filter by (maps to tags.session_id)
+        trace_id: Specific trace ID to fetch
+        project_name: Project name for filtering (can use experiment name or tags.project_name)
+        limit: Maximum number of traces to return
     
-    filter_dict: Dict[str, Any] = {}
+    Returns:
+        List of MLflow Trace objects
+    """
+    if not config.mlflow_tracking_uri:
+        raise ValueError("MLFLOW_TRACKING_URI not configured")
+    
+    # Set MLflow tracking URI
+    mlflow.set_tracking_uri(config.mlflow_tracking_uri)
+    
+    # Build filter string for MLflow search
+    filter_parts = []
+    
     if session_id:
-        filter_dict["sessionId"] = {"$eq": session_id}
+        filter_parts.append(f"tags.session_id = '{session_id}'")
+    
     if trace_id:
-        filter_dict["id"] = {"$eq": trace_id}
+        # For specific trace_id, use get_trace instead of search
+        try:
+            trace = mlflow.get_trace(trace_id)
+            return [trace] if trace else []
+        except Exception as e:
+            logger.warning(f"Failed to get trace by ID {trace_id}: {e}")
+            # Fall back to search with trace_id filter
+            filter_parts.append(f"trace_id = '{trace_id}'")
+    
     if project_name:
-        # Filter by metadata.project_name for metadata-based filtering
-        filter_dict["metadata"] = {"project_name": {"$eq": project_name}}
+        # Try filtering by experiment name first, then fall back to tags
+        try:
+            experiment = mlflow.get_experiment_by_name(project_name)
+            if experiment:
+                experiment_ids = [experiment.experiment_id]
+            else:
+                # Fall back to tag filtering
+                filter_parts.append(f"tags.project_name = '{project_name}'")
+                experiment_ids = None
+        except Exception:
+            # Fall back to tag filtering
+            filter_parts.append(f"tags.project_name = '{project_name}'")
+            experiment_ids = None
+    else:
+        experiment_ids = None
     
-    params = {"limit": limit, "page": 1}
-    if filter_dict:
-        import json as json_lib
-        params["filter"] = json_lib.dumps(filter_dict)
+    filter_string = " AND ".join(filter_parts) if filter_parts else None
     
-    delay_seconds = 0.5
-    max_attempts = 6
-    
-    async with httpx.AsyncClient() as client:
-        for attempt in range(max_attempts):
-            try:
-                response = await client.get(
-                    f"{config.langfuse_base_url}/api/public/traces",
-                    headers=headers,
-                    params=params,
-                    timeout=30.0
-                )
-                
-                if response.status_code == 429:  # Rate limited
-                    if attempt < max_attempts - 1:
-                        await asyncio.sleep(delay_seconds + random.random() * 0.25)
-                        delay_seconds *= 2
-                        continue
-                
-                response.raise_for_status()
-                data = response.json()
-                return data.get("traces", [])
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 429 and attempt < max_attempts - 1:
-                    await asyncio.sleep(delay_seconds + random.random() * 0.25)
-                    delay_seconds *= 2
-                    continue
-                raise
-            except Exception as e:
-                if attempt == max_attempts - 1:
-                    raise
-                await asyncio.sleep(delay_seconds + random.random() * 0.25)
-                delay_seconds *= 2
+    # Search traces using MLflow SDK
+    try:
+        traces = mlflow.search_traces(
+            experiment_ids=experiment_ids,
+            filter_string=filter_string,
+            max_results=limit,
+            return_type="list"  # Return Trace objects, not DataFrame
+        )
+        return traces
+    except Exception as e:
+        logger.error(f"Error searching MLflow traces: {e}", exc_info=True)
+        raise ValueError(f"Failed to fetch traces from MLflow: {str(e)}")
 
 
 async def fetch_thread_runs(thread_id: str, project_name: str | None = None):
     """
     Returns a dict: {run_id: run} and a parent->children index for the whole thread.
+    Uses MLflow traces which contain nested spans.
     """
-    if project_name is None:
-        project_name = config.langfuse_project_name
-        if not project_name:
-            raise ValueError(
-                "Langfuse project not set. Pass project_name or set LANGFUSE_PROJECT_NAME."
-            )
+    if not config.mlflow_tracking_uri:
+        raise ValueError("MLFLOW_TRACKING_URI not configured. Set MLFLOW_TRACKING_URI environment variable.")
 
-    # Fetch traces by session_id (thread_id maps to session_id in Langfuse)
-    root_traces = await _fetch_langfuse_traces(
+    # Fetch traces by session_id (thread_id maps to tags.session_id in MLflow)
+    root_traces = await _fetch_mlflow_traces(
         session_id=thread_id,
         project_name=project_name,
         limit=1000
     )
 
-    # Fetch observations for each trace to build the tree
+    # Build runs dict and children index from MLflow traces and spans
     all_runs: Dict[str, Dict[str, Any]] = {}
     children_index: Dict[str, List[str]] = {}
     root_ids: List[str] = []
 
-    if not config.langfuse_secret_key:
-        raise ValueError("LANGFUSE_SECRET_KEY not configured")
-    
-    headers = {
-        "Authorization": f"Bearer {config.langfuse_secret_key}",
-        "Content-Type": "application/json"
-    }
-
-    async with httpx.AsyncClient() as client:
-        for trace in root_traces:
-            trace_id = trace.get("id", "")
+    for trace in root_traces:
+        try:
+            trace_info = trace.info
+            trace_id = trace_info.trace_id
+            
             if not trace_id:
+                logger.warning("Trace missing trace_id, skipping")
                 continue
             
             root_ids.append(trace_id)
             
-            # Fetch observations for this trace
-            try:
-                obs_response = await client.get(
-                    f"{config.langfuse_base_url}/api/public/traces/{trace_id}/observations",
-                    headers=headers,
-                    params={"limit": 1000},
-                    timeout=30.0
-                )
+            # Map MLflow status to our format
+            status_map = {
+                "OK": "success",
+                "ERROR": "error",
+                "IN_PROGRESS": "pending",
+            }
+            status = status_map.get(trace_info.status, "pending")
+            
+            # Convert milliseconds to datetime
+            start_time = None
+            if trace_info.start_time_ms:
+                start_time = datetime.fromtimestamp(trace_info.start_time_ms / 1000, tz=timezone.utc)
+            
+            end_time = None
+            if trace_info.end_time_ms:
+                end_time = datetime.fromtimestamp(trace_info.end_time_ms / 1000, tz=timezone.utc)
+            
+            # Extract inputs/outputs from trace info
+            inputs = trace_info.inputs if hasattr(trace_info, 'inputs') else None
+            outputs = trace_info.outputs if hasattr(trace_info, 'outputs') else None
+            error = trace_info.exception if hasattr(trace_info, 'exception') else None
+            
+            # Get trace name from request_id or trace_name
+            trace_name = getattr(trace_info, 'request_id', None) or getattr(trace_info, 'trace_name', None) or "Unnamed"
+            
+            # Add trace as root run
+            all_runs[trace_id] = {
+                "id": trace_id,
+                "run_type": "trace",
+                "name": trace_name,
+                "start_time": start_time,
+                "end_time": end_time,
+                "duration": (trace_info.end_time_ms - trace_info.start_time_ms) / 1000 if (trace_info.end_time_ms and trace_info.start_time_ms) else None,
+                "status": status,
+                "inputs": inputs,
+                "outputs": outputs,
+                "error": str(error) if error else None,
+                "parent_run_id": None,
+            }
+            children_index[trace_id] = []
+            
+            # Process spans (nested runs)
+            if hasattr(trace, 'spans') and trace.spans:
+                # Build a map of span_id -> span for quick lookup
+                span_map: Dict[str, Any] = {}
+                for span in trace.spans:
+                    span_map[span.span_id] = span
                 
-                if obs_response.status_code == 200:
-                    obs_data = obs_response.json()
-                    observations = obs_data.get("observations", [])
+                # Process spans and build parent-child relationships
+                for span in trace.spans:
+                    span_id = span.span_id
+                    if not span_id:
+                        continue
                     
-                    # Add trace as root run
-                    all_runs[trace_id] = {
-                        "id": trace_id,
-                        "run_type": "trace",
-                        "name": trace.get("name", "Unnamed"),
-                        "start_time": datetime.fromisoformat(trace["startTime"].replace('Z', '+00:00')) if trace.get("startTime") else None,
-                        "end_time": datetime.fromisoformat(trace["endTime"].replace('Z', '+00:00')) if trace.get("endTime") else None,
-                        "inputs": trace.get("input"),
-                        "outputs": trace.get("output"),
-                        "error": trace.get("error"),
-                        "parent_run_id": None,
+                    # Determine parent: if parent_span_id exists, use it; otherwise parent is trace
+                    parent_span_id = getattr(span, 'parent_span_id', None)
+                    parent_id = parent_span_id if parent_span_id else trace_id
+                    
+                    # Map span status
+                    span_status = status_map.get(getattr(span, 'status', 'OK'), "pending")
+                    
+                    # Convert span timestamps
+                    span_start_time = None
+                    if hasattr(span, 'start_time_ms') and span.start_time_ms:
+                        span_start_time = datetime.fromtimestamp(span.start_time_ms / 1000, tz=timezone.utc)
+                    
+                    span_end_time = None
+                    if hasattr(span, 'end_time_ms') and span.end_time_ms:
+                        span_end_time = datetime.fromtimestamp(span.end_time_ms / 1000, tz=timezone.utc)
+                    
+                    # Get span type (e.g., "LLM", "TOOL", "CHAIN", etc.)
+                    span_type = getattr(span, 'span_type', 'span').lower()
+                    
+                    # Extract inputs/outputs from span
+                    span_inputs = getattr(span, 'inputs', None)
+                    span_outputs = getattr(span, 'outputs', None)
+                    span_error = getattr(span, 'exception', None)
+                    
+                    span_name = getattr(span, 'name', 'Unnamed')
+                    
+                    # Calculate duration
+                    span_duration = None
+                    if hasattr(span, 'start_time_ms') and hasattr(span, 'end_time_ms'):
+                        if span.start_time_ms and span.end_time_ms:
+                            span_duration = (span.end_time_ms - span.start_time_ms) / 1000
+                    
+                    # Add span as child run
+                    all_runs[span_id] = {
+                        "id": span_id,
+                        "run_type": span_type,
+                        "name": span_name,
+                        "start_time": span_start_time,
+                        "end_time": span_end_time,
+                        "duration": span_duration,
+                        "status": span_status,
+                        "inputs": span_inputs,
+                        "outputs": span_outputs,
+                        "error": str(span_error) if span_error else None,
+                        "parent_run_id": parent_id,
                     }
-                    children_index[trace_id] = []
                     
-                    # Add observations as child runs
-                    for obs in observations:
-                        obs_id = obs.get("id", "")
-                        if not obs_id:
-                            continue
-                        
-                        parent_id = obs.get("parentObservationId") or trace_id
-                        
-                        all_runs[obs_id] = {
-                            "id": obs_id,
-                            "run_type": obs.get("type", "span").lower(),
-                            "name": obs.get("name", "Unnamed"),
-                            "start_time": datetime.fromisoformat(obs["startTime"].replace('Z', '+00:00')) if obs.get("startTime") else None,
-                            "end_time": datetime.fromisoformat(obs["endTime"].replace('Z', '+00:00')) if obs.get("endTime") else None,
-                            "inputs": obs.get("input"),
-                            "outputs": obs.get("output"),
-                            "error": obs.get("error"),
-                            "parent_run_id": parent_id,
-                        }
-                        
-                        if parent_id not in children_index:
-                            children_index[parent_id] = []
-                        children_index[parent_id].append(obs_id)
-                        children_index.setdefault(obs_id, [])
-            except Exception as e:
-                # If we can't fetch observations, at least include the trace
-                all_runs[trace_id] = {
-                    "id": trace_id,
-                    "run_type": "trace",
-                    "name": trace.get("name", "Unnamed"),
-                    "start_time": datetime.fromisoformat(trace["startTime"].replace('Z', '+00:00')) if trace.get("startTime") else None,
-                    "end_time": datetime.fromisoformat(trace["endTime"].replace('Z', '+00:00')) if trace.get("endTime") else None,
-                    "inputs": trace.get("input"),
-                    "outputs": trace.get("output"),
-                    "error": trace.get("error"),
-                    "parent_run_id": None,
-                }
-                children_index[trace_id] = []
+                    # Update children index
+                    if parent_id not in children_index:
+                        children_index[parent_id] = []
+                    children_index[parent_id].append(span_id)
+                    children_index.setdefault(span_id, [])
+        except Exception as e:
+            logger.error(f"Error processing MLflow trace: {e}", exc_info=True)
+            # Continue with next trace even if one fails
+            continue
 
     return all_runs, children_index, root_ids
 
