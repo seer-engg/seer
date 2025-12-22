@@ -979,7 +979,7 @@ def dev(frontend_url: str, backend_url: str, no_browser: bool, rebuild: bool):
         try:
             # Stop and remove containers
             subprocess.run(
-                ["docker-compose", "down"],
+                ["docker", "compose", "down"],
                 cwd=project_root,
                 capture_output=True,
                 text=True,
@@ -995,7 +995,7 @@ def dev(frontend_url: str, backend_url: str, no_browser: bool, rebuild: bool):
         # Always use --build to ensure image is rebuilt if Dockerfile or dependencies changed
         # Volume mount ensures code changes don't require rebuild
         result = subprocess.run(
-            ["docker-compose", "up", "-d", "--build"],
+            ["docker", "compose", "up", "-d", "--build"],
             cwd=project_root,
             capture_output=True,
             text=True,
@@ -1039,7 +1039,7 @@ def dev(frontend_url: str, backend_url: str, no_browser: bool, rebuild: bool):
         console.print("[bold red]❌ Backend server failed to start[/bold red]")
         console.print("[yellow]Checking logs...[/yellow]")
         subprocess.run(
-            ["docker-compose", "logs", "langgraph-server", "--tail=50"],
+            ["docker", "compose", "logs", "langgraph-server", "--tail=50"],
             cwd=project_root,
         )
         sys.exit(1)
@@ -1084,8 +1084,8 @@ def dev(frontend_url: str, backend_url: str, no_browser: bool, rebuild: bool):
         console.print(f"[bold]{workflow_url}[/bold]")
     
     console.print()
-    console.print("[dim]📝 To view logs: docker-compose logs -f[/dim]")
-    console.print("[dim]🛑 To stop: docker-compose down[/dim]")
+    console.print("[dim]📝 To view logs: docker compose logs -f[/dim]")
+    console.print("[dim]🛑 To stop: docker compose down[/dim]")
 
 
 def main():
