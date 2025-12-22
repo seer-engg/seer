@@ -25,7 +25,7 @@ async def connect(
     provider: str,
     user_id: str = Query(...),
     redirect_to: str = Query(None),
-    scope: str = Query(None),  # OAuth scope from frontend (closed source)
+    scope: str = Query(...),  # OAuth scope from frontend (REQUIRED - frontend controls scopes)
 ):
     """
     Start OAuth flow for a provider.
@@ -34,36 +34,36 @@ async def connect(
         provider: Provider name (google, github, googledrive, gmail)
         user_id: User ID
         redirect_to: Redirect URL after auth
-        scope: OAuth scope from frontend (CRITICAL: frontend validates and passes scope)
+        scope: OAuth scope from frontend (REQUIRED - frontend controls which scopes to request)
+    
+    Note:
+        Frontend must always pass scope parameter. This ensures frontend controls
+        which permissions are requested (read-only is core differentiation).
     """
     if provider not in ['google', 'github', 'googledrive', 'gmail']:
         raise HTTPException(status_code=400, detail="Unsupported provider")
+    
+    if not scope:
+        raise HTTPException(status_code=400, detail="scope parameter is required. Frontend must specify OAuth scopes.")
     
     real_provider = 'google' if provider in ['googledrive', 'gmail'] else provider
     
     redirect_uri = request.url_for('auth_callback', provider=provider)
     
-    # Use scope from frontend if provided, otherwise use defaults
-    # CRITICAL: Frontend (closed source) validates scopes, backend trusts frontend
-    if not scope:
-        if provider == 'googledrive':
-            scope = 'openid email profile https://www.googleapis.com/auth/drive.readonly'
-        elif provider == 'gmail':
-            scope = 'openid email profile https://www.googleapis.com/auth/gmail.readonly'
-    
-    # Store user_id and final redirect in state
+    # Store user_id, scope, and final redirect in state
+    # Scope is stored so we can save it when token is received
     state_data = {
         'user_id': user_id,
         'redirect_to': redirect_to or f"{FRONTEND_URL}/settings/integrations",
-        'original_provider': provider
+        'original_provider': provider,
+        'requested_scope': scope  # Store requested scope to save in callback
     }
     
     state = encode_state(state_data)
     
     client = oauth.create_client(real_provider)
-    kwargs = {'state': state}
-    if scope:
-        kwargs['scope'] = scope
+    # Always pass scope from frontend - no defaults
+    kwargs = {'state': state, 'scope': scope}
         
     return await client.authorize_redirect(request, redirect_uri, **kwargs)
 
@@ -92,6 +92,7 @@ async def auth_callback(request: Request, provider: str):
         state_data = decode_state(state)
         user_id = state_data.get('user_id')
         redirect_to = state_data.get('redirect_to')
+        requested_scope = state_data.get('requested_scope')  # Get requested scope from state
     except:
         raise HTTPException(status_code=400, detail="Invalid state")
     
@@ -99,7 +100,7 @@ async def auth_callback(request: Request, provider: str):
         raise HTTPException(status_code=400, detail="Missing user_id in state")
         
     # Get user profile
-    if provider == 'google':
+    if provider == 'google' or provider in ['googledrive', 'gmail']:
         user_info = await client.parse_id_token(request, token)
         # Or fetch userinfo endpoint if needed
         # resp = await client.get('https://www.googleapis.com/oauth2/v3/userinfo', token=token)
@@ -110,8 +111,12 @@ async def auth_callback(request: Request, provider: str):
         user_info = resp.json()
     else:
         user_info = {}
-        
-    await store_oauth_connection(user_id, provider, token, user_info)
+    
+    # Extract granted scopes from token response
+    # Token may contain 'scope' field (space-separated) or we use requested_scope
+    granted_scopes = token.get('scope') or requested_scope or ''
+    
+    await store_oauth_connection(user_id, provider, token, user_info, granted_scopes)
     
     return RedirectResponse(url=f"{redirect_to}?connected={provider}")
 

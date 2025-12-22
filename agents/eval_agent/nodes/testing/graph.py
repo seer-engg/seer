@@ -19,7 +19,6 @@ def build_testing_subgraph():
             subgraph_name="testing",
             required=lambda state: (
                 ["openai_api_key", "github_token"]
-                + (["composio_api_key"] if getattr(state.context, "mcp_services", []) else [])
             ),
         ),
     )

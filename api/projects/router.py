@@ -4,8 +4,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Response, status, Request
 
-from src.projects import services
-from src.projects.models import (
+from api.projects import services
+from api.projects.models import (
     ProjectCreate,
     ProjectListResponse,
     ProjectPublic,

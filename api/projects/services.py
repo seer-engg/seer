@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from tortoise.exceptions import DoesNotExist, IntegrityError
 
-from src.projects.models import Project, ProjectCreate, ProjectUpdate
+from api.projects.models import Project, ProjectCreate, ProjectUpdate
 
 
 async def list_projects() -> List[Project]:

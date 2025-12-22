@@ -11,7 +11,7 @@ Usage:
         ...
 """
 import os
-from typing import Optional, Dict, Any, Literal
+from typing import Optional, Dict, Any
 from pydantic import Field, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -35,8 +35,6 @@ class SeerConfig(BaseSettings):
     # ============================================================================
     
     openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key for LLM and embeddings")
-    langfuse_secret_key: Optional[str] = Field(default=None, description="Langfuse secret key for API access")
-    langfuse_public_key: Optional[str] = Field(default=None, description="Langfuse public key for SDK (optional)")
     tavily_api_key: Optional[str] = Field(default=None, description="Tavily API key for web search")
     github_token: Optional[str] = Field(default=None, description="GitHub token for sandbox provisioning")
     CONTEXT7_API_KEY: Optional[str] = Field(default=None, description="Context7 API key for MCP tools")
@@ -56,7 +54,6 @@ class SeerConfig(BaseSettings):
     # Feature flags
     target_agent_context_level: int = Field(default=0, ge=0, le=3, description="Context level for target agent messages: 0=minimal, 1=system_goal, 2=system_goal+action, 3=full_context")
     
-    langfuse_project_name: str = Field(default="target_agent", description="Langfuse project name for target agent")
     project_name: str = Field(default="eval-v1", description="Project name for metadata filtering (used in eval agent trace metadata)")
     codex_project_name: str = Field(default="codex-v1", description="Project name for metadata filtering (used in codex agent trace metadata)")
 
@@ -129,14 +126,11 @@ class SeerConfig(BaseSettings):
     # MCP (Model Context Protocol) Configuration
     # ============================================================================
     
-    # Composio configuration
-    composio_api_key: Optional[str] = Field(default=None, description="Composio API key (if required)")
-    
-    # ============================================================================
-    # Langfuse Configuration
-    # ============================================================================
-    
-    langfuse_base_url: str = Field(default="http://localhost:3000", description="Langfuse host URL (self-hosted instance)")
+    # OAuth Client Credentials (for token refresh)
+    google_client_id: Optional[str] = Field(default=None, description="Google OAuth client ID")
+    google_client_secret: Optional[str] = Field(default=None, description="Google OAuth client secret")
+    github_client_id: Optional[str] = Field(default=None, description="GitHub OAuth client ID")
+    github_client_secret: Optional[str] = Field(default=None, description="GitHub OAuth client secret")
     
     # ============================================================================
     # MLflow Configuration
@@ -146,21 +140,27 @@ class SeerConfig(BaseSettings):
     mlflow_experiment_name: Optional[str] = Field(default=None, description="MLflow experiment name for organizing runs")
     
     # ============================================================================
-    # Tracing Provider Configuration
-    # ============================================================================
-    
-    tracing_provider: Optional[Literal["langfuse", "mlflow"]] = Field(
-        default=None, 
-        description="Tracing provider to use: 'langfuse' or 'mlflow'. If not set, auto-detected from env vars. Only one can be active."
-    )
-    
-    # ============================================================================
     # Asana Configuration
     # ============================================================================
     
     asana_workspace_id: Optional[str] = Field(default=None, description="Asana workspace ID")
     asana_team_gid: Optional[str] = Field(default=None, description="Asana default team GID")
     asana_project_id: Optional[str] = Field(default=None, description="Asana project ID to reuse (for free plans without teams)")
+    
+    # ============================================================================
+    # Deployment Mode Configuration
+    # ============================================================================
+    
+    seer_mode: str = Field(default="self-hosted", description="Deployment mode: 'self-hosted' or 'cloud'")
+    
+    # ============================================================================
+    # Clerk Authentication Configuration
+    # ============================================================================
+    
+    clerk_jwks_url: Optional[str] = Field(default=None, description="Clerk JWKS URL for JWT verification")
+    clerk_issuer: Optional[str] = Field(default=None, description="Clerk JWT issuer (e.g., https://clerk.your-domain.com)")
+    clerk_audience: Optional[str] = Field(default=None, description="Clerk JWT audience (e.g., ['api.your-domain.com'])")
+    
     # ============================================================================
     # Computed Properties
     # ============================================================================
@@ -178,90 +178,33 @@ class SeerConfig(BaseSettings):
         envs: Dict[str, Any] = {}
         if self.openai_api_key:
             envs["OPENAI_API_KEY"] = self.openai_api_key
-        if self.composio_api_key:
-            envs["COMPOSIO_API_KEY"] = self.composio_api_key
-        # Add Langfuse environment variables if configured
-        if self.langfuse_secret_key:
-            envs['LANGFUSE_SECRET_KEY'] = self.langfuse_secret_key
-        if self.langfuse_public_key:
-            envs['LANGFUSE_PUBLIC_KEY'] = self.langfuse_public_key
-        if self.langfuse_base_url:
-            envs['LANGFUSE_BASE_URL'] = self.langfuse_base_url
-        if self.langfuse_project_name:
-            envs['LANGFUSE_PROJECT_NAME'] = self.langfuse_project_name
         return envs
 
-    
-    @property
-    def is_langfuse_configured(self) -> bool:
-        """Check if Langfuse is configured."""
-        return self.langfuse_secret_key is not None and self.langfuse_base_url is not None
     
     @property
     def is_mlflow_configured(self) -> bool:
         """Check if MLflow is configured."""
         return self.mlflow_tracking_uri is not None
     
-    @computed_field
-    @property
-    def active_tracing_provider(self) -> Optional[Literal["langfuse", "mlflow"]]:
-        """
-        Get the active tracing provider.
-        
-        Returns the explicitly set tracing_provider, or auto-detects based on 
-        configured env vars. Returns None if no tracing is configured.
-        """
-        if self.tracing_provider:
-            return self.tracing_provider
-        
-        # Auto-detect based on configured env vars
-        if self.is_langfuse_configured:
-            return "langfuse"
-        if self.is_mlflow_configured:
-            return "mlflow"
-        return None
-    
-    @property
-    def is_langfuse_tracing_enabled(self) -> bool:
-        """Check if Langfuse tracing is enabled."""
-        return self.active_tracing_provider == "langfuse"
-    
     @property
     def is_mlflow_tracing_enabled(self) -> bool:
         """Check if MLflow tracing is enabled."""
-        return self.active_tracing_provider == "mlflow"
+        return self.is_mlflow_configured
     
-    @model_validator(mode="after")
-    def validate_tracing_provider(self) -> "SeerConfig":
-        """
-        Validate that only one tracing provider is configured.
-        
-        Raises:
-            ValueError: If both Langfuse and MLflow are configured without 
-                        explicitly setting tracing_provider to choose one.
-        """
-        langfuse_configured = self.langfuse_secret_key is not None
-        mlflow_configured = self.mlflow_tracking_uri is not None
-        
-        if langfuse_configured and mlflow_configured:
-            if self.tracing_provider is None:
-                raise ValueError(
-                    "Both Langfuse and MLflow tracing are configured. "
-                    "Set TRACING_PROVIDER='langfuse' or TRACING_PROVIDER='mlflow' "
-                    "to explicitly choose one tracing provider."
-                )
-        
-        # Validate that if tracing_provider is set, the corresponding config exists
-        if self.tracing_provider == "langfuse" and not langfuse_configured:
-            raise ValueError(
-                "TRACING_PROVIDER is set to 'langfuse' but LANGFUSE_SECRET_KEY is not configured."
-            )
-        if self.tracing_provider == "mlflow" and not mlflow_configured:
-            raise ValueError(
-                "TRACING_PROVIDER is set to 'mlflow' but MLFLOW_TRACKING_URI is not configured."
-            )
-        
-        return self
+    @property
+    def is_cloud_mode(self) -> bool:
+        """Check if running in cloud mode."""
+        return self.seer_mode == "cloud"
+    
+    @property
+    def is_self_hosted(self) -> bool:
+        """Check if running in self-hosted mode."""
+        return self.seer_mode == "self-hosted"
+    
+    @property
+    def is_clerk_configured(self) -> bool:
+        """Check if Clerk authentication is configured."""
+        return self.clerk_jwks_url is not None and self.clerk_issuer is not None
 
 # ============================================================================
 # Global Config Instance

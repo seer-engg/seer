@@ -6,6 +6,7 @@ from datetime import datetime
 
 from fastapi import HTTPException
 from shared.logger import get_logger
+from shared.config import config
 
 from .models import (
     Workflow,
@@ -22,14 +23,14 @@ logger = get_logger("api.workflows.services")
 
 
 async def create_workflow(
-    user_id: str,
+    user_id: Optional[str],
     payload: WorkflowCreate,
 ) -> Workflow:
     """
     Create a new workflow.
     
     Args:
-        user_id: User ID from auth
+        user_id: User ID from auth (None in self-hosted mode)
         payload: Workflow creation payload
         
     Returns:
@@ -39,11 +40,16 @@ async def create_workflow(
         # Validate workflow graph
         validate_workflow_graph(payload.graph_data)
         
+        # In self-hosted mode, user_id is None
+        # In cloud mode, user_id is required
+        if config.is_cloud_mode and not user_id:
+            raise HTTPException(status_code=401, detail="Authentication required in cloud mode")
+        
         # Create workflow
         workflow = await Workflow.create(
             name=payload.name,
             description=payload.description,
-            user_id=user_id,
+            user_id=user_id,  # None in self-hosted, set in cloud
             graph_data=payload.graph_data,
             schema_version=payload.schema_version,
             is_active=payload.is_active,
@@ -52,7 +58,7 @@ async def create_workflow(
         # Create blocks and edges
         await _sync_workflow_blocks_and_edges(workflow, payload.graph_data)
         
-        logger.info(f"Created workflow {workflow.id} for user {user_id}")
+        logger.info(f"Created workflow {workflow.id} for user {user_id or 'self-hosted'}")
         return workflow
         
     except ValueError as e:
@@ -62,13 +68,13 @@ async def create_workflow(
         raise HTTPException(status_code=500, detail="Failed to create workflow")
 
 
-async def get_workflow(workflow_id: int, user_id: str) -> Workflow:
+async def get_workflow(workflow_id: int, user_id: Optional[str]) -> Workflow:
     """
     Get a workflow by ID.
     
     Args:
         workflow_id: Workflow ID
-        user_id: User ID for authorization
+        user_id: User ID for authorization (None in self-hosted mode)
         
     Returns:
         Workflow model
@@ -81,29 +87,42 @@ async def get_workflow(workflow_id: int, user_id: str) -> Workflow:
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
     
-    if workflow.user_id != user_id:
-        raise HTTPException(status_code=403, detail="Unauthorized")
+    # In cloud mode, check authorization
+    if config.is_cloud_mode:
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Authentication required in cloud mode")
+        if workflow.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Unauthorized")
+    # In self-hosted mode, allow access to any workflow
     
     return workflow
 
 
-async def list_workflows(user_id: str) -> List[Workflow]:
+async def list_workflows(user_id: Optional[str]) -> List[Workflow]:
     """
     List all workflows for a user.
     
     Args:
-        user_id: User ID
+        user_id: User ID (None in self-hosted mode)
         
     Returns:
         List of workflows
     """
-    workflows = await Workflow.filter(user_id=user_id, is_active=True).all()
+    if config.is_self_hosted:
+        # Self-hosted: Show all workflows (no filtering)
+        workflows = await Workflow.filter(is_active=True).all()
+    else:
+        # Cloud: Filter by user_id
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Authentication required in cloud mode")
+        workflows = await Workflow.filter(user_id=user_id, is_active=True).all()
+    
     return workflows
 
 
 async def update_workflow(
     workflow_id: int,
-    user_id: str,
+    user_id: Optional[str],
     payload: WorkflowUpdate,
 ) -> Workflow:
     """
@@ -142,7 +161,7 @@ async def update_workflow(
     return workflow
 
 
-async def delete_workflow(workflow_id: int, user_id: str) -> None:
+async def delete_workflow(workflow_id: int, user_id: Optional[str]) -> None:
     """
     Delete a workflow (soft delete).
     
@@ -234,7 +253,7 @@ async def _sync_workflow_blocks_and_edges(
 
 async def create_execution(
     workflow_id: int,
-    user_id: str,
+    user_id: Optional[str],
     input_data: Optional[dict] = None,
 ) -> WorkflowExecution:
     """
@@ -242,7 +261,7 @@ async def create_execution(
     
     Args:
         workflow_id: Workflow ID
-        user_id: User ID
+        user_id: User ID (None in self-hosted mode)
         input_data: Input data for execution
         
     Returns:
@@ -252,7 +271,7 @@ async def create_execution(
     
     execution = await WorkflowExecution.create(
         workflow=workflow,
-        user_id=user_id,
+        user_id=user_id,  # None in self-hosted, set in cloud
         status='running',
         input_data=input_data,
     )
@@ -262,7 +281,7 @@ async def create_execution(
 
 async def update_execution(
     execution_id: int,
-    user_id: str,
+    user_id: Optional[str],
     status: str,
     output_data: Optional[dict] = None,
     error_message: Optional[str] = None,
@@ -272,7 +291,7 @@ async def update_execution(
     
     Args:
         execution_id: Execution ID
-        user_id: User ID for authorization
+        user_id: User ID for authorization (None in self-hosted mode)
         status: New status
         output_data: Output data
         error_message: Error message if failed
@@ -285,8 +304,13 @@ async def update_execution(
     if not execution:
         raise HTTPException(status_code=404, detail="Execution not found")
     
-    if execution.user_id != user_id:
-        raise HTTPException(status_code=403, detail="Unauthorized")
+    # In cloud mode, check authorization
+    if config.is_cloud_mode:
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Authentication required in cloud mode")
+        if execution.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Unauthorized")
+    # In self-hosted mode, allow access to any execution
     
     execution.status = status
     execution.output_data = output_data
@@ -301,7 +325,7 @@ async def update_execution(
 
 async def list_executions(
     workflow_id: int,
-    user_id: str,
+    user_id: Optional[str],
     limit: int = 50,
 ) -> List[WorkflowExecution]:
     """
@@ -309,7 +333,7 @@ async def list_executions(
     
     Args:
         workflow_id: Workflow ID
-        user_id: User ID for authorization
+        user_id: User ID for authorization (None in self-hosted mode)
         limit: Maximum number of executions to return
         
     Returns:
@@ -317,10 +341,19 @@ async def list_executions(
     """
     workflow = await get_workflow(workflow_id, user_id)
     
-    executions = await WorkflowExecution.filter(
-        workflow=workflow,
-        user_id=user_id,
-    ).order_by('-started_at').limit(limit).all()
+    if config.is_self_hosted:
+        # Self-hosted: Show all executions for this workflow
+        executions = await WorkflowExecution.filter(
+            workflow=workflow,
+        ).order_by('-started_at').limit(limit).all()
+    else:
+        # Cloud: Filter by user_id
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Authentication required in cloud mode")
+        executions = await WorkflowExecution.filter(
+            workflow=workflow,
+            user_id=user_id,
+        ).order_by('-started_at').limit(limit).all()
     
     return executions
 

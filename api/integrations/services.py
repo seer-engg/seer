@@ -10,8 +10,19 @@ async def store_oauth_connection(
     user_id: str,
     provider: str,
     token: Dict[str, Any],
-    profile: Dict[str, Any]
+    profile: Dict[str, Any],
+    granted_scopes: str = ""
 ):
+    """
+    Store OAuth connection with granted scopes.
+    
+    Args:
+        user_id: User ID
+        provider: Provider name
+        token: OAuth token response dict
+        profile: User profile information
+        granted_scopes: Space-separated string of granted OAuth scopes
+    """
     # Find user
     user = await User.get(user_id=user_id)
     
@@ -31,6 +42,9 @@ async def store_oauth_connection(
     expires_at_ts = token.get('expires_at')
     expires_at = datetime.fromtimestamp(expires_at_ts, tz=timezone.utc) if expires_at_ts else None
     
+    # Extract token_type (usually 'Bearer')
+    token_type = token.get('token_type', 'Bearer')
+    
     # Update or Create
     connection = await OAuthConnection.get_or_none(
         user=user,
@@ -45,6 +59,8 @@ async def store_oauth_connection(
         connection.provider_metadata = provider_metadata
         connection.status = "active"
         connection.expires_at = expires_at
+        connection.scopes = granted_scopes  # Store granted scopes
+        connection.token_type = token_type
         connection.updated_at = datetime.now(timezone.utc)
         await connection.save()
     else:
@@ -56,7 +72,9 @@ async def store_oauth_connection(
             refresh_token_enc=refresh_token,
             provider_metadata=provider_metadata,
             status="active",
-            expires_at=expires_at
+            expires_at=expires_at,
+            scopes=granted_scopes,  # Store granted scopes
+            token_type=token_type
         )
         
     return connection

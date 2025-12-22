@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 from tortoise import fields, models
-from src.auth.middleware import AuthenticatedUser
+from api.middleware.auth import AuthenticatedUser
 
 
 class Project(models.Model):

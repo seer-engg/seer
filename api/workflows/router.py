@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from shared.logger import get_logger
+from shared.config import config
 
 from .models import (
     WorkflowCreate,
@@ -31,6 +32,29 @@ logger = get_logger("api.workflows.router")
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
 
+def _get_user_id(request: Request) -> Optional[str]:
+    """
+    Get user_id from request, returns None in self-hosted mode.
+    
+    Args:
+        request: FastAPI request object
+        
+    Returns:
+        User ID string or None
+        
+    Raises:
+        HTTPException: If authentication is required but missing in cloud mode
+    """
+    if config.is_self_hosted:
+        return None
+    
+    # Cloud mode: require authentication
+    if not hasattr(request.state, 'user') or not request.state.user:
+        raise HTTPException(status_code=401, detail="Authentication required in cloud mode")
+    
+    return request.state.user.user_id
+
+
 @router.post("", response_model=WorkflowPublic, status_code=201)
 async def create_workflow_endpoint(
     request: Request,
@@ -39,9 +63,9 @@ async def create_workflow_endpoint(
     """
     Create a new workflow.
     
-    Requires authentication. User ID is extracted from request state.
+    Requires authentication in cloud mode. User ID is extracted from request state.
     """
-    user_id = request.state.user.user_id
+    user_id = _get_user_id(request)
     workflow = await create_workflow(user_id, payload)
     return WorkflowPublic.model_validate(workflow, from_attributes=True)
 
@@ -49,9 +73,9 @@ async def create_workflow_endpoint(
 @router.get("", response_model=WorkflowListResponse)
 async def list_workflows_endpoint(request: Request) -> WorkflowListResponse:
     """
-    List all workflows for the authenticated user.
+    List all workflows for the authenticated user (cloud mode) or all workflows (self-hosted mode).
     """
-    user_id = request.state.user.user_id
+    user_id = _get_user_id(request)
     workflows = await list_workflows(user_id)
     return WorkflowListResponse(
         workflows=[
@@ -69,9 +93,9 @@ async def get_workflow_endpoint(
     """
     Get a workflow by ID.
     
-    Returns 404 if not found, 403 if unauthorized.
+    Returns 404 if not found, 403 if unauthorized (cloud mode only).
     """
-    user_id = request.state.user.user_id
+    user_id = _get_user_id(request)
     workflow = await get_workflow(workflow_id, user_id)
     return WorkflowPublic.model_validate(workflow, from_attributes=True)
 
@@ -85,9 +109,9 @@ async def update_workflow_endpoint(
     """
     Update a workflow.
     
-    Returns 404 if not found, 403 if unauthorized.
+    Returns 404 if not found, 403 if unauthorized (cloud mode only).
     """
-    user_id = request.state.user.user_id
+    user_id = _get_user_id(request)
     workflow = await update_workflow(workflow_id, user_id, payload)
     return WorkflowPublic.model_validate(workflow, from_attributes=True)
 
@@ -100,9 +124,9 @@ async def delete_workflow_endpoint(
     """
     Delete a workflow (soft delete).
     
-    Returns 404 if not found, 403 if unauthorized.
+    Returns 404 if not found, 403 if unauthorized (cloud mode only).
     """
-    user_id = request.state.user.user_id
+    user_id = _get_user_id(request)
     await delete_workflow(workflow_id, user_id)
 
 
@@ -118,7 +142,7 @@ async def execute_workflow_endpoint(
     Executes the workflow with the provided input data and returns results.
     For streaming execution, use the stream endpoint.
     """
-    user_id = request.state.user.user_id
+    user_id = _get_user_id(request)
     
     # Get workflow
     workflow = await get_workflow(workflow_id, user_id)
@@ -189,7 +213,7 @@ async def execute_workflow_stream_endpoint(
     import json
     from datetime import datetime
     
-    user_id = request.state.user.user_id
+    user_id = _get_user_id(request)
     
     async def generate_events():
         try:
@@ -255,7 +279,7 @@ async def list_executions_endpoint(
     """
     List executions for a workflow.
     """
-    user_id = request.state.user.user_id
+    user_id = _get_user_id(request)
     executions = await list_executions(workflow_id, user_id, limit=limit)
     return [
         WorkflowExecutionPublic.model_validate(e, from_attributes=True)

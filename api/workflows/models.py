@@ -16,7 +16,7 @@ class Workflow(models.Model):
     id = fields.IntField(primary_key=True)
     name = fields.CharField(max_length=255)
     description = fields.TextField(null=True)
-    user_id = fields.CharField(max_length=255, index=True)  # From auth middleware
+    user_id = fields.CharField(max_length=255, null=True, index=True)  # Optional: NULL for self-hosted, set for cloud
     graph_data = fields.JSONField()  # ReactFlow nodes/edges JSON
     schema_version = fields.CharField(max_length=50, default="1.0")
     is_active = fields.BooleanField(default=True)
@@ -77,7 +77,7 @@ class WorkflowExecution(models.Model):
     
     id = fields.IntField(primary_key=True)
     workflow = fields.ForeignKeyField('models.Workflow', related_name='executions')
-    user_id = fields.CharField(max_length=255, index=True)
+    user_id = fields.CharField(max_length=255, null=True, index=True)  # Optional: NULL for self-hosted, set for cloud
     status = fields.CharField(max_length=50)  # 'running', 'completed', 'failed'
     input_data = fields.JSONField(null=True)
     output_data = fields.JSONField(null=True)
@@ -149,7 +149,7 @@ class WorkflowPublic(WorkflowBase):
     model_config = ConfigDict(from_attributes=True)
     
     id: int
-    user_id: str
+    user_id: Optional[str]  # Optional: NULL for self-hosted, set for cloud
     created_at: datetime
     updated_at: datetime
 
@@ -174,7 +174,7 @@ class WorkflowExecutionPublic(BaseModel):
     
     id: int
     workflow_id: int
-    user_id: str
+    user_id: Optional[str]  # Optional: NULL for self-hosted, set for cloud
     status: str
     input_data: Optional[Dict[str, Any]] = None
     output_data: Optional[Dict[str, Any]] = None

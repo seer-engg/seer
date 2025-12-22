@@ -9,9 +9,7 @@ from datetime import datetime
 
 from shared.logger import get_logger
 from shared.llm import get_llm
-from shared.tools.composio import ComposioMCPClient
-from composio import Composio
-from composio_langchain import LangchainProvider
+from shared.tools.executor import execute_tool as execute_tool_with_oauth
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from .models import Workflow, WorkflowBlock, WorkflowEdge, WorkflowExecution, BlockExecution
@@ -38,15 +36,14 @@ class WorkflowExecutor:
     - Error handling and retries
     """
     
-    def __init__(self, user_id: str):
+    def __init__(self, user_id: Optional[str]):
         """
         Initialize workflow executor.
         
         Args:
-            user_id: User ID for OAuth and tool execution
+            user_id: User ID for OAuth and tool execution (None in self-hosted mode)
         """
         self.user_id = user_id
-        self.composio_client = Composio(provider=LangchainProvider())
     
     async def execute(
         self,
@@ -286,26 +283,24 @@ class WorkflowExecutor:
                 output = result.get('output')
                 
             elif block.type == BlockType.TOOL:
-                # Execute Composio tool
+                # Execute tool using new tool system
                 tool_name = block.config.get('tool_name')
                 tool_params = block.config.get('params', {})
+                connection_id = block.config.get('connection_id')  # OAuthConnection ID
                 
                 # Merge inputs into params
                 tool_params = {**tool_params, **inputs}
                 
-                # Execute tool with OAuth scope if specified
-                oauth_scope = block.oauth_scope
-                tools = await asyncio.to_thread(
-                    self.composio_client.tools.get,
-                    user_id=self.user_id,
-                    tools=[tool_name],
-                )
-                
-                if not tools:
-                    raise WorkflowExecutionError(f"Tool '{tool_name}' not found")
-                
-                tool = tools[0]
-                output = await asyncio.to_thread(tool.invoke, tool_params)
+                # Execute tool with OAuth token management
+                try:
+                    output = await execute_tool_with_oauth(
+                        tool_name=tool_name,
+                        user_id=self.user_id,
+                        connection_id=connection_id,
+                        arguments=tool_params
+                    )
+                except Exception as e:
+                    raise WorkflowExecutionError(f"Tool execution failed: {str(e)}")
                 
             elif block.type == BlockType.LLM:
                 # Execute LLM block

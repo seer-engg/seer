@@ -850,9 +850,7 @@ def config(fmt: str):
     sections = {
         "API Keys": [
             ("openai_api_key", "OPENAI_API_KEY", True),  # (attr, env_var, is_secret)
-            ("composio_api_key", "COMPOSIO_API_KEY", True),
             ("github_token", "GITHUB_TOKEN", True),
-            ("langfuse_secret_key", "LANGFUSE_SECRET_KEY", True),
         ],
         "Evaluation Settings": [
             ("eval_n_rounds", "EVAL_N_ROUNDS", False),
@@ -861,7 +859,6 @@ def config(fmt: str):
             ("eval_reasoning_effort", "EVAL_REASONING_EFFORT", False),
         ],
         "External Services": [
-            ("langfuse_base_url", "LANGFUSE_BASE_URL", False),
             ("neo4j_uri", "NEO4J_URI", False),
             ("database_uri", "DATABASE_URI", True),
         ],
@@ -928,7 +925,8 @@ def export(thread_id: str, fmt: str):
 @click.option('--frontend-url', default='http://localhost:5173', help='Frontend URL (default: http://localhost:5173)')
 @click.option('--backend-url', default='http://localhost:8000', help='Backend URL (default: http://localhost:8000)')
 @click.option('--no-browser', is_flag=True, help='Do not open browser automatically')
-def dev(frontend_url: str, backend_url: str, no_browser: bool):
+@click.option('--rebuild', is_flag=True, help='Force rebuild containers (stops, removes, rebuilds, then starts)')
+def dev(frontend_url: str, backend_url: str, no_browser: bool, rebuild: bool):
     """
     Start development environment with Docker Compose.
     
@@ -938,14 +936,20 @@ def dev(frontend_url: str, backend_url: str, no_browser: bool):
     \b
     This command:
       1. Starts Docker Compose services (postgres, mlflow, backend)
-      2. Waits for backend to be ready
-      3. Opens browser to: <frontend-url>/workflows?backend=<backend-url>
+      2. Rebuilds images if needed (--build flag ensures dependencies are up-to-date)
+      3. Waits for backend to be ready
+      4. Opens browser to: <frontend-url>/workflows?backend=<backend-url>
+    
+    \b
+    Code changes are reflected immediately via volume mounts and uvicorn --reload.
+    Use --rebuild to force a full rebuild (useful when dependencies change).
     
     \b
     Example:
       seer dev
       seer dev --frontend-url http://localhost:3000
       seer dev --no-browser
+      seer dev --rebuild  # Force rebuild containers
     """
     import subprocess
     import time
@@ -969,11 +973,29 @@ def dev(frontend_url: str, backend_url: str, no_browser: bool):
     ))
     console.print()
     
-    # Start Docker Compose
+    # Handle rebuild option
+    if rebuild:
+        console.print("[bold]🔄 Force rebuild requested - stopping and removing containers...[/bold]")
+        try:
+            # Stop and remove containers
+            subprocess.run(
+                ["docker-compose", "down"],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+            )
+            console.print("[green]✓[/green] Containers stopped and removed")
+        except FileNotFoundError:
+            console.print("[bold red]Error:[/bold red] docker-compose not found. Please install Docker Compose.")
+            sys.exit(1)
+    
+    # Start Docker Compose with --build flag to ensure dependencies are up-to-date
     console.print("[bold]📦 Starting Docker Compose services...[/bold]")
     try:
+        # Always use --build to ensure image is rebuilt if Dockerfile or dependencies changed
+        # Volume mount ensures code changes don't require rebuild
         result = subprocess.run(
-            ["docker-compose", "up", "-d"],
+            ["docker-compose", "up", "-d", "--build"],
             cwd=project_root,
             capture_output=True,
             text=True,

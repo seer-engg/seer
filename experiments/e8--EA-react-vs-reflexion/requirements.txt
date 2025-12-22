@@ -1,3 +1,0 @@
-deepagents
-langchain
-langchain-openai

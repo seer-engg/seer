@@ -14,7 +14,7 @@ from langchain.tools import ToolRuntime
 
 from shared.logger import get_logger
 from shared.config import config
-from shared.tools import search_composio_documentation, web_search, search_langchain_documentation, think
+from shared.tools import web_search, search_langchain_documentation, think
 
 from agents.codex.state import CodexState
 from shared.llm import get_agent_final_respone
@@ -104,7 +104,6 @@ codebase_explorer_subgraph = create_agent(
     tools=[
         *CODEBASE_VIEW_TOOLS,
         web_search,
-        search_composio_documentation,
         search_langchain_documentation,
     ],
     system_prompt=CODEBASE_EXPLORER_SYSTEM_PROMPT,
@@ -118,7 +117,7 @@ async def codebase_explorer_subagent(query: str, runtime: ToolRuntime[SandboxToo
     Capabilities: 
         - It has read only access to the codebase, 
         - web search 
-        - composio documentation tools.
+        - langchain documentation tools.
     Args:
         query: The query to explore the codebase.
     Returns:
@@ -167,7 +166,6 @@ experimantation_subgraph = create_agent(
         *CODEBASE_VIEW_TOOLS,
         *CODEBASE_EDIT_TOOLS,
         run_command,
-        search_composio_documentation,
         web_search,
 
     ],
@@ -183,7 +181,6 @@ async def junior_programmer_subagent(query: str, runtime: ToolRuntime[SandboxToo
         - Read and Write access to codebase 
         - run commands in the working directory of codebase
         - web search 
-        - composio documentation tools.
 
     Args:
         query: The query to experiment with the codebase.
@@ -199,80 +196,36 @@ You are a helpful python  assistant that can help search the relevant informatio
 
 You should carefully consider every aspect of the querry.
 
-# CONTEXT:
-Composio is a pythan package that offers langchain based tools for all external services like github, asana, etc. Composio provides a langchain provider to fetch tools that can be directly used with langchain/langgraph agents . There are thousands of tools avialble in composio , you can search for tools using search_composio_tools tool.
-```python
-# composio user id
-COMPOSIO_USER_ID = os.getenv("COMPOSIO_USER_ID")
-
-composio = Composio(provider=LangchainProvider())
-
-# Get tools from Composio
-tools = composio.tools.get(
-    user_id=COMPOSIO_USER_ID,
-    tools=[
-        "ASANA_CREATE_A_TASK",
-        "ASANA_CREATE_TASK_COMMENT"
-    ],
-)
-
-```
-
-
 # Important:
 - while returning the information don't miss any details, include code snippets, etc.
 - Do not include any web urls in the response.
 - Only search for python documentations and in your response only include python code snippets, not any other code snippets.
 
 # TOOL USAGE:
-- search_composio_tools: Use this tool to search for tools from composio.
-- get_tool_schema_from_composio: use this tool to get the schema of a specific tool from composio.
-- search_composio_documentation: Use this tool to search general documentation from composio about how we integrate composio tools with the codebase. DO NOT use this to search for composio tools.
+- search_tools: Use this tool to search for available tools.
 - web_search: Use this tool to search the web .
-- search_langchain_documentation: Use this tool to search the langchain/langgraph specific documentation(this does not include composio documentation).
+- search_langchain_documentation: Use this tool to search the langchain/langgraph specific documentation.
 - think: Use this tool to think about the current task/plan.
 
 
 """
-from shared.tools import ComposioMCPClient
-
 import asyncio
-@tool()
-async def get_tool_schema_from_composio(tool_names: list[str]) -> dict:
-    """
-    Tool to get the schema of a specific tools from composio.
-    Args:
-        tool_names: The names of the tools to get the schema for.
-    Returns:
-        The schema of the tools in a dictionary format.
-    """
-    #TODO: replcae with tool hub search 
-    # tool_service = ComposioMCPClient([], config.composio_user_id)
-    # client = tool_service.get_client()
-    # tools = await asyncio.to_thread(client.tools.get,
-    #     user_id=config.composio_user_id,
-    #     tools=tool_names,
-    # )
-    # tools  = [{'name': t.name,'schema': t.args_schema.model_json_schema()} for t in tools]
-    tools = []
-    return tools
-
 from typing import Dict
 
 @tool()
-async def search_composio_tools(query_text: str) -> Dict[str, ToolEntry]:
+async def search_tools(query_text: str) -> Dict[str, ToolEntry]:
     """
-    Tool to search for tools from composio. Use when you have to find tools in composio for specific intents.
+    Tool to search for available tools. Use when you have to find tools for specific intents.
 
     Args:
         query_text: The query to search the tools for.
     Returns:
-        The relevant tools from composio.
+        The relevant tools.
     """
     hub = await get_tool_hub()
     relevant_tool_dicts = await asyncio.to_thread(hub.query, query_text, top_k=20)
     
-    # 4. Convert to ToolEntry format expected by the agent state
+    # Convert to ToolEntry format expected by the agent state
     tool_entries: Dict[str, ToolEntry] = {}
     for t_dict in relevant_tool_dicts:
         name = t_dict.get("name")
@@ -300,10 +253,8 @@ Return the relevant information for each query in the list. Do not include any w
 search_documentation_subgraph = create_agent(
     model=medium_reasoning_llm,
     tools=[
-        search_composio_documentation,
         web_search,
-        search_composio_tools,
-        get_tool_schema_from_composio,
+        search_tools,
         search_langchain_documentation,
         think,
     ],
@@ -335,7 +286,7 @@ class SearchDocumentationInput(BaseModel):
 @tool(args_schema=SearchDocumentationInput)
 async def search_documentation_subagent(query_list: list[SearchQuery]) -> str:
     """
-    Tool to search for python package documentations (langchain, composio, etc), composio tools for external services. Use this when you need to find information about a specific python package's implementation details, usage, etc.  Use it to search for specific tools available from composio for each external service.
+    Tool to search for python package documentations (langchain, etc) and available tools. Use this when you need to find information about a specific python package's implementation details, usage, etc. Use it to search for specific tools available for each external service.
     
     Args:
         query_list: List of detailed queries to search the documentation for. Write detailed queries that you have, instead of few keywords.
