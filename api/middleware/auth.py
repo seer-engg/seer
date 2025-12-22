@@ -11,7 +11,9 @@ from jwt.exceptions import InvalidTokenError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-from shared.config import logger
+from shared.logger import get_logger
+
+logger = get_logger("api.middleware.auth")
 from shared.database.models import User
 
 

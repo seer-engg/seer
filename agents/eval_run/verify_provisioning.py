@@ -11,7 +11,7 @@ from agents.eval_agent.models import TestExecutionState
 from shared.logger import get_logger
 from shared.llm import get_llm
 from langchain_core.messages import HumanMessage
-from shared.tools import ComposioMCPClient
+from shared.tools.langchain_adapter import get_langchain_tools_from_registry
 from shared.config import config
 from .utils import handle_tool_errors
 from langchain.agents import create_agent
@@ -83,10 +83,9 @@ Check:
 
 Use the tools available to you to inspect the actual state of the environment and compare it to the plan requirements."""
 
-    # Get tools for verification
-    # TODO: replace hardcoded asana services
-    tool_service = ComposioMCPClient(["GITHUB", "ASANA"], state.context.user_id)
-    all_tools = await tool_service.get_tools()
+    # Get tools for verification from tool registry
+    # Filter tools based on what's in state.context.tool_entries
+    all_tools = get_langchain_tools_from_registry(user_id=state.context.user_id)
     
     actual_tools = []
     for tool in all_tools:

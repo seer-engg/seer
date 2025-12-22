@@ -8,7 +8,7 @@ from shared.logger import get_logger
 from shared.llm import get_llm_without_responses_api
 from langchain_core.runnables import RunnableConfig
 from langchain.agents import create_agent
-from shared.tools import ComposioMCPClient
+from shared.tools.langchain_adapter import get_langchain_tools_from_registry
 from shared.config import config
 from .utils import handle_tool_errors
 import uuid
@@ -42,9 +42,8 @@ async def provision_environment_node(state: TestExecutionState) -> dict:
     
     resource_hints = state.mcp_resources
     llm = get_llm_without_responses_api()
-    # TODO: replace hardcoded asana services
-    tool_service = ComposioMCPClient(["GITHUB", "ASANA"], state.context.user_id)
-    all_tools = await tool_service.get_tools()
+    # Get tools from tool registry
+    all_tools = get_langchain_tools_from_registry(user_id=state.context.user_id)
 
     actual_tools = []
     for tool in all_tools:

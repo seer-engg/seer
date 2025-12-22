@@ -67,9 +67,7 @@ async def provision_target_agent(state: EvalAgentPlannerState) -> dict:
             repo_url,
             branch_name,
         )
-        env_vars = {
-            "COMPOSIO_USER_ID": state.context.user_id,
-        }
+        env_vars = {}
         writer({"progress":f"Provisioning sandbox (repo={repo_url} branch={branch_name}) ..."})
 
         sbx, repo_dir, resolved_branch = await initialize_e2b_sandbox(

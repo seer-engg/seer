@@ -7,10 +7,6 @@ from langchain_core.messages import AIMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.pregel.remote import RemoteGraph
 from langgraph_sdk import get_sync_client
-from langfuse import Langfuse
-from langfuse.langchain import CallbackHandler
-
-from agents.eval_agent.constants import LANGFUSE_CLIENT
 from agents.eval_agent.models import EvalAgentState
 from shared.logger import get_logger
 from shared.schema import (
@@ -78,51 +74,17 @@ async def _handoff_to_codex(state: EvalAgentState) -> dict:
 
     codex_thread_cfg = {"configurable": {"thread_id": thread["thread_id"]}}
     
-    # Generate deterministic trace ID from thread ID for distributed tracing
-    trace_id = None
-    langfuse_handler = None
-    if LANGFUSE_CLIENT:
-        trace_id = Langfuse.create_trace_id(seed=thread["thread_id"])
-        # Initialize CallbackHandler with public_key (required for proper tracing)
-        langfuse_handler = CallbackHandler(
-            public_key=config.langfuse_public_key
-        ) if config.langfuse_public_key else CallbackHandler()
-        # Add trace context and metadata to config
-        codex_thread_cfg["metadata"] = codex_thread_cfg.get("metadata", {})
-        codex_thread_cfg["metadata"]["langfuse_trace_id"] = trace_id
-        codex_thread_cfg["metadata"]["project_name"] = config.project_name  # Add project_name for filtering
-    
     codex_remote = RemoteGraph(
         "codex",
         url=config.codex_remote_url,
         sync_client=codex_sync_client,
     )
 
-    # Wrap invocation with Langfuse trace context if available
-    if LANGFUSE_CLIENT and trace_id:
-        with LANGFUSE_CLIENT.start_as_current_observation(
-            as_type="span",
-            name="codex-remote-invocation",
-            trace_context={"trace_id": trace_id}
-        ) as span:
-            span.update_trace(input=codex_payload)
-            # Pass metadata via config to ensure it's attached to the root trace
-            invoke_config = {**codex_thread_cfg}
-            if langfuse_handler:
-                invoke_config["callbacks"] = [langfuse_handler]
-            # Metadata is already in codex_thread_cfg["metadata"] from above
-            codex_response = await asyncio.to_thread(
-                codex_remote.invoke,
-                codex_payload,
-                invoke_config,
-            )
-            span.update_trace(output=codex_response)
-    else:
-        codex_response = await asyncio.to_thread(
-            codex_remote.invoke,
-            codex_payload,
-            codex_thread_cfg,
-        )
+    codex_response = await asyncio.to_thread(
+        codex_remote.invoke,
+        codex_payload,
+        codex_thread_cfg,
+    )
 
     codex_response: CodexOutput = CodexOutput.model_validate(codex_response)
     logger.info("Codex response: %s", codex_response)

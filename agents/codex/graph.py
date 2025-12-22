@@ -102,65 +102,6 @@ def compile_codex_graph():
 
     compiled_graph = workflow.compile(debug=True)
     
-    # Configure Langfuse callbacks at graph compilation time for LangGraph dev server
-    # This ensures traces are created even when graph is invoked via HTTP
-    # CRITICAL: For LangGraph dev server, callbacks MUST be configured at compile time
-    # using .with_config(), not just passed when invoking via RemoteGraph
-    # See: https://langfuse.com/guides/cookbook/integration_langgraph
-    from agents.eval_agent.constants import LANGFUSE_CLIENT
-    if LANGFUSE_CLIENT and config.langfuse_public_key:
-        try:
-            from langfuse.langchain import CallbackHandler
-            
-            # Create a custom wrapper that adds metadata to the root trace
-            # CRITICAL: For LangGraph dev server, metadata must be set when the root chain starts
-            class MetadataCallbackHandler(CallbackHandler):
-                def __init__(self, *args, metadata=None, **kwargs):
-                    super().__init__(*args, **kwargs)
-                    self.metadata = metadata or {}
-                    self._root_chain_started = False
-                
-                def on_chain_start(self, serialized, inputs, **kwargs):
-                    """Override to add metadata when LangGraph root chain starts"""
-                    result = super().on_chain_start(serialized, inputs, **kwargs)
-                    
-                    # Detect LangGraph root chain start (name is "LangGraph" or id is None)
-                    run_id = kwargs.get("run_id")
-                    parent_run_id = kwargs.get("parent_run_id")
-                    
-                    # Root chain has no parent_run_id and is the LangGraph chain
-                    if not self._root_chain_started and parent_run_id is None:
-                        self._root_chain_started = True
-                        from langfuse import get_client, propagate_attributes
-                        langfuse = get_client()
-                        try:
-                            # Use propagate_attributes to ensure metadata is attached to root trace
-                            # This is the same approach Supervisor uses
-                            with propagate_attributes(metadata=self.metadata):
-                                # The metadata will now be propagated to all observations
-                                # Update the trace directly as well for immediate effect
-                                langfuse.update_current_trace(metadata=self.metadata)
-                                logger.debug(f"✅ Added metadata to root trace: {self.metadata}")
-                        except Exception as e:
-                            logger.warning(f"Failed to add metadata to root trace: {e}")
-                    
-                    return result
-            
-            langfuse_handler = MetadataCallbackHandler(
-                public_key=config.langfuse_public_key,
-                metadata={"project_name": config.codex_project_name}
-            )
-            
-            # Use with_config to attach callbacks at compile time
-            # This is required for LangGraph dev server to capture traces
-            compiled_graph = compiled_graph.with_config({
-                "callbacks": [langfuse_handler]
-            })
-            
-            logger.info(f"📊 Langfuse tracing configured at graph compilation time with project_name={config.codex_project_name}")
-        except Exception as e:
-            logger.warning(f"Failed to configure Langfuse callbacks at graph compilation: {e}")
-    
     return compiled_graph
 
 graph = compile_codex_graph()

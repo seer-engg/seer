@@ -3,7 +3,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import ToolCallLimitMiddleware, ModelRetryMiddleware
 from typing import Optional, List
 
-from agents.supervisor.tools.composio_tools import search_tools, execute_tool
+from agents.supervisor.tools.integration_tools import search_tools, execute_tool
 from agents.supervisor.tools.think_tool import think
 from agents.supervisor.tools.user_context_store import get_user_context_store
 from agents.supervisor.prompts import PROMPT_GENERIC_WORKER
