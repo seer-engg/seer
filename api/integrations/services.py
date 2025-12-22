@@ -82,7 +82,7 @@ async def store_oauth_connection(
 async def list_connections(user_id: str):
     # Using user_id (string) to find User model
     try:
-        user = await User.get(user_id=user_id)
+        user = await User.get(email=user_id)
         logger.info(f"Listing connections for user {user_id}")
         connections = await OAuthConnection.filter(user=user, status="active").all()
         return connections
