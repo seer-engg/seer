@@ -54,6 +54,7 @@ services:
       MLFLOW_TRACKING_URI: "http://mlflow:5000"
       MLFLOW_EXPERIMENT_NAME: "langgraph-local"
       DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
+      DB_GENERATE_SCHEMAS: "true"  # Enable schema generation in development
     volumes:
       - ./:/app  # Mount source code for instant updates in development (overrides COPY in Dockerfile)
     command: >
