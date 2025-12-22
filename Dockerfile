@@ -1,4 +1,4 @@
-# LangGraph Standalone Server Dockerfile for Railway
+# Seer Backend Server Dockerfile
 # Based on official LangGraph API image
 FROM langchain/langgraph-api:3.13
 
@@ -14,7 +14,9 @@ RUN uv sync
 
 # IMPORTANT: remove the base image entrypoint that starts the API server
 ENTRYPOINT []
-# Expose the default LangGraph API port
+# Expose the default API port
 EXPOSE 8000
 
-CMD ["uv", "run", "langgraph", "dev", "--port", "8000", "--host", "0.0.0.0", "--config", "langgraph.json", "--no-browser", "--no-reload"]
+# Default command runs FastAPI server
+# Can be overridden in docker-compose.yml
+CMD ["uv", "run", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

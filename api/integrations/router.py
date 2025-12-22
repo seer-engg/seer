@@ -20,9 +20,21 @@ def decode_state(state: str) -> dict:
     return json.loads(base64.urlsafe_b64decode(state).decode())
 
 @router.get("/{provider}/connect")
-async def connect(request: Request, provider: str, user_id: str = Query(...), redirect_to: str = Query(None)):
+async def connect(
+    request: Request,
+    provider: str,
+    user_id: str = Query(...),
+    redirect_to: str = Query(None),
+    scope: str = Query(None),  # OAuth scope from frontend (closed source)
+):
     """
     Start OAuth flow for a provider.
+    
+    Args:
+        provider: Provider name (google, github, googledrive, gmail)
+        user_id: User ID
+        redirect_to: Redirect URL after auth
+        scope: OAuth scope from frontend (CRITICAL: frontend validates and passes scope)
     """
     if provider not in ['google', 'github', 'googledrive', 'gmail']:
         raise HTTPException(status_code=400, detail="Unsupported provider")
@@ -31,12 +43,13 @@ async def connect(request: Request, provider: str, user_id: str = Query(...), re
     
     redirect_uri = request.url_for('auth_callback', provider=provider)
     
-    # Scopes
-    scope = None
-    if provider == 'googledrive':
-        scope = 'openid email profile https://www.googleapis.com/auth/drive.readonly'
-    elif provider == 'gmail':
-        scope = 'openid email profile https://www.googleapis.com/auth/gmail.readonly'
+    # Use scope from frontend if provided, otherwise use defaults
+    # CRITICAL: Frontend (closed source) validates scopes, backend trusts frontend
+    if not scope:
+        if provider == 'googledrive':
+            scope = 'openid email profile https://www.googleapis.com/auth/drive.readonly'
+        elif provider == 'gmail':
+            scope = 'openid email profile https://www.googleapis.com/auth/gmail.readonly'
     
     # Store user_id and final redirect in state
     state_data = {

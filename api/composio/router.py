@@ -108,6 +108,46 @@ async def execute_tool_endpoint(
     )
 
 
+@router.get("/tools")
+async def list_tools_endpoint(
+    toolkit: Optional[str] = Query(None, description="Filter by toolkit (e.g., gmail, github)"),
+    user_id: str = Query(..., description="User ID"),
+) -> Dict[str, Any]:
+    """
+    List available Composio tools.
+    
+    Returns tools grouped by toolkit, optionally filtered by toolkit name.
+    """
+    from composio import Composio
+    from composio_langchain import LangchainProvider
+    import asyncio
+    
+    client = Composio(provider=LangchainProvider())
+    
+    try:
+        toolkits = [toolkit.upper()] if toolkit else None
+        tools = await asyncio.to_thread(
+            client.tools.get,
+            user_id=user_id,
+            toolkits=toolkits,
+            limit=2000,
+        )
+        
+        # Convert tools to serializable format
+        tools_list = []
+        for tool in tools:
+            tools_list.append({
+                'name': tool.name,
+                'description': tool.description or '',
+                'toolkit': toolkit or 'general',
+                'slug': tool.name,
+            })
+        
+        return {'tools': tools_list}
+    except Exception as e:
+        return {'tools': [], 'error': str(e)}
+
+
 __all__ = ["router"]
 
 

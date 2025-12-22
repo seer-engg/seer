@@ -924,6 +924,148 @@ def export(thread_id: str, fmt: str):
     console.print("[dim]Set DATABASE_URI in your .env to enable persistent state.[/dim]")
 
 
+@cli.command()
+@click.option('--frontend-url', default='http://localhost:5173', help='Frontend URL (default: http://localhost:5173)')
+@click.option('--backend-url', default='http://localhost:8000', help='Backend URL (default: http://localhost:8000)')
+@click.option('--no-browser', is_flag=True, help='Do not open browser automatically')
+def dev(frontend_url: str, backend_url: str, no_browser: bool):
+    """
+    Start development environment with Docker Compose.
+    
+    Starts Postgres, MLflow, and backend server, then opens the workflow editor
+    in your browser connected to the local backend.
+    
+    \b
+    This command:
+      1. Starts Docker Compose services (postgres, mlflow, backend)
+      2. Waits for backend to be ready
+      3. Opens browser to: <frontend-url>/workflows?backend=<backend-url>
+    
+    \b
+    Example:
+      seer dev
+      seer dev --frontend-url http://localhost:3000
+      seer dev --no-browser
+    """
+    import subprocess
+    import time
+    import sys
+    import os
+    from pathlib import Path
+    
+    # Get project root (where docker-compose.yml is)
+    project_root = Path(__file__).parent.parent
+    docker_compose_file = project_root / "docker-compose.yml"
+    
+    if not docker_compose_file.exists():
+        console.print(f"[bold red]Error:[/bold red] docker-compose.yml not found at {docker_compose_file}")
+        sys.exit(1)
+    
+    console.print(Panel.fit(
+        "[bold cyan]🚀 Starting Seer Development Environment[/bold cyan]\n\n"
+        f"[dim]Frontend: {frontend_url}[/dim]\n"
+        f"[dim]Backend: {backend_url}[/dim]",
+        border_style="cyan"
+    ))
+    console.print()
+    
+    # Start Docker Compose
+    console.print("[bold]📦 Starting Docker Compose services...[/bold]")
+    try:
+        result = subprocess.run(
+            ["docker-compose", "up", "-d"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            console.print(f"[bold red]Error starting Docker Compose:[/bold red]")
+            console.print(result.stderr)
+            sys.exit(1)
+        console.print("[green]✓[/green] Services started")
+    except FileNotFoundError:
+        console.print("[bold red]Error:[/bold red] docker-compose not found. Please install Docker Compose.")
+        sys.exit(1)
+    
+    # Wait for backend to be ready
+    console.print()
+    console.print("[bold]⏳ Waiting for backend server to be ready...[/bold]")
+    
+    max_attempts = 60
+    attempt = 0
+    import urllib.request
+    import urllib.error
+    
+    while attempt < max_attempts:
+        try:
+            health_url = f"{backend_url}/health"
+            req = urllib.request.Request(health_url)
+            with urllib.request.urlopen(req, timeout=2) as response:
+                if response.getcode() == 200:
+                    console.print("[green]✓[/green] Backend server is ready!")
+                    break
+        except (urllib.error.URLError, urllib.error.HTTPError, OSError):
+            pass
+        
+        attempt += 1
+        if attempt % 5 == 0:
+            console.print(f"   [dim]Attempt {attempt}/{max_attempts}...[/dim]")
+        time.sleep(2)
+    
+    if attempt == max_attempts:
+        console.print()
+        console.print("[bold red]❌ Backend server failed to start[/bold red]")
+        console.print("[yellow]Checking logs...[/yellow]")
+        subprocess.run(
+            ["docker-compose", "logs", "langgraph-server", "--tail=50"],
+            cwd=project_root,
+        )
+        sys.exit(1)
+    
+    # Construct workflow URL
+    workflow_url = f"{frontend_url}/workflows?backend={backend_url}"
+    
+    console.print()
+    console.print(Panel.fit(
+        "[bold green]🎉 Development environment is ready![/bold green]\n\n"
+        "[bold]📊 Services:[/bold]\n"
+        f"   • Backend API: {backend_url}\n"
+        f"   • MLflow: http://localhost:5000\n"
+        f"   • Postgres: localhost:5432\n\n"
+        f"[bold]🌐 Workflow Editor:[/bold]\n"
+        f"   {workflow_url}",
+        border_style="green"
+    ))
+    console.print()
+    
+    # Open browser
+    if not no_browser:
+        console.print("[bold]🌐 Opening workflow editor...[/bold]")
+        try:
+            if sys.platform == "darwin":
+                # macOS
+                subprocess.run(["open", workflow_url], check=False)
+            elif sys.platform == "linux":
+                # Linux
+                subprocess.run(["xdg-open", workflow_url], check=False)
+            elif sys.platform == "win32":
+                # Windows
+                subprocess.run(["start", workflow_url], check=False, shell=True)
+            else:
+                console.print(f"[yellow]⚠ Could not automatically open browser.[/yellow]")
+                console.print(f"Please navigate to: {workflow_url}")
+        except Exception as e:
+            console.print(f"[yellow]⚠ Could not open browser: {e}[/yellow]")
+            console.print(f"Please navigate to: {workflow_url}")
+    else:
+        console.print(f"[dim]Browser opening skipped. Navigate to:[/dim]")
+        console.print(f"[bold]{workflow_url}[/bold]")
+    
+    console.print()
+    console.print("[dim]📝 To view logs: docker-compose logs -f[/dim]")
+    console.print("[dim]🛑 To stop: docker-compose down[/dim]")
+
+
 def main():
     """Main entry point for the CLI."""
     cli()
