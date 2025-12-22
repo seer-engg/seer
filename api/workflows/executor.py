@@ -218,7 +218,12 @@ class WorkflowExecutor:
             if source_output is not None:
                 # If source has specific handle, use it; otherwise use entire output
                 if edge.source_handle:
-                    inputs[edge.target_handle or 'input'] = source_output.get(edge.source_handle, source_output)
+                    # Only extract from dict if source_output is a dict
+                    # For non-dict outputs (strings, lists, etc.), use the entire output
+                    if isinstance(source_output, dict):
+                        inputs[edge.target_handle or 'input'] = source_output.get(edge.source_handle, source_output)
+                    else:
+                        inputs[edge.target_handle or 'input'] = source_output
                 else:
                     inputs[edge.target_handle or 'input'] = source_output
         
