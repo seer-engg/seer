@@ -101,11 +101,16 @@ async def auth_callback(request: Request, provider: str):
         
     # Get user profile
     if provider == 'google' or provider in ['googledrive', 'gmail']:
-        user_info = await client.parse_id_token(request, token)
-        # Or fetch userinfo endpoint if needed
-        # resp = await client.get('https://www.googleapis.com/oauth2/v3/userinfo', token=token)
-        # user_info = resp.json()
-        # id_token usually has enough info
+        # Try to parse id_token if present, otherwise fetch from userinfo endpoint
+        logger.info(f"Token is to parse: {token}")
+        # if 'id_token' in token:
+        #     logger.info(f"Parsing id_token")
+        #     user_info = await client.parse_id_token(request, token)
+        #     logger.info(f"User info parsed: {user_info}")
+        # else:
+            # Fallback to userinfo endpoint when id_token is not returned
+        resp = await client.get('https://www.googleapis.com/oauth2/v3/userinfo', token=token)
+        user_info = resp.json()
     elif provider == 'github':
         resp = await client.get('user', token=token)
         user_info = resp.json()

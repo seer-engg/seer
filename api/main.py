@@ -75,8 +75,8 @@ if config.is_cloud_mode:
         ],
     )
 else:
-    from api.middleware.auth import AddDefaultUserMiddleware
-    app.add_middleware(AddDefaultUserMiddleware)
+    from api.middleware.auth import TokenDecodeWithoutValidationMiddleware
+    app.add_middleware(TokenDecodeWithoutValidationMiddleware)
     logger.info("🔧 Self-hosted mode: Authentication disabled")
 
 # CORS middleware for development - must be AFTER auth middleware

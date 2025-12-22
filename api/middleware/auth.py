@@ -136,15 +136,58 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
 
 
 
-class AddDefaultUserMiddleware(BaseHTTPMiddleware):
-    """Adds a default user to the request if no user is authenticated."""
+class TokenDecodeWithoutValidationMiddleware(BaseHTTPMiddleware):
+    """Decodes a JWT token without validating signature. Useful for development/testing."""
 
     def __init__(self, app: ASGIApp) -> None:
         super().__init__(app)
 
     async def dispatch(self, request: Request, call_next):
-        auth_user = AuthenticatedUser(user_id="default", email="default@example.com", first_name="Default", last_name="User", claims={})
-        db_user = await User.get_or_create_from_auth(auth_user)
+        request.state.user = None
+        request.state.db_user = None
+
+        authorization = request.headers.get("Authorization")
+        if not authorization or not authorization.startswith("Bearer "):
+            return await call_next(request)
+
+        token = authorization.removeprefix("Bearer ").strip()
+        if not token:
+            return await call_next(request)
+
+        try:
+            # Decode without signature verification
+            claims = jwt.decode(token, options={"verify_signature": False})
+        except Exception as exc:
+            logger.warning(f"Failed to decode token: {exc}")
+            return await call_next(request)
+
+        user_id = self._extract_user_id(claims)
+        if not user_id:
+            return await call_next(request)
+
+        auth_user = AuthenticatedUser(
+            user_id=user_id,
+            email=claims.get("email"),
+            first_name=claims.get("first_name"),
+            last_name=claims.get("last_name"),
+            claims=claims,
+        )
+        logger.info(f"Decoded user (no validation): {auth_user}")
+
+        try:
+            db_user = await User.get_or_create_from_auth(auth_user)
+            logger.info(f"Persisted user: {db_user}")
+        except Exception:
+            logger.exception("Failed to persist user from decoded token")
+            return await call_next(request)
+
         request.state.user = auth_user
         request.state.db_user = db_user
         return await call_next(request)
+
+    @staticmethod
+    def _extract_user_id(claims: Dict[str, Any]) -> Optional[str]:
+        for key in ("sub", "user_id", "sid"):
+            if claims.get(key):
+                return str(claims[key])
+        return None
