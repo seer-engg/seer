@@ -24,7 +24,7 @@ async def store_oauth_connection(
         granted_scopes: Space-separated string of granted OAuth scopes
     """
     # Find user
-    user = await User.get(user_id=user_id)
+    user = await User.get(email=user_id)
     
     # Extract provider account id
     if provider in ['google', 'googledrive', 'gmail']:
