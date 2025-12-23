@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 from pydantic import BaseModel, Field
 
-from shared.database.models import User
+from shared.database.models import UserPublic
 
 
 class WorkflowEdit(BaseModel):
@@ -51,7 +51,7 @@ class ChatSession(BaseModel):
     """Response model for chat session."""
     id: int
     workflow_id: int
-    user: User
+    user: UserPublic
     thread_id: str
     title: Optional[str]
     created_at: datetime

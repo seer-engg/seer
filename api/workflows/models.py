@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 from pydantic import BaseModel, ConfigDict, Field
 from tortoise import fields, models
 
-from shared.database.models import User
+from shared.database.models import UserPublic
 
 
 class Workflow(models.Model):
@@ -190,7 +190,7 @@ class WorkflowPublic(WorkflowBase):
     model_config = ConfigDict(from_attributes=True)
     
     id: int
-    user: User
+    user: UserPublic
     created_at: datetime
     updated_at: datetime
 
@@ -215,7 +215,7 @@ class WorkflowExecutionPublic(BaseModel):
     
     id: int
     workflow_id: int
-    user: User
+    user: UserPublic
     status: str
     input_data: Optional[Dict[str, Any]] = None
     output_data: Optional[Dict[str, Any]] = None
@@ -231,7 +231,7 @@ class WorkflowChatSessionPublic(BaseModel):
     
     id: int
     workflow_id: int
-    user: User
+    user: UserPublic
     thread_id: str
     title: Optional[str]
     created_at: datetime
