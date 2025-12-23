@@ -115,6 +115,45 @@ class BlockExecution(models.Model):
         return f"BlockExecution<{self.block.block_id}:{self.status}>"
 
 
+class WorkflowChatSession(models.Model):
+    """Chat session for workflow assistant."""
+    
+    id = fields.IntField(primary_key=True)
+    workflow = fields.ForeignKeyField('models.Workflow', related_name='chat_sessions')
+    user_id = fields.CharField(max_length=255, null=True, index=True)
+    thread_id = fields.CharField(max_length=255, unique=True, index=True)  # LangGraph thread ID
+    title = fields.CharField(max_length=255, null=True)  # Optional title for the session
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+    
+    class Meta:
+        table = "workflow_chat_sessions"
+        ordering = ("-updated_at",)
+    
+    def __str__(self) -> str:
+        return f"WorkflowChatSession<{self.workflow.name}:{self.thread_id}>"
+
+
+class WorkflowChatMessage(models.Model):
+    """Individual message in a chat session."""
+    
+    id = fields.IntField(primary_key=True)
+    session = fields.ForeignKeyField('models.WorkflowChatSession', related_name='messages')
+    role = fields.CharField(max_length=20)  # 'user' or 'assistant'
+    content = fields.TextField()
+    thinking = fields.TextField(null=True)  # Optional thinking/reasoning steps
+    suggested_edits = fields.JSONField(null=True)  # Suggested workflow edits
+    metadata = fields.JSONField(null=True)  # Additional metadata (model used, etc.)
+    created_at = fields.DatetimeField(auto_now_add=True)
+    
+    class Meta:
+        table = "workflow_chat_messages"
+        ordering = ("created_at",)
+    
+    def __str__(self) -> str:
+        return f"WorkflowChatMessage<{self.role}:{self.content[:50]}>"
+
+
 # ============================================================================
 # Pydantic Models for API
 # ============================================================================
@@ -183,12 +222,43 @@ class WorkflowExecutionPublic(BaseModel):
     completed_at: Optional[datetime] = None
 
 
+class WorkflowChatSessionPublic(BaseModel):
+    """Response model for chat session."""
+    
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    workflow_id: int
+    user_id: Optional[str]
+    thread_id: str
+    title: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorkflowChatMessagePublic(BaseModel):
+    """Response model for chat message."""
+    
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    session_id: int
+    role: str
+    content: str
+    thinking: Optional[str] = None
+    suggested_edits: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    created_at: datetime
+
+
 __all__ = [
     "Workflow",
     "WorkflowBlock",
     "WorkflowEdge",
     "WorkflowExecution",
     "BlockExecution",
+    "WorkflowChatSession",
+    "WorkflowChatMessage",
     "WorkflowBase",
     "WorkflowCreate",
     "WorkflowUpdate",
@@ -196,5 +266,7 @@ __all__ = [
     "WorkflowListResponse",
     "WorkflowExecutionCreate",
     "WorkflowExecutionPublic",
+    "WorkflowChatSessionPublic",
+    "WorkflowChatMessagePublic",
 ]
 

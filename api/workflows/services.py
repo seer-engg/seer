@@ -14,6 +14,8 @@ from .models import (
     WorkflowEdge,
     WorkflowExecution,
     BlockExecution,
+    WorkflowChatSession,
+    WorkflowChatMessage,
     WorkflowCreate,
     WorkflowUpdate,
 )
@@ -406,6 +408,242 @@ async def get_execution(
     return execution
 
 
+# ============================================================================
+# Chat Session Services
+# ============================================================================
+
+async def create_chat_session(
+    workflow_id: int,
+    user_id: Optional[str],
+    thread_id: str,
+    title: Optional[str] = None,
+) -> WorkflowChatSession:
+    """
+    Create a new chat session for a workflow.
+    
+    Args:
+        workflow_id: Workflow ID
+        user_id: User ID (None in self-hosted mode)
+        thread_id: LangGraph thread ID
+        title: Optional session title
+        
+    Returns:
+        Created chat session
+    """
+    workflow = await get_workflow(workflow_id, user_id)
+    
+    session = await WorkflowChatSession.create(
+        workflow=workflow,
+        user_id=user_id,
+        thread_id=thread_id,
+        title=title,
+    )
+    
+    logger.info(f"Created chat session {session.id} for workflow {workflow_id}")
+    return session
+
+
+async def get_chat_session(
+    session_id: int,
+    workflow_id: int,
+    user_id: Optional[str],
+) -> WorkflowChatSession:
+    """
+    Get a chat session with its messages.
+    
+    Args:
+        session_id: Session ID
+        workflow_id: Workflow ID (for authorization)
+        user_id: User ID for authorization (None in self-hosted mode)
+        
+    Returns:
+        Chat session with messages
+        
+    Raises:
+        HTTPException: If session not found or unauthorized
+    """
+    # Verify workflow access first
+    workflow = await get_workflow(workflow_id, user_id)
+    
+    session = await WorkflowChatSession.get_or_none(
+        id=session_id,
+        workflow=workflow,
+    )
+    
+    if not session:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chat session {session_id} not found"
+        )
+    
+    # In cloud mode, verify user_id matches
+    if config.is_cloud_mode and user_id and session.user_id != user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied to this chat session"
+        )
+    
+    return session
+
+
+async def get_chat_session_by_thread_id(
+    thread_id: str,
+    workflow_id: int,
+    user_id: Optional[str],
+) -> Optional[WorkflowChatSession]:
+    """
+    Get a chat session by thread ID.
+    
+    Args:
+        thread_id: LangGraph thread ID
+        workflow_id: Workflow ID (for authorization)
+        user_id: User ID for authorization (None in self-hosted mode)
+        
+    Returns:
+        Chat session if found, None otherwise
+    """
+    # Verify workflow access first
+    workflow = await get_workflow(workflow_id, user_id)
+    
+    session = await WorkflowChatSession.get_or_none(
+        thread_id=thread_id,
+        workflow=workflow,
+    )
+    
+    if not session:
+        return None
+    
+    # In cloud mode, verify user_id matches
+    if config.is_cloud_mode and user_id and session.user_id != user_id:
+        return None
+    
+    return session
+
+
+async def list_chat_sessions(
+    workflow_id: int,
+    user_id: Optional[str],
+    limit: int = 50,
+) -> List[WorkflowChatSession]:
+    """
+    List chat sessions for a workflow.
+    
+    Args:
+        workflow_id: Workflow ID
+        user_id: User ID for authorization (None in self-hosted mode)
+        limit: Maximum number of sessions to return
+        
+    Returns:
+        List of chat sessions
+    """
+    workflow = await get_workflow(workflow_id, user_id)
+    
+    if config.is_self_hosted:
+        # Self-hosted: Show all sessions for this workflow
+        sessions = await WorkflowChatSession.filter(
+            workflow=workflow,
+        ).order_by('-updated_at').limit(limit).all()
+    else:
+        # Cloud: Filter by user_id
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Authentication required in cloud mode")
+        sessions = await WorkflowChatSession.filter(
+            workflow=workflow,
+            user_id=user_id,
+        ).order_by('-updated_at').limit(limit).all()
+    
+    return sessions
+
+
+async def save_chat_message(
+    session_id: int,
+    role: str,
+    content: str,
+    thinking: Optional[str] = None,
+    suggested_edits: Optional[dict] = None,
+    metadata: Optional[dict] = None,
+) -> WorkflowChatMessage:
+    """
+    Save a chat message to the database.
+    
+    Args:
+        session_id: Session ID
+        role: Message role ('user' or 'assistant')
+        content: Message content
+        thinking: Optional thinking/reasoning steps
+        suggested_edits: Optional suggested workflow edits
+        metadata: Optional metadata (model used, etc.)
+        
+    Returns:
+        Created message
+    """
+    session = await WorkflowChatSession.get_or_none(id=session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    
+    # Update session updated_at timestamp
+    session.updated_at = datetime.utcnow()
+    await session.save()
+    
+    message = await WorkflowChatMessage.create(
+        session=session,
+        role=role,
+        content=content,
+        thinking=thinking,
+        suggested_edits=suggested_edits,
+        metadata=metadata,
+    )
+    
+    logger.debug(f"Saved chat message {message.id} to session {session_id}")
+    return message
+
+
+async def load_chat_history(
+    session_id: int,
+) -> List[WorkflowChatMessage]:
+    """
+    Load chat history for a session.
+    
+    Args:
+        session_id: Session ID
+        
+    Returns:
+        List of messages ordered by creation time
+    """
+    messages = await WorkflowChatMessage.filter(
+        session_id=session_id
+    ).order_by('created_at').all()
+    
+    return messages
+
+
+async def update_chat_session_title(
+    session_id: int,
+    workflow_id: int,
+    user_id: Optional[str],
+    title: str,
+) -> WorkflowChatSession:
+    """
+    Update chat session title.
+    
+    Args:
+        session_id: Session ID
+        workflow_id: Workflow ID (for authorization)
+        user_id: User ID for authorization
+        title: New title
+        
+    Returns:
+        Updated session
+    """
+    session = await get_chat_session(session_id, workflow_id, user_id)
+    
+    session.title = title
+    session.updated_at = datetime.utcnow()
+    await session.save()
+    
+    return session
+
+
 __all__ = [
     "create_workflow",
     "get_workflow",
@@ -416,5 +654,12 @@ __all__ = [
     "update_execution",
     "list_executions",
     "get_execution",
+    "create_chat_session",
+    "get_chat_session",
+    "get_chat_session_by_thread_id",
+    "list_chat_sessions",
+    "save_chat_message",
+    "load_chat_history",
+    "update_chat_session_title",
 ]
 
