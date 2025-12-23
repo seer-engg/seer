@@ -202,20 +202,29 @@ async def llm_node(
     variable_map = {}
     
     # 1. Add variables from input_data (direct input)
-    variable_map.update(input_data)
+    # Flatten nested structures if needed
+    for key, value in input_data.items():
+        if isinstance(value, dict):
+            # If it's a dict, merge its keys into variable_map
+            variable_map.update(value)
+        else:
+            variable_map[key] = value
     
     # 2. Add variables from input block outputs
     # Input blocks store their output under block_outputs[block_id].output
-    # If the input block has a variable_name config, use that as the key
     for block_id, block_output in block_outputs.items():
         if isinstance(block_output, dict) and "output" in block_output:
             output_value = block_output["output"]
-            # Try to find the input block to get its variable_name
-            # For now, we'll use the output directly if it's a dict with variable names
             if isinstance(output_value, dict):
+                # Merge dict output directly
                 variable_map.update(output_value)
-            # Also check if there's a direct variable_name mapping
-            # This handles the case where input_data already has the variable names
+            elif output_value is not None:
+                # If it's a single value, try to use block_id or find variable_name
+                # For now, we'll skip non-dict outputs here as they're handled by input_data
+                pass
+    
+    # Log for debugging
+    logger.debug(f"Template variable map: {variable_map}")
     
     # Resolve template variables
     if system_prompt and "{{" in system_prompt:
@@ -223,8 +232,10 @@ async def llm_node(
             var_name = match.group(1)
             # Try variable_map first, then fallback to empty string
             value = variable_map.get(var_name, "")
+            logger.debug(f"Resolving {{{{{var_name}}}}}: {value}")
             return str(value) if value is not None else ""
         system_prompt = re.sub(r'\{\{(\w+)\}\}', replace_template_var, system_prompt)
+        logger.debug(f"Resolved system prompt: {system_prompt}")
     
     inputs = await resolve_inputs(state, input_resolution, block)
     user_message = inputs.get("input", "")
