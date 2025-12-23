@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, Any
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
+from pydantic import BaseModel, ConfigDict, Field
 from tortoise import fields, models
 
 if TYPE_CHECKING:
@@ -56,12 +58,18 @@ class User(models.Model):
         return user
 
 
-from datetime import datetime
-from typing import Any, Dict, Optional
+class UserPublic(BaseModel):
+    """Pydantic model for User API responses."""
 
-from pydantic import BaseModel, ConfigDict, Field
-from tortoise import fields, models
+    model_config = ConfigDict(from_attributes=True)
 
+    id: int
+    user_id: str
+    email: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class Project(models.Model):
@@ -127,6 +135,8 @@ class ProjectListResponse(BaseModel):
 
 
 __all__ = [
+    "User",
+    "UserPublic",
     "Project",
     "ProjectBase",
     "ProjectCreate",

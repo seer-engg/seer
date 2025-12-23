@@ -113,7 +113,7 @@ async def refresh_oauth_token(connection: OAuthConnection) -> OAuthConnection:
 
 
 async def get_oauth_token(
-    user_id: Optional[str],
+    user: User,
     connection_id: Optional[str] = None,
     provider: Optional[str] = None
 ) -> tuple[OAuthConnection, str]:
@@ -131,12 +131,6 @@ async def get_oauth_token(
     Raises:
         HTTPException: If connection not found or token invalid
     """
-    if not user_id:
-        raise HTTPException(
-            status_code=401,
-            detail="User ID is required for OAuth token access"
-        )
-    user = await User.get(user_id=user_id)
     
     if connection_id:
         # Parse connection_id (may be "provider:id" or just "id")
@@ -185,7 +179,7 @@ async def get_oauth_token(
 
 async def execute_tool(
     tool_name: str,
-    user_id: Optional[str],
+    user: User,
     connection_id: Optional[str] = None,
     arguments: Optional[Dict[str, Any]] = None
 ) -> Any:
@@ -194,7 +188,7 @@ async def execute_tool(
     
     Args:
         tool_name: Name of the tool to execute
-        user_id: User ID (None in self-hosted mode)
+        user: User
         connection_id: OAuth connection ID (if tool requires OAuth)
         arguments: Tool arguments
     
@@ -219,18 +213,27 @@ async def execute_tool(
     connection = None
     
     if tool.required_scopes:
-        if not user_id:
+        if not user.user_id:
             raise HTTPException(
                 status_code=401,
                 detail=f"Tool '{tool_name}' requires OAuth authentication. User ID is required."
             )
-        if not connection_id:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Tool '{tool_name}' requires OAuth connection. connection_id must be provided."
-            )
         
-        connection, access_token = await get_oauth_token(user_id, connection_id)
+        # If no connection_id provided, try to find connection by tool's integration_type
+        provider = None
+        if not connection_id:
+            # Get integration_type from tool (e.g., "gmail", "googledrive", "github")
+            integration_type = getattr(tool, 'integration_type', None)
+            if integration_type:
+                provider = integration_type
+                logger.info(f"No connection_id provided, using tool integration_type '{provider}' to find connection")
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Tool '{tool_name}' requires OAuth connection. connection_id must be provided."
+                )
+        
+        connection, access_token = await get_oauth_token(user, connection_id, provider=provider)
         
         # Validate scopes
         is_valid, missing_scope = validate_scopes(connection, tool.required_scopes)
@@ -245,7 +248,7 @@ async def execute_tool(
     
     # Execute tool
     try:
-        logger.info(f"Executing tool '{tool_name}' for user {user_id}")
+        logger.info(f"Executing tool '{tool_name}' for user {user.user_id}")
         result = await tool.execute(access_token, arguments)
         logger.info(f"Tool '{tool_name}' executed successfully")
         return result

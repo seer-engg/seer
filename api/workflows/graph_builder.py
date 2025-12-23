@@ -297,7 +297,7 @@ class WorkflowGraphBuilder:
         # Build and compile
         if workflow is None:
             from .services import get_workflow
-            workflow = await get_workflow(workflow_id, user_id)
+            workflow = await get_workflow(workflow_id)
         
         compiled = await self.build_graph(workflow, user_id=user_id)
         

@@ -56,33 +56,13 @@ try:
     import psycopg
 except ImportError:
     psycopg = None
+from shared.database.models import User
 
 logger = get_logger("api.workflows.router")
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
 
-def _get_user_id(request: Request) -> Optional[str]:
-    """
-    Get user_id from request, returns None in self-hosted mode.
-    
-    Args:
-        request: FastAPI request object
-        
-    Returns:
-        User ID string or None
-        
-    Raises:
-        HTTPException: If authentication is required but missing in cloud mode
-    """
-    if config.is_self_hosted:
-        return None
-    
-    # Cloud mode: require authentication
-    if not hasattr(request.state, 'user') or not request.state.user:
-        raise HTTPException(status_code=401, detail="Authentication required in cloud mode")
-    
-    return request.state.user.user_id
 
 
 @router.post("", response_model=WorkflowPublic, status_code=201)
@@ -95,8 +75,8 @@ async def create_workflow_endpoint(
     
     Requires authentication in cloud mode. User ID is extracted from request state.
     """
-    user_id = _get_user_id(request)
-    workflow = await create_workflow(user_id, payload)
+    user = request.state.db_user
+    workflow = await create_workflow(user, payload)
     return WorkflowPublic.model_validate(workflow, from_attributes=True)
 
 
@@ -105,8 +85,8 @@ async def list_workflows_endpoint(request: Request) -> WorkflowListResponse:
     """
     List all workflows for the authenticated user (cloud mode) or all workflows (self-hosted mode).
     """
-    user_id = _get_user_id(request)
-    workflows = await list_workflows(user_id)
+    user = request.state.db_user
+    workflows = await list_workflows(user)
     return WorkflowListResponse(
         workflows=[
             WorkflowPublic.model_validate(w, from_attributes=True)
@@ -125,8 +105,7 @@ async def get_workflow_endpoint(
     
     Returns 404 if not found, 403 if unauthorized (cloud mode only).
     """
-    user_id = _get_user_id(request)
-    workflow = await get_workflow(workflow_id, user_id)
+    workflow = await get_workflow(workflow_id)
     return WorkflowPublic.model_validate(workflow, from_attributes=True)
 
 
@@ -141,8 +120,7 @@ async def update_workflow_endpoint(
     
     Returns 404 if not found, 403 if unauthorized (cloud mode only).
     """
-    user_id = _get_user_id(request)
-    workflow = await update_workflow(workflow_id, user_id, payload)
+    workflow = await update_workflow(workflow_id, payload)
     return WorkflowPublic.model_validate(workflow, from_attributes=True)
 
 
@@ -156,8 +134,7 @@ async def delete_workflow_endpoint(
     
     Returns 404 if not found, 403 if unauthorized (cloud mode only).
     """
-    user_id = _get_user_id(request)
-    await delete_workflow(workflow_id, user_id)
+    await delete_workflow(workflow_id)
 
 
 @router.post("/{workflow_id}/execute", response_model=WorkflowExecutionPublic)
@@ -172,15 +149,14 @@ async def execute_workflow_endpoint(
     Executes the workflow with the provided input data and returns results.
     For streaming execution, use the stream endpoint.
     """
-    user_id = _get_user_id(request)
-    
+    user:User = request.state.db_user
     # Get workflow
-    workflow = await get_workflow(workflow_id, user_id)
+    workflow = await get_workflow(workflow_id)
     
     # Create execution record
     execution = await create_execution(
         workflow_id=workflow_id,
-        user_id=user_id,
+        user=user,
         input_data=payload.input_data,
     )
     
@@ -190,7 +166,7 @@ async def execute_workflow_endpoint(
         compiled_graph = await builder.get_compiled_graph(
             workflow_id=workflow_id,
             workflow=workflow,
-            user_id=user_id,
+            user_id=user.user_id,
         )
         
         # Prepare initial state
@@ -198,7 +174,7 @@ async def execute_workflow_endpoint(
         initial_state = {
             "input_data": payload.input_data or {},
             "execution_id": execution.id,
-            "user_id": user_id,
+            "user_id": user.user_id,
             "block_outputs": {},
             "loop_state": None,
         }
@@ -212,7 +188,6 @@ async def execute_workflow_endpoint(
         # Update execution with results
         execution = await update_execution(
             execution_id=execution.id,
-            user_id=user_id,
             status='completed',
             output_data=output_data,
             error_message=None,
@@ -224,7 +199,6 @@ async def execute_workflow_endpoint(
         logger.error(f"Workflow execution failed: {e}", exc_info=True)
         execution = await update_execution(
             execution_id=execution.id,
-            user_id=user_id,
             status='failed',
             error_message=str(e),
         )
@@ -245,17 +219,17 @@ async def execute_workflow_stream_endpoint(
     import json
     from datetime import datetime
     
-    user_id = _get_user_id(request)
+    user:User = request.state.db_user
     
     async def generate_events():
         try:
             # Get workflow
-            workflow = await get_workflow(workflow_id, user_id)
+            workflow = await get_workflow(workflow_id)
             
             # Create execution record
             execution = await create_execution(
                 workflow_id=workflow_id,
-                user_id=user_id,
+                user=user,
                 input_data=payload.input_data,
             )
             
@@ -266,7 +240,7 @@ async def execute_workflow_stream_endpoint(
             compiled_graph = await builder.get_compiled_graph(
                 workflow_id=workflow_id,
                 workflow=workflow,
-                user_id=user_id,
+                user_id=user.user_id,
             )
             
             # Prepare initial state
@@ -274,7 +248,7 @@ async def execute_workflow_stream_endpoint(
             initial_state = {
                 "input_data": payload.input_data or {},
                 "execution_id": execution.id,
-                "user_id": user_id,
+                "user_id": user.user_id,
                 "block_outputs": {},
                 "loop_state": None,
             }
@@ -291,7 +265,6 @@ async def execute_workflow_stream_endpoint(
             # Update execution
             execution = await update_execution(
                 execution_id=execution.id,
-                user_id=user_id,
                 status='completed',
                 output_data=output_data,
                 error_message=None,
@@ -323,8 +296,7 @@ async def list_executions_endpoint(
     """
     List executions for a workflow.
     """
-    user_id = _get_user_id(request)
-    executions = await list_executions(workflow_id, user_id, limit=limit)
+    executions = await list_executions(workflow_id, limit=limit)
     return [
         WorkflowExecutionPublic.model_validate(e, from_attributes=True)
         for e in executions
@@ -340,8 +312,7 @@ async def get_execution_endpoint(
     """
     Get a single execution by ID.
     """
-    user_id = _get_user_id(request)
-    execution = await get_execution(execution_id, workflow_id, user_id)
+    execution = await get_execution(execution_id, workflow_id)
     return WorkflowExecutionPublic.model_validate(execution, from_attributes=True)
 
 
@@ -364,10 +335,10 @@ async def chat_with_workflow_endpoint(
     Supports session persistence and human-in-the-loop interrupts.
     """
     logger.info(f"Chat request received: workflow_id={workflow_id}, message_length={len(chat_request.message)}")
-    user_id = _get_user_id(request)
+    user:User = request.state.db_user
     
     # Verify workflow exists and user has access
-    workflow = await get_workflow(workflow_id, user_id)
+    workflow = await get_workflow(workflow_id)
     
     # Get model from request or use default
     model = chat_request.model or config.default_llm_model
@@ -381,19 +352,19 @@ async def chat_with_workflow_endpoint(
     
     if thread_id:
         # Try to find existing session by thread_id
-        session = await get_chat_session_by_thread_id(thread_id, workflow_id, user_id)
+        session = await get_chat_session_by_thread_id(thread_id, workflow_id)
         if session:
             session_id = session.id
     elif session_id:
         # Get session by ID
-        session = await get_chat_session(session_id, workflow_id, user_id)
+        session = await get_chat_session(session_id, workflow_id)
         thread_id = session.thread_id
     else:
         # Create new session
         thread_id = f"workflow-{workflow_id}-{uuid.uuid4().hex}"
         session = await create_chat_session(
             workflow_id=workflow_id,
-            user_id=user_id,
+            user=user,
             thread_id=thread_id,
         )
         session_id = session.id
@@ -824,13 +795,13 @@ async def create_chat_session_endpoint(
     session_data: ChatSessionCreate,
 ) -> ChatSession:
     """Create a new chat session."""
-    user_id = _get_user_id(request)
-    workflow = await get_workflow(workflow_id, user_id)
+    user:User = request.state.db_user
+    workflow = await get_workflow(workflow_id)
     
     thread_id = f"workflow-{workflow_id}-{uuid.uuid4().hex}"
     session = await create_chat_session(
         workflow_id=workflow_id,
-        user_id=user_id,
+        user=user,
         thread_id=thread_id,
         title=session_data.title,
     )
@@ -838,7 +809,7 @@ async def create_chat_session_endpoint(
     return ChatSession(
         id=session.id,
         workflow_id=workflow_id,  # Use the workflow_id parameter directly
-        user_id=session.user_id,
+        user=session.user,
         thread_id=session.thread_id,
         title=session.title,
         created_at=session.created_at,
@@ -853,14 +824,14 @@ async def list_chat_sessions_endpoint(
     limit: int = Query(default=50, le=100),
 ) -> list[ChatSession]:
     """List chat sessions for a workflow."""
-    user_id = _get_user_id(request)
-    sessions = await list_chat_sessions(workflow_id, user_id, limit=limit)
+    user:User = request.state.db_user
+    sessions = await list_chat_sessions(workflow_id, user, limit=limit)
     
     return [
         ChatSession(
             id=session.id,
             workflow_id=workflow_id,  # Use the workflow_id parameter directly
-            user_id=session.user_id,
+            user=session.user,
             thread_id=session.thread_id,
             title=session.title,
             created_at=session.created_at,
@@ -877,15 +848,15 @@ async def get_chat_session_endpoint(
     session_id: int,
 ) -> ChatSessionWithMessages:
     """Get a chat session with its messages."""
-    user_id = _get_user_id(request)
-    session = await get_chat_session(session_id, workflow_id, user_id)
+    user:User = request.state.db_user
+    session = await get_chat_session(session_id, workflow_id)
     
     messages = await load_chat_history(session_id)
     
     return ChatSessionWithMessages(
         id=session.id,
         workflow_id=workflow_id,  # Use the workflow_id parameter directly
-        user_id=session.user_id,
+        user=session.user,
         thread_id=session.thread_id,
         title=session.title,
         created_at=session.created_at,

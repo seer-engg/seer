@@ -2,13 +2,18 @@
 GitHub MCP Tool Wrappers
 
 Wraps GitHub MCP server tools as Seer BaseTool instances with scope validation.
+Uses the official GitHub MCP server with per-request OAuth token injection.
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 from fastapi import HTTPException
 import httpx
 
+from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_core.tools import BaseTool as LangChainBaseTool
+
 from shared.tools.base import BaseTool, register_tool
-from shared.tools.mcp_client import client, _load_tools
+from shared.tools.mcp_client import _load_tools
+from shared.config import config
 from shared.logger import get_logger
 
 logger = get_logger("shared.tools.github")
@@ -80,6 +85,7 @@ class GitHubMCPTool(BaseTool):
             GITHUB_TOOL_SCOPES.get("default", ["repo"])
         )
         self.integration_type = "github"
+        self.provider = "github"
         self._parameters_schema = parameters_schema or {
             "type": "object",
             "properties": {},
@@ -92,7 +98,10 @@ class GitHubMCPTool(BaseTool):
     
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         """
-        Execute GitHub MCP tool via MCP client.
+        Execute GitHub tool via the official GitHub MCP server.
+        
+        Creates a new MCP client per-request with the user's OAuth token
+        injected in the Authorization header.
         
         Args:
             access_token: OAuth access token (required for GitHub API)
@@ -108,40 +117,15 @@ class GitHubMCPTool(BaseTool):
             )
         
         try:
-            # Execute via MCP client
-            # Note: The GitHub MCP server may need the token passed differently
-            # For now, we'll pass it in headers if the MCP client supports it
-            # The actual implementation may need adjustment based on how GitHub MCP server handles auth
+            # First, try to execute via GitHub MCP server with OAuth token
+            if config.GITHUB_MCP_SERVER_URL:
+                try:
+                    result = await self._execute_via_mcp(access_token, arguments)
+                    return result
+                except Exception as mcp_error:
+                    logger.warning(f"MCP execution failed, falling back to direct API: {mcp_error}")
             
-            # Try to get tools from GitHub MCP server
-            tools = _load_tools("github")
-            
-            # Find the matching tool
-            tool = None
-            for t in tools:
-                if t.name == self.mcp_tool_name:
-                    tool = t
-                    break
-            
-            if not tool:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"GitHub MCP tool '{self.mcp_tool_name}' not found"
-                )
-            
-            # Execute tool via MCP client
-            # The MCP client's run_tool method should handle the execution
-            # We may need to pass the access_token in a way the GitHub MCP server understands
-            # For now, assume the MCP server can use the token from environment or headers
-            
-            # Note: The GitHub MCP server typically expects GITHUB_TOKEN env var
-            # For OAuth tokens, we may need to modify how we call the MCP server
-            # This is a limitation we'll need to address - either:
-            # 1. Modify GitHub MCP server to accept tokens per-request
-            # 2. Use a proxy/wrapper that injects tokens
-            # 3. Call GitHub API directly instead of via MCP server
-            
-            # For POC, we'll call GitHub API directly if MCP server doesn't support per-request tokens
+            # Fallback to direct GitHub API calls
             result = await self._execute_via_github_api(access_token, arguments)
             return result
             
@@ -153,6 +137,61 @@ class GitHubMCPTool(BaseTool):
                 status_code=500,
                 detail=f"GitHub tool execution failed: {str(e)}"
             )
+    
+    async def _execute_via_mcp(self, access_token: str, arguments: Dict[str, Any]) -> Any:
+        """
+        Execute tool via GitHub MCP server with OAuth token injection.
+        
+        Creates a new MCP client with the user's OAuth token in the
+        Authorization header, then invokes the tool.
+        """
+        # Create a new MCP client with the OAuth token in headers
+        mcp_client = MultiServerMCPClient({
+            "github": {
+                "transport": "streamable_http",
+                "url": config.GITHUB_MCP_SERVER_URL,
+                "headers": {
+                    "Authorization": f"Bearer {access_token}",
+                },
+            }
+        })
+        
+        try:
+            # Get tools from the MCP server (authenticated with user's token)
+            tools: List[LangChainBaseTool] = await mcp_client.get_tools(server_name="github")
+            
+            if not tools:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No tools available from GitHub MCP server"
+                )
+            
+            # Find the matching tool
+            target_tool = None
+            for tool in tools:
+                if tool.name == self.mcp_tool_name:
+                    target_tool = tool
+                    break
+            
+            if not target_tool:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"GitHub MCP tool '{self.mcp_tool_name}' not found. Available: {[t.name for t in tools]}"
+                )
+            
+            # Invoke the tool
+            logger.info(f"Invoking GitHub MCP tool '{self.mcp_tool_name}' with args: {arguments}")
+            result = await target_tool.ainvoke(arguments)
+            logger.info(f"GitHub MCP tool '{self.mcp_tool_name}' completed successfully")
+            
+            return result
+            
+        finally:
+            # Clean up the client session
+            try:
+                await mcp_client.close()
+            except Exception as e:
+                logger.warning(f"Error closing MCP client: {e}")
     
     async def _execute_via_github_api(self, access_token: str, arguments: Dict[str, Any]) -> Any:
         """

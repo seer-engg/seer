@@ -25,7 +25,7 @@ async def list_projects(request: Request) -> ProjectListResponse:
             ProjectPublic.model_validate(project, from_attributes=True)
             for project in projects
         ],
-        user=request.state.user,
+        user=request.state.db_user,
     )
 
 

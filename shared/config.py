@@ -167,7 +167,7 @@ class SeerConfig(BaseSettings):
     GITHUB_CLIENT_ID: Optional[str] = Field(default=None, description="GitHub OAuth client ID")
     GITHUB_CLIENT_SECRET: Optional[str] = Field(default=None, description="GitHub OAuth client secret")
     GITHUB_MCP_SERVER_URL: Optional[str] = Field(
-        default=None,
+        default="https://api.githubcopilot.com/mcp/",
         description="GitHub MCP server URL (for streamable HTTP transport, e.g., http://localhost:8080/mcp)"
     )
     # ============================================================================

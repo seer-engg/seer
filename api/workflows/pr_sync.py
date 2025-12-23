@@ -9,7 +9,6 @@ from pydantic import BaseModel
 
 from shared.tools.executor import execute_tool
 from shared.logger import get_logger
-from shared.config import config
 
 logger = get_logger("api.workflows.pr_sync")
 
@@ -29,25 +28,18 @@ class PRSyncRequest(BaseModel):
 
 def _get_user_id(request: Request) -> Optional[str]:
     """
-    Get user_id from request, returns None in self-hosted mode.
+    Get user_id from request.state.db_user.
+    
+    The auth middleware handles authentication and sets db_user in both modes.
     
     Args:
         request: FastAPI request object
         
     Returns:
-        User ID string or None
-        
-    Raises:
-        HTTPException: If authentication is required but missing in cloud mode
+        User ID string or None if not authenticated
     """
-    if config.is_self_hosted:
-        return None
-    
-    # Cloud mode: require authentication
-    if not hasattr(request.state, 'user') or not request.state.user:
-        raise HTTPException(status_code=401, detail="Authentication required in cloud mode")
-    
-    return request.state.user.user_id
+    db_user = getattr(request.state, 'db_user', None)
+    return db_user.user_id if db_user else None
 
 
 @router.post("")
