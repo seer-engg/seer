@@ -1,10 +1,10 @@
 from shared.database.models_oauth import OAuthConnection
 from shared.database.models import User
 from typing import Dict, Any, List
-import logging
 from datetime import datetime, timezone
+from shared.logger import get_logger
+logger = get_logger("api.integrations.services")
 
-logger = logging.getLogger(__name__)
 
 async def store_oauth_connection(
     user_id: str,
@@ -83,7 +83,7 @@ async def list_connections(user_id: str):
     # Using user_id (string) to find User model
     try:
         user = await User.get(email=user_id)
-        logger.info(f"Listing connections for user {user_id}")
+        logger.info(f"Listing connections for user {user.id}")
         connections = await OAuthConnection.filter(user=user, status="active").all()
         return connections
     except Exception as e:

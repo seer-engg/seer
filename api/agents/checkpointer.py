@@ -32,8 +32,8 @@ async def get_checkpointer() -> Optional[AsyncPostgresSaver]:
         if _checkpointer is not None:
             return _checkpointer
         
-        if not config.database_uri:
-            logger.warning("DATABASE_URI not configured, workflows will run without checkpointing")
+        if not config.DATABASE_URL:
+            logger.warning("DATABASE_URL not configured, workflows will run without checkpointing")
             return None
         
         logger.info("Initializing AsyncPostgresSaver checkpointer")
@@ -41,7 +41,7 @@ async def get_checkpointer() -> Optional[AsyncPostgresSaver]:
             # AsyncPostgresSaver.from_conn_string() returns a context manager
             # We need to enter it to get the actual checkpointer instance
             global _checkpointer_cm
-            _checkpointer_cm = AsyncPostgresSaver.from_conn_string(config.database_uri)
+            _checkpointer_cm = AsyncPostgresSaver.from_conn_string(config.DATABASE_URL)
             
             # Enter the context manager to get the actual checkpointer instance
             _checkpointer = await _checkpointer_cm.__aenter__()

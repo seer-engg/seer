@@ -52,7 +52,6 @@ app = FastAPI(
 )
 
 app.include_router(router)
-app.include_router(integrations_router)
 app.include_router(tools_router)
 
 # Authentication middleware - register BEFORE CORS to ensure user is set
