@@ -75,8 +75,8 @@ async def create_workflow_endpoint(
     
     Requires authentication in cloud mode. User ID is extracted from request state.
     """
-    user_id = request.state.db_user.user_id
-    workflow = await create_workflow(user_id, payload)
+    user = request.state.db_user
+    workflow = await create_workflow(user, payload)
     return WorkflowPublic.model_validate(workflow, from_attributes=True)
 
 

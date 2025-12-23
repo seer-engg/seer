@@ -25,14 +25,14 @@ logger = get_logger("api.workflows.services")
 
 
 async def create_workflow(
-    user_id: Optional[str],
+    user: User,
     payload: WorkflowCreate,
 ) -> Workflow:
     """
     Create a new workflow.
     
     Args:
-        user_id: User ID from auth (None in self-hosted mode)
+        user: User
         payload: Workflow creation payload
         
     Returns:
@@ -42,16 +42,11 @@ async def create_workflow(
         # Validate workflow graph
         validate_workflow_graph(payload.graph_data)
         
-        # In self-hosted mode, user_id is None
-        # In cloud mode, user_id is required
-        if config.is_cloud_mode and not user_id:
-            raise HTTPException(status_code=401, detail="Authentication required in cloud mode")
-        
         # Create workflow
         workflow = await Workflow.create(
             name=payload.name,
             description=payload.description,
-            user_id=user_id,  # None in self-hosted, set in cloud
+            user=user,
             graph_data=payload.graph_data,
             schema_version=payload.schema_version,
             is_active=payload.is_active,
@@ -60,7 +55,7 @@ async def create_workflow(
         # Create blocks and edges
         await _sync_workflow_blocks_and_edges(workflow, payload.graph_data)
         
-        logger.info(f"Created workflow {workflow.id} for user {user_id or 'self-hosted'}")
+        logger.info(f"Created workflow {workflow.id}")
         return workflow
         
     except ValueError as e:

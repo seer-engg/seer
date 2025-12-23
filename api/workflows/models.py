@@ -190,7 +190,6 @@ class WorkflowPublic(WorkflowBase):
     model_config = ConfigDict(from_attributes=True)
     
     id: int
-    user: UserPublic
     created_at: datetime
     updated_at: datetime
 
@@ -215,7 +214,6 @@ class WorkflowExecutionPublic(BaseModel):
     
     id: int
     workflow_id: int
-    user: UserPublic
     status: str
     input_data: Optional[Dict[str, Any]] = None
     output_data: Optional[Dict[str, Any]] = None
