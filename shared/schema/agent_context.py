@@ -27,7 +27,6 @@ Usage:
 """
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field, ConfigDict
-from shared.tools import ToolEntry
 
 
 if TYPE_CHECKING:

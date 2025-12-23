@@ -1,7 +1,15 @@
 from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from .oauth import oauth
-from .services import store_oauth_connection, list_connections, disconnect_provider, delete_connection_by_id
+from .services import (
+    store_oauth_connection,
+    list_connections,
+    disconnect_provider,
+    delete_connection_by_id,
+    get_oauth_provider,
+    get_tool_connection_status,
+    has_required_scopes
+)
 import json
 import base64
 import os
@@ -20,48 +28,183 @@ def encode_state(data: dict) -> str:
 def decode_state(state: str) -> dict:
     return json.loads(base64.urlsafe_b64decode(state).decode())
 
+
+# =============================================================================
+# STATIC ROUTES - Must come BEFORE dynamic routes to avoid path conflicts
+# =============================================================================
+
+@router.get("/")
+async def list_integrations(request: Request):
+    """
+    List all integration connections for the current user.
+    
+    Returns connections organized by OAuth provider with scope information.
+    Frontend can use this to determine which tools are connected.
+    """
+    user: User = request.state.db_user
+    logger.info(f"Listing integrations for user {user.user_id}")
+    connections = await list_connections(user)
+    res = []
+    for conn in connections:
+        # Construct composite ID so frontend can use it for deletion if needed
+        composite_id = f"{conn.provider}:{conn.id}"
+        
+        res.append({
+            "id": composite_id, 
+            "status": "ACTIVE" if conn.status == 'active' else "INACTIVE",
+            "user_id": user.user_id,
+            "toolkit": {
+                "slug": conn.provider  # OAuth provider (google, github, etc.)
+            },
+            "connection": {
+                "user_id": user.user_id,
+                "provider_account_id": conn.provider_account_id
+            },
+            # Include scopes so frontend can check tool-level connectivity
+            "scopes": conn.scopes or "",
+            "provider": conn.provider
+        })
+    return {"items": res}
+
+
+@router.get("/tools/status")
+async def get_tools_connection_status(request: Request):
+    """
+    Get connection status for all tools.
+    
+    Returns a list of all tools with their connection status based on
+    whether the user has a connection with the required scopes.
+    
+    This is the primary endpoint for frontend to check which tools are connected.
+    """
+    from shared.tools.base import list_tools as get_all_tools
+    
+    user: User = request.state.db_user
+    logger.info(f"Getting tools connection status for user {user.user_id}")
+    
+    # Get all connections for this user
+    connections = await list_connections(user)
+    
+    # Build a map of provider -> connection with scopes
+    provider_connections = {}
+    for conn in connections:
+        provider_connections[conn.provider] = {
+            "scopes": conn.scopes or "",
+            "connection_id": f"{conn.provider}:{conn.id}",
+            "provider_account_id": conn.provider_account_id
+        }
+    
+    # Get all registered tools
+    all_tools = get_all_tools()
+    
+    results = []
+    for tool in all_tools:
+        tool_provider = tool.provider or tool.integration_type
+        if not tool_provider:
+            # Non-OAuth tool
+            results.append({
+                "tool_name": tool.name,
+                "integration_type": tool.integration_type,
+                "provider": None,
+                "connected": True,  # Non-OAuth tools are always "connected"
+                "has_required_scopes": True,
+                "missing_scopes": [],
+                "connection_id": None
+            })
+            continue
+        
+        # Normalize to OAuth provider
+        oauth_provider = get_oauth_provider(tool_provider)
+        
+        # Check if user has connection for this provider
+        conn_info = provider_connections.get(oauth_provider)
+        
+        if not conn_info:
+            results.append({
+                "tool_name": tool.name,
+                "integration_type": tool.integration_type,
+                "provider": oauth_provider,
+                "connected": False,
+                "has_required_scopes": False,
+                "missing_scopes": tool.required_scopes,
+                "connection_id": None
+            })
+            continue
+        
+        # Check if connection has required scopes
+        has_scopes = has_required_scopes(conn_info["scopes"], tool.required_scopes)
+        
+        # Find missing scopes
+        granted_set = set(conn_info["scopes"].split()) if conn_info["scopes"] else set()
+        missing = [s for s in tool.required_scopes if s not in granted_set]
+        
+        results.append({
+            "tool_name": tool.name,
+            "integration_type": tool.integration_type,
+            "provider": oauth_provider,
+            "connected": True,
+            "has_required_scopes": has_scopes,
+            "missing_scopes": missing,
+            "connection_id": conn_info["connection_id"],
+            "provider_account_id": conn_info["provider_account_id"]
+        })
+    
+    return {"tools": results}
+
+
+# =============================================================================
+# DYNAMIC ROUTES - Must come AFTER static routes
+# =============================================================================
+
 @router.get("/{provider}/connect")
 async def connect(
     request: Request,
     provider: str,
     redirect_to: str = Query(None),
     scope: str = Query(...),  # OAuth scope from frontend (REQUIRED - frontend controls scopes)
+    integration_type: str = Query(None),  # Integration type for tracking (e.g., 'gmail', 'googlesheets')
 ):
     """
     Start OAuth flow for a provider.
     
     Args:
-        provider: Provider name (google, github, googledrive, gmail)
+        provider: OAuth provider name (google, github)
         redirect_to: Redirect URL after auth
         scope: OAuth scope from frontend (REQUIRED - frontend controls which scopes to request)
+        integration_type: Optional integration type that triggered this connection (for tracking)
     
     Note:
         Frontend must always pass scope parameter. This ensures frontend controls
         which permissions are requested (read-only is core differentiation).
+        
+        Connections are stored by OAuth provider (e.g., 'google'), not integration type.
+        Multiple integration types (gmail, googlesheets, googledrive) share the same Google connection.
     """
     
     if not scope:
         raise HTTPException(status_code=400, detail="scope parameter is required. Frontend must specify OAuth scopes.")
     
-    real_provider = 'google' if provider in ['googledrive', 'gmail'] else provider
+    # Normalize to OAuth provider
+    oauth_provider = get_oauth_provider(provider)
     
-    redirect_uri = request.url_for('auth_callback', provider=provider)
+    redirect_uri = request.url_for('auth_callback', provider=oauth_provider)
     
     # Store user_id, scope, and final redirect in state
     # Scope is stored so we can save it when token is received
-    user:User = request.state.db_user
+    user: User = request.state.db_user
     state_data = {
         'user_id': user.user_id,
         'user_email': user.email,
         'redirect_to': redirect_to or f"{FRONTEND_URL}/settings/integrations",
-        'original_provider': provider,
+        'oauth_provider': oauth_provider,
+        'integration_type': integration_type or provider,  # Track which integration triggered this
         'requested_scope': scope  # Store requested scope to save in callback
     }
 
-    logger.info(f"State data: {state_data}")
+    logger.info(f"Starting OAuth flow: provider={oauth_provider}, integration_type={integration_type}, scopes={scope[:100]}...")
     state = encode_state(state_data)
     
-    client = oauth.create_client(real_provider)
+    client = oauth.create_client(oauth_provider)
     # Always pass scope from frontend - no defaults
     kwargs = {'state': state, 'scope': scope}
         
@@ -69,12 +212,16 @@ async def connect(
 
 @router.get("/{provider}/callback", name="auth_callback")
 async def auth_callback(request: Request, provider: str):
-    # provider param here comes from the redirect_uri path.
-    # If we started with 'googledrive', redirect_uri was /integrations/googledrive/callback
-    # So 'provider' is 'googledrive'.
+    """
+    Handle OAuth callback from provider.
     
-    real_provider = 'google' if provider in ['googledrive', 'gmail'] else provider
-    client = oauth.create_client(real_provider)
+    Stores connection with OAuth provider (e.g., 'google'), merging scopes
+    if a connection already exists for this provider.
+    """
+    # Normalize to OAuth provider
+    oauth_provider = get_oauth_provider(provider)
+    
+    client = oauth.create_client(oauth_provider)
     try:
         token = await client.authorize_access_token(request)
     except Exception as e:
@@ -83,35 +230,30 @@ async def auth_callback(request: Request, provider: str):
     
     # Retrieve user_id from state
     # Authlib validates state match, but we need to extract data from it.
-    # The 'state' query param is in the request.
     state = request.query_params.get('state')
     if not state:
-         raise HTTPException(status_code=400, detail="Missing state")
+        raise HTTPException(status_code=400, detail="Missing state")
          
     try:
         state_data = decode_state(state)
         user_id = state_data.get('user_id')
         redirect_to = state_data.get('redirect_to')
-        requested_scope = state_data.get('requested_scope')  # Get requested scope from state
+        requested_scope = state_data.get('requested_scope')
+        integration_type = state_data.get('integration_type')  # Track which integration triggered this
     except:
         raise HTTPException(status_code=400, detail="Invalid state")
     
     if not user_id:
         raise HTTPException(status_code=400, detail="Missing user_id in state")
+    
+    logger.info(f"OAuth callback: provider={oauth_provider}, integration_type={integration_type}")
         
     # Get user profile
-    if provider == 'google' or provider in ['googledrive', 'gmail']:
-        # Try to parse id_token if present, otherwise fetch from userinfo endpoint
-        logger.info(f"Token is to parse: {token}")
-        # if 'id_token' in token:
-        #     logger.info(f"Parsing id_token")
-        #     user_info = await client.parse_id_token(request, token)
-        #     logger.info(f"User info parsed: {user_info}")
-        # else:
-            # Fallback to userinfo endpoint when id_token is not returned
+    if oauth_provider == 'google':
+        # Fetch from userinfo endpoint
         resp = await client.get('https://www.googleapis.com/oauth2/v3/userinfo', token=token)
         user_info = resp.json()
-    elif provider == 'github':
+    elif oauth_provider == 'github':
         resp = await client.get('user', token=token)
         user_info = resp.json()
     else:
@@ -121,47 +263,87 @@ async def auth_callback(request: Request, provider: str):
     # Token may contain 'scope' field (space-separated) or we use requested_scope
     granted_scopes = token.get('scope') or requested_scope or ''
     
-    await store_oauth_connection(user_id, provider, token, user_info, granted_scopes)
+    # Store connection with OAuth provider (not integration type)
+    # Scopes will be merged if connection already exists
+    await store_oauth_connection(
+        user_id=user_id,
+        provider=oauth_provider,
+        token=token,
+        profile=user_info,
+        granted_scopes=granted_scopes,
+        integration_type=integration_type
+    )
     
-    return RedirectResponse(url=f"{redirect_to}?connected={provider}")
+    # Return with integration_type so frontend knows which tool was connected
+    connected_param = integration_type or oauth_provider
+    return RedirectResponse(url=f"{redirect_to}?connected={connected_param}")
+
+@router.get("/{integration_type}/status")
+async def get_integration_status(request: Request, integration_type: str):
+    """
+    Get connection status for a specific integration type.
+    
+    This checks if the user has a connection with the required scopes for
+    all tools belonging to this integration type.
+    
+    Args:
+        integration_type: Integration type (gmail, googlesheets, googledrive, github, etc.)
+    
+    Returns:
+        Connection status including whether all required scopes are granted
+    """
+    from shared.tools.base import list_tools as get_all_tools
+    
+    user: User = request.state.db_user
+    oauth_provider = get_oauth_provider(integration_type)
+    
+    # Get connection for this provider
+    connections = await list_connections(user)
+    conn = next((c for c in connections if c.provider == oauth_provider), None)
+    
+    if not conn:
+        return {
+            "integration_type": integration_type,
+            "provider": oauth_provider,
+            "connected": False,
+            "has_required_scopes": False,
+            "granted_scopes": [],
+            "missing_scopes": [],
+            "connection_id": None
+        }
+    
+    # Get all tools for this integration type and collect required scopes
+    all_tools = get_all_tools()
+    integration_tools = [t for t in all_tools if t.integration_type == integration_type]
+    
+    # Collect all unique required scopes for this integration
+    all_required_scopes = set()
+    for tool in integration_tools:
+        all_required_scopes.update(tool.required_scopes)
+    
+    granted_scopes = set(conn.scopes.split()) if conn.scopes else set()
+    missing = list(all_required_scopes - granted_scopes)
+    
+    return {
+        "integration_type": integration_type,
+        "provider": oauth_provider,
+        "connected": True,
+        "has_required_scopes": len(missing) == 0,
+        "granted_scopes": list(granted_scopes),
+        "missing_scopes": missing,
+        "connection_id": f"{conn.provider}:{conn.id}",
+        "provider_account_id": conn.provider_account_id
+    }
+
 
 @router.post("/{provider}/disconnect")
 async def disconnect(provider: str, request: Request):
-    user:User = request.state.db_user
+    user: User = request.state.db_user
     await disconnect_provider(user, provider)
     return {"status": "success"}
 
 @router.delete("/{connection_id}")
 async def delete_connection(connection_id: str, request: Request):
-    user:User = request.state.db_user
+    user: User = request.state.db_user
     await delete_connection_by_id(user, connection_id)
     return {"status": "success"}
-
-@router.get("/")
-async def list_integrations(request: Request):
-    user:User = request.state.db_user
-    logger.info(f"Listing integrations for user {user.user_id}")
-    connections = await list_connections(user)
-    res = []
-    for conn in connections:
-        # Construct composite ID so frontend can use it for deletion if needed
-        # Or just use DB ID if we handle it in delete_connection_by_id
-        composite_id = f"{conn.provider}:{conn.id}"
-        
-        # Determine toolkit/provider logic for frontend compat
-        # Frontend expects 'toolkit': {'slug': ...}
-        
-        res.append({
-            "id": composite_id, 
-            "status": "ACTIVE" if conn.status == 'active' else "INACTIVE",
-            "user_id": user.user_id,
-            "toolkit": {
-                "slug": conn.provider
-            },
-            "connection": {
-                "user_id": user.user_id,
-                "provider_account_id": conn.provider_account_id
-            }
-        })
-    return {"items": res}
-
