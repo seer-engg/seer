@@ -36,8 +36,13 @@ def validate_scope(connection: OAuthConnection, required_scope: str) -> bool:
     if not granted_scopes:
         return False
     
-    # Split scopes (space-separated)
-    granted_scope_list = granted_scopes.split()
+    # Split scopes - handle both comma-separated (GitHub) and space-separated (Google) formats
+    # First check if scopes are comma-separated (no spaces between them)
+    if ',' in granted_scopes and ' ' not in granted_scopes:
+        granted_scope_list = [s.strip() for s in granted_scopes.split(',')]
+    else:
+        # Space-separated (Google style) or mixed - split by whitespace
+        granted_scope_list = granted_scopes.split()
     
     # Check for exact match first
     if required_scope in granted_scope_list:
