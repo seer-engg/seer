@@ -6,19 +6,41 @@ from shared.logger import get_logger
 logger = get_logger("api.integrations.services")
 
 
+def parse_scopes(scopes_str: str) -> Set[str]:
+    """
+    Parse a scopes string into a set of individual scopes.
+    Handles both whitespace-separated (Google) and comma-separated (GitHub) formats.
+    
+    Args:
+        scopes_str: String containing scopes (either whitespace or comma separated)
+    
+    Returns:
+        Set of individual scope strings
+    """
+    if not scopes_str:
+        return set()
+    
+    # If scopes contain commas, split by comma; otherwise split by whitespace
+    if ',' in scopes_str:
+        return set(s.strip() for s in scopes_str.split(',') if s.strip())
+    else:
+        return set(scopes_str.split())
+
+
 def merge_scopes(existing_scopes: str, new_scopes: str) -> str:
     """
     Merge existing scopes with new scopes, removing duplicates.
+    Handles both whitespace-separated (Google) and comma-separated (GitHub) formats.
     
     Args:
-        existing_scopes: Space-separated string of existing scopes
-        new_scopes: Space-separated string of new scopes to add
+        existing_scopes: String of existing scopes (whitespace or comma separated)
+        new_scopes: String of new scopes to add (whitespace or comma separated)
     
     Returns:
-        Space-separated string of merged scopes
+        Space-separated string of merged scopes (normalized to whitespace-separated)
     """
-    existing_set: Set[str] = set(existing_scopes.split()) if existing_scopes else set()
-    new_set: Set[str] = set(new_scopes.split()) if new_scopes else set()
+    existing_set = parse_scopes(existing_scopes)
+    new_set = parse_scopes(new_scopes)
     merged = existing_set | new_set
     return " ".join(sorted(merged))
 
@@ -26,9 +48,10 @@ def merge_scopes(existing_scopes: str, new_scopes: str) -> str:
 def has_required_scopes(granted_scopes: str, required_scopes: List[str]) -> bool:
     """
     Check if granted scopes include all required scopes.
+    Handles both whitespace-separated (Google) and comma-separated (GitHub) formats.
     
     Args:
-        granted_scopes: Space-separated string of granted scopes
+        granted_scopes: String of granted scopes (whitespace or comma separated)
         required_scopes: List of required scope strings
     
     Returns:
@@ -36,7 +59,7 @@ def has_required_scopes(granted_scopes: str, required_scopes: List[str]) -> bool
     """
     if not required_scopes:
         return True
-    granted_set = set(granted_scopes.split()) if granted_scopes else set()
+    granted_set = parse_scopes(granted_scopes)
     return all(scope in granted_set for scope in required_scopes)
 
 
@@ -217,8 +240,8 @@ async def get_tool_connection_status(user: User, tool_name: str, required_scopes
         granted_scopes = connection.scopes or ""
         has_scopes = has_required_scopes(granted_scopes, required_scopes)
         
-        # Find missing scopes
-        granted_set = set(granted_scopes.split()) if granted_scopes else set()
+        # Find missing scopes (using parse_scopes to handle both comma and whitespace separators)
+        granted_set = parse_scopes(granted_scopes)
         missing = [s for s in required_scopes if s not in granted_set]
         
         return {
