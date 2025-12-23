@@ -223,7 +223,7 @@ async def execute_tool(
         provider = None
         if not connection_id:
             # Get integration_type from tool (e.g., "gmail", "googledrive", "github")
-            integration_type = getattr(tool, 'integration_type', None)
+            integration_type = getattr(tool, 'provider', None)
             if integration_type:
                 provider = integration_type
                 logger.info(f"No connection_id provided, using tool integration_type '{provider}' to find connection")

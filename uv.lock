@@ -1930,21 +1930,6 @@ wheels = [
 ]
 
 [[package]]
-name = "openevals"
-version = "0.1.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "langchain" },
-    { name = "langchain-openai" },
-    { name = "langsmith" },
-    { name = "rich" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/d4/37/31e23ef661fa4c3c6a3c979afd884b30205512b4dde680b36d5909550500/openevals-0.1.3.tar.gz", hash = "sha256:9b00df1a7738464676aa887d4d950b77d3ef7024f6e8a54be3a83c82f485ea65", size = 100828, upload-time = "2025-12-18T04:09:03.034Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/0d/68/162b0d273ffef5b0ad557ebccb790725bf94d78969702324dd5726828cf0/openevals-0.1.3-py3-none-any.whl", hash = "sha256:aed448df0cfdded732e24cda026eda065435a71ffb8c406a3ce73e590156d9f9", size = 67802, upload-time = "2025-12-18T04:09:01.59Z" },
-]
-
-[[package]]
 name = "opentelemetry-api"
 version = "1.39.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3118,8 +3103,6 @@ dependencies = [
     { name = "langgraph-checkpoint-postgres" },
     { name = "langgraph-cli", extra = ["inmem"] },
     { name = "mlflow" },
-    { name = "openevals" },
-    { name = "pandas" },
     { name = "pinecone" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -3165,8 +3148,6 @@ requires-dist = [
     { name = "langgraph-checkpoint-postgres", specifier = ">=3.0.1,<4.0.0" },
     { name = "langgraph-cli", extras = ["inmem"], specifier = ">=0.4.7" },
     { name = "mlflow", specifier = ">=3.7.0" },
-    { name = "openevals", specifier = ">=0.1.2" },
-    { name = "pandas", specifier = ">=2.3.3" },
     { name = "pinecone", specifier = ">=5.0.0" },
     { name = "pydantic", specifier = ">=2.12.4" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },

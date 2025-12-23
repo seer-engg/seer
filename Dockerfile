@@ -1,6 +1,6 @@
 # Seer Backend Server Dockerfile
 # Based on official LangGraph API image
-FROM langchain/langgraph-api:3.13
+FROM python:3.13-slim
 
 # Set working directory
 WORKDIR /app
@@ -9,8 +9,13 @@ WORKDIR /app
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     libpq-dev \
-    postgresql-client && \
+    postgresql-client \
+    curl && \
     rm -rf /var/lib/apt/lists/*
+
+# Install uv package manager
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
 
 # Copy project files
 # NOTE: In development, docker-compose.yml mounts ./:/app as a volume,

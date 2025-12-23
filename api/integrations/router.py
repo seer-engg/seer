@@ -179,6 +179,9 @@ async def connect(
         
         Connections are stored by OAuth provider (e.g., 'google'), not integration type.
         Multiple integration types (gmail, googlesheets, googledrive) share the same Google connection.
+        
+        For Google OAuth, we use incremental authorization (include_granted_scopes=true)
+        to preserve previously granted scopes when adding new ones.
     """
     
     if not scope:
@@ -207,6 +210,13 @@ async def connect(
     client = oauth.create_client(oauth_provider)
     # Always pass scope from frontend - no defaults
     kwargs = {'state': state, 'scope': scope}
+    
+    # For Google OAuth, enable incremental authorization to preserve previously granted scopes
+    # This ensures that when connecting a new tool (e.g., Google Sheets), existing scopes 
+    # (e.g., Gmail) are included in the new access token instead of being replaced
+    # See: https://developers.google.com/identity/protocols/oauth2/web-server#incrementalAuth
+    if oauth_provider == 'google':
+        kwargs['include_granted_scopes'] = 'true'
         
     return await client.authorize_redirect(request, redirect_uri, **kwargs)
 
