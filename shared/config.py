@@ -10,7 +10,6 @@ Usage:
     if score >= config.eval_pass_threshold:
         ...
 """
-import os
 from typing import Optional, Dict, Any
 from pydantic import Field, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -40,49 +39,13 @@ class SeerConfig(BaseSettings):
     github_token: Optional[str] = Field(default=None, description="GitHub token for sandbox provisioning")
     CONTEXT7_API_KEY: Optional[str] = Field(default=None, description="Context7 API key for MCP tools")
     
-    # ============================================================================
-    # Evaluation Agent Configuration
-    # ============================================================================
-    
-    eval_n_rounds: int = Field(default=2, description="Number of eval rounds per version")
-    eval_n_test_cases: int = Field(default=1, description="Number of test cases to generate per round")
-    eval_n_versions: int = Field(default=2, description="Total versions of target agent to evaluate")
-    eval_pass_threshold: float = Field(default=0.8, ge=0.0, le=1.0, description="Minimum score to pass evaluation")
-    
-    # LangGraph URLs
-    codex_remote_url: str = Field(default="http://127.0.0.1:8003", description="URL for codex agent LangGraph")
-    
-    # Feature flags
-    target_agent_context_level: int = Field(default=0, ge=0, le=3, description="Context level for target agent messages: 0=minimal, 1=system_goal, 2=system_goal+action, 3=full_context")
-    
-    project_name: str = Field(default="eval-v1", description="Project name for metadata filtering (used in eval agent trace metadata)")
-    codex_project_name: str = Field(default="codex-v1", description="Project name for metadata filtering (used in codex agent trace metadata)")
 
     target_agent_port: int = Field(default=2024, description="Port for target agent")
-    target_agent_setup_script: str = Field(default="pip install -e .", description="Setup script for target agent")
     target_agent_command: str = Field(default="langgraph dev --host 0.0.0.0", description="Command to run target agent")
-    codex_handoff_enabled: bool = Field(default=True, description="Enable handoff to codex agent")
-    eval_plan_only_mode: bool = Field(default=False, description="Plan-only mode: skip execution, return after plan generation")
-    eval_reasoning_effort: str = Field(default="medium", description="Reasoning effort for eval agent planning: 'minimal', 'medium', or 'high'")
+
     
     # Base template for E2B sandbox
     base_template_alias: str = Field(default="seer-base", description="E2B template alias")
-
-
-    # ============================================================================
-    # Codex Agent Configuration
-    # ============================================================================
-    allow_pr: bool = Field(default=True, description="Allow PR creation even if eval  fails")
-    eval_agent_handoff_enabled: bool = Field(default=False, description="Enable handoff to eval agent")
-    codex_reasoning_effort: str = Field(default="high", description="Reasoning effort for Codex developer node: 'minimal', 'medium', or 'high'")
-    
-    # ============================================================================
-    # Neo4j Graph Database Configuration
-    # ============================================================================
-    
-    neo4j_uri: str = Field(default="bolt://localhost:7687", description="Neo4j connection URI")
-    neo4j_username: Optional[str] = Field(default=None, description="Neo4j username")
-    neo4j_password: Optional[str] = Field(default=None, description="Neo4j password")
     
     # ============================================================================
     # LangGraph Checkpointer Configuration
@@ -111,22 +74,6 @@ class SeerConfig(BaseSettings):
     embedding_model: str = Field(default="text-embedding-3-small", description="OpenAI embedding model")
     embedding_batch_size: int = Field(default=128, description="OpenAI embedding batch size")
     
-    # Eval reflections index
-    eval_reflections_index_name: str = Field(default="eval_reflections", description="Neo4j index name for eval reflections")
-    eval_reflections_node_label: str = Field(default="EvalReflection", description="Neo4j node label for reflections")
-    eval_reflections_embedding_property: str = Field(default="embedding", description="Property name for embeddings")
-    
-    # MCP tools index
-    tool_node_label: str = Field(default="MCPTool", description="Neo4j node label for tools")
-    tool_embed_prop: str = Field(default="embedding", description="Property name for tool embeddings")
-    tool_vector_index: str = Field(default="mcp_tools_index", description="Neo4j index name for tools")
-    tool_hub_index_dir: str = Field(default="tool_hub_index", description="Directory for ToolHub index")
-
-    # user
-    user_id: str = Field(default="", description="User ID")
-    github_default_owner: str = Field(default="", description="GitHub default owner")
-    github_default_repo: str = Field(default="", description="GitHub default repo")
-    
     
     # ============================================================================
     # MLflow Configuration
@@ -135,13 +82,6 @@ class SeerConfig(BaseSettings):
     mlflow_tracking_uri: Optional[str] = Field(default=None, description="MLflow tracking server URI (e.g., http://localhost:5000)")
     mlflow_experiment_name: Optional[str] = Field(default=None, description="MLflow experiment name for organizing runs")
     
-    # ============================================================================
-    # Asana Configuration
-    # ============================================================================
-    
-    asana_workspace_id: Optional[str] = Field(default=None, description="Asana workspace ID")
-    asana_team_gid: Optional[str] = Field(default=None, description="Asana default team GID")
-    asana_project_id: Optional[str] = Field(default=None, description="Asana project ID to reuse (for free plans without teams)")
     
     # ============================================================================
     # Deployment Mode Configuration
