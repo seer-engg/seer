@@ -67,8 +67,6 @@ if config.is_cloud_mode:
         audience=config.clerk_audience.split(",") if config.clerk_audience else None,
         allow_unauthenticated_paths=[
             "/health",
-            "/ok",
-            "/info",
             "/api/integrations/gmail/callback",
             "/api/integrations/google_drive/callback",
             "/api/integrations/github/callback",
@@ -124,34 +122,15 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.get("/health", tags=["System"])
 async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy"}
-
-
-@app.get("/ok", tags=["System"])
-async def ok_check():
     """
-    LangGraph Server health check endpoint.
-    Required by @langchain/langgraph-sdk for server compatibility.
-    Returns {"ok": true} as per LangGraph Server API specification.
-    """
-    return {"ok": True}
-
-
-@app.get("/info", tags=["System"])
-async def info():
-    """
-    LangGraph Server info endpoint.
-    Used by frontend to verify server connectivity.
-    Returns basic server information.
+    Health check endpoint.
+    Returns server information including status, server name, and version.
     """
     return {
         "status": "ok",
         "server": "Seer LangGraph API",
         "version": "1.0.0"
     }
-
-
 
 
 # =============================================================================

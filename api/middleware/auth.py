@@ -199,11 +199,16 @@ class TokenDecodeWithoutValidationMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
     def _should_skip(self, request: Request) -> bool:
-        """Skip auth for OPTIONS requests and OAuth callbacks."""
+        """Skip auth for OPTIONS requests, health checks, and OAuth callbacks."""
         if request.method == "OPTIONS":
             return True
 
         path = request.scope.get("path") or request.url.path
+        
+        # Skip health check endpoints (should be publicly accessible)
+        if path == "/health":
+            return True
+        
         # Skip OAuth callbacks (they come from OAuth provider, no JWT)
         if "/integrations/" in path and path.endswith("/callback"):
             return True

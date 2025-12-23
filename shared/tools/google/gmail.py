@@ -76,7 +76,39 @@ class GmailReadTool(BaseTool):
                 detail="Gmail tool requires OAuth access token"
             )
         
-        max_results = min(arguments.get("max_results", 10), 100)
+        # Validate and convert max_results with defensive type checking
+        max_results_raw = arguments.get("max_results", 10)
+        if isinstance(max_results_raw, int):
+            max_results = min(max_results_raw, 100)
+        elif isinstance(max_results_raw, float) and max_results_raw.is_integer():
+            max_results = min(int(max_results_raw), 100)
+        elif isinstance(max_results_raw, str):
+            try:
+                max_results = min(int(max_results_raw), 100)
+            except ValueError:
+                logger.warning(f"Invalid max_results value '{max_results_raw}', using default 10")
+                max_results = 10
+        elif isinstance(max_results_raw, dict):
+            # Try to extract numeric value from dict
+            for key in ["value", "count", "output", "result", "number", "max_results"]:
+                if key in max_results_raw:
+                    nested_value = max_results_raw[key]
+                    if isinstance(nested_value, (int, float)):
+                        max_results = min(int(nested_value), 100)
+                        break
+                    elif isinstance(nested_value, str):
+                        try:
+                            max_results = min(int(nested_value), 100)
+                            break
+                        except ValueError:
+                            continue
+            else:
+                logger.warning(f"Could not extract numeric value from max_results dict '{max_results_raw}', using default 10")
+                max_results = 10
+        else:
+            logger.warning(f"Unexpected type for max_results: {type(max_results_raw).__name__}, using default 10")
+            max_results = 10
+        
         label_ids = arguments.get("label_ids", ["INBOX"])
         query = arguments.get("q")
         include_body = arguments.get("include_body", False)
