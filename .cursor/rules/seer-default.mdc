@@ -7,7 +7,12 @@ alwaysApply: true
 
 # Seer Architecture
 
-## Api
-we have a fastapi based client in /api directory.
+## API
+- We have a FastAPI-based client in the /api directory.
+- It has built-in auth middlewares in /middleware/auth that inject a database_user "db_user" object into request.state. Throughout the APIs, we should use this for user-related operations.
 
-It has builtin auth middlewares in /middleware/auth that injects database_user "db_user" object into request.state Throughout teh apis we should use this for user related operations
+## Database
+
+- We use a PostgreSQL database via the tortoise-orm[asyncpg] interface.
+- In dockerized (self-hosted setup), Tortoise creates all tables if DB_GENERATE_SCHEMAS is set with Tortoise.generate_schemas() in /database/init.
+- Do not create SQL migration files in the /migrations directory for database model schema changes. Use aerich (Tortoise migrations) helper instead for doing any sort of migrations.
