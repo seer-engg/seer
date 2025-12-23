@@ -24,7 +24,6 @@ from api.agents.checkpointer import checkpointer_lifespan
 from shared.database import db_lifespan
 
 # Import tools to register them
-from shared.tools import gmail  # noqa: F401
 # Note: model_block removed - use LLM block in workflows instead
 
 logger = get_logger("api.main")
