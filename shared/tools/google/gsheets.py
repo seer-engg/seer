@@ -30,6 +30,7 @@ class GoogleSheetsWriteTool(BaseTool):
                 "spreadsheet_id": {
                     "type": "string",
                     "description": "Google Sheets spreadsheet ID (from URL)"
+                    
                 },
                 "range": {
                     "type": "string",
