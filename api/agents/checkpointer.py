@@ -1,6 +1,6 @@
 """PostgreSQL checkpointer management for LangGraph."""
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Optional, Any
 import asyncio
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -9,19 +9,20 @@ from shared.logger import get_logger
 
 logger = get_logger("api.checkpointer")
 
-# Global checkpointer instance
+# Global checkpointer instance and context manager
 _checkpointer: Optional[AsyncPostgresSaver] = None
+_checkpointer_cm: Optional[Any] = None  # Store context manager to keep it alive
 _checkpointer_lock = asyncio.Lock()
 
 
-async def get_checkpointer() -> AsyncPostgresSaver:
+async def get_checkpointer() -> Optional[AsyncPostgresSaver]:
     """
     Get or create the async PostgreSQL checkpointer.
     
     Uses connection pooling for efficient database access.
-    Raises RuntimeError if DATABASE_URI is not configured.
+    Returns None if DATABASE_URI is not configured or initialization fails.
     """
-    global _checkpointer
+    global _checkpointer, _checkpointer_cm
     
     if _checkpointer is not None:
         return _checkpointer
@@ -32,37 +33,55 @@ async def get_checkpointer() -> AsyncPostgresSaver:
             return _checkpointer
         
         if not config.database_uri:
-            raise RuntimeError(
-                "DATABASE_URI environment variable is required for checkpointing. "
-                "Please set it to a PostgreSQL connection string."
-            )
+            logger.warning("DATABASE_URI not configured, workflows will run without checkpointing")
+            return None
         
         logger.info("Initializing AsyncPostgresSaver checkpointer")
-        _checkpointer = AsyncPostgresSaver.from_conn_string(config.database_uri)
-        
-        # Setup tables (idempotent)
         try:
-            await _checkpointer.setup()
-            logger.info("PostgreSQL checkpointer tables setup complete")
+            # AsyncPostgresSaver.from_conn_string() returns a context manager
+            # We need to enter it to get the actual checkpointer instance
+            global _checkpointer_cm
+            _checkpointer_cm = AsyncPostgresSaver.from_conn_string(config.database_uri)
+            
+            # Enter the context manager to get the actual checkpointer instance
+            _checkpointer = await _checkpointer_cm.__aenter__()
+            
+            # Setup tables (idempotent)
+            try:
+                await _checkpointer.setup()
+                logger.info("PostgreSQL checkpointer tables setup complete")
+            except Exception as e:
+                # Tables might already exist
+                logger.debug(f"Checkpointer setup (tables may already exist): {e}")
+            
+            # Verify checkpointer has required methods before returning
+            if not hasattr(_checkpointer, 'get_next_version'):
+                logger.warning("Checkpointer missing get_next_version method - this may cause issues")
+                # Don't fail here - let graph_builder handle it gracefully
+            
+            return _checkpointer
         except Exception as e:
-            # Tables might already exist
-            logger.debug(f"Checkpointer setup (tables may already exist): {e}")
-        
-        return _checkpointer
+            logger.error(f"Failed to initialize checkpointer: {e}", exc_info=True)
+            _checkpointer = None
+            _checkpointer_cm = None
+            return None
 
 
 async def close_checkpointer():
     """Close the checkpointer connection pool."""
-    global _checkpointer
+    global _checkpointer, _checkpointer_cm
     
-    if _checkpointer is not None:
+    if _checkpointer_cm is not None:
         try:
-            # AsyncPostgresSaver manages its own connection pool
-            # Close will be handled when the app shuts down
+            # Exit the context manager properly
             logger.info("Closing checkpointer connection")
+            await _checkpointer_cm.__aexit__(None, None, None)
             _checkpointer = None
+            _checkpointer_cm = None
         except Exception as e:
             logger.warning(f"Error closing checkpointer: {e}")
+            _checkpointer = None
+            _checkpointer_cm = None
 
 
 @asynccontextmanager

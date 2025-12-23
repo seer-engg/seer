@@ -56,8 +56,10 @@ services:
       MLFLOW_EXPERIMENT_NAME: "langgraph-local"
       DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
       DB_GENERATE_SCHEMAS: "true"  # Enable schema generation in development
+      UV_LINK_MODE: "copy"  # Use copy mode to avoid hardlink warnings in Docker volumes
     volumes:
       - ./:/app  # Mount source code for instant updates in development (overrides COPY in Dockerfile)
+      - /app/.venv  # Exclude local .venv (Docker will create its own venv)
     command: >
       sh -c "
         echo 'Waiting for database to be ready...' &&

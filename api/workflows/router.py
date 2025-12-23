@@ -24,8 +24,11 @@ from .services import (
     create_execution,
     update_execution,
     list_executions,
+    get_execution,
 )
-from .executor import WorkflowExecutor, WorkflowExecutionError
+from .graph_builder import get_workflow_graph_builder
+from .chat_schema import ChatRequest, ChatResponse
+from .chat_agent import create_workflow_chat_agent
 
 logger = get_logger("api.workflows.router")
 
@@ -155,39 +158,41 @@ async def execute_workflow_endpoint(
     )
     
     try:
-        # Execute workflow
-        executor = WorkflowExecutor(user_id=user_id)
-        result = await executor.execute(
+        # Build and compile graph
+        builder = await get_workflow_graph_builder()
+        compiled_graph = await builder.get_compiled_graph(
+            workflow_id=workflow_id,
             workflow=workflow,
-            input_data=payload.input_data,
-            execution=execution,
+            user_id=user_id,
         )
         
-        # Update execution with results
-        status = 'completed' if result.get('success') else 'failed'
-        output_data = result.get('output')
-        error_message = result.get('error')
+        # Prepare initial state
+        config = {"configurable": {"thread_id": f"workflow_{execution.id}"}}
+        initial_state = {
+            "input_data": payload.input_data or {},
+            "execution_id": execution.id,
+            "user_id": user_id,
+            "block_outputs": {},
+            "loop_state": None,
+        }
         
+        # Execute workflow
+        result = await compiled_graph.ainvoke(initial_state, config)
+        
+        # Extract outputs from output blocks
+        output_data = result.get("block_outputs", {})
+        
+        # Update execution with results
         execution = await update_execution(
             execution_id=execution.id,
             user_id=user_id,
-            status=status,
+            status='completed',
             output_data=output_data,
-            error_message=error_message,
+            error_message=None,
         )
         
         return WorkflowExecutionPublic.model_validate(execution, from_attributes=True)
         
-    except WorkflowExecutionError as e:
-        # Update execution with error
-        execution = await update_execution(
-            execution_id=execution.id,
-            user_id=user_id,
-            status='failed',
-            error_message=str(e),
-        )
-        raise HTTPException(status_code=500, detail=str(e))
-    
     except Exception as e:
         logger.error(f"Workflow execution failed: {e}", exc_info=True)
         execution = await update_execution(
@@ -196,7 +201,7 @@ async def execute_workflow_endpoint(
             status='failed',
             error_message=str(e),
         )
-        raise HTTPException(status_code=500, detail="Workflow execution failed")
+        raise HTTPException(status_code=500, detail=f"Workflow execution failed: {str(e)}")
 
 
 @router.post("/{workflow_id}/execute/stream")
@@ -229,31 +234,43 @@ async def execute_workflow_stream_endpoint(
             
             yield f"event: execution_started\ndata: {json.dumps({'execution_id': execution.id})}\n\n"
             
-            # Execute workflow
-            executor = WorkflowExecutor(user_id=user_id)
-            
-            # TODO: Implement streaming execution with per-block events
-            # For now, execute and stream final result
-            result = await executor.execute(
+            # Build and compile graph
+            builder = await get_workflow_graph_builder()
+            compiled_graph = await builder.get_compiled_graph(
+                workflow_id=workflow_id,
                 workflow=workflow,
-                input_data=payload.input_data,
-                execution=execution,
+                user_id=user_id,
             )
             
-            # Stream block execution events (simplified)
-            yield f"event: block_executed\ndata: {json.dumps({'status': 'processing'})}\n\n"
+            # Prepare initial state
+            config = {"configurable": {"thread_id": f"workflow_{execution.id}"}}
+            initial_state = {
+                "input_data": payload.input_data or {},
+                "execution_id": execution.id,
+                "user_id": user_id,
+                "block_outputs": {},
+                "loop_state": None,
+            }
+            
+            # Stream execution events
+            output_data = {}
+            async for event in compiled_graph.astream(initial_state, config):
+                # Stream block execution events
+                for node_name, node_output in event.items():
+                    yield f"event: block_executed\ndata: {json.dumps({'node': node_name, 'status': 'completed'})}\n\n"
+                    if isinstance(node_output, dict) and "block_outputs" in node_output:
+                        output_data.update(node_output.get("block_outputs", {}))
             
             # Update execution
-            status = 'completed' if result.get('success') else 'failed'
             execution = await update_execution(
                 execution_id=execution.id,
                 user_id=user_id,
-                status=status,
-                output_data=result.get('output'),
-                error_message=result.get('error'),
+                status='completed',
+                output_data=output_data,
+                error_message=None,
             )
             
-            yield f"event: execution_completed\ndata: {json.dumps({'execution_id': execution.id, 'status': status})}\n\n"
+            yield f"event: execution_completed\ndata: {json.dumps({'execution_id': execution.id, 'status': 'completed'})}\n\n"
             
         except Exception as e:
             logger.error(f"Streaming execution failed: {e}", exc_info=True)
@@ -286,6 +303,83 @@ async def list_executions_endpoint(
         for e in executions
     ]
 
+
+@router.get("/{workflow_id}/executions/{execution_id}", response_model=WorkflowExecutionPublic)
+async def get_execution_endpoint(
+    request: Request,
+    workflow_id: int,
+    execution_id: int,
+) -> WorkflowExecutionPublic:
+    """
+    Get a single execution by ID.
+    """
+    user_id = _get_user_id(request)
+    execution = await get_execution(execution_id, workflow_id, user_id)
+    return WorkflowExecutionPublic.model_validate(execution, from_attributes=True)
+
+
+# Include PR sync workflow
+from .pr_sync import router as pr_sync_router
+router.include_router(pr_sync_router)
+
+# Include chat endpoint
+from .chat_schema import ChatRequest, ChatResponse
+from .chat_agent import create_workflow_chat_agent
+
+@router.post("/{workflow_id}/chat", response_model=ChatResponse)
+async def chat_with_workflow_endpoint(
+    request: Request,
+    workflow_id: int,
+    chat_request: ChatRequest,
+) -> ChatResponse:
+    """
+    Chat with AI assistant about workflow.
+    
+    The assistant can analyze the workflow and suggest edits.
+    """
+    user_id = _get_user_id(request)
+    
+    # Verify workflow exists and user has access
+    workflow = await get_workflow(workflow_id, user_id)
+    
+    # Get model from request or use default
+    model = chat_request.model or config.default_llm_model
+    
+    # Create chat agent with specified model
+    agent = create_workflow_chat_agent(model=model)
+    
+    # Get current workflow state
+    workflow_state = {
+        "nodes": workflow.graph_data.get("nodes", []) if workflow.graph_data else [],
+        "edges": workflow.graph_data.get("edges", []) if workflow.graph_data else [],
+    }
+    
+    # Merge with provided workflow state (in case frontend has unsaved changes)
+    if chat_request.workflow_state:
+        workflow_state.update(chat_request.workflow_state)
+    
+    try:
+        # Invoke agent with user message and workflow state
+        # The agent function is now async, so we await it
+        result = await agent({
+            "messages": [{"role": "user", "content": chat_request.message}],
+            "workflow_state": workflow_state,
+        })
+        
+        # Extract response and edits
+        response_text = result.get("response", "I'm here to help with your workflow!")
+        suggested_edits = result.get("suggested_edits", [])
+        
+        return ChatResponse(
+            response=response_text,
+            suggested_edits=suggested_edits,
+        )
+    except Exception as e:
+        logger.error(f"Error in workflow chat: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process chat request: {str(e)}"
+        )
 
 __all__ = ["router"]
 

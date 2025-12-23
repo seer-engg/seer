@@ -156,6 +156,10 @@ async def update_workflow(
     # Sync blocks and edges if graph_data was updated
     if payload.graph_data:
         await _sync_workflow_blocks_and_edges(workflow, payload.graph_data)
+        # Invalidate cached graph
+        from .graph_builder import get_workflow_graph_builder
+        builder = await get_workflow_graph_builder()
+        builder.invalidate_cache(workflow_id)
     
     logger.info(f"Updated workflow {workflow_id} for user {user_id}")
     return workflow
@@ -358,6 +362,50 @@ async def list_executions(
     return executions
 
 
+async def get_execution(
+    execution_id: int,
+    workflow_id: int,
+    user_id: Optional[str],
+) -> WorkflowExecution:
+    """
+    Get a single execution by ID.
+    
+    Args:
+        execution_id: Execution ID
+        workflow_id: Workflow ID (for authorization)
+        user_id: User ID for authorization (None in self-hosted mode)
+        
+    Returns:
+        Execution object
+        
+    Raises:
+        HTTPException: If execution not found or unauthorized
+    """
+    # Verify workflow access first
+    workflow = await get_workflow(workflow_id, user_id)
+    
+    # Get execution
+    execution = await WorkflowExecution.get_or_none(
+        id=execution_id,
+        workflow=workflow,
+    )
+    
+    if not execution:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Execution {execution_id} not found"
+        )
+    
+    # In cloud mode, verify user_id matches
+    if config.is_cloud_mode and user_id and execution.user_id != user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied to this execution"
+        )
+    
+    return execution
+
+
 __all__ = [
     "create_workflow",
     "get_workflow",
@@ -367,5 +415,6 @@ __all__ = [
     "create_execution",
     "update_execution",
     "list_executions",
+    "get_execution",
 ]
 

@@ -58,15 +58,15 @@ async def refresh_oauth_token(connection: OAuthConnection) -> OAuthConnection:
             "grant_type": "refresh_token"
         }
     elif connection.provider == 'github':
-        if not config.github_client_id or not config.github_client_secret:
+        if not config.GITHUB_CLIENT_ID or not config.GITHUB_CLIENT_SECRET:
             raise HTTPException(
                 status_code=500,
                 detail="GitHub OAuth client credentials not configured"
             )
         refresh_url = "https://github.com/login/oauth/access_token"
         refresh_data = {
-            "client_id": config.github_client_id,
-            "client_secret": config.github_client_secret,
+            "client_id": config.GITHUB_CLIENT_ID,
+            "client_secret": config.GITHUB_CLIENT_SECRET,
             "refresh_token": connection.refresh_token_enc,
             "grant_type": "refresh_token"
         }

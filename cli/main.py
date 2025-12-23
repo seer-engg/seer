@@ -3,9 +3,12 @@
 CLI for the Seer Eval Agent and Supervisor Agent.
 
 Usage:
-    seer-eval run                    # Start interactive eval agent loop
-    seer-eval run --thread-id <uuid> # Resume existing thread
-    seer-eval new-supervisor         # Start interactive supervisor chat
+    uv run seer dev            # Start development environment (recommended: no installation)
+    uv run seer run            # Start interactive eval agent loop
+    uv run seer run --thread-id <uuid> # Resume existing thread
+    uv run seer new-supervisor # Start interactive supervisor chat
+    
+    # If CLI is installed, you can use 'seer' directly instead of 'uv run seer'
 """
 import asyncio
 import base64
@@ -14,6 +17,7 @@ import mimetypes
 import sys
 import uuid
 import traceback
+import threading
 from pathlib import Path
 from typing import Optional, Any, List
 
@@ -268,11 +272,11 @@ def format_dataset_example(example) -> str:
 
 
 @click.group()
-@click.version_option(version="0.1.4", prog_name="seer-eval")
+@click.version_option(version="0.1.4", prog_name="seer")
 @click.option('--verbose', '-v', is_flag=True, help='Show full error tracebacks for debugging')
 def cli(verbose: bool):
     """
-    🔮 Seer Eval Agent CLI
+    🔮 Seer - Multi-Agent System for Evaluating AI Agents
     
     Evaluate AI agents through automated test generation and execution.
     
@@ -280,20 +284,27 @@ def cli(verbose: bool):
     Commands:
       run            - Start interactive eval agent loop (continuous)
       new-supervisor - Start interactive supervisor chat for database operations
+      dev            - Start development environment with Docker Compose
     
     \b
     Examples:
+      # Start development environment (recommended: no installation needed)
+      uv run seer dev
+      
       # Start the interactive eval agent loop
-      seer-eval run
+      uv run seer run
       
       # Resume an existing thread
-      seer-eval run --thread-id <uuid>
+      uv run seer run --thread-id <uuid>
       
       # Start a supervisor chat session
-      seer-eval new-supervisor
+      uv run seer new-supervisor
       
       # Debug with full tracebacks
-      seer-eval -v run
+      uv run seer -v run
+      
+      # If CLI is installed, you can use 'seer' directly
+      seer dev
     """
     global VERBOSE
     VERBOSE = verbose
@@ -323,8 +334,9 @@ def run(thread_id: Optional[str]):
     
     \b
     Example:
-      seer-eval run
-      seer-eval run --thread-id <uuid>  # Resume existing thread
+      uv run seer run  # Recommended: no installation needed
+      uv run seer run --thread-id <uuid>  # Resume existing thread
+      # Or if CLI is installed: seer run
     """
     asyncio.run(_run(thread_id))
 
@@ -459,7 +471,7 @@ async def _run(thread_id: Optional[str]):
                         console.print("\n[bold red]Full Traceback:[/bold red]")
                         console.print(traceback.format_exc())
                     else:
-                        console.print("[dim]Use -v flag for full traceback: seer-eval -v run[/dim]")
+                        console.print("[dim]Use -v flag for full traceback: seer -v run[/dim]")
                     continue
             
             # Display results based on step
@@ -570,8 +582,9 @@ def new_supervisor(thread_id: Optional[str], db_uri: Optional[str]):
     
     \b
     Example:
-      seer-eval new-supervisor
-      seer-eval new-supervisor --db-uri "postgresql://user:pass@host/db"
+      uv run seer new-supervisor  # Recommended: no installation needed
+      uv run seer new-supervisor --db-uri "postgresql://user:pass@host/db"
+      # Or if CLI is installed: seer new-supervisor
     """
     asyncio.run(_new_supervisor(thread_id, db_uri))
 
@@ -912,13 +925,70 @@ def export(thread_id: str, fmt: str):
     
     \b
     Example:
-      seer-eval export <thread-id>
-      seer-eval export <thread-id> --format json
+      uv run seer export <thread-id>  # Recommended: no installation needed
+      uv run seer export <thread-id> --format json
+      # Or if CLI is installed: seer export <thread-id>
     """
     console.print(f"[yellow]Export functionality requires database checkpointer.[/yellow]")
     console.print(f"[dim]Thread ID: {thread_id}[/dim]")
     console.print("\n[dim]Note: When using MemorySaver, state is only available during the session.[/dim]")
     console.print("[dim]Set DATABASE_URI in your .env to enable persistent state.[/dim]")
+
+
+def _tail_docker_logs(project_root: Path, service: str, stop_event: threading.Event):
+    """
+    Tail Docker logs for a service in a background thread.
+    
+    Args:
+        project_root: Path to project root (where docker-compose.yml is)
+        service: Service name to tail logs for
+        stop_event: Threading event to signal when to stop tailing
+    """
+    import subprocess
+    import select
+    import time
+    
+    try:
+        # Start docker compose logs with follow flag
+        process = subprocess.Popen(
+            ["docker", "compose", "logs", "-f", "--tail=0", service],
+            cwd=project_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,  # Line buffered
+        )
+        
+        # Read lines until stop event is set
+        # Use select for non-blocking reads (Unix only, but that's fine for Docker)
+        while not stop_event.is_set():
+            # Check if data is available (Unix/Linux/macOS)
+            if sys.platform != "win32":
+                ready, _, _ = select.select([process.stdout], [], [], 0.5)
+                if not ready:
+                    continue
+            
+            line = process.stdout.readline()
+            if not line:
+                # Process ended or no more data
+                if stop_event.is_set():
+                    break
+                # Small delay before checking again
+                time.sleep(0.1)
+                continue
+            
+            # Print log line with service prefix
+            console.print(f"[dim][{service}][/dim] {line.rstrip()}")
+        
+        # Clean up
+        process.terminate()
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+    except Exception as e:
+        # Silently fail - don't interrupt main flow
+        pass
 
 
 @cli.command()
@@ -936,9 +1006,14 @@ def dev(frontend_url: str, backend_url: str, no_browser: bool, rebuild: bool):
     \b
     This command:
       1. Starts Docker Compose services (postgres, mlflow, backend)
-      2. Rebuilds images if needed (--build flag ensures dependencies are up-to-date)
-      3. Waits for backend to be ready
-      4. Opens browser to: <frontend-url>/workflows?backend=<backend-url>
+      2. Installs dependencies in Docker container (via uv sync during build)
+      3. Tails Docker logs in real-time during startup
+      4. Waits for backend to be ready (health check)
+      5. Opens browser automatically to: <frontend-url>/workflows?backend=<backend-url>
+    
+    \b
+    Note: Dependencies are installed inside Docker containers, not locally.
+    Only the CLI tool needs to be installed locally (lightweight: click, rich).
     
     \b
     Code changes are reflected immediately via volume mounts and uvicorn --reload.
@@ -946,7 +1021,8 @@ def dev(frontend_url: str, backend_url: str, no_browser: bool, rebuild: bool):
     
     \b
     Example:
-      seer dev
+      uv run seer dev  # Recommended: no installation needed
+      seer dev  # If CLI is installed
       seer dev --frontend-url http://localhost:3000
       seer dev --no-browser
       seer dev --rebuild  # Force rebuild containers
@@ -955,11 +1031,34 @@ def dev(frontend_url: str, backend_url: str, no_browser: bool, rebuild: bool):
     import time
     import sys
     import os
+    import shutil
     from pathlib import Path
+    
+    # Clear VIRTUAL_ENV if it points to Docker path to avoid uv warnings
+    if os.environ.get('VIRTUAL_ENV', '').startswith('/app'):
+        os.environ.pop('VIRTUAL_ENV', None)
     
     # Get project root (where docker-compose.yml is)
     project_root = Path(__file__).parent.parent
     docker_compose_file = project_root / "docker-compose.yml"
+    
+    # Check for broken .venv symlinks and clean if needed
+    venv_path = project_root / ".venv"
+    if venv_path.exists():
+        python_symlink = venv_path / "bin" / "python3"
+        if python_symlink.exists() and python_symlink.is_symlink():
+            try:
+                target = python_symlink.readlink()
+                # Check if symlink target exists (resolved relative to symlink's directory)
+                if not (venv_path / "bin" / target).exists() and not Path(target).exists():
+                    console.print("[yellow]⚠ Detected broken .venv symlinks, cleaning...[/yellow]")
+                    shutil.rmtree(venv_path)
+                    console.print("[green]✓[/green] Cleaned broken .venv")
+            except (OSError, ValueError):
+                # Symlink is broken, clean it
+                console.print("[yellow]⚠ Detected broken .venv, cleaning...[/yellow]")
+                shutil.rmtree(venv_path)
+                console.print("[green]✓[/green] Cleaned broken .venv")
     
     if not docker_compose_file.exists():
         console.print(f"[bold red]Error:[/bold red] docker-compose.yml not found at {docker_compose_file}")
@@ -978,11 +1077,16 @@ def dev(frontend_url: str, backend_url: str, no_browser: bool, rebuild: bool):
         console.print("[bold]🔄 Force rebuild requested - stopping and removing containers...[/bold]")
         try:
             # Stop and remove containers
+            # Unset VIRTUAL_ENV in subprocess env to avoid uv warnings
+            env = os.environ.copy()
+            if env.get('VIRTUAL_ENV', '').startswith('/app'):
+                env.pop('VIRTUAL_ENV', None)
             subprocess.run(
                 ["docker", "compose", "down"],
                 cwd=project_root,
                 capture_output=True,
                 text=True,
+                env=env,
             )
             console.print("[green]✓[/green] Containers stopped and removed")
         except FileNotFoundError:
@@ -994,11 +1098,16 @@ def dev(frontend_url: str, backend_url: str, no_browser: bool, rebuild: bool):
     try:
         # Always use --build to ensure image is rebuilt if Dockerfile or dependencies changed
         # Volume mount ensures code changes don't require rebuild
+        # Unset VIRTUAL_ENV in subprocess env to avoid uv warnings
+        env = os.environ.copy()
+        if env.get('VIRTUAL_ENV', '').startswith('/app'):
+            env.pop('VIRTUAL_ENV', None)
         result = subprocess.run(
             ["docker", "compose", "up", "-d", "--build"],
             cwd=project_root,
             capture_output=True,
             text=True,
+            env=env,
         )
         if result.returncode != 0:
             console.print(f"[bold red]Error starting Docker Compose:[/bold red]")
@@ -1012,80 +1121,130 @@ def dev(frontend_url: str, backend_url: str, no_browser: bool, rebuild: bool):
     # Wait for backend to be ready
     console.print()
     console.print("[bold]⏳ Waiting for backend server to be ready...[/bold]")
+    console.print("[dim]📋 Tailing Docker logs (langgraph-server)...[/dim]")
+    console.print()
     
     max_attempts = 60
     attempt = 0
     import urllib.request
     import urllib.error
     
-    while attempt < max_attempts:
-        try:
-            health_url = f"{backend_url}/health"
-            req = urllib.request.Request(health_url)
-            with urllib.request.urlopen(req, timeout=2) as response:
-                if response.getcode() == 200:
-                    console.print("[green]✓[/green] Backend server is ready!")
-                    break
-        except (urllib.error.URLError, urllib.error.HTTPError, OSError):
-            pass
+    # Start tailing Docker logs in background thread
+    # This will continue running until interrupted or error
+    stop_logs_event = threading.Event()
+    logs_thread = threading.Thread(
+        target=_tail_docker_logs,
+        args=(project_root, "langgraph-server", stop_logs_event),
+        daemon=True,
+    )
+    logs_thread.start()
+    
+    backend_ready = False
+    try:
+        # Wait for backend to be ready
+        while attempt < max_attempts:
+            try:
+                health_url = f"{backend_url}/health"
+                req = urllib.request.Request(health_url)
+                with urllib.request.urlopen(req, timeout=2) as response:
+                    if response.getcode() == 200:
+                        console.print()
+                        console.print("[green]✓[/green] Backend server is ready!")
+                        backend_ready = True
+                        break
+            except (urllib.error.URLError, urllib.error.HTTPError, OSError):
+                pass
+            
+            attempt += 1
+            time.sleep(2)
         
-        attempt += 1
-        if attempt % 5 == 0:
-            console.print(f"   [dim]Attempt {attempt}/{max_attempts}...[/dim]")
-        time.sleep(2)
-    
-    if attempt == max_attempts:
+        if not backend_ready:
+            console.print()
+            console.print("[bold red]❌ Backend server failed to start[/bold red]")
+            console.print("[yellow]Last 50 lines of logs:[/yellow]")
+            console.print()
+            # Unset VIRTUAL_ENV in subprocess env to avoid uv warnings
+            env = os.environ.copy()
+            if env.get('VIRTUAL_ENV', '').startswith('/app'):
+                env.pop('VIRTUAL_ENV', None)
+            subprocess.run(
+                ["docker", "compose", "logs", "langgraph-server", "--tail=50"],
+                cwd=project_root,
+                env=env,
+            )
+            stop_logs_event.set()
+            sys.exit(1)
+        
+        # Backend is ready - show success message and continue tailing logs
+        workflow_url = f"{frontend_url}/workflows?backend={backend_url}"
+        
         console.print()
-        console.print("[bold red]❌ Backend server failed to start[/bold red]")
-        console.print("[yellow]Checking logs...[/yellow]")
-        subprocess.run(
-            ["docker", "compose", "logs", "langgraph-server", "--tail=50"],
-            cwd=project_root,
-        )
-        sys.exit(1)
-    
-    # Construct workflow URL
-    workflow_url = f"{frontend_url}/workflows?backend={backend_url}"
-    
-    console.print()
-    console.print(Panel.fit(
-        "[bold green]🎉 Development environment is ready![/bold green]\n\n"
-        "[bold]📊 Services:[/bold]\n"
-        f"   • Backend API: {backend_url}\n"
-        f"   • MLflow: http://localhost:5000\n"
-        f"   • Postgres: localhost:5432\n\n"
-        f"[bold]🌐 Workflow Editor:[/bold]\n"
-        f"   {workflow_url}",
-        border_style="green"
-    ))
-    console.print()
-    
-    # Open browser
-    if not no_browser:
-        console.print("[bold]🌐 Opening workflow editor...[/bold]")
-        try:
-            if sys.platform == "darwin":
-                # macOS
-                subprocess.run(["open", workflow_url], check=False)
-            elif sys.platform == "linux":
-                # Linux
-                subprocess.run(["xdg-open", workflow_url], check=False)
-            elif sys.platform == "win32":
-                # Windows
-                subprocess.run(["start", workflow_url], check=False, shell=True)
-            else:
-                console.print(f"[yellow]⚠ Could not automatically open browser.[/yellow]")
+        console.print(Panel.fit(
+            "[bold green]🎉 Development environment is ready![/bold green]\n\n"
+            "[bold]📊 Services:[/bold]\n"
+            f"   • Backend API: {backend_url}\n"
+            f"   • MLflow: http://localhost:5000\n"
+            f"   • Postgres: localhost:5432\n\n"
+            f"[bold]🌐 Workflow Editor:[/bold]\n"
+            f"   {workflow_url}\n\n"
+            "[dim]📋 Logs will continue streaming. Press Ctrl+C to stop.[/dim]",
+            border_style="green"
+        ))
+        console.print()
+        
+        # Open browser
+        if not no_browser:
+            console.print("[bold]🌐 Opening workflow editor...[/bold]")
+            try:
+                if sys.platform == "darwin":
+                    # macOS
+                    subprocess.run(["open", workflow_url], check=False)
+                elif sys.platform == "linux":
+                    # Linux
+                    subprocess.run(["xdg-open", workflow_url], check=False)
+                elif sys.platform == "win32":
+                    # Windows
+                    subprocess.run(["start", workflow_url], check=False, shell=True)
+                else:
+                    console.print(f"[yellow]⚠ Could not automatically open browser.[/yellow]")
+                    console.print(f"Please navigate to: {workflow_url}")
+            except Exception as e:
+                console.print(f"[yellow]⚠ Could not open browser: {e}[/yellow]")
                 console.print(f"Please navigate to: {workflow_url}")
-        except Exception as e:
-            console.print(f"[yellow]⚠ Could not open browser: {e}[/yellow]")
-            console.print(f"Please navigate to: {workflow_url}")
-    else:
-        console.print(f"[dim]Browser opening skipped. Navigate to:[/dim]")
-        console.print(f"[bold]{workflow_url}[/bold]")
-    
-    console.print()
-    console.print("[dim]📝 To view logs: docker compose logs -f[/dim]")
-    console.print("[dim]🛑 To stop: docker compose down[/dim]")
+        else:
+            console.print(f"[dim]Browser opening skipped. Navigate to:[/dim]")
+            console.print(f"[bold]{workflow_url}[/bold]")
+        
+        console.print()
+        console.print("[dim]📝 To view logs: docker compose logs -f[/dim]")
+        console.print("[dim]🛑 To stop: Press Ctrl+C or run 'docker compose down'[/dim]")
+        console.print()
+        
+        # Keep tailing logs until interrupted
+        # The log tailing thread will continue running
+        # Wait for the thread to finish (which happens on Ctrl+C or error)
+        try:
+            while logs_thread.is_alive():
+                logs_thread.join(timeout=1)
+        except KeyboardInterrupt:
+            console.print()
+            console.print("[yellow]🛑 Stopping development environment...[/yellow]")
+            stop_logs_event.set()
+            logs_thread.join(timeout=2)
+            console.print("[green]✓[/green] Stopped")
+            
+    except KeyboardInterrupt:
+        console.print()
+        console.print("[yellow]🛑 Stopping development environment...[/yellow]")
+        stop_logs_event.set()
+        logs_thread.join(timeout=2)
+        console.print("[green]✓[/green] Stopped")
+    except Exception as e:
+        console.print()
+        console.print(f"[bold red]❌ Error:[/bold red] {e}")
+        stop_logs_event.set()
+        logs_thread.join(timeout=2)
+        raise
 
 
 def main():

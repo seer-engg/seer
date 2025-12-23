@@ -35,6 +35,7 @@ class SeerConfig(BaseSettings):
     # ============================================================================
     
     openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key for LLM and embeddings")
+    anthropic_api_key: Optional[str] = Field(default=None, description="Anthropic API key for Claude models")
     tavily_api_key: Optional[str] = Field(default=None, description="Tavily API key for web search")
     github_token: Optional[str] = Field(default=None, description="GitHub token for sandbox provisioning")
     CONTEXT7_API_KEY: Optional[str] = Field(default=None, description="Context7 API key for MCP tools")
@@ -158,6 +159,13 @@ class SeerConfig(BaseSettings):
 
     GOOGLE_CLIENT_ID: str = Field(default="", description="Google OAuth client ID")
     GOOGLE_CLIENT_SECRET: str = Field(default="", description="Google OAuth client secret")
+    
+    GITHUB_CLIENT_ID: Optional[str] = Field(default=None, description="GitHub OAuth client ID")
+    GITHUB_CLIENT_SECRET: Optional[str] = Field(default=None, description="GitHub OAuth client secret")
+    GITHUB_MCP_SERVER_URL: Optional[str] = Field(
+        default=None,
+        description="GitHub MCP server URL (for streamable HTTP transport, e.g., http://localhost:8080/mcp)"
+    )
     # ============================================================================
     # Computed Properties
     # ============================================================================

@@ -52,8 +52,8 @@ async def get_tool_hub() -> ToolHub:
     hub = ToolHub(openai_api_key=openai_key)
 
     # Get tools from registered tool registry
-    # Note: Currently only gmail and model_block are implemented
-    # GitHub and Asana tools need to be implemented as custom tools
+    # Note: Currently gmail and other integration tools are implemented
+    # LLM calls should use LLM blocks in workflows, not model_block tool
     all_tools = get_langchain_tools_from_registry(user_id=config.user_id)
 
     # 3. Load or Ingest

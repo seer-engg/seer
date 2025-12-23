@@ -20,8 +20,8 @@ oauth.register(
 # Scopes are controlled by frontend - minimal default for identity only
 oauth.register(
     name='github',
-    client_id=os.getenv('GITHUB_CLIENT_ID'),
-    client_secret=os.getenv('GITHUB_CLIENT_SECRET'),
+    client_id=config.GITHUB_CLIENT_ID or os.getenv('GITHUB_CLIENT_ID'),
+    client_secret=config.GITHUB_CLIENT_SECRET or os.getenv('GITHUB_CLIENT_SECRET'),
     authorize_url='https://github.com/login/oauth/authorize',
     access_token_url='https://github.com/login/oauth/access_token',
     api_base_url='https://api.github.com/',

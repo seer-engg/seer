@@ -37,7 +37,7 @@ class WorkflowBlock(models.Model):
     id = fields.IntField(primary_key=True)
     workflow = fields.ForeignKeyField('models.Workflow', related_name='blocks')
     block_id = fields.CharField(max_length=255)  # ReactFlow node ID
-    block_type = fields.CharField(max_length=100)  # 'tool', 'code', 'llm', 'if_else', 'for_loop', 'variable'
+    block_type = fields.CharField(max_length=100)  # 'tool', 'code', 'llm', 'if_else', 'for_loop', 'input'
     block_config = fields.JSONField()  # Block-specific config
     python_code = fields.TextField(null=True)  # For code blocks
     position_x = fields.FloatField()

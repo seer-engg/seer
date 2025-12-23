@@ -29,18 +29,28 @@ def get_tools_by_integration(integration_type: Optional[str] = None) -> List[Dic
     
     if integration_type:
         # Filter tools by integration type
-        # Integration type can be inferred from tool name or required_scopes
+        integration_type_lower = integration_type.lower()
         filtered = []
         for tool in all_tools:
-            # Check if tool's scopes match the integration type
-            # e.g., gmail tools have 'gmail.readonly' scope
-            if integration_type.lower() in tool.name.lower():
+            # First check the integration_type property (most reliable)
+            if tool.integration_type and tool.integration_type.lower() == integration_type_lower:
                 filtered.append(tool)
-            elif tool.required_scopes:
+                continue
+            
+            # Fallback: check if integration type is in tool name
+            # e.g., "github_list_pull_requests" contains "github"
+            if integration_type_lower in tool.name.lower():
+                filtered.append(tool)
+                continue
+            
+            # Last resort: check if integration type is in any scope
+            # e.g., gmail tools have 'gmail.readonly' scope
+            if tool.required_scopes:
                 for scope in tool.required_scopes:
-                    if integration_type.lower() in scope.lower():
+                    if integration_type_lower in scope.lower():
                         filtered.append(tool)
                         break
+        
         return [tool.get_metadata() for tool in filtered]
     
     return [tool.get_metadata() for tool in all_tools]

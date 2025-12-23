@@ -14,9 +14,7 @@ class BlockType(str, Enum):
     LLM = "llm"
     IF_ELSE = "if_else"
     FOR_LOOP = "for_loop"
-    VARIABLE = "variable"
     INPUT = "input"
-    OUTPUT = "output"
 
 
 class BlockDefinition(BaseModel):
@@ -47,17 +45,15 @@ class BlockDefinition(BaseModel):
             if 'tool_name' not in v:
                 raise ValueError("tool_name is required in config for tool blocks")
         elif block_type == BlockType.LLM:
+            # system_prompt is optional, default to empty string
             if 'system_prompt' not in v:
-                raise ValueError("system_prompt is required in config for LLM blocks")
+                v['system_prompt'] = ""
         elif block_type == BlockType.IF_ELSE:
             if 'condition' not in v:
                 raise ValueError("condition is required in config for if_else blocks")
         elif block_type == BlockType.FOR_LOOP:
             if 'array_var' not in v or 'item_var' not in v:
                 raise ValueError("array_var and item_var are required in config for for_loop blocks")
-        elif block_type == BlockType.VARIABLE:
-            if 'name' not in v:
-                raise ValueError("name is required in config for variable blocks")
         
         return v
 
