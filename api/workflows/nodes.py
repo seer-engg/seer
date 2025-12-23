@@ -16,6 +16,7 @@ from .state import WorkflowState
 from .schema import BlockDefinition, BlockType
 from .code_executor import execute_code_block, CodeExecutionError
 from .models import WorkflowExecution, BlockExecution, WorkflowBlock
+from shared.database.models import User
 
 logger = get_logger("api.workflows.nodes")
 
@@ -156,10 +157,15 @@ async def tool_node(
             tool_params[param_name] = inputs["input"]
     
     # Execute tool with OAuth token management
+
+    user = await User.get(user_id=user_id)
+    if not user:
+        raise ValueError(f"User not found: {user_id}")
+    
     try:
         result = await execute_tool_with_oauth(
             tool_name=tool_name,
-            user_id=user_id,
+            user=user,
             connection_id=connection_id,
             arguments=tool_params
         )

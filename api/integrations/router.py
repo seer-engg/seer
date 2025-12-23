@@ -7,6 +7,7 @@ import base64
 import os
 import logging
 from shared.logger import get_logger
+from shared.database.models import User
 logger = get_logger("api.integrations.router")
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
@@ -23,7 +24,6 @@ def decode_state(state: str) -> dict:
 async def connect(
     request: Request,
     provider: str,
-    user_id: str = Query(...),
     redirect_to: str = Query(None),
     scope: str = Query(...),  # OAuth scope from frontend (REQUIRED - frontend controls scopes)
 ):
@@ -32,7 +32,6 @@ async def connect(
     
     Args:
         provider: Provider name (google, github, googledrive, gmail)
-        user_id: User ID
         redirect_to: Redirect URL after auth
         scope: OAuth scope from frontend (REQUIRED - frontend controls which scopes to request)
     
@@ -52,8 +51,10 @@ async def connect(
     
     # Store user_id, scope, and final redirect in state
     # Scope is stored so we can save it when token is received
+    user:User = request.state.db_user
     state_data = {
-        'user_id': user_id,
+        'user_id': user.user_id,
+        'user_email': user.email,
         'redirect_to': redirect_to or f"{FRONTEND_URL}/settings/integrations",
         'original_provider': provider,
         'requested_scope': scope  # Store requested scope to save in callback
@@ -127,19 +128,22 @@ async def auth_callback(request: Request, provider: str):
     return RedirectResponse(url=f"{redirect_to}?connected={provider}")
 
 @router.post("/{provider}/disconnect")
-async def disconnect(provider: str, user_id: str = Query(...)):
-    await disconnect_provider(user_id, provider)
+async def disconnect(provider: str, request: Request):
+    user:User = request.state.db_user
+    await disconnect_provider(user, provider)
     return {"status": "success"}
 
 @router.delete("/{connection_id}")
-async def delete_connection(connection_id: str, user_id: str = Query(...)):
-    await delete_connection_by_id(user_id, connection_id)
+async def delete_connection(connection_id: str, request: Request):
+    user:User = request.state.db_user
+    await delete_connection_by_id(user, connection_id)
     return {"status": "success"}
 
 @router.get("/")
-async def list_integrations(user_id: str = Query(...)):
-    logger.info(f"Listing integrations for user {user_id}")
-    connections = await list_connections(user_id)
+async def list_integrations(request: Request):
+    user:User = request.state.db_user
+    logger.info(f"Listing integrations for user {user.user_id}")
+    connections = await list_connections(user)
     res = []
     for conn in connections:
         # Construct composite ID so frontend can use it for deletion if needed
@@ -152,12 +156,12 @@ async def list_integrations(user_id: str = Query(...)):
         res.append({
             "id": composite_id, 
             "status": "ACTIVE" if conn.status == 'active' else "INACTIVE",
-            "user_id": user_id,
+            "user_id": user.user_id,
             "toolkit": {
                 "slug": conn.provider
             },
             "connection": {
-                "user_id": user_id,
+                "user_id": user.user_id,
                 "provider_account_id": conn.provider_account_id
             }
         })

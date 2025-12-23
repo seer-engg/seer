@@ -3,3 +3,11 @@ alwaysApply: true
 ---
 - Use Context MCP always by default to check latest documentation for any tool / SDK / library
 - avoid using create_react_agent. its from langgraph <1.0.0, which is deprecated
+
+
+# Seer Architecture
+
+## Api
+we have a fastapi based client in /api directory.
+
+It has builtin auth middlewares in /middleware/auth that injects database_user "db_user" object into request.state Throughout teh apis we should use this for user related operations

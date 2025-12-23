@@ -8,6 +8,7 @@ from shared.tools.registry import get_tools_by_integration
 from shared.tools.base import get_tool
 from shared.tools.executor import execute_tool as _execute_tool
 from shared.logger import get_logger
+from shared.database.models import User
 
 logger = get_logger("api.tools.services")
 
@@ -36,7 +37,7 @@ async def list_tools(integration_type: Optional[str] = None) -> Dict[str, Any]:
 
 async def execute_tool_service(
     tool_name: str,
-    user_id: str,
+    user: User,
     connection_id: Optional[str] = None,
     arguments: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
@@ -45,7 +46,7 @@ async def execute_tool_service(
     
     Args:
         tool_name: Name of the tool to execute
-        user_id: User ID
+        user: User
         connection_id: OAuthConnection ID (required for OAuth tools)
         arguments: Tool arguments
     
@@ -54,13 +55,13 @@ async def execute_tool_service(
     """
     try:
         logger.info(
-            f"Executing tool: tool_name={tool_name}, user_id={user_id}, "
+            f"Executing tool: tool_name={tool_name}, user_id={user.user_id}, "
             f"connection_id={connection_id}, has_arguments={arguments is not None}"
         )
         
         result = await _execute_tool(
             tool_name=tool_name,
-            user_id=user_id,
+            user=user,
             connection_id=connection_id,
             arguments=arguments or {}
         )

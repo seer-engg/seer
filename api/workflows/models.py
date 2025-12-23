@@ -9,6 +9,8 @@ from typing import Any, Dict, Optional
 from pydantic import BaseModel, ConfigDict, Field
 from tortoise import fields, models
 
+from shared.database.models import User
+
 
 class Workflow(models.Model):
     """Main workflow entity."""
@@ -16,7 +18,7 @@ class Workflow(models.Model):
     id = fields.IntField(primary_key=True)
     name = fields.CharField(max_length=255)
     description = fields.TextField(null=True)
-    user_id = fields.CharField(max_length=255, null=True, index=True)  # Optional: NULL for self-hosted, set for cloud
+    user = fields.ForeignKeyField('models.User', related_name='workflows')
     graph_data = fields.JSONField()  # ReactFlow nodes/edges JSON
     schema_version = fields.CharField(max_length=50, default="1.0")
     is_active = fields.BooleanField(default=True)
@@ -77,7 +79,7 @@ class WorkflowExecution(models.Model):
     
     id = fields.IntField(primary_key=True)
     workflow = fields.ForeignKeyField('models.Workflow', related_name='executions')
-    user_id = fields.CharField(max_length=255, null=True, index=True)  # Optional: NULL for self-hosted, set for cloud
+    user = fields.ForeignKeyField('models.User', related_name='workflow_executions')
     status = fields.CharField(max_length=50)  # 'running', 'completed', 'failed'
     input_data = fields.JSONField(null=True)
     output_data = fields.JSONField(null=True)
@@ -120,7 +122,7 @@ class WorkflowChatSession(models.Model):
     
     id = fields.IntField(primary_key=True)
     workflow = fields.ForeignKeyField('models.Workflow', related_name='chat_sessions')
-    user_id = fields.CharField(max_length=255, null=True, index=True)
+    user = fields.ForeignKeyField('models.User', related_name='chat_sessions')
     thread_id = fields.CharField(max_length=255, unique=True, index=True)  # LangGraph thread ID
     title = fields.CharField(max_length=255, null=True)  # Optional title for the session
     created_at = fields.DatetimeField(auto_now_add=True)
@@ -188,7 +190,7 @@ class WorkflowPublic(WorkflowBase):
     model_config = ConfigDict(from_attributes=True)
     
     id: int
-    user_id: Optional[str]  # Optional: NULL for self-hosted, set for cloud
+    user: User
     created_at: datetime
     updated_at: datetime
 
@@ -213,7 +215,7 @@ class WorkflowExecutionPublic(BaseModel):
     
     id: int
     workflow_id: int
-    user_id: Optional[str]  # Optional: NULL for self-hosted, set for cloud
+    user: User
     status: str
     input_data: Optional[Dict[str, Any]] = None
     output_data: Optional[Dict[str, Any]] = None
@@ -229,7 +231,7 @@ class WorkflowChatSessionPublic(BaseModel):
     
     id: int
     workflow_id: int
-    user_id: Optional[str]
+    user: User
     thread_id: str
     title: Optional[str]
     created_at: datetime

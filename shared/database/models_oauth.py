@@ -32,5 +32,5 @@ class OAuthConnection(models.Model):
         unique_together = (("user", "provider", "provider_account_id"),)
 
     def __str__(self) -> str:
-        return f"{self.provider}:{self.provider_account_id} ({self.user_id})"
+        return f"{self.provider}:{self.provider_account_id} ({self.user})"
 

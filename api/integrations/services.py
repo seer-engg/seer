@@ -24,7 +24,7 @@ async def store_oauth_connection(
         granted_scopes: Space-separated string of granted OAuth scopes
     """
     # Find user
-    user = await User.get(email=user_id)
+    user = await User.get(user_id=user_id)
     
     # Extract provider account id
     if provider in ['google', 'googledrive', 'gmail']:
@@ -79,29 +79,26 @@ async def store_oauth_connection(
         
     return connection
 
-async def list_connections(user_id: str):
+async def list_connections(user: User):
     # Using user_id (string) to find User model
     try:
-        user = await User.get(email=user_id)
-        logger.info(f"Listing connections for user {user.id}")
+        logger.info(f"Listing connections for user {user.user_id}")
         connections = await OAuthConnection.filter(user=user, status="active").all()
         return connections
     except Exception as e:
-        logger.error(f"Error listing connections for user {user_id}: {e}")
+        logger.error(f"Error listing connections for user {user.user_id}: {e}")
         return []
 
-async def disconnect_provider(user_id: str, provider: str):
+async def disconnect_provider(user: User, provider: str):
     try:
-        user = await User.get(user_id=user_id)
         # Soft delete (revoke) all connections for this provider
         await OAuthConnection.filter(user=user, provider=provider).update(status="revoked")
     except Exception as e:
-        logger.error(f"Error disconnecting provider {provider} for user {user_id}: {e}")
+        logger.error(f"Error disconnecting provider {provider} for user {user.user_id}: {e}")
         raise
 
-async def delete_connection_by_id(user_id: str, connection_id: str):
+async def delete_connection_by_id(user: User, connection_id: str):
     try:
-        user = await User.get(user_id=user_id)
         # connection_id might be "provider:id" or just "id"
         if ":" in connection_id:
             _, db_id = connection_id.split(":")
@@ -110,5 +107,5 @@ async def delete_connection_by_id(user_id: str, connection_id: str):
             
         await OAuthConnection.filter(id=int(db_id), user=user).update(status="revoked")
     except Exception as e:
-        logger.error(f"Error deleting connection {connection_id} for user {user_id}: {e}")
+        logger.error(f"Error deleting connection {connection_id} for user {user.user_id}: {e}")
         raise

@@ -7,7 +7,7 @@ from datetime import datetime
 from fastapi import HTTPException
 from shared.logger import get_logger
 from shared.config import config
-
+from shared.database.models import User
 from .models import (
     Workflow,
     WorkflowBlock,
@@ -70,7 +70,7 @@ async def create_workflow(
         raise HTTPException(status_code=500, detail="Failed to create workflow")
 
 
-async def get_workflow(workflow_id: int, user_id: Optional[str]) -> Workflow:
+async def get_workflow(workflow_id: int) -> Workflow:
     """
     Get a workflow by ID.
     
@@ -89,42 +89,26 @@ async def get_workflow(workflow_id: int, user_id: Optional[str]) -> Workflow:
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
     
-    # In cloud mode, check authorization
-    if config.is_cloud_mode:
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Authentication required in cloud mode")
-        if workflow.user_id != user_id:
-            raise HTTPException(status_code=403, detail="Unauthorized")
-    # In self-hosted mode, allow access to any workflow
-    
     return workflow
 
 
-async def list_workflows(user_id: Optional[str]) -> List[Workflow]:
+async def list_workflows(user: User) -> List[Workflow]:
     """
     List all workflows for a user.
     
     Args:
-        user_id: User ID (None in self-hosted mode)
+        user: User
         
     Returns:
         List of workflows
     """
-    if config.is_self_hosted:
-        # Self-hosted: Show all workflows (no filtering)
-        workflows = await Workflow.filter(is_active=True).all()
-    else:
-        # Cloud: Filter by user_id
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Authentication required in cloud mode")
-        workflows = await Workflow.filter(user_id=user_id, is_active=True).all()
+    workflows = await Workflow.filter(user=user, is_active=True).all()
     
     return workflows
 
 
 async def update_workflow(
     workflow_id: int,
-    user_id: Optional[str],
     payload: WorkflowUpdate,
 ) -> Workflow:
     """
@@ -132,7 +116,6 @@ async def update_workflow(
     
     Args:
         workflow_id: Workflow ID
-        user_id: User ID for authorization
         payload: Update payload
         
     Returns:
@@ -141,7 +124,7 @@ async def update_workflow(
     Raises:
         HTTPException: If workflow not found or unauthorized
     """
-    workflow = await get_workflow(workflow_id, user_id)
+    workflow = await get_workflow(workflow_id)
     
     # Validate graph if provided
     if payload.graph_data:
@@ -163,28 +146,27 @@ async def update_workflow(
         builder = await get_workflow_graph_builder()
         builder.invalidate_cache(workflow_id)
     
-    logger.info(f"Updated workflow {workflow_id} for user {user_id}")
+    logger.info(f"Updated workflow {workflow_id} ")
     return workflow
 
 
-async def delete_workflow(workflow_id: int, user_id: Optional[str]) -> None:
+async def delete_workflow(workflow_id: int) -> None:
     """
     Delete a workflow (soft delete).
     
     Args:
         workflow_id: Workflow ID
-        user_id: User ID for authorization
         
     Raises:
         HTTPException: If workflow not found or unauthorized
     """
-    workflow = await get_workflow(workflow_id, user_id)
+    workflow = await get_workflow(workflow_id)
     
     workflow.is_active = False
     workflow.updated_at = datetime.utcnow()
     await workflow.save()
     
-    logger.info(f"Deleted workflow {workflow_id} for user {user_id}")
+    logger.info(f"Deleted workflow {workflow_id}")
 
 
 async def _sync_workflow_blocks_and_edges(
@@ -259,7 +241,7 @@ async def _sync_workflow_blocks_and_edges(
 
 async def create_execution(
     workflow_id: int,
-    user_id: Optional[str],
+    user: User,
     input_data: Optional[dict] = None,
 ) -> WorkflowExecution:
     """
@@ -267,17 +249,17 @@ async def create_execution(
     
     Args:
         workflow_id: Workflow ID
-        user_id: User ID (None in self-hosted mode)
+        user: User
         input_data: Input data for execution
         
     Returns:
         Created execution record
     """
-    workflow = await get_workflow(workflow_id, user_id)
+    workflow = await get_workflow(workflow_id)
     
     execution = await WorkflowExecution.create(
         workflow=workflow,
-        user_id=user_id,  # None in self-hosted, set in cloud
+        user=user,
         status='running',
         input_data=input_data,
     )
@@ -287,7 +269,6 @@ async def create_execution(
 
 async def update_execution(
     execution_id: int,
-    user_id: Optional[str],
     status: str,
     output_data: Optional[dict] = None,
     error_message: Optional[str] = None,
@@ -297,7 +278,6 @@ async def update_execution(
     
     Args:
         execution_id: Execution ID
-        user_id: User ID for authorization (None in self-hosted mode)
         status: New status
         output_data: Output data
         error_message: Error message if failed
@@ -309,14 +289,6 @@ async def update_execution(
     
     if not execution:
         raise HTTPException(status_code=404, detail="Execution not found")
-    
-    # In cloud mode, check authorization
-    if config.is_cloud_mode:
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Authentication required in cloud mode")
-        if execution.user_id != user_id:
-            raise HTTPException(status_code=403, detail="Unauthorized")
-    # In self-hosted mode, allow access to any execution
     
     execution.status = status
     execution.output_data = output_data
@@ -331,7 +303,6 @@ async def update_execution(
 
 async def list_executions(
     workflow_id: int,
-    user_id: Optional[str],
     limit: int = 50,
 ) -> List[WorkflowExecution]:
     """
@@ -345,21 +316,11 @@ async def list_executions(
     Returns:
         List of executions
     """
-    workflow = await get_workflow(workflow_id, user_id)
+    workflow = await get_workflow(workflow_id)
     
-    if config.is_self_hosted:
-        # Self-hosted: Show all executions for this workflow
-        executions = await WorkflowExecution.filter(
-            workflow=workflow,
-        ).order_by('-started_at').limit(limit).all()
-    else:
-        # Cloud: Filter by user_id
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Authentication required in cloud mode")
-        executions = await WorkflowExecution.filter(
-            workflow=workflow,
-            user_id=user_id,
-        ).order_by('-started_at').limit(limit).all()
+    executions = await WorkflowExecution.filter(
+        workflow=workflow,
+    ).order_by('-started_at').limit(limit).all()
     
     return executions
 
@@ -367,7 +328,6 @@ async def list_executions(
 async def get_execution(
     execution_id: int,
     workflow_id: int,
-    user_id: Optional[str],
 ) -> WorkflowExecution:
     """
     Get a single execution by ID.
@@ -375,7 +335,6 @@ async def get_execution(
     Args:
         execution_id: Execution ID
         workflow_id: Workflow ID (for authorization)
-        user_id: User ID for authorization (None in self-hosted mode)
         
     Returns:
         Execution object
@@ -384,7 +343,7 @@ async def get_execution(
         HTTPException: If execution not found or unauthorized
     """
     # Verify workflow access first
-    workflow = await get_workflow(workflow_id, user_id)
+    workflow = await get_workflow(workflow_id)
     
     # Get execution
     execution = await WorkflowExecution.get_or_none(
@@ -398,13 +357,6 @@ async def get_execution(
             detail=f"Execution {execution_id} not found"
         )
     
-    # In cloud mode, verify user_id matches
-    if config.is_cloud_mode and user_id and execution.user_id != user_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Access denied to this execution"
-        )
-    
     return execution
 
 
@@ -414,7 +366,7 @@ async def get_execution(
 
 async def create_chat_session(
     workflow_id: int,
-    user_id: Optional[str],
+    user: User,
     thread_id: str,
     title: Optional[str] = None,
 ) -> WorkflowChatSession:
@@ -423,18 +375,18 @@ async def create_chat_session(
     
     Args:
         workflow_id: Workflow ID
-        user_id: User ID (None in self-hosted mode)
+        user: User
         thread_id: LangGraph thread ID
         title: Optional session title
         
     Returns:
         Created chat session
     """
-    workflow = await get_workflow(workflow_id, user_id)
+    workflow = await get_workflow(workflow_id)
     
     session = await WorkflowChatSession.create(
         workflow=workflow,
-        user_id=user_id,
+        user=user,
         thread_id=thread_id,
         title=title,
     )
@@ -446,7 +398,6 @@ async def create_chat_session(
 async def get_chat_session(
     session_id: int,
     workflow_id: int,
-    user_id: Optional[str],
 ) -> WorkflowChatSession:
     """
     Get a chat session with its messages.
@@ -454,7 +405,6 @@ async def get_chat_session(
     Args:
         session_id: Session ID
         workflow_id: Workflow ID (for authorization)
-        user_id: User ID for authorization (None in self-hosted mode)
         
     Returns:
         Chat session with messages
@@ -463,7 +413,7 @@ async def get_chat_session(
         HTTPException: If session not found or unauthorized
     """
     # Verify workflow access first
-    workflow = await get_workflow(workflow_id, user_id)
+    workflow = await get_workflow(workflow_id)
     
     session = await WorkflowChatSession.get_or_none(
         id=session_id,
@@ -476,20 +426,12 @@ async def get_chat_session(
             detail=f"Chat session {session_id} not found"
         )
     
-    # In cloud mode, verify user_id matches
-    if config.is_cloud_mode and user_id and session.user_id != user_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Access denied to this chat session"
-        )
-    
     return session
 
 
 async def get_chat_session_by_thread_id(
     thread_id: str,
     workflow_id: int,
-    user_id: Optional[str],
 ) -> Optional[WorkflowChatSession]:
     """
     Get a chat session by thread ID.
@@ -503,7 +445,7 @@ async def get_chat_session_by_thread_id(
         Chat session if found, None otherwise
     """
     # Verify workflow access first
-    workflow = await get_workflow(workflow_id, user_id)
+    workflow = await get_workflow(workflow_id)
     
     session = await WorkflowChatSession.get_or_none(
         thread_id=thread_id,
@@ -513,16 +455,12 @@ async def get_chat_session_by_thread_id(
     if not session:
         return None
     
-    # In cloud mode, verify user_id matches
-    if config.is_cloud_mode and user_id and session.user_id != user_id:
-        return None
-    
     return session
 
 
 async def list_chat_sessions(
     workflow_id: int,
-    user_id: Optional[str],
+    user: User,
     limit: int = 50,
 ) -> List[WorkflowChatSession]:
     """
@@ -530,27 +468,18 @@ async def list_chat_sessions(
     
     Args:
         workflow_id: Workflow ID
-        user_id: User ID for authorization (None in self-hosted mode)
+        user: User
         limit: Maximum number of sessions to return
         
     Returns:
         List of chat sessions
     """
-    workflow = await get_workflow(workflow_id, user_id)
+    workflow = await get_workflow(workflow_id)
     
-    if config.is_self_hosted:
-        # Self-hosted: Show all sessions for this workflow
-        sessions = await WorkflowChatSession.filter(
-            workflow=workflow,
-        ).order_by('-updated_at').limit(limit).all()
-    else:
-        # Cloud: Filter by user_id
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Authentication required in cloud mode")
-        sessions = await WorkflowChatSession.filter(
-            workflow=workflow,
-            user_id=user_id,
-        ).order_by('-updated_at').limit(limit).all()
+    sessions = await WorkflowChatSession.filter(
+        workflow=workflow,
+        user=user,
+    ).order_by('-updated_at').limit(limit).all()
     
     return sessions
 

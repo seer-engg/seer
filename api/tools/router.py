@@ -3,9 +3,9 @@ Tool API router for listing and executing tools.
 """
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Body, Query, HTTPException
+from fastapi import APIRouter, Body, Query, HTTPException, Request
 from pydantic import BaseModel
-
+from shared.database.models import User
 from api.tools.services import list_tools, execute_tool_service
 
 router = APIRouter(prefix="/api/tools", tags=["tools"])
@@ -13,7 +13,6 @@ router = APIRouter(prefix="/api/tools", tags=["tools"])
 
 class ExecuteToolRequest(BaseModel):
     """Request body for tool execution."""
-    user_id: str
     connection_id: Optional[str] = None
     arguments: Optional[Dict[str, Any]] = None
 
@@ -39,23 +38,25 @@ async def list_tools_endpoint(
 
 @router.post("/{tool_name}/execute", response_model=ExecuteToolResponse)
 async def execute_tool_endpoint(
+    request: Request,
     tool_name: str,
-    payload: ExecuteToolRequest = Body(...)
+    payload: ExecuteToolRequest = Body(...),
 ) -> Dict[str, Any]:
     """
     Execute a tool.
     
     Args:
         tool_name: Name of the tool to execute
-        payload: Execution request with user_id, connection_id (optional), and arguments
+        payload: Execution request with  connection_id (optional), and arguments
     
     Returns:
         Tool execution result with data and success flag
     """
+    user:User = request.state.db_user
     try:
         result = await execute_tool_service(
             tool_name=tool_name,
-            user_id=payload.user_id,
+            user=user,
             connection_id=payload.connection_id,
             arguments=payload.arguments
         )
