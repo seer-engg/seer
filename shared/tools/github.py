@@ -85,6 +85,7 @@ class GitHubMCPTool(BaseTool):
             GITHUB_TOOL_SCOPES.get("default", ["repo"])
         )
         self.integration_type = "github"
+        self.provider = "github"
         self._parameters_schema = parameters_schema or {
             "type": "object",
             "properties": {},

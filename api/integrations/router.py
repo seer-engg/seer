@@ -39,8 +39,6 @@ async def connect(
         Frontend must always pass scope parameter. This ensures frontend controls
         which permissions are requested (read-only is core differentiation).
     """
-    if provider not in ['google', 'github', 'googledrive', 'gmail']:
-        raise HTTPException(status_code=400, detail="Unsupported provider")
     
     if not scope:
         raise HTTPException(status_code=400, detail="scope parameter is required. Frontend must specify OAuth scopes.")

@@ -20,6 +20,7 @@ class GoogleSheetsWriteTool(BaseTool):
     description = "Write data to a Google Sheet. Requires spreadsheet ID and range."
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     integration_type = "googlesheets"
+    provider = "google"
     
     def get_parameters_schema(self) -> Dict[str, Any]:
         """Get JSON schema for Google Sheets write tool parameters."""
