@@ -96,10 +96,8 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
             last_name=claims.get("last_name"),
             claims=claims,
         )
-        logger.info(f"Authenticated user: {auth_user}")
         try:
             db_user = await User.get_or_create_from_auth(auth_user)
-            logger.info(f"Persisted user: {db_user}")
         except Exception:  # pragma: no cover - defensive
             logger.exception("Failed to persist authenticated user")
             return JSONResponse(
@@ -172,11 +170,9 @@ class TokenDecodeWithoutValidationMiddleware(BaseHTTPMiddleware):
             last_name=claims.get("last_name"),
             claims=claims,
         )
-        logger.info(f"Decoded user (no validation): {auth_user}")
 
         try:
             db_user = await User.get_or_create_from_auth(auth_user)
-            logger.info(f"Persisted user: {db_user}")
         except Exception:
             logger.exception("Failed to persist user from decoded token")
             return await call_next(request)

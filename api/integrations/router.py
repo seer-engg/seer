@@ -6,10 +6,10 @@ import json
 import base64
 import os
 import logging
+from shared.logger import get_logger
+logger = get_logger("api.integrations.router")
 
-logger = logging.getLogger(__name__)
-
-router = APIRouter(prefix="/api/integrations", tags=["integrations"])
+router = APIRouter(prefix="/integrations", tags=["integrations"])
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
@@ -58,7 +58,8 @@ async def connect(
         'original_provider': provider,
         'requested_scope': scope  # Store requested scope to save in callback
     }
-    
+
+    logger.info(f"State data: {state_data}")
     state = encode_state(state_data)
     
     client = oauth.create_client(real_provider)
