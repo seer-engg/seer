@@ -22,7 +22,7 @@ class AuthenticatedUser:
     """Represents the authenticated Clerk user attached to a request."""
 
     user_id: str
-    email: Optional[str]
+    email: str
     first_name: Optional[str]
     last_name: Optional[str]
     claims: Dict[str, Any]
@@ -57,18 +57,12 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
         if self._should_skip(request):
             return await call_next(request)
 
-        authorization = request.headers.get("Authorization")
-        if not authorization or not authorization.startswith("Bearer "):
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Missing or invalid Authorization header"},
-            )
-
-        token = authorization.removeprefix("Bearer ").strip()
+        # Try Authorization header first, then fall back to query param (for OAuth redirects)
+        token = self._extract_token(request)
         if not token:
             return JSONResponse(
                 status_code=401,
-                content={"detail": "Missing bearer token"},
+                content={"detail": "Missing or invalid Authorization header"},
             )
 
         try:
@@ -109,6 +103,22 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
         request.state.db_user = db_user
         return await call_next(request)
 
+    def _extract_token(self, request: Request) -> Optional[str]:
+        """Extract JWT token from Authorization header or query parameter."""
+        # Check Authorization header first
+        authorization = request.headers.get("Authorization")
+        if authorization and authorization.startswith("Bearer "):
+            token = authorization.removeprefix("Bearer ").strip()
+            if token:
+                return token
+
+        # Fall back to query parameter (for OAuth redirect flows)
+        token = request.query_params.get("token")
+        if token:
+            return token
+
+        return None
+
     def _should_skip(self, request: Request) -> bool:
         if request.method == "OPTIONS":
             return True
@@ -144,24 +154,28 @@ class TokenDecodeWithoutValidationMiddleware(BaseHTTPMiddleware):
         request.state.user = None
         request.state.db_user = None
 
-        authorization = request.headers.get("Authorization")
-        if not authorization or not authorization.startswith("Bearer "):
+        # Skip auth for OPTIONS requests and OAuth callbacks
+        if self._should_skip(request):
             return await call_next(request)
 
-        token = authorization.removeprefix("Bearer ").strip()
+        # Try Authorization header first, then fall back to query param (for OAuth redirects)
+        token = self._extract_token(request)
         if not token:
-            return await call_next(request)
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Missing or invalid Authorization header"},
+            )
 
         try:
             # Decode without signature verification
             claims = jwt.decode(token, options={"verify_signature": False})
-        except Exception as exc:
-            logger.warning(f"Failed to decode token: {exc}")
-            return await call_next(request)
+        except Exception as exc:  # pragma: no cover - defensive
+            return JSONResponse(
+                status_code=401,
+                content={"detail": f"Failed to decode User: {exc}"},
+            )
 
         user_id = self._extract_user_id(claims)
-        if not user_id:
-            return await call_next(request)
 
         auth_user = AuthenticatedUser(
             user_id=user_id,
@@ -175,11 +189,42 @@ class TokenDecodeWithoutValidationMiddleware(BaseHTTPMiddleware):
             db_user = await User.get_or_create_from_auth(auth_user)
         except Exception:
             logger.exception("Failed to persist user from decoded token")
-            return await call_next(request)
+            return JSONResponse(
+                status_code=500,
+                content={"detail": "Failed to persist user from decoded token"},
+            )
 
         request.state.user = auth_user
         request.state.db_user = db_user
         return await call_next(request)
+
+    def _should_skip(self, request: Request) -> bool:
+        """Skip auth for OPTIONS requests and OAuth callbacks."""
+        if request.method == "OPTIONS":
+            return True
+
+        path = request.scope.get("path") or request.url.path
+        # Skip OAuth callbacks (they come from OAuth provider, no JWT)
+        if "/integrations/" in path and path.endswith("/callback"):
+            return True
+
+        return False
+
+    def _extract_token(self, request: Request) -> Optional[str]:
+        """Extract JWT token from Authorization header or query parameter."""
+        # Check Authorization header first
+        authorization = request.headers.get("Authorization")
+        if authorization and authorization.startswith("Bearer "):
+            token = authorization.removeprefix("Bearer ").strip()
+            if token:
+                return token
+
+        # Fall back to query parameter (for OAuth redirect flows)
+        token = request.query_params.get("token")
+        if token:
+            return token
+
+        return None
 
     @staticmethod
     def _extract_user_id(claims: Dict[str, Any]) -> Optional[str]:

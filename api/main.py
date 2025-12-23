@@ -70,8 +70,10 @@ if config.is_cloud_mode:
             "/health",
             "/ok",
             "/info",
-            "/api/tools",  # Tools endpoints don't require auth
-            "/api/integrations",  # OAuth endpoints handle their own auth
+            "/api/integrations/gmail/callback",
+            "/api/integrations/google_drive/callback",
+            "/api/integrations/github/callback",
+            "/api/integrations/asana/callback",
         ],
     )
 else:
