@@ -908,8 +908,7 @@ async def chat_with_workflow_endpoint(
                                         edit_id=edit_id,
                                         source_id=edge_data.get("source"),
                                         target_id=edge_data.get("target"),
-                                        source_handle=edge_data.get("sourceHandle"),
-                                        target_handle=edge_data.get("targetHandle"),
+                                        branch=edge_data.get("data", {}).get("branch"),
                                     )
                                     suggested_edits.append(edit)
                                 

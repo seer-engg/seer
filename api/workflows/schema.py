@@ -2,7 +2,7 @@
 Workflow schema definitions for controlled schema architecture (v1.0).
 """
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -64,8 +64,10 @@ class EdgeDefinition(BaseModel):
     id: str = Field(..., description="Unique edge ID")
     source: str = Field(..., description="Source block ID")
     target: str = Field(..., description="Target block ID")
-    source_handle: Optional[str] = Field(None, description="Source output port")
-    target_handle: Optional[str] = Field(None, description="Target input port")
+    branch: Optional[Literal["true", "false"]] = Field(
+        default=None,
+        description="Conditional branch hint (used for if/else blocks)",
+    )
 
 
 class WorkflowSchema(BaseModel):
@@ -138,6 +140,15 @@ def validate_workflow_graph(graph_data: Dict[str, Any]) -> WorkflowSchema:
         )
         blocks.append(block)
     
+    def _determine_branch(edge_data: Dict[str, Any]) -> Optional[str]:
+        branch = edge_data.get('data', {}).get('branch')
+        if branch in ("true", "false"):
+            return branch
+        legacy = edge_data.get('targetHandle')
+        if legacy in ("true", "false"):
+            return legacy
+        return None
+    
     # Convert edges to EdgeDefinition
     edge_definitions = []
     for edge in edges:
@@ -145,8 +156,7 @@ def validate_workflow_graph(graph_data: Dict[str, Any]) -> WorkflowSchema:
             id=edge['id'],
             source=edge['source'],
             target=edge['target'],
-            source_handle=edge.get('sourceHandle'),
-            target_handle=edge.get('targetHandle'),
+            branch=_determine_branch(edge),
         )
         edge_definitions.append(edge_def)
     

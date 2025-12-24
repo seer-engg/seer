@@ -41,33 +41,12 @@ class WorkflowGraphBuilder:
         all_blocks: Dict[str, BlockDefinition],
     ) -> Dict[str, Dict[str, Any]]:
         """
-        Resolve inputs for a block using hybrid approach:
-        1. Explicit connections (via edges)
-        2. Global state access (reference any previous block output)
+        Legacy helper kept for backward compatibility.
         
-        Args:
-            block: Block to resolve inputs for
-            edges: All edges in the workflow
-            all_blocks: All blocks in the workflow
-        
-        Returns:
-            Dict mapping input handle -> reference info
+        Data is now passed exclusively via template references, so explicit
+        edge-based input resolution is no longer required.
         """
-        input_resolution = {}
-        
-        # 1. Explicit connections
-        for edge in edges:
-            if edge.target == block.id:
-                source_handle = edge.source_handle or "output"
-                target_handle = edge.target_handle or "input"
-                
-                input_resolution[target_handle] = {
-                    "type": "connection",
-                    "source_block": edge.source,
-                    "source_handle": source_handle,
-                }
-        
-        return input_resolution
+        return {}
     
     def _create_node_function(
         self,
@@ -231,10 +210,12 @@ class WorkflowGraphBuilder:
                 # Build route map from edges
                 route_map = {}
                 for edge in edges:
-                    if edge.target_handle == "false":
-                        route_map["false"] = edge.target
-                    else:
-                        route_map["true"] = edge.target
+                    target_branch = edge.branch
+                    if target_branch not in ("true", "false"):
+                        target_branch = "true" if "true" not in route_map else "false"
+                    if target_branch in route_map:
+                        continue
+                    route_map[target_branch] = edge.target
                 
                 # Ensure both routes are defined
                 if "true" not in route_map:

@@ -152,9 +152,7 @@ async def resolve_inputs(
     block: BlockDefinition,
 ) -> Dict[str, Any]:
     """
-    Resolve inputs for a block using hybrid approach:
-    1. Explicit connections (via edges)
-    2. Global state references (via block.config.input_refs)
+    Resolve inputs for a block using global state references.
     
     Args:
         state: Current workflow state
@@ -166,16 +164,8 @@ async def resolve_inputs(
     """
     resolved_inputs = {}
     
-    # 1. Resolve explicit connections
-    for handle_id, ref_info in input_resolution.items():
-        source_block_id = ref_info["source_block"]
-        source_handle = ref_info["source_handle"]
-        
-        # Get from global state
-        block_output = state["block_outputs"].get(source_block_id, {})
-        resolved_inputs[handle_id] = block_output.get(source_handle)
-    
-    # 2. Resolve global state references from block.config.input_refs
+    # Legacy explicit connections have been deprecated in favor of variable references.
+    # Resolve global state references from block.config.input_refs
     if "input_refs" in block.config:
         for handle_id, ref in block.config["input_refs"].items():
             # Parse reference: "block_a.email" or "block_a.output"
