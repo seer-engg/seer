@@ -196,6 +196,17 @@ class GoogleDriveGetFileMetadataTool(BaseTool):
     integration_type = "google_drive"
     provider = "google"
 
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        return {
+            "file_id": {
+                "resource_type": "google_drive_file",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+                "hierarchy": True,
+            }
+        }
+
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
@@ -257,6 +268,17 @@ class GoogleDriveDownloadFileTool(BaseTool):
     required_scopes = ["https://www.googleapis.com/auth/drive.readonly"]
     integration_type = "google_drive"
     provider = "google"
+
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        return {
+            "file_id": {
+                "resource_type": "google_drive_file",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+                "hierarchy": True,
+            }
+        }
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -380,6 +402,17 @@ class GoogleDriveUploadFileTool(BaseTool):
     integration_type = "google_drive"
     provider = "google"
 
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        return {
+            "parents": {
+                "resource_type": "google_drive_folder",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+                "hierarchy": True,
+            }
+        }
+
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
@@ -492,6 +525,17 @@ class GoogleDriveCreateFolderTool(BaseTool):
     integration_type = "google_drive"
     provider = "google"
 
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        return {
+            "parents": {
+                "resource_type": "google_drive_folder",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+                "hierarchy": True,
+            }
+        }
+
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
@@ -569,6 +613,31 @@ class GoogleDriveUpdateFileTool(BaseTool):
     required_scopes = ["https://www.googleapis.com/auth/drive.file"]
     integration_type = "google_drive"
     provider = "google"
+
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        return {
+            "file_id": {
+                "resource_type": "google_drive_file",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+                "hierarchy": True,
+            },
+            "add_parents": {
+                "resource_type": "google_drive_folder",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+                "hierarchy": True,
+            },
+            "remove_parents": {
+                "resource_type": "google_drive_folder",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+                "hierarchy": True,
+            },
+        }
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -698,6 +767,17 @@ class GoogleDriveDeleteFileTool(BaseTool):
     integration_type = "google_drive"
     provider = "google"
 
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        return {
+            "file_id": {
+                "resource_type": "google_drive_file",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+                "hierarchy": True,
+            }
+        }
+
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
@@ -750,6 +830,17 @@ class GoogleDriveCreatePermissionTool(BaseTool):
     required_scopes = ["https://www.googleapis.com/auth/drive.file"]
     integration_type = "google_drive"
     provider = "google"
+
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        return {
+            "file_id": {
+                "resource_type": "google_drive_file",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+                "hierarchy": True,
+            }
+        }
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {

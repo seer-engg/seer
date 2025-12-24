@@ -22,6 +22,18 @@ class GoogleSheetsWriteTool(BaseTool):
     integration_type = "google_sheets"
     provider = "google"
     
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        """Enable resource browsing for spreadsheet_id."""
+        return {
+            "spreadsheet_id": {
+                "resource_type": "google_spreadsheet",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+                "hierarchy": False,
+            }
+        }
+    
     def get_parameters_schema(self) -> Dict[str, Any]:
         """Get JSON schema for Google Sheets write tool parameters."""
         return {
@@ -227,6 +239,18 @@ class GoogleSheetsReadTool(BaseTool):
     integration_type = "google_sheets"
     provider = "google"
 
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        """Enable resource browsing for spreadsheet_id."""
+        return {
+            "spreadsheet_id": {
+                "resource_type": "google_spreadsheet",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+                "hierarchy": False,
+            }
+        }
+
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
@@ -306,6 +330,16 @@ class GoogleSheetsBatchReadTool(BaseTool):
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
     integration_type = "google_sheets"
     provider = "google"
+
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        return {
+            "spreadsheet_id": {
+                "resource_type": "google_spreadsheet",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+            }
+        }
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -389,6 +423,16 @@ class GoogleSheetsAppendTool(BaseTool):
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     integration_type = "google_sheets"
     provider = "google"
+
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        return {
+            "spreadsheet_id": {
+                "resource_type": "google_spreadsheet",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+            }
+        }
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -498,6 +542,16 @@ class GoogleSheetsClearTool(BaseTool):
     integration_type = "google_sheets"
     provider = "google"
 
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        return {
+            "spreadsheet_id": {
+                "resource_type": "google_spreadsheet",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+            }
+        }
+
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
@@ -553,6 +607,16 @@ class GoogleSheetsBatchWriteTool(BaseTool):
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     integration_type = "google_sheets"
     provider = "google"
+
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        return {
+            "spreadsheet_id": {
+                "resource_type": "google_spreadsheet",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+            }
+        }
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -666,6 +730,16 @@ class GoogleSheetsGetSpreadsheetTool(BaseTool):
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
     integration_type = "google_sheets"
     provider = "google"
+
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        return {
+            "spreadsheet_id": {
+                "resource_type": "google_spreadsheet",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+            }
+        }
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -805,6 +879,16 @@ class GoogleSheetsBatchUpdateSpreadsheetTool(BaseTool):
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     integration_type = "google_sheets"
     provider = "google"
+
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        return {
+            "spreadsheet_id": {
+                "resource_type": "google_spreadsheet",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+            }
+        }
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
