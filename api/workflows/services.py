@@ -229,8 +229,8 @@ async def _sync_workflow_blocks_and_edges(
                 workflow=workflow,
                 source_block=source_block,
                 target_block=target_block,
-                source_handle=edge_data.get('sourceHandle'),
-                target_handle=edge_data.get('targetHandle'),
+                source_handle=None,
+                target_handle=None,
             )
 
 

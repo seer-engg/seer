@@ -115,8 +115,7 @@ async def analyze_workflow(
         analysis["connections"].append({
             "source": edge.get("source"),
             "target": edge.get("target"),
-            "source_handle": edge.get("sourceHandle"),
-            "target_handle": edge.get("targetHandle"),
+            "branch": edge.get("data", {}).get("branch"),
         })
     
     return json.dumps(analysis, indent=2)
@@ -362,8 +361,6 @@ async def remove_workflow_block(
 async def add_workflow_edge(
     source_id: str,
     target_id: str,
-    source_handle: Optional[str] = None,
-    target_handle: Optional[str] = None,
     workflow_state: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
@@ -372,8 +369,6 @@ async def add_workflow_edge(
     Args:
         source_id: Source block ID
         target_id: Target block ID
-        source_handle: Optional source handle/port
-        target_handle: Optional target handle/port
         workflow_state: Current workflow state (nodes and edges) - optional, will be retrieved from context if not provided
         
     Returns:
@@ -417,12 +412,27 @@ async def add_workflow_edge(
             "error": f"Edge from '{source_id}' to '{target_id}' already exists"
         })
     
+    branch = None
+    source_node = next((node for node in nodes if node.get("id") == source_id), None)
+    if source_node and source_node.get("type") == "if_else":
+        existing_edges = [edge for edge in edges if edge.get("source") == source_id]
+        existing_branches = {
+            edge.get("data", {}).get("branch") for edge in existing_edges
+        }
+        if "true" not in existing_branches:
+            branch = "true"
+        elif "false" not in existing_branches:
+            branch = "false"
+        else:
+            return json.dumps({
+                "error": f"If/Else block '{source_id}' already has true/false branches defined"
+            })
+    
     new_edge = {
         "id": f"edge-{source_id}-{target_id}",
         "source": source_id,
         "target": target_id,
-        "sourceHandle": source_handle,
-        "targetHandle": target_handle,
+        **({"data": {"branch": branch}} if branch else {}),
     }
     
     # Generate edit_id and store planned edit in thread context
