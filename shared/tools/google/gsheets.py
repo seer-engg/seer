@@ -4,6 +4,7 @@ Google Sheets Tool
 Tool for writing data to Google Sheets using Google Sheets API v4.
 """
 from typing import Any, Dict, Optional
+import json
 import httpx
 from fastapi import HTTPException
 
@@ -101,22 +102,42 @@ class GoogleSheetsWriteTool(BaseTool):
                 detail="values is required"
             )
         
+        # Parse values if it's a string (e.g., from workflow config)
+        if isinstance(values, str):
+            try:
+                values = json.loads(values)
+            except json.JSONDecodeError as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid JSON format for 'values' parameter: {str(e)}. Expected a 2D array like [[\"a\", \"b\"], [\"c\", \"d\"]]"
+                )
+        
+        # Validate that values is a 2D array
+        if not isinstance(values, list):
+            raise HTTPException(
+                status_code=400,
+                detail="'values' must be a 2D array (list of lists)"
+            )
+        
         # Use Google Sheets API v4
+        # Note: valueInputOption MUST be a query parameter, not in the request body
         url = f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{range_name}"
+        params = {
+            "valueInputOption": value_input_option
+        }
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
         }
         body = {
-            "values": values,
-            "valueInputOption": value_input_option
+            "values": values
         }
         
         try:
             async with httpx.AsyncClient(timeout=30.0) as http_client:
                 logger.info(f"Writing to Google Sheet {spreadsheet_id}, range {range_name}")
                 
-                response = await http_client.put(url, headers=headers, json=body)
+                response = await http_client.put(url, headers=headers, params=params, json=body)
                 
                 if response.status_code == 401:
                     raise HTTPException(
