@@ -161,16 +161,18 @@ async def input_node(
         # Extract field values based on field names
         output = {}
         for field in fields:
-            if isinstance(field, dict) and "name" in field:
-                field_name = field["name"]
-                # Get value from input_data, use field name as key
-                if field_name in input_data:
-                    output[field_name] = input_data[field_name]
-                # Also support accessing via block label if available
-                block_label = block.config.get("label", block.id)
-                if block_label in input_data and isinstance(input_data[block_label], dict):
-                    if field_name in input_data[block_label]:
-                        output[field_name] = input_data[block_label][field_name]
+            if isinstance(field, dict):
+                # Support both 'id' and 'name' fields (id is preferred)
+                field_name = field.get("id") or field.get("name")
+                if field_name:
+                    # Get value from input_data, use field name as key
+                    if field_name in input_data:
+                        output[field_name] = input_data[field_name]
+                    # Also support accessing via block label if available
+                    block_label = block.config.get("label", block.id)
+                    if block_label in input_data and isinstance(input_data[block_label], dict):
+                        if field_name in input_data[block_label]:
+                            output[field_name] = input_data[block_label][field_name]
         # If no fields matched, return empty dict (or all input_data for backward compatibility)
         if not output:
             output = input_data

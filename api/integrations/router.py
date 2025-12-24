@@ -85,13 +85,15 @@ async def get_tools_connection_status(request: Request):
     # Get all connections for this user
     connections = await list_connections(user)
     
-    # Build a map of provider -> connection with scopes
+    # Build a map of provider -> connection with scopes and refresh_token status
     provider_connections = {}
     for conn in connections:
         provider_connections[conn.provider] = {
             "scopes": conn.scopes or "",
             "connection_id": f"{conn.provider}:{conn.id}",
-            "provider_account_id": conn.provider_account_id
+            "provider_account_id": conn.provider_account_id,
+            "has_refresh_token": bool(conn.refresh_token_enc),  # Check if refresh_token exists
+            "connection": conn  # Store connection object for refresh_token check
         }
     
     # Get all registered tools
@@ -134,6 +136,13 @@ async def get_tools_connection_status(request: Request):
         # Check if connection has required scopes
         has_scopes = has_required_scopes(conn_info["scopes"], tool.required_scopes)
         
+        # Check if refresh_token exists (needed for token refresh)
+        has_refresh_token = conn_info.get("has_refresh_token", False)
+        
+        # Connection is fully functional only if it has scopes AND refresh_token
+        # (refresh_token is needed for token refresh when access_token expires)
+        fully_connected = has_scopes and has_refresh_token
+        
         # Find missing scopes
         granted_set = set(conn_info["scopes"].split()) if conn_info["scopes"] else set()
         missing = [s for s in tool.required_scopes if s not in granted_set]
@@ -142,8 +151,9 @@ async def get_tools_connection_status(request: Request):
             "tool_name": tool.name,
             "integration_type": tool.integration_type,
             "provider": oauth_provider,
-            "connected": True,
+            "connected": fully_connected,  # Only True if scopes AND refresh_token exist
             "has_required_scopes": has_scopes,
+            "has_refresh_token": has_refresh_token,
             "missing_scopes": missing,
             "connection_id": conn_info["connection_id"],
             "provider_account_id": conn_info["provider_account_id"]
