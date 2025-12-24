@@ -227,6 +227,8 @@ async def connect(
     # See: https://developers.google.com/identity/protocols/oauth2/web-server#incrementalAuth
     if oauth_provider == 'google':
         kwargs['include_granted_scopes'] = 'true'
+        kwargs['access_type'] = 'offline'
+        kwargs['prompt'] = 'consent'
         
     return await client.authorize_redirect(request, redirect_uri, **kwargs)
 
