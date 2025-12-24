@@ -19,7 +19,7 @@ class GoogleSheetsWriteTool(BaseTool):
     name = "google_sheets_write"
     description = "Write data to a Google Sheet. Requires spreadsheet ID and range."
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    integration_type = "googlesheets"
+    integration_type = "google_sheets"
     provider = "google"
     
     def get_parameters_schema(self) -> Dict[str, Any]:
@@ -224,7 +224,7 @@ class GoogleSheetsReadTool(BaseTool):
     name = "google_sheets_read"
     description = "Read values from a Google Sheet range. Requires spreadsheet ID and range."
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
-    integration_type = "googlesheets"
+    integration_type = "google_sheets"
     provider = "google"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
@@ -304,7 +304,7 @@ class GoogleSheetsBatchReadTool(BaseTool):
     name = "google_sheets_batch_read"
     description = "Read values from multiple ranges in a Google Sheet (batchGet)."
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
-    integration_type = "googlesheets"
+    integration_type = "google_sheets"
     provider = "google"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
@@ -387,7 +387,7 @@ class GoogleSheetsAppendTool(BaseTool):
     name = "google_sheets_append"
     description = "Append values to a Google Sheet (values.append)."
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    integration_type = "googlesheets"
+    integration_type = "google_sheets"
     provider = "google"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
@@ -495,7 +495,7 @@ class GoogleSheetsClearTool(BaseTool):
     name = "google_sheets_clear"
     description = "Clear values from a Google Sheet range (values.clear)."
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    integration_type = "googlesheets"
+    integration_type = "google_sheets"
     provider = "google"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
@@ -551,7 +551,7 @@ class GoogleSheetsBatchWriteTool(BaseTool):
     name = "google_sheets_batch_write"
     description = "Write values to multiple ranges in a Google Sheet (values.batchUpdate)."
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    integration_type = "googlesheets"
+    integration_type = "google_sheets"
     provider = "google"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
@@ -664,7 +664,7 @@ class GoogleSheetsGetSpreadsheetTool(BaseTool):
     name = "google_sheets_get_spreadsheet"
     description = "Get spreadsheet metadata (and optional grid data) via spreadsheets.get."
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
-    integration_type = "googlesheets"
+    integration_type = "google_sheets"
     provider = "google"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
@@ -738,7 +738,7 @@ class GoogleSheetsCreateSpreadsheetTool(BaseTool):
     name = "google_sheets_create_spreadsheet"
     description = "Create a new Google Sheet (spreadsheets.create)."
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    integration_type = "googlesheets"
+    integration_type = "google_sheets"
     provider = "google"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
@@ -803,7 +803,7 @@ class GoogleSheetsBatchUpdateSpreadsheetTool(BaseTool):
     name = "google_sheets_batch_update_spreadsheet"
     description = "Batch update a spreadsheet for formatting/structure (spreadsheets.batchUpdate)."
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    integration_type = "googlesheets"
+    integration_type = "google_sheets"
     provider = "google"
 
     def get_parameters_schema(self) -> Dict[str, Any]:

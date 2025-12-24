@@ -76,7 +76,7 @@ GITHUB_TOOL_SCOPES: Dict[str, list[str]] = {
 class GitHubMCPTool(BaseTool):
     """Base wrapper for GitHub MCP tools."""
     
-    def __init__(self, mcp_tool_name: str, description: str, parameters_schema: Optional[Dict[str, Any]] = None):
+    def __init__(self, mcp_tool_name: str, description: str, parameters_schema: Optional[Dict[str, Any]] = None, integration_type: Optional[str] = "github"):
         self.mcp_tool_name = mcp_tool_name
         self.name = f"github_{mcp_tool_name.replace(':', '_')}"
         self.description = description
@@ -84,7 +84,7 @@ class GitHubMCPTool(BaseTool):
             mcp_tool_name,
             GITHUB_TOOL_SCOPES.get("default", ["repo"])
         )
-        self.integration_type = "github"
+        self.integration_type = integration_type
         self.provider = "github"
         self._parameters_schema = parameters_schema or {
             "type": "object",
@@ -284,7 +284,8 @@ def register_github_tools():
                     "state": {"type": "string", "description": "PR state (open, closed, all)", "default": "open"}
                 },
                 "required": ["owner", "repo"]
-            }
+            },
+            integration_type="pull_request"
         ),
         GitHubMCPTool(
             mcp_tool_name="pull_request_read:get",
@@ -298,7 +299,8 @@ def register_github_tools():
                     "method": {"type": "string", "description": "Method (get, get_diff, etc.)", "default": "get"}
                 },
                 "required": ["owner", "repo", "pullNumber"]
-            }
+            },
+            integration_type="pull_request"
         ),
     ]
     
