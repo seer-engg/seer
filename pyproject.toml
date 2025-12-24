@@ -60,6 +60,7 @@ fallback_version = "0.0.0"
 
 [dependency-groups]
 dev = [
+    "aerich>=0.9.2",
     "ipykernel>=7.1.0",
 ]
 
@@ -80,3 +81,8 @@ Homepage = "https://www.getseer.dev"
 Documentation = "https://github.com/seer-engg/seer#readme"
 Repository = "https://github.com/seer-engg/seer"
 Issues = "https://github.com/seer-engg/seer/issues"
+
+[tool.aerich]
+tortoise_orm = "shared.database.config.TORTOISE_ORM"
+location = "./migrations"
+src_folder = "./."
