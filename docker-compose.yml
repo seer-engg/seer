@@ -1,0 +1,71 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: seer-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-seer}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-seer}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    container_name: mlflow
+    ports:
+      - "5001:5000"  # Changed host port to 5001 to avoid conflict with macOS AirPlay Receiver
+    volumes:
+      - ./mlflow_local:/mlflow
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --allowed-hosts "mlflow:5000,localhost:5000,localhost:5001,127.0.0.1:5000,127.0.0.1:5001"
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --default-artifact-root file:/mlflow/artifacts
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  langgraph-server:
+    build:
+      context: .
+      dockerfile: Dockerfile          # <-- your existing root Dockerfile
+    container_name: langgraph-server
+    ports:
+      - "8000:8000"                   # change if your server uses another port
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      MLFLOW_TRACKING_URI: "http://mlflow:5000"
+      MLFLOW_EXPERIMENT_NAME: "langgraph-local"
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
+      DB_GENERATE_SCHEMAS: "true"  # Enable schema generation in development
+      UV_LINK_MODE: "copy"  # Use copy mode to avoid hardlink warnings in Docker volumes
+    volumes:
+      - ./:/app  # Mount source code for instant updates in development (overrides COPY in Dockerfile)
+      - /app/.venv  # Exclude local .venv (Docker will create its own venv)
+    command: >
+      sh -c "
+        echo 'Waiting for database to be ready...' &&
+        sleep 2 &&
+        uv run uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+
+volumes:
+  postgres_data:

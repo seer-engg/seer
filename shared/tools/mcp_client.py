@@ -16,6 +16,15 @@ context7_headers = {}
 if config.CONTEXT7_API_KEY:
     context7_headers["CONTEXT7_API_KEY"] = config.CONTEXT7_API_KEY
 
+# Build GitHub MCP server config
+github_mcp_config = {}
+if config.GITHUB_MCP_SERVER_URL:
+    github_mcp_config["github"] = {
+        "transport": "streamable_http",
+        "url": config.GITHUB_MCP_SERVER_URL,
+        "headers": None,  # GitHub MCP server may use OAuth tokens passed per-request
+    }
+
 client = MultiServerMCPClient(
     {
         "context7": {
@@ -26,7 +35,8 @@ client = MultiServerMCPClient(
         "langchain": {
             "transport": "streamable_http",
             "url": "https://docs.langchain.com/mcp",
-        }
+        },
+        **github_mcp_config,  # Add GitHub MCP server if configured
     }
 )
 

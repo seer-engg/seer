@@ -3,34 +3,21 @@
 CLI for the Seer Eval Agent and Supervisor Agent.
 
 Usage:
-    seer-eval run                    # Start interactive eval agent loop
-    seer-eval run --thread-id <uuid> # Resume existing thread
-    seer-eval new-supervisor         # Start interactive supervisor chat
+    uv run seer dev            # Start development environment (recommended: no installation)
+    
+    # If CLI is installed, you can use 'seer' directly instead of 'uv run seer'
 """
-import asyncio
-import base64
 import json
-import mimetypes
 import sys
-import uuid
-import traceback
+import threading
 from pathlib import Path
-from typing import Optional, Any, List
 
 import click
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
-from rich.markdown import Markdown
-from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
-from rich.syntax import Syntax
 from rich import box
-from rich.prompt import Prompt
-
-from langchain_core.runnables import RunnableConfig
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.types import Command
 
 # Load .env before importing seer modules
 load_dotenv()
@@ -40,795 +27,32 @@ console = Console()
 # Global verbose flag
 VERBOSE = False
 
-
-def process_file_input(user_input: str) -> Optional[str]:
-    """
-    Process file path(s) from user input and encode them as base64.
-    
-    Returns a JSON string with file data if files were successfully read,
-    or None if no valid files were found.
-    """
-    # Parse potential file paths (space-separated, or single path)
-    potential_paths = user_input.strip().split()
-    
-    files_data: List[dict] = []
-    
-    for path_str in potential_paths:
-        # Expand ~ and resolve path
-        file_path = Path(path_str).expanduser().resolve()
-        
-        if not file_path.exists():
-            console.print(f"[yellow]Warning: File not found: {path_str}[/yellow]")
-            continue
-        
-        if not file_path.is_file():
-            console.print(f"[yellow]Warning: Not a file: {path_str}[/yellow]")
-            continue
-        
-        # Determine MIME type
-        mime_type, _ = mimetypes.guess_type(str(file_path))
-        if mime_type is None:
-            # Default based on extension
-            ext = file_path.suffix.lower()
-            mime_map = {
-                '.png': 'image/png',
-                '.jpg': 'image/jpeg',
-                '.jpeg': 'image/jpeg',
-                '.gif': 'image/gif',
-                '.webp': 'image/webp',
-                '.pdf': 'application/pdf',
-                '.txt': 'text/plain',
-                '.json': 'application/json',
-                '.csv': 'text/csv',
-            }
-            mime_type = mime_map.get(ext, 'application/octet-stream')
-        
-        try:
-            # Read and encode file
-            with open(file_path, 'rb') as f:
-                file_data = f.read()
-            
-            # Check file size (limit to 10MB)
-            if len(file_data) > 10 * 1024 * 1024:
-                console.print(f"[yellow]Warning: File too large (>10MB): {path_str}[/yellow]")
-                continue
-            
-            encoded_data = base64.b64encode(file_data).decode('utf-8')
-            
-            files_data.append({
-                'filename': file_path.name,
-                'content_type': mime_type,
-                'data': encoded_data,
-                'path': str(file_path),
-            })
-            
-            console.print(f"[green]✓ Loaded file: {file_path.name} ({mime_type})[/green]")
-            
-        except Exception as e:
-            console.print(f"[red]Error reading file {path_str}: {e}[/red]")
-            continue
-    
-    if files_data:
-        return json.dumps({
-            'type': 'file_upload',
-            'files': files_data,
-            'message': f"Uploaded {len(files_data)} file(s)",
-        })
-    
-    return None
-
-
-async def handle_interrupts(
-    graph,
-    config: RunnableConfig,
-    progress=None,
-    task=None,
-) -> dict:
-    """
-    Handle LangGraph interrupts in a loop.
-    
-    When the graph encounters an interrupt(), it pauses and returns.
-    This function checks for pending interrupts, prompts the user,
-    and resumes the graph until completion.
-    
-    Returns the final state when no more interrupts are pending.
-    """
-    while True:
-        # Check the current state for interrupts
-        state = graph.get_state(config)
-        
-        # Check if there are pending interrupts
-        # Interrupts are stored in state.tasks with interrupts field
-        has_interrupt = False
-        interrupt_payload = None
-        
-        for task_state in state.tasks:
-            if hasattr(task_state, 'interrupts') and task_state.interrupts:
-                has_interrupt = True
-                # Get the first interrupt payload
-                interrupt_payload = task_state.interrupts[0].value if task_state.interrupts else None
-                break
-        
-        if not has_interrupt:
-            # No more interrupts, return the final values
-            return state.values
-        
-        # Stop the progress spinner while prompting
-        # Note: task can be 0 (first task ID), so check `is not None`
-        if progress is not None and task is not None:
-            progress.stop()
-        
-        # Display the interrupt to the user
-        if interrupt_payload and isinstance(interrupt_payload, dict):
-            interrupt_type = interrupt_payload.get('type', 'input_required')
-            
-            if interrupt_type == 'missing_config':
-                field = interrupt_payload.get('field', 'unknown')
-                env_var = interrupt_payload.get('env_var', field.upper())
-                instructions = interrupt_payload.get('instructions', f'Please provide a value for {field}')
-                
-                console.print(f"\n[bold yellow]⚠ Missing Configuration[/bold yellow]")
-                console.print(Panel(
-                    f"[bold]{env_var}[/bold] is required but not set.\n\n"
-                    f"[dim]{instructions}[/dim]",
-                    border_style="yellow",
-                    box=box.ROUNDED
-                ))
-                console.print()  # Extra newline for visibility
-                
-                user_input = Prompt.ask(
-                    f"[bold]Enter value for [cyan]{env_var}[/cyan][/bold] (or 'exit' to quit)",
-                    console=console
-                )
-                console.print()  # Newline after input
-            else:
-                # Generic interrupt
-                console.print(f"\n[bold yellow]Input Required[/bold yellow]")
-                if isinstance(interrupt_payload, dict):
-                    console.print(Panel(
-                        json.dumps(interrupt_payload, indent=2, default=str),
-                        border_style="yellow",
-                        box=box.ROUNDED
-                    ))
-                else:
-                    console.print(f"[dim]{interrupt_payload}[/dim]")
-                
-                user_input = Prompt.ask("Your response (or 'exit' to quit)", console=console)
-        else:
-            # Unknown interrupt format
-            console.print(f"\n[bold yellow]Input Required[/bold yellow]")
-            console.print(f"[dim]Payload: {interrupt_payload}[/dim]")
-            user_input = Prompt.ask("Your response (or 'exit' to quit)", console=console)
-        
-        # Check for exit
-        if user_input.lower() in ('exit', 'quit', 'stop', 'cancel'):
-            console.print("[yellow]Exiting...[/yellow]")
-            return state.values
-        
-        # Restart progress if it was running
-        if progress is not None and task is not None:
-            progress.start()
-        
-        # Resume the graph with the user's input
-        try:
-            await graph.ainvoke(Command(resume=user_input), config=config)
-        except Exception as e:
-            if VERBOSE:
-                console.print(f"\n[bold red]Error during resume:[/bold red] {e}")
-                console.print(traceback.format_exc())
-            raise
-
-
-# Lazy imports to avoid import errors when displaying help
-def get_graph():
-    """Lazy import of the eval agent graph."""
-    from agents.eval_agent.graph import build_graph
-    return build_graph()
-
-
-def create_compiled_graph(checkpointer=None):
-    """Create and compile the eval agent graph."""
-    graph = get_graph()
-    if checkpointer is None:
-        checkpointer = MemorySaver()
-    return graph.compile(checkpointer=checkpointer)
-
-
-def get_supervisor_graph():
-    """Lazy import of the supervisor agent graph."""
-    from agents.supervisor.graph import build_graph
-    return build_graph()
-
-
-def create_supervisor_compiled_graph(checkpointer=None):
-    """Create and compile the supervisor agent graph."""
-    graph = get_supervisor_graph()
-    if checkpointer is None:
-        checkpointer = MemorySaver()
-    return graph.compile(checkpointer=checkpointer)
-
-
-def format_context(context) -> str:
-    """Format agent context for display."""
-    lines = []
-    if hasattr(context, 'agent_name') and context.agent_name:
-        lines.append(f"**Agent Name:** {context.agent_name}")
-    if hasattr(context, 'mcp_services') and context.mcp_services:
-        lines.append(f"**MCP Services:** {', '.join(context.mcp_services)}")
-    if hasattr(context, 'functional_requirements') and context.functional_requirements:
-        lines.append("\n**Functional Requirements:**")
-        for i, req in enumerate(context.functional_requirements, 1):
-            lines.append(f"  {i}. {req}")
-    return '\n'.join(lines)
-
-
-def format_dataset_example(example) -> str:
-    """Format a dataset example for display."""
-    return example.to_markdown()
-
-
 @click.group()
-@click.version_option(version="0.1.4", prog_name="seer-eval")
+@click.version_option(version="0.1.4", prog_name="seer")
 @click.option('--verbose', '-v', is_flag=True, help='Show full error tracebacks for debugging')
 def cli(verbose: bool):
     """
-    🔮 Seer Eval Agent CLI
+    🔮 Seer - Multi-Agent System for Evaluating AI Agents
     
     Evaluate AI agents through automated test generation and execution.
     
     \b
     Commands:
-      run            - Start interactive eval agent loop (continuous)
-      new-supervisor - Start interactive supervisor chat for database operations
+      dev            - Start development environment with Docker Compose
     
     \b
     Examples:
-      # Start the interactive eval agent loop
-      seer-eval run
-      
-      # Resume an existing thread
-      seer-eval run --thread-id <uuid>
-      
-      # Start a supervisor chat session
-      seer-eval new-supervisor
-      
+      # Start development environment (recommended: no installation needed)
+      uv run seer dev
+          
       # Debug with full tracebacks
-      seer-eval -v run
+      uv run seer -v dev
+      
+      # If CLI is installed, you can use 'seer' directly
+      seer dev
     """
     global VERBOSE
     VERBOSE = verbose
-
-
-@cli.command()
-@click.option('--thread-id', '-t', default=None, help='Thread ID (auto-generated if not provided)')
-def run(thread_id: Optional[str]):
-    """
-    Start an interactive eval agent loop.
-    
-    This is a continuous agent loop that runs until you type 'exit'.
-    Each iteration asks for a step (alignment, plan, testing, finalize).
-    
-    \b
-    Steps:
-      alignment - Align agent expectations with user requirements
-                  (prompts for description, repo, and user-id)
-      plan      - Generate test cases based on aligned expectations
-      testing   - Execute generated test cases
-      finalize  - Finalize the evaluation
-    
-    \b
-    Commands during session:
-      exit, quit, bye  - Exit the session
-      clear            - Clear the screen
-    
-    \b
-    Example:
-      seer-eval run
-      seer-eval run --thread-id <uuid>  # Resume existing thread
-    """
-    asyncio.run(_run(thread_id))
-
-
-async def _run(thread_id: Optional[str]):
-    """Async implementation of run command (continuous agent loop)."""
-    thread_id = thread_id or str(uuid.uuid4())
-    
-    console.print(Panel.fit(
-        "[bold cyan]🔮 Seer Eval Agent - Interactive Loop[/bold cyan]\n\n"
-        f"[dim]Thread ID: {thread_id}[/dim]\n"
-        "[dim]Type 'exit' to quit, 'clear' to clear screen[/dim]",
-        border_style="cyan"
-    ))
-    console.print()
-    
-    # Create the eval agent with checkpointer
-    memory = MemorySaver()
-    eval_agent = create_compiled_graph(memory)
-    runnable_config = RunnableConfig(configurable={"thread_id": thread_id})
-    
-    valid_steps = ['alignment', 'plan', 'testing', 'finalize']
-    
-    # Continuous agent loop
-    while True:
-        try:
-            # Ask for step (mandatory)
-            console.print("[bold]Available steps:[/bold] alignment, plan, testing, finalize")
-            step = Prompt.ask(
-                "[bold cyan]Select step[/bold cyan]",
-                console=console,
-                choices=valid_steps + ['exit', 'quit', 'bye', 'clear'],
-                show_choices=False
-            )
-            
-            # Handle special commands
-            if step.lower().strip() in ('exit', 'quit', 'bye', 'q'):
-                console.print("\n[cyan]👋 Goodbye![/cyan]")
-                break
-            
-            if step.lower().strip() == 'clear':
-                console.clear()
-                console.print(Panel.fit(
-                    "[bold cyan]🔮 Seer Eval Agent - Interactive Loop[/bold cyan]\n\n"
-                    f"[dim]Thread ID: {thread_id}[/dim]\n"
-                    "[dim]Type 'exit' to quit, 'clear' to clear screen[/dim]",
-                    border_style="cyan"
-                ))
-                continue
-            
-            # Prepare inputs based on step
-            inputs = {"step": step}
-            
-            # For alignment step, ask for additional inputs
-            if step == 'alignment':
-                console.print("\n[bold]Alignment Configuration[/bold]")
-                console.print("─" * 40)
-                
-                description = Prompt.ask(
-                    "[bold]Description[/bold] (what does your agent do?)",
-                    console=console
-                )
-                if description.lower().strip() in ('exit', 'quit', 'bye'):
-                    console.print("\n[cyan]👋 Goodbye![/cyan]")
-                    break
-                
-                repo = Prompt.ask(
-                    "[bold]GitHub Repository[/bold] (owner/repo format)",
-                    console=console
-                )
-                if repo.lower().strip() in ('exit', 'quit', 'bye'):
-                    console.print("\n[cyan]👋 Goodbye![/cyan]")
-                    break
-                
-                user_id = Prompt.ask(
-                    "[bold]User ID[/bold] (for authentication context, press Enter to skip)",
-                    console=console,
-                    default=""
-                )
-                if user_id.lower().strip() in ('exit', 'quit', 'bye'):
-                    console.print("\n[cyan]👋 Goodbye![/cyan]")
-                    break
-                
-                inputs["messages"] = [{"type": "human", "content": description}]
-                inputs["input_context"] = {
-                    "integrations": {
-                        "github": {"name": repo}
-                    }
-                }
-                if user_id.strip():
-                    inputs["input_context"]["user_id"] = user_id.strip()
-                
-                console.print()
-                console.print(f"[dim]Description: {description}[/dim]")
-                console.print(f"[dim]Repository: {repo}[/dim]")
-                if user_id.strip():
-                    console.print(f"[dim]User ID: {user_id}[/dim]")
-            
-            console.print()
-            console.print(f"[bold]Running step: {step}[/bold]")
-            console.print("─" * 40)
-            
-            # Run the eval agent
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=console,
-                transient=True,
-            ) as progress:
-                prog_task = progress.add_task(f"Running {step}...", total=None)
-                
-                try:
-                    # Initial invocation
-                    await eval_agent.ainvoke(inputs, config=runnable_config)
-                    
-                    # Handle any interrupts
-                    results = await handle_interrupts(
-                        eval_agent,
-                        runnable_config,
-                        progress=progress,
-                        task=prog_task,
-                    )
-                    progress.update(prog_task, completed=True)
-                except KeyboardInterrupt:
-                    progress.stop()
-                    console.print("\n[yellow]Interrupted. Type 'exit' to quit.[/yellow]")
-                    continue
-                except Exception as e:
-                    progress.stop()
-                    console.print(f"\n[bold red]Error in {step}:[/bold red] {e}")
-                    if VERBOSE:
-                        console.print("\n[bold red]Full Traceback:[/bold red]")
-                        console.print(traceback.format_exc())
-                    else:
-                        console.print("[dim]Use -v flag for full traceback: seer-eval -v run[/dim]")
-                    continue
-            
-            # Display results based on step
-            console.print()
-            _display_step_results(step, results)
-            console.print()
-            
-        except KeyboardInterrupt:
-            console.print("\n[yellow]Interrupted. Type 'exit' to quit.[/yellow]")
-            continue
-        except EOFError:
-            console.print("\n[cyan]👋 Goodbye![/cyan]")
-            break
-
-
-def _display_step_results(step: str, results: dict):
-    """Display results based on the step that was run."""
-    if step == 'alignment':
-        context = results.get('context')
-        if context:
-            # Build display content
-            content_lines = [
-                f"[bold]Agent:[/bold] {context.agent_name if hasattr(context, 'agent_name') else 'Unknown'}",
-                f"[bold]Services:[/bold] {', '.join(context.mcp_services) if hasattr(context, 'mcp_services') and context.mcp_services else 'None'}"
-            ]
-            
-            # Add functional requirements if available
-            if hasattr(context, 'functional_requirements') and context.functional_requirements:
-                content_lines.append("")
-                content_lines.append("[bold]Functional Requirements:[/bold]")
-                for i, req in enumerate(context.functional_requirements, 1):
-                    content_lines.append(f"  {i}. {req}")
-            
-            console.print(Panel(
-                "\n".join(content_lines),
-                title="[bold green]✓ Alignment Complete[/bold green]",
-                border_style="green",
-                box=box.ROUNDED
-            ))
-        else:
-            console.print("[green]✓ Alignment step completed[/green]")
-    
-    elif step == 'plan':
-        examples = results.get('dataset_examples', [])
-        console.print(f"[green]✓[/green] Generated {len(examples)} test case(s)")
-        
-        if examples:
-            for example in examples:
-                console.print(Panel(
-                    Markdown(format_dataset_example(example)),
-                    border_style="blue",
-                    box=box.ROUNDED
-                ))
-    
-    elif step == 'testing':
-        latest_results = results.get('latest_results', [])
-        passed = sum(1 for r in latest_results if hasattr(r, 'passed') and r.passed)
-        total = len(latest_results)
-        
-        if total > 0:
-            status_color = "green" if passed == total else "yellow" if passed > 0 else "red"
-            console.print(Panel(
-                f"[bold]Tests Passed:[/bold] {passed}/{total}",
-                title=f"[bold {status_color}]Testing Results[/bold {status_color}]",
-                border_style=status_color,
-                box=box.ROUNDED
-            ))
-        else:
-            console.print("[green]✓ Testing step completed[/green]")
-        
-        # Check for missing config
-        missing_config = results.get('missing_config', [])
-        if missing_config:
-            console.print(f"\n[bold yellow]⚠ Missing Configuration:[/bold yellow]")
-            for config_key in missing_config:
-                console.print(f"  • {config_key}")
-    
-    elif step == 'finalize':
-        console.print("[green]✓ Finalize step completed[/green]")
-        
-        # Display any final summary if available
-        if results.get('summary'):
-            console.print(Panel(
-                Markdown(results['summary']),
-                title="[bold green]Evaluation Summary[/bold green]",
-                border_style="green",
-                box=box.ROUNDED
-            ))
-    
-    else:
-        console.print(f"[green]✓ Step '{step}' completed[/green]")
-
-
-@cli.command('new-supervisor')
-@click.option('--thread-id', '-t', default=None, help='Thread ID (auto-generated if not provided)')
-@click.option('--db-uri', '-d', default=None, help='PostgreSQL connection URI (uses DATABASE_URI env var if not provided)')
-def new_supervisor(thread_id: Optional[str], db_uri: Optional[str]):
-    """
-    Start an interactive chat session with the Supervisor agent.
-    
-    The Supervisor agent can help with database operations, schema exploration,
-    and other PostgreSQL-related tasks.
-    
-    \b
-    Commands during chat:
-      exit, quit, bye  - Exit the chat session
-      clear            - Clear the screen
-    
-    \b
-    Example:
-      seer-eval new-supervisor
-      seer-eval new-supervisor --db-uri "postgresql://user:pass@host/db"
-    """
-    asyncio.run(_new_supervisor(thread_id, db_uri))
-
-
-async def _new_supervisor(thread_id: Optional[str], db_uri: Optional[str]):
-    """Async implementation of new-supervisor command."""
-    thread_id = thread_id or str(uuid.uuid4())
-    
-    console.print(Panel.fit(
-        "[bold magenta]🤖 Seer Supervisor Agent[/bold magenta]\n\n"
-        f"[dim]Thread ID: {thread_id}[/dim]\n"
-        "[dim]Type 'exit' to quit, 'clear' to clear screen[/dim]",
-        border_style="magenta"
-    ))
-    
-    if db_uri:
-        console.print(f"[dim]Database: Connected via provided URI[/dim]")
-    else:
-        console.print(f"[dim]Database: Using DATABASE_URI from environment[/dim]")
-    console.print()
-    
-    # Create the supervisor agent with checkpointer
-    memory = MemorySaver()
-    supervisor_agent = create_supervisor_compiled_graph(memory)
-    runnable_config = RunnableConfig(configurable={"thread_id": thread_id})
-    
-    # Chat loop
-    while True:
-        try:
-            # Get user input
-            user_input = Prompt.ask("[bold cyan]You[/bold cyan]", console=console)
-            
-            # Handle special commands
-            if user_input.lower().strip() in ('exit', 'quit', 'bye', 'q'):
-                console.print("\n[magenta]👋 Goodbye![/magenta]")
-                break
-            
-            if user_input.lower().strip() == 'clear':
-                console.clear()
-                console.print(Panel.fit(
-                    "[bold magenta]🤖 Seer Supervisor Agent[/bold magenta]\n\n"
-                    f"[dim]Thread ID: {thread_id}[/dim]\n"
-                    "[dim]Type 'exit' to quit, 'clear' to clear screen[/dim]",
-                    border_style="magenta"
-                ))
-                continue
-            
-            if not user_input.strip():
-                continue
-            
-            # Build input for the supervisor
-            inputs = {
-                "messages": [{"type": "human", "content": user_input}],
-            }
-            if db_uri:
-                inputs["database_connection_string"] = db_uri
-            
-            # Run the supervisor agent
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=console,
-                transient=True,
-            ) as progress:
-                prog_task = progress.add_task("Thinking...", total=None)
-                
-                try:
-                    # Initial invocation
-                    await supervisor_agent.ainvoke(inputs, config=runnable_config)
-                    
-                    # Handle any interrupts (file requests, etc.)
-                    results = await handle_supervisor_interrupts(
-                        supervisor_agent,
-                        runnable_config,
-                        progress=progress,
-                        task=prog_task,
-                    )
-                    progress.update(prog_task, completed=True)
-                except KeyboardInterrupt:
-                    progress.stop()
-                    console.print("\n[yellow]Interrupted. Type 'exit' to quit.[/yellow]")
-                    continue
-                except Exception as e:
-                    progress.stop()
-                    console.print(f"\n[bold red]Error:[/bold red] {e}")
-                    if VERBOSE:
-                        console.print("\n[bold red]Full Traceback:[/bold red]")
-                        console.print(traceback.format_exc())
-                    continue
-            
-            # Display the response
-            response = results.get('response')
-            if response:
-                console.print()
-                console.print(Panel(
-                    Markdown(response),
-                    title="[bold magenta]Supervisor[/bold magenta]",
-                    border_style="magenta",
-                    box=box.ROUNDED
-                ))
-                console.print()
-            else:
-                console.print("[dim]No response received.[/dim]")
-                
-        except KeyboardInterrupt:
-            console.print("\n[yellow]Interrupted. Type 'exit' to quit.[/yellow]")
-            continue
-        except EOFError:
-            console.print("\n[magenta]👋 Goodbye![/magenta]")
-            break
-
-
-async def handle_supervisor_interrupts(
-    graph,
-    config: RunnableConfig,
-    progress=None,
-    task=None,
-) -> dict:
-    """
-    Handle LangGraph interrupts for the supervisor agent.
-    
-    Handles file request interrupts and other supervisor-specific interrupts.
-    Returns the final state when no more interrupts are pending.
-    """
-    while True:
-        # Check the current state for interrupts
-        state = graph.get_state(config)
-        
-        # Check if there are pending interrupts
-        has_interrupt = False
-        interrupt_payload = None
-        
-        for task_state in state.tasks:
-            if hasattr(task_state, 'interrupts') and task_state.interrupts:
-                has_interrupt = True
-                interrupt_payload = task_state.interrupts[0].value if task_state.interrupts else None
-                break
-        
-        if not has_interrupt:
-            # No more interrupts, return the final values
-            return state.values
-        
-        # Stop the progress spinner while prompting
-        if progress is not None and task is not None:
-            progress.stop()
-        
-        # Display the interrupt to the user
-        if interrupt_payload and isinstance(interrupt_payload, dict):
-            interrupt_type = interrupt_payload.get('type', 'input_required')
-            
-            if interrupt_type == 'file_request':
-                # File request interrupt from supervisor
-                description = interrupt_payload.get('description', 'Files requested')
-                accepted_types = interrupt_payload.get('accepted_types', ['image', 'pdf'])
-                message = interrupt_payload.get('message', description)
-                
-                console.print(f"\n[bold yellow]📎 File Request[/bold yellow]")
-                console.print(Panel(
-                    Markdown(message),
-                    border_style="yellow",
-                    box=box.ROUNDED
-                ))
-                console.print("[dim]Provide file path(s) separated by spaces, or type 'skip' to continue without files[/dim]")
-                console.print()
-                
-                user_input = Prompt.ask(
-                    "[bold]File path(s) or response[/bold]",
-                    console=console
-                )
-                console.print()
-                
-                # Check if user provided file paths
-                if user_input.lower().strip() not in ('skip', 'exit', 'quit', 'stop', 'cancel'):
-                    file_response = process_file_input(user_input)
-                    if file_response:
-                        user_input = file_response
-                
-            elif interrupt_type == 'missing_config':
-                field = interrupt_payload.get('field', 'unknown')
-                env_var = interrupt_payload.get('env_var', field.upper())
-                instructions = interrupt_payload.get('instructions', f'Please provide a value for {field}')
-                
-                console.print(f"\n[bold yellow]⚠ Missing Configuration[/bold yellow]")
-                console.print(Panel(
-                    f"[bold]{env_var}[/bold] is required but not set.\n\n"
-                    f"[dim]{instructions}[/dim]",
-                    border_style="yellow",
-                    box=box.ROUNDED
-                ))
-                console.print()
-                
-                user_input = Prompt.ask(
-                    f"[bold]Enter value for [cyan]{env_var}[/cyan][/bold] (or 'exit' to quit)",
-                    console=console
-                )
-                console.print()
-            else:
-                # Generic interrupt
-                console.print(f"\n[bold yellow]Input Required[/bold yellow]")
-                if isinstance(interrupt_payload, dict):
-                    console.print(Panel(
-                        json.dumps(interrupt_payload, indent=2, default=str),
-                        border_style="yellow",
-                        box=box.ROUNDED
-                    ))
-                else:
-                    console.print(f"[dim]{interrupt_payload}[/dim]")
-                
-                user_input = Prompt.ask("Your response (or 'exit' to quit)", console=console)
-        else:
-            # Handle string payloads (like postgres write approval)
-            if isinstance(interrupt_payload, str):
-                # Check if it's a postgres write approval request
-                if "PostgreSQL Write Approval" in interrupt_payload or interrupt_payload.startswith("🔒"):
-                    console.print(f"\n[bold yellow]🔒 Database Write Approval[/bold yellow]")
-                    console.print(Panel(
-                        Markdown(interrupt_payload),
-                        border_style="yellow",
-                        box=box.ROUNDED
-                    ))
-                    console.print()
-                    user_input = Prompt.ask(
-                        "[bold]Approve?[/bold] (yes/approve to proceed, no/reject to cancel)",
-                        console=console
-                    )
-                else:
-                    # Generic string payload - render as markdown
-                    console.print(f"\n[bold yellow]Input Required[/bold yellow]")
-                    console.print(Panel(
-                        Markdown(interrupt_payload),
-                        border_style="yellow",
-                        box=box.ROUNDED
-                    ))
-                    user_input = Prompt.ask("Your response (or 'exit' to quit)", console=console)
-            else:
-                # Unknown interrupt format
-                console.print(f"\n[bold yellow]Input Required[/bold yellow]")
-                console.print(f"[dim]Payload: {interrupt_payload}[/dim]")
-                user_input = Prompt.ask("Your response (or 'exit' to quit)", console=console)
-        
-        # Check for exit
-        if user_input.lower() in ('exit', 'quit', 'stop', 'cancel'):
-            console.print("[yellow]Exiting interrupt handler...[/yellow]")
-            return state.values
-        
-        # Restart progress if it was running
-        if progress is not None and task is not None:
-            progress.start()
-        
-        # Resume the graph with the user's input
-        try:
-            await graph.ainvoke(Command(resume=user_input), config=config)
-        except Exception as e:
-            if VERBOSE:
-                console.print(f"\n[bold red]Error during resume:[/bold red] {e}")
-                console.print(traceback.format_exc())
-            raise
 
 
 @cli.command()
@@ -850,9 +74,7 @@ def config(fmt: str):
     sections = {
         "API Keys": [
             ("openai_api_key", "OPENAI_API_KEY", True),  # (attr, env_var, is_secret)
-            ("composio_api_key", "COMPOSIO_API_KEY", True),
             ("github_token", "GITHUB_TOKEN", True),
-            ("langfuse_secret_key", "LANGFUSE_SECRET_KEY", True),
         ],
         "Evaluation Settings": [
             ("eval_n_rounds", "EVAL_N_ROUNDS", False),
@@ -861,7 +83,6 @@ def config(fmt: str):
             ("eval_reasoning_effort", "EVAL_REASONING_EFFORT", False),
         ],
         "External Services": [
-            ("langfuse_base_url", "LANGFUSE_BASE_URL", False),
             ("neo4j_uri", "NEO4J_URI", False),
             ("database_uri", "DATABASE_URI", True),
         ],
@@ -915,13 +136,326 @@ def export(thread_id: str, fmt: str):
     
     \b
     Example:
-      seer-eval export <thread-id>
-      seer-eval export <thread-id> --format json
+      uv run seer export <thread-id>  # Recommended: no installation needed
+      uv run seer export <thread-id> --format json
+      # Or if CLI is installed: seer export <thread-id>
     """
     console.print(f"[yellow]Export functionality requires database checkpointer.[/yellow]")
     console.print(f"[dim]Thread ID: {thread_id}[/dim]")
     console.print("\n[dim]Note: When using MemorySaver, state is only available during the session.[/dim]")
     console.print("[dim]Set DATABASE_URI in your .env to enable persistent state.[/dim]")
+
+
+def _tail_docker_logs(project_root: Path, service: str, stop_event: threading.Event):
+    """
+    Tail Docker logs for a service in a background thread.
+    
+    Args:
+        project_root: Path to project root (where docker-compose.yml is)
+        service: Service name to tail logs for
+        stop_event: Threading event to signal when to stop tailing
+    """
+    import subprocess
+    import select
+    import time
+    
+    try:
+        # Start docker compose logs with follow flag
+        process = subprocess.Popen(
+            ["docker", "compose", "logs", "-f", "--tail=0", service],
+            cwd=project_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,  # Line buffered
+        )
+        
+        # Read lines until stop event is set
+        # Use select for non-blocking reads (Unix only, but that's fine for Docker)
+        while not stop_event.is_set():
+            # Check if data is available (Unix/Linux/macOS)
+            if sys.platform != "win32":
+                ready, _, _ = select.select([process.stdout], [], [], 0.5)
+                if not ready:
+                    continue
+            
+            line = process.stdout.readline()
+            if not line:
+                # Process ended or no more data
+                if stop_event.is_set():
+                    break
+                # Small delay before checking again
+                time.sleep(0.1)
+                continue
+            
+            # Print log line with service prefix
+            console.print(f"[dim][{service}][/dim] {line.rstrip()}")
+        
+        # Clean up
+        process.terminate()
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+    except Exception as e:
+        # Silently fail - don't interrupt main flow
+        pass
+
+
+@cli.command()
+@click.option('--frontend-url', default='http://localhost:5173', help='Frontend URL (default: http://localhost:5173)')
+@click.option('--backend-url', default='http://localhost:8000', help='Backend URL (default: http://localhost:8000)')
+@click.option('--no-browser', is_flag=True, help='Do not open browser automatically')
+@click.option('--rebuild', is_flag=True, help='Force rebuild containers (stops, removes, rebuilds, then starts)')
+def dev(frontend_url: str, backend_url: str, no_browser: bool, rebuild: bool):
+    """
+    Start development environment with Docker Compose.
+    
+    Starts Postgres, MLflow, and backend server, then opens the workflow editor
+    in your browser connected to the local backend.
+    
+    \b
+    This command:
+      1. Starts Docker Compose services (postgres, mlflow, backend)
+      2. Installs dependencies in Docker container (via uv sync during build)
+      3. Tails Docker logs in real-time during startup
+      4. Waits for backend to be ready (health check)
+      5. Opens browser automatically to: <frontend-url>/workflows?backend=<backend-url>
+    
+    \b
+    Note: Dependencies are installed inside Docker containers, not locally.
+    Only the CLI tool needs to be installed locally (lightweight: click, rich).
+    
+    \b
+    Code changes are reflected immediately via volume mounts and uvicorn --reload.
+    Use --rebuild to force a full rebuild (useful when dependencies change).
+    
+    \b
+    Example:
+      uv run seer dev  # Recommended: no installation needed
+      seer dev  # If CLI is installed
+      seer dev --frontend-url http://localhost:3000
+      seer dev --no-browser
+      seer dev --rebuild  # Force rebuild containers
+    """
+    import subprocess
+    import time
+    import sys
+    import os
+    import shutil
+    from pathlib import Path
+    
+    # Clear VIRTUAL_ENV if it points to Docker path to avoid uv warnings
+    if os.environ.get('VIRTUAL_ENV', '').startswith('/app'):
+        os.environ.pop('VIRTUAL_ENV', None)
+    
+    # Get project root (where docker-compose.yml is)
+    project_root = Path(__file__).parent.parent
+    docker_compose_file = project_root / "docker-compose.yml"
+    
+    # Check for broken .venv symlinks and clean if needed
+    venv_path = project_root / ".venv"
+    if venv_path.exists():
+        python_symlink = venv_path / "bin" / "python3"
+        if python_symlink.exists() and python_symlink.is_symlink():
+            try:
+                target = python_symlink.readlink()
+                # Check if symlink target exists (resolved relative to symlink's directory)
+                if not (venv_path / "bin" / target).exists() and not Path(target).exists():
+                    console.print("[yellow]⚠ Detected broken .venv symlinks, cleaning...[/yellow]")
+                    shutil.rmtree(venv_path)
+                    console.print("[green]✓[/green] Cleaned broken .venv")
+            except (OSError, ValueError):
+                # Symlink is broken, clean it
+                console.print("[yellow]⚠ Detected broken .venv, cleaning...[/yellow]")
+                shutil.rmtree(venv_path)
+                console.print("[green]✓[/green] Cleaned broken .venv")
+    
+    if not docker_compose_file.exists():
+        console.print(f"[bold red]Error:[/bold red] docker-compose.yml not found at {docker_compose_file}")
+        sys.exit(1)
+    
+    console.print(Panel.fit(
+        "[bold cyan]🚀 Starting Seer Development Environment[/bold cyan]\n\n"
+        f"[dim]Frontend: {frontend_url}[/dim]\n"
+        f"[dim]Backend: {backend_url}[/dim]",
+        border_style="cyan"
+    ))
+    console.print()
+    
+    # Handle rebuild option
+    if rebuild:
+        console.print("[bold]🔄 Force rebuild requested - stopping and removing containers...[/bold]")
+        try:
+            # Stop and remove containers
+            # Unset VIRTUAL_ENV in subprocess env to avoid uv warnings
+            env = os.environ.copy()
+            if env.get('VIRTUAL_ENV', '').startswith('/app'):
+                env.pop('VIRTUAL_ENV', None)
+            subprocess.run(
+                ["docker", "compose", "down"],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            console.print("[green]✓[/green] Containers stopped and removed")
+        except FileNotFoundError:
+            console.print("[bold red]Error:[/bold red] docker-compose not found. Please install Docker Compose.")
+            sys.exit(1)
+    
+    # Start Docker Compose with --build flag to ensure dependencies are up-to-date
+    console.print("[bold]📦 Starting Docker Compose services...[/bold]")
+    try:
+        # Always use --build to ensure image is rebuilt if Dockerfile or dependencies changed
+        # Volume mount ensures code changes don't require rebuild
+        # Unset VIRTUAL_ENV in subprocess env to avoid uv warnings
+        env = os.environ.copy()
+        if env.get('VIRTUAL_ENV', '').startswith('/app'):
+            env.pop('VIRTUAL_ENV', None)
+        result = subprocess.run(
+            ["docker", "compose", "up", "-d", "--build"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        if result.returncode != 0:
+            console.print(f"[bold red]Error starting Docker Compose:[/bold red]")
+            console.print(result.stderr)
+            sys.exit(1)
+        console.print("[green]✓[/green] Services started")
+    except FileNotFoundError:
+        console.print("[bold red]Error:[/bold red] docker-compose not found. Please install Docker Compose.")
+        sys.exit(1)
+    
+    # Wait for backend to be ready
+    console.print()
+    console.print("[bold]⏳ Waiting for backend server to be ready...[/bold]")
+    console.print("[dim]📋 Tailing Docker logs (langgraph-server)...[/dim]")
+    console.print()
+    
+    max_attempts = 60
+    attempt = 0
+    import urllib.request
+    import urllib.error
+    
+    # Start tailing Docker logs in background thread
+    # This will continue running until interrupted or error
+    stop_logs_event = threading.Event()
+    logs_thread = threading.Thread(
+        target=_tail_docker_logs,
+        args=(project_root, "langgraph-server", stop_logs_event),
+        daemon=True,
+    )
+    logs_thread.start()
+    
+    backend_ready = False
+    try:
+        # Wait for backend to be ready
+        while attempt < max_attempts:
+            try:
+                health_url = f"{backend_url}/health"
+                req = urllib.request.Request(health_url)
+                with urllib.request.urlopen(req, timeout=2) as response:
+                    if response.getcode() == 200:
+                        console.print()
+                        console.print("[green]✓[/green] Backend server is ready!")
+                        backend_ready = True
+                        break
+            except (urllib.error.URLError, urllib.error.HTTPError, OSError):
+                pass
+            
+            attempt += 1
+            time.sleep(2)
+        
+        if not backend_ready:
+            console.print()
+            console.print("[bold red]❌ Backend server failed to start[/bold red]")
+            console.print("[yellow]Last 50 lines of logs:[/yellow]")
+            console.print()
+            # Unset VIRTUAL_ENV in subprocess env to avoid uv warnings
+            env = os.environ.copy()
+            if env.get('VIRTUAL_ENV', '').startswith('/app'):
+                env.pop('VIRTUAL_ENV', None)
+            subprocess.run(
+                ["docker", "compose", "logs", "langgraph-server", "--tail=50"],
+                cwd=project_root,
+                env=env,
+            )
+            stop_logs_event.set()
+            sys.exit(1)
+        
+        # Backend is ready - show success message and continue tailing logs
+        workflow_url = f"{frontend_url}/workflows?backend={backend_url}"
+        
+        console.print()
+        console.print(Panel.fit(
+            "[bold green]🎉 Development environment is ready![/bold green]\n\n"
+            "[bold]📊 Services:[/bold]\n"
+            f"   • Backend API: {backend_url}\n"
+            f"   • MLflow: http://localhost:5000\n"
+            f"   • Postgres: localhost:5432\n\n"
+            f"[bold]🌐 Workflow Editor:[/bold]\n"
+            f"   {workflow_url}\n\n"
+            "[dim]📋 Logs will continue streaming. Press Ctrl+C to stop.[/dim]",
+            border_style="green"
+        ))
+        console.print()
+        
+        # Open browser
+        if not no_browser:
+            console.print("[bold]🌐 Opening workflow editor...[/bold]")
+            try:
+                if sys.platform == "darwin":
+                    # macOS
+                    subprocess.run(["open", workflow_url], check=False)
+                elif sys.platform == "linux":
+                    # Linux
+                    subprocess.run(["xdg-open", workflow_url], check=False)
+                elif sys.platform == "win32":
+                    # Windows
+                    subprocess.run(["start", workflow_url], check=False, shell=True)
+                else:
+                    console.print(f"[yellow]⚠ Could not automatically open browser.[/yellow]")
+                    console.print(f"Please navigate to: {workflow_url}")
+            except Exception as e:
+                console.print(f"[yellow]⚠ Could not open browser: {e}[/yellow]")
+                console.print(f"Please navigate to: {workflow_url}")
+        else:
+            console.print(f"[dim]Browser opening skipped. Navigate to:[/dim]")
+            console.print(f"[bold]{workflow_url}[/bold]")
+        
+        console.print()
+        console.print("[dim]📝 To view logs: docker compose logs -f[/dim]")
+        console.print("[dim]🛑 To stop: Press Ctrl+C or run 'docker compose down'[/dim]")
+        console.print()
+        
+        # Keep tailing logs until interrupted
+        # The log tailing thread will continue running
+        # Wait for the thread to finish (which happens on Ctrl+C or error)
+        try:
+            while logs_thread.is_alive():
+                logs_thread.join(timeout=1)
+        except KeyboardInterrupt:
+            console.print()
+            console.print("[yellow]🛑 Stopping development environment...[/yellow]")
+            stop_logs_event.set()
+            logs_thread.join(timeout=2)
+            console.print("[green]✓[/green] Stopped")
+            
+    except KeyboardInterrupt:
+        console.print()
+        console.print("[yellow]🛑 Stopping development environment...[/yellow]")
+        stop_logs_event.set()
+        logs_thread.join(timeout=2)
+        console.print("[green]✓[/green] Stopped")
+    except Exception as e:
+        console.print()
+        console.print(f"[bold red]❌ Error:[/bold red] {e}")
+        stop_logs_event.set()
+        logs_thread.join(timeout=2)
+        raise
 
 
 def main():

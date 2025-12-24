@@ -65,3 +65,5 @@ data/seer.db
 notebooks/
 
 tool_hub_index/
+
+*.code-workspace
