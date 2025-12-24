@@ -20,7 +20,7 @@ async def get_checkpointer() -> Optional[AsyncPostgresSaver]:
     Get or create the async PostgreSQL checkpointer.
     
     Uses connection pooling for efficient database access.
-    Returns None if DATABASE_URI is not configured or initialization fails.
+    Returns None if DATABASE_URL is not configured or initialization fails.
     """
     global _checkpointer, _checkpointer_cm
     

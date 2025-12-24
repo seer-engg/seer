@@ -596,7 +596,7 @@ async def get_default_client(connection_string: Optional[str] = None) -> Postgre
     
     Args:
         connection_string: PostgreSQL connection URI. If not provided,
-            uses the DATABASE_URI from shared.config.
+            uses the DATABASE_URL from shared.config.
     
     Returns:
         PostgresClient instance
@@ -607,12 +607,12 @@ async def get_default_client(connection_string: Optional[str] = None) -> Postgre
         if _default_client is None:
             if connection_string is None:
                 from shared.config import config
-                connection_string = config.database_uri
+                connection_string = config.DATABASE_URL
                 
             if not connection_string:
                 raise ValueError(
                     "No PostgreSQL connection string provided. "
-                    "Set DATABASE_URI environment variable or pass connection_string."
+                    "Set DATABASE_URL environment variable or pass connection_string."
                 )
             
             _default_client = PostgresClient(connection_string)
@@ -661,12 +661,12 @@ def get_postgres_tools(
     
     if connection_string is None:
         from shared.config import config
-        connection_string = config.database_uri
+        connection_string = config.DATABASE_URL
     
     if not connection_string:
         raise ValueError(
             "No PostgreSQL connection string provided. "
-            "Set DATABASE_URI environment variable or pass connection_string."
+            "Set DATABASE_URL environment variable or pass connection_string."
         )
     
     new_client = PostgresClient(connection_string)
@@ -686,7 +686,7 @@ class PostgresProvider:
     def __init__(self, connection_string: Optional[str] = None):
         if connection_string is None:
             from shared.config import config
-            connection_string = config.database_uri
+            connection_string = config.DATABASE_URL
         self._connection_string = connection_string
         self._client: Optional[PostgresClient] = None
     
@@ -717,7 +717,7 @@ class PostgresProvider:
         """
         return {}
         if not self._connection_string:
-            logger.warning("No database_uri configured, skipping PostgreSQL provisioning")
+            logger.warning("No DATABASE_URL configured, skipping PostgreSQL provisioning")
             return {}
         
         self._client = PostgresClient(self._connection_string)

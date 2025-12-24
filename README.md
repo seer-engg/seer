@@ -44,7 +44,7 @@ Create a `.env` file (automatically loaded):
 OPENAI_API_KEY=...
 GITHUB_TOKEN=...
 E2B_API_KEY=...  # For sandbox provisioning
-DATABASE_URI=...  # Optional: Postgres persistence
+DATABASE_URL=...  # Optional: Postgres persistence
 MLFLOW_TRACKING_URI=...  # Optional: MLflow tracing
 ```
 
@@ -97,7 +97,7 @@ uv run seer -v run          # Verbose mode
 | **testing** | `OPENAI_API_KEY`, `GITHUB_TOKEN` |
 | **sandbox** | `E2B_API_KEY` |
 | **OAuth** | `GOOGLE_CLIENT_ID/SECRET`, `GITHUB_CLIENT_ID/SECRET` |
-| **Optional** | `DATABASE_URI`, `MLFLOW_TRACKING_URI`, `NEO4J_URI` |
+| **Optional** | `DATABASE_URL`, `MLFLOW_TRACKING_URI`, `NEO4J_URI` |
 
 Missing keys? Seer prompts interactively.
 

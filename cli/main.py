@@ -84,7 +84,7 @@ def config(fmt: str):
         ],
         "External Services": [
             ("neo4j_uri", "NEO4J_URI", False),
-            ("database_uri", "DATABASE_URI", True),
+            ("database_url", "DATABASE_URL", True),
         ],
     }
     
@@ -143,7 +143,7 @@ def export(thread_id: str, fmt: str):
     console.print(f"[yellow]Export functionality requires database checkpointer.[/yellow]")
     console.print(f"[dim]Thread ID: {thread_id}[/dim]")
     console.print("\n[dim]Note: When using MemorySaver, state is only available during the session.[/dim]")
-    console.print("[dim]Set DATABASE_URI in your .env to enable persistent state.[/dim]")
+    console.print("[dim]Set DATABASE_URL in your .env to enable persistent state.[/dim]")
 
 
 def _tail_docker_logs(project_root: Path, service: str, stop_event: threading.Event):
