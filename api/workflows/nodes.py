@@ -78,6 +78,7 @@ def resolve_template_variables(text: str, variable_map: Dict[str, Any]) -> str:
     Supports:
     - Simple names: {{email}} - resolves to variable_map["email"]
     - Dot notation: {{block_id.handle_id}} - resolves to variable_map["block_id.handle_id"]
+    - Deep dot notation: {{block_id.structured_output.field}} - resolves nested properties
     - Falls back to empty string if variable not found
     
     Args:
@@ -88,18 +89,59 @@ def resolve_template_variables(text: str, variable_map: Dict[str, Any]) -> str:
         Text with template variables resolved
     """
     import re
+    import json
     
     if not text or "{{" not in text:
         return text
     
+    def resolve_nested_value(var_name: str) -> Any:
+        """Resolve a variable name, supporting nested dot notation."""
+        # First try exact match in variable_map
+        if var_name in variable_map:
+            return variable_map[var_name]
+        
+        # Try nested access: split by dots and traverse
+        parts = var_name.split(".")
+        if len(parts) >= 2:
+            # Try block_id.rest_of_path format
+            block_id = parts[0]
+            
+            # First check if block_id.second_part exists as a key (e.g., "LLM.output")
+            if len(parts) == 2:
+                key = f"{parts[0]}.{parts[1]}"
+                if key in variable_map:
+                    return variable_map[key]
+            
+            # Try to traverse from block output
+            remaining_path = parts[1:]
+            current_value = variable_map.get(f"{block_id}.output")
+            
+            # Also try to get from structured_output if available
+            structured = variable_map.get(f"{block_id}.structured_output")
+            if structured and isinstance(structured, dict) and remaining_path[0] in structured:
+                current_value = structured
+            
+            # Traverse the remaining path
+            for key in remaining_path:
+                if isinstance(current_value, dict) and key in current_value:
+                    current_value = current_value[key]
+                else:
+                    return ""  # Path not found
+            return current_value
+        
+        return ""
+    
     def replace_template_var(match):
         var_name = match.group(1)
-        # Try variable_map first, then fallback to empty string
-        value = variable_map.get(var_name, "")
+        value = resolve_nested_value(var_name)
         logger.debug(f"Resolving {{{{{var_name}}}}}: {value}")
+        # Convert dict/list to JSON string for readability
+        if isinstance(value, (dict, list)):
+            return json.dumps(value)
         return str(value) if value is not None else ""
     
-    resolved = re.sub(r'\{\{(\w+(?:\.\w+)?)\}\}', replace_template_var, text)
+    # Updated regex to support multiple levels of dot notation
+    resolved = re.sub(r'\{\{(\w+(?:\.\w+)*)\}\}', replace_template_var, text)
     logger.debug(f"Resolved template: {text[:50]}... -> {resolved[:50]}...")
     return resolved
 
