@@ -386,6 +386,9 @@ async def create_chat_session(
         title=title,
     )
     
+    # Fetch the user relationship to ensure it's loaded
+    await session.fetch_related('user')
+    
     logger.info(f"Created chat session {session.id} for workflow {workflow_id}")
     return session
 
@@ -410,10 +413,10 @@ async def get_chat_session(
     # Verify workflow access first
     workflow = await get_workflow(workflow_id)
     
-    session = await WorkflowChatSession.get_or_none(
+    session = await WorkflowChatSession.filter(
         id=session_id,
         workflow=workflow,
-    )
+    ).prefetch_related('user').first()
     
     if not session:
         raise HTTPException(
@@ -442,10 +445,10 @@ async def get_chat_session_by_thread_id(
     # Verify workflow access first
     workflow = await get_workflow(workflow_id)
     
-    session = await WorkflowChatSession.get_or_none(
+    session = await WorkflowChatSession.filter(
         thread_id=thread_id,
         workflow=workflow,
-    )
+    ).prefetch_related('user').first()
     
     if not session:
         return None
@@ -457,6 +460,7 @@ async def list_chat_sessions(
     workflow_id: int,
     user: User,
     limit: int = 50,
+    offset: int = 0,
 ) -> List[WorkflowChatSession]:
     """
     List chat sessions for a workflow.
@@ -465,6 +469,7 @@ async def list_chat_sessions(
         workflow_id: Workflow ID
         user: User
         limit: Maximum number of sessions to return
+        offset: Number of sessions to skip
         
     Returns:
         List of chat sessions
@@ -474,7 +479,7 @@ async def list_chat_sessions(
     sessions = await WorkflowChatSession.filter(
         workflow=workflow,
         user=user,
-    ).order_by('-updated_at').limit(limit).all()
+    ).prefetch_related('user').order_by('-created_at').offset(offset).limit(limit).all()
     
     return sessions
 

@@ -1,7 +1,7 @@
 """
 Workflow API router for CRUD and execution endpoints.
 """
-from typing import Optional
+from typing import Optional, Dict
 from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from shared.logger import get_logger
@@ -42,6 +42,7 @@ from .chat_schema import (
     ChatSessionWithMessages,
     ChatMessage,
     InterruptResponse,
+    WorkflowEdit,
 )
 from .chat_agent import create_workflow_chat_agent, extract_thinking_from_messages
 from api.agents.checkpointer import get_checkpointer, get_checkpointer_with_retry, _recreate_checkpointer
@@ -56,7 +57,7 @@ try:
     import psycopg
 except ImportError:
     psycopg = None
-from shared.database.models import User
+from shared.database.models import User, UserPublic
 
 logger = get_logger("api.workflows.router")
 
@@ -377,10 +378,24 @@ async def chat_with_workflow_endpoint(
     
     # Merge with provided workflow state (in case frontend has unsaved changes)
     if chat_request.workflow_state:
-        workflow_state.update(chat_request.workflow_state)
+        # Ensure nodes and edges keys exist
+        provided_nodes = chat_request.workflow_state.get("nodes", [])
+        provided_edges = chat_request.workflow_state.get("edges", [])
+        workflow_state["nodes"] = provided_nodes if provided_nodes else workflow_state.get("nodes", [])
+        workflow_state["edges"] = provided_edges if provided_edges else workflow_state.get("edges", [])
+        # Merge any other keys
+        for key, value in chat_request.workflow_state.items():
+            if key not in ["nodes", "edges"]:
+                workflow_state[key] = value
+    
+    # Ensure workflow_state always has nodes and edges keys (even if empty)
+    if "nodes" not in workflow_state:
+        workflow_state["nodes"] = []
+    if "edges" not in workflow_state:
+        workflow_state["edges"] = []
     
     # Store workflow_state in context for tools to access
-    from .chat_agent import set_workflow_state_for_thread
+    from .chat_agent import set_workflow_state_for_thread, _current_thread_id
     if thread_id:
         set_workflow_state_for_thread(thread_id, workflow_state)
     
@@ -406,17 +421,27 @@ async def chat_with_workflow_endpoint(
     # Helper function to invoke agent with timeout
     async def invoke_agent_with_timeout(agent, messages, config, timeout=300.0):
         """Invoke agent with timeout to prevent indefinite hangs."""
+        thread_id = config.get('configurable', {}).get('thread_id') if config else None
+        # Set thread_id in context variable for tools to access
+        if thread_id:
+            token = _current_thread_id.set(thread_id)
+        else:
+            token = None
         try:
             return await asyncio.wait_for(
                 agent.ainvoke(messages, config=config),
                 timeout=timeout
             )
         except asyncio.TimeoutError:
-            logger.error(f"Agent invocation timed out after {timeout} seconds for thread {config.get('configurable', {}).get('thread_id', 'unknown')}")
+            logger.error(f"Agent invocation timed out after {timeout} seconds for thread {thread_id or 'unknown'}")
             raise HTTPException(
                 status_code=504,
                 detail="Request timed out. The agent took too long to respond."
             )
+        finally:
+            # Reset context variable
+            if token is not None:
+                _current_thread_id.reset(token)
     
     try:
         # Invoke agent with thread configuration
@@ -686,21 +711,24 @@ async def chat_with_workflow_endpoint(
                                     await checkpointer.adelete_thread(thread_id)
                                 else:
                                     await asyncio.to_thread(checkpointer.delete_thread, thread_id)
-                                result = await agent.ainvoke(
+                                result = await invoke_agent_with_timeout(
+                                    agent,
                                     {"messages": [user_msg]},
-                                    config=config_dict,
+                                    config_dict,
                                 )
                             else:
                                 logger.error("Failed to recreate checkpointer, proceeding without deletion")
-                                result = await agent.ainvoke(
+                                result = await invoke_agent_with_timeout(
+                                    agent,
                                     {"messages": [user_msg]},
-                                    config=config_dict,
+                                    config_dict,
                                 )
                         except Exception as reconnect_error:
                             logger.error(f"Error during checkpointer reconnection in recovery: {reconnect_error}")
-                            result = await agent.ainvoke(
+                            result = await invoke_agent_with_timeout(
+                                agent,
                                 {"messages": [user_msg]},
-                                config=config_dict,
+                                config_dict,
                             )
                     else:
                         logger.error(f"Error recovering from incomplete state: {e}", exc_info=True)
@@ -719,21 +747,73 @@ async def chat_with_workflow_endpoint(
             else:
                 # No checkpointer, can't recover - this shouldn't happen but handle gracefully
                 logger.error("No checkpointer available for state recovery")
-                result = await agent.ainvoke(
+                result = await invoke_agent_with_timeout(
+                    agent,
                     {"messages": [user_msg]},
-                    config=config_dict,
+                    config_dict,
                 )
         else:
             # Normal invocation - state is clean
-            logger.info(f"Invoking agent for thread {thread_id}")
+            logger.info(f"Invoking agent for thread {thread_id} with checkpointer={'enabled' if checkpointer else 'disabled'}")
             result = await invoke_agent_with_timeout(
                 agent,
                 {"messages": [user_msg]},
                 config_dict,
             )
+            logger.debug(f"Agent invocation completed for thread {thread_id}, checkpoint should be saved automatically by LangGraph")
+        
+        # Check for interrupts (from ask_clarifying_question or other interrupt calls)
+        interrupt_required = False
+        interrupt_data = None
+        
+        # Check if result indicates an interrupt
+        if isinstance(result, dict):
+            # Check for interrupt in result
+            if "__interrupt__" in result:
+                interrupt_required = True
+                interrupts = result["__interrupt__"]
+                # Handle list of Interrupt objects
+                if isinstance(interrupts, list) and len(interrupts) > 0:
+                    first_interrupt = interrupts[0]
+                    # Extract value from Interrupt object
+                    if hasattr(first_interrupt, 'value'):
+                        interrupt_data = first_interrupt.value if isinstance(first_interrupt.value, dict) else {"value": first_interrupt.value}
+                    elif isinstance(first_interrupt, dict):
+                        interrupt_data = first_interrupt.get('value', first_interrupt)
+                    else:
+                        interrupt_data = {"value": str(first_interrupt)}
+                elif isinstance(interrupts, dict):
+                    interrupt_data = interrupts
+                else:
+                    interrupt_data = {"value": str(interrupts)}
+            # Also check state for interrupts
+            elif "interrupt" in result:
+                interrupt_required = True
+                interrupt_data = result["interrupt"] if isinstance(result["interrupt"], dict) else {"value": result["interrupt"]}
+        
+        # Check current state for interrupts
+        try:
+            current_state = await agent.aget_state(config_dict)
+            if hasattr(current_state, "interrupt") and current_state.interrupt:
+                interrupt_required = True
+                if isinstance(current_state.interrupt, list) and len(current_state.interrupt) > 0:
+                    # Handle list of interrupts
+                    first_interrupt = current_state.interrupt[0]
+                    if hasattr(first_interrupt, 'value'):
+                        interrupt_data = first_interrupt.value if isinstance(first_interrupt.value, dict) else {"value": first_interrupt.value}
+                    elif isinstance(first_interrupt, dict):
+                        interrupt_data = first_interrupt.get('value', first_interrupt)
+                    else:
+                        interrupt_data = {"value": str(first_interrupt)}
+                elif isinstance(current_state.interrupt, dict):
+                    interrupt_data = current_state.interrupt
+                else:
+                    interrupt_data = {"value": current_state.interrupt}
+        except Exception as e:
+            logger.debug(f"Could not check state for interrupts: {e}")
         
         # Extract response
-        agent_messages = result.get("messages", [])
+        agent_messages = result.get("messages", []) if isinstance(result, dict) else []
         if not agent_messages:
             response_text = "I'm here to help with your workflow!"
         else:
@@ -744,25 +824,108 @@ async def chat_with_workflow_endpoint(
             else:
                 response_text = str(last_msg)
         
-        logger.info(f"Agent completed for thread {thread_id}, response_length={len(response_text)}")
+        logger.info(f"Agent completed for thread {thread_id}, response_length={len(response_text)}, interrupt_required={interrupt_required}")
+        
+        # Verify checkpoint was saved after agent invocation
+        if checkpointer and thread_id:
+            try:
+                # Verify checkpoint exists by getting the current state
+                verify_config = {"configurable": {"thread_id": thread_id}}
+                state_tuple = await checkpointer.aget_tuple(verify_config)
+                if state_tuple:
+                    checkpoint_id = state_tuple.config.get("configurable", {}).get("checkpoint_id")
+                    logger.info(f"Checkpoint verified for thread {thread_id}, checkpoint_id={checkpoint_id}")
+                else:
+                    logger.warning(f"No checkpoint found for thread {thread_id} after agent invocation")
+            except Exception as e:
+                logger.error(f"Error verifying checkpoint for thread {thread_id}: {e}", exc_info=True)
         
         # Extract thinking steps
         thinking_steps = extract_thinking_from_messages(agent_messages)
         
-        # Parse suggested edits from tool results
+        # Parse suggested edits from tool results (ToolMessages)
+        # Planning tools return plans that are displayed as suggested_edits
         suggested_edits = []
+        tool_call_to_result = {}  # Map tool_call_id -> ToolMessage
+        
+        # First pass: collect ToolMessages
         for msg in agent_messages:
-            if hasattr(msg, "tool_calls"):
-                # Tool calls indicate workflow edits
-                for tool_call in getattr(msg, "tool_calls", []):
-                    tool_name = tool_call.get("name", "")
-                    if tool_name.startswith(("add_workflow", "modify_workflow", "remove_workflow")):
-                        # Parse tool result to extract edit
-                        try:
-                            # Tool results are in subsequent messages
-                            pass  # Will be handled by parsing tool results
-                        except Exception:
-                            pass
+            if isinstance(msg, ToolMessage):
+                tool_call_id = getattr(msg, "tool_call_id", None)
+                if tool_call_id:
+                    tool_call_to_result[tool_call_id] = msg
+        
+        # Second pass: match tool calls to results
+        for msg in agent_messages:
+            if isinstance(msg, AIMessage) and hasattr(msg, "tool_calls") and msg.tool_calls:
+                for tool_call in msg.tool_calls:
+                    # Handle both dict and object formats
+                    if isinstance(tool_call, dict):
+                        tool_call_id = tool_call.get("id")
+                        tool_name = tool_call.get("name", "")
+                    else:
+                        tool_call_id = getattr(tool_call, "id", None)
+                        tool_name = getattr(tool_call, "name", "")
+                    
+                    if tool_name.startswith(("add_workflow", "modify_workflow", "remove_workflow", "add_workflow_edge", "remove_workflow_edge")):
+                        tool_result_msg = tool_call_to_result.get(tool_call_id)
+                        if tool_result_msg:
+                            try:
+                                # Parse JSON from ToolMessage content
+                                content = tool_result_msg.content if hasattr(tool_result_msg, "content") else str(tool_result_msg)
+                                result_data = json.loads(content)
+                                
+                                # Skip error responses
+                                if "error" in result_data:
+                                    logger.debug(f"Skipping tool result with error for {tool_name}: {result_data.get('error')}")
+                                    continue
+                                
+                                # Convert to WorkflowEdit
+                                operation = result_data.get("operation", "")
+                                
+                                # Extract edit_id from result
+                                edit_id = result_data.get("edit_id")
+                                
+                                # Handle block operations
+                                if operation in ("add_block", "modify_block", "remove_block"):
+                                    block_data = result_data.get("block", {})
+                                    edit = WorkflowEdit(
+                                        operation=operation,
+                                        edit_id=edit_id,
+                                        block_id=block_data.get("id") if block_data else result_data.get("block_id"),
+                                        block_type=block_data.get("type") if operation == "add_block" else None,
+                                        label=block_data.get("data", {}).get("label") if block_data and "data" in block_data else None,
+                                        config=block_data.get("data", {}).get("config") if block_data and "data" in block_data else None,
+                                        position=block_data.get("position") if operation == "add_block" else None,
+                                    )
+                                    suggested_edits.append(edit)
+                                
+                                # Handle edge operations
+                                elif operation == "add_edge":
+                                    edge_data = result_data.get("edge", {})
+                                    edit = WorkflowEdit(
+                                        operation=operation,
+                                        edit_id=edit_id,
+                                        source_id=edge_data.get("source"),
+                                        target_id=edge_data.get("target"),
+                                        source_handle=edge_data.get("sourceHandle"),
+                                        target_handle=edge_data.get("targetHandle"),
+                                    )
+                                    suggested_edits.append(edit)
+                                
+                                elif operation == "remove_edge":
+                                    edit = WorkflowEdit(
+                                        operation=operation,
+                                        edit_id=edit_id,
+                                        source_id=result_data.get("source_id"),
+                                        target_id=result_data.get("target_id"),
+                                    )
+                                    suggested_edits.append(edit)
+                                
+                            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                                logger.warning(f"Failed to parse tool result for {tool_name} (tool_call_id={tool_call_id}): {e}")
+                        else:
+                            logger.debug(f"No ToolMessage found for tool call {tool_name} (tool_call_id={tool_call_id})")
         
         # Save assistant message to database
         await save_chat_message(
@@ -778,7 +941,8 @@ async def chat_with_workflow_endpoint(
             session_id=session_id,
             thread_id=thread_id,
             thinking=thinking_steps if thinking_steps else None,
-            interrupt_required=False,  # Will be set by middleware if needed
+            interrupt_required=interrupt_required,
+            interrupt_data=interrupt_data,
         )
     except Exception as e:
         logger.error(f"Error in workflow chat: {e}", exc_info=True)
@@ -809,7 +973,7 @@ async def create_chat_session_endpoint(
     return ChatSession(
         id=session.id,
         workflow_id=workflow_id,  # Use the workflow_id parameter directly
-        user=session.user,
+        user=UserPublic.model_validate(session.user, from_attributes=True),
         thread_id=session.thread_id,
         title=session.title,
         created_at=session.created_at,
@@ -822,16 +986,17 @@ async def list_chat_sessions_endpoint(
     request: Request,
     workflow_id: int,
     limit: int = Query(default=50, le=100),
+    offset: int = Query(default=0, ge=0),
 ) -> list[ChatSession]:
     """List chat sessions for a workflow."""
     user:User = request.state.db_user
-    sessions = await list_chat_sessions(workflow_id, user, limit=limit)
+    sessions = await list_chat_sessions(workflow_id, user, limit=limit, offset=offset)
     
     return [
         ChatSession(
             id=session.id,
             workflow_id=workflow_id,  # Use the workflow_id parameter directly
-            user=session.user,
+            user=UserPublic.model_validate(session.user, from_attributes=True),
             thread_id=session.thread_id,
             title=session.title,
             created_at=session.created_at,
@@ -856,7 +1021,7 @@ async def get_chat_session_endpoint(
     return ChatSessionWithMessages(
         id=session.id,
         workflow_id=workflow_id,  # Use the workflow_id parameter directly
-        user=session.user,
+        user=UserPublic.model_validate(session.user, from_attributes=True),
         thread_id=session.thread_id,
         title=session.title,
         created_at=session.created_at,
@@ -875,6 +1040,131 @@ async def get_chat_session_endpoint(
             for msg in messages
         ],
     )
+
+
+@router.post("/{workflow_id}/chat/resume")
+async def resume_chat_endpoint(
+    request: Request,
+    workflow_id: int,
+    resume_data: Dict[str, Any],
+) -> ChatResponse:
+    """
+    Resume a chat session after an interrupt (e.g., clarification question).
+    
+    This endpoint handles resuming agent execution after a LangGraph interrupt.
+    The resume_data should contain a Command object with resume information.
+    """
+    from langgraph.types import Command
+    
+    logger.info(f"Resume request received: workflow_id={workflow_id}")
+    user:User = request.state.db_user
+    
+    # Verify workflow exists
+    workflow = await get_workflow(workflow_id)
+    
+    # Extract thread_id and command from resume_data
+    thread_id = resume_data.get("thread_id")
+    if not thread_id:
+        raise HTTPException(
+            status_code=400,
+            detail="thread_id is required in resume_data"
+        )
+    
+    command_data = resume_data.get("command", {})
+    if not command_data:
+        raise HTTPException(
+            status_code=400,
+            detail="command is required in resume_data"
+        )
+    
+    # Get checkpointer
+    checkpointer = await get_checkpointer()
+    
+    # Get session by thread_id
+    session = await get_chat_session_by_thread_id(thread_id, workflow_id)
+    if not session:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chat session not found for thread_id: {thread_id}"
+        )
+    
+    session_id = session.id
+    
+    # Get current workflow state
+    workflow_state = {
+        "nodes": workflow.graph_data.get("nodes", []) if workflow.graph_data else [],
+        "edges": workflow.graph_data.get("edges", []) if workflow.graph_data else [],
+    }
+    
+    # Create agent
+    from .chat_agent import create_workflow_chat_agent
+    agent = create_workflow_chat_agent(
+        model=config.default_llm_model,
+        checkpointer=checkpointer,
+        workflow_state=workflow_state,
+    )
+    
+    # Create Command object for resuming
+    resume_command = Command(**command_data)
+    
+    # Resume agent execution
+    config_dict = {
+        "configurable": {
+            "thread_id": thread_id,
+        },
+    }
+    
+    # Set thread_id in context variable for tools to access
+    token = None
+    if thread_id:
+        token = _current_thread_id.set(thread_id)
+    try:
+        # Resume the agent with the command
+        result = await agent.ainvoke(resume_command, config=config_dict)
+        
+        # Extract response
+        agent_messages = result.get("messages", [])
+        if not agent_messages:
+            response_text = "I've received your response. Let me continue..."
+        else:
+            # Get last assistant message
+            last_msg = agent_messages[-1]
+            if hasattr(last_msg, "content"):
+                response_text = last_msg.content
+            else:
+                response_text = str(last_msg)
+        
+        # Extract thinking steps
+        from .chat_agent import extract_thinking_from_messages
+        thinking_steps = extract_thinking_from_messages(agent_messages)
+        
+        # Save assistant message to database
+        await save_chat_message(
+            session_id=session_id,
+            role="assistant",
+            content=response_text,
+            thinking="\n".join(thinking_steps) if thinking_steps else None,
+        )
+        
+        return ChatResponse(
+            response=response_text,
+            suggested_edits=[],
+            session_id=session_id,
+            thread_id=thread_id,
+            thinking=thinking_steps if thinking_steps else None,
+            interrupt_required=False,
+        )
+    except Exception as e:
+        logger.error(f"Error resuming chat: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to resume chat: {str(e)}"
+        )
+    finally:
+        # Reset context variable
+        if token is not None:
+            _current_thread_id.reset(token)
+
 
 __all__ = ["router"]
 

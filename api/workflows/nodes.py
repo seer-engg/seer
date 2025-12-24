@@ -21,6 +21,89 @@ from shared.database.models import User
 logger = get_logger("api.workflows.nodes")
 
 
+def build_variable_map(state: WorkflowState) -> Dict[str, Any]:
+    """
+    Build a comprehensive variable map from workflow state for template resolution.
+    
+    Extracts variables from:
+    1. input_data (direct input)
+    2. All block outputs (including tool outputs with structured data)
+    
+    Args:
+        state: Current workflow state
+        
+    Returns:
+        Dictionary mapping variable names to values
+    """
+    input_data = state.get("input_data", {})
+    block_outputs = state.get("block_outputs", {})
+    
+    variable_map = {}
+    
+    # 1. Add variables from input_data (direct input)
+    # Flatten nested structures if needed
+    for key, value in input_data.items():
+        if isinstance(value, dict):
+            # If it's a dict, merge its keys into variable_map
+            variable_map.update(value)
+        else:
+            variable_map[key] = value
+    
+    # 2. Add variables from all block outputs
+    # For each block, extract all output handles
+    for block_id, block_output in block_outputs.items():
+        if isinstance(block_output, dict):
+            # Extract all keys from block_output as variables
+            # This includes both "output" and any structured output keys
+            for key, value in block_output.items():
+                # Use block_id.key as the variable name for explicit reference
+                # Also add just the key if it's unique
+                var_name_with_block = f"{block_id}.{key}"
+                variable_map[var_name_with_block] = value
+                
+                # Add simple key if not already present (allows {{key}} if unique)
+                if key not in variable_map:
+                    variable_map[key] = value
+                elif isinstance(value, dict) and isinstance(variable_map.get(key), dict):
+                    # If both are dicts, merge them
+                    variable_map[key].update(value)
+    
+    return variable_map
+
+
+def resolve_template_variables(text: str, variable_map: Dict[str, Any]) -> str:
+    """
+    Resolve {{variable_name}} template variables in text.
+    
+    Supports:
+    - Simple names: {{email}} - resolves to variable_map["email"]
+    - Dot notation: {{block_id.handle_id}} - resolves to variable_map["block_id.handle_id"]
+    - Falls back to empty string if variable not found
+    
+    Args:
+        text: Text containing template variables
+        variable_map: Dictionary mapping variable names to values
+        
+    Returns:
+        Text with template variables resolved
+    """
+    import re
+    
+    if not text or "{{" not in text:
+        return text
+    
+    def replace_template_var(match):
+        var_name = match.group(1)
+        # Try variable_map first, then fallback to empty string
+        value = variable_map.get(var_name, "")
+        logger.debug(f"Resolving {{{{{var_name}}}}}: {value}")
+        return str(value) if value is not None else ""
+    
+    resolved = re.sub(r'\{\{(\w+(?:\.\w+)?)\}\}', replace_template_var, text)
+    logger.debug(f"Resolved template: {text[:50]}... -> {resolved[:50]}...")
+    return resolved
+
+
 async def resolve_inputs(
     state: WorkflowState,
     input_resolution: Dict[str, Dict[str, Any]],
@@ -72,11 +155,36 @@ async def input_node(
     # Get input_data from state
     input_data = state.get("input_data", {})
     
-    # If this input block has a variable_name config, extract that specific variable
-    variable_name = block.config.get("variable_name")
-    if variable_name and variable_name in input_data:
-        # Return the specific variable value
-        output = {variable_name: input_data[variable_name]}
+    # Handle fields array (new format)
+    fields = block.config.get("fields", [])
+    if isinstance(fields, list) and len(fields) > 0:
+        # Extract field values based on field names
+        output = {}
+        for field in fields:
+            if isinstance(field, dict):
+                # Support both 'id' and 'name' fields (id is preferred)
+                field_name = field.get("id") or field.get("name")
+                if field_name:
+                    # Get value from input_data, use field name as key
+                    if field_name in input_data:
+                        output[field_name] = input_data[field_name]
+                    # Also support accessing via block label if available
+                    block_label = block.config.get("label", block.id)
+                    if block_label in input_data and isinstance(input_data[block_label], dict):
+                        if field_name in input_data[block_label]:
+                            output[field_name] = input_data[block_label][field_name]
+        # If no fields matched, return empty dict (or all input_data for backward compatibility)
+        if not output:
+            output = input_data
+    # Handle variable_name (legacy format)
+    elif block.config.get("variable_name"):
+        variable_name = block.config.get("variable_name")
+        if variable_name in input_data:
+            # Return the specific variable value
+            output = {variable_name: input_data[variable_name]}
+        else:
+            # Return all input_data for backward compatibility
+            output = input_data
     else:
         # Return all input_data (for backward compatibility)
         output = input_data
@@ -141,20 +249,31 @@ async def tool_node(
     inputs = await resolve_inputs(state, input_resolution, block)
     tool_params = {}
     
+    # Build variable map for template resolution
+    variable_map = build_variable_map(state)
+    
     # Get parameter names from schema
     param_properties = tool_schema.get("properties", {})
     
     for param_name in param_properties.keys():
+        param_value = None
+        param_schema = param_properties.get(param_name, {})
+        
         # Check if there's an explicit connection for this parameter
         if param_name in inputs:
-            tool_params[param_name] = inputs[param_name]
+            param_value = inputs[param_name]
         # Otherwise, check block.config.params for default/static values
         elif param_name in block.config.get("params", {}):
-            tool_params[param_name] = block.config["params"][param_name]
-        # Check if there's a generic "input" handle
-        elif "input" in inputs and param_name not in tool_params:
-            # Use generic input if available
-            tool_params[param_name] = inputs["input"]
+            param_value = block.config["params"][param_name]
+        # Use schema default if available
+        elif "default" in param_schema:
+            param_value = param_schema["default"]
+        
+        # Resolve template variables in parameter value if it's a string
+        if param_value is not None:
+            if isinstance(param_value, str) and "{{" in param_value:
+                param_value = resolve_template_variables(param_value, variable_map)
+            tool_params[param_name] = param_value
     
     # Execute tool with OAuth token management
 
@@ -200,48 +319,8 @@ async def llm_node(
     output_schema = block.config.get("output_schema")  # Optional JSON schema for structured output
     
     # Resolve template variables in system prompt (e.g., {{variable_name}})
-    # First, collect all available variables from input_data and input block outputs
-    input_data = state.get("input_data", {})
-    block_outputs = state.get("block_outputs", {})
-    
-    # Build a comprehensive variable map
-    variable_map = {}
-    
-    # 1. Add variables from input_data (direct input)
-    # Flatten nested structures if needed
-    for key, value in input_data.items():
-        if isinstance(value, dict):
-            # If it's a dict, merge its keys into variable_map
-            variable_map.update(value)
-        else:
-            variable_map[key] = value
-    
-    # 2. Add variables from input block outputs
-    # Input blocks store their output under block_outputs[block_id].output
-    for block_id, block_output in block_outputs.items():
-        if isinstance(block_output, dict) and "output" in block_output:
-            output_value = block_output["output"]
-            if isinstance(output_value, dict):
-                # Merge dict output directly
-                variable_map.update(output_value)
-            elif output_value is not None:
-                # If it's a single value, try to use block_id or find variable_name
-                # For now, we'll skip non-dict outputs here as they're handled by input_data
-                pass
-    
-    # Log for debugging
-    logger.debug(f"Template variable map: {variable_map}")
-    
-    # Resolve template variables
-    if system_prompt and "{{" in system_prompt:
-        def replace_template_var(match):
-            var_name = match.group(1)
-            # Try variable_map first, then fallback to empty string
-            value = variable_map.get(var_name, "")
-            logger.debug(f"Resolving {{{{{var_name}}}}}: {value}")
-            return str(value) if value is not None else ""
-        system_prompt = re.sub(r'\{\{(\w+)\}\}', replace_template_var, system_prompt)
-        logger.debug(f"Resolved system prompt: {system_prompt}")
+    variable_map = build_variable_map(state)
+    system_prompt = resolve_template_variables(system_prompt, variable_map)
     
     inputs = await resolve_inputs(state, input_resolution, block)
     user_message = inputs.get("input", "")
@@ -392,6 +471,8 @@ def get_node_function(block_type: BlockType):
 
 __all__ = [
     "resolve_inputs",
+    "build_variable_map",
+    "resolve_template_variables",
     "input_node",
     "code_node",
     "tool_node",

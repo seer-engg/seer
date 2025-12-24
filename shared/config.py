@@ -98,8 +98,10 @@ class SeerConfig(BaseSettings):
     clerk_audience: Optional[str] = Field(default=None, description="Clerk JWT audience (e.g., ['api.your-domain.com'])")
     
     default_llm_model: str = Field(default="gpt-5-mini", description="Default LLM model")
-    PINECONE_INDEX_NAME: str = Field(default="", description="Pinecone index name")
-    PINECONE_API_KEY: str = Field(default="", description="Pinecone API key")
+    
+    # Tool index configuration
+    tool_index_path: str = Field(default="./data/tool_index", description="Path to store tool vector index")
+    tool_index_auto_generate: bool = Field(default=True, description="Auto-generate tool index on startup if missing")
 
     GOOGLE_CLIENT_ID: str = Field(default="", description="Google OAuth client ID")
     GOOGLE_CLIENT_SECRET: str = Field(default="", description="Google OAuth client secret")

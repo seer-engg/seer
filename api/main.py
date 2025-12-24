@@ -20,6 +20,7 @@ from shared.config import config
 from api.router import router
 from api.integrations.router import router as integrations_router
 from api.tools.router import router as tools_router
+from api.traces.router import router as traces_router
 from api.agents.checkpointer import checkpointer_lifespan
 from shared.database import db_lifespan
 
@@ -38,6 +39,37 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Database initialized")
         async with checkpointer_lifespan():
             logger.info("✅ Checkpointer initialized")
+            
+            # Initialize tool index (non-blocking)
+            if config.tool_index_auto_generate:
+                try:
+                    from shared.tool_hub.index_manager import ensure_tool_index_exists
+                    import asyncio
+                    
+                    # Run index initialization in background to not block startup
+                    async def init_tool_index():
+                        try:
+                            toolhub = await ensure_tool_index_exists(
+                                auto_generate=config.tool_index_auto_generate
+                            )
+                            if toolhub:
+                                # Pre-populate the shared singleton with the initialized instance
+                                from shared.tool_hub.singleton import set_toolhub_instance
+                                set_toolhub_instance(toolhub)
+                                logger.info("✅ Tool index initialized")
+                            else:
+                                logger.warning("⚠️ Tool index initialization skipped or failed")
+                        except Exception as e:
+                            logger.error(f"Error initializing tool index: {e}", exc_info=True)
+                    
+                    # Start index initialization as background task (don't await to not block startup)
+                    # The task will run in the background
+                    task = asyncio.create_task(init_tool_index())
+                    # Store task reference to prevent garbage collection
+                    app.state.tool_index_init_task = task
+                except Exception as e:
+                    logger.warning(f"Could not initialize tool index: {e}. Tool search may not work.")
+            
             yield
     
     logger.info("👋 Seer API server shutting down...")
@@ -52,6 +84,7 @@ app = FastAPI(
 
 app.include_router(router)
 app.include_router(tools_router)
+app.include_router(traces_router)
 
 # Authentication middleware - register BEFORE CORS to ensure user is set
 if config.is_cloud_mode:
@@ -67,8 +100,6 @@ if config.is_cloud_mode:
         audience=config.clerk_audience.split(",") if config.clerk_audience else None,
         allow_unauthenticated_paths=[
             "/health",
-            "/ok",
-            "/info",
             "/api/integrations/gmail/callback",
             "/api/integrations/google_drive/callback",
             "/api/integrations/github/callback",
@@ -124,34 +155,15 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.get("/health", tags=["System"])
 async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy"}
-
-
-@app.get("/ok", tags=["System"])
-async def ok_check():
     """
-    LangGraph Server health check endpoint.
-    Required by @langchain/langgraph-sdk for server compatibility.
-    Returns {"ok": true} as per LangGraph Server API specification.
-    """
-    return {"ok": True}
-
-
-@app.get("/info", tags=["System"])
-async def info():
-    """
-    LangGraph Server info endpoint.
-    Used by frontend to verify server connectivity.
-    Returns basic server information.
+    Health check endpoint.
+    Returns server information including status, server name, and version.
     """
     return {
         "status": "ok",
         "server": "Seer LangGraph API",
         "version": "1.0.0"
     }
-
-
 
 
 # =============================================================================
