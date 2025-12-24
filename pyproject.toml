@@ -30,8 +30,7 @@ dependencies = [
     "e2b==2.4.0",
     "e2b-code-interpreter==2.2.0",
     "tavily-python>=0.7.12",
-    "pinecone>=5.0.0",
-
+    "langchain-chroma>=0.1.0",
     "tenacity>=9.1.2",
     "langchain-mcp-adapters==0.1.12",
     "aiosqlite>=0.20.0",

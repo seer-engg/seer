@@ -11,8 +11,10 @@ from shared.database.models import UserPublic
 class WorkflowEdit(BaseModel):
     """Represents a single edit operation on a workflow."""
     operation: str = Field(..., description="Operation type: 'add_block', 'modify_block', 'remove_block', 'add_edge', 'remove_edge'")
+    edit_id: Optional[str] = Field(None, description="ID of the planned edit for application")
     block_id: Optional[str] = Field(None, description="Block ID for the operation")
     block_type: Optional[str] = Field(None, description="Block type (for add_block operation)")
+    label: Optional[str] = Field(None, description="Block label (for add_block operation)")
     config: Optional[Dict[str, Any]] = Field(None, description="Block configuration (for add/modify operations)")
     position: Optional[Dict[str, float]] = Field(None, description="Block position {x, y} (for add_block)")
     source_id: Optional[str] = Field(None, description="Source block ID (for edge operations)")

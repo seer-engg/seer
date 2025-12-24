@@ -1,6 +1,6 @@
 """
 Integration tool discovery and execution utilities.
-Uses Pinecone vector store for semantic tool search and new tool executor.
+Uses local Chroma vector store for semantic tool search and new tool executor.
 """
 from shared.config import config
 import os
@@ -9,7 +9,7 @@ import asyncio
 from typing import Optional, Tuple, List, Dict, Any
 from langchain_core.tools import tool
 
-from tool_hub import ToolHub
+from shared.tool_hub import LocalToolHub
 from agents.supervisor.models import ToolParameter, ToolDefinition
 from agents.supervisor.state import SupervisorState
 from shared.tools.registry import get_tools_by_integration
@@ -18,28 +18,6 @@ from shared.tools.base import get_tool
 
 import logging
 logger = logging.getLogger(__name__)
-
-# Global Pinecone store instance (lazy-loaded)
-# Note: embedding_dimensions must match Pinecone index dimension (512)
-_TOOLHUB_INSTANCE = None
-
-def _get_toolhub_instance():
-    """
-    Lazy-load ToolHub instance.
-    Uses config module which ensures all required environment variables are available.
-    """
-    global _TOOLHUB_INSTANCE
-    if _TOOLHUB_INSTANCE is None:
-        # Use config module (environment variables validated on import)
-        _TOOLHUB_INSTANCE = ToolHub(
-            openai_api_key=config.openai_api_key,
-            pinecone_index_name=config.PINECONE_INDEX_NAME,
-            pinecone_api_key=config.PINECONE_API_KEY,
-            embedding_dimensions=512  # Must match Pinecone index dimension
-        )
-        logger.info("✅ ToolHub instance initialized")
-    
-    return _TOOLHUB_INSTANCE
 
 def get_user_context_from_state(state: Optional[SupervisorState] = None) -> Dict[str, Any]:
     """
@@ -112,13 +90,13 @@ def get_available_integrations() -> List[str]:
     # Return sorted list, or empty list if no integrations found
     return sorted(list(integrations))
 
-async def _search_tools_in_pinecone(
+async def _search_tools_local(
     query: str,
     integration_name: Optional[List[str]] = None,
     top_k: int = 3
 ) -> List[dict]:
     """
-    Search tools from Pinecone using semantic search.
+    Search tools from local Chroma vector store using semantic search.
     
     Args:
         query: Search query string
@@ -129,8 +107,13 @@ async def _search_tools_in_pinecone(
         List of tool dictionaries
     """
     
-    # Lazy-load ToolHub instance (initializes on first use)
-    toolhub = _get_toolhub_instance()
+    # Use shared LocalToolHub singleton instance
+    from shared.tool_hub.singleton import get_toolhub_instance
+    toolhub = get_toolhub_instance()
+    
+    if toolhub is None:
+        logger.warning("LocalToolHub not available, returning empty results")
+        return []
     
     results = await toolhub.query(
         query=query,
@@ -147,7 +130,7 @@ async def search_tools(
     integration_filter: Optional[List[str]] = None
 ) -> str:
     """
-    Search for available tools/actions using semantic search via Pinecone vector store.
+    Search for available tools/actions using semantic search via local Chroma vector store.
     
     **MANDATORY REASONING:**
     Before searching, explain:
@@ -170,7 +153,7 @@ async def search_tools(
         JSON string with list of matching tools and their parameters
     """
     try:
-        results = await _search_tools_in_pinecone(
+        results = await _search_tools_local(
             query=query,
             integration_name=integration_filter,
             top_k=5
