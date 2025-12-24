@@ -1,7 +1,7 @@
 from shared.database.models_oauth import OAuthConnection
 from shared.database.models import User
 from typing import Dict, Any, List, Optional, Set
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from shared.logger import get_logger
 logger = get_logger("api.integrations.services")
 
@@ -290,3 +290,73 @@ async def delete_connection_by_id(user: User, connection_id: str):
     except Exception as e:
         logger.error(f"Error deleting connection {connection_id} for user {user.user_id}: {e}")
         raise
+
+
+async def get_valid_access_token(user: User, provider: str) -> Optional[str]:
+    """
+    Get a valid access token for a provider, refreshing if needed.
+    
+    Args:
+        user: User model instance
+        provider: OAuth provider name (google, github, etc.)
+    
+    Returns:
+        Valid access token or None if no connection exists
+    """
+    from .oauth import oauth
+    import httpx
+    
+    oauth_provider = get_oauth_provider(provider)
+    connection = await get_connection_for_provider(user, oauth_provider)
+    
+    if not connection:
+        return None
+    
+    # Check if token is expired
+    if connection.expires_at:
+        now = datetime.now(timezone.utc)
+        # Add a 5-minute buffer to refresh before expiration
+        if now >= connection.expires_at - timedelta(minutes=5):
+            # Token is expired or about to expire, try to refresh
+            if connection.refresh_token_enc:
+                try:
+                    # Refresh the token using authlib
+                    client = oauth.create_client(oauth_provider)
+                    
+                    if oauth_provider == 'google':
+                        # Google token refresh
+                        async with httpx.AsyncClient() as http_client:
+                            response = await http_client.post(
+                                'https://oauth2.googleapis.com/token',
+                                data={
+                                    'client_id': client.client_id,
+                                    'client_secret': client.client_secret,
+                                    'refresh_token': connection.refresh_token_enc,
+                                    'grant_type': 'refresh_token',
+                                }
+                            )
+                            
+                            if response.status_code == 200:
+                                token_data = response.json()
+                                connection.access_token_enc = token_data.get('access_token')
+                                if 'expires_in' in token_data:
+                                    connection.expires_at = datetime.now(timezone.utc) + timedelta(seconds=token_data['expires_in'])
+                                connection.updated_at = datetime.now(timezone.utc)
+                                await connection.save()
+                                logger.info(f"Refreshed access token for {oauth_provider}")
+                            else:
+                                logger.error(f"Failed to refresh token: {response.status_code} - {response.text[:200]}")
+                                return None
+                    else:
+                        # For other providers, implement as needed
+                        logger.warning(f"Token refresh not implemented for provider: {oauth_provider}")
+                        return connection.access_token_enc
+                        
+                except Exception as e:
+                    logger.error(f"Error refreshing token for {oauth_provider}: {e}")
+                    return None
+            else:
+                logger.warning(f"Token expired and no refresh token available for {oauth_provider}")
+                return None
+    
+    return connection.access_token_enc

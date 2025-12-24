@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 from datetime import datetime
 
 from shared.logger import get_logger
-from shared.llm import get_llm
+from shared.llm import get_llm, get_llm_without_responses_api
 from shared.tools.executor import execute_tool as execute_tool_with_oauth
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -78,6 +78,7 @@ def resolve_template_variables(text: str, variable_map: Dict[str, Any]) -> str:
     Supports:
     - Simple names: {{email}} - resolves to variable_map["email"]
     - Dot notation: {{block_id.handle_id}} - resolves to variable_map["block_id.handle_id"]
+    - Deep dot notation: {{block_id.structured_output.field}} - resolves nested properties
     - Falls back to empty string if variable not found
     
     Args:
@@ -88,18 +89,59 @@ def resolve_template_variables(text: str, variable_map: Dict[str, Any]) -> str:
         Text with template variables resolved
     """
     import re
+    import json
     
     if not text or "{{" not in text:
         return text
     
+    def resolve_nested_value(var_name: str) -> Any:
+        """Resolve a variable name, supporting nested dot notation."""
+        # First try exact match in variable_map
+        if var_name in variable_map:
+            return variable_map[var_name]
+        
+        # Try nested access: split by dots and traverse
+        parts = var_name.split(".")
+        if len(parts) >= 2:
+            # Try block_id.rest_of_path format
+            block_id = parts[0]
+            
+            # First check if block_id.second_part exists as a key (e.g., "LLM.output")
+            if len(parts) == 2:
+                key = f"{parts[0]}.{parts[1]}"
+                if key in variable_map:
+                    return variable_map[key]
+            
+            # Try to traverse from block output
+            remaining_path = parts[1:]
+            current_value = variable_map.get(f"{block_id}.output")
+            
+            # Also try to get from structured_output if available
+            structured = variable_map.get(f"{block_id}.structured_output")
+            if structured and isinstance(structured, dict) and remaining_path[0] in structured:
+                current_value = structured
+            
+            # Traverse the remaining path
+            for key in remaining_path:
+                if isinstance(current_value, dict) and key in current_value:
+                    current_value = current_value[key]
+                else:
+                    return ""  # Path not found
+            return current_value
+        
+        return ""
+    
     def replace_template_var(match):
         var_name = match.group(1)
-        # Try variable_map first, then fallback to empty string
-        value = variable_map.get(var_name, "")
+        value = resolve_nested_value(var_name)
         logger.debug(f"Resolving {{{{{var_name}}}}}: {value}")
+        # Convert dict/list to JSON string for readability
+        if isinstance(value, (dict, list)):
+            return json.dumps(value)
         return str(value) if value is not None else ""
     
-    resolved = re.sub(r'\{\{(\w+(?:\.\w+)?)\}\}', replace_template_var, text)
+    # Updated regex to support multiple levels of dot notation
+    resolved = re.sub(r'\{\{(\w+(?:\.\w+)*)\}\}', replace_template_var, text)
     logger.debug(f"Resolved template: {text[:50]}... -> {resolved[:50]}...")
     return resolved
 
@@ -303,6 +345,87 @@ async def tool_node(
     }
 
 
+def _prepare_structured_output_schema(schema: Dict[str, Any], block_id: str) -> Dict[str, Any]:
+    """
+    Prepare a JSON schema for OpenAI's structured output.
+    
+    OpenAI's structured output requires:
+    - additionalProperties: false for strict mode
+    - required array with all property names
+    - A title/name for the schema
+    
+    Args:
+        schema: Raw JSON schema from block config
+        block_id: Block ID for generating unique schema name
+        
+    Returns:
+        Properly formatted JSON schema for OpenAI
+    """
+    import copy
+    
+    if not schema or not isinstance(schema, dict):
+        return schema
+    
+    # Create a deep copy to avoid mutating original
+    prepared_schema = copy.deepcopy(schema)
+    
+    # Ensure it's an object type
+    if prepared_schema.get("type") != "object":
+        prepared_schema["type"] = "object"
+    
+    # Add title if not present (required by OpenAI for schema identification)
+    if "title" not in prepared_schema:
+        # Create a clean title from block_id
+        clean_id = "".join(c if c.isalnum() else "_" for c in block_id)
+        prepared_schema["title"] = f"Output_{clean_id}"
+    
+    # Add additionalProperties: false for strict mode
+    if "additionalProperties" not in prepared_schema:
+        prepared_schema["additionalProperties"] = False
+    
+    # Build required array from all properties if not already present
+    properties = prepared_schema.get("properties", {})
+    if properties and "required" not in prepared_schema:
+        prepared_schema["required"] = list(properties.keys())
+    
+    # Ensure each property has a valid type and preserve description
+    for prop_name, prop_def in properties.items():
+        if isinstance(prop_def, dict):
+            if "type" not in prop_def:
+                prop_def["type"] = "string"  # Default to string if type is missing
+            # Description is already preserved from the schema, no action needed
+    
+    return prepared_schema
+
+
+def _extract_text_from_response(content: Any) -> str:
+    """
+    Extract text content from LLM response, handling both standard and Responses API formats.
+    
+    Args:
+        content: Response content (could be string, list, or other format)
+        
+    Returns:
+        Extracted text content as string
+    """
+    if isinstance(content, str):
+        return content
+    elif isinstance(content, list):
+        # Responses API format: list of content blocks
+        text_parts = []
+        for item in content:
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    text_parts.append(item.get("text", ""))
+                elif "text" in item:
+                    text_parts.append(item["text"])
+            elif isinstance(item, str):
+                text_parts.append(item)
+        return "\n".join(text_parts) if text_parts else str(content)
+    else:
+        return str(content) if content else ""
+
+
 async def llm_node(
     state: WorkflowState,
     block: BlockDefinition,
@@ -318,6 +441,8 @@ async def llm_node(
     temperature = block.config.get("temperature", 0.2)
     output_schema = block.config.get("output_schema")  # Optional JSON schema for structured output
     
+    logger.info(f"LLM node executing with model={model}, has_output_schema={output_schema is not None}")
+    
     # Resolve template variables in system prompt (e.g., {{variable_name}})
     variable_map = build_variable_map(state)
     system_prompt = resolve_template_variables(system_prompt, variable_map)
@@ -325,22 +450,40 @@ async def llm_node(
     inputs = await resolve_inputs(state, input_resolution, block)
     user_message = inputs.get("input", "")
     
-    llm = get_llm(model=model, temperature=temperature)
+    # If no user message but system prompt exists, use system prompt as both
+    # This handles cases where the LLM block is standalone with just a system prompt
+    if not user_message and system_prompt:
+        user_message = system_prompt
+        system_prompt = ""  # Clear system prompt since we're using it as user message
     
     messages = []
     if system_prompt:
         messages.append(SystemMessage(content=system_prompt))
-    messages.append(HumanMessage(content=str(user_message)))
+    messages.append(HumanMessage(content=str(user_message) if user_message else "Please respond based on your instructions."))
+    
+    logger.debug(f"LLM messages: system_prompt={system_prompt[:100] if system_prompt else 'None'}..., user_message={str(user_message)[:100] if user_message else 'None'}...")
     
     # If output_schema provided, use structured output
-    if output_schema:
-        logger.info(f"Running LLM with structured output schema")
+    if output_schema and isinstance(output_schema, dict) and output_schema.get("properties"):
+        logger.info(f"Running LLM with structured output schema: {output_schema}")
+        
+        # Prepare schema for OpenAI's structured output requirements
+        prepared_schema = _prepare_structured_output_schema(output_schema, block.id)
+        logger.info(f"Prepared schema for structured output: {prepared_schema}")
+        
         try:
-            structured_llm = llm.with_structured_output(
-                output_schema,
+            # Use LLM without responses API for structured output
+            # The responses API doesn't work correctly with with_structured_output
+            llm_for_structured = get_llm_without_responses_api(model=model, temperature=temperature)
+            logger.debug(f"Created LLM for structured output (without responses API)")
+            
+            structured_llm = llm_for_structured.with_structured_output(
+                prepared_schema,
                 method="json_schema"
             )
+            logger.debug(f"Calling structured LLM...")
             result = await structured_llm.ainvoke(messages)
+            logger.debug(f"Structured LLM result type: {type(result)}, value: {result}")
             
             # Convert result to dict if it's a Pydantic model
             if hasattr(result, "model_dump"):
@@ -348,30 +491,48 @@ async def llm_node(
             elif isinstance(result, dict):
                 structured_output = result
             else:
-                structured_output = {"result": str(result)}
+                # Try to parse as JSON string
+                try:
+                    structured_output = json.loads(str(result))
+                except (json.JSONDecodeError, TypeError):
+                    structured_output = {"result": str(result)}
+            
+            logger.info(f"Structured output result: {structured_output}")
+            
+            # Return both the JSON string output and the structured output dict
+            # Also include individual field values at the top level for easy access
+            block_output = {
+                "output": json.dumps(structured_output, indent=2),
+                "structured_output": structured_output,
+            }
+            # Add each field from structured output to block output for easy variable access
+            block_output.update(structured_output)
             
             return {
                 "block_outputs": {
-                    block.id: {
-                        "output": json.dumps(structured_output, indent=2),
-                        "structured_output": structured_output
-                    }
+                    block.id: block_output
                 }
             }
         except Exception as e:
-            logger.warning(f"Structured output failed, falling back to text: {e}")
-            # Fall back to regular text generation
+            logger.error(f"Structured output failed: {e}", exc_info=True)
+            # Fall back to regular text generation with error context
+            # Use non-responses API for consistent output format
+            llm = get_llm_without_responses_api(model=model, temperature=temperature)
             response = await llm.ainvoke(messages)
-            output = response.content
+            output = _extract_text_from_response(response.content)
             return {
                 "block_outputs": {
-                    block.id: {"output": output}
+                    block.id: {
+                        "output": output,
+                        "structured_output_error": str(e)
+                    }
                 }
             }
     else:
-        # Regular text generation
+        # Regular text generation - use non-responses API for consistent output format
+        llm = get_llm_without_responses_api(model=model, temperature=temperature)
         response = await llm.ainvoke(messages)
-        output = response.content
+        output = _extract_text_from_response(response.content)
         
         return {
             "block_outputs": {

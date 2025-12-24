@@ -4,6 +4,7 @@ Google Sheets Tool
 Tool for writing data to Google Sheets using Google Sheets API v4.
 """
 from typing import Any, Dict, Optional
+import json
 import httpx
 from fastapi import HTTPException
 
@@ -19,8 +20,20 @@ class GoogleSheetsWriteTool(BaseTool):
     name = "google_sheets_write"
     description = "Write data to a Google Sheet. Requires spreadsheet ID and range."
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    integration_type = "googlesheets"
+    integration_type = "google_sheets"
     provider = "google"
+    
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        """Enable resource browsing for spreadsheet_id."""
+        return {
+            "spreadsheet_id": {
+                "resource_type": "google_spreadsheet",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+                "hierarchy": False,
+            }
+        }
     
     def get_parameters_schema(self) -> Dict[str, Any]:
         """Get JSON schema for Google Sheets write tool parameters."""
@@ -89,22 +102,42 @@ class GoogleSheetsWriteTool(BaseTool):
                 detail="values is required"
             )
         
+        # Parse values if it's a string (e.g., from workflow config)
+        if isinstance(values, str):
+            try:
+                values = json.loads(values)
+            except json.JSONDecodeError as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid JSON format for 'values' parameter: {str(e)}. Expected a 2D array like [[\"a\", \"b\"], [\"c\", \"d\"]]"
+                )
+        
+        # Validate that values is a 2D array
+        if not isinstance(values, list):
+            raise HTTPException(
+                status_code=400,
+                detail="'values' must be a 2D array (list of lists)"
+            )
+        
         # Use Google Sheets API v4
+        # Note: valueInputOption MUST be a query parameter, not in the request body
         url = f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{range_name}"
+        params = {
+            "valueInputOption": value_input_option
+        }
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
         }
         body = {
-            "values": values,
-            "valueInputOption": value_input_option
+            "values": values
         }
         
         try:
             async with httpx.AsyncClient(timeout=30.0) as http_client:
                 logger.info(f"Writing to Google Sheet {spreadsheet_id}, range {range_name}")
                 
-                response = await http_client.put(url, headers=headers, json=body)
+                response = await http_client.put(url, headers=headers, params=params, json=body)
                 
                 if response.status_code == 401:
                     raise HTTPException(
@@ -224,8 +257,20 @@ class GoogleSheetsReadTool(BaseTool):
     name = "google_sheets_read"
     description = "Read values from a Google Sheet range. Requires spreadsheet ID and range."
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
-    integration_type = "googlesheets"
+    integration_type = "google_sheets"
     provider = "google"
+
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        """Enable resource browsing for spreadsheet_id."""
+        return {
+            "spreadsheet_id": {
+                "resource_type": "google_spreadsheet",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+                "hierarchy": False,
+            }
+        }
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -304,8 +349,18 @@ class GoogleSheetsBatchReadTool(BaseTool):
     name = "google_sheets_batch_read"
     description = "Read values from multiple ranges in a Google Sheet (batchGet)."
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
-    integration_type = "googlesheets"
+    integration_type = "google_sheets"
     provider = "google"
+
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        return {
+            "spreadsheet_id": {
+                "resource_type": "google_spreadsheet",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+            }
+        }
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -387,8 +442,18 @@ class GoogleSheetsAppendTool(BaseTool):
     name = "google_sheets_append"
     description = "Append values to a Google Sheet (values.append)."
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    integration_type = "googlesheets"
+    integration_type = "google_sheets"
     provider = "google"
+
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        return {
+            "spreadsheet_id": {
+                "resource_type": "google_spreadsheet",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+            }
+        }
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -495,8 +560,18 @@ class GoogleSheetsClearTool(BaseTool):
     name = "google_sheets_clear"
     description = "Clear values from a Google Sheet range (values.clear)."
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    integration_type = "googlesheets"
+    integration_type = "google_sheets"
     provider = "google"
+
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        return {
+            "spreadsheet_id": {
+                "resource_type": "google_spreadsheet",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+            }
+        }
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -551,8 +626,18 @@ class GoogleSheetsBatchWriteTool(BaseTool):
     name = "google_sheets_batch_write"
     description = "Write values to multiple ranges in a Google Sheet (values.batchUpdate)."
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    integration_type = "googlesheets"
+    integration_type = "google_sheets"
     provider = "google"
+
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        return {
+            "spreadsheet_id": {
+                "resource_type": "google_spreadsheet",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+            }
+        }
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -664,8 +749,18 @@ class GoogleSheetsGetSpreadsheetTool(BaseTool):
     name = "google_sheets_get_spreadsheet"
     description = "Get spreadsheet metadata (and optional grid data) via spreadsheets.get."
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
-    integration_type = "googlesheets"
+    integration_type = "google_sheets"
     provider = "google"
+
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        return {
+            "spreadsheet_id": {
+                "resource_type": "google_spreadsheet",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+            }
+        }
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -738,7 +833,7 @@ class GoogleSheetsCreateSpreadsheetTool(BaseTool):
     name = "google_sheets_create_spreadsheet"
     description = "Create a new Google Sheet (spreadsheets.create)."
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    integration_type = "googlesheets"
+    integration_type = "google_sheets"
     provider = "google"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
@@ -803,8 +898,18 @@ class GoogleSheetsBatchUpdateSpreadsheetTool(BaseTool):
     name = "google_sheets_batch_update_spreadsheet"
     description = "Batch update a spreadsheet for formatting/structure (spreadsheets.batchUpdate)."
     required_scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    integration_type = "googlesheets"
+    integration_type = "google_sheets"
     provider = "google"
+
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        return {
+            "spreadsheet_id": {
+                "resource_type": "google_spreadsheet",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+            }
+        }
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {

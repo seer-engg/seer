@@ -2,12 +2,49 @@
 Base tool interface for custom tool system.
 
 All tools inherit from BaseTool and implement the execute() method.
+
+Resource Picker System:
+-----------------------
+Tools can declare parameters that support resource browsing via the 
+`x-resource-picker` schema extension. This allows the UI to render
+a resource browser instead of a plain text input.
+
+Example resource picker schema:
+{
+    "spreadsheet_id": {
+        "type": "string",
+        "description": "Google Sheets spreadsheet ID",
+        "x-resource-picker": {
+            "resource_type": "google_drive_file",
+            "filter": {"mimeType": "application/vnd.google-apps.spreadsheet"},
+            "display_field": "name",
+            "value_field": "id",
+            "search_enabled": True,
+            "hierarchy": True  # Enables folder navigation
+        }
+    }
+}
+
+The frontend will detect `x-resource-picker` and render a ResourcePicker component
+that calls /api/integrations/{provider}/resources/{resource_type} to list resources.
 """
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TypedDict
 from shared.logger import get_logger
 
 logger = get_logger("shared.tools.base")
+
+
+class ResourcePickerConfig(TypedDict, total=False):
+    """Configuration for resource picker UI component."""
+    resource_type: str  # Type of resource to browse (e.g., 'google_drive_file', 'github_repo')
+    filter: Dict[str, Any]  # Filters to apply when fetching resources
+    display_field: str  # Field to display in the picker (default: 'name')
+    value_field: str  # Field to use as the parameter value (default: 'id')
+    search_enabled: bool  # Enable search functionality
+    hierarchy: bool  # Enable folder/hierarchy navigation
+    depends_on: str  # Another parameter this depends on (for nested resources)
+    endpoint: str  # Custom endpoint override (optional)
 
 
 class BaseTool(ABC):
@@ -21,6 +58,9 @@ class BaseTool(ABC):
     - integration_type: Integration type (gmail, github, googledrive, etc.)
     - provider: OAuth provider (google, github, etc.) - used for OAuth connections
     - execute(): Tool execution logic
+    
+    Optional:
+    - get_resource_pickers(): Define which parameters support resource browsing
     """
     
     name: str
@@ -62,20 +102,53 @@ class BaseTool(ABC):
             "required": []
         }
     
+    def get_resource_pickers(self) -> Dict[str, ResourcePickerConfig]:
+        """
+        Get resource picker configurations for parameters that support browsing.
+        
+        Override this in subclasses to enable resource browsing for specific parameters.
+        
+        Returns:
+            Dict mapping parameter names to ResourcePickerConfig
+        
+        Example:
+            return {
+                "spreadsheet_id": {
+                    "resource_type": "google_drive_file",
+                    "filter": {"mimeType": "application/vnd.google-apps.spreadsheet"},
+                    "display_field": "name",
+                    "value_field": "id",
+                    "search_enabled": True,
+                    "hierarchy": True
+                }
+            }
+        """
+        return {}
+    
     def get_metadata(self) -> Dict[str, Any]:
         """
         Get tool metadata for API responses.
         
         Returns:
-            Dict with tool metadata
+            Dict with tool metadata including resource picker configs
         """
+        schema = self.get_parameters_schema()
+        resource_pickers = self.get_resource_pickers()
+        
+        # Inject x-resource-picker into schema properties
+        if resource_pickers and "properties" in schema:
+            for param_name, picker_config in resource_pickers.items():
+                if param_name in schema["properties"]:
+                    schema["properties"][param_name]["x-resource-picker"] = picker_config
+        
         return {
             "name": self.name,
             "description": self.description,
             "required_scopes": self.required_scopes,
             "integration_type": self.integration_type,
             "provider": self.provider,
-            "parameters": self.get_parameters_schema()
+            "parameters": schema,
+            "resource_pickers": resource_pickers  # Also include separately for convenience
         }
 
 

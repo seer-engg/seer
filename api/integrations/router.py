@@ -8,12 +8,16 @@ from .services import (
     delete_connection_by_id,
     get_oauth_provider,
     get_tool_connection_status,
-    has_required_scopes
+    has_required_scopes,
+    get_connection_for_provider,
+    get_valid_access_token
 )
+from .resource_browser import ResourceBrowser
 import json
 import base64
 import os
 import logging
+from typing import Optional
 from shared.logger import get_logger
 from shared.database.models import User
 logger = get_logger("api.integrations.router")
@@ -227,6 +231,8 @@ async def connect(
     # See: https://developers.google.com/identity/protocols/oauth2/web-server#incrementalAuth
     if oauth_provider == 'google':
         kwargs['include_granted_scopes'] = 'true'
+        kwargs['access_type'] = 'offline'
+        kwargs['prompt'] = 'consent'
         
     return await client.authorize_redirect(request, redirect_uri, **kwargs)
 
@@ -367,3 +373,120 @@ async def delete_connection(connection_id: str, request: Request):
     user: User = request.state.db_user
     await delete_connection_by_id(user, connection_id)
     return {"status": "success"}
+
+
+# =============================================================================
+# RESOURCE BROWSER ROUTES - For browsing integration resources
+# =============================================================================
+
+@router.get("/resources/types")
+async def list_resource_types(request: Request):
+    """
+    List all supported resource types across all providers.
+    
+    Returns configuration info for each resource type including
+    whether it supports hierarchy, search, and dependencies.
+    """
+    all_types = {}
+    for provider in ["google", "github"]:
+        types = ResourceBrowser.get_supported_resource_types(provider)
+        for rt in types:
+            info = ResourceBrowser.get_resource_type_info(rt)
+            if info:
+                info["provider"] = provider
+                all_types[rt] = info
+    
+    return {"resource_types": all_types}
+
+
+@router.get("/resources/{provider}/types")
+async def list_provider_resource_types(request: Request, provider: str):
+    """
+    List supported resource types for a specific provider.
+    
+    Args:
+        provider: OAuth provider (google, github, etc.)
+    """
+    types = ResourceBrowser.get_supported_resource_types(provider)
+    result = {}
+    for rt in types:
+        info = ResourceBrowser.get_resource_type_info(rt)
+        if info:
+            result[rt] = info
+    
+    return {"provider": provider, "resource_types": result}
+
+
+@router.get("/resources/{provider}/{resource_type}")
+async def browse_resources(
+    request: Request,
+    provider: str,
+    resource_type: str,
+    q: Optional[str] = Query(None, description="Search query"),
+    parent_id: Optional[str] = Query(None, description="Parent folder ID for hierarchy navigation"),
+    page_token: Optional[str] = Query(None, description="Pagination token"),
+    page_size: int = Query(50, ge=1, le=100, description="Number of items per page"),
+    # Dependent parameter values (JSON encoded)
+    depends_on: Optional[str] = Query(None, description="JSON object of dependent parameter values"),
+):
+    """
+    Browse resources of a specific type.
+    
+    This endpoint powers the ResourcePicker UI component, allowing users
+    to browse and select resources (files, spreadsheets, repos, etc.)
+    instead of manually entering IDs.
+    
+    Args:
+        provider: OAuth provider (google, github)
+        resource_type: Type of resource to browse (google_spreadsheet, github_repo, etc.)
+        q: Optional search query
+        parent_id: Parent folder ID for hierarchical navigation (Google Drive)
+        page_token: Token for pagination
+        page_size: Number of results per page (max 100)
+        depends_on: JSON object with values for dependent parameters
+    
+    Returns:
+        List of resources with metadata for display
+    """
+    user: User = request.state.db_user
+    
+    # Get valid access token
+    access_token = await get_valid_access_token(user, provider)
+    if not access_token:
+        raise HTTPException(
+            status_code=401,
+            detail=f"No active {provider} connection. Please connect your {provider} account first."
+        )
+    
+    # Parse depends_on if provided
+    depends_on_values = None
+    if depends_on:
+        try:
+            depends_on_values = json.loads(depends_on)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid depends_on JSON")
+    
+    # Create browser and list resources
+    browser = ResourceBrowser(access_token, provider)
+    
+    try:
+        result = await browser.list_resources(
+            resource_type=resource_type,
+            query=q,
+            parent_id=parent_id,
+            page_token=page_token,
+            page_size=page_size,
+            depends_on_values=depends_on_values,
+        )
+        
+        if "error" in result and result["error"]:
+            logger.error(f"Resource browser error: {result['error']}")
+            raise HTTPException(status_code=500, detail=result["error"])
+        
+        return result
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Error browsing resources: {e}")
+        raise HTTPException(status_code=500, detail=f"Error browsing resources: {str(e)}")
