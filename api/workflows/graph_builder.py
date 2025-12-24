@@ -280,7 +280,7 @@ class WorkflowGraphBuilder:
         user_id: Optional[str] = None,
     ) -> Any:
         """
-        Get compiled graph, using cache if available.
+        Get compiled graph, always rebuilding to ensure latest code is used.
         
         Args:
             workflow_id: Workflow ID
@@ -290,9 +290,9 @@ class WorkflowGraphBuilder:
         Returns:
             Compiled LangGraph graph
         """
-        # Check cache
-        if workflow_id in self._compiled_graphs:
-            return self._compiled_graphs[workflow_id]
+        # Always rebuild the graph to ensure latest node function code is used
+        # This is important because node functions capture code at compile time
+        # and caching would prevent code updates from taking effect
         
         # Build and compile
         if workflow is None:
@@ -300,9 +300,6 @@ class WorkflowGraphBuilder:
             workflow = await get_workflow(workflow_id)
         
         compiled = await self.build_graph(workflow, user_id=user_id)
-        
-        # Cache
-        self._compiled_graphs[workflow_id] = compiled
         
         return compiled
     
