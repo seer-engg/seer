@@ -51,10 +51,6 @@ class SeerConfig(BaseSettings):
     # LangGraph Checkpointer Configuration
     # ============================================================================
     
-    database_uri: Optional[str] = Field(
-        default=None,
-        description="PostgreSQL connection string for LangGraph checkpointer (e.g., postgresql://user:pass@host:port/db). Required for human-in-the-loop interrupts."
-    )
     DATABASE_URL: Optional[str] = Field(
         default=None,
         description="PostgreSQL connection string for LangGraph checkpointer (e.g., postgresql://user:pass@host:port/db). Required for human-in-the-loop interrupts."

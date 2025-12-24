@@ -1,6 +1,6 @@
 ## Seer (`seeragents`)
 
-Seer is a **LangGraph-based evaluation orchestrator** for testing autonomous agents end-to-end (align → generate tests → run tests), with optional telemetry (MLflow) and persistence (Postgres/Neo4j).
+Seer is a **workflow builder with fine-grained control** for creating and executing automated workflows with integrated tools and services. Build complex automation workflows with visual editing, AI-assisted development, and seamless integrations (Google Workspace, GitHub, and more).
 
 > **Note:** Package name is `seeragents` on PyPI (name conflict), but CLI command is `seer`.
 
@@ -11,7 +11,7 @@ git clone <repo> && cd seer
 uv run seer dev
 ```
 
-That's it! No installation needed. Starts Docker services (Postgres, MLflow, backend), installs dependencies in containers, tails logs, waits for readiness, and opens your browser.
+That's it! No installation needed. Starts Docker services (Postgres, MLflow, backend), installs dependencies in containers, tails logs, waits for readiness, and opens the workflow builder in your browser.
 
 ### Installation (Optional)
 
@@ -41,11 +41,21 @@ seer dev  # Now you can use 'seer' directly
 Create a `.env` file (automatically loaded):
 
 ```bash
+# Required for workflow execution and AI assistance
 OPENAI_API_KEY=...
-GITHUB_TOKEN=...
-E2B_API_KEY=...  # For sandbox provisioning
-DATABASE_URI=...  # Optional: Postgres persistence
-MLFLOW_TRACKING_URI=...  # Optional: MLflow tracing
+ANTHROPIC_API_KEY=...  # Alternative to OpenAI
+
+# Integrations
+TAVILY_API_KEY=...  # For web search tools
+
+# OAuth Configuration (for cloud deployments)
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+
+# Optional: Persistence and monitoring
+DATABASE_URL=...  # PostgreSQL for workflow persistence
+MLFLOW_TRACKING_URI=...  # MLflow for execution tracking
+
 ```
 
 Check: `uv run seer config` or `seer config` (if installed)
@@ -59,22 +69,16 @@ uv run seer dev  # Recommended: no installation needed
 seer dev
 ```
 
-**Eval agent:**
+**Configuration:**
 ```bash
-uv run seer run  # Interactive loop (alignment → plan → testing → finalize)
-uv run seer run --thread-id <uuid>  # Resume session
+uv run seer config           # Show current configuration
+uv run seer config --format json  # JSON output format
 ```
 
-**Supervisor (database ops):**
+**Data Export:**
 ```bash
-uv run seer new-supervisor
-```
-
-**Other commands:**
-```bash
-uv run seer config           # Show configuration
-uv run seer export <id>      # Export results
-uv run seer -v run          # Verbose mode
+uv run seer export <thread-id>      # Export workflow execution results
+uv run seer export <thread-id> --format markdown  # Export in markdown format
 ```
 
 ### Development Workflow
@@ -85,29 +89,63 @@ uv run seer -v run          # Verbose mode
 
 **Steps:**
 1. Run: `uv run seer dev` (no installation needed!)
-2. Code changes hot-reload via volume mounts
-3. Logs: `docker compose logs -f`
-4. Stop: `docker compose down`
+2. Code changes hot-reload via volume mounts (uvicorn --reload)
+3. Access workflow builder at: http://localhost:5173/workflows?backend=http://localhost:8000
+4. View logs: `docker compose logs -f`
+5. Stop: `docker compose down`
 
-### API Keys
+**Services started:**
+- **Backend API** (port 8000): FastAPI server with workflow execution engine
+- **Postgres** (port 5432): Workflow and user data persistence
+- **MLflow** (port 5001): Execution tracking and observability
 
-| Stage | Required |
-|-------|----------|
-| **alignment/plan** | `OPENAI_API_KEY` |
-| **testing** | `OPENAI_API_KEY`, `GITHUB_TOKEN` |
-| **sandbox** | `E2B_API_KEY` |
-| **OAuth** | `GOOGLE_CLIENT_ID/SECRET`, `GITHUB_CLIENT_ID/SECRET` |
-| **Optional** | `DATABASE_URI`, `MLFLOW_TRACKING_URI`, `NEO4J_URI` |
+### API Keys & Integrations
 
-Missing keys? Seer prompts interactively.
+| Feature | Required Keys |
+|---------|---------------|
+| **Workflow Execution** | `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` |
+| **AI Chat Assistant** | `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` |
+| **GitHub Integration** | `GITHUB_TOKEN`, `GITHUB_CLIENT_ID/SECRET` |
+| **Google Workspace** | `GOOGLE_CLIENT_ID/SECRET` |
+| **Web Search** | `TAVILY_API_KEY` |
+| **Persistence** | `DATABASE_URL` (PostgreSQL) |
+| **Monitoring** | `MLFLOW_TRACKING_URI` |
+| **Cloud Auth** | `CLERK_JWKS_URL`, `CLERK_ISSUER` |
 
-### Python API
+**Supported Integrations:**
+- **Google Workspace**: Gmail, Google Drive, Google Sheets
+- **GitHub**: Repositories, Issues, Pull Requests
+- **Web Tools**: Search, content fetching
+- **Database**: PostgreSQL with read/write controls
 
-```python
-from agents.eval_agent.graph import build_graph
-from langgraph.checkpoint.memory import MemorySaver
+Missing keys? Seer prompts interactively and supports OAuth flows.
 
-graph = build_graph()
-agent = graph.compile(checkpointer=MemorySaver())
-result = await agent.ainvoke({"step": "alignment", ...})
-```
+### Key Features
+
+**🛠️ Visual Workflow Builder**
+- Drag-and-drop interface for creating automation workflows
+- Node-based editor with custom blocks and integrations
+- Real-time workflow validation and execution
+
+**🤖 AI-Assisted Development**
+- Chat interface for workflow design and debugging
+- AI suggestions for workflow improvements
+- Intelligent error handling and recovery
+
+**🔗 Rich Integrations**
+- **Google Workspace**: Gmail, Drive, Sheets with OAuth
+- **GitHub**: Repository management, issues, PRs
+- **Web Tools**: Search, content fetching, APIs
+- **Databases**: PostgreSQL with approval-based write controls
+
+**⚡ Advanced Execution Engine**
+- Streaming execution with real-time updates
+- Interrupt handling for human-in-the-loop workflows
+- Persistent state management with PostgreSQL
+- MLflow integration for observability
+
+**🔒 Enterprise-Ready**
+- Self-hosted or cloud deployment options
+- OAuth-based authentication (Clerk integration)
+- Role-based access control
+- Audit trails and execution history

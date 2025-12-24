@@ -19,8 +19,7 @@ class WorkflowEdit(BaseModel):
     position: Optional[Dict[str, float]] = Field(None, description="Block position {x, y} (for add_block)")
     source_id: Optional[str] = Field(None, description="Source block ID (for edge operations)")
     target_id: Optional[str] = Field(None, description="Target block ID (for edge operations)")
-    source_handle: Optional[str] = Field(None, description="Source handle (for edge operations)")
-    target_handle: Optional[str] = Field(None, description="Target handle (for edge operations)")
+    branch: Optional[str] = Field(None, description="Branch hint for conditional edges ('true' or 'false')")
 
 
 class ChatRequest(BaseModel):
