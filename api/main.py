@@ -100,8 +100,7 @@ if config.is_cloud_mode:
         audience=config.clerk_audience.split(",") if config.clerk_audience else None,
         allow_unauthenticated_paths=[
             "/health",
-            "/api/integrations/gmail/callback",
-            "/api/integrations/google_drive/callback",
+            "/api/integrations/google/callback",
             "/api/integrations/github/callback",
             "/api/integrations/asana/callback",
         ],
