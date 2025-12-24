@@ -19,7 +19,11 @@ class GoogleSheetsWriteTool(BaseTool):
     
     name = "google_sheets_write"
     description = "Write data to a Google Sheet. Requires spreadsheet ID and range."
-    required_scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    required_scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        # TODO: it is hack for now to allow writing to Google Sheets, we need to find a better way to do this.
+        "https://www.googleapis.com/auth/drive.file"
+        ]
     integration_type = "google_sheets"
     provider = "google"
     
