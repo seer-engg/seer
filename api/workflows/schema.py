@@ -10,7 +10,6 @@ class BlockType(str, Enum):
     """Supported block types in controlled schema v1.0."""
     
     TOOL = "tool"
-    CODE = "code"
     LLM = "llm"
     IF_ELSE = "if_else"
     FOR_LOOP = "for_loop"
@@ -23,17 +22,8 @@ class BlockDefinition(BaseModel):
     id: str = Field(..., description="Unique block ID (ReactFlow node ID)")
     type: BlockType = Field(..., description="Block type")
     config: Dict[str, Any] = Field(default_factory=dict, description="Block-specific configuration")
-    python_code: Optional[str] = Field(None, description="Python code for code blocks")
     oauth_scope: Optional[str] = Field(None, description="OAuth scope from frontend (for tool blocks)")
     position: Dict[str, float] = Field(..., description="Block position {x, y}")
-    
-    @field_validator('python_code')
-    @classmethod
-    def validate_python_code(cls, v: Optional[str], info) -> Optional[str]:
-        """Validate that python_code is provided for code blocks."""
-        if info.data.get('type') == BlockType.CODE and not v:
-            raise ValueError("python_code is required for code blocks")
-        return v
     
     @field_validator('config')
     @classmethod
@@ -134,7 +124,6 @@ def validate_workflow_graph(graph_data: Dict[str, Any]) -> WorkflowSchema:
             id=node['id'],
             type=block_type,
             config=data.get('config', {}),
-            python_code=data.get('python_code'),
             oauth_scope=data.get('oauth_scope'),
             position={'x': position.get('x', 0), 'y': position.get('y', 0)},
         )

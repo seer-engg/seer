@@ -14,7 +14,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from .state import WorkflowState
 from .schema import BlockDefinition, BlockType
-from .code_executor import execute_code_block, CodeExecutionError
 from .models import WorkflowExecution, BlockExecution, WorkflowBlock
 from shared.database.models import User
 
@@ -220,36 +219,6 @@ async def input_node(
     else:
         # Return all input_data (for backward compatibility)
         output = input_data
-    
-    return {
-        "block_outputs": {
-            block.id: {"output": output}
-        }
-    }
-
-
-async def code_node(
-    state: WorkflowState,
-    block: BlockDefinition,
-    input_resolution: Dict[str, Dict[str, Any]],
-    execution: Optional[WorkflowExecution] = None,
-) -> WorkflowState:
-    """Code block: execute Python code."""
-    code = block.python_code or ""
-    inputs = await resolve_inputs(state, input_resolution, block)
-    
-    # Prepare code context
-    code_context = {
-        **inputs,
-        "_inputs": inputs,
-    }
-    
-    result = await execute_code_block(code, code_context)
-    
-    if result.get("error"):
-        raise CodeExecutionError(result["error"])
-    
-    output = result.get("output")
     
     return {
         "block_outputs": {
@@ -607,7 +576,6 @@ async def for_loop_node(
 # Node function registry
 NODE_FUNCTIONS = {
     BlockType.INPUT: input_node,
-    BlockType.CODE: code_node,
     BlockType.TOOL: tool_node,
     BlockType.LLM: llm_node,
     BlockType.IF_ELSE: if_else_node,
@@ -625,7 +593,6 @@ __all__ = [
     "build_variable_map",
     "resolve_template_variables",
     "input_node",
-    "code_node",
     "tool_node",
     "llm_node",
     "if_else_node",

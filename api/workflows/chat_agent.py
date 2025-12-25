@@ -14,6 +14,8 @@ from shared.logger import get_logger
 from shared.llm import get_llm_without_responses_api
 from shared.tools.registry import get_tools_by_integration
 from .chat_schema import WorkflowEdit
+import mlflow
+mlflow.langchain.autolog()
 
 logger = get_logger("api.workflows.chat_agent")
 
@@ -118,7 +120,7 @@ async def add_workflow_block(
     Add a new block to the workflow.
     
     Args:
-        block_type: Type of block to add (e.g., 'code', 'tool', 'llm', 'if_else', 'for_loop', 'input')
+        block_type: Type of block to add (e.g., 'tool', 'llm', 'if_else', 'for_loop', 'input')
         workflow_state: Current workflow state (nodes and edges) - optional, will be retrieved from context if not provided
         block_id: Optional block ID (will be generated if not provided)
         block_config: Optional block configuration

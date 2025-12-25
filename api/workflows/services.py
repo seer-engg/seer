@@ -189,9 +189,8 @@ async def _sync_workflow_blocks_and_edges(
         
         if block_id in existing_blocks:
             block = existing_blocks[block_id]
-            block.block_type = node.get('type', 'code')
+            block.block_type = node.get('type', 'tool')
             block.block_config = data.get('config', {})
-            block.python_code = data.get('python_code')
             block.oauth_scope = data.get('oauth_scope')
             block.position_x = position.get('x', 0)
             block.position_y = position.get('y', 0)
@@ -200,9 +199,8 @@ async def _sync_workflow_blocks_and_edges(
             await WorkflowBlock.create(
                 workflow=workflow,
                 block_id=block_id,
-                block_type=node.get('type', 'code'),
+                block_type=node.get('type', 'tool'),
                 block_config=data.get('config', {}),
-                python_code=data.get('python_code'),
                 oauth_scope=data.get('oauth_scope'),
                 position_x=position.get('x', 0),
                 position_y=position.get('y', 0),
