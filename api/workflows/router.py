@@ -38,6 +38,7 @@ from .services import (
     accept_workflow_proposal,
     reject_workflow_proposal,
     preview_patch_ops,
+    derive_block_aliases,
 )
 from .graph_builder import get_workflow_graph_builder
 from .chat_schema import (
@@ -271,6 +272,7 @@ async def execute_workflow_endpoint(
         )
         
         # Prepare initial state
+        block_aliases = derive_block_aliases(workflow.graph_data)
         config = {"configurable": {"thread_id": f"workflow_{execution.id}"}}
         initial_state = {
             "input_data": payload.input_data or {},
@@ -278,6 +280,7 @@ async def execute_workflow_endpoint(
             "user_id": user.user_id,
             "block_outputs": {},
             "loop_state": None,
+            "block_aliases": block_aliases,
         }
         
         # Execute workflow
@@ -345,6 +348,7 @@ async def execute_workflow_stream_endpoint(
             )
             
             # Prepare initial state
+            block_aliases = derive_block_aliases(workflow.graph_data)
             config = {"configurable": {"thread_id": f"workflow_{execution.id}"}}
             initial_state = {
                 "input_data": payload.input_data or {},
@@ -352,6 +356,7 @@ async def execute_workflow_stream_endpoint(
                 "user_id": user.user_id,
                 "block_outputs": {},
                 "loop_state": None,
+                "block_aliases": block_aliases,
             }
             
             # Stream execution events

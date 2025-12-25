@@ -4,7 +4,7 @@ Workflow state schema for LangGraph execution.
 Defines the state structure that flows through the workflow graph.
 """
 from typing_extensions import TypedDict, Annotated
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import operator
 
 
@@ -22,6 +22,9 @@ class WorkflowState(TypedDict):
     # Example: {"block_a": {"output": "result", "email": "user@example.com"}}
     # This allows any block to reference any previous block's output
     block_outputs: Annotated[Dict[str, Dict[str, Any]], operator.or_]
+    
+    # Mapping of block_id -> list of alias strings that can be used in templates
+    block_aliases: Annotated[Dict[str, List[str]], operator.or_]
     
     # Execution metadata
     execution_id: Optional[int]

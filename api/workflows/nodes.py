@@ -36,6 +36,7 @@ def build_variable_map(state: WorkflowState) -> Dict[str, Any]:
     """
     input_data = state.get("input_data", {})
     block_outputs = state.get("block_outputs", {})
+    block_aliases = state.get("block_aliases", {})
     
     variable_map = {}
     
@@ -59,6 +60,13 @@ def build_variable_map(state: WorkflowState) -> Dict[str, Any]:
                 # Also add just the key if it's unique
                 var_name_with_block = f"{block_id}.{key}"
                 variable_map[var_name_with_block] = value
+                
+                # Register alias-based names (e.g., {{gmail_read_tool.output}})
+                aliases = block_aliases.get(block_id, [])
+                for alias in aliases:
+                    alias_key = f"{alias}.{key}"
+                    if alias_key not in variable_map:
+                        variable_map[alias_key] = value
                 
                 # Add simple key if not already present (allows {{key}} if unique)
                 if key not in variable_map:
