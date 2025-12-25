@@ -1,7 +1,7 @@
 """
 Workflow API router for CRUD and execution endpoints.
 """
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Any, Tuple
 from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from shared.logger import get_logger
@@ -14,6 +14,7 @@ from .models import (
     WorkflowListResponse,
     WorkflowExecutionCreate,
     WorkflowExecutionPublic,
+    WorkflowProposalPublic,
 )
 from .services import (
     create_workflow,
@@ -32,6 +33,11 @@ from .services import (
     save_chat_message,
     load_chat_history,
     update_chat_session_title,
+    create_workflow_proposal,
+    get_workflow_proposal,
+    accept_workflow_proposal,
+    reject_workflow_proposal,
+    preview_patch_ops,
 )
 from .graph_builder import get_workflow_graph_builder
 from .chat_schema import (
@@ -42,15 +48,14 @@ from .chat_schema import (
     ChatSessionWithMessages,
     ChatMessage,
     InterruptResponse,
-    WorkflowEdit,
+    WorkflowProposalActionResponse,
 )
-from .chat_agent import create_workflow_chat_agent, extract_thinking_from_messages
+from .chat_agent import create_workflow_chat_agent, extract_thinking_from_messages, _current_thread_id
 from api.agents.checkpointer import get_checkpointer, get_checkpointer_with_retry, _recreate_checkpointer
 import uuid
 import json
 import asyncio
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
-from typing import Any
 
 # Import psycopg for error type checking
 try:
@@ -62,6 +67,101 @@ from shared.database.models import User, UserPublic
 logger = get_logger("api.workflows.router")
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
+
+
+def _summarize_patch_ops(patch_ops: List[Dict[str, Any]]) -> str:
+    """Produce a short human summary for proposal patches."""
+    descriptions = [
+        op.get("description")
+        for op in patch_ops
+        if isinstance(op, dict) and op.get("description")
+    ]
+    if descriptions:
+        return "; ".join(descriptions)
+    return f"{len(patch_ops)} workflow change(s)"
+
+
+def _extract_patch_ops_from_messages(agent_messages: List[Any]) -> List[Dict[str, Any]]:
+    """Find workflow patch operations emitted by tools."""
+    patch_ops: List[Dict[str, Any]] = []
+    tool_call_to_result: Dict[str, ToolMessage] = {}
+    
+    for msg in agent_messages:
+        if isinstance(msg, ToolMessage):
+            tool_call_id = getattr(msg, "tool_call_id", None)
+            if tool_call_id:
+                tool_call_to_result[tool_call_id] = msg
+    
+    recognized_tool_prefixes = (
+        "add_workflow",
+        "modify_workflow",
+        "remove_workflow",
+        "add_workflow_edge",
+        "remove_workflow_edge",
+    )
+    
+    for msg in agent_messages:
+        if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+            for tool_call in msg.tool_calls:
+                if isinstance(tool_call, dict):
+                    tool_call_id = tool_call.get("id")
+                    tool_name = tool_call.get("name", "")
+                else:
+                    tool_call_id = getattr(tool_call, "id", None)
+                    tool_name = getattr(tool_call, "name", "")
+                
+                if not tool_name.startswith(recognized_tool_prefixes):
+                    continue
+                
+                tool_result_msg = tool_call_to_result.get(tool_call_id)
+                if not tool_result_msg:
+                    continue
+                
+                try:
+                    content = tool_result_msg.content if hasattr(tool_result_msg, "content") else str(tool_result_msg)
+                    result_data = json.loads(content)
+                    
+                    if "error" in result_data:
+                        continue
+                    
+                    if "op" in result_data:
+                        patch_ops.append(result_data)
+                except (json.JSONDecodeError, KeyError, ValueError) as exc:
+                    logger.warning(f"Failed to parse tool result for {tool_name}: {exc}")
+    
+    return patch_ops
+
+
+async def _maybe_create_proposal_from_ops(
+    workflow,
+    session,
+    user,
+    model_name: str,
+    patch_ops: List[Dict[str, Any]],
+) -> Tuple[Optional[Any], Optional[WorkflowProposalPublic]]:
+    """Persist workflow proposal if there are patch ops."""
+    if not patch_ops:
+        return None, None
+    
+    preview_graph = None
+    try:
+        preview_graph = preview_patch_ops(getattr(workflow, "graph_data", {}), patch_ops)
+    except HTTPException as preview_error:
+        logger.warning(f"Unable to build preview graph for proposal: {preview_error}")
+    
+    summary = _summarize_patch_ops(patch_ops)
+    proposal = await create_workflow_proposal(
+        workflow=workflow,
+        session=session,
+        user=user,
+        summary=summary,
+        patch_ops=patch_ops,
+        preview_graph=preview_graph,
+        metadata={"model": model_name},
+    )
+    await proposal.fetch_related('created_by', 'workflow', 'session')
+    proposal_public = WorkflowProposalPublic.model_validate(proposal, from_attributes=True)
+    return proposal, proposal_public
 
 
 
@@ -350,6 +450,7 @@ async def chat_with_workflow_endpoint(
     # Create or get chat session
     thread_id = chat_request.thread_id
     session_id = chat_request.session_id
+    session = None
     
     if thread_id:
         # Try to find existing session by thread_id
@@ -363,6 +464,15 @@ async def chat_with_workflow_endpoint(
     else:
         # Create new session
         thread_id = f"workflow-{workflow_id}-{uuid.uuid4().hex}"
+        session = await create_chat_session(
+            workflow_id=workflow_id,
+            user=user,
+            thread_id=thread_id,
+        )
+        session_id = session.id
+    
+    if session is None:
+        thread_id = thread_id or f"workflow-{workflow_id}-{uuid.uuid4().hex}"
         session = await create_chat_session(
             workflow_id=workflow_id,
             user=user,
@@ -843,88 +953,14 @@ async def chat_with_workflow_endpoint(
         # Extract thinking steps
         thinking_steps = extract_thinking_from_messages(agent_messages)
         
-        # Parse suggested edits from tool results (ToolMessages)
-        # Planning tools return plans that are displayed as suggested_edits
-        suggested_edits = []
-        tool_call_to_result = {}  # Map tool_call_id -> ToolMessage
-        
-        # First pass: collect ToolMessages
-        for msg in agent_messages:
-            if isinstance(msg, ToolMessage):
-                tool_call_id = getattr(msg, "tool_call_id", None)
-                if tool_call_id:
-                    tool_call_to_result[tool_call_id] = msg
-        
-        # Second pass: match tool calls to results
-        for msg in agent_messages:
-            if isinstance(msg, AIMessage) and hasattr(msg, "tool_calls") and msg.tool_calls:
-                for tool_call in msg.tool_calls:
-                    # Handle both dict and object formats
-                    if isinstance(tool_call, dict):
-                        tool_call_id = tool_call.get("id")
-                        tool_name = tool_call.get("name", "")
-                    else:
-                        tool_call_id = getattr(tool_call, "id", None)
-                        tool_name = getattr(tool_call, "name", "")
-                    
-                    if tool_name.startswith(("add_workflow", "modify_workflow", "remove_workflow", "add_workflow_edge", "remove_workflow_edge")):
-                        tool_result_msg = tool_call_to_result.get(tool_call_id)
-                        if tool_result_msg:
-                            try:
-                                # Parse JSON from ToolMessage content
-                                content = tool_result_msg.content if hasattr(tool_result_msg, "content") else str(tool_result_msg)
-                                result_data = json.loads(content)
-                                
-                                # Skip error responses
-                                if "error" in result_data:
-                                    logger.debug(f"Skipping tool result with error for {tool_name}: {result_data.get('error')}")
-                                    continue
-                                
-                                # Convert to WorkflowEdit
-                                operation = result_data.get("operation", "")
-                                
-                                # Extract edit_id from result
-                                edit_id = result_data.get("edit_id")
-                                
-                                # Handle block operations
-                                if operation in ("add_block", "modify_block", "remove_block"):
-                                    block_data = result_data.get("block", {})
-                                    edit = WorkflowEdit(
-                                        operation=operation,
-                                        edit_id=edit_id,
-                                        block_id=block_data.get("id") if block_data else result_data.get("block_id"),
-                                        block_type=block_data.get("type") if operation == "add_block" else None,
-                                        label=block_data.get("data", {}).get("label") if block_data and "data" in block_data else None,
-                                        config=block_data.get("data", {}).get("config") if block_data and "data" in block_data else None,
-                                        position=block_data.get("position") if operation == "add_block" else None,
-                                    )
-                                    suggested_edits.append(edit)
-                                
-                                # Handle edge operations
-                                elif operation == "add_edge":
-                                    edge_data = result_data.get("edge", {})
-                                    edit = WorkflowEdit(
-                                        operation=operation,
-                                        edit_id=edit_id,
-                                        source_id=edge_data.get("source"),
-                                        target_id=edge_data.get("target"),
-                                        branch=edge_data.get("data", {}).get("branch"),
-                                    )
-                                    suggested_edits.append(edit)
-                                
-                                elif operation == "remove_edge":
-                                    edit = WorkflowEdit(
-                                        operation=operation,
-                                        edit_id=edit_id,
-                                        source_id=result_data.get("source_id"),
-                                        target_id=result_data.get("target_id"),
-                                    )
-                                    suggested_edits.append(edit)
-                                
-                            except (json.JSONDecodeError, KeyError, ValueError) as e:
-                                logger.warning(f"Failed to parse tool result for {tool_name} (tool_call_id={tool_call_id}): {e}")
-                        else:
-                            logger.debug(f"No ToolMessage found for tool call {tool_name} (tool_call_id={tool_call_id})")
+        patch_ops = _extract_patch_ops_from_messages(agent_messages)
+        proposal, proposal_public = await _maybe_create_proposal_from_ops(
+            workflow=workflow,
+            session=session,
+            user=user,
+            model_name=model,
+            patch_ops=patch_ops,
+        )
         
         # Save assistant message to database
         await save_chat_message(
@@ -932,11 +968,13 @@ async def chat_with_workflow_endpoint(
             role="assistant",
             content=response_text,
             thinking="\n".join(thinking_steps) if thinking_steps else None,
+            suggested_edits={"patch_ops": patch_ops} if patch_ops else None,
+            proposal=proposal,
         )
         
         return ChatResponse(
             response=response_text,
-            suggested_edits=suggested_edits,
+            proposal=proposal_public,
             session_id=session_id,
             thread_id=thread_id,
             thinking=thinking_steps if thinking_steps else None,
@@ -1033,6 +1071,7 @@ async def get_chat_session_endpoint(
                 content=msg.content,
                 thinking=msg.thinking,
                 suggested_edits=msg.suggested_edits,
+                proposal=WorkflowProposalPublic.model_validate(msg.proposal, from_attributes=True) if msg.proposal else None,
                 metadata=msg.metadata,
                 created_at=msg.created_at,
             )
@@ -1137,17 +1176,28 @@ async def resume_chat_endpoint(
         from .chat_agent import extract_thinking_from_messages
         thinking_steps = extract_thinking_from_messages(agent_messages)
         
+        patch_ops = _extract_patch_ops_from_messages(agent_messages)
+        proposal, proposal_public = await _maybe_create_proposal_from_ops(
+            workflow=workflow,
+            session=session,
+            user=user,
+            model_name=config.default_llm_model,
+            patch_ops=patch_ops,
+        )
+        
         # Save assistant message to database
         await save_chat_message(
             session_id=session_id,
             role="assistant",
             content=response_text,
             thinking="\n".join(thinking_steps) if thinking_steps else None,
+            suggested_edits={"patch_ops": patch_ops} if patch_ops else None,
+            proposal=proposal,
         )
         
         return ChatResponse(
             response=response_text,
-            suggested_edits=[],
+            proposal=proposal_public,
             session_id=session_id,
             thread_id=thread_id,
             thinking=thinking_steps if thinking_steps else None,
@@ -1163,6 +1213,48 @@ async def resume_chat_endpoint(
         # Reset context variable
         if token is not None:
             _current_thread_id.reset(token)
+
+
+@router.get("/{workflow_id}/proposals/{proposal_id}", response_model=WorkflowProposalPublic)
+async def get_proposal_endpoint(
+    request: Request,
+    workflow_id: int,
+    proposal_id: int,
+) -> WorkflowProposalPublic:
+    """Fetch a single workflow proposal."""
+    proposal = await get_workflow_proposal(workflow_id, proposal_id)
+    await proposal.fetch_related('created_by', 'workflow', 'session')
+    return WorkflowProposalPublic.model_validate(proposal, from_attributes=True)
+
+
+@router.post("/{workflow_id}/proposals/{proposal_id}/accept", response_model=WorkflowProposalActionResponse)
+async def accept_proposal_endpoint(
+    request: Request,
+    workflow_id: int,
+    proposal_id: int,
+) -> WorkflowProposalActionResponse:
+    """Accept a workflow proposal and apply its changes."""
+    proposal, workflow = await accept_workflow_proposal(workflow_id, proposal_id)
+    await proposal.fetch_related('created_by', 'workflow', 'session')
+    return WorkflowProposalActionResponse(
+        proposal=WorkflowProposalPublic.model_validate(proposal, from_attributes=True),
+        workflow_graph=workflow.graph_data,
+    )
+
+
+@router.post("/{workflow_id}/proposals/{proposal_id}/reject", response_model=WorkflowProposalActionResponse)
+async def reject_proposal_endpoint(
+    request: Request,
+    workflow_id: int,
+    proposal_id: int,
+) -> WorkflowProposalActionResponse:
+    """Reject a workflow proposal without applying changes."""
+    proposal = await reject_workflow_proposal(workflow_id, proposal_id)
+    await proposal.fetch_related('created_by', 'workflow', 'session')
+    return WorkflowProposalActionResponse(
+        proposal=WorkflowProposalPublic.model_validate(proposal, from_attributes=True),
+        workflow_graph=None,
+    )
 
 
 __all__ = ["router"]

@@ -13,7 +13,6 @@ import uuid
 from shared.logger import get_logger
 from shared.llm import get_llm_without_responses_api
 from shared.tools.registry import get_tools_by_integration
-from .chat_schema import WorkflowEdit
 import mlflow
 mlflow.langchain.autolog()
 
@@ -34,26 +33,20 @@ def get_workflow_state_for_thread(thread_id: str) -> Optional[Dict[str, Any]]:
     """Get workflow state for a specific thread."""
     return _workflow_state_context.get(thread_id)
 
-# Global planned edits context (thread-safe via thread_id key)
-_planned_edits_context: Dict[str, Dict[str, Dict[str, Any]]] = {}
-
-def set_planned_edits_for_thread(thread_id: str, planned_edits: Dict[str, Dict[str, Any]]) -> None:
-    """Set planned edits for a specific thread."""
-    _planned_edits_context[thread_id] = planned_edits
-
-def get_planned_edits_for_thread(thread_id: str) -> Optional[Dict[str, Dict[str, Any]]]:
-    """Get planned edits for a specific thread."""
-    return _planned_edits_context.get(thread_id)
-
-def get_planned_edit(thread_id: str, edit_id: str) -> Optional[Dict[str, Any]]:
-    """Get a specific planned edit by ID."""
-    planned_edits = get_planned_edits_for_thread(thread_id)
-    if planned_edits:
-        return planned_edits.get(edit_id)
-    return None
-
-
 # Workflow manipulation tools
+
+
+def _with_block_config_defaults(
+    block_type: Optional[str],
+    config: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Ensure required config defaults exist for specific block types."""
+    config = config.copy() if config else {}
+    if block_type == "for_loop":
+        # Loop blocks require array_var/item_var for validation/execution
+        config.setdefault("array_var", "items")
+        config.setdefault("item_var", "item")
+    return config
 
 @tool
 async def analyze_workflow(
@@ -138,8 +131,6 @@ async def add_workflow_block(
     if workflow_state is None:
         return json.dumps({"error": "Workflow state not available"})
     
-    thread_id = _current_thread_id.get()
-    
     nodes = workflow_state.get("nodes", [])
     
     # Generate block ID if not provided
@@ -159,7 +150,7 @@ async def add_workflow_block(
         position = {"x": 0, "y": 0}
     
     # Process block_config: transform inputs to params for tool blocks
-    processed_config = block_config or {}
+    processed_config = _with_block_config_defaults(block_type, block_config)
     if block_type == "tool" and "inputs" in processed_config and "params" not in processed_config:
         processed_config = {
             **processed_config,
@@ -177,22 +168,18 @@ async def add_workflow_block(
         }
     }
     
-    # Generate edit_id and store planned edit in thread context
-    edit_id = f"edit-{uuid.uuid4().hex[:8]}"
+    # Mutate workflow_state contextually so subsequent tool calls can reference the block
+    nodes.append(new_block)
+    workflow_state["nodes"] = nodes
+    thread_id = _current_thread_id.get()
     if thread_id:
-        planned_edits = get_planned_edits_for_thread(thread_id) or {}
-        planned_edits[edit_id] = {
-            "operation": "add_block",
-            "block": new_block,
-            "timestamp": json.dumps({"iso": "now"}),  # Simple timestamp placeholder
-        }
-        set_planned_edits_for_thread(thread_id, planned_edits)
+        set_workflow_state_for_thread(thread_id, workflow_state)
     
     return json.dumps({
-        "operation": "add_block",
-        "edit_id": edit_id,
-        "block": new_block,
-        "message": f"Ready to add {block_type} block '{block_id}'. Use apply_workflow_edit with edit_id '{edit_id}' to apply this change."
+        "op": "add_node",
+        "description": f"Add {block_type} block '{block_id}'",
+        "node_id": block_id,
+        "node": new_block,
     })
 
 
@@ -224,8 +211,6 @@ async def modify_workflow_block(
             workflow_state = get_workflow_state_for_thread(thread_id)
     if workflow_state is None:
         return json.dumps({"error": "Workflow state not available"})
-    
-    thread_id = _current_thread_id.get()
     
     nodes = workflow_state.get("nodes", [])
     
@@ -260,24 +245,29 @@ async def modify_workflow_block(
     if position:
         modified_block["position"] = position
     
-    # Generate edit_id and store planned edit in thread context
-    edit_id = f"edit-{uuid.uuid4().hex[:8]}"
+    # Ensure config defaults (important for validation)
+    block_type = modified_block.get("type")
+    if block_type:
+        updated_config = _with_block_config_defaults(block_type, modified_block.get("data", {}).get("config"))
+        if "data" not in modified_block:
+            modified_block["data"] = {}
+        modified_block["data"]["config"] = updated_config
+    
+    # Update workflow_state so further reasoning uses modified block
+    for idx, node in enumerate(nodes):
+        if node.get("id") == block_id:
+            nodes[idx] = modified_block
+            break
+    workflow_state["nodes"] = nodes
+    thread_id = _current_thread_id.get()
     if thread_id:
-        planned_edits = get_planned_edits_for_thread(thread_id) or {}
-        planned_edits[edit_id] = {
-            "operation": "modify_block",
-            "block_id": block_id,
-            "block": modified_block,
-            "timestamp": json.dumps({"iso": "now"}),
-        }
-        set_planned_edits_for_thread(thread_id, planned_edits)
+        set_workflow_state_for_thread(thread_id, workflow_state)
     
     return json.dumps({
-        "operation": "modify_block",
-        "edit_id": edit_id,
-        "block_id": block_id,
-        "block": modified_block,
-        "message": f"Ready to modify block '{block_id}'. Use apply_workflow_edit with edit_id '{edit_id}' to apply this change."
+        "op": "update_node",
+        "description": f"Modify block '{block_id}'",
+        "node_id": block_id,
+        "node": modified_block,
     })
 
 
@@ -304,8 +294,6 @@ async def remove_workflow_block(
     if workflow_state is None:
         return json.dumps({"error": "Workflow state not available"})
     
-    thread_id = _current_thread_id.get()
-    
     nodes = workflow_state.get("nodes", [])
     edges = workflow_state.get("edges", [])
     
@@ -316,30 +304,25 @@ async def remove_workflow_block(
             "error": f"Block with ID '{block_id}' not found"
         })
     
-    # Check for connected edges
     connected_edges = [
         edge for edge in edges
         if edge.get("source") == block_id or edge.get("target") == block_id
     ]
     
-    # Generate edit_id and store planned edit in thread context
-    edit_id = f"edit-{uuid.uuid4().hex[:8]}"
+    # Mutate workflow_state so subsequent tool calls respect the removal
+    workflow_state["nodes"] = [node for node in nodes if node.get("id") != block_id]
+    workflow_state["edges"] = [
+        edge for edge in edges
+        if edge.get("source") != block_id and edge.get("target") != block_id
+    ]
+    thread_id = _current_thread_id.get()
     if thread_id:
-        planned_edits = get_planned_edits_for_thread(thread_id) or {}
-        planned_edits[edit_id] = {
-            "operation": "remove_block",
-            "block_id": block_id,
-            "connected_edges": len(connected_edges),
-            "timestamp": json.dumps({"iso": "now"}),
-        }
-        set_planned_edits_for_thread(thread_id, planned_edits)
+        set_workflow_state_for_thread(thread_id, workflow_state)
     
     return json.dumps({
-        "operation": "remove_block",
-        "edit_id": edit_id,
-        "block_id": block_id,
-        "connected_edges": len(connected_edges),
-        "message": f"Ready to remove block '{block_id}' (will also remove {len(connected_edges)} connected edges). Use apply_workflow_edit with edit_id '{edit_id}' to apply this change."
+        "op": "remove_node",
+        "description": f"Remove block '{block_id}' and {len(connected_edges)} connected edges",
+        "node_id": block_id,
     })
 
 
@@ -367,8 +350,6 @@ async def add_workflow_edge(
             workflow_state = get_workflow_state_for_thread(thread_id)
     if workflow_state is None:
         return json.dumps({"error": "Workflow state not available"})
-    
-    thread_id = _current_thread_id.get()
     
     nodes = workflow_state.get("nodes", [])
     edges = workflow_state.get("edges", [])
@@ -421,22 +402,18 @@ async def add_workflow_edge(
         **({"data": {"branch": branch}} if branch else {}),
     }
     
-    # Generate edit_id and store planned edit in thread context
-    edit_id = f"edit-{uuid.uuid4().hex[:8]}"
+    # Update workflow_state
+    edges.append(new_edge)
+    workflow_state["edges"] = edges
+    thread_id = _current_thread_id.get()
     if thread_id:
-        planned_edits = get_planned_edits_for_thread(thread_id) or {}
-        planned_edits[edit_id] = {
-            "operation": "add_edge",
-            "edge": new_edge,
-            "timestamp": json.dumps({"iso": "now"}),
-        }
-        set_planned_edits_for_thread(thread_id, planned_edits)
+        set_workflow_state_for_thread(thread_id, workflow_state)
     
     return json.dumps({
-        "operation": "add_edge",
-        "edit_id": edit_id,
+        "op": "add_edge",
+        "description": f"Connect '{source_id}' to '{target_id}'",
+        "edge_id": new_edge.get("id"),
         "edge": new_edge,
-        "message": f"Ready to connect '{source_id}' to '{target_id}'. Use apply_workflow_edit with edit_id '{edit_id}' to apply this change."
     })
 
 
@@ -465,8 +442,6 @@ async def remove_workflow_edge(
     if workflow_state is None:
         return json.dumps({"error": "Workflow state not available"})
     
-    thread_id = _current_thread_id.get()
-    
     edges = workflow_state.get("edges", [])
     
     # Check if edge exists
@@ -480,159 +455,21 @@ async def remove_workflow_edge(
             "error": f"Edge from '{source_id}' to '{target_id}' not found"
         })
     
-    # Generate edit_id and store planned edit in thread context
-    edit_id = f"edit-{uuid.uuid4().hex[:8]}"
-    if thread_id:
-        planned_edits = get_planned_edits_for_thread(thread_id) or {}
-        planned_edits[edit_id] = {
-            "operation": "remove_edge",
-            "source_id": source_id,
-            "target_id": target_id,
-            "timestamp": json.dumps({"iso": "now"}),
-        }
-        set_planned_edits_for_thread(thread_id, planned_edits)
-    
-    return json.dumps({
-        "operation": "remove_edge",
-        "edit_id": edit_id,
-        "source_id": source_id,
-        "target_id": target_id,
-        "message": f"Ready to remove connection from '{source_id}' to '{target_id}'. Use apply_workflow_edit with edit_id '{edit_id}' to apply this change."
-    })
-
-
-@tool
-async def apply_workflow_edit(
-    edit_id: str,
-    workflow_state: Optional[Dict[str, Any]] = None,
-) -> str:
-    """
-    Apply a previously planned workflow edit.
-    
-    This tool actually modifies the workflow state. Use this AFTER the user has approved
-    a plan that was shown via suggested_edits.
-    
-    Args:
-        edit_id: ID of the edit to apply (from a previous plan)
-        workflow_state: Current workflow state - optional, will be retrieved from context if not provided
-        
-    Returns:
-        Confirmation message with details of what was applied
-    """
-    # Get workflow_state from parameter or thread context
-    if workflow_state is None:
-        thread_id = _current_thread_id.get()
-        if thread_id:
-            workflow_state = get_workflow_state_for_thread(thread_id)
-    if workflow_state is None:
-        return json.dumps({"error": "Workflow state not available"})
-    
+    workflow_state["edges"] = [
+        edge for edge in edges
+        if not (edge.get("source") == source_id and edge.get("target") == target_id)
+    ]
     thread_id = _current_thread_id.get()
-    
-    # Retrieve the planned edit
-    planned_edit = get_planned_edit(thread_id, edit_id) if thread_id else None
-    if not planned_edit:
-        return json.dumps({
-            "error": f"Planned edit with ID '{edit_id}' not found. It may have expired or been cleared."
-        })
-    
-    operation = planned_edit.get("operation")
-    nodes = workflow_state.get("nodes", [])
-    edges = workflow_state.get("edges", [])
-    
-    # Apply the edit based on operation type
-    if operation == "add_block":
-        block = planned_edit.get("block")
-        if block:
-            nodes.append(block)
-            workflow_state["nodes"] = nodes
-            # Update thread context with modified workflow state
-            if thread_id:
-                set_workflow_state_for_thread(thread_id, workflow_state)
-            return json.dumps({
-                "success": True,
-                "operation": "add_block",
-                "block_id": block.get("id"),
-                "message": f"Successfully added {block.get('type')} block '{block.get('id')}' to the workflow."
-            })
-    
-    elif operation == "modify_block":
-        block_id = planned_edit.get("block_id")
-        modified_block = planned_edit.get("block")
-        if block_id and modified_block:
-            # Find and replace the block
-            for i, node in enumerate(nodes):
-                if node.get("id") == block_id:
-                    nodes[i] = modified_block
-                    workflow_state["nodes"] = nodes
-                    # Update thread context with modified workflow state
-                    if thread_id:
-                        set_workflow_state_for_thread(thread_id, workflow_state)
-                    return json.dumps({
-                        "success": True,
-                        "operation": "modify_block",
-                        "block_id": block_id,
-                        "message": f"Successfully modified block '{block_id}'."
-                    })
-            return json.dumps({
-                "error": f"Block '{block_id}' not found in workflow"
-            })
-    
-    elif operation == "remove_block":
-        block_id = planned_edit.get("block_id")
-        if block_id:
-            # Remove the block
-            nodes = [node for node in nodes if node.get("id") != block_id]
-            workflow_state["nodes"] = nodes
-            # Also remove connected edges
-            edges = [edge for edge in edges if edge.get("source") != block_id and edge.get("target") != block_id]
-            workflow_state["edges"] = edges
-            # Update thread context with modified workflow state
-            if thread_id:
-                set_workflow_state_for_thread(thread_id, workflow_state)
-            return json.dumps({
-                "success": True,
-                "operation": "remove_block",
-                "block_id": block_id,
-                "message": f"Successfully removed block '{block_id}' and its connected edges."
-            })
-    
-    elif operation == "add_edge":
-        edge = planned_edit.get("edge")
-        if edge:
-            edges.append(edge)
-            workflow_state["edges"] = edges
-            # Update thread context with modified workflow state
-            if thread_id:
-                set_workflow_state_for_thread(thread_id, workflow_state)
-            return json.dumps({
-                "success": True,
-                "operation": "add_edge",
-                "source_id": edge.get("source"),
-                "target_id": edge.get("target"),
-                "message": f"Successfully connected '{edge.get('source')}' to '{edge.get('target')}'."
-            })
-    
-    elif operation == "remove_edge":
-        source_id = planned_edit.get("source_id")
-        target_id = planned_edit.get("target_id")
-        if source_id and target_id:
-            # Remove the edge
-            edges = [edge for edge in edges if not (edge.get("source") == source_id and edge.get("target") == target_id)]
-            workflow_state["edges"] = edges
-            # Update thread context with modified workflow state
-            if thread_id:
-                set_workflow_state_for_thread(thread_id, workflow_state)
-            return json.dumps({
-                "success": True,
-                "operation": "remove_edge",
-                "source_id": source_id,
-                "target_id": target_id,
-                "message": f"Successfully removed connection from '{source_id}' to '{target_id}'."
-            })
+    if thread_id:
+        set_workflow_state_for_thread(thread_id, workflow_state)
     
     return json.dumps({
-        "error": f"Unknown operation '{operation}'"
+        "op": "remove_edge",
+        "description": f"Remove connection from '{source_id}' to '{target_id}'",
+        "edge": {
+            "source": source_id,
+            "target": target_id,
+        },
     })
 
 
@@ -714,7 +551,7 @@ async def search_tools(
         results = await _search_tools_local(
             query=query,
             integration_name=integration_filter,
-            top_k=5
+            top_k=3
         )
         
         if not results:
@@ -807,10 +644,9 @@ def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:
         remove_workflow_block,
         add_workflow_edge,
         remove_workflow_edge,
-        apply_workflow_edit,
         # Dynamic tool discovery tools
         search_tools,
-        list_available_tools,
+        # list_available_tools,
     ]
     
     if workflow_state is None:
@@ -905,12 +741,13 @@ def create_workflow_chat_agent(
 1. Understand user intent - what outcome do they want?
 2. If unclear, ask 1-2 clarifying questions in plain language (e.g., "What should happen if no emails are found?")
 3. Search for relevant tools using search_tools(query, reasoning)
-4. Build the workflow step-by-step: add blocks, connect them, validate intent
+4. Build the workflow step-by-step: add blocks, connect them via tool add_workflow_edge, validate intent
+5. remember to connect blocks to each other via tool add_workflow_edge after you have added all blocks
 **Modifying Workflows:**
-Follow PLAN → WAIT → APPLY:
-- **PLAN**: Call planning tools (add_workflow_block, modify_workflow_block, etc.) - they return a plan with edit_id
-- **WAIT**: User approves with "yes", "approve", "apply", etc. - if rejected, create a new plan
-- **APPLY**: Call apply_workflow_edit(edit_id) once approved
+- Call planning tools (add_workflow_block, modify_workflow_block, etc.) to build a complete proposal
+- Each tool call must describe the change as a patch operation (add_node, update_node, remove_node, add_edge, remove_edge)
+- Never apply edits yourself; simply describe the full change-set so the user can accept or reject it
+- Include a concise natural-language justification for the proposal
 **Asking Questions:**
 - Ask only when essential information is missing - make reasonable assumptions otherwise
 - Limit to 1-2 questions at a time to avoid overwhelming users

@@ -6,20 +6,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from shared.database.models import UserPublic
-
-
-class WorkflowEdit(BaseModel):
-    """Represents a single edit operation on a workflow."""
-    operation: str = Field(..., description="Operation type: 'add_block', 'modify_block', 'remove_block', 'add_edge', 'remove_edge'")
-    edit_id: Optional[str] = Field(None, description="ID of the planned edit for application")
-    block_id: Optional[str] = Field(None, description="Block ID for the operation")
-    block_type: Optional[str] = Field(None, description="Block type (for add_block operation)")
-    label: Optional[str] = Field(None, description="Block label (for add_block operation)")
-    config: Optional[Dict[str, Any]] = Field(None, description="Block configuration (for add/modify operations)")
-    position: Optional[Dict[str, float]] = Field(None, description="Block position {x, y} (for add_block)")
-    source_id: Optional[str] = Field(None, description="Source block ID (for edge operations)")
-    target_id: Optional[str] = Field(None, description="Target block ID (for edge operations)")
-    branch: Optional[str] = Field(None, description="Branch hint for conditional edges ('true' or 'false')")
+from .models import WorkflowProposalPublic
 
 
 class ChatRequest(BaseModel):
@@ -35,7 +22,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     """Response model for chat endpoint."""
     response: str = Field(..., description="Assistant's text response")
-    suggested_edits: List[WorkflowEdit] = Field(default_factory=list, description="Suggested workflow edits")
+    proposal: Optional[WorkflowProposalPublic] = Field(default=None, description="Workflow proposal with patch operations")
     session_id: Optional[int] = Field(default=None, description="Chat session ID")
     thread_id: Optional[str] = Field(default=None, description="LangGraph thread ID")
     thinking: Optional[List[str]] = Field(default=None, description="Agent thinking/reasoning steps (collapsible)")
@@ -67,6 +54,7 @@ class ChatMessage(BaseModel):
     content: str
     thinking: Optional[str] = None
     suggested_edits: Optional[Dict[str, Any]] = None
+    proposal: Optional[WorkflowProposalPublic] = None
     metadata: Optional[Dict[str, Any]] = None
     created_at: datetime
 
@@ -74,6 +62,12 @@ class ChatMessage(BaseModel):
 class ChatSessionWithMessages(ChatSession):
     """Chat session with messages."""
     messages: List[ChatMessage] = Field(default_factory=list)
+
+
+class WorkflowProposalActionResponse(BaseModel):
+    """Response for proposal accept/reject actions."""
+    proposal: WorkflowProposalPublic
+    workflow_graph: Optional[Dict[str, Any]] = Field(default=None, description="Updated workflow graph when accepted")
 
 
 class InterruptResponse(BaseModel):

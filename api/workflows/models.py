@@ -4,7 +4,7 @@ Database models for workflow system.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 from tortoise import fields, models
@@ -141,6 +141,7 @@ class WorkflowChatMessage(models.Model):
     
     id = fields.IntField(primary_key=True)
     session = fields.ForeignKeyField('models.WorkflowChatSession', related_name='messages')
+    proposal = fields.OneToOneField('models.WorkflowProposal', related_name='message', null=True)
     role = fields.CharField(max_length=20)  # 'user' or 'assistant'
     content = fields.TextField()
     thinking = fields.TextField(null=True)  # Optional thinking/reasoning steps
@@ -154,6 +155,35 @@ class WorkflowChatMessage(models.Model):
     
     def __str__(self) -> str:
         return f"WorkflowChatMessage<{self.role}:{self.content[:50]}>"
+
+
+class WorkflowProposal(models.Model):
+    """Reviewable workflow edit proposal."""
+    
+    STATUS_PENDING = "pending"
+    STATUS_ACCEPTED = "accepted"
+    STATUS_REJECTED = "rejected"
+    
+    id = fields.IntField(primary_key=True)
+    workflow = fields.ForeignKeyField('models.Workflow', related_name='proposals')
+    session = fields.ForeignKeyField('models.WorkflowChatSession', related_name='proposals', null=True)
+    created_by = fields.ForeignKeyField('models.User', related_name='workflow_proposals')
+    summary = fields.CharField(max_length=512)
+    patch_ops = fields.JSONField()
+    status = fields.CharField(max_length=20, default=STATUS_PENDING)
+    preview_graph = fields.JSONField(null=True)
+    applied_graph = fields.JSONField(null=True)
+    metadata = fields.JSONField(null=True)
+    decided_at = fields.DatetimeField(null=True)
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+    
+    class Meta:
+        table = "workflow_proposals"
+        ordering = ("-created_at",)
+    
+    def __str__(self) -> str:
+        return f"WorkflowProposal<{self.id}:{self.status}>"
 
 
 # ============================================================================
@@ -236,6 +266,39 @@ class WorkflowChatSessionPublic(BaseModel):
     updated_at: datetime
 
 
+class WorkflowProposalPatchOp(BaseModel):
+    """Single patch operation inside a proposal."""
+    
+    op: str
+    description: Optional[str] = None
+    node_id: Optional[str] = None
+    node: Optional[Dict[str, Any]] = None
+    edge_id: Optional[str] = None
+    edge: Optional[Dict[str, Any]] = None
+    source: Optional[str] = None
+    target: Optional[str] = None
+
+
+class WorkflowProposalPublic(BaseModel):
+    """Response model for workflow proposals."""
+    
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    workflow_id: int
+    session_id: Optional[int] = None
+    created_by: UserPublic
+    summary: str
+    status: str
+    patch_ops: List[WorkflowProposalPatchOp]
+    preview_graph: Optional[Dict[str, Any]] = None
+    applied_graph: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    decided_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class WorkflowChatMessagePublic(BaseModel):
     """Response model for chat message."""
     
@@ -248,6 +311,7 @@ class WorkflowChatMessagePublic(BaseModel):
     thinking: Optional[str] = None
     suggested_edits: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
+    proposal: Optional[WorkflowProposalPublic] = None
     created_at: datetime
 
 
@@ -259,6 +323,7 @@ __all__ = [
     "BlockExecution",
     "WorkflowChatSession",
     "WorkflowChatMessage",
+    "WorkflowProposal",
     "WorkflowBase",
     "WorkflowCreate",
     "WorkflowUpdate",
@@ -268,5 +333,7 @@ __all__ = [
     "WorkflowExecutionPublic",
     "WorkflowChatSessionPublic",
     "WorkflowChatMessagePublic",
+    "WorkflowProposalPublic",
+    "WorkflowProposalPatchOp",
 ]
 
