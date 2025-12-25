@@ -1,8 +1,9 @@
 """
 Workflow service layer for business logic.
 """
-from typing import List, Optional
+from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
+from copy import deepcopy
 
 from fastapi import HTTPException
 from shared.logger import get_logger
@@ -16,6 +17,7 @@ from .models import (
     BlockExecution,
     WorkflowChatSession,
     WorkflowChatMessage,
+    WorkflowProposal,
     WorkflowCreate,
     WorkflowUpdate,
 )
@@ -189,9 +191,8 @@ async def _sync_workflow_blocks_and_edges(
         
         if block_id in existing_blocks:
             block = existing_blocks[block_id]
-            block.block_type = node.get('type', 'code')
+            block.block_type = node.get('type', 'tool')
             block.block_config = data.get('config', {})
-            block.python_code = data.get('python_code')
             block.oauth_scope = data.get('oauth_scope')
             block.position_x = position.get('x', 0)
             block.position_y = position.get('y', 0)
@@ -200,9 +201,8 @@ async def _sync_workflow_blocks_and_edges(
             await WorkflowBlock.create(
                 workflow=workflow,
                 block_id=block_id,
-                block_type=node.get('type', 'code'),
+                block_type=node.get('type', 'tool'),
                 block_config=data.get('config', {}),
-                python_code=data.get('python_code'),
                 oauth_scope=data.get('oauth_scope'),
                 position_x=position.get('x', 0),
                 position_y=position.get('y', 0),
@@ -491,6 +491,7 @@ async def save_chat_message(
     thinking: Optional[str] = None,
     suggested_edits: Optional[dict] = None,
     metadata: Optional[dict] = None,
+    proposal: Optional[WorkflowProposal] = None,
 ) -> WorkflowChatMessage:
     """
     Save a chat message to the database.
@@ -502,6 +503,7 @@ async def save_chat_message(
         thinking: Optional thinking/reasoning steps
         suggested_edits: Optional suggested workflow edits
         metadata: Optional metadata (model used, etc.)
+        proposal: Optional proposal linked to this message
         
     Returns:
         Created message
@@ -516,6 +518,7 @@ async def save_chat_message(
     
     message = await WorkflowChatMessage.create(
         session=session,
+        proposal=proposal,
         role=role,
         content=content,
         thinking=thinking,
@@ -541,7 +544,7 @@ async def load_chat_history(
     """
     messages = await WorkflowChatMessage.filter(
         session_id=session_id
-    ).order_by('created_at').all()
+    ).prefetch_related('proposal__created_by', 'proposal__workflow', 'proposal__session').order_by('created_at').all()
     
     return messages
 
@@ -573,6 +576,214 @@ async def update_chat_session_title(
     return session
 
 
+def _with_default_graph(graph_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Return a deepcopy of graph data with default nodes/edges."""
+    base = graph_data or {}
+    return {
+        "nodes": deepcopy(base.get("nodes", [])),
+        "edges": deepcopy(base.get("edges", [])),
+    }
+
+
+def _apply_patch_ops(
+    graph_data: Optional[Dict[str, Any]],
+    patch_ops: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Apply patch operations to a workflow graph."""
+    updated_graph = _with_default_graph(graph_data)
+    nodes = updated_graph["nodes"]
+    edges = updated_graph["edges"]
+    
+    def _ensure_node_defaults(node: Dict[str, Any]) -> Dict[str, Any]:
+        if not node:
+            return node
+        block_type = node.get("type")
+        data = node.get("data") or {}
+        config = data.get("config") or {}
+        if block_type == "for_loop":
+            config.setdefault("array_var", "items")
+            config.setdefault("item_var", "item")
+        data["config"] = config
+        node["data"] = data
+        return node
+    
+    def _find_node_index(node_id: str) -> Optional[int]:
+        for idx, node in enumerate(nodes):
+            if node.get("id") == node_id:
+                return idx
+        return None
+    
+    for op in patch_ops:
+        op_type = (op or {}).get("op")
+        if not op_type:
+            raise HTTPException(status_code=400, detail="Patch operation missing 'op'")
+        
+        if op_type == "add_node":
+            node = op.get("node")
+            if not node or "id" not in node:
+                raise HTTPException(status_code=400, detail="add_node requires node.id")
+            if _find_node_index(node["id"]) is not None:
+                raise HTTPException(status_code=400, detail=f"Node '{node['id']}' already exists")
+            nodes.append(_ensure_node_defaults(node))
+        
+        elif op_type == "update_node":
+            node = op.get("node")
+            node_id = op.get("node_id") or (node or {}).get("id")
+            if not node_id or not node:
+                raise HTTPException(status_code=400, detail="update_node requires node_id and node")
+            idx = _find_node_index(node_id)
+            if idx is None:
+                raise HTTPException(status_code=400, detail=f"Node '{node_id}' not found")
+            nodes[idx] = _ensure_node_defaults(node)
+        
+        elif op_type == "remove_node":
+            node_id = op.get("node_id")
+            if not node_id:
+                raise HTTPException(status_code=400, detail="remove_node requires node_id")
+            if _find_node_index(node_id) is None:
+                raise HTTPException(status_code=400, detail=f"Node '{node_id}' not found")
+            nodes[:] = [node for node in nodes if node.get("id") != node_id]
+            edges[:] = [
+                edge for edge in edges
+                if edge.get("source") != node_id and edge.get("target") != node_id
+            ]
+        
+        elif op_type == "add_edge":
+            edge = op.get("edge")
+            if not edge:
+                raise HTTPException(status_code=400, detail="add_edge requires edge payload")
+            source = edge.get("source")
+            target = edge.get("target")
+            if not source or not target:
+                raise HTTPException(status_code=400, detail="add_edge requires source/target")
+            if _find_node_index(source) is None or _find_node_index(target) is None:
+                raise HTTPException(status_code=400, detail=f"Edge references unknown nodes {source}->{target}")
+            already_exists = any(
+                existing.get("source") == source and existing.get("target") == target
+                for existing in edges
+            )
+            if already_exists:
+                raise HTTPException(status_code=400, detail=f"Edge {source}->{target} already exists")
+            edges.append(edge)
+        
+        elif op_type == "remove_edge":
+            edge = op.get("edge", {})
+            edge_id = op.get("edge_id") or edge.get("id")
+            source = edge.get("source") or op.get("source_id")
+            target = edge.get("target") or op.get("target_id")
+            if not edge_id and not (source and target):
+                raise HTTPException(status_code=400, detail="remove_edge requires edge_id or source/target")
+            edges[:] = [
+                existing for existing in edges
+                if not (
+                    (edge_id and existing.get("id") == edge_id) or
+                    (source and target and existing.get("source") == source and existing.get("target") == target)
+                )
+            ]
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown patch operation '{op_type}'")
+    
+    return updated_graph
+
+
+def preview_patch_ops(
+    graph_data: Optional[Dict[str, Any]],
+    patch_ops: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Return a preview graph after applying patch ops (without persistence)."""
+    preview_graph = _apply_patch_ops(graph_data, patch_ops)
+    # Validate preview to catch schema issues early
+    validate_workflow_graph(preview_graph)
+    return preview_graph
+
+
+async def create_workflow_proposal(
+    workflow: Workflow,
+    session: Optional[WorkflowChatSession],
+    user: User,
+    summary: str,
+    patch_ops: List[Dict[str, Any]],
+    preview_graph: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> WorkflowProposal:
+    """Persist a workflow proposal."""
+    if not patch_ops:
+        raise HTTPException(status_code=400, detail="Proposal requires at least one patch op")
+    
+    safe_summary = (summary or "").strip() or "Workflow changes"
+    if len(safe_summary) > 512:
+        safe_summary = f"{safe_summary[:509]}..."
+    
+    proposal = await WorkflowProposal.create(
+        workflow=workflow,
+        session=session,
+        created_by=user,
+        summary=safe_summary,
+        patch_ops=patch_ops,
+        preview_graph=preview_graph,
+        status=WorkflowProposal.STATUS_PENDING,
+        metadata=metadata,
+    )
+    return proposal
+
+
+async def get_workflow_proposal(
+    workflow_id: int,
+    proposal_id: int,
+) -> WorkflowProposal:
+    """Fetch a workflow proposal."""
+    workflow = await get_workflow(workflow_id)
+    proposal = await WorkflowProposal.get_or_none(id=proposal_id, workflow=workflow)
+    if not proposal:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    return proposal
+
+
+async def accept_workflow_proposal(
+    workflow_id: int,
+    proposal_id: int,
+) -> Tuple[WorkflowProposal, Workflow]:
+    """Apply workflow proposal and mark accepted."""
+    proposal = await get_workflow_proposal(workflow_id, proposal_id)
+    if proposal.status != WorkflowProposal.STATUS_PENDING:
+        raise HTTPException(status_code=400, detail="Proposal is not pending")
+    
+    workflow = await proposal.workflow
+    updated_graph = _apply_patch_ops(workflow.graph_data, proposal.patch_ops or [])
+    validate_workflow_graph(updated_graph)
+    
+    workflow.graph_data = updated_graph
+    workflow.updated_at = datetime.utcnow()
+    await workflow.save()
+    await _sync_workflow_blocks_and_edges(workflow, updated_graph)
+    
+    from .graph_builder import get_workflow_graph_builder
+    builder = await get_workflow_graph_builder()
+    builder.invalidate_cache(workflow.id)
+    
+    proposal.status = WorkflowProposal.STATUS_ACCEPTED
+    proposal.applied_graph = updated_graph
+    proposal.decided_at = datetime.utcnow()
+    await proposal.save()
+    
+    return proposal, workflow
+
+
+async def reject_workflow_proposal(
+    workflow_id: int,
+    proposal_id: int,
+) -> WorkflowProposal:
+    """Reject workflow proposal."""
+    proposal = await get_workflow_proposal(workflow_id, proposal_id)
+    if proposal.status != WorkflowProposal.STATUS_PENDING:
+        raise HTTPException(status_code=400, detail="Proposal is not pending")
+    
+    proposal.status = WorkflowProposal.STATUS_REJECTED
+    proposal.decided_at = datetime.utcnow()
+    await proposal.save()
+    return proposal
+
+
 __all__ = [
     "create_workflow",
     "get_workflow",
@@ -590,5 +801,10 @@ __all__ = [
     "save_chat_message",
     "load_chat_history",
     "update_chat_session_title",
+    "preview_patch_ops",
+    "create_workflow_proposal",
+    "get_workflow_proposal",
+    "accept_workflow_proposal",
+    "reject_workflow_proposal",
 ]
 

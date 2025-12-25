@@ -14,7 +14,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from .state import WorkflowState
 from .schema import BlockDefinition, BlockType
-from .code_executor import execute_code_block, CodeExecutionError
 from .models import WorkflowExecution, BlockExecution, WorkflowBlock
 from shared.database.models import User
 
@@ -37,6 +36,7 @@ def build_variable_map(state: WorkflowState) -> Dict[str, Any]:
     """
     input_data = state.get("input_data", {})
     block_outputs = state.get("block_outputs", {})
+    block_aliases = state.get("block_aliases", {})
     
     variable_map = {}
     
@@ -60,6 +60,13 @@ def build_variable_map(state: WorkflowState) -> Dict[str, Any]:
                 # Also add just the key if it's unique
                 var_name_with_block = f"{block_id}.{key}"
                 variable_map[var_name_with_block] = value
+                
+                # Register alias-based names (e.g., {{gmail_read_tool.output}})
+                aliases = block_aliases.get(block_id, [])
+                for alias in aliases:
+                    alias_key = f"{alias}.{key}"
+                    if alias_key not in variable_map:
+                        variable_map[alias_key] = value
                 
                 # Add simple key if not already present (allows {{key}} if unique)
                 if key not in variable_map:
@@ -220,36 +227,6 @@ async def input_node(
     else:
         # Return all input_data (for backward compatibility)
         output = input_data
-    
-    return {
-        "block_outputs": {
-            block.id: {"output": output}
-        }
-    }
-
-
-async def code_node(
-    state: WorkflowState,
-    block: BlockDefinition,
-    input_resolution: Dict[str, Dict[str, Any]],
-    execution: Optional[WorkflowExecution] = None,
-) -> WorkflowState:
-    """Code block: execute Python code."""
-    code = block.python_code or ""
-    inputs = await resolve_inputs(state, input_resolution, block)
-    
-    # Prepare code context
-    code_context = {
-        **inputs,
-        "_inputs": inputs,
-    }
-    
-    result = await execute_code_block(code, code_context)
-    
-    if result.get("error"):
-        raise CodeExecutionError(result["error"])
-    
-    output = result.get("output")
     
     return {
         "block_outputs": {
@@ -427,31 +404,28 @@ async def llm_node(
     import re
     
     system_prompt = block.config.get("system_prompt", "")
+    user_prompt = block.config.get("user_prompt", "")
     model = block.config.get("model", "gpt-5-mini")
     temperature = block.config.get("temperature", 0.2)
     output_schema = block.config.get("output_schema")  # Optional JSON schema for structured output
     
+    # Validate that user_prompt is provided and not empty
+    if not user_prompt or not user_prompt.strip():
+        raise ValueError(f"LLM block '{block.id}' requires a non-empty 'user_prompt' in config")
+    
     logger.info(f"LLM node executing with model={model}, has_output_schema={output_schema is not None}")
     
-    # Resolve template variables in system prompt (e.g., {{variable_name}})
+    # Resolve template variables in system prompt and user prompt (e.g., {{variable_name}})
     variable_map = build_variable_map(state)
     system_prompt = resolve_template_variables(system_prompt, variable_map)
-    
-    inputs = await resolve_inputs(state, input_resolution, block)
-    user_message = inputs.get("input", "")
-    
-    # If no user message but system prompt exists, use system prompt as both
-    # This handles cases where the LLM block is standalone with just a system prompt
-    if not user_message and system_prompt:
-        user_message = system_prompt
-        system_prompt = ""  # Clear system prompt since we're using it as user message
+    user_prompt = resolve_template_variables(user_prompt, variable_map)
     
     messages = []
     if system_prompt:
         messages.append(SystemMessage(content=system_prompt))
-    messages.append(HumanMessage(content=str(user_message) if user_message else "Please respond based on your instructions."))
+    messages.append(HumanMessage(content=user_prompt))
     
-    logger.debug(f"LLM messages: system_prompt={system_prompt[:100] if system_prompt else 'None'}..., user_message={str(user_message)[:100] if user_message else 'None'}...")
+    logger.debug(f"LLM messages: system_prompt={system_prompt[:100] if system_prompt else 'None'}..., user_prompt={user_prompt[:100] if user_prompt else 'None'}...")
     
     # If output_schema provided, use structured output
     if output_schema and isinstance(output_schema, dict) and output_schema.get("properties"):
@@ -607,7 +581,6 @@ async def for_loop_node(
 # Node function registry
 NODE_FUNCTIONS = {
     BlockType.INPUT: input_node,
-    BlockType.CODE: code_node,
     BlockType.TOOL: tool_node,
     BlockType.LLM: llm_node,
     BlockType.IF_ELSE: if_else_node,
@@ -625,7 +598,6 @@ __all__ = [
     "build_variable_map",
     "resolve_template_variables",
     "input_node",
-    "code_node",
     "tool_node",
     "llm_node",
     "if_else_node",

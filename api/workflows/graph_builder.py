@@ -3,9 +3,10 @@ Workflow Graph Builder
 
 Converts workflow JSON spec to LangGraph StateGraph with hybrid input resolution.
 """
-from typing import Any, Dict, List, Optional, Callable, Literal
+from typing import Any, Dict, List, Optional, Callable, Literal, Set, Tuple
 from collections import defaultdict
 from typing_extensions import TypedDict
+import re
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -23,8 +24,11 @@ from .schema import (
 )
 from .nodes import get_node_function, resolve_inputs
 from .models import Workflow
+from .alias_utils import derive_block_aliases, collect_input_variables
 
 logger = get_logger("api.workflows.graph_builder")
+
+VAR_PATTERN = re.compile(r"\{\{([^}]+)\}\}")
 
 
 class WorkflowGraphBuilder:
@@ -33,6 +37,73 @@ class WorkflowGraphBuilder:
     def __init__(self):
         """Initialize graph builder."""
         self._compiled_graphs: Dict[int, Any] = {}  # Cache compiled graphs
+    
+    def _iter_config_strings(self, value: Any, path: str = "config") -> List[Tuple[str, str]]:
+        """Yield (path, string) pairs from nested block config structures."""
+        if isinstance(value, str):
+            return [(path, value)]
+        strings: List[Tuple[str, str]] = []
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                strings.extend(self._iter_config_strings(nested, f"{path}.{key}"))
+        elif isinstance(value, list):
+            for idx, item in enumerate(value):
+                strings.extend(self._iter_config_strings(item, f"{path}[{idx}]"))
+        return strings
+    
+    def _validate_template_references(
+        self,
+        blocks: List[BlockDefinition],
+        alias_map: Dict[str, List[str]],
+        input_variables: Set[str],
+    ) -> None:
+        """Ensure all {{ }} references target known block aliases."""
+        alias_prefixes: Set[str] = set()
+        for block in blocks:
+            alias_prefixes.add(block.id)
+            alias_prefixes.update(alias_map.get(block.id, []))
+        known_simple_vars: Set[str] = set(input_variables or set())
+        known_simple_vars.update({"output", "structured_output", "condition_result", "route", "items", "count"})
+        
+        for block in blocks:
+            for path, text in self._iter_config_strings(block.config):
+                if "{{" not in text:
+                    continue
+                
+                matches = list(VAR_PATTERN.finditer(text))
+                if not matches:
+                    raise ValueError(
+                        f"Block '{block.id}' contains '{{{{' without closing '}}}}' in {path}."
+                    )
+                
+                for match in matches:
+                    var_name = match.group(1).strip()
+                    if not var_name:
+                        raise ValueError(
+                            f"Block '{block.id}' has an empty template variable in {path}."
+                        )
+                    if any(ch.isspace() for ch in var_name):
+                        raise ValueError(
+                            f"Block '{block.id}' references '{{{{{var_name}}}}}' with whitespace in {path}. "
+                            "Template identifiers cannot contain spaces."
+                        )
+                    
+                    if "." in var_name:
+                        prefix = var_name.split(".", 1)[0]
+                        if prefix not in alias_prefixes:
+                            raise ValueError(
+                                f"Block '{block.id}' references '{{{{{var_name}}}}}' in {path}, "
+                                "but no block or alias named "
+                                f"'{prefix}' exists. Use the sanitized alias from the builder."
+                            )
+                    else:
+                        if var_name not in known_simple_vars:
+                            logger.debug(
+                                "Template reference '{{%s}}' in block '%s' at %s is assumed to be a simple variable.",
+                                var_name,
+                                block.id,
+                                path,
+                            )
     
     def _resolve_block_inputs(
         self,
@@ -152,6 +223,10 @@ class WorkflowGraphBuilder:
         """
         # Validate and parse workflow schema
         schema = validate_workflow_graph(workflow.graph_data)
+        graph_data = workflow.graph_data or {}
+        alias_map = derive_block_aliases(graph_data)
+        input_variables = collect_input_variables(graph_data)
+        self._validate_template_references(schema.blocks, alias_map, input_variables)
         
         # Get checkpointer if not provided
         if checkpointer is None:
