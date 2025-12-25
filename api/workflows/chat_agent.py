@@ -14,6 +14,7 @@ from shared.logger import get_logger
 from shared.llm import get_llm_without_responses_api
 from shared.tools.registry import get_tools_by_integration
 from .schema import BlockDefinition, BlockType
+from .alias_utils import extract_block_alias_info, refresh_workflow_state_aliases
 import mlflow
 mlflow.langchain.autolog()
 
@@ -239,16 +240,39 @@ async def add_workflow_block(
     # Mutate workflow_state contextually so subsequent tool calls can reference the block
     nodes.append(new_block)
     workflow_state["nodes"] = nodes
+    
+    # Extract alias info for the new block
+    existing_aliases = set()
+    for existing_node in nodes:
+        if existing_node.get("id") != block_id:
+            existing_info = extract_block_alias_info(existing_node, existing_aliases)
+            if existing_info.get("aliases"):
+                existing_aliases.update(existing_info["aliases"])
+    
+    alias_info = extract_block_alias_info(new_block, existing_aliases)
+    
+    # Refresh workflow_state alias maps to include the new block
+    refresh_workflow_state_aliases(workflow_state)
+    
     thread_id = _current_thread_id.get()
     if thread_id:
         set_workflow_state_for_thread(thread_id, workflow_state)
     
-    return json.dumps({
+    response_data = {
         "op": "add_node",
         "description": f"Add {block_type} block '{block_id}'",
         "node_id": block_id,
         "node": new_block,
-    })
+    }
+    
+    # Include alias info so agent can immediately use it in prompts
+    if alias_info.get("alias"):
+        response_data["alias"] = alias_info["alias"]
+        # response_data["aliases"] = alias_info["aliases"]
+        # response_data["variable_references"] = alias_info["references"]
+        # response_data["hint"] = f"Use {', '.join(alias_info['references'])} to reference this block's output in other blocks."
+    
+    return json.dumps(response_data)
 
 
 @tool
@@ -337,16 +361,39 @@ async def modify_workflow_block(
             nodes[idx] = modified_block
             break
     workflow_state["nodes"] = nodes
+    
+    # Extract alias info for the modified block (may have changed if label/tool_name changed)
+    existing_aliases = set()
+    for existing_node in nodes:
+        if existing_node.get("id") != block_id:
+            existing_info = extract_block_alias_info(existing_node, existing_aliases)
+            if existing_info.get("aliases"):
+                existing_aliases.update(existing_info["aliases"])
+    
+    alias_info = extract_block_alias_info(modified_block, existing_aliases)
+    
+    # Refresh workflow_state alias maps to reflect any changes
+    refresh_workflow_state_aliases(workflow_state)
+    
     thread_id = _current_thread_id.get()
     if thread_id:
         set_workflow_state_for_thread(thread_id, workflow_state)
     
-    return json.dumps({
+    response_data = {
         "op": "update_node",
         "description": f"Modify block '{block_id}'",
         "node_id": block_id,
         "node": modified_block,
-    })
+    }
+    
+    # Include updated alias info
+    if alias_info.get("alias"):
+        response_data["alias"] = alias_info["alias"]
+        # response_data["aliases"] = alias_info["aliases"]
+        # response_data["variable_references"] = alias_info["references"]
+        # response_data["hint"] = f"Use {', '.join(alias_info['references'])} to reference this block's output in other blocks."
+    
+    return json.dumps(response_data)
 
 
 @tool
@@ -393,6 +440,10 @@ async def remove_workflow_block(
         edge for edge in edges
         if edge.get("source") != block_id and edge.get("target") != block_id
     ]
+    
+    # Refresh workflow_state alias maps after removal
+    refresh_workflow_state_aliases(workflow_state)
+    
     thread_id = _current_thread_id.get()
     if thread_id:
         set_workflow_state_for_thread(thread_id, workflow_state)
@@ -825,7 +876,10 @@ def create_workflow_chat_agent(
 - Ask questions in everyday language - avoid jargon and technical terms
 - Always plan changes first, get approval, then apply - never modify workflows directly
 - Use search_tools to discover tools dynamically - let the LLM reason about tool selection
-- When referencing other blocks, prefer the provided {{alias.output}} hints and never invent template names
+- When referencing other blocks, use the alias hints returned by add_workflow_block/modify_workflow_block tools
+- Each tool response includes "variable_references" showing the exact {{alias.output}} format to use
+- Always use the aliases from tool responses - never invent template variable names
+- Remember alias names are always between double curly braces like {{alias.output}} 
 **Creating Workflows:**
 1. Understand user intent - what outcome do they want?
 2. If unclear, ask 1-2 clarifying questions in plain language (e.g., "What should happen if no emails are found?")

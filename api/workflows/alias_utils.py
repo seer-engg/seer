@@ -105,10 +105,88 @@ def build_template_reference_examples(alias_map: Dict[str, List[str]]) -> Dict[s
     return examples
 
 
+def extract_block_alias_info(node: Dict[str, Any], existing_aliases: Optional[Set[str]] = None) -> Dict[str, Any]:
+    """
+    Extract alias information for a single node.
+    
+    Args:
+        node: Node dictionary with id, type, data (label, config), etc.
+        existing_aliases: Optional set of already-used aliases to avoid collisions
+        
+    Returns:
+        Dictionary with:
+        - alias: Primary sanitized alias (first available)
+        - aliases: List of all sanitized aliases for this block
+        - references: List of template reference examples like ["{{alias.output}}"]
+    """
+    if existing_aliases is None:
+        existing_aliases = set()
+    
+    block_id = node.get("id")
+    if not block_id:
+        return {"alias": None, "aliases": [], "references": []}
+    
+    data = node.get("data") or {}
+    config = data.get("config") or {}
+    
+    # Same preference order as derive_block_aliases
+    candidates: Tuple[Optional[str], ...] = (
+        data.get("label"),
+        config.get("tool_name") or config.get("toolName"),
+        config.get("variable_name"),
+        block_id,
+    )
+    
+    alias_list: List[str] = []
+    for candidate in candidates:
+        alias = sanitize_block_alias(candidate)
+        if not alias or alias in existing_aliases:
+            continue
+        alias_list.append(alias)
+        existing_aliases.add(alias)
+    
+    if not alias_list:
+        return {"alias": None, "aliases": [], "references": []}
+    
+    primary_alias = alias_list[0]
+    references = [
+        f"{{{{{primary_alias}.output}}}}",
+        f"{{{{{primary_alias}.structured_output}}}}",
+    ]
+    
+    return {
+        "alias": primary_alias,
+        "aliases": alias_list,
+        "references": references,
+    }
+
+
+def refresh_workflow_state_aliases(workflow_state: Dict[str, Any]) -> None:
+    """
+    Rebuild alias maps in workflow_state after nodes/edges change.
+    
+    Mutates workflow_state to update:
+    - block_aliases: Dict[block_id, List[aliases]]
+    - template_reference_examples: Dict[block_id, List[reference_strings]]
+    - input_variables: Sorted list of input variable names
+    """
+    graph_snapshot = {
+        "nodes": workflow_state.get("nodes", []),
+        "edges": workflow_state.get("edges", []),
+    }
+    
+    block_aliases = derive_block_aliases(graph_snapshot)
+    workflow_state["block_aliases"] = block_aliases
+    workflow_state["template_reference_examples"] = build_template_reference_examples(block_aliases)
+    workflow_state["input_variables"] = sorted(collect_input_variables(graph_snapshot))
+
+
 __all__ = [
     "build_template_reference_examples",
     "collect_input_variables",
     "derive_block_aliases",
+    "extract_block_alias_info",
+    "refresh_workflow_state_aliases",
     "sanitize_block_alias",
 ]
 
