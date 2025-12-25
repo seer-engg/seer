@@ -23,6 +23,7 @@ class ChatResponse(BaseModel):
     """Response model for chat endpoint."""
     response: str = Field(..., description="Assistant's text response")
     proposal: Optional[WorkflowProposalPublic] = Field(default=None, description="Workflow proposal with patch operations")
+    proposal_error: Optional[str] = Field(default=None, description="Validation error message if proposal creation failed")
     session_id: Optional[int] = Field(default=None, description="Chat session ID")
     thread_id: Optional[str] = Field(default=None, description="LangGraph thread ID")
     thinking: Optional[List[str]] = Field(default=None, description="Agent thinking/reasoning steps (collapsible)")

@@ -143,16 +143,47 @@ async def _maybe_create_proposal_from_ops(
     user,
     model_name: str,
     patch_ops: List[Dict[str, Any]],
-) -> Tuple[Optional[Any], Optional[WorkflowProposalPublic]]:
-    """Persist workflow proposal if there are patch ops."""
+) -> Tuple[Optional[Any], Optional[WorkflowProposalPublic], Optional[str]]:
+    """
+    Persist workflow proposal if there are patch ops.
+    
+    Returns:
+        Tuple of (proposal, proposal_public, error_message)
+        If validation fails, returns (None, None, error_message)
+    """
     if not patch_ops:
-        return None, None
+        return None, None, None
     
     preview_graph = None
+    validation_error = None
     try:
         preview_graph = preview_patch_ops(getattr(workflow, "graph_data", {}), patch_ops)
-    except HTTPException as preview_error:
+    except (HTTPException, ValueError, Exception) as preview_error:
+        # Extract error message from exception
+        if isinstance(preview_error, HTTPException):
+            error_detail = preview_error.detail
+        elif hasattr(preview_error, 'args') and preview_error.args:
+            error_detail = str(preview_error.args[0])
+        else:
+            error_detail = str(preview_error)
+        
+        # Extract more specific error message if it's a validation error
+        if "tool_name is required" in error_detail:
+            validation_error = "Invalid workflow proposal: Tool blocks require 'tool_name' in their configuration. Please ensure all tool blocks have a tool_name specified."
+        elif "user_prompt is required" in error_detail:
+            validation_error = "Invalid workflow proposal: LLM blocks require 'user_prompt' in their configuration."
+        elif "condition is required" in error_detail:
+            validation_error = "Invalid workflow proposal: If/else blocks require 'condition' in their configuration."
+        elif "array_var" in error_detail or "item_var" in error_detail:
+            validation_error = "Invalid workflow proposal: For loop blocks require 'array_var' and 'item_var' in their configuration."
+        else:
+            validation_error = f"Invalid workflow proposal: {error_detail}"
+        
         logger.warning(f"Unable to build preview graph for proposal: {preview_error}")
+    
+    # Don't persist proposal if validation failed
+    if validation_error:
+        return None, None, validation_error
     
     summary = _summarize_patch_ops(patch_ops)
     proposal = await create_workflow_proposal(
@@ -166,7 +197,7 @@ async def _maybe_create_proposal_from_ops(
     )
     await proposal.fetch_related('created_by', 'workflow', 'session')
     proposal_public = WorkflowProposalPublic.model_validate(proposal, from_attributes=True)
-    return proposal, proposal_public
+    return proposal, proposal_public, None
 
 
 
@@ -972,7 +1003,7 @@ async def chat_with_workflow_endpoint(
         thinking_steps = extract_thinking_from_messages(agent_messages)
         
         patch_ops = _extract_patch_ops_from_messages(agent_messages)
-        proposal, proposal_public = await _maybe_create_proposal_from_ops(
+        proposal, proposal_public, proposal_error = await _maybe_create_proposal_from_ops(
             workflow=workflow,
             session=session,
             user=user,
@@ -993,6 +1024,7 @@ async def chat_with_workflow_endpoint(
         return ChatResponse(
             response=response_text,
             proposal=proposal_public,
+            proposal_error=proposal_error,
             session_id=session_id,
             thread_id=thread_id,
             thinking=thinking_steps if thinking_steps else None,
@@ -1195,7 +1227,7 @@ async def resume_chat_endpoint(
         thinking_steps = extract_thinking_from_messages(agent_messages)
         
         patch_ops = _extract_patch_ops_from_messages(agent_messages)
-        proposal, proposal_public = await _maybe_create_proposal_from_ops(
+        proposal, proposal_public, proposal_error = await _maybe_create_proposal_from_ops(
             workflow=workflow,
             session=session,
             user=user,
@@ -1216,6 +1248,7 @@ async def resume_chat_endpoint(
         return ChatResponse(
             response=response_text,
             proposal=proposal_public,
+            proposal_error=proposal_error,
             session_id=session_id,
             thread_id=thread_id,
             thinking=thinking_steps if thinking_steps else None,

@@ -38,6 +38,9 @@ class BlockDefinition(BaseModel):
             # system_prompt is optional, default to empty string
             if 'system_prompt' not in v:
                 v['system_prompt'] = ""
+            # user_prompt is required and must be non-empty
+            if 'user_prompt' not in v or not v.get('user_prompt', '').strip():
+                raise ValueError("user_prompt is required in config for LLM blocks and must be non-empty")
         elif block_type == BlockType.IF_ELSE:
             if 'condition' not in v:
                 raise ValueError("condition is required in config for if_else blocks")

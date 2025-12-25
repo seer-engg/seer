@@ -13,6 +13,7 @@ import uuid
 from shared.logger import get_logger
 from shared.llm import get_llm_without_responses_api
 from shared.tools.registry import get_tools_by_integration
+from .schema import BlockDefinition, BlockType
 import mlflow
 mlflow.langchain.autolog()
 
@@ -47,6 +48,56 @@ def _with_block_config_defaults(
         config.setdefault("array_var", "items")
         config.setdefault("item_var", "item")
     return config
+
+
+def _validate_block_config(
+    block_type: str,
+    config: Dict[str, Any],
+    block_id: str = "validation-dummy",
+) -> Optional[str]:
+    """
+    Validate block configuration using BlockDefinition schema.
+    
+    Args:
+        block_type: Block type (e.g., 'tool', 'llm', 'if_else', 'for_loop')
+        config: Block configuration dictionary
+        block_id: Optional block ID for error messages (defaults to dummy)
+        
+    Returns:
+        Error message string if validation fails, None if valid
+    """
+    try:
+        # Convert block_type string to BlockType enum
+        try:
+            block_type_enum = BlockType(block_type.lower().replace('_', '_'))
+        except ValueError:
+            return f"Invalid block type: {block_type}"
+        
+        # Create a BlockDefinition with dummy position to validate config
+        BlockDefinition(
+            id=block_id,
+            type=block_type_enum,
+            config=config,
+            position={"x": 0, "y": 0},
+        )
+        return None
+    except ValueError as e:
+        # Extract the validation error message
+        error_msg = str(e)
+        # Make error message more helpful for the agent
+        if "tool_name is required" in error_msg:
+            return f"Tool blocks require 'tool_name' in config. Please specify which tool to use (e.g., 'gmail_read_emails', 'github_create_issue')."
+        elif "user_prompt is required" in error_msg:
+            return f"LLM blocks require 'user_prompt' in config. Please provide the prompt text."
+        elif "condition is required" in error_msg:
+            return f"If/else blocks require 'condition' in config. Please provide a condition expression."
+        elif "array_var" in error_msg or "item_var" in error_msg:
+            return f"For loop blocks require 'array_var' and 'item_var' in config."
+        else:
+            return f"Invalid block configuration: {error_msg}"
+    except Exception as e:
+        logger.warning(f"Unexpected error validating block config: {e}")
+        return f"Validation error: {str(e)}"
 
 @tool
 async def analyze_workflow(
@@ -164,6 +215,16 @@ async def add_workflow_block(
             "params": processed_config.pop("inputs"),
         }
     
+    # Validate block configuration before creating the block
+    validation_error = _validate_block_config(block_type, processed_config, block_id)
+    if validation_error:
+        return json.dumps({
+            "error": validation_error,
+            "block_type": block_type,
+            "block_id": block_id,
+            "suggestion": "Please provide the required configuration fields. For tool blocks, you must specify 'tool_name' (e.g., use search_tools to find available tools)."
+        })
+    
     # Create new block
     new_block = {
         "id": block_id,
@@ -259,6 +320,16 @@ async def modify_workflow_block(
         if "data" not in modified_block:
             modified_block["data"] = {}
         modified_block["data"]["config"] = updated_config
+        
+        # Validate block configuration before applying modification
+        validation_error = _validate_block_config(block_type, updated_config, block_id)
+        if validation_error:
+            return json.dumps({
+                "error": validation_error,
+                "block_type": block_type,
+                "block_id": block_id,
+                "suggestion": "Please provide the required configuration fields."
+            })
     
     # Update workflow_state so further reasoning uses modified block
     for idx, node in enumerate(nodes):
