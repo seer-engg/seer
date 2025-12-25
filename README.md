@@ -120,6 +120,16 @@ uv run seer export <thread-id> --format markdown  # Export in markdown format
 
 Missing keys? Seer prompts interactively and supports OAuth flows.
 
+### OAuth Scope Architecture
+
+**Important**: OAuth scopes are controlled entirely by the frontend. The backend does not validate scopes - it only provides connection information including granted scopes.
+
+- **Frontend controls** which scopes are requested during OAuth flows
+- **Frontend validates** if connections have required scopes using its own scope mappings
+- **Backend provides** connection info (including granted scopes) but does not validate them
+
+When developing backend tools, do not add `required_scopes` fields - they are not used. The frontend determines which scopes each tool needs using its own mappings (e.g., `gmail_tool_scopes.ts`, `github_tool_scopes.ts`).
+
 ### Key Features
 
 **🛠️ Visual Workflow Builder**

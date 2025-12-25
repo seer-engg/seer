@@ -3,9 +3,11 @@ Tool executor for executing tools with OAuth token management.
 
 Handles:
 - Loading OAuth tokens from database
-- Validating scopes
 - Token refresh if expired
 - Tool execution
+
+Note: OAuth scopes are controlled by frontend. Backend only verifies that
+a connection exists for the provider, it does not validate specific scopes.
 """
 from typing import Any, Dict, Optional
 from datetime import datetime, timezone, timedelta
@@ -15,7 +17,6 @@ from fastapi import HTTPException
 from shared.database.models_oauth import OAuthConnection
 from shared.database.models import User
 from shared.tools.base import BaseTool, get_tool
-from shared.tools.scope_validator import validate_scopes
 from shared.logger import get_logger
 from shared.config import config
 
@@ -196,7 +197,7 @@ async def execute_tool(
         Tool execution result
     
     Raises:
-        HTTPException: If tool not found, scopes invalid, or execution fails
+        HTTPException: If tool not found, connection not found, or execution fails
     """
     arguments = arguments or {}
     
@@ -208,25 +209,25 @@ async def execute_tool(
             detail=f"Tool '{tool_name}' not found"
         )
     
-    # Get OAuth token if tool requires scopes
+    # Get OAuth token if tool requires OAuth (has provider/integration_type)
     access_token = None
     connection = None
     
-    if tool.required_scopes:
+    # Check if tool requires OAuth by checking if it has a provider
+    if tool.provider or tool.integration_type:
         if not user.user_id:
             raise HTTPException(
                 status_code=401,
                 detail=f"Tool '{tool_name}' requires OAuth authentication. User ID is required."
             )
         
-        # If no connection_id provided, try to find connection by tool's integration_type
+        # If no connection_id provided, try to find connection by tool's provider
         provider = None
         if not connection_id:
-            # Get integration_type from tool (e.g., "gmail", "googledrive", "github")
-            integration_type = getattr(tool, 'provider', None)
-            if integration_type:
-                provider = integration_type
-                logger.info(f"No connection_id provided, using tool integration_type '{provider}' to find connection")
+            # Use tool's provider if available, otherwise use integration_type
+            provider = tool.provider or tool.integration_type
+            if provider:
+                logger.info(f"No connection_id provided, using tool provider '{provider}' to find connection")
             else:
                 raise HTTPException(
                     status_code=400,
@@ -234,17 +235,8 @@ async def execute_tool(
                 )
         
         connection, access_token = await get_oauth_token(user, connection_id, provider=provider)
-        
-        # Validate scopes
-        is_valid, missing_scope = validate_scopes(connection, tool.required_scopes)
-        if not is_valid:
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    f"OAuth connection {connection_id} missing required scope '{missing_scope}' "
-                    f"for tool '{tool_name}'. Required scopes: {tool.required_scopes}"
-                )
-            )
+        # Note: We don't validate scopes here - frontend controls which scopes are requested
+        # Backend trusts that if a connection exists, it has the necessary scopes
     
     # Execute tool
     try:

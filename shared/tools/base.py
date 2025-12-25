@@ -54,7 +54,6 @@ class BaseTool(ABC):
     Tools must implement:
     - name: Tool identifier
     - description: Human-readable description
-    - required_scopes: List of OAuth scopes needed (empty for non-OAuth tools)
     - integration_type: Integration type (gmail, github, googledrive, etc.)
     - provider: OAuth provider (google, github, etc.) - used for OAuth connections
     - execute(): Tool execution logic
@@ -65,7 +64,6 @@ class BaseTool(ABC):
     
     name: str
     description: str
-    required_scopes: List[str] = []
     integration_type: Optional[str] = None  # e.g., 'gmail', 'github', 'googledrive'
     provider: Optional[str] = None  # e.g., 'google', 'github' - OAuth provider for connections
     
@@ -144,7 +142,6 @@ class BaseTool(ABC):
         return {
             "name": self.name,
             "description": self.description,
-            "required_scopes": self.required_scopes,
             "integration_type": self.integration_type,
             "provider": self.provider,
             "parameters": schema,

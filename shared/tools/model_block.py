@@ -25,7 +25,6 @@ class ModelBlockTool(BaseTool):
     
     name = "model_block"
     description = "Run LLM inference with a prompt. Supports structured output via JSON schema."
-    required_scopes = []  # No OAuth needed
     
     def get_parameters_schema(self) -> Dict[str, Any]:
         """Get JSON schema for model block tool parameters."""

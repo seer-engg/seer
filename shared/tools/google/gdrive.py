@@ -86,7 +86,6 @@ class GoogleDriveListFilesTool(BaseTool):
     name = "google_drive_list_files"
     description = "List/search Google Drive files. Supports Drive query 'q' and pagination."
     # files.list supports multiple scopes; pick the least-privileged common one for listing.
-    required_scopes = ["https://www.googleapis.com/auth/drive.metadata.readonly"]
     integration_type = "google_drive"
     provider = "google"
 
@@ -192,7 +191,6 @@ class GoogleDriveGetFileMetadataTool(BaseTool):
 
     name = "google_drive_get_file_metadata"
     description = "Get Google Drive file metadata by file_id."
-    required_scopes = ["https://www.googleapis.com/auth/drive.metadata.readonly"]
     integration_type = "google_drive"
     provider = "google"
 
@@ -265,7 +263,6 @@ class GoogleDriveDownloadFileTool(BaseTool):
 
     name = "google_drive_download_file"
     description = "Download a Drive file (returns base64). For Google Docs/Sheets/Slides, provide export_mime_type."
-    required_scopes = ["https://www.googleapis.com/auth/drive.readonly"]
     integration_type = "google_drive"
     provider = "google"
 
@@ -398,7 +395,6 @@ class GoogleDriveUploadFileTool(BaseTool):
 
     name = "google_drive_upload_file"
     description = "Upload a file to Google Drive (multipart or media). Expects base64 content."
-    required_scopes = ["https://www.googleapis.com/auth/drive.file"]
     integration_type = "google_drive"
     provider = "google"
 
@@ -521,7 +517,6 @@ class GoogleDriveCreateFolderTool(BaseTool):
 
     name = "google_drive_create_folder"
     description = "Create a folder in Google Drive."
-    required_scopes = ["https://www.googleapis.com/auth/drive.file"]
     integration_type = "google_drive"
     provider = "google"
 
@@ -610,7 +605,6 @@ class GoogleDriveUpdateFileTool(BaseTool):
 
     name = "google_drive_update_file"
     description = "Update a Drive file (rename/move; optional content update)."
-    required_scopes = ["https://www.googleapis.com/auth/drive.file"]
     integration_type = "google_drive"
     provider = "google"
 
@@ -763,7 +757,6 @@ class GoogleDriveDeleteFileTool(BaseTool):
 
     name = "google_drive_delete_file"
     description = "Permanently delete a Drive file by file_id."
-    required_scopes = ["https://www.googleapis.com/auth/drive.file"]
     integration_type = "google_drive"
     provider = "google"
 
@@ -827,7 +820,6 @@ class GoogleDriveCreatePermissionTool(BaseTool):
 
     name = "google_drive_create_permission"
     description = "Create a sharing permission for a Drive file (share with user/group/domain/anyone)."
-    required_scopes = ["https://www.googleapis.com/auth/drive.file"]
     integration_type = "google_drive"
     provider = "google"
 
@@ -970,7 +962,6 @@ class GoogleDriveAboutGetTool(BaseTool):
 
     name = "google_drive_about_get"
     description = "Get information about the user, the user's Drive, and system capabilities (about.get)."
-    required_scopes = ["https://www.googleapis.com/auth/drive.metadata.readonly"]
     integration_type = "google_drive"
     provider = "google"
 

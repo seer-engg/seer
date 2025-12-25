@@ -45,7 +45,6 @@ class GmailReadTool(BaseTool):
     
     name = "gmail_read_emails"
     description = "Read emails from Gmail inbox. Supports filtering by labels, query, and max results."
-    required_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
     integration_type = "gmail"
     provider = "google"
     
@@ -486,7 +485,6 @@ class GmailSendEmailTool(BaseTool):
     """
     name = "gmail_send_email"
     description = "Send an email using Gmail. Supports plain text + optional HTML + optional attachments."
-    required_scopes = ["https://www.googleapis.com/auth/gmail.send"]
     integration_type = "gmail"
     provider = "google"
 
@@ -582,7 +580,6 @@ class GmailGetMessageTool(BaseTool):
     """
     name = "gmail_get_message"
     description = "Get a Gmail message by ID. Supports format: minimal|metadata|full|raw."
-    required_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
     integration_type = "gmail"
     provider = "google"
 
@@ -654,7 +651,6 @@ class GmailModifyMessageLabelsTool(BaseTool):
     """
     name = "gmail_modify_message_labels"
     description = "Add/remove labels on a Gmail message (e.g., mark read/unread, archive by removing INBOX)."
-    required_scopes = ["https://www.googleapis.com/auth/gmail.modify"]
     integration_type = "gmail"
     provider = "google"
 
@@ -698,7 +694,6 @@ class GmailModifyMessageLabelsTool(BaseTool):
 class GmailTrashMessageTool(BaseTool):
     name = "gmail_trash_message"
     description = "Move a Gmail message to TRASH."
-    required_scopes = ["https://www.googleapis.com/auth/gmail.modify"]
     integration_type = "gmail"
     provider = "google"
 
@@ -725,7 +720,6 @@ class GmailTrashMessageTool(BaseTool):
 class GmailDeleteMessageTool(BaseTool):
     name = "gmail_delete_message"
     description = "Permanently delete a Gmail message (cannot be undone; prefer trash)."
-    required_scopes = ["https://www.googleapis.com/auth/gmail.modify"]
     integration_type = "gmail"
     provider = "google"
 
@@ -753,7 +747,6 @@ class GmailDeleteMessageTool(BaseTool):
 class GmailListThreadsTool(BaseTool):
     name = "gmail_list_threads"
     description = "List Gmail threads. Supports labelIds, q, maxResults, and pageToken."
-    required_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
     integration_type = "gmail"
     provider = "google"
 
@@ -807,7 +800,6 @@ class GmailListThreadsTool(BaseTool):
 class GmailGetThreadTool(BaseTool):
     name = "gmail_get_thread"
     description = "Get a Gmail thread by ID. Supports format: minimal|metadata|full."
-    required_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
     integration_type = "gmail"
     provider = "google"
 
@@ -857,7 +849,6 @@ class GmailCreateDraftTool(BaseTool):
     """
     name = "gmail_create_draft"
     description = "Create a Gmail draft (DRAFT label). Supports plain text + optional HTML + optional attachments."
-    required_scopes = ["https://www.googleapis.com/auth/gmail.compose"]
     integration_type = "gmail"
     provider = "google"
 
@@ -916,7 +907,6 @@ class GmailCreateDraftTool(BaseTool):
 class GmailListDraftsTool(BaseTool):
     name = "gmail_list_drafts"
     description = "List Gmail drafts. Supports maxResults, q, pageToken, and includeSpamTrash."
-    required_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
     integration_type = "gmail"
     provider = "google"
 
@@ -962,7 +952,6 @@ class GmailListDraftsTool(BaseTool):
 class GmailGetDraftTool(BaseTool):
     name = "gmail_get_draft"
     description = "Get a Gmail draft by ID. Supports format: minimal|metadata|full|raw."
-    required_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
     integration_type = "gmail"
     provider = "google"
 
@@ -1009,7 +998,6 @@ class GmailGetDraftTool(BaseTool):
 class GmailSendDraftTool(BaseTool):
     name = "gmail_send_draft"
     description = "Send a Gmail draft by ID (users.drafts.send). Optionally update raw content before sending."
-    required_scopes = ["https://www.googleapis.com/auth/gmail.compose"]
     integration_type = "gmail"
     provider = "google"
 
@@ -1083,7 +1071,6 @@ class GmailSendDraftTool(BaseTool):
 class GmailDeleteDraftTool(BaseTool):
     name = "gmail_delete_draft"
     description = "Permanently delete a draft (users.drafts.delete)."
-    required_scopes = ["https://www.googleapis.com/auth/gmail.modify"]
     integration_type = "gmail"
     provider = "google"
 
@@ -1110,7 +1097,6 @@ class GmailDeleteDraftTool(BaseTool):
 class GmailListLabelsTool(BaseTool):
     name = "gmail_list_labels"
     description = "List all labels in the user's mailbox."
-    required_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
     integration_type = "gmail"
     provider = "google"
 
@@ -1134,7 +1120,6 @@ class GmailListLabelsTool(BaseTool):
 class GmailCreateLabelTool(BaseTool):
     name = "gmail_create_label"
     description = "Create a new Gmail label."
-    required_scopes = ["https://www.googleapis.com/auth/gmail.labels"]
     integration_type = "gmail"
     provider = "google"
 
@@ -1184,7 +1169,6 @@ class GmailCreateLabelTool(BaseTool):
 class GmailDeleteLabelTool(BaseTool):
     name = "gmail_delete_label"
     description = "Permanently delete a Gmail label by ID."
-    required_scopes = ["https://www.googleapis.com/auth/gmail.labels"]
     integration_type = "gmail"
     provider = "google"
 
@@ -1211,7 +1195,6 @@ class GmailDeleteLabelTool(BaseTool):
 class GmailGetAttachmentTool(BaseTool):
     name = "gmail_get_attachment"
     description = "Get a message attachment by attachment ID (users.messages.attachments.get)."
-    required_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
     integration_type = "gmail"
     provider = "google"
 

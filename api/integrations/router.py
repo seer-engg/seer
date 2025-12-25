@@ -8,7 +8,6 @@ from .services import (
     delete_connection_by_id,
     get_oauth_provider,
     get_tool_connection_status,
-    has_required_scopes,
     get_connection_for_provider,
     get_valid_access_token
 )
@@ -77,7 +76,10 @@ async def get_tools_connection_status(request: Request):
     Get connection status for all tools.
     
     Returns a list of all tools with their connection status based on
-    whether the user has a connection with the required scopes.
+    whether the user has a connection for the provider.
+    
+    Note: Backend does not validate scopes. Frontend controls which scopes
+    are requested and validates scope presence using its own mappings.
     
     This is the primary endpoint for frontend to check which tools are connected.
     """
@@ -89,15 +91,14 @@ async def get_tools_connection_status(request: Request):
     # Get all connections for this user
     connections = await list_connections(user)
     
-    # Build a map of provider -> connection with scopes and refresh_token status
+    # Build a map of provider -> connection info
     provider_connections = {}
     for conn in connections:
         provider_connections[conn.provider] = {
-            "scopes": conn.scopes or "",
+            "scopes": conn.scopes or "",  # Include scopes for frontend validation
             "connection_id": f"{conn.provider}:{conn.id}",
             "provider_account_id": conn.provider_account_id,
             "has_refresh_token": bool(conn.refresh_token_enc),  # Check if refresh_token exists
-            "connection": conn  # Store connection object for refresh_token check
         }
     
     # Get all registered tools
@@ -113,8 +114,7 @@ async def get_tools_connection_status(request: Request):
                 "integration_type": tool.integration_type,
                 "provider": None,
                 "connected": True,  # Non-OAuth tools are always "connected"
-                "has_required_scopes": True,
-                "missing_scopes": [],
+                "has_refresh_token": True,
                 "connection_id": None
             })
             continue
@@ -131,36 +131,25 @@ async def get_tools_connection_status(request: Request):
                 "integration_type": tool.integration_type,
                 "provider": oauth_provider,
                 "connected": False,
-                "has_required_scopes": False,
-                "missing_scopes": tool.required_scopes,
+                "has_refresh_token": False,
                 "connection_id": None
             })
             continue
         
-        # Check if connection has required scopes
-        has_scopes = has_required_scopes(conn_info["scopes"], tool.required_scopes)
-        
-        # Check if refresh_token exists (needed for token refresh)
-        has_refresh_token = conn_info.get("has_refresh_token", False)
-        
-        # Connection is fully functional only if it has scopes AND refresh_token
+        # Connection is fully functional if it has refresh_token
         # (refresh_token is needed for token refresh when access_token expires)
-        fully_connected = has_scopes and has_refresh_token
-        
-        # Find missing scopes
-        granted_set = set(conn_info["scopes"].split()) if conn_info["scopes"] else set()
-        missing = [s for s in tool.required_scopes if s not in granted_set]
+        # Frontend will validate scopes using its own mappings
+        fully_connected = conn_info.get("has_refresh_token", False)
         
         results.append({
             "tool_name": tool.name,
             "integration_type": tool.integration_type,
             "provider": oauth_provider,
-            "connected": fully_connected,  # Only True if scopes AND refresh_token exist
-            "has_required_scopes": has_scopes,
-            "has_refresh_token": has_refresh_token,
-            "missing_scopes": missing,
+            "connected": fully_connected,
+            "has_refresh_token": conn_info["has_refresh_token"],
             "connection_id": conn_info["connection_id"],
-            "provider_account_id": conn_info["provider_account_id"]
+            "provider_account_id": conn_info["provider_account_id"],
+            "scopes": conn_info["scopes"]  # Include scopes for frontend validation
         })
     
     return {"tools": results}
@@ -316,10 +305,11 @@ async def get_integration_status(request: Request, integration_type: str):
         integration_type: Integration type (gmail, googlesheets, googledrive, github, etc.)
     
     Returns:
-        Connection status including whether all required scopes are granted
+        Connection status including granted scopes (for frontend validation)
+        
+    Note: Backend does not validate scopes. Frontend controls which scopes
+    are requested and validates scope presence using its own mappings.
     """
-    from shared.tools.base import list_tools as get_all_tools
-    
     user: User = request.state.db_user
     oauth_provider = get_oauth_provider(integration_type)
     
@@ -332,31 +322,17 @@ async def get_integration_status(request: Request, integration_type: str):
             "integration_type": integration_type,
             "provider": oauth_provider,
             "connected": False,
-            "has_required_scopes": False,
             "granted_scopes": [],
-            "missing_scopes": [],
             "connection_id": None
         }
     
-    # Get all tools for this integration type and collect required scopes
-    all_tools = get_all_tools()
-    integration_tools = [t for t in all_tools if t.integration_type == integration_type]
-    
-    # Collect all unique required scopes for this integration
-    all_required_scopes = set()
-    for tool in integration_tools:
-        all_required_scopes.update(tool.required_scopes)
-    
-    granted_scopes = set(conn.scopes.split()) if conn.scopes else set()
-    missing = list(all_required_scopes - granted_scopes)
+    granted_scopes = conn.scopes.split() if conn.scopes else []
     
     return {
         "integration_type": integration_type,
         "provider": oauth_provider,
         "connected": True,
-        "has_required_scopes": len(missing) == 0,
-        "granted_scopes": list(granted_scopes),
-        "missing_scopes": missing,
+        "granted_scopes": granted_scopes,
         "connection_id": f"{conn.provider}:{conn.id}",
         "provider_account_id": conn.provider_account_id
     }

@@ -42,14 +42,6 @@ def get_tools_by_integration(integration_type: Optional[str] = None) -> List[Dic
             if integration_type_lower in tool.name.lower():
                 filtered.append(tool)
                 continue
-            
-            # Last resort: check if integration type is in any scope
-            # e.g., gmail tools have 'gmail.readonly' scope
-            if tool.required_scopes:
-                for scope in tool.required_scopes:
-                    if integration_type_lower in scope.lower():
-                        filtered.append(tool)
-                        break
         
         return [tool.get_metadata() for tool in filtered]
     

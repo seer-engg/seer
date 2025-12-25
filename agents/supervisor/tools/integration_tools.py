@@ -69,7 +69,6 @@ def get_available_integrations() -> List[str]:
     integrations = set()
     for tool_meta in all_tools:
         tool_name = tool_meta.get("name", "").lower()
-        required_scopes = tool_meta.get("required_scopes", [])
         
         # Check tool name for integration type
         # Extract integration type from tool name (e.g., "gmail_read_emails" -> "gmail")
@@ -77,11 +76,6 @@ def get_available_integrations() -> List[str]:
             potential_integration = tool_name.split("_")[0]
             if potential_integration:
                 integrations.add(potential_integration)
-        
-        # Also check scopes for integration hints
-        for scope in required_scopes:
-            if "gmail" in scope.lower():
-                integrations.add("gmail")
             elif "github" in scope.lower():
                 integrations.add("github")
             elif "asana" in scope.lower():

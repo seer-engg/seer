@@ -45,22 +45,6 @@ def merge_scopes(existing_scopes: str, new_scopes: str) -> str:
     return " ".join(sorted(merged))
 
 
-def has_required_scopes(granted_scopes: str, required_scopes: List[str]) -> bool:
-    """
-    Check if granted scopes include all required scopes.
-    Handles both whitespace-separated (Google) and comma-separated (GitHub) formats.
-    
-    Args:
-        granted_scopes: String of granted scopes (whitespace or comma separated)
-        required_scopes: List of required scope strings
-    
-    Returns:
-        True if all required scopes are granted
-    """
-    if not required_scopes:
-        return True
-    granted_set = parse_scopes(granted_scopes)
-    return all(scope in granted_set for scope in required_scopes)
 
 
 def get_oauth_provider(integration_type: str) -> str:
@@ -206,12 +190,15 @@ async def get_connection_for_provider(user: User, provider: str) -> Optional[OAu
 
 async def get_tool_connection_status(user: User, tool_name: str, required_scopes: List[str], provider: str) -> Dict[str, Any]:
     """
-    Check if user has a connection with required scopes for a specific tool.
+    Check if user has a connection for a specific tool's provider.
+    
+    Note: Backend does not validate scopes. Frontend controls which scopes
+    are requested and validates scope presence using its own mappings.
     
     Args:
         user: User model instance
         tool_name: Name of the tool
-        required_scopes: List of OAuth scopes required by the tool
+        required_scopes: List of OAuth scopes (deprecated, kept for API compatibility)
         provider: OAuth provider for the tool (google, github, etc.)
     
     Returns:
@@ -230,36 +217,23 @@ async def get_tool_connection_status(user: User, tool_name: str, required_scopes
             return {
                 "tool_name": tool_name,
                 "connected": False,
-                "has_required_scopes": False,
-                "missing_scopes": required_scopes,
                 "provider": oauth_provider,
                 "connection_id": None
             }
         
-        # Check if connection has all required scopes
-        granted_scopes = connection.scopes or ""
-        has_scopes = has_required_scopes(granted_scopes, required_scopes)
-        
-        # Find missing scopes (using parse_scopes to handle both comma and whitespace separators)
-        granted_set = parse_scopes(granted_scopes)
-        missing = [s for s in required_scopes if s not in granted_set]
-        
         return {
             "tool_name": tool_name,
             "connected": True,
-            "has_required_scopes": has_scopes,
-            "missing_scopes": missing,
             "provider": oauth_provider,
             "connection_id": f"{oauth_provider}:{connection.id}",
-            "provider_account_id": connection.provider_account_id
+            "provider_account_id": connection.provider_account_id,
+            "scopes": connection.scopes or ""  # Include scopes for frontend validation
         }
     except Exception as e:
         logger.error(f"Error checking tool connection status: {e}")
         return {
             "tool_name": tool_name,
             "connected": False,
-            "has_required_scopes": False,
-            "missing_scopes": required_scopes,
             "provider": oauth_provider,
             "connection_id": None,
             "error": str(e)

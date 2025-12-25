@@ -18,60 +18,6 @@ from shared.logger import get_logger
 
 logger = get_logger("shared.tools.github")
 
-# Tool-to-scope mapping (matches frontend)
-# This is a simplified mapping - backend trusts frontend's scope requests
-GITHUB_TOOL_SCOPES: Dict[str, list[str]] = {
-    # Read-only PR tools
-    "pull_request_read:get": ["repo"],
-    "pull_request_read:get_comments": ["repo"],
-    "pull_request_read:get_reviews": ["repo"],
-    "pull_request_read:get_status": ["repo"],
-    "pull_request_read:get_files": ["repo"],
-    "pull_request_read:get_diff": ["repo"],
-    "pull_request_read:get_sub_issues": ["repo"],
-    "list_pull_requests": ["repo"],
-    "search_pull_requests": ["repo"],
-    
-    # Write PR tools
-    "create_pull_request": ["repo"],
-    "update_pull_request": ["repo"],
-    "merge_pull_request": ["repo"],
-    "pull_request_review_write": ["repo"],
-    "update_pull_request_branch": ["repo"],
-    "add_comment_to_pending_review": ["repo"],
-    "request_copilot_review": ["repo"],
-    
-    # Issue tools
-    "issue_read:get": ["repo"],
-    "issue_read:get_comments": ["repo"],
-    "issue_read:get_sub_issues": ["repo"],
-    "create_issue": ["repo"],
-    "update_issue": ["repo"],
-    "add_issue_comment": ["repo"],
-    "close_issue": ["repo"],
-    "reopen_issue": ["repo"],
-    
-    # Repository tools
-    "get_repository": ["repo"],
-    "list_repositories": ["repo"],
-    "search_repositories": ["repo"],
-    "get_repository_contents": ["repo"],
-    "get_repository_file": ["repo"],
-    
-    # Branch tools
-    "create_branch": ["repo"],
-    "get_branch": ["repo"],
-    "list_branches": ["repo"],
-    
-    # Commit tools
-    "get_commit": ["repo"],
-    "list_commits": ["repo"],
-    "create_commit": ["repo"],
-    
-    # Default fallback
-    "default": ["repo"],
-}
-
 
 class GitHubMCPTool(BaseTool):
     """Base wrapper for GitHub MCP tools."""
@@ -80,10 +26,6 @@ class GitHubMCPTool(BaseTool):
         self.mcp_tool_name = mcp_tool_name
         self.name = f"github_{mcp_tool_name.replace(':', '_')}"
         self.description = description
-        self.required_scopes = GITHUB_TOOL_SCOPES.get(
-            mcp_tool_name,
-            GITHUB_TOOL_SCOPES.get("default", ["repo"])
-        )
         self.integration_type = integration_type
         self.provider = "github"
         self._parameters_schema = parameters_schema or {

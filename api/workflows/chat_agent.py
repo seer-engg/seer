@@ -17,23 +17,6 @@ from .chat_schema import WorkflowEdit
 
 logger = get_logger("api.workflows.chat_agent")
 
-# Import interrupt for clarification questions
-try:
-    from langgraph.types import interrupt
-    from langgraph.errors import GraphInterrupt
-except ImportError:
-    # Fallback for older versions
-    try:
-        from langgraph.checkpoint.memory import interrupt
-        from langgraph.errors import GraphInterrupt
-    except ImportError:
-        logger.warning("interrupt not available - clarification questions will not work")
-        def interrupt(data):
-            raise NotImplementedError("interrupt not available")
-        # Create a dummy exception class for when GraphInterrupt is not available
-        class GraphInterrupt(Exception):
-            pass
-
 # Context variable to track current thread_id in tool execution
 _current_thread_id: ContextVar[Optional[str]] = ContextVar('_current_thread_id', default=None)
 
@@ -786,7 +769,6 @@ async def list_available_tools(integration_type: Optional[str] = None) -> str:
                 "description": tool_meta.get("description", ""),
                 "parameters": tool_meta.get("parameters", {}),
                 "integration_type": tool_meta.get("integration_type", ""),
-                "required_scopes": tool_meta.get("required_scopes", [])
             })
         
         return json.dumps({
@@ -801,43 +783,6 @@ async def list_available_tools(integration_type: Optional[str] = None) -> str:
             "tools": [],
             "error": str(e)
         })
-
-
-@tool
-async def ask_clarifying_question(question: str, context: str = "") -> str:
-    """
-    Ask the user a clarifying question when their intent is unclear.
-    
-    Use this tool when you need more information from the user to understand what they want.
-    For example, if they say "create a workflow" but don't specify what it should do,
-    or if they mention "emails" but it's unclear what action they want to perform.
-    
-    This will pause the agent execution and wait for the user's response.
-    
-    Args:
-        question: The clarifying question to ask the user
-        context: Optional context explaining why you're asking this question
-    
-    Returns:
-        The user's answer to your question
-    """
-    try:
-        interrupt_data = {
-            "type": "clarification",
-            "question": question,
-            "context": context
-        }
-        user_response = interrupt(interrupt_data)
-        # Handle both dict and direct string responses
-        if isinstance(user_response, dict):
-            return user_response.get("answer", user_response.get("response", ""))
-        return str(user_response)
-    except GraphInterrupt:
-        # Re-raise GraphInterrupt for LangGraph human-in-the-loop handling
-        raise
-    except Exception as e:
-        logger.exception(f"Error asking clarifying question: {e}")
-        return f"Could not ask question: {str(e)}. Please provide more details about what you want."
 
 
 def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:
@@ -861,7 +806,6 @@ def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:
         # Dynamic tool discovery tools
         search_tools,
         list_available_tools,
-        ask_clarifying_question,
     ]
     
     if workflow_state is None:
@@ -946,60 +890,43 @@ def create_workflow_chat_agent(
     if workflow_state:
         workflow_context = f"\n\nCurrent workflow state:\n{json.dumps(workflow_state, indent=2)}\n\nUse this information when calling tools. Tools automatically access workflow state from thread context via runtime configuration."
     
-    system_prompt = f"""You are an intelligent workflow assistant that helps users build and edit workflows.
+    system_prompt = f"""You are an intelligent workflow assistant that helps users build and edit workflows. Your role is to understand user intent, discover appropriate tools, and create workflows that achieve their goals.
 
-Your capabilities:
-1. Analyze workflow structure (blocks, connections, configurations)
-2. Discover available tools dynamically using search_tools and list_available_tools
-3. Create workflows by understanding user intent and selecting appropriate tools
-4. Suggest improvements and edits
-5. Answer questions about workflow logic
-6. Help debug workflow issues
-7. Ask clarifying questions when user intent is unclear
+**Core Principles:**
+- Focus on what users want to achieve, not technical implementation details
+- Ask questions in everyday language - avoid jargon and technical terms
+- Always plan changes first, get approval, then apply - never modify workflows directly
+- Use search_tools to discover tools dynamically - let the LLM reason about tool selection
 
-**Workflow Creation Process:**
-When a user asks you to create a workflow:
-1. Understand their intent - what do they want the workflow to do?
-2. If intent is unclear, use ask_clarifying_question to get more details
-3. Use search_tools to discover relevant tools for the user's needs (e.g., "search emails" for Gmail tools)
-4. Think through the workflow design - what blocks are needed? How should they connect?
-5. Use add_workflow_block to create the workflow step by step
-6. Use add_workflow_edge to connect blocks appropriately
-7. Validate that the workflow captures the user's intent
+**Creating Workflows:**
+1. Understand user intent - what outcome do they want?
+2. If unclear, ask 1-2 clarifying questions in plain language (e.g., "What should happen if no emails are found?")
+3. Search for relevant tools using search_tools(query, reasoning)
+4. Build the workflow step-by-step: add blocks, connect them, validate intent
+
+**Modifying Workflows:**
+Follow PLAN → WAIT → APPLY:
+- **PLAN**: Call planning tools (add_workflow_block, modify_workflow_block, etc.) - they return a plan with edit_id
+- **WAIT**: User approves with "yes", "approve", "apply", etc. - if rejected, create a new plan
+- **APPLY**: Call apply_workflow_edit(edit_id) once approved
+
+**Asking Questions:**
+- Ask only when essential information is missing - make reasonable assumptions otherwise
+- Limit to 1-2 questions at a time to avoid overwhelming users
+- Adapt language to user's apparent technical level
+- Ask about goals and outcomes, not technical details
+
+**Error Handling:**
+- If tools fail, explain the error in plain terms and suggest alternatives
+- If workflow state is invalid, identify what's missing and ask for clarification
+- When multiple tools could work, choose the simplest that meets the requirement
 
 **Tool Discovery:**
-- Use search_tools(query, reasoning) to semantically search for tools by capability
-- Use list_available_tools(integration_type) to see all tools, optionally filtered by integration
-- Let the LLM reason about which tools are needed - don't hardcode tool selection
-- When you find relevant tools, explain why they're appropriate for the user's request
+- Use search_tools(query, reasoning) for semantic search by capability
+- Use list_available_tools(integration_type) to see all tools, optionally filtered
+- Explain why selected tools are appropriate for the user's request
 
-**Clarification:**
-- If the user's request is ambiguous or missing details, use ask_clarifying_question
-- Examples: "What should happen if no emails are found?", "Should the workflow run automatically or manually?"
-- Wait for the user's answer before proceeding
-
-**Workflow Modification Process:**
-When a user asks you to modify a workflow, follow this process:
-1. **PLAN**: Call the appropriate planning tool (add_workflow_block, modify_workflow_block, remove_workflow_block, add_workflow_edge, remove_workflow_edge)
-   - These tools return a plan showing what will be changed
-   - The plan will be displayed to the user as suggested_edits
-   - Each plan includes an edit_id that you'll need later
-2. **WAIT**: Wait for user approval
-   - User will approve by saying "yes", "approve", "go ahead", "apply", etc.
-   - User may reject or request changes - if so, create a new plan
-3. **APPLY**: Once approved, call apply_workflow_edit with the edit_id from the plan
-   - Pass the edit_id from the plan you created
-   - Confirm the changes were applied
-
-**Important**: Never modify the workflow directly. Always plan first, get approval, then apply using apply_workflow_edit.
-
-**Workflow Manipulation:**
-When suggesting edits, be specific about:
-- Which blocks to add/modify/remove
-- What configurations to change
-- How to connect blocks
-
-Always provide clear explanations for your suggestions. Think through your reasoning before taking actions.{workflow_context}"""
+Always think through your reasoning and provide clear explanations for suggestions.{workflow_context}"""
 
     # Get workflow tools (with optional workflow_state injection)
     tools = get_workflow_tools(workflow_state=workflow_state)
