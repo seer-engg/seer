@@ -38,7 +38,6 @@ from .services import (
     accept_workflow_proposal,
     reject_workflow_proposal,
     preview_patch_ops,
-    derive_block_aliases,
 )
 from .graph_builder import get_workflow_graph_builder
 from .chat_schema import (
@@ -52,6 +51,11 @@ from .chat_schema import (
     WorkflowProposalActionResponse,
 )
 from .chat_agent import create_workflow_chat_agent, extract_thinking_from_messages, _current_thread_id
+from .alias_utils import (
+    build_template_reference_examples,
+    collect_input_variables,
+    derive_block_aliases,
+)
 from api.agents.checkpointer import get_checkpointer, get_checkpointer_with_retry, _recreate_checkpointer
 import uuid
 import json
@@ -508,6 +512,15 @@ async def chat_with_workflow_endpoint(
         workflow_state["nodes"] = []
     if "edges" not in workflow_state:
         workflow_state["edges"] = []
+    
+    graph_snapshot = {
+        "nodes": workflow_state.get("nodes", []),
+        "edges": workflow_state.get("edges", []),
+    }
+    block_aliases = derive_block_aliases(graph_snapshot)
+    workflow_state["block_aliases"] = block_aliases
+    workflow_state["template_reference_examples"] = build_template_reference_examples(block_aliases)
+    workflow_state["input_variables"] = sorted(collect_input_variables(graph_snapshot))
     
     # Store workflow_state in context for tools to access
     from .chat_agent import set_workflow_state_for_thread, _current_thread_id

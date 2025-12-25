@@ -97,6 +97,13 @@ async def analyze_workflow(
             "branch": edge.get("data", {}).get("branch"),
         })
     
+    if workflow_state.get("block_aliases"):
+        analysis["block_aliases"] = workflow_state["block_aliases"]
+    if workflow_state.get("template_reference_examples"):
+        analysis["template_reference_examples"] = workflow_state["template_reference_examples"]
+    if workflow_state.get("input_variables"):
+        analysis["input_variables"] = workflow_state["input_variables"]
+    
     return json.dumps(analysis, indent=2)
 
 
@@ -728,15 +735,26 @@ def create_workflow_chat_agent(
     
     # System prompt for the workflow assistant
     workflow_context = ""
+    template_hint_section = ""
     if workflow_state:
         workflow_context = f"\n\nCurrent workflow state:\n{json.dumps(workflow_state, indent=2)}\n\nUse this information when calling tools. Tools automatically access workflow state from thread context via runtime configuration."
+        alias_examples = workflow_state.get("template_reference_examples") or {}
+        if alias_examples:
+            alias_lines = []
+            for block_id, examples in alias_examples.items():
+                if not examples:
+                    continue
+                alias_lines.append(f"- {block_id}: {', '.join(examples)}")
+            if alias_lines:
+                template_hint_section = "\nTemplate reference hints (use these names when writing {{alias.output}} expressions):\n" + "\n".join(alias_lines)
     
-        system_prompt = f"""You are an intelligent workflow assistant that helps users build and edit workflows. Your role is to understand user intent, discover appropriate tools, and create workflows that achieve their goals.
+    system_prompt = f"""You are an intelligent workflow assistant that helps users build and edit workflows. Your role is to understand user intent, discover appropriate tools, and create workflows that achieve their goals.
 **Core Principles:**
 - Focus on what users want to achieve, not technical implementation details
 - Ask questions in everyday language - avoid jargon and technical terms
 - Always plan changes first, get approval, then apply - never modify workflows directly
 - Use search_tools to discover tools dynamically - let the LLM reason about tool selection
+- When referencing other blocks, prefer the provided {{alias.output}} hints and never invent template names
 **Creating Workflows:**
 1. Understand user intent - what outcome do they want?
 2. If unclear, ask 1-2 clarifying questions in plain language (e.g., "What should happen if no emails are found?")
@@ -761,7 +779,7 @@ def create_workflow_chat_agent(
 - Use search_tools(query, reasoning) for semantic search by capability
 - Use list_available_tools(integration_type) to see all tools, optionally filtered
 - Explain why selected tools are appropriate for the user's request
-Always think through your reasoning and provide clear explanations for suggestions.{workflow_context}"""
+Always think through your reasoning and provide clear explanations for suggestions.{template_hint_section}{workflow_context}"""
 
     # Get workflow tools (with optional workflow_state injection)
     tools = get_workflow_tools(workflow_state=workflow_state)

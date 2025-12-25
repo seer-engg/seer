@@ -1,10 +1,9 @@
 """
 Workflow service layer for business logic.
 """
-from typing import List, Optional, Dict, Any, Tuple, Set
+from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 from copy import deepcopy
-import re
 
 from fastapi import HTTPException
 from shared.logger import get_logger
@@ -25,73 +24,6 @@ from .models import (
 from .schema import validate_workflow_graph
 
 logger = get_logger("api.workflows.services")
-
-
-_ALIAS_SANITIZE_PATTERN = re.compile(r"[^a-zA-Z0-9]+")
-
-
-def _sanitize_block_alias(value: Optional[str]) -> Optional[str]:
-    """Convert arbitrary labels/tool names into safe template identifiers."""
-    if not value:
-        return None
-    alias = _ALIAS_SANITIZE_PATTERN.sub("_", str(value).strip()).strip("_").lower()
-    if not alias:
-        return None
-    if alias[0].isdigit():
-        alias = f"_{alias}"
-    return alias
-
-
-def derive_block_aliases(graph_data: Optional[Dict[str, Any]]) -> Dict[str, List[str]]:
-    """
-    Build a mapping of block_id -> list of sanitized aliases usable in templates.
-    
-    Preference order:
-      1. Explicit block label provided by the user
-      2. tool_name/toolName (for tool blocks)
-      3. variable_name (for input blocks)
-      4. ReactFlow node id (guaranteed fallback)
-    """
-    if not graph_data:
-        return {}
-    
-    nodes = graph_data.get("nodes") or []
-    alias_map: Dict[str, List[str]] = {}
-    used_aliases: Set[str] = set()
-    
-    for node in nodes:
-        block_id = node.get("id")
-        if not block_id:
-            continue
-        
-        data = node.get("data") or {}
-        config = data.get("config") or {}
-        
-        candidates = [
-            data.get("label"),
-            config.get("tool_name") or config.get("toolName"),
-            config.get("variable_name"),
-        ]
-        
-        alias_list: List[str] = []
-        
-        for candidate in candidates:
-            alias = _sanitize_block_alias(candidate)
-            if not alias or alias in used_aliases:
-                continue
-            used_aliases.add(alias)
-            alias_list.append(alias)
-        
-        fallback_alias = _sanitize_block_alias(block_id)
-        if fallback_alias:
-            if fallback_alias not in alias_list:
-                alias_list.append(fallback_alias)
-            used_aliases.add(fallback_alias)
-        
-        if alias_list:
-            alias_map[block_id] = alias_list
-    
-    return alias_map
 
 
 async def create_workflow(
