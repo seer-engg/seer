@@ -10,18 +10,12 @@ from shared.logger import get_logger
 from shared.config import config
 from shared.database.models import User
 from .models import (
-    Workflow,
-    WorkflowBlock,
-    WorkflowEdge,
-    WorkflowExecution,
-    BlockExecution,
-    WorkflowChatSession,
-    WorkflowChatMessage,
-    WorkflowProposal,
     WorkflowCreate,
     WorkflowUpdate,
 )
-from .schema import validate_workflow_graph
+from shared.database import Workflow, WorkflowBlock, WorkflowEdge, WorkflowExecution, WorkflowChatSession, WorkflowChatMessage, WorkflowProposal
+from workflow_core.schema import validate_workflow_graph
+from workflow_core.graph_builder import get_workflow_graph_builder
 
 logger = get_logger("api.workflows.services")
 
@@ -138,8 +132,6 @@ async def update_workflow(
     # Sync blocks and edges if graph_data was updated
     if payload.graph_data:
         await _sync_workflow_blocks_and_edges(workflow, payload.graph_data)
-        # Invalidate cached graph
-        from .graph_builder import get_workflow_graph_builder
         builder = await get_workflow_graph_builder()
         builder.invalidate_cache(workflow_id)
     
@@ -757,7 +749,7 @@ async def accept_workflow_proposal(
     await workflow.save()
     await _sync_workflow_blocks_and_edges(workflow, updated_graph)
     
-    from .graph_builder import get_workflow_graph_builder
+    
     builder = await get_workflow_graph_builder()
     builder.invalidate_cache(workflow.id)
     

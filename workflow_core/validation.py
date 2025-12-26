@@ -1,6 +1,6 @@
 from typing import Optional, Dict, Any
 from shared.logger import get_logger
-from api.workflows.schema import BlockType, BlockDefinition
+from workflow_core.schema import BlockType, BlockDefinition
 
 logger = get_logger(__name__)
 

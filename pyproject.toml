@@ -50,6 +50,7 @@ packages = [
   "cli",
   "shared",
   "agents",
+  "workflow_core"
 ]
 [tool.setuptools_scm]
 fallback_version = "0.0.0"

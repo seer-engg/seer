@@ -4,8 +4,8 @@ from langchain_core.tools import tool
 from agents.workflow_agent.context import get_workflow_state_for_thread, set_workflow_state_for_thread, _current_thread_id
 import uuid
 from shared.logger import get_logger
-from agents.workflow_agent.validation import with_block_config_defaults, validate_block_config
-from api.workflows.alias_utils import extract_block_alias_info, refresh_workflow_state_aliases
+from workflow_core.validation import with_block_config_defaults, validate_block_config
+from workflow_core.alias_utils import extract_block_alias_info, refresh_workflow_state_aliases
 
 logger = get_logger(__name__)
 
@@ -178,9 +178,6 @@ async def add_workflow_block(
     # Include alias info so agent can immediately use it in prompts
     if alias_info.get("alias"):
         response_data["alias"] = alias_info["alias"]
-        # response_data["aliases"] = alias_info["aliases"]
-        # response_data["variable_references"] = alias_info["references"]
-        # response_data["hint"] = f"Use {', '.join(alias_info['references'])} to reference this block's output in other blocks."
     
     return json.dumps(response_data)
 
@@ -299,9 +296,6 @@ async def modify_workflow_block(
     # Include updated alias info
     if alias_info.get("alias"):
         response_data["alias"] = alias_info["alias"]
-        # response_data["aliases"] = alias_info["aliases"]
-        # response_data["variable_references"] = alias_info["references"]
-        # response_data["hint"] = f"Use {', '.join(alias_info['references'])} to reference this block's output in other blocks."
     
     return json.dumps(response_data)
 

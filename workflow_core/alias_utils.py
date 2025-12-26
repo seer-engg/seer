@@ -116,15 +116,13 @@ def extract_block_alias_info(node: Dict[str, Any], existing_aliases: Optional[Se
     Returns:
         Dictionary with:
         - alias: Primary sanitized alias (first available)
-        - aliases: List of all sanitized aliases for this block
-        - references: List of template reference examples like ["{{alias.output}}"]
     """
     if existing_aliases is None:
         existing_aliases = set()
     
     block_id = node.get("id")
     if not block_id:
-        return {"alias": None, "aliases": [], "references": []}
+        return {"alias": None}
     
     data = node.get("data") or {}
     config = data.get("config") or {}
@@ -146,18 +144,12 @@ def extract_block_alias_info(node: Dict[str, Any], existing_aliases: Optional[Se
         existing_aliases.add(alias)
     
     if not alias_list:
-        return {"alias": None, "aliases": [], "references": []}
+        return {"alias": None}
     
     primary_alias = alias_list[0]
-    references = [
-        f"{{{{{primary_alias}.output}}}}",
-        f"{{{{{primary_alias}.structured_output}}}}",
-    ]
     
     return {
         "alias": primary_alias,
-        "aliases": alias_list,
-        "references": references,
     }
 
 

@@ -2,7 +2,6 @@ from typing import Optional, Dict, Any
 from shared.logger import get_logger
 from shared.llm import get_llm_without_responses_api
 from agents.workflow_agent.utils import get_workflow_tools
-from shared.logger import get_logger
 logger = get_logger(__name__)
 
 from langchain.agents import create_agent

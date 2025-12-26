@@ -5,16 +5,14 @@ Each block type has a corresponding node function that executes the block
 and updates the workflow state.
 """
 from typing import Any, Dict, Optional
-from datetime import datetime
 
 from shared.logger import get_logger
-from shared.llm import get_llm, get_llm_without_responses_api
+from shared.llm import  get_llm_without_responses_api
 from shared.tools.executor import execute_tool as execute_tool_with_oauth
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from .state import WorkflowState
 from .schema import BlockDefinition, BlockType
-from .models import WorkflowExecution, BlockExecution, WorkflowBlock
 from shared.database.models import User
 
 logger = get_logger("api.workflows.nodes")
@@ -188,7 +186,6 @@ async def input_node(
     state: WorkflowState,
     block: BlockDefinition,
     input_resolution: Dict[str, Dict[str, Any]],
-    execution: Optional[WorkflowExecution] = None,
 ) -> WorkflowState:
     """Input block: provides workflow input data."""
     # Get input_data from state
@@ -240,7 +237,6 @@ async def tool_node(
     block: BlockDefinition,
     input_resolution: Dict[str, Dict[str, Any]],
     user_id: Optional[str] = None,
-    execution: Optional[WorkflowExecution] = None,
 ) -> WorkflowState:
     """Tool block: execute external tool."""
     tool_name = block.config.get("tool_name")
@@ -397,7 +393,6 @@ async def llm_node(
     state: WorkflowState,
     block: BlockDefinition,
     input_resolution: Dict[str, Dict[str, Any]],
-    execution: Optional[WorkflowExecution] = None,
 ) -> WorkflowState:
     """LLM block: execute LLM call with optional structured output."""
     import json
@@ -509,7 +504,6 @@ async def if_else_node(
     state: WorkflowState,
     block: BlockDefinition,
     input_resolution: Dict[str, Dict[str, Any]],
-    execution: Optional[WorkflowExecution] = None,
 ) -> WorkflowState:
     """If/Else block: evaluate condition and set routing flag."""
     condition = block.config.get("condition", "")
@@ -545,7 +539,6 @@ async def for_loop_node(
     state: WorkflowState,
     block: BlockDefinition,
     input_resolution: Dict[str, Dict[str, Any]],
-    execution: Optional[WorkflowExecution] = None,
 ) -> WorkflowState:
     """For loop block: prepare loop state for iteration."""
     array_var = block.config.get("array_var")

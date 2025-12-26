@@ -5,7 +5,6 @@ Converts workflow JSON spec to LangGraph StateGraph with hybrid input resolution
 """
 from typing import Any, Dict, List, Optional, Callable, Literal, Set, Tuple
 from collections import defaultdict
-from typing_extensions import TypedDict
 import re
 
 from langgraph.graph import StateGraph, START, END
@@ -18,12 +17,11 @@ from .state import WorkflowState
 from .schema import (
     BlockDefinition,
     EdgeDefinition,
-    WorkflowSchema,
     BlockType,
     validate_workflow_graph,
 )
-from .nodes import get_node_function, resolve_inputs
-from .models import Workflow
+from shared.database import Workflow
+from .nodes import get_node_function
 from .alias_utils import derive_block_aliases, collect_input_variables
 
 logger = get_logger("api.workflows.graph_builder")
@@ -105,19 +103,6 @@ class WorkflowGraphBuilder:
                                 path,
                             )
     
-    def _resolve_block_inputs(
-        self,
-        block: BlockDefinition,
-        edges: List[EdgeDefinition],
-        all_blocks: Dict[str, BlockDefinition],
-    ) -> Dict[str, Dict[str, Any]]:
-        """
-        Legacy helper kept for backward compatibility.
-        
-        Data is now passed exclusively via template references, so explicit
-        edge-based input resolution is no longer required.
-        """
-        return {}
     
     def _create_node_function(
         self,
@@ -125,7 +110,6 @@ class WorkflowGraphBuilder:
         all_blocks: Dict[str, BlockDefinition],
         all_edges: List[EdgeDefinition],
         user_id: Optional[str] = None,
-        execution: Optional[Any] = None,
     ) -> Callable:
         """
         Create a node function for a block with input resolution.
@@ -135,13 +119,12 @@ class WorkflowGraphBuilder:
             all_blocks: All blocks in workflow
             all_edges: All edges in workflow
             user_id: User ID for tool execution
-            execution: Execution record for logging
         
         Returns:
             Node function that takes state and returns updated state
         """
-        # Pre-compute input resolution
-        input_resolution = self._resolve_block_inputs(block, all_edges, all_blocks)
+
+        input_resolution = {} # No input resolution needed anymore
         
         # Get base node function
         base_func = get_node_function(block.type)
@@ -158,14 +141,12 @@ class WorkflowGraphBuilder:
                         block,
                         input_resolution,
                         user_id=user_id,
-                        execution=execution,
                     )
                 else:
                     return await base_func(
                         state,
                         block,
                         input_resolution,
-                        execution=execution,
                     )
             except Exception as e:
                 logger.error(f"Error executing block {block.id}: {e}", exc_info=True)
@@ -331,16 +312,14 @@ class WorkflowGraphBuilder:
     
     async def get_compiled_graph(
         self,
-        workflow_id: int,
-        workflow: Optional[Workflow] = None,
+        workflow: Workflow,
         user_id: Optional[str] = None,
     ) -> Any:
         """
         Get compiled graph, always rebuilding to ensure latest code is used.
         
         Args:
-            workflow_id: Workflow ID
-            workflow: Optional workflow instance (will fetch if not provided)
+            workflow: Workflow instance
             user_id: User ID for tool execution
         
         Returns:
@@ -349,11 +328,6 @@ class WorkflowGraphBuilder:
         # Always rebuild the graph to ensure latest node function code is used
         # This is important because node functions capture code at compile time
         # and caching would prevent code updates from taking effect
-        
-        # Build and compile
-        if workflow is None:
-            from .services import get_workflow
-            workflow = await get_workflow(workflow_id)
         
         compiled = await self.build_graph(workflow, user_id=user_id)
         

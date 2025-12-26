@@ -32,14 +32,13 @@ from .services import (
     list_chat_sessions,
     save_chat_message,
     load_chat_history,
-    update_chat_session_title,
     create_workflow_proposal,
     get_workflow_proposal,
     accept_workflow_proposal,
     reject_workflow_proposal,
     preview_patch_ops,
 )
-from .graph_builder import get_workflow_graph_builder
+from workflow_core.graph_builder import get_workflow_graph_builder
 from .chat_schema import (
     ChatRequest,
     ChatResponse,
@@ -47,11 +46,10 @@ from .chat_schema import (
     ChatSession,
     ChatSessionWithMessages,
     ChatMessage,
-    InterruptResponse,
     WorkflowProposalActionResponse,
 )
 from agents.workflow_agent import create_workflow_chat_agent, extract_thinking_from_messages, _current_thread_id, set_workflow_state_for_thread
-from .alias_utils import (
+from workflow_core.alias_utils import (
     build_template_reference_examples,
     collect_input_variables,
     derive_block_aliases,
@@ -301,7 +299,6 @@ async def execute_workflow_endpoint(
         # Build and compile graph
         builder = await get_workflow_graph_builder()
         compiled_graph = await builder.get_compiled_graph(
-            workflow_id=workflow_id,
             workflow=workflow,
             user_id=user.user_id,
         )
@@ -377,7 +374,6 @@ async def execute_workflow_stream_endpoint(
             # Build and compile graph
             builder = await get_workflow_graph_builder()
             compiled_graph = await builder.get_compiled_graph(
-                workflow_id=workflow_id,
                 workflow=workflow,
                 user_id=user.user_id,
             )
