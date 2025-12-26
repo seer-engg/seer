@@ -457,10 +457,6 @@ async def get_execution_endpoint(
     return WorkflowExecutionPublic.model_validate(execution, from_attributes=True)
 
 
-# Include PR sync workflow
-from .pr_sync import router as pr_sync_router
-router.include_router(pr_sync_router)
-
 # Chat endpoints
 
 @router.post("/{workflow_id}/chat", response_model=ChatResponse)
