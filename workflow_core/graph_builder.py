@@ -175,6 +175,90 @@ class WorkflowGraphBuilder:
         
         return conditional_route
     
+    def _create_for_loop_edge_function(
+        self,
+        block: BlockDefinition,
+    ) -> Callable:
+        """Return a routing function for for_loop blocks."""
+        def loop_route(state: WorkflowState) -> Literal["loop", "exit"]:
+            block_output = state["block_outputs"].get(block.id, {})
+            route = block_output.get("route", "exit")
+            return "loop" if route == "loop" else "exit"  # type: ignore
+        
+        return loop_route
+
+    def _collect_loop_body_nodes(
+        self,
+        start_node: str,
+        loop_block_id: str,
+        edges_by_source: Dict[str, List[EdgeDefinition]],
+    ) -> Set[str]:
+        """Collect all nodes that belong to the loop body starting from loop output target."""
+        visited: Set[str] = set()
+        stack: List[str] = [start_node]
+        
+        while stack:
+            node_id = stack.pop()
+            if node_id == loop_block_id or node_id in visited:
+                continue
+            visited.add(node_id)
+            for edge in edges_by_source.get(node_id, []):
+                if edge.target == loop_block_id:
+                    continue
+                stack.append(edge.target)
+        
+        return visited
+    
+    def _validate_loop_body_edges(
+        self,
+        loop_block_id: str,
+        loop_nodes: Set[str],
+        edges_by_source: Dict[str, List[EdgeDefinition]],
+    ) -> None:
+        """Ensure loop body nodes do not connect outside the loop body."""
+        for node_id in loop_nodes:
+            for edge in edges_by_source.get(node_id, []):
+                if edge.target == loop_block_id:
+                    continue
+                if edge.target not in loop_nodes:
+                    raise ValueError(
+                        f"For loop '{loop_block_id}' has a loop branch node '{node_id}' "
+                        "that connects outside the loop. Use the exit edge to continue "
+                        "after the loop completes."
+                    )
+    
+    def _ensure_loop_returns_to_block(
+        self,
+        loop_block_id: str,
+        loop_nodes: Set[str],
+        edges_by_source: Dict[str, List[EdgeDefinition]],
+        workflow_graph: StateGraph,
+    ) -> None:
+        """Connect terminal loop nodes back to the for_loop block to trigger next iteration."""
+        if not loop_nodes:
+            return
+        
+        terminal_nodes: List[str] = []
+        for node_id in loop_nodes:
+            outgoing_within_loop = [
+                edge for edge in edges_by_source.get(node_id, [])
+                if edge.target in loop_nodes
+            ]
+            if not outgoing_within_loop:
+                terminal_nodes.append(node_id)
+        
+        if not terminal_nodes:
+            raise ValueError(
+                f"For loop '{loop_block_id}' does not have a terminal node inside its loop branch."
+            )
+        
+        for terminal in terminal_nodes:
+            existing_loopback = any(
+                edge.target == loop_block_id for edge in edges_by_source.get(terminal, [])
+            )
+            if not existing_loopback:
+                workflow_graph.add_edge(terminal, loop_block_id)
+    
     def _find_input_blocks(self, blocks: List[BlockDefinition], edges: List[EdgeDefinition]) -> List[str]:
         """Find blocks with no incoming edges (input blocks)."""
         incoming = {edge.target for edge in edges}
@@ -283,6 +367,53 @@ class WorkflowGraphBuilder:
                     source_id,
                     conditional_func,
                     route_map,
+                )
+            elif source_block.type == BlockType.FOR_LOOP:
+                loop_edges = [edge for edge in edges if edge.branch == "loop"]
+                exit_edges = [edge for edge in edges if edge.branch == "exit"]
+                
+                if not loop_edges and edges:
+                    loop_edges = [edges[0]]
+                if len(loop_edges) != 1:
+                    raise ValueError(
+                        f"For loop block '{source_id}' must have exactly one loop_output_edge."
+                    )
+                
+                loop_target = loop_edges[0].target
+                if not exit_edges:
+                    fallback_candidates = [edge for edge in edges if edge is not loop_edges[0]]
+                    if fallback_candidates:
+                        exit_edges = [fallback_candidates[0]]
+                exit_target = exit_edges[0].target if exit_edges else None
+                
+                route_map: Dict[str, Any] = {"loop": loop_target}
+                route_map["exit"] = exit_target if exit_target else END
+                
+                loop_route = self._create_for_loop_edge_function(source_block)
+                workflow_graph.add_conditional_edges(
+                    source_id,
+                    loop_route,
+                    route_map,
+                )
+                
+                loop_body_nodes = self._collect_loop_body_nodes(
+                    loop_target,
+                    source_id,
+                    edges_by_source,
+                )
+                if loop_target not in loop_body_nodes:
+                    loop_body_nodes.add(loop_target)
+                
+                self._validate_loop_body_edges(
+                    source_id,
+                    loop_body_nodes,
+                    edges_by_source,
+                )
+                self._ensure_loop_returns_to_block(
+                    source_id,
+                    loop_body_nodes,
+                    edges_by_source,
+                    workflow_graph,
                 )
             else:
                 # Regular edges

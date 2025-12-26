@@ -320,7 +320,7 @@ async def execute_workflow_endpoint(
             "execution_id": execution.id,
             "user_id": user.user_id,
             "block_outputs": {},
-            "loop_state": None,
+            "loop_state": {},
             "block_aliases": block_aliases,
         }
         
@@ -395,7 +395,7 @@ async def execute_workflow_stream_endpoint(
                 "execution_id": execution.id,
                 "user_id": user.user_id,
                 "block_outputs": {},
-                "loop_state": None,
+                "loop_state": {},
                 "block_aliases": block_aliases,
             }
             

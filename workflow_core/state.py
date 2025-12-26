@@ -30,15 +30,16 @@ class WorkflowState(TypedDict):
     execution_id: Optional[int]
     user_id: Optional[str]
     
-    # Loop state (for for_loop blocks)
-    # Structure: {
-    #   "array_var": "items",
-    #   "item_var": "item",
-    #   "current_index": 0,
-    #   "items": [...],
-    #   "results": [...]
+    # Loop state per for_loop block:
+    # {
+    #   "block_id": {
+    #       "items": [...],
+    #       "current_index": 0,
+    #       "item_var": "item",
+    #       "array_mode": "variable"
+    #   }
     # }
-    loop_state: Optional[Dict[str, Any]]
+    loop_state: Annotated[Dict[str, Dict[str, Any]], operator.or_]
 
 
 __all__ = ["WorkflowState"]

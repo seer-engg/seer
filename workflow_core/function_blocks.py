@@ -112,21 +112,37 @@ def _for_loop_block_schema() -> FunctionBlockSchema:
     return FunctionBlockSchema(
         type=BlockType.FOR_LOOP,
         label="For Loop",
-        description="Iterate over items in an array and run downstream blocks per item.",
+        description="Iterate over each item from an array (literal or variable reference) and execute the loop branch before exiting.",
         defaults={
-            "array_var": "items",
+            "array_mode": "variable",
+            "array_variable": "items",
+            "array_literal": [],
             "item_var": "item",
         },
         config_schema={
             "type": "object",
-            "required": ["array_var", "item_var"],
+            "required": ["item_var"],
             "properties": {
-                "array_var": {
+                "array_mode": {
+                    "type": "string",
+                    "title": "Array Source",
+                    "enum": ["variable", "literal"],
+                    "default": "variable",
+                    "description": "Choose whether to resolve items from a variable reference or enter them manually.",
+                },
+                "array_variable": {
                     "type": "string",
                     "title": "Array Variable",
-                    "description": "Variable name that resolves to the list to iterate.",
+                    "description": "Variable (e.g., previous block alias) that resolves to the list to iterate.",
                     "minLength": 1,
                     "default": "items",
+                },
+                "array_literal": {
+                    "type": "array",
+                    "title": "Manual Items",
+                    "description": "Explicit list of items to iterate when not using a variable.",
+                    "items": {},
+                    "default": [],
                 },
                 "item_var": {
                     "type": "string",

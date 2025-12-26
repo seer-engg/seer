@@ -18,8 +18,17 @@ def with_block_config_defaults(
         if "inputs" in config and "params" not in config:
             config["params"] = config.pop("inputs")
     if block_type == "for_loop":
-        # Loop blocks require array_var/item_var for validation/execution
-        config.setdefault("array_var", "items")
+        legacy_array_var = config.pop("array_var", None)
+        if legacy_array_var and "array_variable" not in config:
+            config["array_variable"] = legacy_array_var
+        array_mode = config.get("array_mode") or "variable"
+        if array_mode not in ("variable", "literal"):
+            array_mode = "variable"
+        config["array_mode"] = array_mode
+        if array_mode == "variable":
+            config.setdefault("array_variable", "items")
+        else:
+            config.setdefault("array_literal", [])
         config.setdefault("item_var", "item")
     return config
 

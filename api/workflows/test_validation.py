@@ -68,7 +68,7 @@ class TestBlockConfigValidation:
     def test_validate_for_loop_block_with_vars(self):
         """Test that for_loop blocks with array_var/item_var are accepted."""
         error = validate_block_config("for_loop", {
-            "array_var": "items",
+            "array_variable": "items",
             "item_var": "item"
         }, "test-block")
         assert error is None
@@ -247,7 +247,7 @@ class TestToolNodeExecution:
             "block_aliases": {},
             "execution_id": None,
             "user_id": "user-123",
-            "loop_state": None,
+            "loop_state": {},
         }
 
         class DummyTool:

@@ -50,8 +50,23 @@ class BlockDefinition(BaseModel):
             if 'condition' not in v:
                 raise ValueError("condition is required in config for if_else blocks")
         elif block_type == BlockType.FOR_LOOP:
-            if 'array_var' not in v or 'item_var' not in v:
-                raise ValueError("array_var and item_var are required in config for for_loop blocks")
+            array_mode = v.get("array_mode", "variable")
+            item_var = v.get("item_var")
+            if not item_var or not str(item_var).strip():
+                raise ValueError("item_var is required in config for for_loop blocks")
+            if array_mode not in ("variable", "literal"):
+                raise ValueError("array_mode must be either 'variable' or 'literal' for for_loop blocks")
+            if array_mode == "variable":
+                array_var = v.get("array_variable") or v.get("array_var")
+                if not array_var or not str(array_var).strip():
+                    raise ValueError("array_variable is required when array_mode='variable' for for_loop blocks")
+                v["array_variable"] = array_var
+            else:
+                array_literal = v.get("array_literal")
+                if array_literal is None:
+                    raise ValueError("array_literal is required when array_mode='literal' for for_loop blocks")
+                if not isinstance(array_literal, list):
+                    raise ValueError("array_literal must be a list when array_mode='literal' for for_loop blocks")
         
         return v
 
@@ -62,9 +77,9 @@ class EdgeDefinition(BaseModel):
     id: str = Field(..., description="Unique edge ID")
     source: str = Field(..., description="Source block ID")
     target: str = Field(..., description="Target block ID")
-    branch: Optional[Literal["true", "false"]] = Field(
+    branch: Optional[Literal["true", "false", "loop", "exit"]] = Field(
         default=None,
-        description="Conditional branch hint (used for if/else blocks)",
+        description="Conditional branch hint (if/else or for loop branches)",
     )
 
 
@@ -138,12 +153,14 @@ def validate_workflow_graph(graph_data: Dict[str, Any]) -> WorkflowSchema:
         blocks.append(block)
     
     def _determine_branch(edge_data: Dict[str, Any]) -> Optional[str]:
+        valid_branches = {"true", "false", "loop", "exit"}
         branch = edge_data.get('data', {}).get('branch')
-        if branch in ("true", "false"):
+        if branch in valid_branches:
             return branch
-        legacy = edge_data.get('targetHandle')
-        if legacy in ("true", "false"):
-            return legacy
+        for handle_key in ("sourceHandle", "targetHandle"):
+            legacy = edge_data.get(handle_key)
+            if legacy in valid_branches:
+                return legacy
         return None
     
     # Convert edges to EdgeDefinition

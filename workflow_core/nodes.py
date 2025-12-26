@@ -4,7 +4,7 @@ Node functions for workflow blocks.
 Each block type has a corresponding node function that executes the block
 and updates the workflow state.
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 from shared.logger import get_logger
 from shared.llm import  get_llm_without_responses_api
@@ -13,6 +13,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from .state import WorkflowState
 from .schema import BlockDefinition, BlockType
+from .code_executor import execute_code_block, CodeExecutionError
 from shared.database.models import User
 
 logger = get_logger("api.workflows.nodes")
@@ -535,38 +536,102 @@ async def if_else_node(
     }
 
 
+def _resolve_loop_items(config: Dict[str, Any], state: WorkflowState) -> List[Any]:
+    """Resolve the iterable for a for_loop block based on config."""
+    import json
+    
+    array_mode = (config.get("array_mode") or "variable").lower()
+    variable_map = build_variable_map(state)
+    
+    if array_mode == "literal":
+        literal_items = config.get("array_literal", [])
+        if literal_items is None:
+            raise ValueError("array_literal must be provided when array_mode is 'literal'")
+        if not isinstance(literal_items, list):
+            raise ValueError("array_literal must be a list when array_mode is 'literal'")
+        return list(literal_items)
+    
+    array_var = config.get("array_variable") or config.get("array_var")
+    if not array_var:
+        raise ValueError("array_variable is required when array_mode is 'variable'")
+    
+    normalized_var = array_var.strip()
+    if normalized_var.startswith("{{") and normalized_var.endswith("}}"):
+        normalized_var = normalized_var[2:-2].strip()
+    
+    array_value = variable_map.get(normalized_var)
+    if array_value is None:
+        raise ValueError(f"for_loop could not resolve variable '{normalized_var}'")
+    
+    # Attempt to parse JSON arrays stored as strings
+    if isinstance(array_value, str):
+        trimmed = array_value.strip()
+        if trimmed.startswith("[") and trimmed.endswith("]"):
+            try:
+                array_value = json.loads(trimmed)
+            except json.JSONDecodeError:
+                pass
+    
+    if not isinstance(array_value, (list, tuple)):
+        raise ValueError(f"for_loop expected '{normalized_var}' to be a list/array but received {type(array_value).__name__}")
+    
+    return list(array_value)
+
+
 async def for_loop_node(
     state: WorkflowState,
     block: BlockDefinition,
     input_resolution: Dict[str, Dict[str, Any]],
 ) -> WorkflowState:
-    """For loop block: prepare loop state for iteration."""
-    array_var = block.config.get("array_var")
-    item_var = block.config.get("item_var", "item")
+    """For loop block: iterate through items and expose the current item per execution."""
+    config = block.config or {}
+    item_var = (config.get("item_var") or "item").strip() or "item"
     
-    inputs = await resolve_inputs(state, input_resolution, block)
+    loop_states = dict(state.get("loop_state") or {})
+    loop_ctx = loop_states.get(block.id)
     
-    # Get array from inputs
-    array = inputs.get(array_var) or inputs.get("input", [])
+    if loop_ctx is None:
+        items = _resolve_loop_items(config, state)
+        loop_ctx = {
+            "items": items,
+            "current_index": 0,
+            "item_var": item_var,
+            "array_mode": config.get("array_mode", "variable"),
+        }
+    else:
+        items = loop_ctx.get("items", [])
+        loop_ctx["item_var"] = item_var
     
-    if not isinstance(array, (list, tuple)):
-        raise ValueError(f"For loop array '{array_var}' is not iterable")
+    total_items = len(items)
+    current_index = loop_ctx.get("current_index", 0)
     
-    # Store loop state
-    loop_state = {
-        "array_var": array_var,
-        "item_var": item_var,
-        "current_index": 0,
-        "items": list(array),
-        "results": [],
-    }
+    if current_index < total_items:
+        current_item = items[current_index]
+        loop_ctx["current_index"] = current_index + 1
+        loop_states[block.id] = loop_ctx
+        block_output = {
+            "output": current_item,
+            item_var: current_item,
+            "item_index": current_index,
+            "count": total_items,
+            "route": "loop",
+        }
+    else:
+        # Loop complete
+        loop_states.pop(block.id, None)
+        block_output = {
+            "output": {"items": items, "count": total_items},
+            "count": total_items,
+            "route": "exit",
+        }
+    
+    # Always expose the full collection for reference
+    block_output.setdefault("items", items)
     
     return {
-        "loop_state": loop_state,
+        "loop_state": loop_states,
         "block_outputs": {
-            block.id: {
-                "output": {"items": list(array), "count": len(array)}
-            }
+            block.id: block_output
         }
     }
 
