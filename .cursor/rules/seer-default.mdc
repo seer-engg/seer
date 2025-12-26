@@ -16,3 +16,10 @@ alwaysApply: true
 - We use a PostgreSQL database via the tortoise-orm[asyncpg] interface.
 - In dockerized (self-hosted setup), Tortoise creates all tables if DB_GENERATE_SCHEMAS is set with Tortoise.generate_schemas() in /database/init.
 - Do not create SQL migration files in the /migrations directory for database model schema changes. Use aerich (Tortoise migrations) helper instead for doing any sort of migrations.
+- all database model should reside in /shared/database 
+
+## Worlflows
+
+- The core logic for workflow components /building /compilation is in /workflow_core
+- /api/workflow contains CRUD and chat agent apis for workflows
+- /agent/workflow_agent conatains a langgraph based agent that can build workflow via natural language querry.

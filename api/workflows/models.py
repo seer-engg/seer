@@ -77,19 +77,6 @@ class WorkflowExecutionPublic(BaseModel):
     completed_at: Optional[datetime] = None
 
 
-class WorkflowChatSessionPublic(BaseModel):
-    """Response model for chat session."""
-    
-    model_config = ConfigDict(from_attributes=True)
-    
-    id: int
-    workflow_id: int
-    user: UserPublic
-    thread_id: str
-    title: Optional[str]
-    created_at: datetime
-    updated_at: datetime
-
 
 class WorkflowProposalPatchOp(BaseModel):
     """Single patch operation inside a proposal."""
@@ -124,20 +111,6 @@ class WorkflowProposalPublic(BaseModel):
     updated_at: datetime
 
 
-class WorkflowChatMessagePublic(BaseModel):
-    """Response model for chat message."""
-    
-    model_config = ConfigDict(from_attributes=True)
-    
-    id: int
-    session_id: int
-    role: str
-    content: str
-    thinking: Optional[str] = None
-    suggested_edits: Optional[Dict[str, Any]] = None
-    metadata: Optional[Dict[str, Any]] = None
-    proposal: Optional[WorkflowProposalPublic] = None
-    created_at: datetime
 
 
 __all__ = [
@@ -148,8 +121,6 @@ __all__ = [
     "WorkflowListResponse",
     "WorkflowExecutionCreate",
     "WorkflowExecutionPublic",
-    "WorkflowChatSessionPublic",
-    "WorkflowChatMessagePublic",
     "WorkflowProposalPublic",
     "WorkflowProposalPatchOp",
 ]

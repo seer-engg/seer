@@ -16,6 +16,7 @@ from .models import (
 from shared.database import Workflow, WorkflowBlock, WorkflowEdge, WorkflowExecution, WorkflowChatSession, WorkflowChatMessage, WorkflowProposal
 from workflow_core.schema import validate_workflow_graph
 from workflow_core.graph_builder import get_workflow_graph_builder
+from workflow_core.validation import with_block_config_defaults
 
 logger = get_logger("api.workflows.services")
 
@@ -586,19 +587,6 @@ def _apply_patch_ops(
     nodes = updated_graph["nodes"]
     edges = updated_graph["edges"]
     
-    def _ensure_node_defaults(node: Dict[str, Any]) -> Dict[str, Any]:
-        if not node:
-            return node
-        block_type = node.get("type")
-        data = node.get("data") or {}
-        config = data.get("config") or {}
-        if block_type == "for_loop":
-            config.setdefault("array_var", "items")
-            config.setdefault("item_var", "item")
-        data["config"] = config
-        node["data"] = data
-        return node
-    
     def _find_node_index(node_id: str) -> Optional[int]:
         for idx, node in enumerate(nodes):
             if node.get("id") == node_id:
@@ -616,7 +604,9 @@ def _apply_patch_ops(
                 raise HTTPException(status_code=400, detail="add_node requires node.id")
             if _find_node_index(node["id"]) is not None:
                 raise HTTPException(status_code=400, detail=f"Node '{node['id']}' already exists")
-            nodes.append(_ensure_node_defaults(node))
+            default_config = with_block_config_defaults(node.get("type"), node.get("data", {}).get("config"))
+            node["data"]["config"] = default_config
+            nodes.append(node)
         
         elif op_type == "update_node":
             node = op.get("node")
@@ -626,7 +616,9 @@ def _apply_patch_ops(
             idx = _find_node_index(node_id)
             if idx is None:
                 raise HTTPException(status_code=400, detail=f"Node '{node_id}' not found")
-            nodes[idx] = _ensure_node_defaults(node)
+            default_config = with_block_config_defaults(node.get("type"), node.get("data", {}).get("config"))
+            node["data"]["config"] = default_config
+            nodes[idx] = node
         
         elif op_type == "remove_node":
             node_id = op.get("node_id")
