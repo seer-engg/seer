@@ -17,8 +17,21 @@ from shared.database import Workflow, WorkflowBlock, WorkflowEdge, WorkflowExecu
 from workflow_core.schema import validate_workflow_graph
 from workflow_core.graph_builder import get_workflow_graph_builder
 from workflow_core.validation import with_block_config_defaults
+from workflow_core.function_blocks import get_function_block_schemas
 
 logger = get_logger("api.workflows.services")
+
+
+async def list_function_blocks() -> Dict[str, Any]:
+    """
+    List built-in function block schemas (LLM, if/else, for loop, etc.).
+    """
+    try:
+        schemas = get_function_block_schemas()
+        return {"blocks": [schema.model_dump() for schema in schemas]}
+    except Exception as exc:
+        logger.exception("Error listing function block schemas: %s", exc)
+        raise HTTPException(status_code=500, detail="Error listing function block schemas")
 
 
 async def create_workflow(

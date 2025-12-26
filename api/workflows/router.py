@@ -37,6 +37,7 @@ from .services import (
     accept_workflow_proposal,
     reject_workflow_proposal,
     preview_patch_ops,
+    list_function_blocks,
 )
 from workflow_core.graph_builder import get_workflow_graph_builder
 from .chat_schema import (
@@ -70,6 +71,14 @@ from shared.database.models import User, UserPublic
 logger = get_logger("api.workflows.router")
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
+
+
+@router.get("/blocks/functions")
+async def list_function_blocks_endpoint() -> Dict[str, Any]:
+    """
+    List built-in function block schemas (e.g., LLM, if/else, for loop).
+    """
+    return await list_function_blocks()
 
 
 def _summarize_patch_ops(patch_ops: List[Dict[str, Any]]) -> str:
