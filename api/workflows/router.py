@@ -50,7 +50,7 @@ from .chat_schema import (
     InterruptResponse,
     WorkflowProposalActionResponse,
 )
-from .chat_agent import create_workflow_chat_agent, extract_thinking_from_messages, _current_thread_id
+from agents.workflow_agent import create_workflow_chat_agent, extract_thinking_from_messages, _current_thread_id, set_workflow_state_for_thread
 from .alias_utils import (
     build_template_reference_examples,
     collect_input_variables,
@@ -554,7 +554,7 @@ async def chat_with_workflow_endpoint(
     workflow_state["input_variables"] = sorted(collect_input_variables(graph_snapshot))
     
     # Store workflow_state in context for tools to access
-    from .chat_agent import set_workflow_state_for_thread, _current_thread_id
+    
     if thread_id:
         set_workflow_state_for_thread(thread_id, workflow_state)
     
@@ -1185,7 +1185,6 @@ async def resume_chat_endpoint(
     }
     
     # Create agent
-    from .chat_agent import create_workflow_chat_agent
     agent = create_workflow_chat_agent(
         model=config.default_llm_model,
         checkpointer=checkpointer,
@@ -1223,7 +1222,6 @@ async def resume_chat_endpoint(
                 response_text = str(last_msg)
         
         # Extract thinking steps
-        from .chat_agent import extract_thinking_from_messages
         thinking_steps = extract_thinking_from_messages(agent_messages)
         
         patch_ops = _extract_patch_ops_from_messages(agent_messages)
