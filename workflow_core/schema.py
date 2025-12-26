@@ -34,6 +34,11 @@ class BlockDefinition(BaseModel):
         if block_type == BlockType.TOOL:
             if 'tool_name' not in v:
                 raise ValueError("tool_name is required in config for tool blocks")
+            if 'tool_params' in v:
+                raise ValueError("tool_params is deprecated; use 'params' instead.")
+            params = v.get("params")
+            if params is not None and not isinstance(params, dict):
+                raise ValueError("'params' must be an object for tool blocks")
         elif block_type == BlockType.LLM:
             # system_prompt is optional, default to empty string
             if 'system_prompt' not in v:

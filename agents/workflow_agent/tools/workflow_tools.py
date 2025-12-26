@@ -10,6 +10,18 @@ from workflow_core.alias_utils import extract_block_alias_info, refresh_workflow
 logger = get_logger(__name__)
 
 
+def _normalize_tool_block_config(block_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Rename legacy tool config keys to the canonical schema."""
+    config = block_config.copy() if block_config else {}
+    legacy_params = config.pop("tool_params", None)
+    if legacy_params is not None and "params" not in config:
+        config["params"] = legacy_params
+    legacy_inputs = config.pop("inputs", None)
+    if legacy_inputs is not None and "params" not in config:
+        config["params"] = legacy_inputs
+    return config
+
+
 @tool
 async def analyze_workflow(
     workflow_state: Optional[Dict[str, Any]] = None,
@@ -119,12 +131,10 @@ async def add_workflow_block(
         position = {"x": 0, "y": 0}
     
     # Process block_config: transform inputs to params for tool blocks
-    processed_config = with_block_config_defaults(block_type, block_config)
-    if block_type == "tool" and "inputs" in processed_config and "params" not in processed_config:
-        processed_config = {
-            **processed_config,
-            "params": processed_config.pop("inputs"),
-        }
+    normalized_config = block_config.copy() if block_config else {}
+    if block_type == "tool":
+        normalized_config = _normalize_tool_block_config(normalized_config)
+    processed_config = with_block_config_defaults(block_type, normalized_config)
     
     # Validate block configuration before creating the block
     validation_error = validate_block_config(block_type, processed_config, block_id)
@@ -232,6 +242,8 @@ async def modify_workflow_block(
     if block_config:
         current_config = modified_block.get("data", {}).get("config", {})
         current_config.update(block_config)
+        if modified_block.get("type") == "tool":
+            current_config = _normalize_tool_block_config(current_config)
         if "data" not in modified_block:
             modified_block["data"] = {}
         modified_block["data"]["config"] = current_config

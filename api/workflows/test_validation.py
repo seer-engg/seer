@@ -5,9 +5,13 @@ These tests ensure that invalid workflow proposals are caught early
 and don't reach the accept/reject stage.
 """
 import pytest
-from agents.workflow_agent.validation import validate_block_config
-from .schema import validate_workflow_graph, BlockType
 from fastapi import HTTPException
+
+from agents.workflow_agent.validation import validate_block_config
+from api.workflows.services import preview_patch_ops
+from workflow_core.schema import BlockDefinition, BlockType, validate_workflow_graph
+from workflow_core.state import WorkflowState
+import workflow_core.nodes as workflow_nodes
 
 
 class TestBlockConfigValidation:
@@ -151,8 +155,6 @@ class TestProposalErrorHandling:
     
     def test_preview_patch_ops_rejects_invalid_config(self):
         """Test that preview_patch_ops raises error for invalid configs."""
-        from .services import preview_patch_ops
-        
         # Create patch ops that add a tool block without tool_name
         patch_ops = [
             {
@@ -175,4 +177,108 @@ class TestProposalErrorHandling:
         
         # Should raise validation error
         assert "tool_name" in str(exc_info.value).lower() or "required" in str(exc_info.value).lower()
+
+    def test_preview_patch_ops_rejects_tool_params_key(self):
+        """Ensure legacy tool_params payloads are rejected."""
+        patch_ops = [
+            {
+                "op": "add_node",
+                "node_id": "block-1",
+                "node": {
+                    "id": "block-1",
+                    "type": "tool",
+                    "position": {"x": 0, "y": 0},
+                    "data": {
+                        "label": "Legacy Tool",
+                        "config": {
+                            "tool_name": "gmail_read_emails",
+                            "tool_params": {"max_results": 3},
+                        },
+                    },
+                },
+            }
+        ]
+
+        with pytest.raises(ValueError) as exc_info:
+            preview_patch_ops({}, patch_ops)
+
+        assert "tool_params" in str(exc_info.value)
+
+    def test_preview_patch_ops_accepts_params_payload(self):
+        """Ensure params payloads flow through unchanged."""
+        patch_ops = [
+            {
+                "op": "add_node",
+                "node_id": "block-1",
+                "node": {
+                    "id": "block-1",
+                    "type": "tool",
+                    "position": {"x": 0, "y": 0},
+                    "data": {
+                        "label": "Max 3",
+                        "config": {
+                            "tool_name": "gmail_read_emails",
+                            "params": {"max_results": 3},
+                        },
+                    },
+                },
+            }
+        ]
+
+        preview = preview_patch_ops({}, patch_ops)
+        assert preview["nodes"][0]["data"]["config"]["params"]["max_results"] == 3
+
+
+class TestToolNodeExecution:
+    """Tests for runtime execution semantics."""
+
+    @pytest.mark.asyncio
+    async def test_tool_node_uses_configured_params(self, monkeypatch):
+        """Tool node should pass through params to the executor."""
+        block = BlockDefinition(
+            id="block-1",
+            type=BlockType.TOOL,
+            config={"tool_name": "gmail_read_emails", "params": {"max_results": 3}},
+            position={"x": 0, "y": 0},
+        )
+        state: WorkflowState = {
+            "input_data": {},
+            "block_outputs": {},
+            "block_aliases": {},
+            "execution_id": None,
+            "user_id": "user-123",
+            "loop_state": None,
+        }
+
+        class DummyTool:
+            def get_parameters_schema(self):
+                return {"properties": {"max_results": {"type": "integer"}}}
+
+        monkeypatch.setattr("shared.tools.base.get_tool", lambda _: DummyTool())
+
+        async def fake_resolve_inputs(*_args, **_kwargs):
+            return {}
+
+        monkeypatch.setattr(workflow_nodes, "resolve_inputs", fake_resolve_inputs)
+        monkeypatch.setattr(workflow_nodes, "build_variable_map", lambda _state: {})
+
+        async def fake_user_get(*_args, **_kwargs):
+            class DummyUser:
+                id = "user-123"
+            return DummyUser()
+
+        monkeypatch.setattr(workflow_nodes.User, "get", fake_user_get)
+
+        captured = {}
+
+        async def fake_execute_tool_with_oauth(**kwargs):
+            captured.update(kwargs)
+            return [{"id": "message"}]
+
+        monkeypatch.setattr(workflow_nodes, "execute_tool_with_oauth", fake_execute_tool_with_oauth)
+
+        result_state = await workflow_nodes.tool_node(state, block, {}, user_id="user-123")
+
+        assert captured["arguments"]["max_results"] == 3
+        assert "block-1" in result_state["block_outputs"]
 

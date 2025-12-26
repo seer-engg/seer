@@ -10,6 +10,13 @@ def with_block_config_defaults(
 ) -> Dict[str, Any]:
     """Ensure required config defaults exist for specific block types."""
     config = config.copy() if config else {}
+    if block_type == "tool":
+        if "tool_params" in config:
+            raise ValueError(
+                "tool_params is no longer supported. Use 'params' to configure tool arguments."
+            )
+        if "inputs" in config and "params" not in config:
+            config["params"] = config.pop("inputs")
     if block_type == "for_loop":
         # Loop blocks require array_var/item_var for validation/execution
         config.setdefault("array_var", "items")
