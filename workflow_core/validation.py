@@ -30,6 +30,29 @@ def with_block_config_defaults(
         else:
             config.setdefault("array_literal", [])
         config.setdefault("item_var", "item")
+    elif block_type == "variable":
+        input_type = str(config.get("input_type") or "string").lower()
+        if input_type not in ("string", "number", "array"):
+            input_type = "string"
+        config["input_type"] = input_type
+        if "input" not in config:
+            if input_type == "array":
+                config["input"] = []
+            elif input_type == "number":
+                config["input"] = 0
+            else:
+                config["input"] = ""
+        else:
+            value = config["input"]
+            if input_type == "array" and not isinstance(value, list):
+                config["input"] = [value] if value is not None else []
+            elif input_type == "number" and not isinstance(value, (int, float)):
+                try:
+                    config["input"] = float(value)
+                except (TypeError, ValueError):
+                    config["input"] = 0
+            elif input_type == "string" and not isinstance(value, str):
+                config["input"] = str(value) if value is not None else ""
     return config
 
 
@@ -76,6 +99,8 @@ def validate_block_config(
             return f"If/else blocks require 'condition' in config. Please provide a condition expression."
         elif "array_var" in error_msg or "item_var" in error_msg:
             return f"For loop blocks require 'array_var' and 'item_var' in config."
+        elif "variable block" in error_msg.lower() or "input is required in config for variable blocks" in error_msg.lower():
+            return "Variable blocks require an 'input' value (string, number, or array)."
         else:
             return f"Invalid block configuration: {error_msg}"
     except Exception as e:

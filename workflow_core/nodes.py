@@ -4,7 +4,7 @@ Node functions for workflow blocks.
 Each block type has a corresponding node function that executes the block
 and updates the workflow state.
 """
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Union
 
 from shared.logger import get_logger
 from shared.llm import  get_llm_without_responses_api
@@ -229,6 +229,65 @@ async def input_node(
     return {
         "block_outputs": {
             block.id: {"output": output}
+        }
+    }
+
+
+async def variable_node(
+    state: WorkflowState,
+    block: BlockDefinition,
+    input_resolution: Dict[str, Dict[str, Any]],
+) -> WorkflowState:
+    """Variable block: expose a literal value (string, number, or array) for reuse."""
+    config = block.config or {}
+    resolved_inputs = await resolve_inputs(state, input_resolution, block)
+    value = resolved_inputs.get("input") if resolved_inputs else None
+    if value is None:
+        value = config.get("input")
+    if value is None:
+        raise ValueError(f"Variable block '{block.id}' requires an 'input' value.")
+
+    input_type = str(config.get("input_type") or "string").lower()
+    variable_map = build_variable_map(state)
+
+    def resolve_templates(payload: Any) -> Any:
+        if isinstance(payload, str):
+            if "{{" in payload:
+                return resolve_template_variables(payload, variable_map)
+            return payload
+        if isinstance(payload, list):
+            return [resolve_templates(item) for item in payload]
+        return payload
+
+    def coerce_number(raw: Any) -> Union[float, int]:
+        resolved = resolve_templates(raw if not isinstance(raw, str) else raw)
+        if isinstance(resolved, (int, float)):
+            return resolved
+        if resolved is None:
+            raise ValueError(f"Variable block '{block.id}' input resolved to None, expected a number.")
+        text = str(resolved).strip()
+        if not text:
+            raise ValueError(f"Variable block '{block.id}' input resolved to empty string, expected a number.")
+        try:
+            if any(char in text.lower() for char in ("e", ".")):
+                return float(text)
+            return int(text)
+        except ValueError as exc:
+            raise ValueError(f"Variable block '{block.id}' could not convert '{text}' to a number.") from exc
+
+    if input_type == "array":
+        if not isinstance(value, list):
+            raise ValueError(f"Variable block '{block.id}' expected a list when input_type='array'.")
+        resolved_value = resolve_templates(value)
+    elif input_type == "number":
+        resolved_value = coerce_number(value)
+    else:
+        string_value = value if isinstance(value, str) else str(value)
+        resolved_value = resolve_templates(string_value)
+
+    return {
+        "block_outputs": {
+            block.id: {"output": resolved_value}
         }
     }
 
@@ -643,6 +702,7 @@ NODE_FUNCTIONS = {
     BlockType.LLM: llm_node,
     BlockType.IF_ELSE: if_else_node,
     BlockType.FOR_LOOP: for_loop_node,
+    BlockType.VARIABLE: variable_node,
 }
 
 
@@ -656,6 +716,7 @@ __all__ = [
     "build_variable_map",
     "resolve_template_variables",
     "input_node",
+    "variable_node",
     "tool_node",
     "llm_node",
     "if_else_node",

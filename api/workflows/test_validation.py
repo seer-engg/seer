@@ -73,6 +73,23 @@ class TestBlockConfigValidation:
         }, "test-block")
         assert error is None
     
+    def test_validate_variable_block_without_input(self):
+        """Variable blocks must include an input value."""
+        error = validate_block_config("variable", {"input_type": "string"}, "test-block")
+        assert error is not None
+        assert "input" in error.lower()
+    
+    def test_validate_variable_block_with_string_input(self):
+        """Variable blocks accept string literals."""
+        error = validate_block_config("variable", {"input_type": "string", "input": "value"}, "test-block")
+        assert error is None
+    
+    def test_validate_variable_block_with_invalid_array_payload(self):
+        """Variable blocks reject non-array payloads when array type selected."""
+        error = validate_block_config("variable", {"input_type": "array", "input": "not-a-list"}, "test-block")
+        assert error is not None
+        assert "array" in error.lower()
+    
     def test_validate_invalid_block_type(self):
         """Test that invalid block types are rejected."""
         error = validate_block_config("invalid_type", {}, "test-block")

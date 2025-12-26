@@ -158,10 +158,43 @@ def _for_loop_block_schema() -> FunctionBlockSchema:
     )
 
 
+def _variable_block_schema() -> FunctionBlockSchema:
+    return FunctionBlockSchema(
+        type=BlockType.VARIABLE,
+        label="Variable",
+        description="Capture a literal string, number, or array value for reuse elsewhere in the workflow.",
+        defaults={
+            "input_type": "string",
+            "input": "",
+        },
+        config_schema={
+            "type": "object",
+            "required": ["input"],
+            "properties": {
+                "input_type": {
+                    "type": "string",
+                    "enum": ["string", "number", "array"],
+                    "default": "string",
+                    "title": "Input Type",
+                    "description": "Controls whether the stored value is treated as a string, number, or array.",
+                },
+                "input": {
+                    "type": ["string", "number", "array"],
+                    "title": "Value",
+                    "description": "Literal value that will be stored and referenced by downstream blocks.",
+                },
+            },
+            "additionalProperties": True,
+        },
+        tags=["state", "constants"],
+    )
+
+
 FUNCTION_BLOCK_SCHEMAS: List[FunctionBlockSchema] = [
     _llm_block_schema(),
     _if_else_block_schema(),
     _for_loop_block_schema(),
+    _variable_block_schema(),
 ]
 
 

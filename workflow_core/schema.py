@@ -14,6 +14,7 @@ class BlockType(str, Enum):
     IF_ELSE = "if_else"
     FOR_LOOP = "for_loop"
     INPUT = "input"
+    VARIABLE = "variable"
 
 
 class BlockDefinition(BaseModel):
@@ -67,6 +68,22 @@ class BlockDefinition(BaseModel):
                     raise ValueError("array_literal is required when array_mode='literal' for for_loop blocks")
                 if not isinstance(array_literal, list):
                     raise ValueError("array_literal must be a list when array_mode='literal' for for_loop blocks")
+        elif block_type == BlockType.VARIABLE:
+            if "input" not in v:
+                raise ValueError("input is required in config for variable blocks")
+            input_type = str(v.get("input_type") or "string").lower()
+            if input_type not in ("string", "number", "array"):
+                raise ValueError("input_type must be 'string', 'number', or 'array' for variable blocks")
+            value = v.get("input")
+            if input_type == "array":
+                if not isinstance(value, list):
+                    raise ValueError("Variable block input must be an array when input_type='array'")
+            elif input_type == "number":
+                if not isinstance(value, (int, float)):
+                    raise ValueError("Variable block input must be a number when input_type='number'")
+            else:
+                if not isinstance(value, str):
+                    raise ValueError("Variable block input must be a string when input_type='string'")
         
         return v
 
