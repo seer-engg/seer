@@ -9,7 +9,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import (
         SummarizationMiddleware,
     )
-
+import json
 # Autolog LangChain
 import mlflow
 mlflow.langchain.autolog()
