@@ -14,6 +14,7 @@ class BlockType(str, Enum):
     IF_ELSE = "if_else"
     FOR_LOOP = "for_loop"
     INPUT = "input"
+    VARIABLE = "variable"
 
 
 class BlockDefinition(BaseModel):
@@ -34,6 +35,11 @@ class BlockDefinition(BaseModel):
         if block_type == BlockType.TOOL:
             if 'tool_name' not in v:
                 raise ValueError("tool_name is required in config for tool blocks")
+            if 'tool_params' in v:
+                raise ValueError("tool_params is deprecated; use 'params' instead.")
+            params = v.get("params")
+            if params is not None and not isinstance(params, dict):
+                raise ValueError("'params' must be an object for tool blocks")
         elif block_type == BlockType.LLM:
             # system_prompt is optional, default to empty string
             if 'system_prompt' not in v:
@@ -45,8 +51,39 @@ class BlockDefinition(BaseModel):
             if 'condition' not in v:
                 raise ValueError("condition is required in config for if_else blocks")
         elif block_type == BlockType.FOR_LOOP:
-            if 'array_var' not in v or 'item_var' not in v:
-                raise ValueError("array_var and item_var are required in config for for_loop blocks")
+            array_mode = v.get("array_mode", "variable")
+            item_var = v.get("item_var")
+            if not item_var or not str(item_var).strip():
+                raise ValueError("item_var is required in config for for_loop blocks")
+            if array_mode not in ("variable", "literal"):
+                raise ValueError("array_mode must be either 'variable' or 'literal' for for_loop blocks")
+            if array_mode == "variable":
+                array_var = v.get("array_variable") or v.get("array_var")
+                if not array_var or not str(array_var).strip():
+                    raise ValueError("array_variable is required when array_mode='variable' for for_loop blocks")
+                v["array_variable"] = array_var
+            else:
+                array_literal = v.get("array_literal")
+                if array_literal is None:
+                    raise ValueError("array_literal is required when array_mode='literal' for for_loop blocks")
+                if not isinstance(array_literal, list):
+                    raise ValueError("array_literal must be a list when array_mode='literal' for for_loop blocks")
+        elif block_type == BlockType.VARIABLE:
+            if "input" not in v:
+                raise ValueError("input is required in config for variable blocks")
+            input_type = str(v.get("input_type") or "string").lower()
+            if input_type not in ("string", "number", "array"):
+                raise ValueError("input_type must be 'string', 'number', or 'array' for variable blocks")
+            value = v.get("input")
+            if input_type == "array":
+                if not isinstance(value, list):
+                    raise ValueError("Variable block input must be an array when input_type='array'")
+            elif input_type == "number":
+                if not isinstance(value, (int, float)):
+                    raise ValueError("Variable block input must be a number when input_type='number'")
+            else:
+                if not isinstance(value, str):
+                    raise ValueError("Variable block input must be a string when input_type='string'")
         
         return v
 
@@ -57,9 +94,9 @@ class EdgeDefinition(BaseModel):
     id: str = Field(..., description="Unique edge ID")
     source: str = Field(..., description="Source block ID")
     target: str = Field(..., description="Target block ID")
-    branch: Optional[Literal["true", "false"]] = Field(
+    branch: Optional[Literal["true", "false", "loop", "exit"]] = Field(
         default=None,
-        description="Conditional branch hint (used for if/else blocks)",
+        description="Conditional branch hint (if/else or for loop branches)",
     )
 
 
@@ -133,12 +170,14 @@ def validate_workflow_graph(graph_data: Dict[str, Any]) -> WorkflowSchema:
         blocks.append(block)
     
     def _determine_branch(edge_data: Dict[str, Any]) -> Optional[str]:
+        valid_branches = {"true", "false", "loop", "exit"}
         branch = edge_data.get('data', {}).get('branch')
-        if branch in ("true", "false"):
+        if branch in valid_branches:
             return branch
-        legacy = edge_data.get('targetHandle')
-        if legacy in ("true", "false"):
-            return legacy
+        for handle_key in ("sourceHandle", "targetHandle"):
+            legacy = edge_data.get(handle_key)
+            if legacy in valid_branches:
+                return legacy
         return None
     
     # Convert edges to EdgeDefinition

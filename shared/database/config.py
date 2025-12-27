@@ -76,7 +76,7 @@ TORTOISE_ORM: Dict[str, Any] = {
                 "api.projects.models",
                 "shared.database.models",
                 "shared.database.models_oauth",
-                "api.workflows.models",
+                "shared.database.workflow_models",
             ],
             "default_connection": "default",
         },

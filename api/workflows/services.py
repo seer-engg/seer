@@ -10,20 +10,28 @@ from shared.logger import get_logger
 from shared.config import config
 from shared.database.models import User
 from .models import (
-    Workflow,
-    WorkflowBlock,
-    WorkflowEdge,
-    WorkflowExecution,
-    BlockExecution,
-    WorkflowChatSession,
-    WorkflowChatMessage,
-    WorkflowProposal,
     WorkflowCreate,
     WorkflowUpdate,
 )
-from .schema import validate_workflow_graph
+from shared.database import Workflow, WorkflowBlock, WorkflowEdge, WorkflowExecution, WorkflowChatSession, WorkflowChatMessage, WorkflowProposal
+from workflow_core.schema import validate_workflow_graph
+from workflow_core.graph_builder import get_workflow_graph_builder
+from workflow_core.validation import with_block_config_defaults
+from workflow_core.function_blocks import get_function_block_schemas
 
 logger = get_logger("api.workflows.services")
+
+
+async def list_function_blocks() -> Dict[str, Any]:
+    """
+    List built-in function block schemas (LLM, if/else, for loop, etc.).
+    """
+    try:
+        schemas = get_function_block_schemas()
+        return {"blocks": [schema.model_dump() for schema in schemas]}
+    except Exception as exc:
+        logger.exception("Error listing function block schemas: %s", exc)
+        raise HTTPException(status_code=500, detail="Error listing function block schemas")
 
 
 async def create_workflow(
@@ -138,8 +146,6 @@ async def update_workflow(
     # Sync blocks and edges if graph_data was updated
     if payload.graph_data:
         await _sync_workflow_blocks_and_edges(workflow, payload.graph_data)
-        # Invalidate cached graph
-        from .graph_builder import get_workflow_graph_builder
         builder = await get_workflow_graph_builder()
         builder.invalidate_cache(workflow_id)
     
@@ -594,19 +600,6 @@ def _apply_patch_ops(
     nodes = updated_graph["nodes"]
     edges = updated_graph["edges"]
     
-    def _ensure_node_defaults(node: Dict[str, Any]) -> Dict[str, Any]:
-        if not node:
-            return node
-        block_type = node.get("type")
-        data = node.get("data") or {}
-        config = data.get("config") or {}
-        if block_type == "for_loop":
-            config.setdefault("array_var", "items")
-            config.setdefault("item_var", "item")
-        data["config"] = config
-        node["data"] = data
-        return node
-    
     def _find_node_index(node_id: str) -> Optional[int]:
         for idx, node in enumerate(nodes):
             if node.get("id") == node_id:
@@ -624,7 +617,9 @@ def _apply_patch_ops(
                 raise HTTPException(status_code=400, detail="add_node requires node.id")
             if _find_node_index(node["id"]) is not None:
                 raise HTTPException(status_code=400, detail=f"Node '{node['id']}' already exists")
-            nodes.append(_ensure_node_defaults(node))
+            default_config = with_block_config_defaults(node.get("type"), node.get("data", {}).get("config"))
+            node["data"]["config"] = default_config
+            nodes.append(node)
         
         elif op_type == "update_node":
             node = op.get("node")
@@ -634,7 +629,9 @@ def _apply_patch_ops(
             idx = _find_node_index(node_id)
             if idx is None:
                 raise HTTPException(status_code=400, detail=f"Node '{node_id}' not found")
-            nodes[idx] = _ensure_node_defaults(node)
+            default_config = with_block_config_defaults(node.get("type"), node.get("data", {}).get("config"))
+            node["data"]["config"] = default_config
+            nodes[idx] = node
         
         elif op_type == "remove_node":
             node_id = op.get("node_id")
@@ -757,7 +754,7 @@ async def accept_workflow_proposal(
     await workflow.save()
     await _sync_workflow_blocks_and_edges(workflow, updated_graph)
     
-    from .graph_builder import get_workflow_graph_builder
+    
     builder = await get_workflow_graph_builder()
     builder.invalidate_cache(workflow.id)
     

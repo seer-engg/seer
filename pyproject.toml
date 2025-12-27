@@ -50,6 +50,7 @@ packages = [
   "cli",
   "shared",
   "agents",
+  "workflow_core"
 ]
 [tool.setuptools_scm]
 fallback_version = "0.0.0"
@@ -62,6 +63,7 @@ fallback_version = "0.0.0"
 dev = [
     "aerich>=0.9.2",
     "ipykernel>=7.1.0",
+    "pytest>=9.0.2",
 ]
 
 [project.optional-dependencies]

@@ -4,17 +4,16 @@ Node functions for workflow blocks.
 Each block type has a corresponding node function that executes the block
 and updates the workflow state.
 """
-from typing import Any, Dict, Optional
-from datetime import datetime
+from typing import Any, Dict, Optional, List, Union
 
 from shared.logger import get_logger
-from shared.llm import get_llm, get_llm_without_responses_api
+from shared.llm import  get_llm_without_responses_api
 from shared.tools.executor import execute_tool as execute_tool_with_oauth
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from .state import WorkflowState
 from .schema import BlockDefinition, BlockType
-from .models import WorkflowExecution, BlockExecution, WorkflowBlock
+from .code_executor import execute_code_block, CodeExecutionError
 from shared.database.models import User
 
 logger = get_logger("api.workflows.nodes")
@@ -97,6 +96,9 @@ def resolve_template_variables(text: str, variable_map: Dict[str, Any]) -> str:
     """
     import re
     import json
+
+    logger.info(f"Resolving template variables: {text[:50]}...")
+    logger.info(f"Variable map: {variable_map.keys()}...")
     
     if not text or "{{" not in text:
         return text
@@ -107,36 +109,63 @@ def resolve_template_variables(text: str, variable_map: Dict[str, Any]) -> str:
         if var_name in variable_map:
             return variable_map[var_name]
         
-        # Try nested access: split by dots and traverse
         parts = var_name.split(".")
-        if len(parts) >= 2:
-            # Try block_id.rest_of_path format
-            block_id = parts[0]
-            
-            # First check if block_id.second_part exists as a key (e.g., "LLM.output")
-            if len(parts) == 2:
-                key = f"{parts[0]}.{parts[1]}"
-                if key in variable_map:
-                    return variable_map[key]
-            
-            # Try to traverse from block output
-            remaining_path = parts[1:]
-            current_value = variable_map.get(f"{block_id}.output")
-            
-            # Also try to get from structured_output if available
-            structured = variable_map.get(f"{block_id}.structured_output")
-            if structured and isinstance(structured, dict) and remaining_path[0] in structured:
-                current_value = structured
-            
-            # Traverse the remaining path
-            for key in remaining_path:
-                if isinstance(current_value, dict) and key in current_value:
-                    current_value = current_value[key]
-                else:
-                    return ""  # Path not found
-            return current_value
+        if len(parts) < 2:
+            return ""
         
-        return ""
+        block_id = parts[0]
+        first_handle = parts[1]
+        remaining_path = parts[2:]
+        
+        def get_handle_value(handle_name: str) -> Any:
+            return variable_map.get(f"{block_id}.{handle_name}")
+        
+        # Prefer explicit handle references such as {{alias.item.*}}
+        current_value = get_handle_value(first_handle)
+        if current_value is None:
+            # Fall back to default output/structured_output handles
+            remaining_path = parts[1:]
+            current_value = get_handle_value("output")
+            if current_value is not None and remaining_path and remaining_path[0] == "output":
+                remaining_path = remaining_path[1:]
+            elif current_value is None:
+                current_value = get_handle_value("structured_output")
+                if current_value is not None and remaining_path and remaining_path[0] == "structured_output":
+                    remaining_path = remaining_path[1:]
+        
+        if current_value is None:
+            return ""
+        
+        # If we still have a nested path to resolve, try to coerce strings
+        # containing JSON or reuse structured_output for legacy {{block.output.*}} refs.
+        if remaining_path:
+            parsed_value = None
+            if isinstance(current_value, str):
+                try:
+                    parsed_value = json.loads(current_value)
+                except Exception:
+                    parsed_value = None
+            if parsed_value is not None:
+                current_value = parsed_value
+            elif first_handle == "output":
+                structured_value = get_handle_value("structured_output")
+                if structured_value is not None:
+                    current_value = structured_value
+        
+        # Traverse any remaining nested keys (dicts or list indexes)
+        for key in remaining_path:
+            if isinstance(current_value, dict) and key in current_value:
+                current_value = current_value[key]
+            elif isinstance(current_value, list):
+                try:
+                    index = int(key)
+                    current_value = current_value[index]
+                except (ValueError, IndexError):
+                    return ""
+            else:
+                return ""
+        
+        return current_value
     
     def replace_template_var(match):
         var_name = match.group(1)
@@ -151,6 +180,27 @@ def resolve_template_variables(text: str, variable_map: Dict[str, Any]) -> str:
     resolved = re.sub(r'\{\{(\w+(?:\.\w+)*)\}\}', replace_template_var, text)
     logger.debug(f"Resolved template: {text[:50]}... -> {resolved[:50]}...")
     return resolved
+
+
+def resolve_template_payload(payload: Any, variable_map: Dict[str, Any]) -> Any:
+    """
+    Resolve template variables within arbitrary payloads.
+    
+    Supports nested lists/dicts so tool parameters like ["{{node.handle}}"]
+    are resolved just like plain strings.
+    """
+    if isinstance(payload, str):
+        if "{{" in payload:
+            return resolve_template_variables(payload, variable_map)
+        return payload
+    if isinstance(payload, list):
+        return [resolve_template_payload(item, variable_map) for item in payload]
+    if isinstance(payload, dict):
+        return {
+            key: resolve_template_payload(value, variable_map)
+            for key, value in payload.items()
+        }
+    return payload
 
 
 async def resolve_inputs(
@@ -188,7 +238,6 @@ async def input_node(
     state: WorkflowState,
     block: BlockDefinition,
     input_resolution: Dict[str, Dict[str, Any]],
-    execution: Optional[WorkflowExecution] = None,
 ) -> WorkflowState:
     """Input block: provides workflow input data."""
     # Get input_data from state
@@ -235,12 +284,61 @@ async def input_node(
     }
 
 
+async def variable_node(
+    state: WorkflowState,
+    block: BlockDefinition,
+    input_resolution: Dict[str, Dict[str, Any]],
+) -> WorkflowState:
+    """Variable block: expose a literal value (string, number, or array) for reuse."""
+    config = block.config or {}
+    resolved_inputs = await resolve_inputs(state, input_resolution, block)
+    value = resolved_inputs.get("input") if resolved_inputs else None
+    if value is None:
+        value = config.get("input")
+    if value is None:
+        raise ValueError(f"Variable block '{block.id}' requires an 'input' value.")
+
+    input_type = str(config.get("input_type") or "string").lower()
+    variable_map = build_variable_map(state)
+
+    def coerce_number(raw: Any) -> Union[float, int]:
+        resolved = resolve_template_payload(raw, variable_map)
+        if isinstance(resolved, (int, float)):
+            return resolved
+        if resolved is None:
+            raise ValueError(f"Variable block '{block.id}' input resolved to None, expected a number.")
+        text = str(resolved).strip()
+        if not text:
+            raise ValueError(f"Variable block '{block.id}' input resolved to empty string, expected a number.")
+        try:
+            if any(char in text.lower() for char in ("e", ".")):
+                return float(text)
+            return int(text)
+        except ValueError as exc:
+            raise ValueError(f"Variable block '{block.id}' could not convert '{text}' to a number.") from exc
+
+    if input_type == "array":
+        if not isinstance(value, list):
+            raise ValueError(f"Variable block '{block.id}' expected a list when input_type='array'.")
+        resolved_value = resolve_template_payload(value, variable_map)
+    elif input_type == "number":
+        resolved_value = coerce_number(value)
+    else:
+        string_value = value if isinstance(value, str) else str(value)
+        resolved_value = resolve_template_payload(string_value, variable_map)
+
+    return {
+        "block_outputs": {
+            block.id: {"output": resolved_value}
+        }
+    }
+
+
 async def tool_node(
     state: WorkflowState,
     block: BlockDefinition,
     input_resolution: Dict[str, Dict[str, Any]],
     user_id: Optional[str] = None,
-    execution: Optional[WorkflowExecution] = None,
 ) -> WorkflowState:
     """Tool block: execute external tool."""
     tool_name = block.config.get("tool_name")
@@ -280,9 +378,8 @@ async def tool_node(
         
         # Resolve template variables in parameter value if it's a string
         if param_value is not None:
-            if isinstance(param_value, str) and "{{" in param_value:
-                param_value = resolve_template_variables(param_value, variable_map)
-            tool_params[param_name] = param_value
+            resolved_param = resolve_template_payload(param_value, variable_map)
+            tool_params[param_name] = resolved_param
     
     # Execute tool with OAuth token management
 
@@ -397,7 +494,6 @@ async def llm_node(
     state: WorkflowState,
     block: BlockDefinition,
     input_resolution: Dict[str, Dict[str, Any]],
-    execution: Optional[WorkflowExecution] = None,
 ) -> WorkflowState:
     """LLM block: execute LLM call with optional structured output."""
     import json
@@ -509,7 +605,6 @@ async def if_else_node(
     state: WorkflowState,
     block: BlockDefinition,
     input_resolution: Dict[str, Dict[str, Any]],
-    execution: Optional[WorkflowExecution] = None,
 ) -> WorkflowState:
     """If/Else block: evaluate condition and set routing flag."""
     condition = block.config.get("condition", "")
@@ -541,39 +636,102 @@ async def if_else_node(
     }
 
 
+def _resolve_loop_items(config: Dict[str, Any], state: WorkflowState) -> List[Any]:
+    """Resolve the iterable for a for_loop block based on config."""
+    import json
+    
+    array_mode = (config.get("array_mode") or "variable").lower()
+    variable_map = build_variable_map(state)
+    
+    if array_mode == "literal":
+        literal_items = config.get("array_literal", [])
+        if literal_items is None:
+            raise ValueError("array_literal must be provided when array_mode is 'literal'")
+        if not isinstance(literal_items, list):
+            raise ValueError("array_literal must be a list when array_mode is 'literal'")
+        return list(literal_items)
+    
+    array_var = config.get("array_variable") or config.get("array_var")
+    if not array_var:
+        raise ValueError("array_variable is required when array_mode is 'variable'")
+    
+    normalized_var = array_var.strip()
+    if normalized_var.startswith("{{") and normalized_var.endswith("}}"):
+        normalized_var = normalized_var[2:-2].strip()
+    
+    array_value = variable_map.get(normalized_var)
+    if array_value is None:
+        raise ValueError(f"for_loop could not resolve variable '{normalized_var}'")
+    
+    # Attempt to parse JSON arrays stored as strings
+    if isinstance(array_value, str):
+        trimmed = array_value.strip()
+        if trimmed.startswith("[") and trimmed.endswith("]"):
+            try:
+                array_value = json.loads(trimmed)
+            except json.JSONDecodeError:
+                pass
+    
+    if not isinstance(array_value, (list, tuple)):
+        raise ValueError(f"for_loop expected '{normalized_var}' to be a list/array but received {type(array_value).__name__}")
+    
+    return list(array_value)
+
+
 async def for_loop_node(
     state: WorkflowState,
     block: BlockDefinition,
     input_resolution: Dict[str, Dict[str, Any]],
-    execution: Optional[WorkflowExecution] = None,
 ) -> WorkflowState:
-    """For loop block: prepare loop state for iteration."""
-    array_var = block.config.get("array_var")
-    item_var = block.config.get("item_var", "item")
+    """For loop block: iterate through items and expose the current item per execution."""
+    config = block.config or {}
+    item_var = (config.get("item_var") or "item").strip() or "item"
     
-    inputs = await resolve_inputs(state, input_resolution, block)
+    loop_states = dict(state.get("loop_state") or {})
+    loop_ctx = loop_states.get(block.id)
     
-    # Get array from inputs
-    array = inputs.get(array_var) or inputs.get("input", [])
+    if loop_ctx is None:
+        items = _resolve_loop_items(config, state)
+        loop_ctx = {
+            "items": items,
+            "current_index": 0,
+            "item_var": item_var,
+            "array_mode": config.get("array_mode", "variable"),
+        }
+    else:
+        items = loop_ctx.get("items", [])
+        loop_ctx["item_var"] = item_var
     
-    if not isinstance(array, (list, tuple)):
-        raise ValueError(f"For loop array '{array_var}' is not iterable")
+    total_items = len(items)
+    current_index = loop_ctx.get("current_index", 0)
     
-    # Store loop state
-    loop_state = {
-        "array_var": array_var,
-        "item_var": item_var,
-        "current_index": 0,
-        "items": list(array),
-        "results": [],
-    }
+    if current_index < total_items:
+        current_item = items[current_index]
+        loop_ctx["current_index"] = current_index + 1
+        loop_states[block.id] = loop_ctx
+        block_output = {
+            "output": current_item,
+            item_var: current_item,
+            "item_index": current_index,
+            "count": total_items,
+            "route": "loop",
+        }
+    else:
+        # Loop complete
+        loop_states.pop(block.id, None)
+        block_output = {
+            "output": {"items": items, "count": total_items},
+            "count": total_items,
+            "route": "exit",
+        }
+    
+    # Always expose the full collection for reference
+    block_output.setdefault("items", items)
     
     return {
-        "loop_state": loop_state,
+        "loop_state": loop_states,
         "block_outputs": {
-            block.id: {
-                "output": {"items": list(array), "count": len(array)}
-            }
+            block.id: block_output
         }
     }
 
@@ -585,6 +743,7 @@ NODE_FUNCTIONS = {
     BlockType.LLM: llm_node,
     BlockType.IF_ELSE: if_else_node,
     BlockType.FOR_LOOP: for_loop_node,
+    BlockType.VARIABLE: variable_node,
 }
 
 
@@ -597,7 +756,9 @@ __all__ = [
     "resolve_inputs",
     "build_variable_map",
     "resolve_template_variables",
+    "resolve_template_payload",
     "input_node",
+    "variable_node",
     "tool_node",
     "llm_node",
     "if_else_node",

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from shared.logger import get_logger
 from shared.config import config
+from copy import deepcopy
 
 from .models import (
     WorkflowCreate,
@@ -32,14 +33,14 @@ from .services import (
     list_chat_sessions,
     save_chat_message,
     load_chat_history,
-    update_chat_session_title,
     create_workflow_proposal,
     get_workflow_proposal,
     accept_workflow_proposal,
     reject_workflow_proposal,
     preview_patch_ops,
+    list_function_blocks,
 )
-from .graph_builder import get_workflow_graph_builder
+from workflow_core.graph_builder import get_workflow_graph_builder
 from .chat_schema import (
     ChatRequest,
     ChatResponse,
@@ -47,11 +48,17 @@ from .chat_schema import (
     ChatSession,
     ChatSessionWithMessages,
     ChatMessage,
-    InterruptResponse,
     WorkflowProposalActionResponse,
 )
-from .chat_agent import create_workflow_chat_agent, extract_thinking_from_messages, _current_thread_id
-from .alias_utils import (
+from agents.workflow_agent import (
+    create_workflow_chat_agent,
+    extract_thinking_from_messages,
+    _current_thread_id,
+    set_workflow_state_for_thread,
+    get_patch_ops_for_thread,
+    clear_patch_ops_for_thread,
+)
+from workflow_core.alias_utils import (
     build_template_reference_examples,
     collect_input_variables,
     derive_block_aliases,
@@ -72,6 +79,14 @@ from shared.database.models import User, UserPublic
 logger = get_logger("api.workflows.router")
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
+
+
+@router.get("/blocks/functions")
+async def list_function_blocks_endpoint() -> Dict[str, Any]:
+    """
+    List built-in function block schemas (e.g., LLM, if/else, for loop).
+    """
+    return await list_function_blocks()
 
 
 def _summarize_patch_ops(patch_ops: List[Dict[str, Any]]) -> str:
@@ -301,7 +316,6 @@ async def execute_workflow_endpoint(
         # Build and compile graph
         builder = await get_workflow_graph_builder()
         compiled_graph = await builder.get_compiled_graph(
-            workflow_id=workflow_id,
             workflow=workflow,
             user_id=user.user_id,
         )
@@ -314,7 +328,7 @@ async def execute_workflow_endpoint(
             "execution_id": execution.id,
             "user_id": user.user_id,
             "block_outputs": {},
-            "loop_state": None,
+            "loop_state": {},
             "block_aliases": block_aliases,
         }
         
@@ -377,7 +391,6 @@ async def execute_workflow_stream_endpoint(
             # Build and compile graph
             builder = await get_workflow_graph_builder()
             compiled_graph = await builder.get_compiled_graph(
-                workflow_id=workflow_id,
                 workflow=workflow,
                 user_id=user.user_id,
             )
@@ -390,7 +403,7 @@ async def execute_workflow_stream_endpoint(
                 "execution_id": execution.id,
                 "user_id": user.user_id,
                 "block_outputs": {},
-                "loop_state": None,
+                "loop_state": {},
                 "block_aliases": block_aliases,
             }
             
@@ -457,10 +470,6 @@ async def get_execution_endpoint(
     return WorkflowExecutionPublic.model_validate(execution, from_attributes=True)
 
 
-# Include PR sync workflow
-from .pr_sync import router as pr_sync_router
-router.include_router(pr_sync_router)
-
 # Chat endpoints
 
 @router.post("/{workflow_id}/chat", response_model=ChatResponse)
@@ -520,11 +529,11 @@ async def chat_with_workflow_endpoint(
         )
         session_id = session.id
     
-    # Get current workflow state
-    workflow_state = {
-        "nodes": workflow.graph_data.get("nodes", []) if workflow.graph_data else [],
-        "edges": workflow.graph_data.get("edges", []) if workflow.graph_data else [],
-    }
+    # Get current workflow state (deep copy so tool mutations don't touch DB graph)
+    if workflow.graph_data:
+        workflow_state = deepcopy(workflow.graph_data)
+    else:
+        workflow_state = {"nodes": [], "edges": []}
     
     # Merge with provided workflow state (in case frontend has unsaved changes)
     if chat_request.workflow_state:
@@ -545,8 +554,8 @@ async def chat_with_workflow_endpoint(
         workflow_state["edges"] = []
     
     graph_snapshot = {
-        "nodes": workflow_state.get("nodes", []),
-        "edges": workflow_state.get("edges", []),
+        "nodes": deepcopy(workflow_state.get("nodes", [])),
+        "edges": deepcopy(workflow_state.get("edges", [])),
     }
     block_aliases = derive_block_aliases(graph_snapshot)
     workflow_state["block_aliases"] = block_aliases
@@ -554,7 +563,7 @@ async def chat_with_workflow_endpoint(
     workflow_state["input_variables"] = sorted(collect_input_variables(graph_snapshot))
     
     # Store workflow_state in context for tools to access
-    from .chat_agent import set_workflow_state_for_thread, _current_thread_id
+    
     if thread_id:
         set_workflow_state_for_thread(thread_id, workflow_state)
     
@@ -1002,7 +1011,10 @@ async def chat_with_workflow_endpoint(
         # Extract thinking steps
         thinking_steps = extract_thinking_from_messages(agent_messages)
         
-        patch_ops = _extract_patch_ops_from_messages(agent_messages)
+        # Prefer patch ops recorded directly by tools; fall back to log parsing
+        patch_ops = get_patch_ops_for_thread(thread_id)
+        if not patch_ops:
+            patch_ops = _extract_patch_ops_from_messages(agent_messages)
         proposal, proposal_public, proposal_error = await _maybe_create_proposal_from_ops(
             workflow=workflow,
             session=session,
@@ -1037,6 +1049,8 @@ async def chat_with_workflow_endpoint(
             status_code=500,
             detail=f"Failed to process chat request: {str(e)}"
         )
+    finally:
+        clear_patch_ops_for_thread(thread_id)
 
 
 @router.post("/{workflow_id}/chat/sessions", response_model=ChatSession)
@@ -1178,14 +1192,13 @@ async def resume_chat_endpoint(
     
     session_id = session.id
     
-    # Get current workflow state
-    workflow_state = {
-        "nodes": workflow.graph_data.get("nodes", []) if workflow.graph_data else [],
-        "edges": workflow.graph_data.get("edges", []) if workflow.graph_data else [],
-    }
+    # Get current workflow state (deep copy to avoid mutating DB graph)
+    if workflow.graph_data:
+        workflow_state = deepcopy(workflow.graph_data)
+    else:
+        workflow_state = {"nodes": [], "edges": []}
     
     # Create agent
-    from .chat_agent import create_workflow_chat_agent
     agent = create_workflow_chat_agent(
         model=config.default_llm_model,
         checkpointer=checkpointer,
@@ -1223,10 +1236,11 @@ async def resume_chat_endpoint(
                 response_text = str(last_msg)
         
         # Extract thinking steps
-        from .chat_agent import extract_thinking_from_messages
         thinking_steps = extract_thinking_from_messages(agent_messages)
         
-        patch_ops = _extract_patch_ops_from_messages(agent_messages)
+        patch_ops = get_patch_ops_for_thread(thread_id)
+        if not patch_ops:
+            patch_ops = _extract_patch_ops_from_messages(agent_messages)
         proposal, proposal_public, proposal_error = await _maybe_create_proposal_from_ops(
             workflow=workflow,
             session=session,
@@ -1264,6 +1278,7 @@ async def resume_chat_endpoint(
         # Reset context variable
         if token is not None:
             _current_thread_id.reset(token)
+        clear_patch_ops_for_thread(thread_id)
 
 
 @router.get("/{workflow_id}/proposals/{proposal_id}", response_model=WorkflowProposalPublic)
