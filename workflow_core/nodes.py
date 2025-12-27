@@ -106,36 +106,63 @@ def resolve_template_variables(text: str, variable_map: Dict[str, Any]) -> str:
         if var_name in variable_map:
             return variable_map[var_name]
         
-        # Try nested access: split by dots and traverse
         parts = var_name.split(".")
-        if len(parts) >= 2:
-            # Try block_id.rest_of_path format
-            block_id = parts[0]
-            
-            # First check if block_id.second_part exists as a key (e.g., "LLM.output")
-            if len(parts) == 2:
-                key = f"{parts[0]}.{parts[1]}"
-                if key in variable_map:
-                    return variable_map[key]
-            
-            # Try to traverse from block output
-            remaining_path = parts[1:]
-            current_value = variable_map.get(f"{block_id}.output")
-            
-            # Also try to get from structured_output if available
-            structured = variable_map.get(f"{block_id}.structured_output")
-            if structured and isinstance(structured, dict) and remaining_path[0] in structured:
-                current_value = structured
-            
-            # Traverse the remaining path
-            for key in remaining_path:
-                if isinstance(current_value, dict) and key in current_value:
-                    current_value = current_value[key]
-                else:
-                    return ""  # Path not found
-            return current_value
+        if len(parts) < 2:
+            return ""
         
-        return ""
+        block_id = parts[0]
+        first_handle = parts[1]
+        remaining_path = parts[2:]
+        
+        def get_handle_value(handle_name: str) -> Any:
+            return variable_map.get(f"{block_id}.{handle_name}")
+        
+        # Prefer explicit handle references such as {{alias.item.*}}
+        current_value = get_handle_value(first_handle)
+        if current_value is None:
+            # Fall back to default output/structured_output handles
+            remaining_path = parts[1:]
+            current_value = get_handle_value("output")
+            if current_value is not None and remaining_path and remaining_path[0] == "output":
+                remaining_path = remaining_path[1:]
+            elif current_value is None:
+                current_value = get_handle_value("structured_output")
+                if current_value is not None and remaining_path and remaining_path[0] == "structured_output":
+                    remaining_path = remaining_path[1:]
+        
+        if current_value is None:
+            return ""
+        
+        # If we still have a nested path to resolve, try to coerce strings
+        # containing JSON or reuse structured_output for legacy {{block.output.*}} refs.
+        if remaining_path:
+            parsed_value = None
+            if isinstance(current_value, str):
+                try:
+                    parsed_value = json.loads(current_value)
+                except Exception:
+                    parsed_value = None
+            if parsed_value is not None:
+                current_value = parsed_value
+            elif first_handle == "output":
+                structured_value = get_handle_value("structured_output")
+                if structured_value is not None:
+                    current_value = structured_value
+        
+        # Traverse any remaining nested keys (dicts or list indexes)
+        for key in remaining_path:
+            if isinstance(current_value, dict) and key in current_value:
+                current_value = current_value[key]
+            elif isinstance(current_value, list):
+                try:
+                    index = int(key)
+                    current_value = current_value[index]
+                except (ValueError, IndexError):
+                    return ""
+            else:
+                return ""
+        
+        return current_value
     
     def replace_template_var(match):
         var_name = match.group(1)
