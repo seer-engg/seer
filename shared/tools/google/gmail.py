@@ -19,6 +19,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import base64
 import email.utils
 from email.message import EmailMessage
+import json
+import re
 
 import httpx
 from fastapi import HTTPException
@@ -322,10 +324,22 @@ def _coerce_str_list(value: Any, default: List[str]) -> List[str]:
     if value is None:
         return default
     if isinstance(value, list):
-        return [str(x) for x in value if str(x).strip()]
+        return [str(x).strip() for x in value if str(x).strip()]
     if isinstance(value, str):
+        trimmed = value.strip()
+        if trimmed.startswith("[") and trimmed.endswith("]"):
+            try:
+                parsed = json.loads(trimmed)
+                if isinstance(parsed, list):
+                    return [str(x).strip() for x in parsed if str(x).strip()]
+            except Exception:
+                inner = trimmed[1:-1].strip()
+                if inner:
+                    trimmed = inner
+                else:
+                    return default
         # allow comma-separated
-        parts = [p.strip() for p in value.split(",")]
+        parts = [p.strip() for p in trimmed.split(",")]
         return [p for p in parts if p]
     return default
 
@@ -388,6 +402,27 @@ def _extract_text_body(payload: Dict[str, Any]) -> str:
     return ""
 
 
+_HEADER_SANITIZE_RE = re.compile(r"[\r\n]+")
+
+
+def _sanitize_header_value(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    cleaned = _HEADER_SANITIZE_RE.sub(" ", str(value)).strip()
+    return cleaned or None
+
+
+def _sanitize_address_list(addresses: Optional[List[str]]) -> List[str]:
+    if not addresses:
+        return []
+    sanitized: List[str] = []
+    for addr in addresses:
+        cleaned = _sanitize_header_value(addr)
+        if cleaned:
+            sanitized.append(cleaned)
+    return sanitized
+
+
 async def _gmail_request(
     access_token: str,
     method: str,
@@ -423,25 +458,36 @@ def _build_mime_email(
     Build an RFC 2822 MIME message. Gmail API requires this then base64url as Message.raw.
     """
     msg = EmailMessage()
-    msg["To"] = ", ".join(to)
-    msg["Subject"] = subject
 
-    if cc:
-        msg["Cc"] = ", ".join(cc)
-    if bcc:
+    sanitized_to = _sanitize_address_list(to)
+    if not sanitized_to:
+        raise HTTPException(status_code=400, detail="Parameter 'to' must contain at least one valid address")
+
+    msg["To"] = ", ".join(sanitized_to)
+    msg["Subject"] = _sanitize_header_value(subject) or ""
+
+    sanitized_cc = _sanitize_address_list(cc)
+    if sanitized_cc:
+        msg["Cc"] = ", ".join(sanitized_cc)
+    sanitized_bcc = _sanitize_address_list(bcc)
+    if sanitized_bcc:
         # Bcc header is allowed; Gmail typically strips it for recipients, but safe to set.
-        msg["Bcc"] = ", ".join(bcc)
-    if from_email:
-        msg["From"] = from_email
-    if reply_to:
-        msg["Reply-To"] = reply_to
+        msg["Bcc"] = ", ".join(sanitized_bcc)
+    sanitized_from = _sanitize_header_value(from_email)
+    if sanitized_from:
+        msg["From"] = sanitized_from
+    sanitized_reply_to = _sanitize_header_value(reply_to)
+    if sanitized_reply_to:
+        msg["Reply-To"] = sanitized_reply_to
 
     msg["Date"] = email.utils.formatdate(localtime=True)
 
-    if in_reply_to:
-        msg["In-Reply-To"] = in_reply_to
-    if references:
-        msg["References"] = references
+    sanitized_in_reply_to = _sanitize_header_value(in_reply_to)
+    if sanitized_in_reply_to:
+        msg["In-Reply-To"] = sanitized_in_reply_to
+    sanitized_references = _sanitize_header_value(references)
+    if sanitized_references:
+        msg["References"] = sanitized_references
 
     msg.set_content(body_text or "")
 
@@ -904,6 +950,7 @@ class GmailCreateDraftTool(BaseTool):
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPStatusError as e:
+            logger.error(f"input: to {to}, subject {subject}, body_text {body_text}, body_html {body_html}, cc {cc}, bcc {bcc}, from_email {from_email}, reply_to {reply_to}, in_reply_to {in_reply_to}, references {references}, attachments {attachments}")
             logger.error(f"Gmail create draft error: {e.response.status_code} - {e.response.text[:500]}")
             raise HTTPException(status_code=e.response.status_code, detail=f"Gmail API error: {e.response.text[:500]}")
         except httpx.TimeoutException:
