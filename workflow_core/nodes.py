@@ -96,6 +96,9 @@ def resolve_template_variables(text: str, variable_map: Dict[str, Any]) -> str:
     """
     import re
     import json
+
+    logger.info(f"Resolving template variables: {text[:50]}...")
+    logger.info(f"Variable map: {variable_map.keys()}...")
     
     if not text or "{{" not in text:
         return text
@@ -177,6 +180,27 @@ def resolve_template_variables(text: str, variable_map: Dict[str, Any]) -> str:
     resolved = re.sub(r'\{\{(\w+(?:\.\w+)*)\}\}', replace_template_var, text)
     logger.debug(f"Resolved template: {text[:50]}... -> {resolved[:50]}...")
     return resolved
+
+
+def resolve_template_payload(payload: Any, variable_map: Dict[str, Any]) -> Any:
+    """
+    Resolve template variables within arbitrary payloads.
+    
+    Supports nested lists/dicts so tool parameters like ["{{node.handle}}"]
+    are resolved just like plain strings.
+    """
+    if isinstance(payload, str):
+        if "{{" in payload:
+            return resolve_template_variables(payload, variable_map)
+        return payload
+    if isinstance(payload, list):
+        return [resolve_template_payload(item, variable_map) for item in payload]
+    if isinstance(payload, dict):
+        return {
+            key: resolve_template_payload(value, variable_map)
+            for key, value in payload.items()
+        }
+    return payload
 
 
 async def resolve_inputs(
@@ -277,17 +301,8 @@ async def variable_node(
     input_type = str(config.get("input_type") or "string").lower()
     variable_map = build_variable_map(state)
 
-    def resolve_templates(payload: Any) -> Any:
-        if isinstance(payload, str):
-            if "{{" in payload:
-                return resolve_template_variables(payload, variable_map)
-            return payload
-        if isinstance(payload, list):
-            return [resolve_templates(item) for item in payload]
-        return payload
-
     def coerce_number(raw: Any) -> Union[float, int]:
-        resolved = resolve_templates(raw if not isinstance(raw, str) else raw)
+        resolved = resolve_template_payload(raw, variable_map)
         if isinstance(resolved, (int, float)):
             return resolved
         if resolved is None:
@@ -305,12 +320,12 @@ async def variable_node(
     if input_type == "array":
         if not isinstance(value, list):
             raise ValueError(f"Variable block '{block.id}' expected a list when input_type='array'.")
-        resolved_value = resolve_templates(value)
+        resolved_value = resolve_template_payload(value, variable_map)
     elif input_type == "number":
         resolved_value = coerce_number(value)
     else:
         string_value = value if isinstance(value, str) else str(value)
-        resolved_value = resolve_templates(string_value)
+        resolved_value = resolve_template_payload(string_value, variable_map)
 
     return {
         "block_outputs": {
@@ -363,9 +378,8 @@ async def tool_node(
         
         # Resolve template variables in parameter value if it's a string
         if param_value is not None:
-            if isinstance(param_value, str) and "{{" in param_value:
-                param_value = resolve_template_variables(param_value, variable_map)
-            tool_params[param_name] = param_value
+            resolved_param = resolve_template_payload(param_value, variable_map)
+            tool_params[param_name] = resolved_param
     
     # Execute tool with OAuth token management
 
@@ -742,6 +756,7 @@ __all__ = [
     "resolve_inputs",
     "build_variable_map",
     "resolve_template_variables",
+    "resolve_template_payload",
     "input_node",
     "variable_node",
     "tool_node",

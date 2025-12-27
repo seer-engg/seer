@@ -1,13 +1,27 @@
 from typing import Optional, Dict, Any
 import json
 from langchain_core.tools import tool
-from agents.workflow_agent.context import get_workflow_state_for_thread, set_workflow_state_for_thread, _current_thread_id
+from agents.workflow_agent.context import (
+    get_workflow_state_for_thread,
+    set_workflow_state_for_thread,
+    _current_thread_id,
+    append_patch_op_for_thread,
+)
 import uuid
 from shared.logger import get_logger
 from workflow_core.validation import with_block_config_defaults, validate_block_config
 from workflow_core.alias_utils import extract_block_alias_info, refresh_workflow_state_aliases
 
 logger = get_logger(__name__)
+
+
+def _record_patch_op(thread_id: Optional[str], patch_op: Dict[str, Any]) -> None:
+    """Record a tool patch op so the router can build proposals without log parsing."""
+    if not thread_id or not isinstance(patch_op, dict):
+        return
+    if "op" not in patch_op:
+        return
+    append_patch_op_for_thread(thread_id, patch_op)
 
 
 def _normalize_tool_block_config(block_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -189,6 +203,7 @@ async def add_workflow_block(
     if alias_info.get("alias"):
         response_data["alias"] = alias_info["alias"]
     
+    _record_patch_op(thread_id, response_data)
     return json.dumps(response_data)
 
 
@@ -309,6 +324,7 @@ async def modify_workflow_block(
     if alias_info.get("alias"):
         response_data["alias"] = alias_info["alias"]
     
+    _record_patch_op(thread_id, response_data)
     return json.dumps(response_data)
 
 
@@ -364,11 +380,14 @@ async def remove_workflow_block(
     if thread_id:
         set_workflow_state_for_thread(thread_id, workflow_state)
     
-    return json.dumps({
+    response_data = {
         "op": "remove_node",
         "description": f"Remove block '{block_id}' and {len(connected_edges)} connected edges",
         "node_id": block_id,
-    })
+    }
+    
+    _record_patch_op(thread_id, response_data)
+    return json.dumps(response_data)
 
 
 @tool
@@ -454,12 +473,15 @@ async def add_workflow_edge(
     if thread_id:
         set_workflow_state_for_thread(thread_id, workflow_state)
     
-    return json.dumps({
+    response_data = {
         "op": "add_edge",
         "description": f"Connect '{source_id}' to '{target_id}'",
         "edge_id": new_edge.get("id"),
         "edge": new_edge,
-    })
+    }
+    
+    _record_patch_op(thread_id, response_data)
+    return json.dumps(response_data)
 
 
 @tool
@@ -508,12 +530,15 @@ async def remove_workflow_edge(
     if thread_id:
         set_workflow_state_for_thread(thread_id, workflow_state)
     
-    return json.dumps({
+    response_data = {
         "op": "remove_edge",
         "description": f"Remove connection from '{source_id}' to '{target_id}'",
         "edge": {
             "source": source_id,
             "target": target_id,
         },
-    })
+    }
+    
+    _record_patch_op(thread_id, response_data)
+    return json.dumps(response_data)
 
