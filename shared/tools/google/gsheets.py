@@ -72,6 +72,10 @@ class GoogleSheetsWriteTool(BaseTool):
             "required": ["spreadsheet_id", "range", "values"]
         }
     
+    def get_output_schema(self) -> Dict[str, Any]:
+        """Get JSON schema for Google Sheets write tool output."""
+        return _update_values_response_output_schema()
+    
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         """
         Execute Google Sheets write tool.
@@ -252,6 +256,139 @@ def _values_schema(description: str) -> Dict[str, Any]:
     }
 
 
+def _cell_schema() -> Dict[str, Any]:
+    """JSON schema for a single cell value."""
+    return {
+        "oneOf": [
+            {"type": "string"},
+            {"type": "number"},
+            {"type": "boolean"},
+            {"type": "null"},
+        ]
+    }
+
+
+def _value_range_output_schema() -> Dict[str, Any]:
+    """ValueRange resource schema."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "range": {"type": "string"},
+            "majorDimension": {"type": "string", "enum": ["ROWS", "COLUMNS"]},
+            "values": {
+                "type": "array",
+                "items": {"type": "array", "items": _cell_schema()},
+            },
+        },
+    }
+
+
+def _update_values_response_output_schema() -> Dict[str, Any]:
+    """UpdateValuesResponse schema."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "spreadsheetId": {"type": "string"},
+            "updatedRange": {"type": "string"},
+            "updatedRows": {"type": "integer"},
+            "updatedColumns": {"type": "integer"},
+            "updatedCells": {"type": "integer"},
+            "updatedData": _value_range_output_schema(),
+        },
+    }
+
+
+def _batch_get_values_response_output_schema() -> Dict[str, Any]:
+    """BatchGetValuesResponse schema."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "spreadsheetId": {"type": "string"},
+            "valueRanges": {
+                "type": "array",
+                "items": _value_range_output_schema(),
+            },
+        },
+    }
+
+
+def _append_values_response_output_schema() -> Dict[str, Any]:
+    """AppendValuesResponse schema."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "spreadsheetId": {"type": "string"},
+            "tableRange": {"type": "string"},
+            "updates": _update_values_response_output_schema(),
+        },
+    }
+
+
+def _clear_values_response_output_schema() -> Dict[str, Any]:
+    """ClearValuesResponse schema."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "spreadsheetId": {"type": "string"},
+            "clearedRange": {"type": "string"},
+        },
+    }
+
+
+def _batch_update_values_response_output_schema() -> Dict[str, Any]:
+    """BatchUpdateValuesResponse schema."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "spreadsheetId": {"type": "string"},
+            "totalUpdatedRows": {"type": "integer"},
+            "totalUpdatedColumns": {"type": "integer"},
+            "totalUpdatedCells": {"type": "integer"},
+            "totalUpdatedSheets": {"type": "integer"},
+            "responses": {
+                "type": "array",
+                "items": _update_values_response_output_schema(),
+            },
+        },
+    }
+
+
+def _spreadsheet_output_schema() -> Dict[str, Any]:
+    """Spreadsheet resource schema (partial)."""
+    return {
+        "type": "object",
+        "additionalProperties": True,
+        "properties": {
+            "spreadsheetId": {"type": "string"},
+            "spreadsheetUrl": {"type": "string"},
+            "properties": {"type": "object", "additionalProperties": True},
+            "sheets": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+            "namedRanges": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+            "developerMetadata": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+            "dataSources": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+        },
+    }
+
+
+def _batch_update_spreadsheet_response_output_schema() -> Dict[str, Any]:
+    """BatchUpdateSpreadsheetResponse schema."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "spreadsheetId": {"type": "string"},
+            "replies": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+            "updatedSpreadsheet": _spreadsheet_output_schema(),
+        },
+    }
+
+
 # ----------------------------
 # Read single range
 # ----------------------------
@@ -307,6 +444,9 @@ class GoogleSheetsReadTool(BaseTool):
             },
             "required": ["spreadsheet_id", "range"],
         }
+
+    def get_output_schema(self) -> Dict[str, Any]:
+        return _value_range_output_schema()
 
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         _require_access_token(access_token)
@@ -397,6 +537,9 @@ class GoogleSheetsBatchReadTool(BaseTool):
             },
             "required": ["spreadsheet_id", "ranges"],
         }
+
+    def get_output_schema(self) -> Dict[str, Any]:
+        return _batch_get_values_response_output_schema()
 
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         _require_access_token(access_token)
@@ -509,6 +652,9 @@ class GoogleSheetsAppendTool(BaseTool):
             "required": ["spreadsheet_id", "range", "values"],
         }
 
+    def get_output_schema(self) -> Dict[str, Any]:
+        return _append_values_response_output_schema()
+
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         _require_access_token(access_token)
 
@@ -590,6 +736,9 @@ class GoogleSheetsClearTool(BaseTool):
             },
             "required": ["spreadsheet_id", "range"],
         }
+
+    def get_output_schema(self) -> Dict[str, Any]:
+        return _clear_values_response_output_schema()
 
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         _require_access_token(access_token)
@@ -692,6 +841,9 @@ class GoogleSheetsBatchWriteTool(BaseTool):
             "required": ["spreadsheet_id", "data"],
         }
 
+    def get_output_schema(self) -> Dict[str, Any]:
+        return _batch_update_values_response_output_schema()
+
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         _require_access_token(access_token)
 
@@ -789,6 +941,9 @@ class GoogleSheetsGetSpreadsheetTool(BaseTool):
             "required": ["spreadsheet_id"],
         }
 
+    def get_output_schema(self) -> Dict[str, Any]:
+        return _spreadsheet_output_schema()
+
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         _require_access_token(access_token)
 
@@ -855,6 +1010,9 @@ class GoogleSheetsCreateSpreadsheetTool(BaseTool):
             },
             "required": [],
         }
+
+    def get_output_schema(self) -> Dict[str, Any]:
+        return _spreadsheet_output_schema()
 
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         _require_access_token(access_token)
@@ -946,6 +1104,9 @@ class GoogleSheetsBatchUpdateSpreadsheetTool(BaseTool):
             },
             "required": ["spreadsheet_id", "requests"],
         }
+
+    def get_output_schema(self) -> Dict[str, Any]:
+        return _batch_update_spreadsheet_response_output_schema()
 
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         _require_access_token(access_token)
