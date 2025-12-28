@@ -150,7 +150,19 @@ class BaseTool(ABC):
             "parameters": schema,
             "resource_pickers": resource_pickers  # Also include separately for convenience
         }
-
+    
+    def get_output_schema(self) -> Dict[str, Any]:
+        """
+        Get JSON schema for tool output.
+        
+        Returns:
+            JSON schema dict describing tool output
+        """
+        return {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
 
 # Tool registry
 _TOOL_REGISTRY: Dict[str, BaseTool] = {}
