@@ -166,7 +166,7 @@ def register_tool(tool: BaseTool) -> None:
     if tool.name in _TOOL_REGISTRY:
         logger.warning(f"Tool '{tool.name}' is already registered. Overwriting.")
     _TOOL_REGISTRY[tool.name] = tool
-    logger.info(f"Registered tool: {tool.name}")
+    # logger.info(f"Registered tool: {tool.name}")
 
 
 def get_tool(name: str) -> Optional[BaseTool]:
