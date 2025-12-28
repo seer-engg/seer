@@ -127,24 +127,37 @@ class NodeRuntime:
         auxiliary = {key: evaluate_value(ctx, value) for key, value in node.in_.items()}
         model_def = self.services.model_registry.get(node.model)
 
-        payload = {
+        invocation = {
             "prompt": prompt,
             "inputs": auxiliary,
-            "temperature": node.temperature,
-            "max_tokens": node.max_tokens,
             "config": dict(config),
+            "parameters": {
+                "temperature": node.temperature,
+                "max_tokens": node.max_tokens,
+            },
+            "meta": node.meta,
         }
-        result = model_def.handler(prompt, payload)
 
         if node.output.mode == OutputMode.text:
+            if model_def.text_handler is None:
+                raise ExecutionError(f"Model '{node.model}' does not support text responses")
+            result = model_def.text_handler(invocation)
             if not isinstance(result, str):
                 raise ExecutionError(f"LLM node '{node.id}' expected text response")
             return self._prepare_output(node.out, result)
 
-        if node.output.mode == OutputMode.json and not isinstance(result, dict):
-            raise ExecutionError(f"LLM node '{node.id}' expected JSON response")
+        if node.output.mode == OutputMode.json:
+            schema = self._type_schemas.get(node.out or "")
+            if schema is None:
+                raise ExecutionError(f"No schema recorded for '{node.out}'")
+            if model_def.json_handler is None:
+                raise ExecutionError(f"Model '{node.model}' does not support structured responses")
+            result = model_def.json_handler(invocation, schema)
+            if not isinstance(result, dict):
+                raise ExecutionError(f"LLM node '{node.id}' expected JSON response")
+            return self._prepare_output(node.out, result)
 
-        return self._prepare_output(node.out, result)
+        raise ExecutionError(f"Unsupported output mode '{node.output.mode}' for node '{node.id}'")
 
     def _run_if(
         self,

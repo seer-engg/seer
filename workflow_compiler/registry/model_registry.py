@@ -5,17 +5,30 @@ locate the callable responsible for executing a model request.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Callable, Dict, MutableMapping, Optional
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional
 
-LLMCallable = Callable[[str, Dict[str, Any]], Any]
+from workflow_compiler.schema.models import JsonSchema, OutputMode
+
+
+ModelInvocation = Dict[str, Any]  # prompt, inputs, config
+TextLLMCallable = Callable[[ModelInvocation], str]
+StructuredLLMCallable = Callable[[ModelInvocation, JsonSchema], Any]
 
 
 @dataclass
 class ModelDefinition:
     model_id: str
-    handler: LLMCallable
-    supports_structured_output: bool = False
+    text_handler: Optional[TextLLMCallable] = None
+    json_handler: Optional[StructuredLLMCallable] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def supports_mode(self, mode: OutputMode) -> bool:
+        if mode == OutputMode.text:
+            return self.text_handler is not None
+        if mode == OutputMode.json:
+            return self.json_handler is not None
+        return False
 
 
 class ModelNotFoundError(KeyError):
