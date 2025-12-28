@@ -9,8 +9,7 @@ from agents.workflow_agent.context import (
 )
 import uuid
 from shared.logger import get_logger
-from workflow_core.validation import with_block_config_defaults, validate_block_config
-from workflow_core.alias_utils import extract_block_alias_info, refresh_workflow_state_aliases
+
 
 logger = get_logger(__name__)
 
@@ -148,17 +147,17 @@ async def add_workflow_block(
     normalized_config = block_config.copy() if block_config else {}
     if block_type == "tool":
         normalized_config = _normalize_tool_block_config(normalized_config)
-    processed_config = with_block_config_defaults(block_type, normalized_config)
+    # processed_config = with_block_config_defaults(block_type, normalized_config)
     
     # Validate block configuration before creating the block
-    validation_error = validate_block_config(block_type, processed_config, block_id)
-    if validation_error:
-        return json.dumps({
-            "error": validation_error,
-            "block_type": block_type,
-            "block_id": block_id,
-            "suggestion": "Please provide the required configuration fields. For tool blocks, you must specify 'tool_name' (e.g., use search_tools to find available tools)."
-        })
+    # validation_error = validate_block_config(block_type, processed_config, block_id)
+    # if validation_error:
+    #     return json.dumps({
+    #         "error": validation_error,
+    #         "block_type": block_type,
+    #         "block_id": block_id,
+    #         "suggestion": "Please provide the required configuration fields. For tool blocks, you must specify 'tool_name' (e.g., use search_tools to find available tools)."
+    #     })
     
     # Create new block
     new_block = {
@@ -167,7 +166,7 @@ async def add_workflow_block(
         "position": position,
         "data": {
             "label": label or block_id,
-            "config": processed_config,
+            # "config": processed_config,
         }
     }
     
@@ -274,20 +273,20 @@ async def modify_workflow_block(
     # Ensure config defaults (important for validation)
     block_type = modified_block.get("type")
     if block_type:
-        updated_config = with_block_config_defaults(block_type, modified_block.get("data", {}).get("config"))
+        # updated_config = with_block_config_defaults(block_type, modified_block.get("data", {}).get("config"))
         if "data" not in modified_block:
             modified_block["data"] = {}
-        modified_block["data"]["config"] = updated_config
+        # modified_block["data"]["config"] = updated_config
         
         # Validate block configuration before applying modification
-        validation_error = validate_block_config(block_type, updated_config, block_id)
-        if validation_error:
-            return json.dumps({
-                "error": validation_error,
-                "block_type": block_type,
-                "block_id": block_id,
-                "suggestion": "Please provide the required configuration fields."
-            })
+        # validation_error = validate_block_config(block_type, updated_config, block_id)
+        # if validation_error:
+        #     return json.dumps({
+        #         "error": validation_error,
+        #         "block_type": block_type,
+        #         "block_id": block_id,
+        #         "suggestion": "Please provide the required configuration fields."
+        #     })
     
     # Update workflow_state so further reasoning uses modified block
     for idx, node in enumerate(nodes):

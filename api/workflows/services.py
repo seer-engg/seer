@@ -14,10 +14,9 @@ from .models import (
     WorkflowUpdate,
 )
 from shared.database import Workflow, WorkflowBlock, WorkflowEdge, WorkflowExecution, WorkflowChatSession, WorkflowChatMessage, WorkflowProposal
-from workflow_core.schema import validate_workflow_graph
-from workflow_core.graph_builder import get_workflow_graph_builder
-from workflow_core.validation import with_block_config_defaults
-from workflow_core.function_blocks import get_function_block_schemas
+from pydantic import BaseModel
+
+
 
 logger = get_logger("api.workflows.services")
 
@@ -27,7 +26,7 @@ async def list_function_blocks() -> Dict[str, Any]:
     List built-in function block schemas (LLM, if/else, for loop, etc.).
     """
     try:
-        schemas = get_function_block_schemas()
+        schemas = BaseModel()
         return {"blocks": [schema.model_dump() for schema in schemas]}
     except Exception as exc:
         logger.exception("Error listing function block schemas: %s", exc)
@@ -50,7 +49,7 @@ async def create_workflow(
     """
     try:
         # Validate workflow graph
-        validate_workflow_graph(payload.graph_data)
+        #TODO: validate workflow with compiler before saving 
         
         # Create workflow
         workflow = await Workflow.create(
@@ -133,7 +132,8 @@ async def update_workflow(
     
     # Validate graph if provided
     if payload.graph_data:
-        validate_workflow_graph(payload.graph_data)
+        #TODO: validate workflow with compiler before saving 
+        pass
     
     # Update fields
     update_data = payload.model_dump(exclude_unset=True)
@@ -146,8 +146,6 @@ async def update_workflow(
     # Sync blocks and edges if graph_data was updated
     if payload.graph_data:
         await _sync_workflow_blocks_and_edges(workflow, payload.graph_data)
-        builder = await get_workflow_graph_builder()
-        builder.invalidate_cache(workflow_id)
     
     logger.info(f"Updated workflow {workflow_id} ")
     return workflow
@@ -617,8 +615,6 @@ def _apply_patch_ops(
                 raise HTTPException(status_code=400, detail="add_node requires node.id")
             if _find_node_index(node["id"]) is not None:
                 raise HTTPException(status_code=400, detail=f"Node '{node['id']}' already exists")
-            default_config = with_block_config_defaults(node.get("type"), node.get("data", {}).get("config"))
-            node["data"]["config"] = default_config
             nodes.append(node)
         
         elif op_type == "update_node":
@@ -629,8 +625,6 @@ def _apply_patch_ops(
             idx = _find_node_index(node_id)
             if idx is None:
                 raise HTTPException(status_code=400, detail=f"Node '{node_id}' not found")
-            default_config = with_block_config_defaults(node.get("type"), node.get("data", {}).get("config"))
-            node["data"]["config"] = default_config
             nodes[idx] = node
         
         elif op_type == "remove_node":
@@ -690,7 +684,7 @@ def preview_patch_ops(
     """Return a preview graph after applying patch ops (without persistence)."""
     preview_graph = _apply_patch_ops(graph_data, patch_ops)
     # Validate preview to catch schema issues early
-    validate_workflow_graph(preview_graph)
+    #TODO: validate workflow with compiler before saving 
     return preview_graph
 
 
@@ -747,16 +741,13 @@ async def accept_workflow_proposal(
     
     workflow = await proposal.workflow
     updated_graph = _apply_patch_ops(workflow.graph_data, proposal.patch_ops or [])
-    validate_workflow_graph(updated_graph)
+    #TODO: validate workflow with compiler before saving 
     
     workflow.graph_data = updated_graph
     workflow.updated_at = datetime.utcnow()
     await workflow.save()
     await _sync_workflow_blocks_and_edges(workflow, updated_graph)
     
-    
-    builder = await get_workflow_graph_builder()
-    builder.invalidate_cache(workflow.id)
     
     proposal.status = WorkflowProposal.STATUS_ACCEPTED
     proposal.applied_graph = updated_graph

@@ -40,7 +40,7 @@ from .services import (
     preview_patch_ops,
     list_function_blocks,
 )
-from workflow_core.graph_builder import get_workflow_graph_builder
+
 from .chat_schema import (
     ChatRequest,
     ChatResponse,
@@ -57,11 +57,6 @@ from agents.workflow_agent import (
     set_workflow_state_for_thread,
     get_patch_ops_for_thread,
     clear_patch_ops_for_thread,
-)
-from workflow_core.alias_utils import (
-    build_template_reference_examples,
-    collect_input_variables,
-    derive_block_aliases,
 )
 from api.agents.checkpointer import get_checkpointer, get_checkpointer_with_retry, _recreate_checkpointer
 import uuid
@@ -314,29 +309,8 @@ async def execute_workflow_endpoint(
     
     try:
         # Build and compile graph
-        builder = await get_workflow_graph_builder()
-        compiled_graph = await builder.get_compiled_graph(
-            workflow=workflow,
-            user_id=user.user_id,
-        )
-        
-        # Prepare initial state
-        block_aliases = derive_block_aliases(workflow.graph_data)
-        config = {"configurable": {"thread_id": f"workflow_{execution.id}"}}
-        initial_state = {
-            "input_data": payload.input_data or {},
-            "execution_id": execution.id,
-            "user_id": user.user_id,
-            "block_outputs": {},
-            "loop_state": {},
-            "block_aliases": block_aliases,
-        }
-        
-        # Execute workflow
-        result = await compiled_graph.ainvoke(initial_state, config)
-        
-        # Extract outputs from output blocks
-        output_data = result.get("block_outputs", {})
+        # TODO: Implement this
+        output_data = None
         
         # Update execution with results
         execution = await update_execution(
@@ -356,89 +330,6 @@ async def execute_workflow_endpoint(
             error_message=str(e),
         )
         raise HTTPException(status_code=500, detail=f"Workflow execution failed: {str(e)}")
-
-
-@router.post("/{workflow_id}/execute/stream")
-async def execute_workflow_stream_endpoint(
-    request: Request,
-    workflow_id: int,
-    payload: WorkflowExecutionCreate,
-) -> StreamingResponse:
-    """
-    Execute a workflow with streaming events.
-    
-    Streams execution events as Server-Sent Events (SSE).
-    """
-    import json
-    from datetime import datetime
-    
-    user:User = request.state.db_user
-    
-    async def generate_events():
-        try:
-            # Get workflow
-            workflow = await get_workflow(workflow_id)
-            
-            # Create execution record
-            execution = await create_execution(
-                workflow_id=workflow_id,
-                user=user,
-                input_data=payload.input_data,
-            )
-            
-            yield f"event: execution_started\ndata: {json.dumps({'execution_id': execution.id})}\n\n"
-            
-            # Build and compile graph
-            builder = await get_workflow_graph_builder()
-            compiled_graph = await builder.get_compiled_graph(
-                workflow=workflow,
-                user_id=user.user_id,
-            )
-            
-            # Prepare initial state
-            block_aliases = derive_block_aliases(workflow.graph_data)
-            config = {"configurable": {"thread_id": f"workflow_{execution.id}"}}
-            initial_state = {
-                "input_data": payload.input_data or {},
-                "execution_id": execution.id,
-                "user_id": user.user_id,
-                "block_outputs": {},
-                "loop_state": {},
-                "block_aliases": block_aliases,
-            }
-            
-            # Stream execution events
-            output_data = {}
-            async for event in compiled_graph.astream(initial_state, config):
-                # Stream block execution events
-                for node_name, node_output in event.items():
-                    yield f"event: block_executed\ndata: {json.dumps({'node': node_name, 'status': 'completed'})}\n\n"
-                    if isinstance(node_output, dict) and "block_outputs" in node_output:
-                        output_data.update(node_output.get("block_outputs", {}))
-            
-            # Update execution
-            execution = await update_execution(
-                execution_id=execution.id,
-                status='completed',
-                output_data=output_data,
-                error_message=None,
-            )
-            
-            yield f"event: execution_completed\ndata: {json.dumps({'execution_id': execution.id, 'status': 'completed'})}\n\n"
-            
-        except Exception as e:
-            logger.error(f"Streaming execution failed: {e}", exc_info=True)
-            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
-    
-    return StreamingResponse(
-        generate_events(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        }
-    )
 
 
 @router.get("/{workflow_id}/executions", response_model=list[WorkflowExecutionPublic])
@@ -553,15 +444,7 @@ async def chat_with_workflow_endpoint(
     if "edges" not in workflow_state:
         workflow_state["edges"] = []
     
-    graph_snapshot = {
-        "nodes": deepcopy(workflow_state.get("nodes", [])),
-        "edges": deepcopy(workflow_state.get("edges", [])),
-    }
-    block_aliases = derive_block_aliases(graph_snapshot)
-    workflow_state["block_aliases"] = block_aliases
-    workflow_state["template_reference_examples"] = build_template_reference_examples(block_aliases)
-    workflow_state["input_variables"] = sorted(collect_input_variables(graph_snapshot))
-    
+
     # Store workflow_state in context for tools to access
     
     if thread_id:
