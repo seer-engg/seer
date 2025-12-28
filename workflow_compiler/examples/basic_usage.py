@@ -81,8 +81,7 @@ def build_context() -> CompilerContext:
     model_registry.register(
         ModelDefinition(
             model_id="demo-text-model",
-            handler=_run_llm,
-            supports_structured_output=False,
+            json_handler=_run_llm,
         )
     )
 
@@ -107,8 +106,8 @@ def _search_issues(inputs: Dict[str, Any], config: Dict[str, Any] | None) -> Dic
     }
 
 
-def _run_llm(prompt: str, request: Dict[str, Any]) -> Dict[str, Any]:
-    return {"message": f"[LLM SUMMARY]\\n{prompt}"}
+def _run_llm(invocation: Dict[str, Any], schema: Dict[str, Any]) -> Dict[str, Any]:
+    return {"message": f"[LLM SUMMARY]\\n{invocation['prompt']}"}
 
 
 def build_workflow_spec() -> Dict[str, Any]:
