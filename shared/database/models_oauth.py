@@ -5,7 +5,7 @@ class OAuthConnection(models.Model):
     """
     Database model for storing OAuth connections/tokens.
     """
-    id = fields.BigIntField(pk=True)
+    id = fields.BigIntField(primary_key=True)
     user = fields.ForeignKeyField("models.User", related_name="oauth_connections")
     provider = fields.CharField(max_length=50)  # google, github, etc.
     provider_account_id = fields.CharField(max_length=255)  # e.g. google sub/email, github user id
