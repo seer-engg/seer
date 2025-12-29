@@ -31,6 +31,12 @@ class SchemaRegistry:
         """
         self._schemas[schema_id] = schema
 
+    def get(self, schema_id: str) -> JsonSchema | None:
+        return self._schemas.get(schema_id)
+
+    def all(self) -> Dict[str, JsonSchema]:
+        return dict(self._schemas)
+
     def has_schema(self, schema_id: str) -> bool:
         return schema_id in self._schemas
 

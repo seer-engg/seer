@@ -26,13 +26,21 @@ from workflow_compiler.registry.model_registry import ModelDefinition, ModelRegi
 from workflow_compiler.registry.tool_registry import ToolDefinition, ToolRegistry
 from workflow_compiler.schema.models import JsonSchema
 from shared.tools.google.gmail import GmailReadTool
+from shared.database.config import TORTOISE_ORM
+from tortoise import Tortoise
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-TOOL_NAME = "demo.gmail_read_emails"
-MODEL_ID = "demo.gmail_summary_llm"
+async def init_tortoise():
+    await Tortoise.init(config=TORTOISE_ORM)
+
+async def close_tortoise():
+    await Tortoise.close_connections()
+
+TOOL_NAME = "gmail_read_emails"
+MODEL_ID = "gpt-5-nano"
 
 
 def register_demo_components(service: GmailDemoService) -> None:
@@ -121,24 +129,26 @@ def build_workflow_spec(email_schema: JsonSchema) -> Dict[str, Any]:
         "output": "${inbox_summary}",
     }
 
+from shared.tools.google.gmail import GmailReadTool
+read_tool = GmailReadTool()
 
-def main() -> None:
+read_schema = read_tool.get_output_schema()
+from shared.database.models import User
+
+async def main() -> None:
     user_id = 1
-    credentials = asyncio.run(fetch_oauth_credentials(user_id))
-    service = GmailDemoService(credentials)
-
-    read_schema = service.read_tool.get_output_schema()
-    register_demo_components(service)
+    await init_tortoise()
 
     spec = build_workflow_spec(read_schema)
     compiler = WorkflowCompilerSingleton.instance()
-    demo_user = User(id=0, user_id="demo-gmail-summary")
+    demo_user = await User.get(id=1)
     compiled = compiler.compile(demo_user, spec)
-    summary = compiled.invoke(inputs={"user_id": user_id})
+    summary = await compiled.ainvoke(inputs={"user_id": user_id})
     print("Inbox summary:\n", summary.get("inbox_summary"))
+    await close_tortoise()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
 
 

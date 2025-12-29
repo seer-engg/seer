@@ -6,7 +6,7 @@ locate the callable responsible for executing a model request.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional
+from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional, List
 
 from workflow_compiler.schema.models import JsonSchema, OutputMode
 
@@ -50,5 +50,8 @@ class ModelRegistry:
 
     def maybe_get(self, model_id: str) -> Optional[ModelDefinition]:
         return self._models.get(model_id)
+
+    def all(self) -> List[ModelDefinition]:
+        return list(self._models.values())
 
 

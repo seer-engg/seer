@@ -9,12 +9,19 @@ execution time.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, MutableMapping, Optional
+from typing import Any, Awaitable, Callable, Dict, MutableMapping, Optional, List
 
 from workflow_compiler.schema.models import JsonSchema
 
 
-ToolCallable = Callable[[Dict[str, Any], Dict[str, Any] | None], Any]
+ToolCallable = Callable[
+    [Dict[str, Any], Dict[str, Any] | None, "WorkflowRuntimeContext | None"],
+    Any,
+]
+ToolAsyncCallable = Callable[
+    [Dict[str, Any], Dict[str, Any] | None, "WorkflowRuntimeContext | None"],
+    Awaitable[Any],
+]
 
 
 @dataclass
@@ -24,6 +31,7 @@ class ToolDefinition:
     input_schema: JsonSchema
     output_schema: JsonSchema
     handler: ToolCallable
+    async_handler: ToolAsyncCallable | None = None
 
 
 class ToolNotFoundError(KeyError):
@@ -49,5 +57,8 @@ class ToolRegistry:
 
     def maybe_get(self, name: str) -> Optional[ToolDefinition]:
         return self._tools.get(name)
+
+    def all(self) -> List[ToolDefinition]:
+        return list(self._tools.values())
 
 
