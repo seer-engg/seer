@@ -26,11 +26,10 @@ from typing import Any, Dict, List, Mapping
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from workflow_compiler import compile_workflow
-from workflow_compiler.compiler.context import CompilerContext
+from shared.database.models import User
+from workflow_compiler.runtime import WorkflowCompilerSingleton
 from workflow_compiler.registry.model_registry import ModelDefinition, ModelRegistry
 from workflow_compiler.registry.tool_registry import ToolDefinition, ToolRegistry
-from workflow_compiler.schema.schema_registry import SchemaRegistry
 from workflow_compiler.schema.models import JsonSchema
 
 from workflow_compiler.examples.gmail_common import (
@@ -44,45 +43,43 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def build_schema_registry(reply_schema: JsonSchema) -> SchemaRegistry:
-    registry = SchemaRegistry(
-        {
-            "schemas.gmail.reply@v1": reply_schema,
-        }
-    )
-    return registry
+READ_TOOL = "demo.gmail_read_emails"
+DRAFT_TOOL = "demo.gmail_create_draft"
+MODEL_ID = "gmail-demo-llm"
 
 
-def build_tool_registry(service: GmailDemoService) -> ToolRegistry:
+def register_demo_components(service: GmailDemoService) -> None:
+    """
+    Register tool + model overrides so the workflow can run offline via the singleton compiler.
+    """
+
+    compiler = WorkflowCompilerSingleton.instance()
+
     read_tool = GmailReadTool()
     draft_tool = GmailCreateDraftTool()
 
-    registry = ToolRegistry()
-    registry.register(
-        ToolDefinition(
-            name="gmail_read_emails",
-            version="v1",
-            input_schema=read_tool.get_parameters_schema(),
-            output_schema=read_tool.get_output_schema(),
-            handler=lambda params, config: service.read_emails(params),
+    tool_registry: ToolRegistry = compiler._tool_registry  # type: ignore[attr-defined]
+    if not tool_registry.maybe_get(READ_TOOL):
+        tool_registry.register(
+            ToolDefinition(
+                name=READ_TOOL,
+                version="v1",
+                input_schema=read_tool.get_parameters_schema(),
+                output_schema=read_tool.get_output_schema(),
+                handler=lambda params, config: service.read_emails(params),
+            )
         )
-    )
-    registry.register(
-        ToolDefinition(
-            name="gmail_create_draft",
-            version="v1",
-            input_schema=draft_tool.get_parameters_schema(),
-            output_schema=draft_tool.get_output_schema(),
-            handler=lambda params, config: service.create_draft(params),
+
+    if not tool_registry.maybe_get(DRAFT_TOOL):
+        tool_registry.register(
+            ToolDefinition(
+                name=DRAFT_TOOL,
+                version="v1",
+                input_schema=draft_tool.get_parameters_schema(),
+                output_schema=draft_tool.get_output_schema(),
+                handler=lambda params, config: service.create_draft(params),
+            )
         )
-    )
-    return registry
-
-
-def build_model_registry(reply_schema: JsonSchema) -> ModelRegistry:
-    """
-    Register a ChatOpenAI-backed handler that produces structured replies.
-    """
 
     class ReplyPayload(BaseModel):
         to: List[str] = Field(..., description="List of recipient email addresses")
@@ -112,14 +109,14 @@ def build_model_registry(reply_schema: JsonSchema) -> ModelRegistry:
         reply = structured_llm.invoke(rendered_prompt)
         return reply.model_dump()
 
-    registry = ModelRegistry()
-    registry.register(
-        ModelDefinition(
-            model_id="gmail-demo-llm",
-            json_handler=llm_handler,
+    model_registry: ModelRegistry = compiler._model_registry  # type: ignore[attr-defined]
+    if not model_registry.maybe_get(MODEL_ID):
+        model_registry.register(
+            ModelDefinition(
+                model_id=MODEL_ID,
+                json_handler=llm_handler,
+            )
         )
-    )
-    return registry
 
 
 def build_workflow_spec(reply_schema: JsonSchema, read_schema: JsonSchema, draft_schema: JsonSchema) -> Dict[str, Any]:
@@ -132,7 +129,7 @@ def build_workflow_spec(reply_schema: JsonSchema, read_schema: JsonSchema, draft
             {
                 "id": "fetch_email",
                 "type": "tool",
-                "tool": "gmail_read_emails",
+                "tool": READ_TOOL,
                 "in": {
                     "user_id": "${inputs.user_id}",
                     "max_results": 1,
@@ -148,7 +145,7 @@ def build_workflow_spec(reply_schema: JsonSchema, read_schema: JsonSchema, draft
             {
                 "id": "draft_reply",
                 "type": "llm",
-                "model": "gmail-demo-llm",
+                "model": MODEL_ID,
                 "prompt": (
                     "You are a helpful assistant that writes short, friendly replies.\n"
                     "Original email subject: ${emails[0].subject}\n"
@@ -165,7 +162,7 @@ def build_workflow_spec(reply_schema: JsonSchema, read_schema: JsonSchema, draft
             {
                 "id": "save_draft",
                 "type": "tool",
-                "tool": "gmail_create_draft",
+                "tool": DRAFT_TOOL,
                 "in": {
                     "user_id": "${inputs.user_id}",
                     "to": "${reply_payload.to}",
@@ -202,18 +199,11 @@ def main() -> None:
     read_schema = service.read_tool.get_output_schema()
     draft_schema = service.create_draft_tool.get_output_schema()
 
-    schema_registry = build_schema_registry(reply_schema)
-    tool_registry = build_tool_registry(service)
-    model_registry = build_model_registry(reply_schema)
-
     workflow_spec = build_workflow_spec(reply_schema, read_schema, draft_schema)
-    context = CompilerContext(
-        schema_registry=schema_registry,
-        tool_registry=tool_registry,
-        model_registry=model_registry,
-    )
-
-    compiled = compile_workflow(workflow_spec, context)
+    register_demo_components(service)
+    compiler = WorkflowCompilerSingleton.instance()
+    demo_user = User(id=0, user_id="demo-gmail-reply")
+    compiled = compiler.compile(demo_user, workflow_spec)
     result = compiled.invoke(inputs={"user_id": user_id})
 
     print("Workflow execution complete. Draft payload:")

@@ -19,39 +19,38 @@ from typing import Any, Dict, List
 
 from langchain_openai import ChatOpenAI
 
-from workflow_compiler import compile_workflow
-from workflow_compiler.compiler.context import CompilerContext
+from shared.database.models import User
+from workflow_compiler.runtime import WorkflowCompilerSingleton
 from workflow_compiler.examples.gmail_common import GmailDemoService, fetch_oauth_credentials
 from workflow_compiler.registry.model_registry import ModelDefinition, ModelRegistry
 from workflow_compiler.registry.tool_registry import ToolDefinition, ToolRegistry
 from workflow_compiler.schema.models import JsonSchema
-from workflow_compiler.schema.schema_registry import SchemaRegistry
 from shared.tools.google.gmail import GmailReadTool
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def build_schema_registry() -> SchemaRegistry:
-    return SchemaRegistry()
+TOOL_NAME = "demo.gmail_read_emails"
+MODEL_ID = "demo.gmail_summary_llm"
 
 
-def build_tool_registry(service: GmailDemoService) -> ToolRegistry:
+def register_demo_components(service: GmailDemoService) -> None:
+    compiler = WorkflowCompilerSingleton.instance()
+
     read_tool = GmailReadTool()
-    registry = ToolRegistry()
-    registry.register(
-        ToolDefinition(
-            name="gmail_read_emails",
-            version="v1",
-            input_schema=read_tool.get_parameters_schema(),
-            output_schema=read_tool.get_output_schema(),
-            handler=lambda params, config: service.read_emails(params),
+    tool_registry: ToolRegistry = compiler._tool_registry  # type: ignore[attr-defined]
+    if not tool_registry.maybe_get(TOOL_NAME):
+        tool_registry.register(
+            ToolDefinition(
+                name=TOOL_NAME,
+                version="v1",
+                input_schema=read_tool.get_parameters_schema(),
+                output_schema=read_tool.get_output_schema(),
+                handler=lambda params, config: service.read_emails(params),
+            )
         )
-    )
-    return registry
 
-
-def build_model_registry() -> ModelRegistry:
     try:
         llm = ChatOpenAI(
             model=os.getenv("OPENAI_MODEL", "gpt-5-nano"),
@@ -73,14 +72,14 @@ def build_model_registry() -> ModelRegistry:
         response = llm.invoke(rendered_prompt)
         return response.content if hasattr(response, "content") else str(response)
 
-    registry = ModelRegistry()
-    registry.register(
-        ModelDefinition(
-            model_id="gmail-summary-llm",
-            text_handler=llm_handler,
+    model_registry: ModelRegistry = compiler._model_registry  # type: ignore[attr-defined]
+    if not model_registry.maybe_get(MODEL_ID):
+        model_registry.register(
+            ModelDefinition(
+                model_id=MODEL_ID,
+                text_handler=llm_handler,
+            )
         )
-    )
-    return registry
 
 
 def build_workflow_spec(email_schema: JsonSchema) -> Dict[str, Any]:
@@ -93,7 +92,7 @@ def build_workflow_spec(email_schema: JsonSchema) -> Dict[str, Any]:
             {
                 "id": "fetch_emails",
                 "type": "tool",
-                "tool": "gmail_read_emails",
+                "tool": TOOL_NAME,
                 "in": {
                     "user_id": "${inputs.user_id}",
                     "max_results": 3,
@@ -109,7 +108,7 @@ def build_workflow_spec(email_schema: JsonSchema) -> Dict[str, Any]:
             {
                 "id": "summarize",
                 "type": "llm",
-                "model": "gmail-summary-llm",
+                "model": MODEL_ID,
                 "prompt": (
                     "Summarize the following emails for a busy engineer. "
                     "Group similar items and call out any requests or deadlines."
@@ -129,18 +128,12 @@ def main() -> None:
     service = GmailDemoService(credentials)
 
     read_schema = service.read_tool.get_output_schema()
-    schema_registry = build_schema_registry()
-    tool_registry = build_tool_registry(service)
-    model_registry = build_model_registry()
+    register_demo_components(service)
 
     spec = build_workflow_spec(read_schema)
-    context = CompilerContext(
-        schema_registry=schema_registry,
-        tool_registry=tool_registry,
-        model_registry=model_registry,
-    )
-
-    compiled = compile_workflow(spec, context)
+    compiler = WorkflowCompilerSingleton.instance()
+    demo_user = User(id=0, user_id="demo-gmail-summary")
+    compiled = compiler.compile(demo_user, spec)
     summary = compiled.invoke(inputs={"user_id": user_id})
     print("Inbox summary:\n", summary.get("inbox_summary"))
 

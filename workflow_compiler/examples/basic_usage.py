@@ -11,17 +11,20 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from workflow_compiler import compile_workflow
-from workflow_compiler.compiler.context import CompilerContext
+from shared.database.models import User
+from workflow_compiler.runtime import WorkflowCompilerSingleton
 from workflow_compiler.registry.model_registry import ModelDefinition, ModelRegistry
 from workflow_compiler.registry.tool_registry import ToolDefinition, ToolRegistry
 from workflow_compiler.schema.schema_registry import SchemaRegistry
 
 
-def build_context() -> CompilerContext:
+def register_demo_components() -> None:
     """
-    Constructs registries with minimal demo implementations.
+    Register demo schemas, tools, and models in the singleton compiler so the
+    example workflow can compile without custom contexts.
     """
+
+    compiler = WorkflowCompilerSingleton.instance()
 
     issue_schema = {
         "type": "object",
@@ -52,44 +55,39 @@ def build_context() -> CompilerContext:
         "additionalProperties": False,
     }
 
-    schema_registry = SchemaRegistry(
-        {
-            "schemas.issue_results@v1": issue_schema,
-            "schemas.summary@v1": summary_schema,
-        }
-    )
+    schema_registry: SchemaRegistry = compiler._schema_registry  # type: ignore[attr-defined]
+    if not schema_registry.has_schema("schemas.issue_results@v1"):
+        schema_registry.register("schemas.issue_results@v1", issue_schema)
+    if not schema_registry.has_schema("schemas.summary@v1"):
+        schema_registry.register("schemas.summary@v1", summary_schema)
 
-    tool_registry = ToolRegistry()
-    tool_registry.register(
-        ToolDefinition(
-            name="github.search_issues",
-            version="v1",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "repo": {"type": "string"},
-                    "q": {"type": "string"},
+    tool_registry: ToolRegistry = compiler._tool_registry  # type: ignore[attr-defined]
+    if not tool_registry.maybe_get("github.search_issues"):
+        tool_registry.register(
+            ToolDefinition(
+                name="github.search_issues",
+                version="v1",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "repo": {"type": "string"},
+                        "q": {"type": "string"},
+                    },
+                    "required": ["repo", "q"],
                 },
-                "required": ["repo", "q"],
-            },
-            output_schema=issue_schema,
-            handler=_search_issues,
+                output_schema=issue_schema,
+                handler=_search_issues,
+            )
         )
-    )
 
-    model_registry = ModelRegistry()
-    model_registry.register(
-        ModelDefinition(
-            model_id="demo-text-model",
-            json_handler=_run_llm,
+    model_registry: ModelRegistry = compiler._model_registry  # type: ignore[attr-defined]
+    if not model_registry.maybe_get("demo-text-model"):
+        model_registry.register(
+            ModelDefinition(
+                model_id="demo-text-model",
+                json_handler=_run_llm,
+            )
         )
-    )
-
-    return CompilerContext(
-        schema_registry=schema_registry,
-        tool_registry=tool_registry,
-        model_registry=model_registry,
-    )
 
 
 def _search_issues(inputs: Dict[str, Any], config: Dict[str, Any] | None) -> Dict[str, Any]:
@@ -170,9 +168,11 @@ def build_workflow_spec() -> Dict[str, Any]:
 
 
 def main() -> None:
-    context = build_context()
+    register_demo_components()
+    compiler = WorkflowCompilerSingleton.instance()
+    demo_user = User(id=0, user_id="demo-basic-user")
     spec = build_workflow_spec()
-    compiled = compile_workflow(spec, context)
+    compiled = compiler.compile(demo_user, spec)
     result = compiled.invoke(
         inputs={
             "repo": "seer-engg/seer",
