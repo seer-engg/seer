@@ -83,7 +83,7 @@ def _load_tools(server_name: str):
 
 
 # Preload the MCP tools without assuming we control the active event loop
-LANGCHAIN_DOCS_TOOLS = _load_tools("langchain")
-CONTEXT7_TOOLS = _load_tools("context7")
+# LANGCHAIN_DOCS_TOOLS = _load_tools("langchain")
+# CONTEXT7_TOOLS = _load_tools("context7")
 
-CONTEXT7_LIBRARY_TOOL = [tool for tool in CONTEXT7_TOOLS if tool.name == "get-library-docs"][0]
+# CONTEXT7_LIBRARY_TOOL = [tool for tool in CONTEXT7_TOOLS if tool.name == "get-library-docs"][0]
