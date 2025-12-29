@@ -1,10 +1,102 @@
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, Optional
-
+from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field
 from tortoise import fields, models
 
 from shared.database.models import User
+
+
+WORKFLOW_ID_PREFIX = "wf_"
+RUN_ID_PREFIX = "run_"
+
+
+class WorkflowRunStatus(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+def make_workflow_public_id(pk: int) -> str:
+    return f"{WORKFLOW_ID_PREFIX}{pk}"
+
+
+def parse_workflow_public_id(value: str) -> int:
+    if not value.startswith(WORKFLOW_ID_PREFIX):
+        raise ValueError("Invalid workflow_id format")
+    return int(value.removeprefix(WORKFLOW_ID_PREFIX))
+
+
+def make_run_public_id(pk: int) -> str:
+    return f"{RUN_ID_PREFIX}{pk}"
+
+
+def parse_run_public_id(value: str) -> int:
+    if not value.startswith(RUN_ID_PREFIX):
+        raise ValueError("Invalid run_id format")
+    return int(value.removeprefix(RUN_ID_PREFIX))
+
+
+class WorkflowRecord(models.Model):
+    """Normalized workflow entity backed by WorkflowSpec JSON."""
+
+    id = fields.IntField(primary_key=True)
+    user = fields.ForeignKeyField("models.User", related_name="workflow_records")
+    name = fields.CharField(max_length=255)
+    description = fields.TextField(null=True)
+    spec = fields.JSONField()
+    version = fields.IntField(default=1)
+    tags = fields.JSONField(null=True)
+    meta = fields.JSONField(null=True)
+    last_compile_ok = fields.BooleanField(default=False)
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    class Meta:
+        table = "workflow_records"
+        ordering = ("-updated_at", "id")
+
+    def __str__(self) -> str:
+        return f"WorkflowRecord<{self.name} v{self.version}>"
+
+    @property
+    def workflow_id(self) -> str:
+        return make_workflow_public_id(self.id)
+
+
+class WorkflowRun(models.Model):
+    """Persisted workflow run metadata (no telemetry)."""
+
+    id = fields.IntField(primary_key=True)
+    user = fields.ForeignKeyField("models.User", related_name="workflow_runs")
+    workflow = fields.ForeignKeyField(
+        "models.WorkflowRecord", related_name="runs", null=True
+    )
+    workflow_version = fields.IntField(null=True)
+    spec = fields.JSONField()
+    inputs = fields.JSONField(null=True)
+    config = fields.JSONField(null=True)
+    status = fields.CharEnumField(
+        WorkflowRunStatus, max_length=20, default=WorkflowRunStatus.QUEUED
+    )
+    output = fields.JSONField(null=True)
+    error = fields.TextField(null=True)
+    created_at = fields.DatetimeField(auto_now_add=True)
+    started_at = fields.DatetimeField(null=True)
+    finished_at = fields.DatetimeField(null=True)
+    metrics = fields.JSONField(null=True)
+
+    class Meta:
+        table = "workflow_runs"
+        ordering = ("-created_at", "id")
+
+    def __str__(self) -> str:
+        return f"WorkflowRun<{self.run_id}:{self.status}>"
+
+    @property
+    def run_id(self) -> str:
+        return make_run_public_id(self.id)
 
 class Workflow(models.Model):
     """Main workflow entity."""
@@ -117,7 +209,7 @@ class WorkflowChatSession(models.Model):
     id = fields.IntField(primary_key=True)
     workflow = fields.ForeignKeyField('models.Workflow', related_name='chat_sessions')
     user = fields.ForeignKeyField('models.User', related_name='chat_sessions')
-    thread_id = fields.CharField(max_length=255, unique=True, index=True)  # LangGraph thread ID
+    thread_id = fields.CharField(max_length=255, unique=True, db_index=True)  # LangGraph thread ID
     title = fields.CharField(max_length=255, null=True)  # Optional title for the session
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)

@@ -1,127 +1,253 @@
-"""
-Database models for workflow system.
-"""
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
-from shared.database.models import UserPublic
+from workflow_compiler.schema.models import WorkflowSpec
 
 
-# ============================================================================
-# Pydantic Models for API
-# ============================================================================
+class ProblemError(BaseModel):
+    code: str
+    message: str
+    node_id: Optional[str] = None
+    location: Optional[str] = None
+    expression: Optional[str] = None
+
+
+class ProblemDetails(BaseModel):
+    type: str
+    title: str
+    status: int
+    detail: str
+    errors: List[ProblemError] = Field(default_factory=list)
+
+
+class NodeFieldDescriptor(BaseModel):
+    name: str
+    kind: str
+    required: bool = False
+    source: Optional[str] = None
+
+
+class NodeTypeDescriptor(BaseModel):
+    type: str
+    title: str
+    fields: List[NodeFieldDescriptor]
+
+
+class NodeTypeResponse(BaseModel):
+    node_types: List[NodeTypeDescriptor]
+
+
+class ToolDescriptor(BaseModel):
+    id: str
+    name: str
+    version: str
+    title: str
+    input_schema: Optional[Dict[str, Any]] = None
+    output_schema: Optional[Dict[str, Any]] = None
+
+
+class ToolRegistryResponse(BaseModel):
+    tools: List[ToolDescriptor]
+
+
+class ModelDescriptor(BaseModel):
+    id: str
+    title: str
+    supports_json_schema: bool = True
+
+
+class ModelRegistryResponse(BaseModel):
+    models: List[ModelDescriptor]
+
+
+class SchemaResponse(BaseModel):
+    id: str
+    json_schema: Dict[str, Any]
+
+
+class WorkflowWarning(BaseModel):
+    code: str
+    node_id: str
+    message: str
+
+
+class ValidateRequest(BaseModel):
+    spec: WorkflowSpec
+
+
+class ValidateResponse(BaseModel):
+    ok: bool = True
+    warnings: List[WorkflowWarning] = Field(default_factory=list)
+
+
+class CompileOptions(BaseModel):
+    emit_graph_preview: bool = False
+    emit_type_env: bool = False
+    strict_task_output: bool = False
+
+
+class CompileRequest(BaseModel):
+    spec: WorkflowSpec
+    options: CompileOptions = Field(default_factory=CompileOptions)
+
+
+class CompileArtifacts(BaseModel):
+    type_env: Optional[Dict[str, Any]] = None
+    graph_preview: Optional[Dict[str, Any]] = None
+
+
+class CompileResponse(BaseModel):
+    ok: bool = True
+    warnings: List[WorkflowWarning] = Field(default_factory=list)
+    artifacts: CompileArtifacts = Field(default_factory=CompileArtifacts)
+
+
+class WorkflowMeta(BaseModel):
+    last_compile_ok: bool = False
+
 
 class WorkflowBase(BaseModel):
-    """Shared attributes for create/update."""
-    
-    name: str = Field(..., min_length=1, max_length=255)
+    name: str
     description: Optional[str] = None
-    graph_data: Dict[str, Any] = Field(..., description="ReactFlow nodes/edges JSON")
-    schema_version: str = Field(default="1.0", max_length=50)
-    is_active: bool = True
+    tags: List[str] = Field(default_factory=list)
 
 
-class WorkflowCreate(WorkflowBase):
-    """Payload for creating a workflow."""
-    pass
+class WorkflowCreateRequest(WorkflowBase):
+    spec: WorkflowSpec
 
 
-class WorkflowUpdate(BaseModel):
-    """Payload for updating a workflow."""
-    
-    name: Optional[str] = Field(None, min_length=1, max_length=255)
+class WorkflowUpdateRequest(BaseModel):
+    name: Optional[str] = None
     description: Optional[str] = None
-    graph_data: Optional[Dict[str, Any]] = None
-    is_active: Optional[bool] = None
+    spec: Optional[WorkflowSpec] = None
+    tags: Optional[List[str]] = None
 
 
-class WorkflowPublic(WorkflowBase):
-    """Response model returned to API clients."""
-    
-    model_config = ConfigDict(from_attributes=True)
-    
-    id: int
+class WorkflowSummary(BaseModel):
+    workflow_id: str
+    name: str
+    description: Optional[str] = None
+    version: int
     created_at: datetime
     updated_at: datetime
+
+
+class WorkflowResponse(WorkflowSummary):
+    spec: WorkflowSpec
+    tags: List[str] = Field(default_factory=list)
+    meta: WorkflowMeta = Field(default_factory=WorkflowMeta)
 
 
 class WorkflowListResponse(BaseModel):
-    """Wrapper response for list endpoints."""
-    
-    workflows: list[WorkflowPublic]
+    items: List[WorkflowSummary]
+    next_cursor: Optional[str] = None
 
 
-class WorkflowExecutionCreate(BaseModel):
-    """Payload for creating a workflow execution."""
-    
-    input_data: Optional[Dict[str, Any]] = None
-    stream: bool = Field(default=False, description="Stream execution events")
+class RunFromSpecRequest(BaseModel):
+    spec: WorkflowSpec
+    inputs: Dict[str, Any] = Field(default_factory=dict)
+    config: Dict[str, Any] = Field(default_factory=dict)
 
 
-class WorkflowExecutionPublic(BaseModel):
-    """Response model for workflow execution."""
-    
-    model_config = ConfigDict(from_attributes=True)
-    
-    id: int
-    workflow_id: int
+class RunFromWorkflowRequest(BaseModel):
+    version: Optional[int] = None
+    inputs: Dict[str, Any] = Field(default_factory=dict)
+    config: Dict[str, Any] = Field(default_factory=dict)
+
+
+class RunProgress(BaseModel):
+    completed: int = 0
+    total: int = 0
+
+
+class RunResponse(BaseModel):
+    run_id: str
     status: str
-    input_data: Optional[Dict[str, Any]] = None
-    output_data: Optional[Dict[str, Any]] = None
-    error_message: Optional[str] = None
-    started_at: datetime
-    completed_at: Optional[datetime] = None
-
-
-
-class WorkflowProposalPatchOp(BaseModel):
-    """Single patch operation inside a proposal."""
-    
-    op: str
-    description: Optional[str] = None
-    node_id: Optional[str] = None
-    node: Optional[Dict[str, Any]] = None
-    edge_id: Optional[str] = None
-    edge: Optional[Dict[str, Any]] = None
-    source: Optional[str] = None
-    target: Optional[str] = None
-
-
-class WorkflowProposalPublic(BaseModel):
-    """Response model for workflow proposals."""
-    
-    model_config = ConfigDict(from_attributes=True)
-    
-    id: int
-    workflow_id: int
-    session_id: Optional[int] = None
-    created_by: UserPublic
-    summary: str
-    status: str
-    patch_ops: List[WorkflowProposalPatchOp]
-    preview_graph: Optional[Dict[str, Any]] = None
-    applied_graph: Optional[Dict[str, Any]] = None
-    metadata: Optional[Dict[str, Any]] = None
-    decided_at: Optional[datetime] = None
     created_at: datetime
-    updated_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    progress: Optional[RunProgress] = None
+    current_node_id: Optional[str] = None
+    last_error: Optional[str] = None
 
 
+class RunResultResponse(BaseModel):
+    run_id: str
+    status: str
+    output: Optional[Dict[str, Any]] = None
+    state: Optional[Dict[str, Any]] = None
+    metrics: Optional[Dict[str, Any]] = None
+
+
+class ExpressionCursorContext(BaseModel):
+    node_id: Optional[str] = None
+    field: Optional[str] = None
+    prefix: str
+
+
+class ExpressionSuggestRequest(BaseModel):
+    spec: WorkflowSpec
+    cursor_context: ExpressionCursorContext
+
+
+class ExpressionSuggestion(BaseModel):
+    label: str
+    insert: str
+    type: Optional[str] = None
+
+
+class ExpressionSuggestResponse(BaseModel):
+    suggestions: List[ExpressionSuggestion] = Field(default_factory=list)
+
+
+class ExpressionTypecheckRequest(BaseModel):
+    spec: WorkflowSpec
+    expression: str
+    scope: Optional[Dict[str, Any]] = None
+
+
+class ExpressionTypecheckResponse(BaseModel):
+    ok: bool = True
+    type: Optional[Dict[str, Any]] = None
 
 
 __all__ = [
-    "WorkflowBase",
-    "WorkflowCreate",
-    "WorkflowUpdate",
-    "WorkflowPublic",
+    "ProblemDetails",
+    "ProblemError",
+    "NodeFieldDescriptor",
+    "NodeTypeDescriptor",
+    "NodeTypeResponse",
+    "ToolDescriptor",
+    "ToolRegistryResponse",
+    "ModelDescriptor",
+    "ModelRegistryResponse",
+    "SchemaResponse",
+    "WorkflowWarning",
+    "ValidateRequest",
+    "ValidateResponse",
+    "CompileOptions",
+    "CompileRequest",
+    "CompileResponse",
+    "CompileArtifacts",
+    "WorkflowMeta",
+    "WorkflowCreateRequest",
+    "WorkflowUpdateRequest",
+    "WorkflowResponse",
+    "WorkflowSummary",
     "WorkflowListResponse",
-    "WorkflowExecutionCreate",
-    "WorkflowExecutionPublic",
-    "WorkflowProposalPublic",
-    "WorkflowProposalPatchOp",
+    "RunFromSpecRequest",
+    "RunFromWorkflowRequest",
+    "RunResponse",
+    "RunResultResponse",
+    "ExpressionSuggestRequest",
+    "ExpressionSuggestResponse",
+    "ExpressionTypecheckRequest",
+    "ExpressionTypecheckResponse",
+    "ExpressionSuggestion",
 ]
+
 
