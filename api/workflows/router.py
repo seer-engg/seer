@@ -7,7 +7,7 @@ from api.workflows import models as api_models
 from api.workflows import services
 
 
-router = APIRouter(prefix="/api/v1", tags=["workflows"])
+router = APIRouter(prefix="/v1", tags=["workflows"])
 
 
 def _require_user(request: Request) -> User:
