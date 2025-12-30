@@ -12,7 +12,7 @@ from .models import WorkflowProposalPublic
 class ChatRequest(BaseModel):
     """Request model for chat endpoint."""
     message: str = Field(..., description="User's chat message")
-    workflow_state: Dict[str, Any] = Field(..., description="Current workflow state (nodes and edges)")
+    workflow_state: Dict[str, Any] = Field(..., description="Legacy workflow state snapshot (ReactFlow schema)")
     model: Optional[str] = Field(default=None, description="Model to use for chat (e.g., 'gpt-5.2', 'claude-opus-4-5')")
     session_id: Optional[int] = Field(default=None, description="Chat session ID to resume conversation")
     thread_id: Optional[str] = Field(default=None, description="LangGraph thread ID to resume conversation")
@@ -22,7 +22,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     """Response model for chat endpoint."""
     response: str = Field(..., description="Assistant's text response")
-    proposal: Optional[WorkflowProposalPublic] = Field(default=None, description="Workflow proposal with patch operations")
+    proposal: Optional[WorkflowProposalPublic] = Field(default=None, description="Workflow proposal containing a full compiler-ready spec")
     proposal_error: Optional[str] = Field(default=None, description="Validation error message if proposal creation failed")
     session_id: Optional[int] = Field(default=None, description="Chat session ID")
     thread_id: Optional[str] = Field(default=None, description="LangGraph thread ID")
@@ -39,7 +39,7 @@ class ChatSessionCreate(BaseModel):
 class ChatSession(BaseModel):
     """Response model for chat session."""
     id: int
-    workflow_id: int
+    workflow_id: str
     user: UserPublic
     thread_id: str
     title: Optional[str]
@@ -68,7 +68,7 @@ class ChatSessionWithMessages(ChatSession):
 class WorkflowProposalActionResponse(BaseModel):
     """Response for proposal accept/reject actions."""
     proposal: WorkflowProposalPublic
-    workflow_graph: Optional[Dict[str, Any]] = Field(default=None, description="Updated workflow graph when accepted")
+    workflow_graph: Optional[Dict[str, Any]] = Field(default=None, description="Updated WorkflowSpec when accepted")
 
 
 class InterruptResponse(BaseModel):

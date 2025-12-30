@@ -76,6 +76,147 @@ def _encode_multipart_related(metadata: Dict[str, Any], content_bytes: bytes, co
 
 
 # -----------------------------
+# Output Schemas (JSON Schema)
+# -----------------------------
+def _drive_user_schema() -> Dict[str, Any]:
+    # https://developers.google.com/workspace/drive/api/reference/rest/v3/User
+    return {
+        "type": "object",
+        "properties": {
+            "displayName": {"type": "string"},
+            "kind": {"type": "string"},
+            "me": {"type": "boolean"},
+            "permissionId": {"type": "string"},
+            "emailAddress": {"type": "string"},
+            "photoLink": {"type": "string"},
+        },
+        "additionalProperties": True,  # tolerate partial fields / future additions
+    }
+
+
+def _drive_file_schema() -> Dict[str, Any]:
+    # Canonical File resource: https://developers.google.com/workspace/drive/api/reference/rest/v3/files
+    # Your tools commonly request these fields, but allow more due to `fields` selector.
+    return {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "name": {"type": "string"},
+            "mimeType": {"type": "string"},
+            "parents": {"type": "array", "items": {"type": "string"}},
+            "driveId": {"type": "string"},
+            "createdTime": {"type": "string", "description": "RFC3339 timestamp"},
+            "modifiedTime": {"type": "string", "description": "RFC3339 timestamp"},
+            # Drive returns some int64-ish values as strings in JSON.
+            "size": {"type": "string", "description": "File size in bytes as a string (int64)"},
+            "webViewLink": {"type": "string"},
+            "webContentLink": {"type": "string"},
+            "trashed": {"type": "boolean"},
+            "owners": {"type": "array", "items": _drive_user_schema()},
+        },
+        "additionalProperties": True,  # `fields` can change returned props
+    }
+
+
+def _drive_file_list_schema() -> Dict[str, Any]:
+    # files.list response body: FileList
+    return {
+        "type": "object",
+        "properties": {
+            "files": {"type": "array", "items": _drive_file_schema()},
+            "nextPageToken": {"type": "string"},
+            "kind": {"type": "string"},
+            "incompleteSearch": {"type": "boolean"},
+        },
+        "required": ["files"],
+        "additionalProperties": True,
+    }
+
+
+def _drive_permission_schema() -> Dict[str, Any]:
+    # Permission resource: https://developers.google.com/workspace/drive/api/reference/rest/v3/permissions
+    return {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "displayName": {"type": "string"},
+            "type": {"type": "string"},
+            "kind": {"type": "string"},
+            "photoLink": {"type": "string"},
+            "emailAddress": {"type": "string"},
+            "role": {"type": "string"},
+            "allowFileDiscovery": {"type": "boolean"},
+            "domain": {"type": "string"},
+            "expirationTime": {"type": "string", "description": "RFC3339 timestamp"},
+            "deleted": {"type": "boolean"},
+            "view": {"type": "string"},
+            "pendingOwner": {"type": "boolean"},
+            "inheritedPermissionsDisabled": {"type": "boolean"},
+            "permissionDetails": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "permissionType": {"type": "string"},
+                        "inheritedFrom": {"type": "string"},
+                        "role": {"type": "string"},
+                        "inherited": {"type": "boolean"},
+                    },
+                    "additionalProperties": True,
+                },
+            },
+            # Keep deprecated field allowed if returned:
+            "teamDrivePermissionDetails": {
+                "type": "array",
+                "items": {"type": "object", "additionalProperties": True},
+            },
+        },
+        "additionalProperties": True,  # `fields` selector + API evolution
+    }
+
+
+def _drive_about_schema() -> Dict[str, Any]:
+    # About resource: https://developers.google.com/workspace/drive/api/reference/rest/v3/about
+    return {
+        "type": "object",
+        "properties": {
+            "kind": {"type": "string"},
+            "user": _drive_user_schema(),
+            "storageQuota": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "string", "description": "int64 as string"},
+                    "usage": {"type": "string", "description": "int64 as string"},
+                    "usageInDrive": {"type": "string", "description": "int64 as string"},
+                    "usageInDriveTrash": {"type": "string", "description": "int64 as string"},
+                },
+                "additionalProperties": True,
+            },
+            "importFormats": {
+                "type": "object",
+                "additionalProperties": {"type": "array", "items": {"type": "string"}},
+            },
+            "exportFormats": {
+                "type": "object",
+                "additionalProperties": {"type": "array", "items": {"type": "string"}},
+            },
+            "maxUploadSize": {"type": "string", "description": "int64 as string"},
+            "canCreateDrives": {"type": "boolean"},
+        },
+        "additionalProperties": True,
+    }
+
+
+def _empty_object_schema(description: str = "Empty JSON object on success.") -> Dict[str, Any]:
+    return {
+        "type": "object",
+        "description": description,
+        "properties": {},
+        "additionalProperties": True,
+    }
+
+
+# -----------------------------
 # Tools
 # -----------------------------
 class GoogleDriveListFilesTool(BaseTool):
@@ -145,6 +286,9 @@ class GoogleDriveListFilesTool(BaseTool):
             },
             "required": []
         }
+
+    def get_output_schema(self) -> Dict[str, Any]:
+        return _drive_file_list_schema()
 
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         _require_access_token(access_token, "Google Drive list files tool")
@@ -226,6 +370,9 @@ class GoogleDriveGetFileMetadataTool(BaseTool):
             "required": ["file_id"]
         }
 
+    def get_output_schema(self) -> Dict[str, Any]:
+        return _drive_file_schema()
+
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         _require_access_token(access_token, "Google Drive get metadata tool")
 
@@ -306,6 +453,22 @@ class GoogleDriveDownloadFileTool(BaseTool):
                 }
             },
             "required": ["file_id"]
+        }
+
+    def get_output_schema(self) -> Dict[str, Any]:
+        # Tool returns a wrapper object, not the raw bytes.
+        return {
+            "type": "object",
+            "properties": {
+                "file_id": {"type": "string"},
+                "exported": {"type": "boolean"},
+                "export_mime_type": {"type": ["string", "null"]},
+                "metadata": {"anyOf": [_drive_file_schema(), {"type": "null"}]},
+                "content_base64": {"type": "string", "description": "Base64-encoded bytes of file content/export"},
+                "content_length": {"type": "integer", "description": "Number of raw bytes before base64 encoding"},
+            },
+            "required": ["file_id", "exported", "metadata", "content_base64", "content_length"],
+            "additionalProperties": False,
         }
 
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
@@ -445,6 +608,9 @@ class GoogleDriveUploadFileTool(BaseTool):
             "required": ["name", "content_base64"]
         }
 
+    def get_output_schema(self) -> Dict[str, Any]:
+        return _drive_file_schema()
+
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         _require_access_token(access_token, "Google Drive upload tool")
 
@@ -560,6 +726,10 @@ class GoogleDriveCreateFolderTool(BaseTool):
             "required": ["name"]
         }
 
+    def get_output_schema(self) -> Dict[str, Any]:
+        # Folder is a File resource with mimeType = application/vnd.google-apps.folder
+        return _drive_file_schema()
+
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         _require_access_token(access_token, "Google Drive create folder tool")
 
@@ -670,6 +840,9 @@ class GoogleDriveUpdateFileTool(BaseTool):
             },
             "required": ["file_id"]
         }
+
+    def get_output_schema(self) -> Dict[str, Any]:
+        return _drive_file_schema()
 
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         _require_access_token(access_token, "Google Drive update tool")
@@ -792,6 +965,10 @@ class GoogleDriveDeleteFileTool(BaseTool):
             "required": ["file_id"]
         }
 
+    def get_output_schema(self) -> Dict[str, Any]:
+        # Drive API: empty JSON object on success.
+        return _empty_object_schema("Drive files.delete success response is an empty JSON object.")
+
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         _require_access_token(access_token, "Google Drive delete tool")
 
@@ -903,6 +1080,9 @@ class GoogleDriveCreatePermissionTool(BaseTool):
             "required": ["file_id", "type", "role"]
         }
 
+    def get_output_schema(self) -> Dict[str, Any]:
+        return _drive_permission_schema()
+
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         _require_access_token(access_token, "Google Drive permission create tool")
 
@@ -986,6 +1166,9 @@ class GoogleDriveAboutGetTool(BaseTool):
             },
             "required": []
         }
+
+    def get_output_schema(self) -> Dict[str, Any]:
+        return _drive_about_schema()
 
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         _require_access_token(access_token, "Google Drive about.get tool")

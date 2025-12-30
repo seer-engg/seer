@@ -150,7 +150,19 @@ class BaseTool(ABC):
             "parameters": schema,
             "resource_pickers": resource_pickers  # Also include separately for convenience
         }
-
+    
+    def get_output_schema(self) -> Dict[str, Any]:
+        """
+        Get JSON schema for tool output.
+        
+        Returns:
+            JSON schema dict describing tool output
+        """
+        return {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
 
 # Tool registry
 _TOOL_REGISTRY: Dict[str, BaseTool] = {}
@@ -166,7 +178,7 @@ def register_tool(tool: BaseTool) -> None:
     if tool.name in _TOOL_REGISTRY:
         logger.warning(f"Tool '{tool.name}' is already registered. Overwriting.")
     _TOOL_REGISTRY[tool.name] = tool
-    logger.info(f"Registered tool: {tool.name}")
+    # logger.info(f"Registered tool: {tool.name}")
 
 
 def get_tool(name: str) -> Optional[BaseTool]:

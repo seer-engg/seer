@@ -20,7 +20,7 @@ alwaysApply: true
 ## Worlflows
 
 ### Overview
-- The core logic for workflow components, building, compilation is in /workflow_core
+- The core logic for workflow components, building, compilation is in /workflow_compiler
 - /api/workflow contains CRUD and chat agent apis for workflows
 - /agent/workflow_agent conatains a langgraph based agent that can build workflow via natural language query.
 
