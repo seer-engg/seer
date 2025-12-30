@@ -47,17 +47,6 @@ RUN_PROBLEM = f"{PROBLEM_BASE}/run"
 NODE_TYPE_DESCRIPTORS = api_models.NodeTypeResponse(
     node_types=[
         api_models.NodeTypeDescriptor(
-            type="tool",
-            title="Tool",
-            fields=[
-                api_models.NodeFieldDescriptor(name="id", kind="string", required=True),
-                api_models.NodeFieldDescriptor(name="tool", kind="select", required=True, source="tools"),
-                api_models.NodeFieldDescriptor(name="in", kind="json"),
-                api_models.NodeFieldDescriptor(name="out", kind="string"),
-                api_models.NodeFieldDescriptor(name="expect_output", kind="output_contract"),
-            ],
-        ),
-        api_models.NodeTypeDescriptor(
             type="llm",
             title="LLM",
             fields=[
@@ -70,7 +59,7 @@ NODE_TYPE_DESCRIPTORS = api_models.NodeTypeResponse(
             ],
         ),
         api_models.NodeTypeDescriptor(
-            type="if",
+            type="if_else",
             title="If/Else",
             fields=[
                 api_models.NodeFieldDescriptor(name="id", kind="string", required=True),
@@ -78,7 +67,7 @@ NODE_TYPE_DESCRIPTORS = api_models.NodeTypeResponse(
             ],
         ),
         api_models.NodeTypeDescriptor(
-            type="for_each",
+            type="for_loop",
             title="For Each",
             fields=[
                 api_models.NodeFieldDescriptor(name="id", kind="string", required=True),
@@ -88,16 +77,8 @@ NODE_TYPE_DESCRIPTORS = api_models.NodeTypeResponse(
                 api_models.NodeFieldDescriptor(name="out", kind="string"),
             ],
         ),
-        api_models.NodeTypeDescriptor(
-            type="task",
-            title="Task",
-            fields=[
-                api_models.NodeFieldDescriptor(name="id", kind="string", required=True),
-                api_models.NodeFieldDescriptor(name="kind", kind="select", required=True),
-                api_models.NodeFieldDescriptor(name="value", kind="json"),
-                api_models.NodeFieldDescriptor(name="out", kind="string"),
-            ],
-        ),
+        # Note: 'task' node type is not supported in the frontend builder UI
+        # It's only used internally in workflow specs
     ]
 )
 

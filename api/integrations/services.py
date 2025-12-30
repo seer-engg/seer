@@ -45,22 +45,118 @@ def merge_scopes(existing_scopes: str, new_scopes: str) -> str:
     return " ".join(sorted(merged))
 
 
+def _extract_base_google_scope(scope: str) -> Optional[str]:
+    """
+    Extract base scope from a Google API scope by removing common suffixes.
+    
+    For Google APIs, broader scopes include narrower ones:
+    - gmail includes gmail.readonly, gmail.modify, gmail.send, etc.
+    - drive includes drive.readonly, drive.file, etc.
+    - spreadsheets includes spreadsheets.readonly, etc.
+    
+    Args:
+        scope: Full scope string (e.g., "https://www.googleapis.com/auth/gmail.readonly")
+    
+    Returns:
+        Base scope string (e.g., "https://www.googleapis.com/auth/gmail") or None if not a Google scope
+    """
+    if "googleapis.com" not in scope:
+        return None
+    
+    # Common Google scope suffixes to remove
+    suffixes = [".readonly", ".modify", ".send", ".compose", ".labels", ".file", ".metadata"]
+    
+    base_scope = scope
+    for suffix in suffixes:
+        if scope.endswith(suffix):
+            base_scope = scope[:-len(suffix)]
+            break
+    
+    return base_scope if base_scope != scope else None
+
+
+def _scope_satisfies_requirement(granted_scope: str, required_scope: str) -> bool:
+    """
+    Check if a granted scope satisfies a required scope, handling Google scope hierarchy.
+    
+    Hierarchy rules:
+    - Base scope (e.g., "gmail") satisfies all narrower scopes (e.g., "gmail.readonly", "gmail.modify")
+    - Narrower scopes do NOT satisfy broader scopes or other narrower scopes
+    
+    Args:
+        granted_scope: Scope that user has (e.g., "https://www.googleapis.com/auth/gmail")
+        required_scope: Scope that is required (e.g., "https://www.googleapis.com/auth/gmail.readonly")
+    
+    Returns:
+        True if granted scope satisfies required scope
+    """
+    # Exact match always satisfies
+    if granted_scope == required_scope:
+        return True
+    
+    # For Google APIs, check hierarchy
+    if "googleapis.com" in required_scope and "googleapis.com" in granted_scope:
+        # Extract base scope from required scope
+        base_required = _extract_base_google_scope(required_scope)
+        if base_required:
+            # Check if granted scope is the base scope (broader satisfies narrower)
+            # This handles: granted="gmail", required="gmail.readonly" -> True
+            if granted_scope == base_required:
+                return True
+        
+        # Check if required scope is a base scope and granted scope is narrower
+        # This handles: granted="gmail.readonly", required="gmail" -> False (narrower doesn't satisfy broader)
+        base_granted = _extract_base_google_scope(granted_scope)
+        if base_granted and not _extract_base_google_scope(required_scope):
+            # Required is base scope, granted is narrower -> doesn't satisfy
+            return False
+    
+    return False
+
+
 def has_required_scopes(granted_scopes: str, required_scopes: List[str]) -> bool:
     """
     Check if granted scopes include all required scopes.
     Handles both whitespace-separated (Google) and comma-separated (GitHub) formats.
+    For Google APIs, handles scope hierarchy where broader scopes satisfy narrower ones.
     
     Args:
         granted_scopes: String of granted scopes (whitespace or comma separated)
         required_scopes: List of required scope strings
     
     Returns:
-        True if all required scopes are granted
+        True if all required scopes are granted (or satisfied by broader scopes for Google APIs)
+    
+    Examples:
+        - has_required_scopes("gmail", ["gmail.readonly"]) -> True (broader satisfies narrower)
+        - has_required_scopes("gmail.readonly", ["gmail"]) -> False (narrower doesn't satisfy broader)
+        - has_required_scopes("gmail.readonly", ["gmail.readonly"]) -> True (exact match)
     """
     if not required_scopes:
         return True
+    
     granted_set = parse_scopes(granted_scopes)
-    return all(scope in granted_set for scope in required_scopes)
+    
+    # Check each required scope
+    for required_scope in required_scopes:
+        # First check for exact match
+        if required_scope in granted_set:
+            continue
+        
+        # For Google APIs, check if any granted scope satisfies the requirement via hierarchy
+        if "googleapis.com" in required_scope:
+            satisfied = False
+            for granted_scope in granted_set:
+                if _scope_satisfies_requirement(granted_scope, required_scope):
+                    satisfied = True
+                    break
+            if not satisfied:
+                return False
+        else:
+            # For non-Google providers, require exact match
+            return False
+    
+    return True
 
 
 def get_oauth_provider(integration_type: str) -> str:
@@ -79,6 +175,47 @@ def get_oauth_provider(integration_type: str) -> str:
         return 'google'
     # For other providers, the integration type is the same as the provider
     return integration_type
+
+
+def extract_provider_account_id(oauth_provider: str, profile: Dict[str, Any]) -> str:
+    """
+    Extract provider_account_id from profile.
+    Raises ValueError if required fields are missing.
+    
+    Args:
+        oauth_provider: OAuth provider name (google, github, etc.)
+        profile: User profile dictionary from OAuth provider
+    
+    Returns:
+        provider_account_id string
+    
+    Raises:
+        ValueError: If required fields are missing from profile
+    """
+    if oauth_provider == 'google':
+        provider_account_id = profile.get('sub') or profile.get('email')
+        if not provider_account_id:
+            raise ValueError(
+                f"Google profile missing required fields 'sub' or 'email'. "
+                f"Profile keys: {list(profile.keys())}"
+            )
+        return provider_account_id
+    elif oauth_provider == 'github':
+        provider_id = profile.get('id')
+        if provider_id is None:
+            raise ValueError(
+                f"GitHub profile missing required field 'id'. "
+                f"Profile keys: {list(profile.keys())}"
+            )
+        return str(provider_id)
+    else:
+        provider_id = profile.get('id')
+        if provider_id is None:
+            raise ValueError(
+                f"{oauth_provider} profile missing required field 'id'. "
+                f"Profile keys: {list(profile.keys())}"
+            )
+        return str(provider_id)
 
 
 async def store_oauth_connection(
@@ -112,12 +249,7 @@ async def store_oauth_connection(
     user = await User.get(user_id=user_id)
     
     # Extract provider account id
-    if oauth_provider == 'google':
-        provider_account_id = profile.get('sub') or profile.get('email')
-    elif oauth_provider == 'github':
-        provider_account_id = str(profile.get('id'))
-    else:
-        provider_account_id = str(profile.get('id', 'unknown'))
+    provider_account_id = extract_provider_account_id(oauth_provider, profile)
         
     provider_metadata = profile
         
