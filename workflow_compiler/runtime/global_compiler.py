@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Any, Dict, Mapping, Sequence, Set
 
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
 import shared.tools  # noqa: F401  # ensure default tool registration occurs
 from shared.database.models import User
 from shared.llm import get_llm
@@ -145,14 +147,20 @@ class WorkflowCompilerSingleton:
                     cls._instance = cls()
         return cls._instance
 
-    def compile(self, user: User, workflow_spec: Any) -> UserBoundCompiledWorkflow:
+    async def compile(
+        self,
+        user: User,
+        workflow_spec: Any,
+        *,
+        checkpointer: AsyncPostgresSaver | None = None,
+    ) -> UserBoundCompiledWorkflow:
         """
         Compile the provided workflow spec and bind it to the given DB user.
         """
 
         spec = parse_workflow_spec(workflow_spec)
         self._ensure_dependencies(spec)
-        compiled = self._compile_spec(spec)
+        compiled = await self._compile_spec(spec, checkpointer=checkpointer)
         return UserBoundCompiledWorkflow(workflow=compiled, user=user)
 
     def ensure_tool(self, tool_name: str) -> ToolDefinition:
@@ -386,7 +394,12 @@ class WorkflowCompilerSingleton:
     # -------------------------------------------------------------------------
     # Compilation pipeline
     # -------------------------------------------------------------------------
-    def _compile_spec(self, spec: WorkflowSpec) -> CompiledWorkflow:
+    async def _compile_spec(
+        self,
+        spec: WorkflowSpec,
+        *,
+        checkpointer: AsyncPostgresSaver | None = None,
+    ) -> CompiledWorkflow:
         context = CompilerContext(
             schema_registry=self._schema_registry,
             tool_registry=self._tool_registry,
@@ -409,7 +422,8 @@ class WorkflowCompilerSingleton:
             )
         )
         from workflow_compiler.compiler.emit_langgraph import emit_langgraph
-        graph = emit_langgraph(plan, runtime)
+
+        graph = await emit_langgraph(plan, runtime, checkpointer=checkpointer)
         return CompiledWorkflow(
             spec=spec,
             type_env=type_env.as_dict(),

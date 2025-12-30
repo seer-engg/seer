@@ -4,7 +4,9 @@ Public entrypoint for compiling workflow specs into runnable LangGraph graphs.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
+
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from workflow_compiler.compiler.context import CompilerContext
 from workflow_compiler.compiler.emit_langgraph import emit_langgraph
@@ -16,7 +18,12 @@ from workflow_compiler.runtime.execution import CompiledWorkflow
 from workflow_compiler.runtime.nodes import NodeRuntime, RuntimeServices
 
 
-def compile_workflow(payload: Any, context: CompilerContext) -> CompiledWorkflow:
+async def compile_workflow(
+    payload: Any,
+    context: CompilerContext,
+    *,
+    checkpointer: Optional[AsyncPostgresSaver] = None,
+) -> CompiledWorkflow:
     """
     Compile a workflow specification into a runnable LangGraph workflow.
     """
@@ -37,7 +44,7 @@ def compile_workflow(payload: Any, context: CompilerContext) -> CompiledWorkflow
             type_env=type_env,
         )
     )
-    graph = emit_langgraph(plan, runtime)
+    graph = await emit_langgraph(plan, runtime, checkpointer=checkpointer)
     return CompiledWorkflow(
         spec=spec,
         type_env=type_env.as_dict(),

@@ -31,6 +31,9 @@ from workflow_compiler.expr import parser as expr_parser
 from workflow_compiler.expr.typecheck import Scope, TypeEnvironment, typecheck_reference
 
 from api.workflows import models as api_models
+import traceback
+
+from api.agents.checkpointer import get_checkpointer
 
 compiler = WorkflowCompilerSingleton.instance()
 logger = logging.getLogger(__name__)
@@ -209,11 +212,12 @@ def _graph_preview(spec: WorkflowSpec) -> Dict[str, Any]:
     return {"nodes": nodes, "edges": edges}
 
 
-def compile_spec(user: User, payload: api_models.CompileRequest) -> api_models.CompileResponse:
+async def compile_spec(user: User, payload: api_models.CompileRequest) -> api_models.CompileResponse:
     spec = payload.spec
     spec_dict = _spec_to_dict(spec)
+    checkpointer = await get_checkpointer()
     try:
-        compiled = compiler.compile(user, spec_dict)
+        compiled = await compiler.compile(user, spec_dict, checkpointer=checkpointer)
     except WorkflowCompilerError as exc:
         _raise_problem(
             type_uri=COMPILE_PROBLEM,
@@ -359,8 +363,13 @@ def _type_env_from_compiled(compiled) -> TypeEnvironment:
     return compiled.workflow.runtime.services.type_env
 
 
-def _prepare_type_env(user: User, spec: WorkflowSpec) -> TypeEnvironment:
-    compiled = compiler.compile(user, _spec_to_dict(spec))
+async def _prepare_type_env(user: User, spec: WorkflowSpec) -> TypeEnvironment:
+    checkpointer = await get_checkpointer()
+    compiled = await compiler.compile(
+        user,
+        _spec_to_dict(spec),
+        checkpointer=checkpointer,
+    )
     return _type_env_from_compiled(compiled)
 
 
@@ -468,6 +477,31 @@ def _serialize_run(run: WorkflowRun) -> api_models.RunResponse:
     )
 
 
+def _serialize_run_summary(run: WorkflowRun) -> api_models.WorkflowRunSummary:
+    return api_models.WorkflowRunSummary(
+        run_id=run.run_id,
+        status=run.status.value if isinstance(run.status, WorkflowRunStatus) else run.status,
+        created_at=run.created_at,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        inputs=dict(run.inputs or {}),
+        output=run.output,
+        error=run.error,
+    )
+
+
+def _build_run_config(run: WorkflowRun, config_payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Ensure LangGraph defaults (thread_id) are present so checkpoints can be recovered.
+    """
+
+    base_config = dict((config_payload or {}) or {})
+    configurable = dict((base_config.get("configurable") or {}) or {})
+    configurable.setdefault("thread_id", run.run_id)
+    base_config["configurable"] = configurable
+    return base_config
+
+
 async def _execute_compiled_run(
     run: WorkflowRun,
     user: User,
@@ -487,8 +521,13 @@ async def _execute_compiled_run(
         status=WorkflowRunStatus.RUNNING,
         started_at=_now(),
     )
+    checkpointer = await get_checkpointer()
     try:
-        compiled = compiler.compile(user, run.spec)
+        compiled = await compiler.compile(
+            user,
+            run.spec,
+            checkpointer=checkpointer,
+        )
     except WorkflowCompilerError as exc:
         await WorkflowRun.filter(id=run.id).update(
             status=WorkflowRunStatus.FAILED,
@@ -509,8 +548,10 @@ async def _execute_compiled_run(
             sorted(run_config.keys()),
             getattr(user, "id", None),
         )
-        result = await compiled.ainvoke(inputs or {}, config=run_config)
+        effective_config = _build_run_config(run, run_config)
+        result = await compiled.ainvoke(inputs or {}, config=effective_config)
     except WorkflowCompilerError as exc:
+        print(f"{traceback.format_exc()}")
         await WorkflowRun.filter(id=run.id).update(
             status=WorkflowRunStatus.FAILED,
             finished_at=_now(),
@@ -558,6 +599,98 @@ async def run_draft_workflow(user: User, payload: api_models.RunFromSpecRequest)
     output = await _execute_compiled_run(run, user, inputs=payload.inputs, config_payload=payload.config)
     run = await _complete_run(run, output)
     return _serialize_run(run)
+
+
+async def list_workflow_runs(
+    user: User,
+    workflow_id: str,
+    *,
+    limit: int = 50,
+) -> api_models.WorkflowRunListResponse:
+    record = await _get_workflow_record(user, workflow_id)
+    limit = max(1, min(limit, 100))
+    runs = (
+        await WorkflowRun.filter(user=user, workflow=record)
+        .order_by("-created_at")
+        .limit(limit)
+    )
+    return api_models.WorkflowRunListResponse(
+        workflow_id=record.workflow_id,
+        runs=[_serialize_run_summary(run) for run in runs],
+    )
+
+
+def _snapshot_to_dict(snapshot: Any) -> Dict[str, Any]:
+    serializable: Dict[str, Any] = {}
+    for key in (
+        "checkpoint_id",
+        "parent_checkpoint_id",
+        "values",
+        "next",
+        "tasks",
+        "metadata",
+        "created_at",
+        "config",
+        "parent_config",
+    ):
+        if hasattr(snapshot, key):
+            value = getattr(snapshot, key)
+            if value is not None:
+                serializable[key] = value
+    return serializable
+
+
+async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryResponse:
+    if not shared_config.DATABASE_URL:
+        _raise_problem(
+            type_uri=RUN_PROBLEM,
+            title="History unavailable",
+            detail="LangGraph checkpointer is not configured",
+            status=503,
+        )
+    run = await _get_run(user, run_id)
+    # TODO : do we even need to compile the workflow again?
+    checkpointer = await get_checkpointer()
+    if checkpointer is None:
+        _raise_problem(
+            type_uri=RUN_PROBLEM,
+            title="History unavailable",
+            detail="LangGraph checkpointer failed to initialize",
+            status=503,
+        )
+    try:
+        compiled = await compiler.compile(
+            user,
+            run.spec,
+            checkpointer=checkpointer,
+        )
+    except WorkflowCompilerError as exc:
+        _raise_problem(
+            type_uri=COMPILE_PROBLEM,
+            title="Failed to rebuild workflow for history",
+            detail=str(exc),
+            status=500,
+        )
+    graph = compiled.workflow.graph
+    config = _build_run_config(run, run.config)
+    try:
+        history_iter = graph.aget_state_history(config)
+        history = [_snapshot_to_dict(item) async for item in history_iter]
+    except Exception as exc:  # pragma: no cover - bubble up as HTTP problem
+        _raise_problem(
+            type_uri=RUN_PROBLEM,
+            title="Failed to load run history",
+            detail=str(exc),
+            status=500,
+        )
+    if not history:
+        _raise_problem(
+            type_uri=RUN_PROBLEM,
+            title="Run history not found",
+            detail=f"No checkpoints found for run '{run.run_id}'",
+            status=404,
+        )
+    return api_models.RunHistoryResponse(run_id=run.run_id, history=history)
 
 
 async def run_saved_workflow(
@@ -663,8 +796,10 @@ __all__ = [
     "typecheck_expression",
     "run_draft_workflow",
     "run_saved_workflow",
+    "list_workflow_runs",
     "get_run_status",
     "get_run_result",
+    "get_run_history",
     "list_run_steps",
     "cancel_run",
 ]

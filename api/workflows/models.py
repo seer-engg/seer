@@ -183,6 +183,27 @@ class RunResultResponse(BaseModel):
     metrics: Optional[Dict[str, Any]] = None
 
 
+class RunHistoryResponse(BaseModel):
+    run_id: str
+    history: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class WorkflowRunSummary(BaseModel):
+    run_id: str
+    status: str
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    inputs: Dict[str, Any] = Field(default_factory=dict)
+    output: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
+class WorkflowRunListResponse(BaseModel):
+    workflow_id: str
+    runs: List[WorkflowRunSummary] = Field(default_factory=list)
+
+
 class ExpressionCursorContext(BaseModel):
     node_id: Optional[str] = None
     field: Optional[str] = None
@@ -243,6 +264,9 @@ __all__ = [
     "RunFromWorkflowRequest",
     "RunResponse",
     "RunResultResponse",
+    "RunHistoryResponse",
+    "WorkflowRunSummary",
+    "WorkflowRunListResponse",
     "ExpressionSuggestRequest",
     "ExpressionSuggestResponse",
     "ExpressionTypecheckRequest",

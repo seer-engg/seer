@@ -112,6 +112,16 @@ async def run_workflow(request: Request, workflow_id: str, payload: api_models.R
     return await services.run_saved_workflow(user, workflow_id, payload)
 
 
+@router.get("/workflows/{workflow_id}/runs", response_model=api_models.WorkflowRunListResponse)
+async def list_workflow_runs(
+    request: Request,
+    workflow_id: str,
+    limit: int = Query(50, ge=1, le=100),
+):
+    user = _require_user(request)
+    return await services.list_workflow_runs(user, workflow_id, limit=limit)
+
+
 @router.get("/runs/{run_id}", response_model=api_models.RunResponse)
 async def get_run_status(request: Request, run_id: str):
     user = _require_user(request)
@@ -123,6 +133,12 @@ async def get_run_result(request: Request, run_id: str, include_state: bool = Qu
     user = _require_user(request)
     return await services.get_run_result(user, run_id, include_state=include_state)
 
+
+
+@router.get("/runs/{run_id}/history", response_model=api_models.RunHistoryResponse)
+async def get_run_history(request: Request, run_id: str):
+    user = _require_user(request)
+    return await services.get_run_history(user, run_id)
 
 @router.get("/runs/{run_id}/steps")
 async def get_run_steps(request: Request, run_id: str):

@@ -6,7 +6,9 @@ import pytest_asyncio
 from tortoise import Tortoise
 from workflow_compiler.schema.models import WorkflowSpec
 
+from api.agents.checkpointer import close_checkpointer, get_checkpointer
 from api.workflows import services
+from shared.config import config as shared_config
 from shared.database.config import TORTOISE_ORM
 from shared.database.models import User
 from shared.database.workflow_models import WorkflowRecord, WorkflowRun
@@ -34,6 +36,22 @@ def event_loop():
 async def tortoise_db():
     await Tortoise.init(config=TORTOISE_ORM)
     yield
+
+
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def langgraph_checkpointer():
+    """
+    Ensure the async LangGraph checkpointer pool stays open for the full test session.
+    """
+    if not shared_config.DATABASE_URL:
+        yield None
+        return
+
+    checkpointer = await get_checkpointer()
+    try:
+        yield checkpointer
+    finally:
+        await close_checkpointer()
 
 
 @pytest.fixture
