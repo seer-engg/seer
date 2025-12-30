@@ -22,7 +22,8 @@ from .services import (
     get_workflow_proposal,
     accept_workflow_proposal,
     reject_workflow_proposal,
-    preview_patch_ops,
+    workflow_state_snapshot,
+    workflow_state_from_spec,
 )
 
 from .chat_schema import (
@@ -39,8 +40,8 @@ from agents.workflow_agent import (
     extract_thinking_from_messages,
     _current_thread_id,
     set_workflow_state_for_thread,
-    get_patch_ops_for_thread,
-    clear_patch_ops_for_thread,
+    get_proposed_spec_for_thread,
+    clear_proposed_spec_for_thread,
 )
 from api.agents.checkpointer import get_checkpointer, get_checkpointer_with_retry, _recreate_checkpointer
 import uuid
@@ -55,132 +56,68 @@ except ImportError:
     psycopg = None
 from shared.database.models import User, UserPublic
 
-logger = get_logger("api.workflows.router")
+logger = get_logger(__name__)
 
-router = APIRouter(prefix="/workflows", tags=["workflows"])
-
-
-def _summarize_patch_ops(patch_ops: List[Dict[str, Any]]) -> str:
-    """Produce a short human summary for proposal patches."""
-    descriptions = [
-        op.get("description")
-        for op in patch_ops
-        if isinstance(op, dict) and op.get("description")
-    ]
-    if descriptions:
-        return "; ".join(descriptions)
-    return f"{len(patch_ops)} workflow change(s)"
+router = APIRouter(prefix="/workflow-agent", tags=["workflow-agent"])
 
 
-def _extract_patch_ops_from_messages(agent_messages: List[Any]) -> List[Dict[str, Any]]:
-    """Find workflow patch operations emitted by tools."""
-    patch_ops: List[Dict[str, Any]] = []
-    tool_call_to_result: Dict[str, ToolMessage] = {}
-    
-    for msg in agent_messages:
-        if isinstance(msg, ToolMessage):
-            tool_call_id = getattr(msg, "tool_call_id", None)
-            if tool_call_id:
-                tool_call_to_result[tool_call_id] = msg
-    
-    recognized_tool_prefixes = (
-        "add_workflow",
-        "modify_workflow",
-        "remove_workflow",
-        "add_workflow_edge",
-        "remove_workflow_edge",
-    )
-    
-    for msg in agent_messages:
-        if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
-            for tool_call in msg.tool_calls:
-                if isinstance(tool_call, dict):
-                    tool_call_id = tool_call.get("id")
-                    tool_name = tool_call.get("name", "")
-                else:
-                    tool_call_id = getattr(tool_call, "id", None)
-                    tool_name = getattr(tool_call, "name", "")
-                
-                if not tool_name.startswith(recognized_tool_prefixes):
-                    continue
-                
-                tool_result_msg = tool_call_to_result.get(tool_call_id)
-                if not tool_result_msg:
-                    continue
-                
-                try:
-                    content = tool_result_msg.content if hasattr(tool_result_msg, "content") else str(tool_result_msg)
-                    result_data = json.loads(content)
-                    
-                    if "error" in result_data:
-                        continue
-                    
-                    if "op" in result_data:
-                        patch_ops.append(result_data)
-                except (json.JSONDecodeError, KeyError, ValueError) as exc:
-                    logger.warning(f"Failed to parse tool result for {tool_name}: {exc}")
-    
-    return patch_ops
+def _require_user(request: Request) -> User:
+    user = getattr(request.state, "db_user", None)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return user
 
 
-async def _maybe_create_proposal_from_ops(
+def _summarize_spec(spec: Dict[str, Any]) -> str:
+    """Produce a short human summary for a WorkflowSpec."""
+    if not spec:
+        return "Workflow proposal"
+    nodes = spec.get("nodes") or []
+    node_types = {}
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        node_type = node.get("type", "node")
+        node_types[node_type] = node_types.get(node_type, 0) + 1
+    if not node_types:
+        return f"{len(nodes)} nodes"
+    parts = [f"{count} {node_type}" for node_type, count in node_types.items()]
+    return ", ".join(parts)
+
+
+async def _maybe_create_proposal_from_spec(
     workflow,
     session,
     user,
     model_name: str,
-    patch_ops: List[Dict[str, Any]],
+    proposal_payload: Optional[Dict[str, Any]],
 ) -> Tuple[Optional[Any], Optional[WorkflowProposalPublic], Optional[str]]:
     """
-    Persist workflow proposal if there are patch ops.
-    
+    Persist workflow proposal if the agent provided a spec payload.
+
     Returns:
         Tuple of (proposal, proposal_public, error_message)
-        If validation fails, returns (None, None, error_message)
     """
-    if not patch_ops:
+    if not proposal_payload:
         return None, None, None
-    
-    preview_graph = None
-    validation_error = None
+
+    spec = proposal_payload.get("spec")
+    if not isinstance(spec, dict):
+        return None, None, "Workflow spec payload is missing or malformed."
+
+    summary = proposal_payload.get("summary") or _summarize_spec(spec)
     try:
-        preview_graph = preview_patch_ops(getattr(workflow, "graph_data", {}), patch_ops)
-    except (HTTPException, ValueError, Exception) as preview_error:
-        # Extract error message from exception
-        if isinstance(preview_error, HTTPException):
-            error_detail = preview_error.detail
-        elif hasattr(preview_error, 'args') and preview_error.args:
-            error_detail = str(preview_error.args[0])
-        else:
-            error_detail = str(preview_error)
-        
-        # Extract more specific error message if it's a validation error
-        if "tool_name is required" in error_detail:
-            validation_error = "Invalid workflow proposal: Tool blocks require 'tool_name' in their configuration. Please ensure all tool blocks have a tool_name specified."
-        elif "user_prompt is required" in error_detail:
-            validation_error = "Invalid workflow proposal: LLM blocks require 'user_prompt' in their configuration."
-        elif "condition is required" in error_detail:
-            validation_error = "Invalid workflow proposal: If/else blocks require 'condition' in their configuration."
-        elif "array_var" in error_detail or "item_var" in error_detail:
-            validation_error = "Invalid workflow proposal: For loop blocks require 'array_var' and 'item_var' in their configuration."
-        else:
-            validation_error = f"Invalid workflow proposal: {error_detail}"
-        
-        logger.warning(f"Unable to build preview graph for proposal: {preview_error}")
-    
-    # Don't persist proposal if validation failed
-    if validation_error:
-        return None, None, validation_error
-    
-    summary = _summarize_patch_ops(patch_ops)
-    proposal = await create_workflow_proposal(
-        workflow=workflow,
-        session=session,
-        user=user,
-        summary=summary,
-        patch_ops=patch_ops,
-        preview_graph=preview_graph,
-        metadata={"model": model_name},
-    )
+        proposal = await create_workflow_proposal(
+            workflow=workflow,
+            session=session,
+            user=user,
+            summary=summary,
+            spec=spec,
+            metadata={"model": model_name},
+        )
+    except HTTPException as exc:
+        error_detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        return None, None, error_detail
     await proposal.fetch_related('created_by', 'workflow', 'session')
     proposal_public = WorkflowProposalPublic.model_validate(proposal, from_attributes=True)
     return proposal, proposal_public, None
@@ -190,7 +127,7 @@ async def _maybe_create_proposal_from_ops(
 @router.post("/{workflow_id}/chat", response_model=ChatResponse)
 async def chat_with_workflow_endpoint(
     request: Request,
-    workflow_id: int,
+    workflow_id: str,
     chat_request: ChatRequest,
 ) -> ChatResponse:
     """
@@ -200,10 +137,10 @@ async def chat_with_workflow_endpoint(
     Supports session persistence and human-in-the-loop interrupts.
     """
     logger.info(f"Chat request received: workflow_id={workflow_id}, message_length={len(chat_request.message)}")
-    user:User = request.state.db_user
+    user = _require_user(request)
     
     # Verify workflow exists and user has access
-    workflow = await get_workflow(workflow_id)
+    workflow = await get_workflow(user, workflow_id)
     
     # Get model from request or use default
     model = chat_request.model or config.default_llm_model
@@ -218,18 +155,18 @@ async def chat_with_workflow_endpoint(
     
     if thread_id:
         # Try to find existing session by thread_id
-        session = await get_chat_session_by_thread_id(thread_id, workflow_id)
+        session = await get_chat_session_by_thread_id(thread_id, workflow)
         if session:
             session_id = session.id
     elif session_id:
         # Get session by ID
-        session = await get_chat_session(session_id, workflow_id)
+        session = await get_chat_session(session_id, workflow)
         thread_id = session.thread_id
     else:
         # Create new session
         thread_id = f"workflow-{workflow_id}-{uuid.uuid4().hex}"
         session = await create_chat_session(
-            workflow_id=workflow_id,
+            workflow=workflow,
             user=user,
             thread_id=thread_id,
         )
@@ -238,17 +175,14 @@ async def chat_with_workflow_endpoint(
     if session is None:
         thread_id = thread_id or f"workflow-{workflow_id}-{uuid.uuid4().hex}"
         session = await create_chat_session(
-            workflow_id=workflow_id,
+            workflow=workflow,
             user=user,
             thread_id=thread_id,
         )
         session_id = session.id
     
     # Get current workflow state (deep copy so tool mutations don't touch DB graph)
-    if workflow.graph_data:
-        workflow_state = deepcopy(workflow.graph_data)
-    else:
-        workflow_state = {"nodes": [], "edges": []}
+    workflow_state = deepcopy(workflow_state_snapshot(workflow))
     
     # Merge with provided workflow state (in case frontend has unsaved changes)
     if chat_request.workflow_state:
@@ -718,16 +652,13 @@ async def chat_with_workflow_endpoint(
         # Extract thinking steps
         thinking_steps = extract_thinking_from_messages(agent_messages)
         
-        # Prefer patch ops recorded directly by tools; fall back to log parsing
-        patch_ops = get_patch_ops_for_thread(thread_id)
-        if not patch_ops:
-            patch_ops = _extract_patch_ops_from_messages(agent_messages)
-        proposal, proposal_public, proposal_error = await _maybe_create_proposal_from_ops(
+        proposal_payload = get_proposed_spec_for_thread(thread_id)
+        proposal, proposal_public, proposal_error = await _maybe_create_proposal_from_spec(
             workflow=workflow,
             session=session,
             user=user,
             model_name=model,
-            patch_ops=patch_ops,
+            proposal_payload=proposal_payload,
         )
         
         # Save assistant message to database
@@ -736,7 +667,7 @@ async def chat_with_workflow_endpoint(
             role="assistant",
             content=response_text,
             thinking="\n".join(thinking_steps) if thinking_steps else None,
-            suggested_edits={"patch_ops": patch_ops} if patch_ops else None,
+            suggested_edits=proposal_payload,
             proposal=proposal,
         )
         
@@ -757,22 +688,23 @@ async def chat_with_workflow_endpoint(
             detail=f"Failed to process chat request: {str(e)}"
         )
     finally:
-        clear_patch_ops_for_thread(thread_id)
+        clear_proposed_spec_for_thread(thread_id)
 
 
 @router.post("/{workflow_id}/chat/sessions", response_model=ChatSession)
 async def create_chat_session_endpoint(
     request: Request,
-    workflow_id: int,
+    workflow_id: str,
     session_data: ChatSessionCreate,
 ) -> ChatSession:
     """Create a new chat session."""
-    user:User = request.state.db_user
-    workflow = await get_workflow(workflow_id)
+    print(f"Creating chat session for workflow {workflow_id}")
+    user = _require_user(request)
+    workflow = await get_workflow(user, workflow_id)
     
     thread_id = f"workflow-{workflow_id}-{uuid.uuid4().hex}"
     session = await create_chat_session(
-        workflow_id=workflow_id,
+        workflow=workflow,
         user=user,
         thread_id=thread_id,
         title=session_data.title,
@@ -780,7 +712,7 @@ async def create_chat_session_endpoint(
     
     return ChatSession(
         id=session.id,
-        workflow_id=workflow_id,  # Use the workflow_id parameter directly
+        workflow_id=workflow.workflow_id,
         user=UserPublic.model_validate(session.user, from_attributes=True),
         thread_id=session.thread_id,
         title=session.title,
@@ -792,18 +724,20 @@ async def create_chat_session_endpoint(
 @router.get("/{workflow_id}/chat/sessions", response_model=list[ChatSession])
 async def list_chat_sessions_endpoint(
     request: Request,
-    workflow_id: int,
+    workflow_id: str,
     limit: int = Query(default=50, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> list[ChatSession]:
     """List chat sessions for a workflow."""
-    user:User = request.state.db_user
-    sessions = await list_chat_sessions(workflow_id, user, limit=limit, offset=offset)
+    print(f"Listing chat sessions for workflow {workflow_id}")
+    user = _require_user(request)
+    workflow = await get_workflow(user, workflow_id)
+    sessions = await list_chat_sessions(workflow, user, limit=limit, offset=offset)
     
     return [
         ChatSession(
             id=session.id,
-            workflow_id=workflow_id,  # Use the workflow_id parameter directly
+            workflow_id=workflow.workflow_id,
             user=UserPublic.model_validate(session.user, from_attributes=True),
             thread_id=session.thread_id,
             title=session.title,
@@ -817,18 +751,19 @@ async def list_chat_sessions_endpoint(
 @router.get("/{workflow_id}/chat/sessions/{session_id}", response_model=ChatSessionWithMessages)
 async def get_chat_session_endpoint(
     request: Request,
-    workflow_id: int,
+    workflow_id: str,
     session_id: int,
 ) -> ChatSessionWithMessages:
     """Get a chat session with its messages."""
-    user:User = request.state.db_user
-    session = await get_chat_session(session_id, workflow_id)
+    user = _require_user(request)
+    workflow = await get_workflow(user, workflow_id)
+    session = await get_chat_session(session_id, workflow)
     
     messages = await load_chat_history(session_id)
     
     return ChatSessionWithMessages(
         id=session.id,
-        workflow_id=workflow_id,  # Use the workflow_id parameter directly
+        workflow_id=workflow.workflow_id,
         user=UserPublic.model_validate(session.user, from_attributes=True),
         thread_id=session.thread_id,
         title=session.title,
@@ -854,7 +789,7 @@ async def get_chat_session_endpoint(
 @router.post("/{workflow_id}/chat/resume")
 async def resume_chat_endpoint(
     request: Request,
-    workflow_id: int,
+    workflow_id: str,
     resume_data: Dict[str, Any],
 ) -> ChatResponse:
     """
@@ -866,10 +801,10 @@ async def resume_chat_endpoint(
     from langgraph.types import Command
     
     logger.info(f"Resume request received: workflow_id={workflow_id}")
-    user:User = request.state.db_user
+    user = _require_user(request)
     
     # Verify workflow exists
-    workflow = await get_workflow(workflow_id)
+    workflow = await get_workflow(user, workflow_id)
     
     # Extract thread_id and command from resume_data
     thread_id = resume_data.get("thread_id")
@@ -900,10 +835,7 @@ async def resume_chat_endpoint(
     session_id = session.id
     
     # Get current workflow state (deep copy to avoid mutating DB graph)
-    if workflow.graph_data:
-        workflow_state = deepcopy(workflow.graph_data)
-    else:
-        workflow_state = {"nodes": [], "edges": []}
+    workflow_state = deepcopy(workflow_state_snapshot(workflow))
     
     # Create agent
     agent = create_workflow_chat_agent(
@@ -945,15 +877,13 @@ async def resume_chat_endpoint(
         # Extract thinking steps
         thinking_steps = extract_thinking_from_messages(agent_messages)
         
-        patch_ops = get_patch_ops_for_thread(thread_id)
-        if not patch_ops:
-            patch_ops = _extract_patch_ops_from_messages(agent_messages)
-        proposal, proposal_public, proposal_error = await _maybe_create_proposal_from_ops(
+        proposal_payload = get_proposed_spec_for_thread(thread_id)
+        proposal, proposal_public, proposal_error = await _maybe_create_proposal_from_spec(
             workflow=workflow,
             session=session,
             user=user,
             model_name=config.default_llm_model,
-            patch_ops=patch_ops,
+            proposal_payload=proposal_payload,
         )
         
         # Save assistant message to database
@@ -962,7 +892,7 @@ async def resume_chat_endpoint(
             role="assistant",
             content=response_text,
             thinking="\n".join(thinking_steps) if thinking_steps else None,
-            suggested_edits={"patch_ops": patch_ops} if patch_ops else None,
+            suggested_edits=proposal_payload,
             proposal=proposal,
         )
         
@@ -985,17 +915,18 @@ async def resume_chat_endpoint(
         # Reset context variable
         if token is not None:
             _current_thread_id.reset(token)
-        clear_patch_ops_for_thread(thread_id)
+        clear_proposed_spec_for_thread(thread_id)
 
 
 @router.get("/{workflow_id}/proposals/{proposal_id}", response_model=WorkflowProposalPublic)
 async def get_proposal_endpoint(
     request: Request,
-    workflow_id: int,
+    workflow_id: str,
     proposal_id: int,
 ) -> WorkflowProposalPublic:
     """Fetch a single workflow proposal."""
-    proposal = await get_workflow_proposal(workflow_id, proposal_id)
+    workflow = await get_workflow(_require_user(request), workflow_id)
+    proposal = await get_workflow_proposal(workflow, proposal_id)
     await proposal.fetch_related('created_by', 'workflow', 'session')
     return WorkflowProposalPublic.model_validate(proposal, from_attributes=True)
 
@@ -1003,26 +934,28 @@ async def get_proposal_endpoint(
 @router.post("/{workflow_id}/proposals/{proposal_id}/accept", response_model=WorkflowProposalActionResponse)
 async def accept_proposal_endpoint(
     request: Request,
-    workflow_id: int,
+    workflow_id: str,
     proposal_id: int,
 ) -> WorkflowProposalActionResponse:
     """Accept a workflow proposal and apply its changes."""
-    proposal, workflow = await accept_workflow_proposal(workflow_id, proposal_id)
+    workflow = await get_workflow(_require_user(request), workflow_id)
+    proposal, workflow = await accept_workflow_proposal(workflow, proposal_id)
     await proposal.fetch_related('created_by', 'workflow', 'session')
     return WorkflowProposalActionResponse(
         proposal=WorkflowProposalPublic.model_validate(proposal, from_attributes=True),
-        workflow_graph=workflow.graph_data,
+        workflow_graph=workflow_state_from_spec(workflow.spec),
     )
 
 
 @router.post("/{workflow_id}/proposals/{proposal_id}/reject", response_model=WorkflowProposalActionResponse)
 async def reject_proposal_endpoint(
     request: Request,
-    workflow_id: int,
+    workflow_id: str,
     proposal_id: int,
 ) -> WorkflowProposalActionResponse:
     """Reject a workflow proposal without applying changes."""
-    proposal = await reject_workflow_proposal(workflow_id, proposal_id)
+    workflow = await get_workflow(_require_user(request), workflow_id)
+    proposal = await reject_workflow_proposal(workflow, proposal_id)
     await proposal.fetch_related('created_by', 'workflow', 'session')
     return WorkflowProposalActionResponse(
         proposal=WorkflowProposalPublic.model_validate(proposal, from_attributes=True),

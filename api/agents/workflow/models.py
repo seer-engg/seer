@@ -78,31 +78,18 @@ class WorkflowExecutionPublic(BaseModel):
 
 
 
-class WorkflowProposalPatchOp(BaseModel):
-    """Single patch operation inside a proposal."""
-    
-    op: str
-    description: Optional[str] = None
-    node_id: Optional[str] = None
-    node: Optional[Dict[str, Any]] = None
-    edge_id: Optional[str] = None
-    edge: Optional[Dict[str, Any]] = None
-    source: Optional[str] = None
-    target: Optional[str] = None
-
-
 class WorkflowProposalPublic(BaseModel):
     """Response model for workflow proposals."""
     
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
     
     id: int
-    workflow_id: int
+    workflow_id: str = Field(alias="workflow_public_id")
     session_id: Optional[int] = None
     created_by: UserPublic
     summary: str
     status: str
-    patch_ops: List[WorkflowProposalPatchOp]
+    spec: Dict[str, Any]
     preview_graph: Optional[Dict[str, Any]] = None
     applied_graph: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
@@ -122,6 +109,5 @@ __all__ = [
     "WorkflowExecutionCreate",
     "WorkflowExecutionPublic",
     "WorkflowProposalPublic",
-    "WorkflowProposalPatchOp",
 ]
 

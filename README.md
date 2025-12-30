@@ -149,3 +149,10 @@ Missing keys? Seer prompts interactively and supports OAuth flows.
 - OAuth-based authentication (Clerk integration)
 - Role-based access control
 - Audit trails and execution history
+
+### Workflow Agent JSON Proposals
+
+- The workflow chat agent now calls `submit_workflow_spec` to emit complete, compiler-ready JSON specs (no more incremental patch ops).
+- Agent prompts include the trimmed WorkflowSpec schema plus a canonical example from `workflow_compiler/schema`.
+- Proposal APIs (`/api/agents/workflow/.../proposals`) return the captured spec so clients can preview or apply it directly.
+- Accepting a proposal replaces the workflow definition atomically with the validated spec; rejecting leaves the workflow untouched.

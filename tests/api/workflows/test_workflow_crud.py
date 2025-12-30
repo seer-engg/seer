@@ -44,3 +44,22 @@ async def test_workflow_crud_validate_compile_flow(db_user, workflow_spec):
     post_delete = await services.list_workflows(db_user)
     assert post_delete.items == []
 
+
+@pytest.mark.asyncio
+async def test_apply_workflow_from_spec(db_user, workflow_spec):
+    """Applying a new spec should bump the workflow version and persist metadata."""
+    create_payload = api_models.WorkflowCreateRequest(
+        name="API workflow",
+        description="Original",
+        tags=["demo"],
+        spec=workflow_spec,
+    )
+    created = await services.create_workflow(db_user, create_payload)
+
+    updated_spec_dict = workflow_spec.model_copy(deep=True).model_dump(mode="json")
+    updated_spec_dict.setdefault("meta", {}).update({"notes": "refined summary"})
+
+    applied = await services.apply_workflow_from_spec(db_user, created.workflow_id, updated_spec_dict)
+    assert applied.version == 2
+    assert applied.spec.meta.get("notes") == "refined summary"
+

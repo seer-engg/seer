@@ -354,6 +354,31 @@ async def update_workflow(
     return _workflow_response(record)
 
 
+async def apply_workflow_from_spec(
+    user: User,
+    workflow_id: str,
+    spec_payload: Dict[str, Any],
+) -> api_models.WorkflowResponse:
+    """
+    Replace an existing workflow's spec with a validated WorkflowSpec payload.
+    """
+    record = await _get_workflow_record(user, workflow_id)
+    try:
+        spec = WorkflowSpec.model_validate(spec_payload)
+    except Exception as exc:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Invalid workflow spec",
+            detail=str(exc),
+            status=400,
+        )
+
+    record.spec = _spec_to_dict(spec)
+    record.version += 1
+    await record.save()
+    return _workflow_response(record)
+
+
 async def delete_workflow(user: User, workflow_id: str) -> None:
     record = await _get_workflow_record(user, workflow_id)
     await record.delete()

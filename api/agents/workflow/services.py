@@ -1,186 +1,103 @@
 """
-Workflow service layer for business logic.
+Workflow service layer for the workflow agent APIs.
 """
-from typing import List, Optional, Dict, Any, Tuple
+
+from __future__ import annotations
+
 from datetime import datetime
-from copy import deepcopy
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
-from shared.logger import get_logger
-from shared.config import config
 from shared.database.models import User
-from .models import (
-    WorkflowUpdate,
+from shared.database.workflow_models import (
+    WorkflowChatMessage,
+    WorkflowChatSession,
+    WorkflowProposal,
+    WorkflowRecord,
+    parse_workflow_public_id,
 )
-from shared.database import Workflow, WorkflowBlock, WorkflowEdge, WorkflowExecution, WorkflowChatSession, WorkflowChatMessage, WorkflowProposal
-from pydantic import BaseModel
+from shared.logger import get_logger
 
 
+logger = get_logger("api.workflow_agent.services")
 
-logger = get_logger("api.workflows.services")
 
-async def get_workflow(workflow_id: int) -> Workflow:
-    """
-    Get a workflow by ID.
-    
-    Args:
-        workflow_id: Workflow ID
-        user_id: User ID for authorization (None in self-hosted mode)
-        
-    Returns:
-        Workflow model
-        
-    Raises:
-        HTTPException: If workflow not found or unauthorized
-    """
-    workflow = await Workflow.get_or_none(id=workflow_id)
-    
+# ============================================================================
+# Workflow helpers
+# ============================================================================
+
+def _workflow_state_from_spec(spec: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert compiler WorkflowSpec JSON into a lightweight graph snapshot."""
+    nodes_payload: List[Dict[str, Any]] = []
+    spec_nodes = spec.get("nodes")
+    if isinstance(spec_nodes, list):
+        for raw_node in spec_nodes:
+            if not isinstance(raw_node, dict):
+                continue
+            meta = raw_node.get("meta") if isinstance(raw_node.get("meta"), dict) else {}
+            label = meta.get("label") if meta else None
+            position = meta.get("position") if meta else None
+
+            node_state: Dict[str, Any] = {
+                "id": raw_node.get("id"),
+                "type": raw_node.get("type"),
+                "data": {
+                    "label": label or raw_node.get("id"),
+                    "config": raw_node,
+                },
+            }
+            if isinstance(position, dict):
+                node_state["position"] = {
+                    "x": position.get("x", 0),
+                    "y": position.get("y", 0),
+                }
+            nodes_payload.append(node_state)
+
+    edges_payload: List[Dict[str, Any]] = []
+    for idx in range(len(nodes_payload) - 1):
+        source = nodes_payload[idx].get("id")
+        target = nodes_payload[idx + 1].get("id")
+        if source and target:
+            edges_payload.append(
+                {
+                    "id": f"wf_edge_{idx}",
+                    "source": source,
+                    "target": target,
+                }
+            )
+    return {"nodes": nodes_payload, "edges": edges_payload}
+
+
+def workflow_state_from_spec(spec: Dict[str, Any]) -> Dict[str, Any]:
+    """Public helper to build a workflow-state snapshot from a WorkflowSpec payload."""
+    if not isinstance(spec, dict):
+        return {"nodes": [], "edges": []}
+    return _workflow_state_from_spec(spec)
+
+
+def workflow_state_snapshot(workflow: WorkflowRecord) -> Dict[str, Any]:
+    """Return the persisted workflow's latest state in ReactFlow-friendly format."""
+    if isinstance(workflow.spec, dict):
+        return workflow_state_from_spec(workflow.spec)
+    return {"nodes": [], "edges": []}
+
+
+async def _get_workflow_record(user: User, workflow_id: str) -> WorkflowRecord:
+    """Resolve and authorize workflow by public id."""
+    try:
+        pk = parse_workflow_public_id(workflow_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid workflow id format") from exc
+
+    workflow = await WorkflowRecord.get_or_none(id=pk, user=user)
     if not workflow:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-    
+        raise HTTPException(status_code=404, detail=f"Workflow '{workflow_id}' not found")
     return workflow
 
 
-async def list_workflows(user: User) -> List[Workflow]:
-    """
-    List all workflows for a user.
-    
-    Args:
-        user: User
-        
-    Returns:
-        List of workflows
-    """
-    workflows = await Workflow.filter(user=user, is_active=True).all()
-    
-    return workflows
-
-
-async def update_workflow(
-    workflow_id: int,
-    payload: WorkflowUpdate,
-) -> Workflow:
-    """
-    Update a workflow.
-    
-    Args:
-        workflow_id: Workflow ID
-        payload: Update payload
-        
-    Returns:
-        Updated workflow
-        
-    Raises:
-        HTTPException: If workflow not found or unauthorized
-    """
-    workflow = await get_workflow(workflow_id)
-    
-    # Validate graph if provided
-    if payload.graph_data:
-        #TODO: validate workflow with compiler before saving 
-        pass
-    
-    # Update fields
-    update_data = payload.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(workflow, field, value)
-    
-    workflow.updated_at = datetime.utcnow()
-    await workflow.save()
-    
-    # Sync blocks and edges if graph_data was updated
-    if payload.graph_data:
-        await _sync_workflow_blocks_and_edges(workflow, payload.graph_data)
-    
-    logger.info(f"Updated workflow {workflow_id} ")
-    return workflow
-
-
-async def delete_workflow(workflow_id: int) -> None:
-    """
-    Delete a workflow (soft delete).
-    
-    Args:
-        workflow_id: Workflow ID
-        
-    Raises:
-        HTTPException: If workflow not found or unauthorized
-    """
-    workflow = await get_workflow(workflow_id)
-    
-    workflow.is_active = False
-    workflow.updated_at = datetime.utcnow()
-    await workflow.save()
-    
-    logger.info(f"Deleted workflow {workflow_id}")
-
-
-async def _sync_workflow_blocks_and_edges(
-    workflow: Workflow,
-    graph_data: dict,
-) -> None:
-    """
-    Synchronize workflow blocks and edges from graph data.
-    
-    Args:
-        workflow: Workflow model
-        graph_data: ReactFlow graph data
-    """
-    nodes = graph_data.get('nodes', [])
-    edges = graph_data.get('edges', [])
-    
-    # Get existing blocks
-    existing_blocks = {block.block_id: block for block in await WorkflowBlock.filter(workflow=workflow).all()}
-    
-    # Create or update blocks
-    for node in nodes:
-        block_id = node['id']
-        data = node.get('data', {})
-        position = node.get('position', {})
-        
-        if block_id in existing_blocks:
-            block = existing_blocks[block_id]
-            block.block_type = node.get('type', 'tool')
-            block.block_config = data.get('config', {})
-            block.oauth_scope = data.get('oauth_scope')
-            block.position_x = position.get('x', 0)
-            block.position_y = position.get('y', 0)
-            await block.save()
-        else:
-            await WorkflowBlock.create(
-                workflow=workflow,
-                block_id=block_id,
-                block_type=node.get('type', 'tool'),
-                block_config=data.get('config', {}),
-                oauth_scope=data.get('oauth_scope'),
-                position_x=position.get('x', 0),
-                position_y=position.get('y', 0),
-            )
-    
-    # Delete blocks that are no longer in graph
-    node_ids = {node['id'] for node in nodes}
-    for block_id, block in existing_blocks.items():
-        if block_id not in node_ids:
-            await block.delete()
-    
-    # Delete all existing edges
-    await WorkflowEdge.filter(workflow=workflow).delete()
-    
-    # Create new edges
-    existing_blocks_dict = {block.block_id: block for block in await WorkflowBlock.filter(workflow=workflow).all()}
-    
-    for edge_data in edges:
-        source_block = existing_blocks_dict.get(edge_data['source'])
-        target_block = existing_blocks_dict.get(edge_data['target'])
-        
-        if source_block and target_block:
-            await WorkflowEdge.create(
-                workflow=workflow,
-                source_block=source_block,
-                target_block=target_block,
-                source_handle=None,
-                target_handle=None,
-            )
+async def get_workflow(user: User, workflow_id: str) -> WorkflowRecord:
+    """Public accessor used by routers."""
+    return await _get_workflow_record(user, workflow_id)
 
 
 # ============================================================================
@@ -188,42 +105,30 @@ async def _sync_workflow_blocks_and_edges(
 # ============================================================================
 
 async def create_chat_session(
-    workflow_id: int,
+    workflow: WorkflowRecord,
     user: User,
     thread_id: str,
     title: Optional[str] = None,
 ) -> WorkflowChatSession:
     """
     Create a new chat session for a workflow.
-    
-    Args:
-        workflow_id: Workflow ID
-        user: User
-        thread_id: LangGraph thread ID
-        title: Optional session title
-        
-    Returns:
-        Created chat session
     """
-    workflow = await get_workflow(workflow_id)
-    
     session = await WorkflowChatSession.create(
         workflow=workflow,
         user=user,
         thread_id=thread_id,
         title=title,
     )
-    
-    # Fetch the user relationship to ensure it's loaded
-    await session.fetch_related('user')
-    
-    logger.info(f"Created chat session {session.id} for workflow {workflow_id}")
+
+    await session.fetch_related("user")
+
+    logger.info(f"Created chat session {session.id} for workflow {workflow.workflow_id}")
     return session
 
 
 async def get_chat_session(
     session_id: int,
-    workflow_id: int,
+    workflow: WorkflowRecord,
 ) -> WorkflowChatSession:
     """
     Get a chat session with its messages.
@@ -238,9 +143,6 @@ async def get_chat_session(
     Raises:
         HTTPException: If session not found or unauthorized
     """
-    # Verify workflow access first
-    workflow = await get_workflow(workflow_id)
-    
     session = await WorkflowChatSession.filter(
         id=session_id,
         workflow=workflow,
@@ -257,7 +159,7 @@ async def get_chat_session(
 
 async def get_chat_session_by_thread_id(
     thread_id: str,
-    workflow_id: int,
+    workflow: WorkflowRecord,
 ) -> Optional[WorkflowChatSession]:
     """
     Get a chat session by thread ID.
@@ -270,9 +172,6 @@ async def get_chat_session_by_thread_id(
     Returns:
         Chat session if found, None otherwise
     """
-    # Verify workflow access first
-    workflow = await get_workflow(workflow_id)
-    
     session = await WorkflowChatSession.filter(
         thread_id=thread_id,
         workflow=workflow,
@@ -285,7 +184,7 @@ async def get_chat_session_by_thread_id(
 
 
 async def list_chat_sessions(
-    workflow_id: int,
+    workflow: WorkflowRecord,
     user: User,
     limit: int = 50,
     offset: int = 0,
@@ -302,8 +201,6 @@ async def list_chat_sessions(
     Returns:
         List of chat sessions
     """
-    workflow = await get_workflow(workflow_id)
-    
     sessions = await WorkflowChatSession.filter(
         workflow=workflow,
         user=user,
@@ -377,154 +274,49 @@ async def load_chat_history(
     return messages
 
 
-async def update_chat_session_title(
-    session_id: int,
-    workflow_id: int,
-    user_id: Optional[str],
-    title: str,
-) -> WorkflowChatSession:
-    """
-    Update chat session title.
-    
-    Args:
-        session_id: Session ID
-        workflow_id: Workflow ID (for authorization)
-        user_id: User ID for authorization
-        title: New title
-        
-    Returns:
-        Updated session
-    """
-    session = await get_chat_session(session_id, workflow_id, user_id)
-    
-    session.title = title
-    session.updated_at = datetime.utcnow()
-    await session.save()
-    
-    return session
+def _normalize_spec(spec: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Validate and normalize a WorkflowSpec payload."""
+    if not spec:
+        raise HTTPException(status_code=400, detail="Workflow spec is required")
+    try:
+        # Lazy import to avoid circular deps
+        from workflow_compiler.compiler.parse import parse_workflow_spec
+
+        validated = parse_workflow_spec(spec)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid workflow spec: {exc}") from exc
+    return validated.model_dump(mode="json")
 
 
-def _with_default_graph(graph_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Return a deepcopy of graph data with default nodes/edges."""
-    base = graph_data or {}
-    return {
-        "nodes": deepcopy(base.get("nodes", [])),
-        "edges": deepcopy(base.get("edges", [])),
-    }
-
-
-def _apply_patch_ops(
-    graph_data: Optional[Dict[str, Any]],
-    patch_ops: List[Dict[str, Any]],
-) -> Dict[str, Any]:
-    """Apply patch operations to a workflow graph."""
-    updated_graph = _with_default_graph(graph_data)
-    nodes = updated_graph["nodes"]
-    edges = updated_graph["edges"]
-    
-    def _find_node_index(node_id: str) -> Optional[int]:
-        for idx, node in enumerate(nodes):
-            if node.get("id") == node_id:
-                return idx
-        return None
-    
-    for op in patch_ops:
-        op_type = (op or {}).get("op")
-        if not op_type:
-            raise HTTPException(status_code=400, detail="Patch operation missing 'op'")
-        
-        if op_type == "add_node":
-            node = op.get("node")
-            if not node or "id" not in node:
-                raise HTTPException(status_code=400, detail="add_node requires node.id")
-            if _find_node_index(node["id"]) is not None:
-                raise HTTPException(status_code=400, detail=f"Node '{node['id']}' already exists")
-            nodes.append(node)
-        
-        elif op_type == "update_node":
-            node = op.get("node")
-            node_id = op.get("node_id") or (node or {}).get("id")
-            if not node_id or not node:
-                raise HTTPException(status_code=400, detail="update_node requires node_id and node")
-            idx = _find_node_index(node_id)
-            if idx is None:
-                raise HTTPException(status_code=400, detail=f"Node '{node_id}' not found")
-            nodes[idx] = node
-        
-        elif op_type == "remove_node":
-            node_id = op.get("node_id")
-            if not node_id:
-                raise HTTPException(status_code=400, detail="remove_node requires node_id")
-            if _find_node_index(node_id) is None:
-                raise HTTPException(status_code=400, detail=f"Node '{node_id}' not found")
-            nodes[:] = [node for node in nodes if node.get("id") != node_id]
-            edges[:] = [
-                edge for edge in edges
-                if edge.get("source") != node_id and edge.get("target") != node_id
-            ]
-        
-        elif op_type == "add_edge":
-            edge = op.get("edge")
-            if not edge:
-                raise HTTPException(status_code=400, detail="add_edge requires edge payload")
-            source = edge.get("source")
-            target = edge.get("target")
-            if not source or not target:
-                raise HTTPException(status_code=400, detail="add_edge requires source/target")
-            if _find_node_index(source) is None or _find_node_index(target) is None:
-                raise HTTPException(status_code=400, detail=f"Edge references unknown nodes {source}->{target}")
-            already_exists = any(
-                existing.get("source") == source and existing.get("target") == target
-                for existing in edges
-            )
-            if already_exists:
-                raise HTTPException(status_code=400, detail=f"Edge {source}->{target} already exists")
-            edges.append(edge)
-        
-        elif op_type == "remove_edge":
-            edge = op.get("edge", {})
-            edge_id = op.get("edge_id") or edge.get("id")
-            source = edge.get("source") or op.get("source_id")
-            target = edge.get("target") or op.get("target_id")
-            if not edge_id and not (source and target):
-                raise HTTPException(status_code=400, detail="remove_edge requires edge_id or source/target")
-            edges[:] = [
-                existing for existing in edges
-                if not (
-                    (edge_id and existing.get("id") == edge_id) or
-                    (source and target and existing.get("source") == source and existing.get("target") == target)
-                )
-            ]
-        else:
-            raise HTTPException(status_code=400, detail=f"Unknown patch operation '{op_type}'")
-    
-    return updated_graph
-
-
-def preview_patch_ops(
-    graph_data: Optional[Dict[str, Any]],
-    patch_ops: List[Dict[str, Any]],
-) -> Dict[str, Any]:
-    """Return a preview graph after applying patch ops (without persistence)."""
-    preview_graph = _apply_patch_ops(graph_data, patch_ops)
-    # Validate preview to catch schema issues early
-    #TODO: validate workflow with compiler before saving 
-    return preview_graph
+def _preview_from_spec(spec: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a lightweight preview graph UI can render."""
+    nodes = spec.get("nodes", [])
+    preview_nodes = [
+        {"id": node.get("id"), "type": node.get("type")}
+        for node in nodes
+        if isinstance(node, dict)
+    ]
+    preview_edges: List[Dict[str, Any]] = []
+    for idx in range(len(preview_nodes) - 1):
+        source = preview_nodes[idx].get("id")
+        target = preview_nodes[idx + 1].get("id")
+        if source and target:
+            preview_edges.append({"source": source, "target": target})
+    return {"nodes": preview_nodes, "edges": preview_edges}
 
 
 async def create_workflow_proposal(
-    workflow: Workflow,
+    workflow: WorkflowRecord,
     session: Optional[WorkflowChatSession],
     user: User,
     summary: str,
-    patch_ops: List[Dict[str, Any]],
-    preview_graph: Optional[Dict[str, Any]] = None,
+    spec: Dict[str, Any],
     metadata: Optional[Dict[str, Any]] = None,
 ) -> WorkflowProposal:
     """Persist a workflow proposal."""
-    if not patch_ops:
-        raise HTTPException(status_code=400, detail="Proposal requires at least one patch op")
-    
+    normalized_spec = _normalize_spec(spec)
+    preview_graph = _preview_from_spec(normalized_spec)
+
     safe_summary = (summary or "").strip() or "Workflow changes"
     if len(safe_summary) > 512:
         safe_summary = f"{safe_summary[:509]}..."
@@ -534,7 +326,7 @@ async def create_workflow_proposal(
         session=session,
         created_by=user,
         summary=safe_summary,
-        patch_ops=patch_ops,
+        spec=normalized_spec,
         preview_graph=preview_graph,
         status=WorkflowProposal.STATUS_PENDING,
         metadata=metadata,
@@ -543,11 +335,10 @@ async def create_workflow_proposal(
 
 
 async def get_workflow_proposal(
-    workflow_id: int,
+    workflow: WorkflowRecord,
     proposal_id: int,
 ) -> WorkflowProposal:
     """Fetch a workflow proposal."""
-    workflow = await get_workflow(workflow_id)
     proposal = await WorkflowProposal.get_or_none(id=proposal_id, workflow=workflow)
     if not proposal:
         raise HTTPException(status_code=404, detail="Proposal not found")
@@ -555,26 +346,25 @@ async def get_workflow_proposal(
 
 
 async def accept_workflow_proposal(
-    workflow_id: int,
+    workflow: WorkflowRecord,
     proposal_id: int,
-) -> Tuple[WorkflowProposal, Workflow]:
+) -> Tuple[WorkflowProposal, WorkflowRecord]:
     """Apply workflow proposal and mark accepted."""
-    proposal = await get_workflow_proposal(workflow_id, proposal_id)
+    proposal = await get_workflow_proposal(workflow, proposal_id)
     if proposal.status != WorkflowProposal.STATUS_PENDING:
         raise HTTPException(status_code=400, detail="Proposal is not pending")
     
     workflow = await proposal.workflow
-    updated_graph = _apply_patch_ops(workflow.graph_data, proposal.patch_ops or [])
-    #TODO: validate workflow with compiler before saving 
+    normalized_spec = _normalize_spec(proposal.spec or {})
     
-    workflow.graph_data = updated_graph
+    workflow.spec = normalized_spec
+    workflow.version += 1
     workflow.updated_at = datetime.utcnow()
     await workflow.save()
-    await _sync_workflow_blocks_and_edges(workflow, updated_graph)
     
     
     proposal.status = WorkflowProposal.STATUS_ACCEPTED
-    proposal.applied_graph = updated_graph
+    proposal.applied_graph = normalized_spec
     proposal.decided_at = datetime.utcnow()
     await proposal.save()
     
@@ -582,11 +372,11 @@ async def accept_workflow_proposal(
 
 
 async def reject_workflow_proposal(
-    workflow_id: int,
+    workflow: WorkflowRecord,
     proposal_id: int,
 ) -> WorkflowProposal:
     """Reject workflow proposal."""
-    proposal = await get_workflow_proposal(workflow_id, proposal_id)
+    proposal = await get_workflow_proposal(workflow, proposal_id)
     if proposal.status != WorkflowProposal.STATUS_PENDING:
         raise HTTPException(status_code=400, detail="Proposal is not pending")
     
