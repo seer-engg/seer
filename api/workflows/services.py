@@ -543,7 +543,7 @@ async def _complete_run(run: WorkflowRun, output: Dict[str, Any]) -> WorkflowRun
         finished_at=_now(),
         output=output,
     )
-    await run.fetch_from_db()
+    await run.refresh_from_db()
     return run
 
 

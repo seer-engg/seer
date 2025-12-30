@@ -99,7 +99,8 @@ class WorkflowRun(models.Model):
         return make_run_public_id(self.id)
 
 class Workflow(models.Model):
-    """Main workflow entity."""
+    """Main workflow entity. NOt used in the new workflow system."""
+    # TODO: Remove this model.
     
     id = fields.IntField(primary_key=True)
     name = fields.CharField(max_length=255)
