@@ -348,7 +348,7 @@ async def auth_callback(request: Request, provider: str):
     if not state:
         raise HTTPException(status_code=400, detail="Missing state")
          
-    try:
+    try:  
         state_data = decode_state(state)
         user_id = state_data.get('user_id')
         redirect_to = state_data.get('redirect_to')
