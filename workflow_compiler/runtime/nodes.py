@@ -333,7 +333,7 @@ class NodeRuntime:
             raise ExecutionError(f"State keys starting with '{INTERNAL_STATE_PREFIX}' are reserved")
         schema = self._type_schemas.get(key)
         if schema is not None:
-            validate_against_schema(schema, value)
+            validate_against_schema(schema, value, schema_id=key)
         return {key: value}
 
 

@@ -25,6 +25,7 @@ from workflow_compiler.registry.tool_registry import ToolDefinition, ToolRegistr
 from workflow_compiler.runtime.context import WorkflowRuntimeContext
 from workflow_compiler.runtime.execution import CompiledWorkflow
 from workflow_compiler.runtime.nodes import NodeRuntime, RuntimeServices
+from workflow_compiler.schema.jsonschema_adapter import SchemaError, check_schema
 from workflow_compiler.schema.models import (
     ForEachNode,
     IfNode,
@@ -228,6 +229,14 @@ class WorkflowCompilerSingleton:
                 tool.get_output_schema(),
                 schema_id=f"tools.{tool_name}.output",
             )
+
+            try:
+                check_schema(input_schema)
+                check_schema(output_schema)
+            except SchemaError as exc:
+                raise WorkflowCompilerError(
+                    f"Tool '{tool_name}' registered invalid schema: {exc.message}"
+                ) from exc
 
             handler, async_handler = self._build_tool_handler(
                 tool_name,

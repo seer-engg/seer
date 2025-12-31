@@ -17,6 +17,7 @@ Official refs:
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 import base64
+import copy
 import email.utils
 from email.message import EmailMessage
 import json
@@ -860,16 +861,18 @@ class GmailListThreadsTool(BaseTool):
 
     def get_output_schema(self) -> Dict[str, Any]:
         # threads.list returns envelope with threads + nextPageToken + resultSizeEstimate. :contentReference[oaicite:19]{index=19}
-        return {
-            "type": "object",
-            "properties": {
-                "threads": {"type": "array", "items": GMAIL_THREAD_SCHEMA},
-                "nextPageToken": {"type": ["string", "null"]},
-                "resultSizeEstimate": {"type": ["integer", "null"]},
-            },
-            "required": ["threads"],
-            "additionalProperties": True,
-        }
+        return _schema_with_defs(
+            {
+                "type": "object",
+                "properties": {
+                    "threads": {"type": "array", "items": _schema_ref("Thread")},
+                    "nextPageToken": {"type": ["string", "null"]},
+                    "resultSizeEstimate": {"type": ["integer", "null"]},
+                },
+                "required": ["threads"],
+                "additionalProperties": True,
+            }
+        )
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -1047,16 +1050,18 @@ class GmailListDraftsTool(BaseTool):
 
     def get_output_schema(self) -> Dict[str, Any]:
         # drafts.list returns envelope with drafts + nextPageToken + resultSizeEstimate. :contentReference[oaicite:22]{index=22}
-        return {
-            "type": "object",
-            "properties": {
-                "drafts": {"type": "array", "items": GMAIL_DRAFT_SCHEMA},
-                "nextPageToken": {"type": ["string", "null"]},
-                "resultSizeEstimate": {"type": ["integer", "null"]},
-            },
-            "required": ["drafts"],
-            "additionalProperties": True,
-        }
+        return _schema_with_defs(
+            {
+                "type": "object",
+                "properties": {
+                    "drafts": {"type": "array", "items": _schema_ref("Draft")},
+                    "nextPageToken": {"type": ["string", "null"]},
+                    "resultSizeEstimate": {"type": ["integer", "null"]},
+                },
+                "required": ["drafts"],
+                "additionalProperties": True,
+            }
+        )
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -1274,7 +1279,12 @@ class GmailListLabelsTool(BaseTool):
 
     def get_output_schema(self) -> Dict[str, Any]:
         # labels.list returns an array of Label resources. :contentReference[oaicite:25]{index=25}
-        return {"type": "array", "items": GMAIL_LABEL_SCHEMA}
+        return _schema_with_defs(
+            {
+                "type": "array",
+                "items": _schema_ref("Label"),
+            }
+        )
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {"type": "object", "properties": {}, "required": []}
@@ -1395,13 +1405,7 @@ class GmailGetAttachmentTool(BaseTool):
 
     def get_output_schema(self) -> Dict[str, Any]:
         # attachments.get returns a MessagePartBody {size, data(base64url)}; tool may add data_base64. :contentReference[oaicite:27]{index=27}
-        schema = dict(GMAIL_MESSAGE_PART_BODY_SCHEMA)
-        schema["properties"] = dict(schema.get("properties", {}))
-        schema["properties"]["data_base64"] = {
-            "type": "string",
-            "description": "Added by tool when decode_bytes=true (standard base64).",
-        }
-        return schema
+        return GMAIL_ATTACHMENT_BODY_SCHEMA
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -1448,126 +1452,146 @@ class GmailGetAttachmentTool(BaseTool):
 # Output schemas (Gmail API v1)
 # =============================
 
-GMAIL_HEADER_SCHEMA: Dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "name": {"type": "string"},
-        "value": {"type": "string"},
+GMAIL_SCHEMA_DEFINITIONS: Dict[str, Any] = {
+    "Header": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "value": {"type": "string"},
+        },
+        "required": ["name", "value"],
+        "additionalProperties": True,
     },
-    "required": ["name", "value"],
-    "additionalProperties": True,
+    "MessagePartBody": {
+        "type": "object",
+        "properties": {
+            "attachmentId": {"type": "string"},
+            "size": {"type": "integer"},
+            "data": {"type": "string", "description": "Base64url-encoded body data (may be omitted)."},
+        },
+        "required": [],
+        "additionalProperties": True,
+    },
+    "AttachmentBody": {
+        "type": "object",
+        "properties": {
+            "attachmentId": {"type": "string"},
+            "size": {"type": "integer"},
+            "data": {"type": "string", "description": "Base64url-encoded body data (may be omitted)."},
+            "data_base64": {
+                "type": "string",
+                "description": "Added by tool when decode_bytes=true (standard base64).",
+            },
+        },
+        "required": [],
+        "additionalProperties": True,
+    },
+    "MessagePart": {
+        "type": "object",
+        "properties": {
+            "partId": {"type": "string"},
+            "mimeType": {"type": "string"},
+            "filename": {"type": "string"},
+            "headers": {"type": "array", "items": {"$ref": "#/$defs/Header"}},
+            "body": {"$ref": "#/$defs/MessagePartBody"},
+            "parts": {
+                "type": "array",
+                "items": {"$ref": "#/$defs/MessagePart"},
+            },
+        },
+        "required": [],
+        "additionalProperties": True,
+    },
+    "Message": {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "threadId": {"type": "string"},
+            "labelIds": {"type": "array", "items": {"type": "string"}},
+            "snippet": {"type": "string"},
+            "historyId": {"type": "string"},
+            "internalDate": {"type": "string", "description": "Epoch ms as string."},
+            "payload": {"$ref": "#/$defs/MessagePart"},
+            "sizeEstimate": {"type": "integer"},
+            "raw": {"type": "string", "description": "Base64url-encoded RFC 2822 message (format=raw)."},
+        },
+        "required": [],
+        "additionalProperties": True,
+    },
+    "MessageIdOnly": {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "threadId": {"type": "string"},
+        },
+        "required": ["id", "threadId"],
+        "additionalProperties": True,
+    },
+    "Thread": {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "snippet": {"type": "string"},
+            "historyId": {"type": "string"},
+            "messages": {"type": "array", "items": {"$ref": "#/$defs/Message"}},
+        },
+        "required": [],
+        "additionalProperties": True,
+    },
+    "Draft": {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "message": {"$ref": "#/$defs/Message"},
+        },
+        "required": [],
+        "additionalProperties": True,
+    },
+    "LabelColor": {
+        "type": "object",
+        "properties": {
+            "backgroundColor": {"type": "string"},
+            "textColor": {"type": "string"},
+        },
+        "required": [],
+        "additionalProperties": True,
+    },
+    "Label": {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "name": {"type": "string"},
+            "messageListVisibility": {"type": "string"},
+            "labelListVisibility": {"type": "string"},
+            "type": {"type": "string"},
+            "messagesTotal": {"type": "integer"},
+            "messagesUnread": {"type": "integer"},
+            "threadsTotal": {"type": "integer"},
+            "threadsUnread": {"type": "integer"},
+            "color": {"$ref": "#/$defs/LabelColor"},
+        },
+        "required": [],
+        "additionalProperties": True,
+    },
 }
 
-GMAIL_MESSAGE_PART_BODY_SCHEMA: Dict[str, Any] = {
-    # MessagePartBody JSON representation (used by messages.get(full/raw) and attachments.get)
-    # Includes base64url-encoded `data` when present. :contentReference[oaicite:7]{index=7}
-    "type": "object",
-    "properties": {
-        "attachmentId": {"type": "string"},
-        "size": {"type": "integer"},
-        "data": {"type": "string", "description": "Base64url-encoded body data (may be omitted)."},
-    },
-    "required": [],
-    "additionalProperties": True,
-}
 
-GMAIL_MESSAGE_PART_SCHEMA: Dict[str, Any] = {
-    # MessagePart JSON representation (payload + nested parts) :contentReference[oaicite:8]{index=8}
-    "type": "object",
-    "properties": {
-        "partId": {"type": "string"},
-        "mimeType": {"type": "string"},
-        "filename": {"type": "string"},
-        "headers": {"type": "array", "items": GMAIL_HEADER_SCHEMA},
-        "body": GMAIL_MESSAGE_PART_BODY_SCHEMA,
-        "parts": {"type": "array", "items": {}},  # replaced below to be recursive
-    },
-    "required": [],
-    "additionalProperties": True,
-}
-# Make parts recursive
-GMAIL_MESSAGE_PART_SCHEMA["properties"]["parts"]["items"] = GMAIL_MESSAGE_PART_SCHEMA  # type: ignore[index]
+def _schema_with_defs(schema: Dict[str, Any]) -> Dict[str, Any]:
+    document = copy.deepcopy(schema)
+    document["$defs"] = copy.deepcopy(GMAIL_SCHEMA_DEFINITIONS)
+    return document
 
-GMAIL_MESSAGE_SCHEMA: Dict[str, Any] = {
-    # Message resource JSON representation. Fields vary by `format` (minimal/metadata/full/raw). :contentReference[oaicite:9]{index=9}
-    "type": "object",
-    "properties": {
-        "id": {"type": "string"},
-        "threadId": {"type": "string"},
-        "labelIds": {"type": "array", "items": {"type": "string"}},
-        "snippet": {"type": "string"},
-        "historyId": {"type": "string"},
-        "internalDate": {"type": "string", "description": "Epoch ms as string."},
-        "payload": GMAIL_MESSAGE_PART_SCHEMA,
-        "sizeEstimate": {"type": "integer"},
-        "raw": {"type": "string", "description": "Base64url-encoded RFC 2822 message (format=raw)."},
-        # Some newer/optional fields may appear; allow them.
-    },
-    "required": [],
-    "additionalProperties": True,
-}
 
-GMAIL_MESSAGE_ID_ONLY_SCHEMA: Dict[str, Any] = {
-    # For list endpoints where each message is only {id, threadId}. :contentReference[oaicite:10]{index=10}
-    "type": "object",
-    "properties": {
-        "id": {"type": "string"},
-        "threadId": {"type": "string"},
-    },
-    "required": ["id", "threadId"],
-    "additionalProperties": True,
-}
+def _schema_ref(root_name: str) -> Dict[str, Any]:
+    return {"$ref": f"#/$defs/{root_name}"}
 
-GMAIL_THREAD_SCHEMA: Dict[str, Any] = {
-    # Thread resource JSON representation; in list(), messages are typically omitted. :contentReference[oaicite:11]{index=11}
-    "type": "object",
-    "properties": {
-        "id": {"type": "string"},
-        "snippet": {"type": "string"},
-        "historyId": {"type": "string"},
-        "messages": {"type": "array", "items": GMAIL_MESSAGE_SCHEMA},
-    },
-    "required": [],
-    "additionalProperties": True,
-}
 
-GMAIL_DRAFT_SCHEMA: Dict[str, Any] = {
-    # Draft resource JSON representation {id, message}. :contentReference[oaicite:12]{index=12}
-    "type": "object",
-    "properties": {
-        "id": {"type": "string"},
-        "message": GMAIL_MESSAGE_SCHEMA,
-    },
-    "required": [],
-    "additionalProperties": True,
-}
-
-GMAIL_LABEL_COLOR_SCHEMA: Dict[str, Any] = {
-    # Label.Color (nested resource). :contentReference[oaicite:13]{index=13}
-    "type": "object",
-    "properties": {
-        "backgroundColor": {"type": "string"},
-        "textColor": {"type": "string"},
-    },
-    "required": [],
-    "additionalProperties": True,
-}
-
-GMAIL_LABEL_SCHEMA: Dict[str, Any] = {
-    # Label resource JSON representation. :contentReference[oaicite:14]{index=14}
-    "type": "object",
-    "properties": {
-        "id": {"type": "string"},
-        "name": {"type": "string"},
-        "messageListVisibility": {"type": "string"},
-        "labelListVisibility": {"type": "string"},
-        "type": {"type": "string"},
-        "messagesTotal": {"type": "integer"},
-        "messagesUnread": {"type": "integer"},
-        "threadsTotal": {"type": "integer"},
-        "threadsUnread": {"type": "integer"},
-        "color": GMAIL_LABEL_COLOR_SCHEMA,
-    },
-    "required": [],
-    "additionalProperties": True,
-}
+GMAIL_HEADER_SCHEMA: Dict[str, Any] = _schema_with_defs(_schema_ref("Header"))
+GMAIL_MESSAGE_PART_BODY_SCHEMA: Dict[str, Any] = _schema_with_defs(_schema_ref("MessagePartBody"))
+GMAIL_ATTACHMENT_BODY_SCHEMA: Dict[str, Any] = _schema_with_defs(_schema_ref("AttachmentBody"))
+GMAIL_MESSAGE_SCHEMA: Dict[str, Any] = _schema_with_defs(_schema_ref("Message"))
+GMAIL_MESSAGE_ID_ONLY_SCHEMA: Dict[str, Any] = _schema_with_defs(_schema_ref("MessageIdOnly"))
+GMAIL_THREAD_SCHEMA: Dict[str, Any] = _schema_with_defs(_schema_ref("Thread"))
+GMAIL_DRAFT_SCHEMA: Dict[str, Any] = _schema_with_defs(_schema_ref("Draft"))
+GMAIL_LABEL_COLOR_SCHEMA: Dict[str, Any] = _schema_with_defs(_schema_ref("LabelColor"))
+GMAIL_LABEL_SCHEMA: Dict[str, Any] = _schema_with_defs(_schema_ref("Label"))
