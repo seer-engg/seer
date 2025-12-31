@@ -108,6 +108,26 @@ class SeerConfig(BaseSettings):
         default="https://api.githubcopilot.com/mcp/",
         description="GitHub MCP server URL (for streamable HTTP transport, e.g., http://localhost:8080/mcp)"
     )
+
+    # ============================================================================
+    # Trigger Poller
+    # ============================================================================
+    trigger_poller_enabled: bool = Field(
+        default=True,
+        description="Enable background polling for provider-based workflow triggers.",
+    )
+    trigger_poller_interval_seconds: int = Field(
+        default=5,
+        description="Sleep interval between poll engine ticks.",
+    )
+    trigger_poller_max_batch_size: int = Field(
+        default=10,
+        description="Maximum subscriptions to lease per poll tick.",
+    )
+    trigger_poller_lock_timeout_seconds: int = Field(
+        default=60,
+        description="Lease timeout for poll locks in seconds.",
+    )
     # ============================================================================
     # Computed Properties
     # ============================================================================

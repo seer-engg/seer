@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field
 from tortoise import fields, models
@@ -8,6 +8,10 @@ from shared.database.models import User
 
 WORKFLOW_ID_PREFIX = "wf_"
 RUN_ID_PREFIX = "run_"
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class WorkflowRunStatus(str, Enum):
@@ -160,6 +164,18 @@ class TriggerSubscription(models.Model):
     bindings = fields.JSONField(null=True)
     provider_config = fields.JSONField(null=True)
     secret_token = fields.CharField(max_length=255, null=True)
+    # NOTE: Adding/changing these poll_* fields requires a manual DB migration.
+    poll_interval_seconds = fields.IntField(default=60)
+    next_poll_at = fields.DatetimeField(
+        default=_now_utc,
+        description="Next scheduled poll time (UTC).",
+    )
+    poll_cursor_json = fields.JSONField(null=True)
+    poll_status = fields.CharField(max_length=32, default="ok")
+    poll_error_json = fields.JSONField(null=True)
+    poll_backoff_seconds = fields.IntField(default=0)
+    poll_lock_owner = fields.CharField(max_length=255, null=True)
+    poll_lock_expires_at = fields.DatetimeField(null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 
@@ -181,6 +197,12 @@ class TriggerEvent(models.Model):
     trigger_key = fields.CharField(max_length=255)
     provider_connection_id = fields.IntField(null=True)
     provider_event_id = fields.CharField(max_length=255, null=True)
+    # NOTE: Requires DB migration to add event_hash + supporting indexes.
+    event_hash = fields.CharField(
+        max_length=255,
+        null=True,
+        description="Deterministic hash used when provider_event_id is unavailable.",
+    )
     occurred_at = fields.DatetimeField(null=True)
     received_at = fields.DatetimeField(auto_now_add=True)
     event = fields.JSONField()
@@ -192,7 +214,10 @@ class TriggerEvent(models.Model):
 
     class Meta:
         table = "trigger_events"
-        unique_together = (("trigger_key", "provider_connection_id", "provider_event_id"),)
+        unique_together = (
+            ("trigger_key", "provider_connection_id", "provider_event_id"),
+            ("trigger_key", "provider_connection_id", "event_hash"),
+        )
         indexes = (
             ("status", "received_at"),
             ("trigger_key", "provider_connection_id"),

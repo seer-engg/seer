@@ -23,6 +23,7 @@ from api.tools.router import router as tools_router
 from api.traces.router import router as traces_router
 from api.agents.checkpointer import checkpointer_lifespan
 from shared.database import db_lifespan
+from api.triggers.polling import TriggerPollScheduler
 
 # Import tools to register them
 # Note: model_block removed - use LLM block in workflows instead
@@ -34,14 +35,25 @@ logger = get_logger("api.main")
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
     logger.info("🚀 Starting Seer API server...")
-    
+
     async with db_lifespan(app):
         logger.info("✅ Database initialized")
         async with checkpointer_lifespan() as checkpointer:
             if checkpointer is not None:
                 app.state.checkpointer = checkpointer
             logger.info("✅ Checkpointer initialized")
-            
+            poll_scheduler: TriggerPollScheduler | None = None
+            if config.trigger_poller_enabled:
+                poll_scheduler = TriggerPollScheduler(
+                    interval_seconds=config.trigger_poller_interval_seconds,
+                    max_batch_size=config.trigger_poller_max_batch_size,
+                    lock_timeout_seconds=config.trigger_poller_lock_timeout_seconds,
+                )
+                await poll_scheduler.start()
+                app.state.trigger_poller = poll_scheduler
+            else:
+                logger.info("⏸ Trigger poller disabled via configuration")
+
             # Initialize tool index (non-blocking)
             if config.tool_index_auto_generate:
                 try:
@@ -75,6 +87,10 @@ async def lifespan(app: FastAPI):
             try:
                 yield
             finally:
+                if poll_scheduler:
+                    await poll_scheduler.stop()
+                    if hasattr(app.state, "trigger_poller"):
+                        delattr(app.state, "trigger_poller")
                 if hasattr(app.state, "checkpointer"):
                     delattr(app.state, "checkpointer")
     
