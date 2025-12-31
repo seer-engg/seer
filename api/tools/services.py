@@ -21,7 +21,7 @@ async def list_tools(integration_type: Optional[str] = None) -> Dict[str, Any]:
         integration_type: Optional filter by integration type (e.g., 'gmail', 'github')
     
     Returns:
-        Dict with 'tools' list containing tool metadata
+        Dict with 'tools' list containing tool metadata (parameters + output schema)
     """
     try:
         tools = get_tools_by_integration(integration_type)
