@@ -150,6 +150,13 @@ Missing keys? Seer prompts interactively and supports OAuth flows.
 - Role-based access control
 - Audit trails and execution history
 
+### Workflow Triggers (beta)
+
+- `GET /api/v1/triggers` exposes the trigger catalog (currently `webhook.generic`) including normalized event schemas.
+- Attach triggers to saved workflows via `/api/v1/trigger-subscriptions` to configure filters, `${event...}` bindings, and per-subscription webhook secrets.
+- Generic webhooks POST to `/api/v1/webhooks/generic/{subscription_id}` with the `X-Seer-Webhook-Secret` header; events are deduped, stored, and dispatched asynchronously.
+- Triggered runs are persisted in `workflow_runs` with `source="trigger"` plus links back to the originating subscription and event for observability.
+
 ### Workflow Agent JSON Proposals
 
 - The workflow chat agent now calls `submit_workflow_spec` to emit complete, compiler-ready JSON specs (no more incremental patch ops).

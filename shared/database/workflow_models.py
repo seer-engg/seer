@@ -18,6 +18,18 @@ class WorkflowRunStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class WorkflowRunSource(str, Enum):
+    MANUAL = "manual"
+    TRIGGER = "trigger"
+
+
+class TriggerEventStatus(str, Enum):
+    RECEIVED = "received"
+    ROUTED = "routed"
+    PROCESSED = "processed"
+    FAILED = "failed"
+
+
 def make_workflow_public_id(pk: int) -> str:
     return f"{WORKFLOW_ID_PREFIX}{pk}"
 
@@ -77,6 +89,15 @@ class WorkflowRun(models.Model):
     spec = fields.JSONField()
     inputs = fields.JSONField(null=True)
     config = fields.JSONField(null=True)
+    source = fields.CharEnumField(
+        WorkflowRunSource, max_length=20, default=WorkflowRunSource.MANUAL
+    )
+    subscription = fields.ForeignKeyField(
+        "models.TriggerSubscription", related_name="runs", null=True
+    )
+    trigger_event = fields.ForeignKeyField(
+        "models.TriggerEvent", related_name="runs", null=True
+    )
     status = fields.CharEnumField(
         WorkflowRunStatus, max_length=20, default=WorkflowRunStatus.QUEUED
     )
@@ -122,6 +143,63 @@ class WorkflowChatSession(models.Model):
     def workflow_public_id(self) -> str:
         """Expose wf_* identifier used by public APIs."""
         return make_workflow_public_id(self.workflow_id)
+
+
+class TriggerSubscription(models.Model):
+    """Trigger configuration attached to a workflow."""
+
+    id = fields.IntField(primary_key=True)
+    user = fields.ForeignKeyField("models.User", related_name="trigger_subscriptions")
+    workflow = fields.ForeignKeyField(
+        "models.WorkflowRecord", related_name="trigger_subscriptions"
+    )
+    trigger_key = fields.CharField(max_length=255)
+    provider_connection_id = fields.IntField(null=True)
+    enabled = fields.BooleanField(default=True)
+    filters = fields.JSONField(null=True)
+    bindings = fields.JSONField(null=True)
+    provider_config = fields.JSONField(null=True)
+    secret_token = fields.CharField(max_length=255, null=True)
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    class Meta:
+        table = "trigger_subscriptions"
+        indexes = (
+            ("user_id", "workflow_id"),
+            ("trigger_key", "provider_connection_id", "enabled"),
+        )
+
+    def __str__(self) -> str:
+        return f"TriggerSubscription<{self.id}:{self.trigger_key}>"
+
+
+class TriggerEvent(models.Model):
+    """Normalized incoming trigger event."""
+
+    id = fields.IntField(primary_key=True)
+    trigger_key = fields.CharField(max_length=255)
+    provider_connection_id = fields.IntField(null=True)
+    provider_event_id = fields.CharField(max_length=255, null=True)
+    occurred_at = fields.DatetimeField(null=True)
+    received_at = fields.DatetimeField(auto_now_add=True)
+    event = fields.JSONField()
+    raw_payload = fields.JSONField(null=True)
+    status = fields.CharEnumField(
+        TriggerEventStatus, max_length=20, default=TriggerEventStatus.RECEIVED
+    )
+    error = fields.JSONField(null=True)
+
+    class Meta:
+        table = "trigger_events"
+        unique_together = (("trigger_key", "provider_connection_id", "provider_event_id"),)
+        indexes = (
+            ("status", "received_at"),
+            ("trigger_key", "provider_connection_id"),
+        )
+
+    def __str__(self) -> str:
+        return f"TriggerEvent<{self.id}:{self.trigger_key}>"
 
 
 class WorkflowChatMessage(models.Model):

@@ -11,7 +11,12 @@ from api.workflows import services
 from shared.config import config as shared_config
 from shared.database.config import TORTOISE_ORM
 from shared.database.models import User
-from shared.database.workflow_models import WorkflowRecord, WorkflowRun
+from shared.database.workflow_models import (
+    TriggerEvent,
+    TriggerSubscription,
+    WorkflowRecord,
+    WorkflowRun,
+)
 from tests.api.workflows.shared_data import (
     TEST_SCHEMA_DEFINITION,
     TEST_SCHEMA_ID,
@@ -74,7 +79,9 @@ def register_test_schema():
     services.compiler.schema_registry.register(TEST_SCHEMA_ID, TEST_SCHEMA_DEFINITION)
 
 
-@pytest_asyncio.fixture(autouse=True)
-async def cleanup_workflow_models():
-    await WorkflowRun.all().delete()
-    await WorkflowRecord.all().delete()
+# @pytest_asyncio.fixture(autouse=True)
+# async def cleanup_workflow_models():
+#     await WorkflowRun.all().delete()
+#     await WorkflowRecord.all().delete()
+#     await TriggerEvent.all().delete()
+#     await TriggerSubscription.all().delete()

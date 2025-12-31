@@ -213,6 +213,9 @@ class TokenDecodeWithoutValidationMiddleware(BaseHTTPMiddleware):
         if "/integrations/" in path and path.endswith("/callback"):
             return True
 
+        if path.startswith("/api/v1/webhooks"):
+            return True
+
         return False
 
     def _extract_token(self, request: Request) -> Optional[str]:
