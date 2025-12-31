@@ -4,6 +4,7 @@ from .agents.routes import router as agents_router
 from .integrations.router import router as integrations_router
 from .models.router import router as models_router
 from .workflows.router import router as workflows_router
+from .webhooks.router import router as webhooks_router
 from .agents.workflow.router import router as workflow_agent_router
 
 router = APIRouter(prefix="/api")
@@ -12,3 +13,4 @@ router.include_router(integrations_router)
 router.include_router(models_router)
 router.include_router(workflows_router)
 router.include_router(workflow_agent_router)
+router.include_router(webhooks_router)

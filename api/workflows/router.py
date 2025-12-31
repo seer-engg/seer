@@ -23,6 +23,79 @@ async def get_node_types(request: Request):
     return await services.list_node_types()
 
 
+@router.get("/triggers", response_model=api_models.TriggerCatalogResponse)
+async def get_trigger_catalog(request: Request):
+    _require_user(request)
+    return await services.list_triggers()
+
+
+@router.get(
+    "/trigger-subscriptions",
+    response_model=api_models.TriggerSubscriptionListResponse,
+)
+async def list_trigger_subscriptions(
+    request: Request,
+    workflow_id: str | None = Query(None),
+):
+    user = _require_user(request)
+    return await services.list_trigger_subscriptions(user, workflow_id=workflow_id)
+
+
+@router.post(
+    "/trigger-subscriptions",
+    response_model=api_models.TriggerSubscriptionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_trigger_subscription(
+    request: Request,
+    payload: api_models.TriggerSubscriptionCreateRequest,
+):
+    user = _require_user(request)
+    return await services.create_trigger_subscription(user, payload)
+
+
+@router.get(
+    "/trigger-subscriptions/{subscription_id}",
+    response_model=api_models.TriggerSubscriptionResponse,
+)
+async def get_trigger_subscription(request: Request, subscription_id: int):
+    user = _require_user(request)
+    return await services.get_trigger_subscription(user, subscription_id)
+
+
+@router.patch(
+    "/trigger-subscriptions/{subscription_id}",
+    response_model=api_models.TriggerSubscriptionResponse,
+)
+async def update_trigger_subscription(
+    request: Request,
+    subscription_id: int,
+    payload: api_models.TriggerSubscriptionUpdateRequest,
+):
+    user = _require_user(request)
+    return await services.update_trigger_subscription(user, subscription_id, payload)
+
+
+@router.delete("/trigger-subscriptions/{subscription_id}", status_code=status.HTTP_200_OK)
+async def delete_trigger_subscription(request: Request, subscription_id: int):
+    user = _require_user(request)
+    await services.delete_trigger_subscription(user, subscription_id)
+    return {"ok": True}
+
+
+@router.post(
+    "/trigger-subscriptions/{subscription_id}/test",
+    response_model=api_models.TriggerSubscriptionTestResponse,
+)
+async def test_trigger_subscription(
+    request: Request,
+    subscription_id: int,
+    payload: api_models.TriggerSubscriptionTestRequest,
+):
+    user = _require_user(request)
+    return await services.test_trigger_subscription(user, subscription_id, payload)
+
+
 @router.get("/registries/tools", response_model=api_models.ToolRegistryResponse)
 async def get_tool_registry(request: Request, include_schemas: bool = Query(False)):
     _require_user(request)

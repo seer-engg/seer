@@ -54,6 +54,66 @@ class ToolRegistryResponse(BaseModel):
     tools: List[ToolDescriptor]
 
 
+class TriggerDescriptor(BaseModel):
+    key: str
+    title: str
+    provider: str
+    mode: str
+    description: Optional[str] = None
+    event_schema: Dict[str, Any]
+    filter_schema: Optional[Dict[str, Any]] = None
+
+
+class TriggerCatalogResponse(BaseModel):
+    triggers: List[TriggerDescriptor]
+
+
+class TriggerSubscriptionCreateRequest(BaseModel):
+    workflow_id: str
+    trigger_key: str
+    provider_connection_id: Optional[int] = None
+    enabled: bool = True
+    filters: Dict[str, Any] = Field(default_factory=dict)
+    bindings: Dict[str, Any] = Field(default_factory=dict)
+    provider_config: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TriggerSubscriptionUpdateRequest(BaseModel):
+    provider_connection_id: Optional[int] = None
+    enabled: Optional[bool] = None
+    filters: Optional[Dict[str, Any]] = None
+    bindings: Optional[Dict[str, Any]] = None
+    provider_config: Optional[Dict[str, Any]] = None
+
+
+class TriggerSubscriptionResponse(BaseModel):
+    subscription_id: int
+    workflow_id: str
+    trigger_key: str
+    provider_connection_id: Optional[int] = None
+    enabled: bool
+    filters: Dict[str, Any] = Field(default_factory=dict)
+    bindings: Dict[str, Any] = Field(default_factory=dict)
+    provider_config: Dict[str, Any] = Field(default_factory=dict)
+    secret_token: Optional[str] = None
+    webhook_url: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class TriggerSubscriptionListResponse(BaseModel):
+    items: List[TriggerSubscriptionResponse] = Field(default_factory=list)
+
+
+class TriggerSubscriptionTestRequest(BaseModel):
+    event: Optional[Dict[str, Any]] = None
+
+
+class TriggerSubscriptionTestResponse(BaseModel):
+    inputs: Dict[str, Any] = Field(default_factory=dict)
+    errors: List[str] = Field(default_factory=list)
+
+
 class ModelDescriptor(BaseModel):
     id: str
     title: str
@@ -244,6 +304,14 @@ __all__ = [
     "NodeTypeResponse",
     "ToolDescriptor",
     "ToolRegistryResponse",
+    "TriggerDescriptor",
+    "TriggerCatalogResponse",
+    "TriggerSubscriptionCreateRequest",
+    "TriggerSubscriptionUpdateRequest",
+    "TriggerSubscriptionResponse",
+    "TriggerSubscriptionListResponse",
+    "TriggerSubscriptionTestRequest",
+    "TriggerSubscriptionTestResponse",
     "ModelDescriptor",
     "ModelRegistryResponse",
     "SchemaResponse",
