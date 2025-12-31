@@ -61,7 +61,6 @@ CREATE TABLE IF NOT EXISTS "workflow_blocks" (
     "block_id" VARCHAR(255) NOT NULL,
     "block_type" VARCHAR(100) NOT NULL,
     "block_config" JSONB NOT NULL,
-    "python_code" TEXT,
     "position_x" DOUBLE PRECISION NOT NULL,
     "position_y" DOUBLE PRECISION NOT NULL,
     "oauth_scope" VARCHAR(255),

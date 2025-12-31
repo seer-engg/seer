@@ -8,7 +8,7 @@ async def upgrade(db: BaseDBAsyncClient) -> str:
         CREATE TABLE IF NOT EXISTS "workflow_proposals" (
     "id" SERIAL NOT NULL PRIMARY KEY,
     "summary" VARCHAR(512) NOT NULL,
-    "patch_ops" JSONB NOT NULL,
+    "spec" JSONB NOT NULL,
     "status" VARCHAR(20) NOT NULL DEFAULT 'pending',
     "preview_graph" JSONB,
     "applied_graph" JSONB,
