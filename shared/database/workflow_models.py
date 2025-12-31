@@ -1,123 +1,133 @@
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, Optional
-
+from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field
 from tortoise import fields, models
 
 from shared.database.models import User
 
-class Workflow(models.Model):
-    """Main workflow entity."""
-    
+
+WORKFLOW_ID_PREFIX = "wf_"
+RUN_ID_PREFIX = "run_"
+
+
+class WorkflowRunStatus(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class WorkflowRunSource(str, Enum):
+    MANUAL = "manual"
+    TRIGGER = "trigger"
+
+
+class TriggerEventStatus(str, Enum):
+    RECEIVED = "received"
+    ROUTED = "routed"
+    PROCESSED = "processed"
+    FAILED = "failed"
+
+
+def make_workflow_public_id(pk: int) -> str:
+    return f"{WORKFLOW_ID_PREFIX}{pk}"
+
+
+def parse_workflow_public_id(value: str) -> int:
+    if not value.startswith(WORKFLOW_ID_PREFIX):
+        raise ValueError("Invalid workflow_id format")
+    return int(value.removeprefix(WORKFLOW_ID_PREFIX))
+
+
+def make_run_public_id(pk: int) -> str:
+    return f"{RUN_ID_PREFIX}{pk}"
+
+
+def parse_run_public_id(value: str) -> int:
+    if not value.startswith(RUN_ID_PREFIX):
+        raise ValueError("Invalid run_id format")
+    return int(value.removeprefix(RUN_ID_PREFIX))
+
+
+class WorkflowRecord(models.Model):
+    """Normalized workflow entity backed by WorkflowSpec JSON."""
+
     id = fields.IntField(primary_key=True)
+    user = fields.ForeignKeyField("models.User", related_name="workflow_records")
     name = fields.CharField(max_length=255)
     description = fields.TextField(null=True)
-    user = fields.ForeignKeyField('models.User', related_name='workflows')
-    graph_data = fields.JSONField()  # ReactFlow nodes/edges JSON
-    schema_version = fields.CharField(max_length=50, default="1.0")
-    is_active = fields.BooleanField(default=True)
+    spec = fields.JSONField()
+    version = fields.IntField(default=1)
+    tags = fields.JSONField(null=True)
+    meta = fields.JSONField(null=True)
+    last_compile_ok = fields.BooleanField(default=False)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
-    
+
     class Meta:
-        table = "workflows"
-        ordering = ("-created_at",)
-    
+        table = "workflow_records"
+        ordering = ("-updated_at", "id")
+
     def __str__(self) -> str:
-        return f"Workflow<{self.name}>"
+        return f"WorkflowRecord<{self.name} v{self.version}>"
+
+    @property
+    def workflow_id(self) -> str:
+        return make_workflow_public_id(self.id)
 
 
-class WorkflowBlock(models.Model):
-    """Individual blocks (nodes) in workflow."""
-    
+class WorkflowRun(models.Model):
+    """Persisted workflow run metadata (no telemetry)."""
+
     id = fields.IntField(primary_key=True)
-    workflow = fields.ForeignKeyField('models.Workflow', related_name='blocks')
-    block_id = fields.CharField(max_length=255)  # ReactFlow node ID
-    block_type = fields.CharField(max_length=100)  # 'tool', 'code', 'llm', 'if_else', 'for_loop', 'input'
-    block_config = fields.JSONField()  # Block-specific config
-    python_code = fields.TextField(null=True)  # For code blocks
-    position_x = fields.FloatField()
-    position_y = fields.FloatField()
-    oauth_scope = fields.CharField(max_length=255, null=True)  # From frontend
+    user = fields.ForeignKeyField("models.User", related_name="workflow_runs")
+    workflow = fields.ForeignKeyField(
+        "models.WorkflowRecord", related_name="runs", null=True
+    )
+    workflow_version = fields.IntField(null=True)
+    spec = fields.JSONField()
+    inputs = fields.JSONField(null=True)
+    config = fields.JSONField(null=True)
+    source = fields.CharEnumField(
+        WorkflowRunSource, max_length=20, default=WorkflowRunSource.MANUAL
+    )
+    subscription = fields.ForeignKeyField(
+        "models.TriggerSubscription", related_name="runs", null=True
+    )
+    trigger_event = fields.ForeignKeyField(
+        "models.TriggerEvent", related_name="runs", null=True
+    )
+    status = fields.CharEnumField(
+        WorkflowRunStatus, max_length=20, default=WorkflowRunStatus.QUEUED
+    )
+    output = fields.JSONField(null=True)
+    error = fields.TextField(null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
-    updated_at = fields.DatetimeField(auto_now=True)
-    
+    started_at = fields.DatetimeField(null=True)
+    finished_at = fields.DatetimeField(null=True)
+    metrics = fields.JSONField(null=True)
+
     class Meta:
-        table = "workflow_blocks"
-        unique_together = (("workflow", "block_id"),)
-    
+        table = "workflow_runs"
+        ordering = ("-created_at", "id")
+
     def __str__(self) -> str:
-        return f"WorkflowBlock<{self.block_id}:{self.block_type}>"
+        return f"WorkflowRun<{self.run_id}:{self.status}>"
 
+    @property
+    def run_id(self) -> str:
+        return make_run_public_id(self.id)
 
-class WorkflowEdge(models.Model):
-    """Connections between blocks."""
-    
-    id = fields.IntField(primary_key=True)
-    workflow = fields.ForeignKeyField('models.Workflow', related_name='edges')
-    source_block = fields.ForeignKeyField('models.WorkflowBlock', related_name='outgoing_edges')
-    target_block = fields.ForeignKeyField('models.WorkflowBlock', related_name='incoming_edges')
-    source_handle = fields.CharField(max_length=100, null=True)  # Output port
-    target_handle = fields.CharField(max_length=100, null=True)  # Input port
-    created_at = fields.DatetimeField(auto_now_add=True)
-    
-    class Meta:
-        table = "workflow_edges"
-    
-    def __str__(self) -> str:
-        return f"WorkflowEdge<{self.source_block.block_id}->{self.target_block.block_id}>"
-
-
-class WorkflowExecution(models.Model):
-    """Workflow execution history."""
-    
-    id = fields.IntField(primary_key=True)
-    workflow = fields.ForeignKeyField('models.Workflow', related_name='executions')
-    user = fields.ForeignKeyField('models.User', related_name='workflow_executions')
-    status = fields.CharField(max_length=50)  # 'running', 'completed', 'failed'
-    input_data = fields.JSONField(null=True)
-    output_data = fields.JSONField(null=True)
-    error_message = fields.TextField(null=True)
-    started_at = fields.DatetimeField(auto_now_add=True)
-    completed_at = fields.DatetimeField(null=True)
-    
-    class Meta:
-        table = "workflow_executions"
-        ordering = ("-started_at",)
-    
-    def __str__(self) -> str:
-        return f"WorkflowExecution<{self.workflow.name}:{self.status}>"
-
-
-class BlockExecution(models.Model):
-    """Per-block execution logs."""
-    
-    id = fields.IntField(primary_key=True)
-    execution = fields.ForeignKeyField('models.WorkflowExecution', related_name='block_executions')
-    block = fields.ForeignKeyField('models.WorkflowBlock', related_name='executions')
-    status = fields.CharField(max_length=50)  # 'pending', 'running', 'completed', 'failed'
-    input_data = fields.JSONField(null=True)
-    output_data = fields.JSONField(null=True)
-    error_message = fields.TextField(null=True)
-    execution_time_ms = fields.IntField(null=True)  # Execution time in milliseconds
-    started_at = fields.DatetimeField(auto_now_add=True)
-    completed_at = fields.DatetimeField(null=True)
-    
-    class Meta:
-        table = "block_executions"
-        ordering = ("started_at",)
-    
-    def __str__(self) -> str:
-        return f"BlockExecution<{self.block.block_id}:{self.status}>"
 
 
 class WorkflowChatSession(models.Model):
     """Chat session for workflow assistant."""
     
     id = fields.IntField(primary_key=True)
-    workflow = fields.ForeignKeyField('models.Workflow', related_name='chat_sessions')
+    workflow = fields.ForeignKeyField('models.WorkflowRecord', related_name='chat_sessions')
     user = fields.ForeignKeyField('models.User', related_name='chat_sessions')
-    thread_id = fields.CharField(max_length=255, unique=True, index=True)  # LangGraph thread ID
+    thread_id = fields.CharField(max_length=255, unique=True, db_index=True)  # LangGraph thread ID
     title = fields.CharField(max_length=255, null=True)  # Optional title for the session
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
@@ -127,7 +137,69 @@ class WorkflowChatSession(models.Model):
         ordering = ("-updated_at",)
     
     def __str__(self) -> str:
-        return f"WorkflowChatSession<{self.workflow.name}:{self.thread_id}>"
+        return f"WorkflowChatSession<{self.workflow_id}:{self.thread_id}>"
+    
+    @property
+    def workflow_public_id(self) -> str:
+        """Expose wf_* identifier used by public APIs."""
+        return make_workflow_public_id(self.workflow_id)
+
+
+class TriggerSubscription(models.Model):
+    """Trigger configuration attached to a workflow."""
+
+    id = fields.IntField(primary_key=True)
+    user = fields.ForeignKeyField("models.User", related_name="trigger_subscriptions")
+    workflow = fields.ForeignKeyField(
+        "models.WorkflowRecord", related_name="trigger_subscriptions"
+    )
+    trigger_key = fields.CharField(max_length=255)
+    provider_connection_id = fields.IntField(null=True)
+    enabled = fields.BooleanField(default=True)
+    filters = fields.JSONField(null=True)
+    bindings = fields.JSONField(null=True)
+    provider_config = fields.JSONField(null=True)
+    secret_token = fields.CharField(max_length=255, null=True)
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    class Meta:
+        table = "trigger_subscriptions"
+        indexes = (
+            ("user_id", "workflow_id"),
+            ("trigger_key", "provider_connection_id", "enabled"),
+        )
+
+    def __str__(self) -> str:
+        return f"TriggerSubscription<{self.id}:{self.trigger_key}>"
+
+
+class TriggerEvent(models.Model):
+    """Normalized incoming trigger event."""
+
+    id = fields.IntField(primary_key=True)
+    trigger_key = fields.CharField(max_length=255)
+    provider_connection_id = fields.IntField(null=True)
+    provider_event_id = fields.CharField(max_length=255, null=True)
+    occurred_at = fields.DatetimeField(null=True)
+    received_at = fields.DatetimeField(auto_now_add=True)
+    event = fields.JSONField()
+    raw_payload = fields.JSONField(null=True)
+    status = fields.CharEnumField(
+        TriggerEventStatus, max_length=20, default=TriggerEventStatus.RECEIVED
+    )
+    error = fields.JSONField(null=True)
+
+    class Meta:
+        table = "trigger_events"
+        unique_together = (("trigger_key", "provider_connection_id", "provider_event_id"),)
+        indexes = (
+            ("status", "received_at"),
+            ("trigger_key", "provider_connection_id"),
+        )
+
+    def __str__(self) -> str:
+        return f"TriggerEvent<{self.id}:{self.trigger_key}>"
 
 
 class WorkflowChatMessage(models.Model):
@@ -159,11 +231,11 @@ class WorkflowProposal(models.Model):
     STATUS_REJECTED = "rejected"
     
     id = fields.IntField(primary_key=True)
-    workflow = fields.ForeignKeyField('models.Workflow', related_name='proposals')
+    workflow = fields.ForeignKeyField('models.WorkflowRecord', related_name='proposals')
     session = fields.ForeignKeyField('models.WorkflowChatSession', related_name='proposals', null=True)
     created_by = fields.ForeignKeyField('models.User', related_name='workflow_proposals')
     summary = fields.CharField(max_length=512)
-    patch_ops = fields.JSONField()
+    spec = fields.JSONField()
     status = fields.CharField(max_length=20, default=STATUS_PENDING)
     preview_graph = fields.JSONField(null=True)
     applied_graph = fields.JSONField(null=True)
@@ -178,4 +250,9 @@ class WorkflowProposal(models.Model):
     
     def __str__(self) -> str:
         return f"WorkflowProposal<{self.id}:{self.status}>"
+    
+    @property
+    def workflow_public_id(self) -> str:
+        """Expose wf_* identifier used by public APIs."""
+        return make_workflow_public_id(self.workflow_id)
 

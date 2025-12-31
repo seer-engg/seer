@@ -10,14 +10,17 @@ from .services import (
     get_tool_connection_status,
     has_required_scopes,
     get_connection_for_provider,
-    get_valid_access_token
+    get_valid_access_token,
+    parse_scopes
 )
 from .resource_browser import ResourceBrowser
 import json
 import base64
 import os
 import logging
+import httpx
 from typing import Optional
+from datetime import datetime, timezone
 from shared.logger import get_logger
 from shared.database.models import User
 logger = get_logger("api.integrations.router")
@@ -89,15 +92,28 @@ async def get_tools_connection_status(request: Request):
     # Get all connections for this user
     connections = await list_connections(user)
     
-    # Build a map of provider -> connection with scopes and refresh_token status
+    # Build a map of provider -> connection with scopes, token status, and refresh_token status
     provider_connections = {}
     for conn in connections:
+        # Check if access token exists and is valid
+        has_access_token = bool(conn.access_token_enc)
+        has_refresh_token = bool(conn.refresh_token_enc)
+        is_token_expired = False
+        if conn.expires_at:
+            is_token_expired = conn.expires_at < datetime.now(timezone.utc)
+        
+        # Access token is valid if:
+        # 1. Token exists and is not expired, OR
+        # 2. Refresh token exists (can get new access token even if current one is expired or missing)
+        access_token_valid = (has_access_token and not is_token_expired) or has_refresh_token
+        
         provider_connections[conn.provider] = {
             "scopes": conn.scopes or "",
             "connection_id": f"{conn.provider}:{conn.id}",
             "provider_account_id": conn.provider_account_id,
-            "has_refresh_token": bool(conn.refresh_token_enc),  # Check if refresh_token exists
-            "connection": conn  # Store connection object for refresh_token check
+            "has_refresh_token": has_refresh_token,  # Check if refresh_token exists
+            "access_token_valid": access_token_valid,  # Whether access token exists and (not expired or can be refreshed)
+            "connection": conn  # Store connection object for token checks
         }
     
     # Get all registered tools
@@ -114,6 +130,7 @@ async def get_tools_connection_status(request: Request):
                 "provider": None,
                 "connected": True,  # Non-OAuth tools are always "connected"
                 "has_required_scopes": True,
+                "access_token_valid": True,  # Non-OAuth tools don't need tokens
                 "missing_scopes": [],
                 "connection_id": None
             })
@@ -132,6 +149,7 @@ async def get_tools_connection_status(request: Request):
                 "provider": oauth_provider,
                 "connected": False,
                 "has_required_scopes": False,
+                "access_token_valid": False,  # No connection means no valid token
                 "missing_scopes": tool.required_scopes,
                 "connection_id": None
             })
@@ -140,24 +158,28 @@ async def get_tools_connection_status(request: Request):
         # Check if connection has required scopes
         has_scopes = has_required_scopes(conn_info["scopes"], tool.required_scopes)
         
+        # Check if access token is valid (exists and not expired)
+        access_token_valid = conn_info.get("access_token_valid", False)
+        
         # Check if refresh_token exists (needed for token refresh)
         has_refresh_token = conn_info.get("has_refresh_token", False)
         
-        # Connection is fully functional only if it has scopes AND refresh_token
-        # (refresh_token is needed for token refresh when access_token expires)
-        fully_connected = has_scopes and has_refresh_token
+        # Connection is functional if scopes present AND access token valid
+        # Access token is valid if: (exists and not expired) OR refresh token exists
+        fully_connected = has_scopes and access_token_valid
         
-        # Find missing scopes
-        granted_set = set(conn_info["scopes"].split()) if conn_info["scopes"] else set()
+        # Find missing scopes - use parse_scopes() to handle both comma and space-separated formats
+        granted_set = parse_scopes(conn_info["scopes"]) if conn_info["scopes"] else set()
         missing = [s for s in tool.required_scopes if s not in granted_set]
         
         results.append({
             "tool_name": tool.name,
             "integration_type": tool.integration_type,
             "provider": oauth_provider,
-            "connected": fully_connected,  # Only True if scopes AND refresh_token exist
+            "connected": fully_connected,  # True if scopes present AND access token valid
             "has_required_scopes": has_scopes,
-            "has_refresh_token": has_refresh_token,
+            "access_token_valid": access_token_valid,  # Whether access token exists and (is not expired or can be refreshed)
+            "has_refresh_token": has_refresh_token,  # Whether refresh token exists (for warnings)
             "missing_scopes": missing,
             "connection_id": conn_info["connection_id"],
             "provider_account_id": conn_info["provider_account_id"]
@@ -194,8 +216,10 @@ async def connect(
         Connections are stored by OAuth provider (e.g., 'google'), not integration type.
         Multiple integration types (gmail, googlesheets, googledrive) share the same Google connection.
         
-        For Google OAuth, we use incremental authorization (include_granted_scopes=true)
-        to preserve previously granted scopes when adding new ones.
+        If user already has all required scopes, OAuth is skipped and success is returned immediately.
+        For Google OAuth, incremental authorization (include_granted_scopes=true) is only used when
+        requesting NEW scopes in addition to existing ones, to avoid showing all previously granted
+        scopes in the consent screen.
     """
     
     if not scope:
@@ -204,11 +228,30 @@ async def connect(
     # Normalize to OAuth provider
     oauth_provider = get_oauth_provider(provider)
     
+    # Parse requested scopes
+    from .services import parse_scopes
+    requested_scopes_list = list(parse_scopes(scope))
+    
+    # Check if user already has all required scopes
+    user: User = request.state.db_user
+    existing_connection = await get_connection_for_provider(user, oauth_provider)
+    
+    if existing_connection and existing_connection.scopes and existing_connection.refresh_token_enc:
+        # Check if user already has all requested scopes
+        if has_required_scopes(existing_connection.scopes, requested_scopes_list):
+            logger.info(
+                f"User already has all required scopes for {oauth_provider}. "
+                f"Requested: {requested_scopes_list}, Granted: {existing_connection.scopes[:100]}..."
+            )
+            # Return success without OAuth redirect
+            final_redirect = redirect_to or f"{FRONTEND_URL}/settings/integrations"
+            connected_param = integration_type or oauth_provider
+            return RedirectResponse(url=f"{final_redirect}?connected={connected_param}")
+    
     redirect_uri = request.url_for('auth_callback', provider=oauth_provider)
     
     # Store user_id, scope, and final redirect in state
     # Scope is stored so we can save it when token is received
-    user: User = request.state.db_user
     state_data = {
         'user_id': user.user_id,
         'user_email': user.email,
@@ -222,17 +265,62 @@ async def connect(
     state = encode_state(state_data)
     
     client = oauth.create_client(oauth_provider)
-    # Always pass scope from frontend - no defaults
-    kwargs = {'state': state, 'scope': scope}
     
-    # For Google OAuth, enable incremental authorization to preserve previously granted scopes
-    # This ensures that when connecting a new tool (e.g., Google Sheets), existing scopes 
-    # (e.g., Gmail) are included in the new access token instead of being replaced
-    # See: https://developers.google.com/identity/protocols/oauth2/web-server#incrementalAuth
+    # For Google OAuth, always include OpenID scopes for userinfo
     if oauth_provider == 'google':
-        kwargs['include_granted_scopes'] = 'true'
+        # Always include openid scopes for userinfo
+        required_openid_scopes = ['openid', 'email', 'profile']
+        requested_set = set(requested_scopes_list)
+        required_set = set(required_openid_scopes)
+        
+        # Merge scopes - add required OpenID scopes if not present
+        merged_scopes = list(requested_set | required_set)
+        scope_string = ' '.join(merged_scopes)
+        
+        logger.info(f"Merged Google scopes - Requested: {requested_scopes_list}, Merged: {merged_scopes}")
+        kwargs = {'state': state, 'scope': scope_string}
         kwargs['access_type'] = 'offline'
         kwargs['prompt'] = 'consent'
+    else:
+        # For other providers, use scope as-is from frontend
+        kwargs = {'state': state, 'scope': scope}
+    
+    # For Google OAuth, conditionally use incremental authorization
+    # Only use include_granted_scopes when requesting NEW scopes in addition to existing ones
+    # This prevents Google from showing all previously granted scopes in the consent screen
+    # when the user only needs a subset of what they already have
+    # See: https://developers.google.com/identity/protocols/oauth2/web-server#incrementalAuth
+    # Note: When include_granted_scopes=true, Google's consent screen shows ALL scopes that will
+    # be in the final token (both existing and new), not just the new ones being requested.
+    # We only use it when we're actually requesting additional scopes beyond what's already granted.
+    if oauth_provider == 'google':
+        
+        # Only use incremental authorization if there's an existing connection AND
+        # we're requesting scopes that aren't already granted (accounting for hierarchy)
+        if existing_connection and existing_connection.scopes:
+            # Check which requested scopes are actually new (not satisfied by existing scopes)
+            new_scopes = []
+            for requested_scope in requested_scopes_list:
+                # Check if this specific scope is satisfied by existing scopes (handles hierarchy)
+                if not has_required_scopes(existing_connection.scopes, [requested_scope]):
+                    new_scopes.append(requested_scope)
+            
+            # Only use include_granted_scopes if we're requesting additional scopes
+            if new_scopes:
+                kwargs['include_granted_scopes'] = 'true'
+                logger.info(
+                    f"Using incremental authorization for {oauth_provider}. "
+                    f"Existing scopes: {existing_connection.scopes[:100]}..., "
+                    f"New scopes: {new_scopes}"
+                )
+            else:
+                # All requested scopes are satisfied by existing scopes (via hierarchy)
+                # This shouldn't happen since we check earlier, but handle gracefully
+                logger.info(
+                    f"All requested scopes already satisfied for {oauth_provider}. "
+                    f"Not using incremental authorization."
+                )
+        # If no existing connection, don't use incremental authorization (first-time connection)
         
     return await client.authorize_redirect(request, redirect_uri, **kwargs)
 
@@ -260,7 +348,7 @@ async def auth_callback(request: Request, provider: str):
     if not state:
         raise HTTPException(status_code=400, detail="Missing state")
          
-    try:
+    try:  
         state_data = decode_state(state)
         user_id = state_data.get('user_id')
         redirect_to = state_data.get('redirect_to')
@@ -273,21 +361,99 @@ async def auth_callback(request: Request, provider: str):
         raise HTTPException(status_code=400, detail="Missing user_id in state")
     
     logger.info(f"OAuth callback: provider={oauth_provider}, integration_type={integration_type}")
+    
+    # Log token structure for debugging (without sensitive values)
+    token_keys = list(token.keys())
+    has_userinfo = 'userinfo' in token
+    has_access_token = 'access_token' in token
+    has_id_token = 'id_token' in token
+    logger.info(
+        f"Token structure - Keys: {token_keys}, "
+        f"has userinfo: {has_userinfo}, "
+        f"has access_token: {has_access_token}, "
+        f"has id_token: {has_id_token}"
+    )
+    
+    # Extract granted scopes from token response
+    # Use requested_scope instead of token.get('scope') to avoid storing
+    # all previously granted scopes when include_granted_scopes=true
+    # The requested_scope already includes merged OpenID scopes (openid, email, profile)
+    granted_scopes = requested_scope or token.get('scope') or ''
+    
+    # Log requested vs granted scopes for debugging
+    requested_scopes_list = requested_scope.split() if requested_scope else []
+    granted_scopes_list = token.get('scope', '').split() if token.get('scope') else []
+    storing_scopes_list = granted_scopes.split() if granted_scopes else []
+    logger.info(
+        f"OAuth scopes - Requested: {requested_scopes_list}, "
+        f"Granted by Google: {granted_scopes_list}, "
+        f"Storing: {storing_scopes_list}, "
+        f"New scopes: {set(granted_scopes_list) - set(requested_scopes_list)}"
+    )
         
     # Get user profile
     if oauth_provider == 'google':
-        # Fetch from userinfo endpoint
-        resp = await client.get('https://www.googleapis.com/oauth2/v3/userinfo', token=token)
-        user_info = resp.json()
+        # Check if userinfo already parsed from ID token (OpenID Connect)
+        if 'userinfo' in token:
+            user_info = token['userinfo']
+            logger.info("Using userinfo from OIDC token")
+        else:
+            # Try authlib's userinfo method
+            try:
+                user_info = await client.userinfo(token=token)
+                logger.info("Fetched userinfo using authlib userinfo() method")
+            except Exception as e:
+                # Fallback: manual request with access_token
+                logger.warning(f"authlib userinfo() failed: {e}, falling back to manual request")
+                access_token = token.get('access_token')
+                if not access_token:
+                    logger.error(f"No access token in OAuth response. Token keys: {list(token.keys())}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail="No access token in OAuth response. This may indicate an OAuth configuration issue."
+                    )
+                async with httpx.AsyncClient() as http_client:
+                    resp = await http_client.get(
+                        'https://www.googleapis.com/oauth2/v3/userinfo',
+                        headers={'Authorization': f'Bearer {access_token}'}
+                    )
+                    if resp.status_code != 200:
+                        logger.error(
+                            f"Google userinfo request failed with status {resp.status_code}: {resp.text[:500]}. "
+                            f"Token has access_token: {bool(access_token)}, token keys: {list(token.keys())}"
+                        )
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Failed to fetch Google user profile: HTTP {resp.status_code}. "
+                                   f"Please ensure 'openid' scope is included in OAuth request."
+                        )
+                    user_info = resp.json()
     elif oauth_provider == 'github':
-        resp = await client.get('user', token=token)
-        user_info = resp.json()
+        # Extract access_token and make authenticated request
+        access_token = token.get('access_token')
+        if not access_token:
+            logger.error(f"No access token in OAuth response. Token keys: {list(token.keys())}")
+            raise HTTPException(
+                status_code=500,
+                detail="No access token in OAuth response. This may indicate an OAuth configuration issue."
+            )
+        async with httpx.AsyncClient() as http_client:
+            resp = await http_client.get(
+                'https://api.github.com/user',
+                headers={'Authorization': f'token {access_token}'}
+            )
+            if resp.status_code != 200:
+                logger.error(
+                    f"GitHub userinfo request failed with status {resp.status_code}: {resp.text[:500]}. "
+                    f"Token has access_token: {bool(access_token)}, token keys: {list(token.keys())}"
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to fetch GitHub user profile: HTTP {resp.status_code}"
+                )
+            user_info = resp.json()
     else:
         user_info = {}
-    
-    # Extract granted scopes from token response
-    # Token may contain 'scope' field (space-separated) or we use requested_scope
-    granted_scopes = token.get('scope') or requested_scope or ''
     
     # Store connection with OAuth provider (not integration type)
     # Scopes will be merged if connection already exists

@@ -37,7 +37,9 @@ async def lifespan(app: FastAPI):
     
     async with db_lifespan(app):
         logger.info("✅ Database initialized")
-        async with checkpointer_lifespan():
+        async with checkpointer_lifespan() as checkpointer:
+            if checkpointer is not None:
+                app.state.checkpointer = checkpointer
             logger.info("✅ Checkpointer initialized")
             
             # Initialize tool index (non-blocking)
@@ -70,7 +72,11 @@ async def lifespan(app: FastAPI):
                 except Exception as e:
                     logger.warning(f"Could not initialize tool index: {e}. Tool search may not work.")
             
-            yield
+            try:
+                yield
+            finally:
+                if hasattr(app.state, "checkpointer"):
+                    delattr(app.state, "checkpointer")
     
     logger.info("👋 Seer API server shutting down...")
 
@@ -103,6 +109,7 @@ if config.is_cloud_mode:
             "/api/integrations/google/callback",
             "/api/integrations/github/callback",
             "/api/integrations/asana/callback",
+            "/api/v1/webhooks",
         ],
     )
 else:

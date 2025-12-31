@@ -29,7 +29,7 @@ The frontend will detect `x-resource-picker` and render a ResourcePicker compone
 that calls /api/integrations/{provider}/resources/{resource_type} to list resources.
 """
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional, Set, TypedDict
 from shared.logger import get_logger
 
 logger = get_logger("shared.tools.base")
@@ -45,6 +45,36 @@ class ResourcePickerConfig(TypedDict, total=False):
     hierarchy: bool  # Enable folder/hierarchy navigation
     depends_on: str  # Another parameter this depends on (for nested resources)
     endpoint: str  # Custom endpoint override (optional)
+
+
+def _make_json_safe(value: Any, seen: Optional[Set[int]] = None) -> Any:
+    """
+    Recursively clone a structure to ensure it is JSON-serializable without
+    shared references (which FastAPI treats as circular).
+    """
+    if seen is None:
+        seen = set()
+        
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    
+    obj_id = id(value)
+    if isinstance(value, (dict, list, tuple, set)):
+        if obj_id in seen:
+            raise ValueError("Circular reference detected in schema")
+        seen.add(obj_id)
+        try:
+            if isinstance(value, dict):
+                return {k: _make_json_safe(v, seen) for k, v in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [_make_json_safe(v, seen) for v in value]
+            if isinstance(value, set):
+                return [_make_json_safe(v, seen) for v in value]
+        finally:
+            seen.remove(obj_id)
+    
+    # Fallback: return as-is (will likely be stringified by FastAPI if needed)
+    return value
 
 
 class BaseTool(ABC):
@@ -134,6 +164,11 @@ class BaseTool(ABC):
         """
         schema = self.get_parameters_schema()
         resource_pickers = self.get_resource_pickers()
+        try:
+            output_schema = _make_json_safe(self.get_output_schema())
+        except ValueError:
+            logger.warning("Tool '%s' output schema contains circular references; omitting from metadata.", self.name)
+            output_schema = None
         
         # Inject x-resource-picker into schema properties
         if resource_pickers and "properties" in schema:
@@ -148,9 +183,22 @@ class BaseTool(ABC):
             "integration_type": self.integration_type,
             "provider": self.provider,
             "parameters": schema,
+            "output_schema": output_schema,
             "resource_pickers": resource_pickers  # Also include separately for convenience
         }
-
+    
+    def get_output_schema(self) -> Dict[str, Any]:
+        """
+        Get JSON schema for tool output.
+        
+        Returns:
+            JSON schema dict describing tool output
+        """
+        return {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
 
 # Tool registry
 _TOOL_REGISTRY: Dict[str, BaseTool] = {}
@@ -166,7 +214,7 @@ def register_tool(tool: BaseTool) -> None:
     if tool.name in _TOOL_REGISTRY:
         logger.warning(f"Tool '{tool.name}' is already registered. Overwriting.")
     _TOOL_REGISTRY[tool.name] = tool
-    logger.info(f"Registered tool: {tool.name}")
+    # logger.info(f"Registered tool: {tool.name}")
 
 
 def get_tool(name: str) -> Optional[BaseTool]:

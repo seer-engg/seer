@@ -17,6 +17,7 @@ Official refs:
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 import base64
+import copy
 import email.utils
 from email.message import EmailMessage
 import json
@@ -37,6 +38,7 @@ from shared.logger import get_logger
 logger = get_logger("shared.tools.gmail")
 
 
+
 class GmailReadTool(BaseTool):
     """
     Tool for reading emails from Gmail inbox.
@@ -50,6 +52,28 @@ class GmailReadTool(BaseTool):
     required_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
     integration_type = "gmail"
     provider = "google"
+    
+    def get_output_schema(self) -> Dict[str, Any]:
+        # This tool returns a simplified projection, not the raw Gmail Message resource.
+        return {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "threadId": {"type": "string"},
+                    "snippet": {"type": "string"},
+                    "subject": {"type": "string"},
+                    "from": {"type": "string"},
+                    "to": {"type": "string"},
+                    "date": {"type": "string"},
+                    "labelIds": {"type": "array", "items": {"type": "string"}},
+                    "body": {"type": "string", "description": "Present only when include_body=true."},
+                },
+                "required": ["id", "threadId", "snippet", "subject", "from", "to", "date", "labelIds"],
+                "additionalProperties": True,
+            },
+        }
     
     def get_parameters_schema(self) -> Dict[str, Any]:
         """Get JSON schema for Gmail read tool parameters."""
@@ -523,9 +547,7 @@ def _build_mime_email(
     return msg
 
 
-# -----------------------------
-# Tools
-# -----------------------------
+
 class GmailSendEmailTool(BaseTool):
     """
     Send email via users.messages.send.
@@ -535,6 +557,10 @@ class GmailSendEmailTool(BaseTool):
     required_scopes = ["https://www.googleapis.com/auth/gmail.send"]
     integration_type = "gmail"
     provider = "google"
+    
+    def get_output_schema(self) -> Dict[str, Any]:
+        # messages.send returns a Message resource. :contentReference[oaicite:15]{index=15}
+        return GMAIL_MESSAGE_SCHEMA
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -632,6 +658,16 @@ class GmailGetMessageTool(BaseTool):
     integration_type = "gmail"
     provider = "google"
 
+    def get_output_schema(self) -> Dict[str, Any]:
+        # messages.get returns a Message resource; tool may append body_text. :contentReference[oaicite:16]{index=16}
+        schema = dict(GMAIL_MESSAGE_SCHEMA)
+        schema["properties"] = dict(schema.get("properties", {}))
+        schema["properties"]["body_text"] = {
+            "type": "string",
+            "description": "Added by tool when decode_body=true and format=full.",
+        }
+        return schema
+
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
@@ -704,6 +740,10 @@ class GmailModifyMessageLabelsTool(BaseTool):
     integration_type = "gmail"
     provider = "google"
 
+    def get_output_schema(self) -> Dict[str, Any]:
+        # messages.modify returns a Message resource. :contentReference[oaicite:17]{index=17}
+        return GMAIL_MESSAGE_SCHEMA
+
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
@@ -748,6 +788,10 @@ class GmailTrashMessageTool(BaseTool):
     integration_type = "gmail"
     provider = "google"
 
+    def get_output_schema(self) -> Dict[str, Any]:
+        # messages.trash returns a Message resource. :contentReference[oaicite:18]{index=18}
+        return GMAIL_MESSAGE_SCHEMA
+
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {"type": "object", "properties": {"message_id": {"type": "string"}}, "required": ["message_id"]}
 
@@ -774,6 +818,18 @@ class GmailDeleteMessageTool(BaseTool):
     required_scopes = ["https://www.googleapis.com/auth/gmail.modify"]
     integration_type = "gmail"
     provider = "google"
+
+    def get_output_schema(self) -> Dict[str, Any]:
+        # users.messages.delete typically returns an empty body; tool normalizes.
+        return {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["deleted"]},
+                "message_id": {"type": "string"},
+            },
+            "required": ["status", "message_id"],
+            "additionalProperties": False,
+        }
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {"type": "object", "properties": {"message_id": {"type": "string"}}, "required": ["message_id"]}
@@ -802,6 +858,21 @@ class GmailListThreadsTool(BaseTool):
     required_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
     integration_type = "gmail"
     provider = "google"
+
+    def get_output_schema(self) -> Dict[str, Any]:
+        # threads.list returns envelope with threads + nextPageToken + resultSizeEstimate. :contentReference[oaicite:19]{index=19}
+        return _schema_with_defs(
+            {
+                "type": "object",
+                "properties": {
+                    "threads": {"type": "array", "items": _schema_ref("Thread")},
+                    "nextPageToken": {"type": ["string", "null"]},
+                    "resultSizeEstimate": {"type": ["integer", "null"]},
+                },
+                "required": ["threads"],
+                "additionalProperties": True,
+            }
+        )
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -857,6 +928,11 @@ class GmailGetThreadTool(BaseTool):
     integration_type = "gmail"
     provider = "google"
 
+
+    def get_output_schema(self) -> Dict[str, Any]:
+        # threads.get returns a Thread resource. :contentReference[oaicite:20]{index=20}
+        return GMAIL_THREAD_SCHEMA
+
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
@@ -906,6 +982,10 @@ class GmailCreateDraftTool(BaseTool):
     required_scopes = ["https://www.googleapis.com/auth/gmail.compose"]
     integration_type = "gmail"
     provider = "google"
+
+    def get_output_schema(self) -> Dict[str, Any]:
+        # drafts.create returns a Draft resource. :contentReference[oaicite:21]{index=21}
+        return GMAIL_DRAFT_SCHEMA
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return GmailSendEmailTool().get_parameters_schema()
@@ -967,6 +1047,22 @@ class GmailListDraftsTool(BaseTool):
     integration_type = "gmail"
     provider = "google"
 
+
+    def get_output_schema(self) -> Dict[str, Any]:
+        # drafts.list returns envelope with drafts + nextPageToken + resultSizeEstimate. :contentReference[oaicite:22]{index=22}
+        return _schema_with_defs(
+            {
+                "type": "object",
+                "properties": {
+                    "drafts": {"type": "array", "items": _schema_ref("Draft")},
+                    "nextPageToken": {"type": ["string", "null"]},
+                    "resultSizeEstimate": {"type": ["integer", "null"]},
+                },
+                "required": ["drafts"],
+                "additionalProperties": True,
+            }
+        )
+
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
@@ -1012,6 +1108,10 @@ class GmailGetDraftTool(BaseTool):
     required_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
     integration_type = "gmail"
     provider = "google"
+
+    def get_output_schema(self) -> Dict[str, Any]:
+        # drafts.get returns a Draft resource. :contentReference[oaicite:23]{index=23}
+        return GMAIL_DRAFT_SCHEMA
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -1059,6 +1159,10 @@ class GmailSendDraftTool(BaseTool):
     required_scopes = ["https://www.googleapis.com/auth/gmail.compose"]
     integration_type = "gmail"
     provider = "google"
+
+    def get_output_schema(self) -> Dict[str, Any]:
+        # drafts.send returns a Message resource. :contentReference[oaicite:24]{index=24}
+        return GMAIL_MESSAGE_SCHEMA
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -1134,6 +1238,18 @@ class GmailDeleteDraftTool(BaseTool):
     integration_type = "gmail"
     provider = "google"
 
+    def get_output_schema(self) -> Dict[str, Any]:
+        # drafts.delete returns empty body; tool normalizes.
+        return {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["deleted"]},
+                "draft_id": {"type": "string"},
+            },
+            "required": ["status", "draft_id"],
+            "additionalProperties": False,
+        }
+
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {"type": "object", "properties": {"draft_id": {"type": "string"}}, "required": ["draft_id"]}
 
@@ -1161,6 +1277,15 @@ class GmailListLabelsTool(BaseTool):
     integration_type = "gmail"
     provider = "google"
 
+    def get_output_schema(self) -> Dict[str, Any]:
+        # labels.list returns an array of Label resources. :contentReference[oaicite:25]{index=25}
+        return _schema_with_defs(
+            {
+                "type": "array",
+                "items": _schema_ref("Label"),
+            }
+        )
+
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {"type": "object", "properties": {}, "required": []}
 
@@ -1184,6 +1309,10 @@ class GmailCreateLabelTool(BaseTool):
     required_scopes = ["https://www.googleapis.com/auth/gmail.labels"]
     integration_type = "gmail"
     provider = "google"
+
+    def get_output_schema(self) -> Dict[str, Any]:
+        # labels.create returns a Label resource. :contentReference[oaicite:26]{index=26}
+        return GMAIL_LABEL_SCHEMA
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -1235,6 +1364,18 @@ class GmailDeleteLabelTool(BaseTool):
     integration_type = "gmail"
     provider = "google"
 
+    def get_output_schema(self) -> Dict[str, Any]:
+        # labels.delete returns empty body; tool normalizes.
+        return {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["deleted"]},
+                "label_id": {"type": "string"},
+            },
+            "required": ["status", "label_id"],
+            "additionalProperties": False,
+        }
+
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {"type": "object", "properties": {"label_id": {"type": "string"}}, "required": ["label_id"]}
 
@@ -1261,6 +1402,10 @@ class GmailGetAttachmentTool(BaseTool):
     required_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
     integration_type = "gmail"
     provider = "google"
+
+    def get_output_schema(self) -> Dict[str, Any]:
+        # attachments.get returns a MessagePartBody {size, data(base64url)}; tool may add data_base64. :contentReference[oaicite:27]{index=27}
+        return GMAIL_ATTACHMENT_BODY_SCHEMA
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -1303,3 +1448,150 @@ class GmailGetAttachmentTool(BaseTool):
             raise HTTPException(status_code=500, detail=f"Error getting Gmail attachment: {str(e)}")
 
 
+# =============================
+# Output schemas (Gmail API v1)
+# =============================
+
+GMAIL_SCHEMA_DEFINITIONS: Dict[str, Any] = {
+    "Header": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "value": {"type": "string"},
+        },
+        "required": ["name", "value"],
+        "additionalProperties": True,
+    },
+    "MessagePartBody": {
+        "type": "object",
+        "properties": {
+            "attachmentId": {"type": "string"},
+            "size": {"type": "integer"},
+            "data": {"type": "string", "description": "Base64url-encoded body data (may be omitted)."},
+        },
+        "required": [],
+        "additionalProperties": True,
+    },
+    "AttachmentBody": {
+        "type": "object",
+        "properties": {
+            "attachmentId": {"type": "string"},
+            "size": {"type": "integer"},
+            "data": {"type": "string", "description": "Base64url-encoded body data (may be omitted)."},
+            "data_base64": {
+                "type": "string",
+                "description": "Added by tool when decode_bytes=true (standard base64).",
+            },
+        },
+        "required": [],
+        "additionalProperties": True,
+    },
+    "MessagePart": {
+        "type": "object",
+        "properties": {
+            "partId": {"type": "string"},
+            "mimeType": {"type": "string"},
+            "filename": {"type": "string"},
+            "headers": {"type": "array", "items": {"$ref": "#/$defs/Header"}},
+            "body": {"$ref": "#/$defs/MessagePartBody"},
+            "parts": {
+                "type": "array",
+                "items": {"$ref": "#/$defs/MessagePart"},
+            },
+        },
+        "required": [],
+        "additionalProperties": True,
+    },
+    "Message": {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "threadId": {"type": "string"},
+            "labelIds": {"type": "array", "items": {"type": "string"}},
+            "snippet": {"type": "string"},
+            "historyId": {"type": "string"},
+            "internalDate": {"type": "string", "description": "Epoch ms as string."},
+            "payload": {"$ref": "#/$defs/MessagePart"},
+            "sizeEstimate": {"type": "integer"},
+            "raw": {"type": "string", "description": "Base64url-encoded RFC 2822 message (format=raw)."},
+        },
+        "required": [],
+        "additionalProperties": True,
+    },
+    "MessageIdOnly": {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "threadId": {"type": "string"},
+        },
+        "required": ["id", "threadId"],
+        "additionalProperties": True,
+    },
+    "Thread": {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "snippet": {"type": "string"},
+            "historyId": {"type": "string"},
+            "messages": {"type": "array", "items": {"$ref": "#/$defs/Message"}},
+        },
+        "required": [],
+        "additionalProperties": True,
+    },
+    "Draft": {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "message": {"$ref": "#/$defs/Message"},
+        },
+        "required": [],
+        "additionalProperties": True,
+    },
+    "LabelColor": {
+        "type": "object",
+        "properties": {
+            "backgroundColor": {"type": "string"},
+            "textColor": {"type": "string"},
+        },
+        "required": [],
+        "additionalProperties": True,
+    },
+    "Label": {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "name": {"type": "string"},
+            "messageListVisibility": {"type": "string"},
+            "labelListVisibility": {"type": "string"},
+            "type": {"type": "string"},
+            "messagesTotal": {"type": "integer"},
+            "messagesUnread": {"type": "integer"},
+            "threadsTotal": {"type": "integer"},
+            "threadsUnread": {"type": "integer"},
+            "color": {"$ref": "#/$defs/LabelColor"},
+        },
+        "required": [],
+        "additionalProperties": True,
+    },
+}
+
+
+def _schema_with_defs(schema: Dict[str, Any]) -> Dict[str, Any]:
+    document = copy.deepcopy(schema)
+    document["$defs"] = copy.deepcopy(GMAIL_SCHEMA_DEFINITIONS)
+    return document
+
+
+def _schema_ref(root_name: str) -> Dict[str, Any]:
+    return {"$ref": f"#/$defs/{root_name}"}
+
+
+GMAIL_HEADER_SCHEMA: Dict[str, Any] = _schema_with_defs(_schema_ref("Header"))
+GMAIL_MESSAGE_PART_BODY_SCHEMA: Dict[str, Any] = _schema_with_defs(_schema_ref("MessagePartBody"))
+GMAIL_ATTACHMENT_BODY_SCHEMA: Dict[str, Any] = _schema_with_defs(_schema_ref("AttachmentBody"))
+GMAIL_MESSAGE_SCHEMA: Dict[str, Any] = _schema_with_defs(_schema_ref("Message"))
+GMAIL_MESSAGE_ID_ONLY_SCHEMA: Dict[str, Any] = _schema_with_defs(_schema_ref("MessageIdOnly"))
+GMAIL_THREAD_SCHEMA: Dict[str, Any] = _schema_with_defs(_schema_ref("Thread"))
+GMAIL_DRAFT_SCHEMA: Dict[str, Any] = _schema_with_defs(_schema_ref("Draft"))
+GMAIL_LABEL_COLOR_SCHEMA: Dict[str, Any] = _schema_with_defs(_schema_ref("LabelColor"))
+GMAIL_LABEL_SCHEMA: Dict[str, Any] = _schema_with_defs(_schema_ref("Label"))

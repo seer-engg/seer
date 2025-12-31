@@ -1,9 +1,10 @@
 """PostgreSQL checkpointer management for LangGraph."""
 from contextlib import asynccontextmanager
-from typing import Optional, Any
+from typing import Optional, Any, AsyncContextManager
 import asyncio
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from infra.checkpointer import open_checkpointer
 from shared.config import config
 from shared.logger import get_logger
 
@@ -11,7 +12,7 @@ logger = get_logger("api.checkpointer")
 
 # Global checkpointer instance and context manager
 _checkpointer: Optional[AsyncPostgresSaver] = None
-_checkpointer_cm: Optional[Any] = None  # Store context manager to keep it alive
+_checkpointer_cm: Optional[AsyncContextManager[AsyncPostgresSaver]] = None
 _checkpointer_lock = asyncio.Lock()
 
 
@@ -38,22 +39,11 @@ async def get_checkpointer() -> Optional[AsyncPostgresSaver]:
         
         logger.info("Initializing AsyncPostgresSaver checkpointer")
         try:
-            # AsyncPostgresSaver.from_conn_string() returns a context manager
-            # We need to enter it to get the actual checkpointer instance
             global _checkpointer_cm
-            _checkpointer_cm = AsyncPostgresSaver.from_conn_string(config.DATABASE_URL)
-            
-            # Enter the context manager to get the actual checkpointer instance
+            _checkpointer_cm = open_checkpointer(config.DATABASE_URL)
+
             _checkpointer = await _checkpointer_cm.__aenter__()
-            
-            # Setup tables (idempotent)
-            try:
-                await _checkpointer.setup()
-                logger.info("PostgreSQL checkpointer tables setup complete")
-            except Exception as e:
-                # Tables might already exist
-                logger.debug(f"Checkpointer setup (tables may already exist): {e}")
-            
+
             # Verify checkpointer has required methods before returning
             if not hasattr(_checkpointer, 'get_next_version'):
                 logger.warning("Checkpointer missing get_next_version method - this may cause issues")
@@ -144,10 +134,11 @@ async def checkpointer_lifespan():
     
     Use with FastAPI lifespan for proper initialization/cleanup.
     """
+    checkpointer = None
     try:
         # Initialize checkpointer on startup
-        await get_checkpointer()
-        yield
+        checkpointer = await get_checkpointer()
+        yield checkpointer
     finally:
         # Cleanup on shutdown
         await close_checkpointer()
