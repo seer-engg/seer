@@ -170,15 +170,19 @@ _TOOL_REGISTRY: Dict[str, BaseTool] = {}
 
 def register_tool(tool: BaseTool) -> None:
     """
-    Register a tool in the global registry.
+    Register a tool in the global registry (idempotent).
     
     Args:
         tool: Tool instance to register
     """
     if tool.name in _TOOL_REGISTRY:
-        logger.warning(f"Tool '{tool.name}' is already registered. Overwriting.")
+        # Check if it's the same instance (by identity)
+        if _TOOL_REGISTRY[tool.name] is tool:
+            return  # Already registered, skip silently
+        # Different instance - this shouldn't happen, but log if it does
+        logger.debug(f"Tool '{tool.name}' already registered with different instance. Skipping.")
+        return
     _TOOL_REGISTRY[tool.name] = tool
-    # logger.info(f"Registered tool: {tool.name}")
 
 
 def get_tool(name: str) -> Optional[BaseTool]:

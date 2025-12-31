@@ -37,8 +37,6 @@ class SeerConfig(BaseSettings):
     anthropic_api_key: Optional[str] = Field(default=None, description="Anthropic API key for Claude models")
     tavily_api_key: Optional[str] = Field(default=None, description="Tavily API key for web search")
     github_token: Optional[str] = Field(default=None, description="GitHub token for sandbox provisioning")
-    CONTEXT7_API_KEY: Optional[str] = Field(default=None, description="Context7 API key for MCP tools")
-    
 
     target_agent_port: int = Field(default=2024, description="Port for target agent")
     target_agent_command: str = Field(default="langgraph dev --host 0.0.0.0", description="Command to run target agent")
@@ -104,10 +102,6 @@ class SeerConfig(BaseSettings):
     
     GITHUB_CLIENT_ID: Optional[str] = Field(default=None, description="GitHub OAuth client ID")
     GITHUB_CLIENT_SECRET: Optional[str] = Field(default=None, description="GitHub OAuth client secret")
-    GITHUB_MCP_SERVER_URL: Optional[str] = Field(
-        default="https://api.githubcopilot.com/mcp/",
-        description="GitHub MCP server URL (for streamable HTTP transport, e.g., http://localhost:8080/mcp)"
-    )
     # ============================================================================
     # Computed Properties
     # ============================================================================

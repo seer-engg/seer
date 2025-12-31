@@ -21,8 +21,25 @@ async def upgrade(db: BaseDBAsyncClient) -> str:
     "workflow_id" INT NOT NULL REFERENCES "workflows" ("id") ON DELETE CASCADE
 );
 COMMENT ON TABLE "workflow_proposals" IS 'Reviewable workflow edit proposal.';
-        ALTER TABLE "workflow_chat_messages" ADD "proposal_id" INT UNIQUE;
-        ALTER TABLE "workflow_chat_messages" ADD CONSTRAINT "fk_workflow_workflow_9fa660a4" FOREIGN KEY ("proposal_id") REFERENCES "workflow_proposals" ("id") ON DELETE CASCADE;"""
+        DO $$ 
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name = 'workflow_chat_messages' 
+                AND column_name = 'proposal_id'
+            ) THEN
+                ALTER TABLE "workflow_chat_messages" ADD "proposal_id" INT UNIQUE;
+            END IF;
+        END $$;
+        DO $$ 
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.table_constraints 
+                WHERE constraint_name = 'fk_workflow_workflow_9fa660a4'
+            ) THEN
+                ALTER TABLE "workflow_chat_messages" ADD CONSTRAINT "fk_workflow_workflow_9fa660a4" FOREIGN KEY ("proposal_id") REFERENCES "workflow_proposals" ("id") ON DELETE CASCADE;
+            END IF;
+        END $$;"""
 
 
 async def downgrade(db: BaseDBAsyncClient) -> str:
