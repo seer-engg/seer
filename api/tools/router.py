@@ -31,7 +31,8 @@ async def list_tools_endpoint(
     """
     List available tools.
     
-    Returns tools with metadata including name, description, required_scopes, and parameters schema.
+    Returns tools with metadata including name, description, required_scopes,
+    parameters schema, and output schema.
     """
     return await list_tools(integration_type=integration_type)
 

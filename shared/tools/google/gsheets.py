@@ -1147,16 +1147,3 @@ class GoogleSheetsBatchUpdateSpreadsheetTool(BaseTool):
         except Exception as e:
             logger.exception(f"Unexpected error batch updating spreadsheet: {e}")
             raise HTTPException(status_code=500, detail=f"Error batch updating spreadsheet: {str(e)}")
-
-
-# ----------------------------
-# Register tools
-# ----------------------------
-register_tool(GoogleSheetsReadTool())
-register_tool(GoogleSheetsBatchReadTool())
-register_tool(GoogleSheetsAppendTool())
-register_tool(GoogleSheetsClearTool())
-register_tool(GoogleSheetsBatchWriteTool())
-register_tool(GoogleSheetsGetSpreadsheetTool())
-register_tool(GoogleSheetsCreateSpreadsheetTool())
-register_tool(GoogleSheetsBatchUpdateSpreadsheetTool())

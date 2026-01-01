@@ -1191,17 +1191,3 @@ class GoogleDriveAboutGetTool(BaseTool):
         except Exception as e:
             logger.exception(f"Unexpected about.get error: {e}")
             raise HTTPException(status_code=500, detail=f"Error getting Drive about info: {str(e)}")
-
-
-# -----------------------------
-# Register tools
-# -----------------------------
-register_tool(GoogleDriveListFilesTool())
-register_tool(GoogleDriveGetFileMetadataTool())
-register_tool(GoogleDriveDownloadFileTool())
-register_tool(GoogleDriveUploadFileTool())
-register_tool(GoogleDriveCreateFolderTool())
-register_tool(GoogleDriveUpdateFileTool())
-register_tool(GoogleDriveDeleteFileTool())
-register_tool(GoogleDriveCreatePermissionTool())
-register_tool(GoogleDriveAboutGetTool())

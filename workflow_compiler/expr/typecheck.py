@@ -9,6 +9,7 @@ import json
 from typing import Dict, Iterable, Mapping, MutableMapping, Sequence
 
 from workflow_compiler.expr.parser import IndexSegment, PathSegment, PropertySegment, ReferenceExpr
+from workflow_compiler.schema.jsonschema_adapter import dereference_schema
 from workflow_compiler.schema.models import InputDef, InputType, JsonSchema, OutputContract, OutputMode
 from workflow_compiler.schema.schema_registry import SchemaRegistry
 
@@ -104,14 +105,20 @@ def register_inputs(env: TypeEnvironment, inputs: Mapping[str, InputDef]) -> Non
     )
 
 
-def resolve_schema_path(schema: JsonSchema, segments: Sequence[PathSegment]) -> JsonSchema:
+def resolve_schema_path(
+    schema: JsonSchema, segments: Sequence[PathSegment], *, root: JsonSchema | None = None
+) -> JsonSchema:
+    root_schema = root or schema
     current = schema
     for segment in segments:
-        current = _resolve_single_segment(current, segment)
-    return current
+        current = _resolve_single_segment(current, segment, root_schema)
+    return dereference_schema(current, root=root_schema)
 
 
-def _resolve_single_segment(schema: JsonSchema, segment: PathSegment) -> JsonSchema:
+def _resolve_single_segment(
+    schema: JsonSchema, segment: PathSegment, root: JsonSchema
+) -> JsonSchema:
+    schema = dereference_schema(schema, root=root)
     schema_type = schema.get("type")
     if isinstance(schema_type, list):
         if "object" in schema_type:
@@ -127,7 +134,7 @@ def _resolve_single_segment(schema: JsonSchema, segment: PathSegment) -> JsonSch
             errors = []
             for candidate in schema[keyword]:
                 try:
-                    return _resolve_single_segment(candidate, segment)
+                    return _resolve_single_segment(candidate, segment, root)
                 except TypeCheckError as exc:
                     errors.append(str(exc))
             raise TypeCheckError("; ".join(errors))
@@ -166,7 +173,7 @@ def _resolve_single_segment(schema: JsonSchema, segment: PathSegment) -> JsonSch
 
 def typecheck_reference(reference: ReferenceExpr, scope: Scope) -> JsonSchema:
     schema = scope.resolve(reference.root)
-    return resolve_schema_path(schema, reference.segments)
+    return resolve_schema_path(schema, reference.segments, root=schema)
 
 
 def ensure_references_valid(references: Iterable[ReferenceExpr], scope: Scope) -> None:
