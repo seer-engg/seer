@@ -24,6 +24,7 @@ from workflow_compiler.registry.model_registry import ModelDefinition, ModelRegi
 from workflow_compiler.registry.tool_registry import ToolDefinition, ToolRegistry
 from workflow_compiler.runtime.context import WorkflowRuntimeContext
 from workflow_compiler.runtime.execution import CompiledWorkflow
+from workflow_compiler.runtime.input_validation import coerce_inputs
 from workflow_compiler.runtime.nodes import NodeRuntime, RuntimeServices
 from workflow_compiler.schema.jsonschema_adapter import SchemaError, check_schema
 from workflow_compiler.schema.models import (
@@ -83,15 +84,18 @@ class UserBoundCompiledWorkflow:
         runtime_context = context or WorkflowRuntimeContext(user=self.user)
         user_before = merged_config.get("user")
         merged_config.pop("user", None)
+        coerced_inputs = coerce_inputs(self.workflow.spec, inputs or {})
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "UserBoundCompiledWorkflow.invoke user_in_config_before=%s context_user=%s config_keys=%s inputs_keys=%s",
                 bool(user_before),
                 getattr(runtime_context.user, "id", None),
                 sorted(merged_config.keys()),
-                sorted(inputs.keys()),
+                sorted(coerced_inputs.keys()),
             )
-        return self.workflow.invoke(inputs, config=merged_config, context=runtime_context)
+        return self.workflow.invoke(
+            coerced_inputs, config=merged_config, context=runtime_context
+        )
 
     async def ainvoke(
         self,
@@ -103,15 +107,18 @@ class UserBoundCompiledWorkflow:
         runtime_context = context or WorkflowRuntimeContext(user=self.user)
         user_before = merged_config.get("user")
         merged_config.pop("user", None)
+        coerced_inputs = coerce_inputs(self.workflow.spec, inputs or {})
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "UserBoundCompiledWorkflow.ainvoke user_in_config_before=%s context_user=%s config_keys=%s inputs_keys=%s",
                 bool(user_before),
                 getattr(runtime_context.user, "id", None),
                 sorted(merged_config.keys()),
-                sorted(inputs.keys()),
+                sorted(coerced_inputs.keys()),
             )
-        return await self.workflow.ainvoke(inputs, config=merged_config, context=runtime_context)
+        return await self.workflow.ainvoke(
+            coerced_inputs, config=merged_config, context=runtime_context
+        )
 
 
 class WorkflowCompilerSingleton:
@@ -379,24 +386,10 @@ class WorkflowCompilerSingleton:
             prompt = self._inject_structured_inputs(
                 invocation["prompt"], invocation.get("inputs")
             )
-            schema_block = json.dumps(schema, indent=2)
-
-            structured_prompt = (
-                f"{prompt}\n\n"
-                "Respond strictly with JSON that satisfies the following schema:\n"
-                f"{schema_block}\n"
-                "The response must be valid JSON without additional commentary."
-            )
-
-            response = llm.invoke(structured_prompt)
-            text = _message_to_text(response).strip()
-
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError as exc:
-                raise ExecutionError(
-                    f"Model '{model_id}' returned invalid JSON: {text}"
-                ) from exc
+            logger.info(f"Schema: {schema}")
+            structured_llm = llm.with_structured_output(schema, method="json_schema")
+            response = structured_llm.invoke(prompt)
+            return response
 
         return handler
 

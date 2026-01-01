@@ -20,7 +20,6 @@ from shared.config import config
 from api.router import router
 from api.integrations.router import router as integrations_router
 from api.tools.router import router as tools_router
-from api.traces.router import router as traces_router
 from api.agents.checkpointer import checkpointer_lifespan
 from shared.database import db_lifespan
 
@@ -90,7 +89,6 @@ app = FastAPI(
 
 app.include_router(router)
 app.include_router(tools_router)
-app.include_router(traces_router)
 
 # Authentication middleware - register BEFORE CORS to ensure user is set
 if config.is_cloud_mode:

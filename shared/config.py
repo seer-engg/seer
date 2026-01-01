@@ -37,8 +37,6 @@ class SeerConfig(BaseSettings):
     anthropic_api_key: Optional[str] = Field(default=None, description="Anthropic API key for Claude models")
     tavily_api_key: Optional[str] = Field(default=None, description="Tavily API key for web search")
     github_token: Optional[str] = Field(default=None, description="GitHub token for sandbox provisioning")
-    CONTEXT7_API_KEY: Optional[str] = Field(default=None, description="Context7 API key for MCP tools")
-    
 
     target_agent_port: int = Field(default=2024, description="Port for target agent")
     target_agent_command: str = Field(default="langgraph dev --host 0.0.0.0", description="Command to run target agent")
@@ -70,15 +68,6 @@ class SeerConfig(BaseSettings):
     embedding_model: str = Field(default="text-embedding-3-small", description="OpenAI embedding model")
     embedding_batch_size: int = Field(default=128, description="OpenAI embedding batch size")
     
-    
-    # ============================================================================
-    # MLflow Configuration
-    # ============================================================================
-    
-    mlflow_tracking_uri: Optional[str] = Field(default=None, description="MLflow tracking server URI (e.g., http://localhost:5000)")
-    mlflow_experiment_name: Optional[str] = Field(default=None, description="MLflow experiment name for organizing runs")
-    
-    
     # ============================================================================
     # Deployment Mode Configuration
     # ============================================================================
@@ -104,10 +93,6 @@ class SeerConfig(BaseSettings):
     
     GITHUB_CLIENT_ID: Optional[str] = Field(default=None, description="GitHub OAuth client ID")
     GITHUB_CLIENT_SECRET: Optional[str] = Field(default=None, description="GitHub OAuth client secret")
-    GITHUB_MCP_SERVER_URL: Optional[str] = Field(
-        default="https://api.githubcopilot.com/mcp/",
-        description="GitHub MCP server URL (for streamable HTTP transport, e.g., http://localhost:8080/mcp)"
-    )
     # ============================================================================
     # Computed Properties
     # ============================================================================
@@ -124,17 +109,6 @@ class SeerConfig(BaseSettings):
             envs["OPENAI_API_KEY"] = self.openai_api_key
         return envs
 
-    
-    @property
-    def is_mlflow_configured(self) -> bool:
-        """Check if MLflow is configured."""
-        return self.mlflow_tracking_uri is not None
-    
-    @property
-    def is_mlflow_tracing_enabled(self) -> bool:
-        """Check if MLflow tracing is enabled."""
-        return self.is_mlflow_configured
-    
     @property
     def is_cloud_mode(self) -> bool:
         """Check if running in cloud mode."""
