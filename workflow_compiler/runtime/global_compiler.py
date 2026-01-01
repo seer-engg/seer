@@ -379,24 +379,9 @@ class WorkflowCompilerSingleton:
             prompt = self._inject_structured_inputs(
                 invocation["prompt"], invocation.get("inputs")
             )
-            schema_block = json.dumps(schema, indent=2)
-
-            structured_prompt = (
-                f"{prompt}\n\n"
-                "Respond strictly with JSON that satisfies the following schema:\n"
-                f"{schema_block}\n"
-                "The response must be valid JSON without additional commentary."
-            )
-
-            response = llm.invoke(structured_prompt)
-            text = _message_to_text(response).strip()
-
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError as exc:
-                raise ExecutionError(
-                    f"Model '{model_id}' returned invalid JSON: {text}"
-                ) from exc
+            structured_llm = llm.with_structured_output(schema, method="json_schema")
+            response = structured_llm.invoke(prompt)
+            return response
 
         return handler
 
