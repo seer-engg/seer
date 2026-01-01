@@ -1,6 +1,6 @@
 # Seer Backend Server Dockerfile
 # Based on official LangGraph API image
-FROM python:3.13-slim
+FROM python:3.12-slim
 
 # Set working directory
 WORKDIR /app

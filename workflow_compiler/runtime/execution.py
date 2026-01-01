@@ -12,9 +12,6 @@ from workflow_compiler.runtime.context import WorkflowRuntimeContext
 from workflow_compiler.runtime.nodes import NodeRuntime
 from workflow_compiler.runtime.state import INTERNAL_STATE_PREFIX
 from workflow_compiler.schema.models import JsonSchema, WorkflowSpec
-import mlflow
-
-mlflow.langchain.autolog()
 
 logger = logging.getLogger(__name__)
 

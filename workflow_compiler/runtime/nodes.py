@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Mapping, MutableMapping, Sequence
 
 from langgraph._internal._runnable import RunnableCallable
@@ -148,8 +149,10 @@ class NodeRuntime:
         locals_ctx: Mapping[str, Any] | None,
         context: WorkflowRuntimeContext | None,
     ) -> Dict[str, Any]:
-        ctx = self._build_eval_context(state, config, locals_ctx)
-        inputs = {key: evaluate_value(ctx, value) for key, value in node.in_.items()}
+        # STEP 1: Capture inputs (AFTER evaluation, BEFORE execution)
+        inputs = self._capture_node_inputs(node, state, config, locals_ctx)
+        
+        # STEP 2: Execute tool (existing logic)
         tool_def = self.services.tool_registry.get(node.tool)
         runtime_context = context or self._current_context
         if logger.isEnabledFor(logging.DEBUG):
@@ -163,7 +166,30 @@ class NodeRuntime:
                 sorted((config.get("configurable") or {}).keys()),
             )
         result = tool_def.handler(inputs, dict(config), runtime_context)
-        return self._prepare_output(node.out, result)
+        
+        # STEP 3: Prepare output (existing logic)
+        output = self._prepare_output(node.out, result)
+        
+        # STEP 4: Store trace data
+        # Use single underscore prefix to avoid LangGraph filtering double-underscore keys
+        trace_key = f"_trace_{node.id}"
+        output[trace_key] = {
+            'node_id': node.id,
+            'node_type': 'tool',
+            'inputs': inputs,  # Actual runtime inputs
+            'output': result,  # Raw tool result (before prepare_output)
+            'output_key': node.out,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+        }
+        
+        # Diagnostic logging: Verify trace key is in output
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                f"Tool node '{node.id}' output keys: {list(output.keys())}, trace_key present: {trace_key in output}",
+                extra={"node_id": node.id, "output_keys": list(output.keys()), "trace_key": trace_key}
+            )
+        
+        return output
 
     async def _run_tool_async(
         self,
@@ -174,8 +200,10 @@ class NodeRuntime:
         locals_ctx: Mapping[str, Any] | None,
         context: WorkflowRuntimeContext | None,
     ) -> Dict[str, Any]:
-        ctx = self._build_eval_context(state, config, locals_ctx)
-        inputs = {key: evaluate_value(ctx, value) for key, value in node.in_.items()}
+        # STEP 1: Capture inputs (AFTER evaluation, BEFORE execution)
+        inputs = self._capture_node_inputs(node, state, config, locals_ctx)
+        
+        # STEP 2: Execute tool (existing logic)
         tool_def = self.services.tool_registry.get(node.tool)
         runtime_context = context or self._current_context
         handler = getattr(tool_def, "async_handler", None)
@@ -183,7 +211,30 @@ class NodeRuntime:
             result = await asyncio.to_thread(tool_def.handler, inputs, dict(config), runtime_context)
         else:
             result = await handler(inputs, dict(config), runtime_context)
-        return self._prepare_output(node.out, result)
+        
+        # STEP 3: Prepare output (existing logic)
+        output = self._prepare_output(node.out, result)
+        
+        # STEP 4: Store trace data
+        # Use single underscore prefix to avoid LangGraph filtering double-underscore keys
+        trace_key = f"_trace_{node.id}"
+        output[trace_key] = {
+            'node_id': node.id,
+            'node_type': 'tool',
+            'inputs': inputs,  # Actual runtime inputs
+            'output': result,  # Raw tool result (before prepare_output)
+            'output_key': node.out,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+        }
+        
+        # Diagnostic logging: Verify trace key is in output
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                f"Tool node '{node.id}' (async) output keys: {list(output.keys())}, trace_key present: {trace_key in output}",
+                extra={"node_id": node.id, "output_keys": list(output.keys()), "trace_key": trace_key}
+            )
+        
+        return output
 
     def _run_llm(
         self,
@@ -193,6 +244,10 @@ class NodeRuntime:
         *,
         locals_ctx: Mapping[str, Any] | None,
     ) -> Dict[str, Any]:
+        # STEP 1: Capture inputs
+        inputs = self._capture_node_inputs(node, state, config, locals_ctx)
+        
+        # STEP 2: Execute LLM (existing logic)
         ctx = self._build_eval_context(state, config, locals_ctx)
         prompt = render_template(ctx, node.prompt)
         # Evaluate auxiliary inputs (e.g. grounding snippets)
@@ -216,9 +271,7 @@ class NodeRuntime:
             result = model_def.text_handler(invocation)
             if not isinstance(result, str):
                 raise ExecutionError(f"LLM node '{node.id}' expected text response")
-            return self._prepare_output(node.out, result)
-
-        if node.output.mode == OutputMode.json:
+        elif node.output.mode == OutputMode.json:
             schema = self._type_schemas.get(node.out or "")
             if schema is None:
                 raise ExecutionError(f"No schema recorded for '{node.out}'")
@@ -227,9 +280,32 @@ class NodeRuntime:
             result = model_def.json_handler(invocation, schema)
             if not isinstance(result, dict):
                 raise ExecutionError(f"LLM node '{node.id}' expected JSON response")
-            return self._prepare_output(node.out, result)
-
-        raise ExecutionError(f"Unsupported output mode '{node.output.mode}' for node '{node.id}'")
+        else:
+            raise ExecutionError(f"Unsupported output mode '{node.output.mode}' for node '{node.id}'")
+        
+        # STEP 3: Prepare output
+        output = self._prepare_output(node.out, result)
+        
+        # STEP 4: Store trace data
+        # Use single underscore prefix to avoid LangGraph filtering double-underscore keys
+        trace_key = f"_trace_{node.id}"
+        output[trace_key] = {
+            'node_id': node.id,
+            'node_type': 'llm',
+            'inputs': inputs,  # Prompt template + evaluated input_refs
+            'output': result,  # Raw LLM response
+            'output_key': node.out,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+        }
+        
+        # Diagnostic logging: Verify trace key is in output
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                f"LLM node '{node.id}' output keys: {list(output.keys())}, trace_key present: {trace_key in output}",
+                extra={"node_id": node.id, "output_keys": list(output.keys()), "trace_key": trace_key}
+            )
+        
+        return output
 
     def _run_if(
         self,
@@ -335,5 +411,100 @@ class NodeRuntime:
         if schema is not None:
             validate_against_schema(schema, value, schema_id=key)
         return {key: value}
+
+    # ------------------------------------------------------------------
+    # Trace capture methods
+    # ------------------------------------------------------------------
+    def _capture_node_inputs(
+        self,
+        node: Node,
+        state: WorkflowState,
+        config: Mapping[str, Any],
+        locals_ctx: Mapping[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        """
+        Capture actual inputs used by node execution.
+        Inputs are evaluated from state at runtime - cannot be predicted at compile time.
+        """
+        ctx = self._build_eval_context(state, config, locals_ctx)
+        
+        if isinstance(node, ToolNode):
+            # Evaluate node.in_ expressions against current state
+            # This gives us the ACTUAL values passed to the tool
+            inputs = {}
+            for key, expr in node.in_.items():
+                try:
+                    inputs[key] = evaluate_value(ctx, expr)
+                except Exception as e:
+                    # If evaluation fails, store error info
+                    inputs[key] = {"__error__": str(e), "__expression__": expr}
+            return inputs
+        
+        elif isinstance(node, LLMNode):
+            # For LLM, capture:
+            # 1. Prompt template (from spec)
+            # 2. Evaluated input_refs (actual values from state)
+            inputs = {
+                'prompt_template': node.prompt,  # Template string
+            }
+            if node.in_:
+                evaluated_refs = {}
+                for key, expr in node.in_.items():
+                    try:
+                        evaluated_refs[key] = evaluate_value(ctx, expr)
+                    except Exception as e:
+                        evaluated_refs[key] = {"__error__": str(e), "__expression__": expr}
+                inputs['input_refs'] = evaluated_refs
+            
+            # Also capture model config
+            inputs['model'] = node.model
+            if node.temperature is not None:
+                inputs['temperature'] = node.temperature
+            if node.max_tokens is not None:
+                inputs['max_tokens'] = node.max_tokens
+            
+            return inputs
+        
+        elif isinstance(node, TaskNode):
+            # Evaluate node.in_ expressions
+            inputs = {}
+            for key, expr in node.in_.items():
+                try:
+                    inputs[key] = evaluate_value(ctx, expr)
+                except Exception as e:
+                    inputs[key] = {"__error__": str(e), "__expression__": expr}
+            return inputs
+        
+        return {}
+
+    def _capture_node_output(
+        self,
+        node: Node,
+        output_dict: Dict[str, Any],
+    ) -> Any:
+        """
+        Extract raw output from node execution result.
+        This is the actual result before any transformation.
+        """
+        if isinstance(node, ToolNode):
+            # Output dict contains {node.out: result}
+            # Extract the raw result
+            if node.out and node.out in output_dict:
+                return output_dict[node.out]
+            # Fallback: return first value
+            if output_dict:
+                return next(iter(output_dict.values()))
+            return None
+        
+        elif isinstance(node, LLMNode):
+            # Similar - extract from output_dict
+            if node.out and node.out in output_dict:
+                return output_dict[node.out]
+            if output_dict:
+                return next(iter(output_dict.values()))
+            return None
+        
+        # For other node types, return the output dict
+        return output_dict
 
 

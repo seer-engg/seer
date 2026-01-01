@@ -13,10 +13,6 @@ from langchain.agents.middleware import (
         SummarizationMiddleware,
     )
 import json
-# Autolog LangChain
-import mlflow
-
-mlflow.langchain.autolog()
 
 WORKFLOW_SPEC_SCHEMA = get_workflow_spec_schema_text()
 WORKFLOW_SPEC_EXAMPLE = get_workflow_spec_example_text()
