@@ -4,6 +4,12 @@ Seer is a **workflow builder with fine-grained control** for creating and execut
 
 > **Note:** Package name is `seeragents` on PyPI (name conflict), but CLI command is `seer`.
 
+### Core Architecture Principle
+
+**If workflows and agents are fundamentally different at the UI layer, they should be different at the API layer.**
+
+This principle guides our API design: workflows (deterministic, node-based execution) and agents (dynamic, message-based conversations) have distinct mental models, data structures, and user needs. Rather than forcing unification through pattern matching or transformation layers, we maintain separate APIs and components that align with their fundamental differences. This reduces complexity, improves maintainability, and ensures each system can evolve independently.
+
 ### Quick Start
 
 ```bash
