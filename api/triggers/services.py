@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional
@@ -22,8 +21,9 @@ from workflow_compiler.registry.trigger_registry import trigger_registry
 from workflow_compiler.schema.models import WorkflowSpec
 
 from api.workflows import services as workflow_services
+from shared.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _utcnow() -> datetime:
@@ -132,6 +132,10 @@ async def handle_generic_webhook(
     secret: Optional[str],
     provider_event_id: Optional[str],
 ) -> TriggerEvent:
+    logger.info(
+        "Handling generic webhook",
+        extra={"subscription_id": subscription_id, "provider_event_id": provider_event_id},
+    )
     subscription = await _get_active_subscription(subscription_id)
     _verify_secret(subscription, secret)
     provider = _load_trigger_provider(subscription.trigger_key)
@@ -198,15 +202,30 @@ class TriggerRunDispatcher:
 
     async def enqueue(self, job: TriggerRunJob) -> None:
         self._ensure_worker()
+        logger.info(
+            "Trigger run dispatcher ensuring worker",
+            extra={"subscription_id": job.subscription_id, "event_id": job.event_id},
+        )
         await self._queue.put(job)
+        logger.info(
+            "Trigger run dispatcher enqueuing job",
+            extra={"subscription_id": job.subscription_id, "event_id": job.event_id},
+        )
 
     async def _worker(self) -> None:
+        logger.info(
+            "Trigger run dispatcher worker started",
+        )
         while True:
             job = await self._queue.get()
+            logger.info(
+                "Trigger run dispatcher worker processing job",
+                extra={"subscription_id": job.subscription_id, "event_id": job.event_id},
+            )
             try:
                 await self._process_job(job)
             except Exception:
-                logger.exception(
+                logger.error(
                     "Trigger run job failed",
                     extra={"subscription_id": job.subscription_id, "event_id": job.event_id},
                 )
@@ -223,6 +242,9 @@ class TriggerRunDispatcher:
                 status=TriggerEventStatus.PROCESSED,
                 error={"detail": "Subscription disabled"},
             )
+            logger.error(
+                "Trigger run job processed (subscription disabled)",
+            )
             return
 
         workflow = subscription.workflow
@@ -232,11 +254,17 @@ class TriggerRunDispatcher:
                 status=TriggerEventStatus.FAILED,
                 error={"detail": "Workflow or user missing for subscription"},
             )
+            logger.error(
+                "Trigger run job processed (workflow or user missing)",
+            )
             return
 
         envelope = event.event or {}
         if not _filters_match(subscription.filters, envelope):
             await TriggerEvent.filter(id=event.id).update(status=TriggerEventStatus.PROCESSED)
+            logger.error(
+                "Trigger run job processed (event filtered out)",
+            )
             return
 
         spec = WorkflowSpec.model_validate(workflow.spec)
@@ -248,6 +276,9 @@ class TriggerRunDispatcher:
                 status=TriggerEventStatus.FAILED,
                 error={"detail": str(exc)},
             )
+            logger.error(
+                f"Trigger run job processed (invalid bindings) with error: {exc}",
+            )
             return
 
         validation_errors = workflow_services._validate_resolved_inputs(resolved_inputs, spec)
@@ -255,6 +286,9 @@ class TriggerRunDispatcher:
             await TriggerEvent.filter(id=event.id).update(
                 status=TriggerEventStatus.FAILED,
                 error={"detail": "Invalid inputs", "errors": validation_errors},
+            )
+            logger.info(
+                "Trigger run job processed (invalid inputs)",
             )
             return
 
@@ -270,7 +304,9 @@ class TriggerRunDispatcher:
             subscription=subscription,
             trigger_event=event,
         )
-
+        logger.info(
+            "Trigger run job processed (run created)"
+        )
         try:
             output = await workflow_services._execute_compiled_run(
                 run,
@@ -281,7 +317,7 @@ class TriggerRunDispatcher:
             await workflow_services._complete_run(run, output)
             await TriggerEvent.filter(id=event.id).update(status=TriggerEventStatus.PROCESSED)
         except HTTPException as exc:
-            logger.exception(
+            logger.error(
                 "Triggered workflow run failed",
                 extra={"run_id": run.id, "subscription_id": subscription.id, "event_id": event.id},
             )
@@ -306,8 +342,16 @@ async def _dispatch_trigger_event(
             extra={"event_id": event.id, "subscription_id": subscription.id},
         )
         return
+    logger.info(
+        "Trigger event matched filters",
+        extra={"event_id": event.id, "subscription_id": subscription.id},
+    )
     await trigger_run_dispatcher.enqueue(
         TriggerRunJob(subscription_id=subscription.id, event_id=event.id)
+    )
+    logger.info(
+        "Trigger event enqueued",
+        extra={"event_id": event.id, "subscription_id": subscription.id},
     )
     await TriggerEvent.filter(id=event.id).update(status=TriggerEventStatus.ROUTED)
 

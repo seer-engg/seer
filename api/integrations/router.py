@@ -236,7 +236,7 @@ async def connect(
     user: User = request.state.db_user
     existing_connection = await get_connection_for_provider(user, oauth_provider)
     
-    if existing_connection and existing_connection.scopes:
+    if existing_connection and existing_connection.scopes and existing_connection.refresh_token_enc:
         # Check if user already has all requested scopes
         if has_required_scopes(existing_connection.scopes, requested_scopes_list):
             logger.info(
@@ -280,6 +280,7 @@ async def connect(
         logger.info(f"Merged Google scopes - Requested: {requested_scopes_list}, Merged: {merged_scopes}")
         kwargs = {'state': state, 'scope': scope_string}
         kwargs['access_type'] = 'offline'
+        kwargs['prompt'] = 'consent'
     else:
         # For other providers, use scope as-is from frontend
         kwargs = {'state': state, 'scope': scope}
@@ -347,7 +348,7 @@ async def auth_callback(request: Request, provider: str):
     if not state:
         raise HTTPException(status_code=400, detail="Missing state")
          
-    try:
+    try:  
         state_data = decode_state(state)
         user_id = state_data.get('user_id')
         redirect_to = state_data.get('redirect_to')
