@@ -973,6 +973,7 @@ async def _execute_compiled_run(
             status=400,
         )
     except Exception as exc:
+        print(f"{traceback.format_exc()}")
         await WorkflowRun.filter(id=run.id).update(
             status=WorkflowRunStatus.FAILED,
             finished_at=_now(),
