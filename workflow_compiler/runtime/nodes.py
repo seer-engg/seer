@@ -115,9 +115,9 @@ class NodeRuntime:
         if isinstance(node, LLMNode):
             return self._run_llm(node, state, config, locals_ctx=locals_ctx)
         if isinstance(node, IfNode):
-            return self._run_if(node, state, config, locals_ctx=locals_ctx, context=context)
+            return await self._run_if_async(node, state, config, locals_ctx=locals_ctx, context=context)
         if isinstance(node, ForEachNode):
-            return self._run_for_each(node, state, config, locals_ctx=locals_ctx, context=context)
+            return await self._run_for_each_async(node, state, config, locals_ctx=locals_ctx, context=context)
         raise ExecutionError(f"Unsupported node type '{node.type}'")
 
     def _run_task(
@@ -320,6 +320,19 @@ class NodeRuntime:
         branch = node.then if evaluate_condition(ctx, node.condition) else node.else_
         return self._execute_sequence(branch, state, config, locals_ctx=locals_ctx, context=context)
 
+    async def _run_if_async(
+        self,
+        node: IfNode,
+        state: WorkflowState,
+        config: Mapping[str, Any],
+        *,
+        locals_ctx: Mapping[str, Any] | None,
+        context: WorkflowRuntimeContext | None,
+    ) -> Dict[str, Any]:
+        ctx = self._build_eval_context(state, config, locals_ctx)
+        branch = node.then if evaluate_condition(ctx, node.condition) else node.else_
+        return await self._execute_sequence_async(branch, state, config, locals_ctx=locals_ctx, context=context)
+
     def _run_for_each(
         self,
         node: ForEachNode,
@@ -366,6 +379,52 @@ class NodeRuntime:
 
         return combined_updates
 
+    async def _run_for_each_async(
+        self,
+        node: ForEachNode,
+        state: WorkflowState,
+        config: Mapping[str, Any],
+        *,
+        locals_ctx: Mapping[str, Any] | None,
+        context: WorkflowRuntimeContext | None,
+    ) -> Dict[str, Any]:
+        ctx = self._build_eval_context(state, config, locals_ctx)
+        items_value = evaluate_value(ctx, node.items)
+        if not isinstance(items_value, list):
+            raise ExecutionError(f"for_each node '{node.id}' items expression must produce a list")
+
+        combined_updates: Dict[str, Any] = {}
+        loop_state: WorkflowState = dict(state)
+        body_result_key = node.body[-1].out if node.body else None
+        if node.out and not body_result_key:
+            raise ExecutionError(
+                f"for_each node '{node.id}' with out='{node.out}' requires the body to end with a node that writes to state"
+            )
+        aggregated: List[Any] = []
+
+        for index, item in enumerate(items_value):
+            iteration_locals = dict(locals_ctx or {})
+            iteration_locals[node.item_var] = item
+            iteration_locals[node.index_var] = index
+            iteration_updates = await self._execute_sequence_async(
+                node.body, loop_state, config, locals_ctx=iteration_locals, context=context
+            )
+            if iteration_updates:
+                loop_state.update(iteration_updates)
+                combined_updates.update(iteration_updates)
+            if node.out:
+                if body_result_key not in loop_state:
+                    raise ExecutionError(
+                        f"for_each node '{node.id}' expected child '{body_result_key}' to produce output"
+                    )
+                aggregated.append(loop_state[body_result_key])
+
+        if node.out:
+            result = aggregated
+            combined_updates.update(self._prepare_output(node.out, result))
+
+        return combined_updates
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -382,6 +441,26 @@ class NodeRuntime:
         accumulator: Dict[str, Any] = {}
         for child in nodes:
             updates = self._run_node(child, sequence_state, config, locals_ctx=locals_ctx, context=context)
+            if updates:
+                sequence_state.update(updates)
+                accumulator.update(updates)
+        return accumulator
+
+    async def _execute_sequence_async(
+        self,
+        nodes: Sequence[Node],
+        state: WorkflowState,
+        config: Mapping[str, Any],
+        *,
+        locals_ctx: Mapping[str, Any] | None,
+        context: WorkflowRuntimeContext | None,
+    ) -> Dict[str, Any]:
+        sequence_state: WorkflowState = dict(state)
+        accumulator: Dict[str, Any] = {}
+        for child in nodes:
+            updates = await self._run_node_async(
+                child, sequence_state, config, locals_ctx=locals_ctx, context=context
+            )
             if updates:
                 sequence_state.update(updates)
                 accumulator.update(updates)
