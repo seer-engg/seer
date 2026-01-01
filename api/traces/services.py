@@ -10,11 +10,11 @@ async def list_traces(
     limit: int,
     start_time: Optional[str],
 ) -> List[TraceSummary]:
-    """List traces from MLflow. Langfuse support has been removed."""
-    # TODO: Implement MLflow trace listing
+    """List traces. Trace listing is not yet implemented."""
+    # TODO: Implement trace listing
     raise HTTPException(
         status_code=501,
-        detail="Trace listing is not yet implemented for MLflow. Langfuse support has been removed.",
+        detail="Trace listing is not yet implemented.",
     )
 
 
@@ -22,11 +22,11 @@ async def get_trace_detail(
     trace_id: str,
     project_name: Optional[str],
 ) -> TraceDetail:
-    """Get full trace details including nested observations. Langfuse support has been removed."""
-    # TODO: Implement MLflow trace detail retrieval
+    """Get full trace details including nested observations. Trace detail retrieval is not yet implemented."""
+    # TODO: Implement trace detail retrieval
     raise HTTPException(
         status_code=501,
-        detail="Trace detail retrieval is not yet implemented for MLflow. Langfuse support has been removed.",
+        detail="Trace detail retrieval is not yet implemented.",
     )
 
 

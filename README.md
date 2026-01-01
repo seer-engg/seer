@@ -11,7 +11,7 @@ git clone <repo> && cd seer
 uv run seer dev
 ```
 
-That's it! No installation needed. Starts Docker services (Postgres, MLflow, backend), installs dependencies in containers, tails logs, waits for readiness, and opens the workflow builder in your browser.
+That's it! No installation needed. Starts Docker services (Postgres, backend), installs dependencies in containers, tails logs, waits for readiness, and opens the workflow builder in your browser.
 
 ### Installation (Optional)
 
@@ -54,7 +54,6 @@ GOOGLE_CLIENT_SECRET=...
 
 # Optional: Persistence and monitoring
 DATABASE_URL=...  # PostgreSQL for workflow persistence
-MLFLOW_TRACKING_URI=...  # MLflow for execution tracking
 
 ```
 
@@ -85,7 +84,7 @@ uv run seer export <thread-id> --format markdown  # Export in markdown format
 
 **What runs where:**
 - **Local:** CLI tool (`seer` command) - lightweight (`click`/`rich` only)
-- **Docker:** Backend API, Postgres, MLflow - all dependencies installed here
+- **Docker:** Backend API, Postgres - all dependencies installed here
 
 **Steps:**
 1. Run: `uv run seer dev` (no installation needed!)
@@ -97,7 +96,6 @@ uv run seer export <thread-id> --format markdown  # Export in markdown format
 **Services started:**
 - **Backend API** (port 8000): FastAPI server with workflow execution engine
 - **Postgres** (port 5432): Workflow and user data persistence
-- **MLflow** (port 5001): Execution tracking and observability
 
 ### API Keys & Integrations
 
@@ -109,7 +107,6 @@ uv run seer export <thread-id> --format markdown  # Export in markdown format
 | **Google Workspace** | `GOOGLE_CLIENT_ID/SECRET` |
 | **Web Search** | `TAVILY_API_KEY` |
 | **Persistence** | `DATABASE_URL` (PostgreSQL) |
-| **Monitoring** | `MLFLOW_TRACKING_URI` |
 | **Cloud Auth** | `CLERK_JWKS_URL`, `CLERK_ISSUER` |
 
 **Supported Integrations:**
@@ -142,7 +139,6 @@ Missing keys? Seer prompts interactively and supports OAuth flows.
 - Streaming execution with real-time updates
 - Interrupt handling for human-in-the-loop workflows
 - Persistent state management with PostgreSQL
-- MLflow integration for observability
 
 **🔒 Enterprise-Ready**
 - Self-hosted or cloud deployment options

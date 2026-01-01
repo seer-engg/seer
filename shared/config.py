@@ -68,15 +68,6 @@ class SeerConfig(BaseSettings):
     embedding_model: str = Field(default="text-embedding-3-small", description="OpenAI embedding model")
     embedding_batch_size: int = Field(default=128, description="OpenAI embedding batch size")
     
-    
-    # ============================================================================
-    # MLflow Configuration
-    # ============================================================================
-    
-    mlflow_tracking_uri: Optional[str] = Field(default=None, description="MLflow tracking server URI (e.g., http://localhost:5000)")
-    mlflow_experiment_name: Optional[str] = Field(default=None, description="MLflow experiment name for organizing runs")
-    
-    
     # ============================================================================
     # Deployment Mode Configuration
     # ============================================================================
@@ -118,17 +109,6 @@ class SeerConfig(BaseSettings):
             envs["OPENAI_API_KEY"] = self.openai_api_key
         return envs
 
-    
-    @property
-    def is_mlflow_configured(self) -> bool:
-        """Check if MLflow is configured."""
-        return self.mlflow_tracking_uri is not None
-    
-    @property
-    def is_mlflow_tracing_enabled(self) -> bool:
-        """Check if MLflow tracing is enabled."""
-        return self.is_mlflow_configured
-    
     @property
     def is_cloud_mode(self) -> bool:
         """Check if running in cloud mode."""

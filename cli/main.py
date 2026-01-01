@@ -211,12 +211,12 @@ def dev(frontend_url: str, backend_url: str, no_browser: bool, rebuild: bool):
     """
     Start development environment with Docker Compose.
     
-    Starts Postgres, MLflow, and backend server, then opens the workflow editor
+    Starts Postgres and backend server, then opens the workflow editor
     in your browser connected to the local backend.
     
     \b
     This command:
-      1. Starts Docker Compose services (postgres, mlflow, backend)
+      1. Starts Docker Compose services (postgres, backend)
       2. Installs dependencies in Docker container (via uv sync during build)
       3. Tails Docker logs in real-time during startup
       4. Waits for backend to be ready (health check)
@@ -394,7 +394,6 @@ def dev(frontend_url: str, backend_url: str, no_browser: bool, rebuild: bool):
             "[bold green]🎉 Development environment is ready![/bold green]\n\n"
             "[bold]📊 Services:[/bold]\n"
             f"   • Backend API: {backend_url}\n"
-            f"   • MLflow: http://localhost:5000\n"
             f"   • Postgres: localhost:5432\n\n"
             f"[bold]🌐 Workflow Editor:[/bold]\n"
             f"   {workflow_url}\n\n"
