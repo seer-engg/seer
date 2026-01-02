@@ -74,15 +74,16 @@ def _build_event_envelope(
     provider_connection_id: Optional[int],
     payload: Dict[str, Any],
     raw: Optional[Dict[str, Any]],
+    occurred_at: Optional[datetime] = None,
 ) -> Dict[str, Any]:
-    occurred_at = _utcnow()
+    occurred = occurred_at or _utcnow()
     return {
         "id": f"evt_{uuid4().hex}",
         "trigger_key": trigger_key,
         "provider": provider,
         "account_id": provider_connection_id,
-        "occurred_at": occurred_at.isoformat(),
-        "received_at": occurred_at.isoformat(),
+        "occurred_at": occurred.isoformat(),
+        "received_at": _utcnow().isoformat(),
         "data": payload,
         "raw": raw,
     }
@@ -93,34 +94,50 @@ async def _persist_event(
     subscription: TriggerSubscription,
     envelope: Dict[str, Any],
     provider_event_id: Optional[str],
+    event_hash: Optional[str],
     raw: Optional[Dict[str, Any]],
-) -> TriggerEvent:
+) -> tuple[TriggerEvent, bool]:
+    occurred_at_str = envelope.get("occurred_at")
+    occurred_at = (
+        datetime.fromisoformat(occurred_at_str)
+        if isinstance(occurred_at_str, str)
+        else _utcnow()
+    )
     try:
-        return await TriggerEvent.create(
+        event = await TriggerEvent.create(
             trigger_key=subscription.trigger_key,
             provider_connection_id=subscription.provider_connection_id,
             provider_event_id=provider_event_id,
-            occurred_at=_utcnow(),
+            event_hash=event_hash,
+            occurred_at=occurred_at,
             event=envelope,
             raw_payload=raw,
             status=TriggerEventStatus.RECEIVED,
         )
+        return event, True
     except IntegrityError:
+        dedupe_filters = {
+            "trigger_key": subscription.trigger_key,
+            "provider_connection_id": subscription.provider_connection_id,
+        }
+        dedupe_key = None
         if provider_event_id:
-            existing = await TriggerEvent.get(
-                trigger_key=subscription.trigger_key,
-                provider_connection_id=subscription.provider_connection_id,
-                provider_event_id=provider_event_id,
-            )
+            dedupe_filters["provider_event_id"] = provider_event_id
+            dedupe_key = ("provider_event_id", provider_event_id)
+        elif event_hash:
+            dedupe_filters["event_hash"] = event_hash
+            dedupe_key = ("event_hash", event_hash)
+        if dedupe_key:
+            existing = await TriggerEvent.get(**dedupe_filters)
             logger.info(
                 "Deduped trigger event",
                 extra={
                     "trigger_key": subscription.trigger_key,
                     "subscription_id": subscription.id,
-                    "provider_event_id": provider_event_id,
+                    dedupe_key[0]: dedupe_key[1],
                 },
             )
-            return existing
+            return existing, False
         raise
 
 
@@ -149,14 +166,17 @@ async def handle_generic_webhook(
         provider_connection_id=subscription.provider_connection_id,
         payload=payload,
         raw=raw_payload,
+        occurred_at=_utcnow(),
     )
-    event = await _persist_event(
+    event, created = await _persist_event(
         subscription=subscription,
         envelope=envelope,
         provider_event_id=provider_event_id,
+        event_hash=None,
         raw=raw_payload,
     )
-    await _dispatch_trigger_event(subscription, event, envelope)
+    if created:
+        await _dispatch_trigger_event(subscription, event, envelope)
     return event
 
 

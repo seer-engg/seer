@@ -93,6 +93,26 @@ class SeerConfig(BaseSettings):
     
     GITHUB_CLIENT_ID: Optional[str] = Field(default=None, description="GitHub OAuth client ID")
     GITHUB_CLIENT_SECRET: Optional[str] = Field(default=None, description="GitHub OAuth client secret")
+
+    # ============================================================================
+    # Trigger Poller
+    # ============================================================================
+    trigger_poller_enabled: bool = Field(
+        default=True,
+        description="Enable background polling for provider-based workflow triggers.",
+    )
+    trigger_poller_interval_seconds: int = Field(
+        default=5,
+        description="Sleep interval between poll engine ticks.",
+    )
+    trigger_poller_max_batch_size: int = Field(
+        default=10,
+        description="Maximum subscriptions to lease per poll tick.",
+    )
+    trigger_poller_lock_timeout_seconds: int = Field(
+        default=60,
+        description="Lease timeout for poll locks in seconds.",
+    )
     # ============================================================================
     # Computed Properties
     # ============================================================================

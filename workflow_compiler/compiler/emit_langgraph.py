@@ -4,7 +4,7 @@ Stage 5 — Emit a LangGraph StateGraph from the lowered execution plan.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Annotated, Any, Dict, Optional
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -13,6 +13,18 @@ from workflow_compiler.compiler.lower_control_flow import ExecutionPlan
 from workflow_compiler.runtime.nodes import NodeRuntime
 
 
+def merge_state(left: dict, right: dict) -> dict:
+    """Merge two state dictionaries, preserving all keys from both.
+
+    This ensures trace data from all nodes is preserved by merging
+    state updates instead of replacing them.
+    """
+    return {**left, **right}
+
+
+# State schema with reducer to merge all state updates (including trace keys)
+WorkflowState = Annotated[Dict[str, Any], merge_state]
+
 
 async def emit_langgraph(
     plan: ExecutionPlan,
@@ -20,7 +32,7 @@ async def emit_langgraph(
     *,
     checkpointer: Optional[AsyncPostgresSaver] = None,
 ):
-    graph = StateGraph(dict)
+    graph = StateGraph(WorkflowState)
 
     if not plan.nodes:
         graph.add_node("__noop", lambda state, config: {})
