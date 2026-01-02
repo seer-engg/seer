@@ -1102,53 +1102,52 @@ def _build_execution_graph(workflow_spec: Optional[WorkflowSpec]) -> Dict[str, A
     """Build execution graph structure from workflow spec."""
     if not workflow_spec:
         return {"nodes": [], "edges": []}
-    
+
     nodes = []
     edges = []
-    node_positions: Dict[str, int] = {}
-    position = 0
-    
-    def process_node(node: Node, parent_id: Optional[str] = None):
-        nonlocal position
+
+    def collect_nodes(node: Node):
+        """Recursively collect all nodes from the workflow spec."""
         node_id = node.id
         node_type = node.type if hasattr(node, "type") else "unknown"
-        
-        # Add node
+
+        # Build label
         label = node_id
         if isinstance(node, ToolNode):
             label = f"{node_id} ({node.tool})"
         elif isinstance(node, LLMNode):
             label = f"{node_id} (LLM)"
-        
+
         nodes.append({
             "id": node_id,
             "type": node_type,
             "label": label,
         })
-        node_positions[node_id] = position
-        position += 1
-        
-        # Add edge from parent
-        if parent_id:
-            edges.append({
-                "source": parent_id,
-                "target": node_id,
-            })
-        
+
         # Process children for composite nodes
         if isinstance(node, IfNode):
             for child in node.then:
-                process_node(child, node_id)
+                collect_nodes(child)
             for child in node.else_:
-                process_node(child, node_id)
+                collect_nodes(child)
         elif isinstance(node, ForEachNode):
             for child in node.body:
-                process_node(child, node_id)
-    
-    # Process all root nodes
+                collect_nodes(child)
+
+    # Collect all nodes
     for node in workflow_spec.nodes:
-        process_node(node)
-    
+        collect_nodes(node)
+
+    # Get edges from reactflow_graph in meta (contains actual graph connections)
+    rf_graph = workflow_spec.meta.get("reactflow_graph") if workflow_spec.meta else None
+    if rf_graph and isinstance(rf_graph, dict) and "edges" in rf_graph:
+        for edge in rf_graph["edges"]:
+            if isinstance(edge, dict) and "source" in edge and "target" in edge:
+                edges.append({
+                    "source": edge["source"],
+                    "target": edge["target"],
+                })
+
     return {"nodes": nodes, "edges": edges}
 
 
