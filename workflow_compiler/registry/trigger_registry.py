@@ -4,6 +4,7 @@ In-memory registry describing workflow trigger metadata and schemas.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, MutableMapping, Optional
 
@@ -66,6 +67,14 @@ def _default_event_envelope_schema() -> JsonSchema:
     }
 
 
+def _enveloped_event_schema(payload_schema: JsonSchema) -> JsonSchema:
+    """Wrap a payload schema in the standard event envelope."""
+
+    envelope = _default_event_envelope_schema()
+    envelope["properties"]["data"] = deepcopy(payload_schema)
+    return envelope
+
+
 def _register_builtin_triggers(registry: TriggerRegistry) -> None:
     registry.register(
         TriggerDefinition(
@@ -84,7 +93,7 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
             provider="gmail",
             mode="polling",
             description="Poll a Gmail inbox for newly received messages using OAuth credentials.",
-            event_schema=_gmail_email_received_event_schema(),
+            event_schema=_enveloped_event_schema(_gmail_email_received_payload_schema()),
             config_schema=_gmail_email_received_config_schema(),
             sample_event=_gmail_email_received_sample_event(),
             metadata={"polling": True, "integration": "gmail"},
@@ -92,7 +101,7 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
     )
 
 
-def _gmail_email_received_event_schema() -> JsonSchema:
+def _gmail_email_received_payload_schema() -> JsonSchema:
     return {
         "type": "object",
         "additionalProperties": False,
@@ -162,7 +171,7 @@ def _gmail_email_received_config_schema() -> JsonSchema:
 
 
 def _gmail_email_received_sample_event() -> Dict[str, Any]:
-    return {
+    payload = {
         "message_id": "18c123example",
         "thread_id": "18c123example",
         "internal_date_ms": 1735630123456,
@@ -175,6 +184,16 @@ def _gmail_email_received_sample_event() -> Dict[str, Any]:
         "labels": ["INBOX", "UNREAD"],
         "date_header": "Fri, 13 Dec 2025 10:00:00 -0000",
         "history_id": "123456",
+    }
+    return {
+        "id": "evt_sample_poll_gmail_email_received",
+        "trigger_key": "poll.gmail.email_received",
+        "provider": "gmail",
+        "account_id": None,
+        "occurred_at": "2025-12-13T10:00:00Z",
+        "received_at": "2025-12-13T10:00:05Z",
+        "data": payload,
+        "raw": {"payload": payload},
     }
 
 

@@ -45,11 +45,14 @@ class TriggerPollEngine:
         self.worker_id = f"poller-{uuid4().hex[:8]}"
 
     async def tick(self) -> None:
+        # logger.info("Polling Engine Tick")
         subscriptions = await self._lease_due_subscriptions(limit=self.max_batch_size)
         if not subscriptions:
+            # logger.info("No subscriptions to process")
             return
 
         for subscription in subscriptions:
+            logger.info(f"Processing subscription {subscription.id}")
             try:
                 await self._process_subscription(subscription)
             except Exception:
@@ -104,6 +107,7 @@ class TriggerPollEngine:
             return
 
         if subscription.provider_connection_id is None:
+            logger.error(f"Missing provider connection for subscription {subscription.id}")
             await self._mark_error(
                 subscription,
                 reason="missing_provider_connection",
@@ -115,6 +119,7 @@ class TriggerPollEngine:
         await subscription.fetch_related("user")
         user = subscription.user
         if user is None:
+            logger.error(f"Missing user for subscription {subscription.id}")
             await self._disable_subscription(subscription, reason="missing_user")
             return
 
@@ -126,6 +131,7 @@ class TriggerPollEngine:
         except HTTPException as exc:
             should_disable = exc.status_code in {401, 403, 404}
             if should_disable:
+                logger.error(f"OAuth error for subscription {subscription.id}: {exc.detail}")
                 await self._disable_subscription(
                     subscription,
                     reason="oauth_error",
@@ -154,12 +160,15 @@ class TriggerPollEngine:
         try:
             result = await adapter.poll(ctx, cursor)
         except PollAdapterError as exc:
+            logger.error(f"Poll adapter error for subscription {subscription.id}: {exc.detail}")
             if exc.permanent:
+                logger.error(f"Permanent poll adapter error for subscription {subscription.id}")
                 await self._disable_subscription(
                     subscription, reason="adapter_permanent_error", detail=exc.detail
                 )
                 return
             backoff = exc.backoff_seconds or min(subscription.poll_interval_seconds * 2, 600)
+            logger.error(f"Backoff poll adapter error for subscription {subscription.id}: {backoff}")
             await self._mark_backoff(
                 subscription,
                 reason="adapter_error",
@@ -178,9 +187,12 @@ class TriggerPollEngine:
 
     async def _handle_events(self, subscription: TriggerSubscription, events) -> None:
         if not events:
+            logger.info(f"No events to handle for subscription {subscription.id}")
             return
         provider = _load_trigger_provider(subscription.trigger_key)
+        logger.info(f"Loading trigger provider for subscription {subscription.id}")
         for polled in events:
+            logger.info(f"Building event envelope for subscription {subscription.id}")
             envelope = _build_event_envelope(
                 trigger_key=subscription.trigger_key,
                 provider=provider,
@@ -207,6 +219,7 @@ class TriggerPollEngine:
                 raw=polled.raw,
             )
             if created:
+                logger.info(f"Dispatching trigger event for subscription {subscription.id}")
                 await _dispatch_trigger_event(subscription, event, envelope)
 
     async def _mark_success(
