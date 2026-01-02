@@ -17,6 +17,17 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: seer-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   langgraph-server:
     build:
       context: .
@@ -27,10 +38,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     env_file:
       - .env
     environment:
       DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
+      REDIS_URL: "redis://redis:6379/0"
       UV_LINK_MODE: "copy"  # Use copy mode to avoid hardlink warnings in Docker volumes
     volumes:
       - ./:/app  # Mount source code for instant updates in development (overrides COPY in Dockerfile)
@@ -40,6 +54,32 @@ services:
         echo 'Waiting for database to be ready...' &&
         sleep 2 &&
         uv run uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+
+  taskiq-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: seer-taskiq-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
+      REDIS_URL: "redis://redis:6379/0"
+      UV_LINK_MODE: "copy"
+    volumes:
+      - ./:/app
+      - /app/.venv
+    command: >
+      sh -c "
+        echo 'Waiting for dependencies to be ready...' &&
+        sleep 2 &&
+        uv run taskiq worker worker.broker:broker
       "
 
 volumes:

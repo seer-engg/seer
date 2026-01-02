@@ -22,7 +22,6 @@ from api.integrations.router import router as integrations_router
 from api.tools.router import router as tools_router
 from api.agents.checkpointer import checkpointer_lifespan
 from shared.database import db_lifespan
-from api.triggers.polling import TriggerPollScheduler
 
 # Import tools to register them
 # Note: model_block removed - use LLM block in workflows instead
@@ -41,15 +40,8 @@ async def lifespan(app: FastAPI):
             if checkpointer is not None:
                 app.state.checkpointer = checkpointer
             logger.info("✅ Checkpointer initialized")
-            poll_scheduler: TriggerPollScheduler | None = None
             if config.trigger_poller_enabled:
-                poll_scheduler = TriggerPollScheduler(
-                    interval_seconds=config.trigger_poller_interval_seconds,
-                    max_batch_size=config.trigger_poller_max_batch_size,
-                    lock_timeout_seconds=config.trigger_poller_lock_timeout_seconds,
-                )
-                await poll_scheduler.start()
-                app.state.trigger_poller = poll_scheduler
+                logger.info("Trigger poller enabled – handled by Taskiq worker")
             else:
                 logger.info("⏸ Trigger poller disabled via configuration")
 
@@ -86,10 +78,6 @@ async def lifespan(app: FastAPI):
             try:
                 yield
             finally:
-                if poll_scheduler:
-                    await poll_scheduler.stop()
-                    if hasattr(app.state, "trigger_poller"):
-                        delattr(app.state, "trigger_poller")
                 if hasattr(app.state, "checkpointer"):
                     delattr(app.state, "checkpointer")
     
