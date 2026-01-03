@@ -16,6 +16,7 @@ from shared.database.workflow_models import (
     WorkflowChatMessage,
     WorkflowProposal,
 )
+from shared.config import config
 
 logger = get_logger("shared.database")
 
@@ -52,7 +53,11 @@ async def init_db() -> None:
     """Initialize Tortoise ORM with the configured settings."""
     
     # Run migrations first (Command handles Tortoise initialization)
-    await run_migrations()
+    if config.AUTO_APPLY_DATABASE_MIGRATIONS:
+        logger.info("Auto-applying database migrations...")
+        await run_migrations()
+    else:
+        logger.info("Database migrations will not be applied automatically. Please run migrations manually.")
     
     # Initialize Tortoise for the application (Command closes connections on exit)
     await Tortoise.init(config=TORTOISE_ORM)
