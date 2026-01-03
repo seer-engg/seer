@@ -84,6 +84,12 @@ class SeerConfig(BaseSettings):
     
     default_llm_model: str = Field(default="gpt-5-mini", description="Default LLM model")
     
+    # Taskiq / Redis configuration
+    redis_url: str = Field(
+        default="redis://localhost:6379/0",
+        description="Redis connection string for Taskiq broker and result backend",
+    )
+    
     # Tool index configuration
     tool_index_path: str = Field(default="./data/tool_index", description="Path to store tool vector index")
     tool_index_auto_generate: bool = Field(default=True, description="Auto-generate tool index on startup if missing")

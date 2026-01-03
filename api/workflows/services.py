@@ -41,6 +41,7 @@ from api.workflows import models as api_models
 import traceback
 
 from api.agents.checkpointer import get_checkpointer
+from worker.tasks.workflows import execute_saved_workflow as execute_saved_workflow_task
 
 compiler = WorkflowCompilerSingleton.instance()
 logger = logging.getLogger(__name__)
@@ -1500,9 +1501,62 @@ async def run_saved_workflow(
         inputs=payload.inputs,
         config_payload=payload.config,
     )
-    output = await _execute_compiled_run(run, user, inputs=payload.inputs, config_payload=payload.config)
-    run = await _complete_run(run, output)
+    try:
+        await execute_saved_workflow_task.kiq(run_id=run.id, user_id=user.id)
+    except Exception as exc:
+        logger.exception(
+            "Failed to enqueue saved workflow run",
+            extra={"workflow_id": workflow_id, "run_id": run.run_id},
+        )
+        await WorkflowRun.filter(id=run.id).update(
+            status=WorkflowRunStatus.FAILED,
+            finished_at=_now(),
+            error={"detail": f"Failed to enqueue workflow run: {exc}"},
+        )
+        await run.refresh_from_db()
+        _raise_problem(
+            type_uri=RUN_PROBLEM,
+            title="Failed to enqueue workflow run",
+            detail="An error occurred while queuing the workflow execution.",
+            status=500,
+        )
     return _serialize_run(run)
+
+
+async def execute_saved_workflow_run(*, run_id: int, user_id: int) -> None:
+    """
+    Execute a saved workflow run asynchronously (invoked by Taskiq worker).
+    """
+    run = await WorkflowRun.get(id=run_id)
+    await run.fetch_related("workflow", "user")
+
+    user = run.user
+    if user is None or getattr(user, "id", None) != user_id:
+        user = await User.get(id=user_id)
+
+    inputs = dict(run.inputs or {})
+    config_payload = dict(run.config or {})
+
+    try:
+        output = await _execute_compiled_run(
+            run,
+            user,
+            inputs=inputs,
+            config_payload=config_payload,
+        )
+        await _complete_run(run, output)
+    except HTTPException:
+        logger.exception(
+            "Saved workflow run failed",
+            extra={"run_id": run.run_id, "workflow_id": getattr(run.workflow, "workflow_id", None)},
+        )
+        raise
+    except Exception:
+        logger.exception(
+            "Unexpected error during saved workflow run",
+            extra={"run_id": run.run_id, "workflow_id": getattr(run.workflow, "workflow_id", None)},
+        )
+        raise
 
 
 async def _get_run(user: User, run_id: str) -> WorkflowRun:
@@ -1589,6 +1643,7 @@ __all__ = [
     "typecheck_expression",
     "run_draft_workflow",
     "run_saved_workflow",
+    "execute_saved_workflow_run",
     "list_workflow_runs",
     "get_run_status",
     "get_run_result",

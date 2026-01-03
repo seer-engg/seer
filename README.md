@@ -60,6 +60,7 @@ GOOGLE_CLIENT_SECRET=...
 
 # Optional: Persistence and monitoring
 DATABASE_URL=...  # PostgreSQL for workflow persistence
+REDIS_URL=redis://localhost:6379/0  # Taskiq broker/result backend
 
 ```
 
@@ -102,6 +103,8 @@ uv run seer export <thread-id> --format markdown  # Export in markdown format
 **Services started:**
 - **Backend API** (port 8000): FastAPI server with workflow execution engine
 - **Postgres** (port 5432): Workflow and user data persistence
+- **Redis** (port 6379): Taskiq message broker
+- **Taskiq Worker**: run `uv run taskiq worker worker.broker:broker` (or use Docker) to process triggers/polling/workflow runs
 
 ### API Keys & Integrations
 
@@ -158,6 +161,7 @@ Missing keys? Seer prompts interactively and supports OAuth flows.
 - Attach triggers to saved workflows via `/api/v1/trigger-subscriptions` to configure filters, `${event...}` bindings, and per-subscription webhook secrets.
 - Generic webhooks POST to `/api/v1/webhooks/generic/{subscription_id}` with the `X-Seer-Webhook-Secret` header; events are deduped, stored, and dispatched asynchronously.
 - Triggered runs are persisted in `workflow_runs` with `source="trigger"` plus links back to the originating subscription and event for observability.
+- A dedicated Taskiq worker handles trigger polling, webhook dispatch, and saved-workflow execution so the FastAPI app stays responsive. Start it with `taskiq worker worker.broker:broker` (remember to point `REDIS_URL` at your Redis instance).
 
 ### Workflow Agent JSON Proposals
 
