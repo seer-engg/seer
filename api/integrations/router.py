@@ -321,6 +321,9 @@ async def connect(
                     f"Not using incremental authorization."
                 )
         # If no existing connection, don't use incremental authorization (first-time connection)
+    
+    if redirect_uri.scheme == "http":
+        redirect_uri = redirect_uri.replace(scheme="https")
         
     return await client.authorize_redirect(request, redirect_uri, **kwargs)
 
