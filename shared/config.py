@@ -53,6 +53,10 @@ class SeerConfig(BaseSettings):
         default=None,
         description="PostgreSQL connection string for LangGraph checkpointer (e.g., postgresql://user:pass@host:port/db). Required for human-in-the-loop interrupts."
     )
+    AUTO_APPLY_DATABASE_MIGRATIONS: bool = Field(
+        default=False,
+        description="Auto-apply database migrations on startup if True. If False, database migrations must be run manually."
+    )
     
     # ============================================================================
     # PostgreSQL Tool Autonomy Configuration
