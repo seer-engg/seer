@@ -46,6 +46,7 @@ services:
       DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
       REDIS_URL: "redis://redis:6379/0"
       UV_LINK_MODE: "copy"  # Use copy mode to avoid hardlink warnings in Docker volumes
+      AUTO_APPLY_DATABASE_MIGRATIONS: "True"
     volumes:
       - ./:/app  # Mount source code for instant updates in development (overrides COPY in Dockerfile)
       - /app/.venv  # Exclude local .venv (Docker will create its own venv)
