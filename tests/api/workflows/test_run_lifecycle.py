@@ -3,10 +3,11 @@ import pytest
 from api.workflows import models as api_models
 from api.workflows import services
 from tests.api.workflows.shared_data import TEST_USER_ID
+from worker.tasks import workflows as worker_workflow_tasks
 
 
 @pytest.mark.asyncio
-async def test_run_lifecycle_from_saved_and_draft(db_user, workflow_spec):
+async def test_run_lifecycle_from_saved_and_draft(db_user, workflow_spec, monkeypatch):
     """Verifies saved and draft workflow runs execute and surface results."""
     created = await services.create_workflow(
         db_user,
@@ -17,6 +18,11 @@ async def test_run_lifecycle_from_saved_and_draft(db_user, workflow_spec):
             tags=[],
         ),
     )
+
+    async def immediate_run(*_, **kwargs):
+        await services.execute_saved_workflow_run(**kwargs)
+
+    monkeypatch.setattr(worker_workflow_tasks.execute_saved_workflow, "kiq", immediate_run)
 
     saved_run = await services.run_saved_workflow(
         db_user,
@@ -39,7 +45,7 @@ async def test_run_lifecycle_from_saved_and_draft(db_user, workflow_spec):
 
 
 @pytest.mark.asyncio
-async def test_list_workflow_runs_returns_recent_runs(db_user, workflow_spec):
+async def test_list_workflow_runs_returns_recent_runs(db_user, workflow_spec, monkeypatch):
     created = await services.create_workflow(
         db_user,
         api_models.WorkflowCreateRequest(
@@ -49,6 +55,11 @@ async def test_list_workflow_runs_returns_recent_runs(db_user, workflow_spec):
             tags=[],
         ),
     )
+
+    async def immediate_run(*_, **kwargs):
+        await services.execute_saved_workflow_run(**kwargs)
+
+    monkeypatch.setattr(worker_workflow_tasks.execute_saved_workflow, "kiq", immediate_run)
 
     run = await services.run_saved_workflow(
         db_user,

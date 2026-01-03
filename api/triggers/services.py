@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional
 from uuid import uuid4
@@ -21,6 +19,7 @@ from workflow_compiler.registry.trigger_registry import trigger_registry
 from workflow_compiler.schema.models import WorkflowSpec
 
 from api.workflows import services as workflow_services
+from worker.tasks.triggers import process_trigger_event as process_trigger_event_task
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -204,150 +203,104 @@ def _filters_match(filters: Optional[Dict[str, Any]], envelope: Dict[str, Any]) 
     return True
 
 
-@dataclass
-class TriggerRunJob:
-    subscription_id: int
-    event_id: int
+async def process_trigger_run_job(subscription_id: int, event_id: int) -> None:
+    """
+    Execute a trigger event workflow run synchronously.
 
+    Invoked by Taskiq worker tasks to convert stored trigger events into workflow runs.
+    """
+    subscription = await TriggerSubscription.get(id=subscription_id)
+    await subscription.fetch_related("workflow", "user")
+    event = await TriggerEvent.get(id=event_id)
 
-class TriggerRunDispatcher:
-    def __init__(self) -> None:
-        self._queue: asyncio.Queue[TriggerRunJob] = asyncio.Queue()
-        self._worker_task: asyncio.Task | None = None
-
-    def _ensure_worker(self) -> None:
-        if self._worker_task is None or self._worker_task.done():
-            loop = asyncio.get_running_loop()
-            self._worker_task = loop.create_task(self._worker())
-
-    async def enqueue(self, job: TriggerRunJob) -> None:
-        self._ensure_worker()
-        logger.info(
-            "Trigger run dispatcher ensuring worker",
-            extra={"subscription_id": job.subscription_id, "event_id": job.event_id},
+    if not subscription.enabled:
+        await TriggerEvent.filter(id=event.id).update(
+            status=TriggerEventStatus.PROCESSED,
+            error={"detail": "Subscription disabled"},
         )
-        await self._queue.put(job)
-        logger.info(
-            "Trigger run dispatcher enqueuing job",
-            extra={"subscription_id": job.subscription_id, "event_id": job.event_id},
+        logger.error(
+            "Trigger run job processed (subscription disabled)",
         )
+        return
 
-    async def _worker(self) -> None:
-        logger.info(
-            "Trigger run dispatcher worker started",
+    workflow = subscription.workflow
+    user = subscription.user
+    if not workflow or not user:
+        await TriggerEvent.filter(id=event.id).update(
+            status=TriggerEventStatus.FAILED,
+            error={"detail": "Workflow or user missing for subscription"},
         )
-        while True:
-            job = await self._queue.get()
-            logger.info(
-                "Trigger run dispatcher worker processing job",
-                extra={"subscription_id": job.subscription_id, "event_id": job.event_id},
-            )
-            try:
-                await self._process_job(job)
-            except Exception:
-                logger.error(
-                    "Trigger run job failed",
-                    extra={"subscription_id": job.subscription_id, "event_id": job.event_id},
-                )
-            finally:
-                self._queue.task_done()
+        logger.error(
+            "Trigger run job processed (workflow or user missing)",
+        )
+        return
 
-    async def _process_job(self, job: TriggerRunJob) -> None:
-        subscription = await TriggerSubscription.get(id=job.subscription_id)
-        await subscription.fetch_related("workflow", "user")
-        event = await TriggerEvent.get(id=job.event_id)
+    envelope = event.event or {}
+    if not _filters_match(subscription.filters, envelope):
+        await TriggerEvent.filter(id=event.id).update(status=TriggerEventStatus.PROCESSED)
+        logger.error(
+            "Trigger run job processed (event filtered out)",
+        )
+        return
 
-        if not subscription.enabled:
-            await TriggerEvent.filter(id=event.id).update(
-                status=TriggerEventStatus.PROCESSED,
-                error={"detail": "Subscription disabled"},
-            )
-            logger.error(
-                "Trigger run job processed (subscription disabled)",
-            )
-            return
+    spec = WorkflowSpec.model_validate(workflow.spec)
+    bindings = dict(subscription.bindings or {})
+    try:
+        resolved_inputs = workflow_services._evaluate_bindings(bindings, envelope)
+    except ValueError as exc:
+        await TriggerEvent.filter(id=event.id).update(
+            status=TriggerEventStatus.FAILED,
+            error={"detail": str(exc)},
+        )
+        logger.error(
+            f"Trigger run job processed (invalid bindings) with error: {exc}",
+        )
+        return
 
-        workflow = subscription.workflow
-        user = subscription.user
-        if not workflow or not user:
-            await TriggerEvent.filter(id=event.id).update(
-                status=TriggerEventStatus.FAILED,
-                error={"detail": "Workflow or user missing for subscription"},
-            )
-            logger.error(
-                "Trigger run job processed (workflow or user missing)",
-            )
-            return
+    validation_errors = workflow_services._validate_resolved_inputs(resolved_inputs, spec)
+    if validation_errors:
+        await TriggerEvent.filter(id=event.id).update(
+            status=TriggerEventStatus.FAILED,
+            error={"detail": "Invalid inputs", "errors": validation_errors},
+        )
+        logger.info(
+            "Trigger run job processed (invalid inputs)",
+        )
+        return
 
-        envelope = event.event or {}
-        if not _filters_match(subscription.filters, envelope):
-            await TriggerEvent.filter(id=event.id).update(status=TriggerEventStatus.PROCESSED)
-            logger.error(
-                "Trigger run job processed (event filtered out)",
-            )
-            return
-
-        spec = WorkflowSpec.model_validate(workflow.spec)
-        bindings = dict(subscription.bindings or {})
-        try:
-            resolved_inputs = workflow_services._evaluate_bindings(bindings, envelope)
-        except ValueError as exc:
-            await TriggerEvent.filter(id=event.id).update(
-                status=TriggerEventStatus.FAILED,
-                error={"detail": str(exc)},
-            )
-            logger.error(
-                f"Trigger run job processed (invalid bindings) with error: {exc}",
-            )
-            return
-
-        validation_errors = workflow_services._validate_resolved_inputs(resolved_inputs, spec)
-        if validation_errors:
-            await TriggerEvent.filter(id=event.id).update(
-                status=TriggerEventStatus.FAILED,
-                error={"detail": "Invalid inputs", "errors": validation_errors},
-            )
-            logger.info(
-                "Trigger run job processed (invalid inputs)",
-            )
-            return
-
-        run = await WorkflowRun.create(
-            user=user,
-            workflow=workflow,
-            workflow_version=workflow.version,
-            spec=workflow.spec,
+    run = await WorkflowRun.create(
+        user=user,
+        workflow=workflow,
+        workflow_version=workflow.version,
+        spec=workflow.spec,
+        inputs=resolved_inputs,
+        config={},
+        status=WorkflowRunStatus.QUEUED,
+        source=WorkflowRunSource.TRIGGER,
+        subscription=subscription,
+        trigger_event=event,
+    )
+    logger.info(
+        "Trigger run job processed (run created)"
+    )
+    try:
+        output = await workflow_services._execute_compiled_run(
+            run,
+            user,
             inputs=resolved_inputs,
-            config={},
-            status=WorkflowRunStatus.QUEUED,
-            source=WorkflowRunSource.TRIGGER,
-            subscription=subscription,
-            trigger_event=event,
+            config_payload={},
         )
-        logger.info(
-            "Trigger run job processed (run created)"
+        await workflow_services._complete_run(run, output)
+        await TriggerEvent.filter(id=event.id).update(status=TriggerEventStatus.PROCESSED)
+    except HTTPException as exc:
+        logger.error(
+            "Triggered workflow run failed",
+            extra={"run_id": run.id, "subscription_id": subscription.id, "event_id": event.id},
         )
-        try:
-            output = await workflow_services._execute_compiled_run(
-                run,
-                user,
-                inputs=resolved_inputs,
-                config_payload={},
-            )
-            await workflow_services._complete_run(run, output)
-            await TriggerEvent.filter(id=event.id).update(status=TriggerEventStatus.PROCESSED)
-        except HTTPException as exc:
-            logger.error(
-                "Triggered workflow run failed",
-                extra={"run_id": run.id, "subscription_id": subscription.id, "event_id": event.id},
-            )
-            await TriggerEvent.filter(id=event.id).update(
-                status=TriggerEventStatus.FAILED,
-                error={"detail": getattr(exc, "detail", str(exc))},
-            )
-
-
-trigger_run_dispatcher = TriggerRunDispatcher()
+        await TriggerEvent.filter(id=event.id).update(
+            status=TriggerEventStatus.FAILED,
+            error={"detail": getattr(exc, "detail", str(exc))},
+        )
 
 
 async def _dispatch_trigger_event(
@@ -366,9 +319,21 @@ async def _dispatch_trigger_event(
         "Trigger event matched filters",
         extra={"event_id": event.id, "subscription_id": subscription.id},
     )
-    await trigger_run_dispatcher.enqueue(
-        TriggerRunJob(subscription_id=subscription.id, event_id=event.id)
-    )
+    try:
+        await process_trigger_event_task.kiq(subscription_id=subscription.id, event_id=event.id)
+    except Exception:
+        logger.exception(
+            "Failed to enqueue trigger event",
+            extra={"event_id": event.id, "subscription_id": subscription.id},
+        )
+        await TriggerEvent.filter(id=event.id).update(
+            status=TriggerEventStatus.FAILED,
+            error={"detail": "Failed to enqueue trigger event"},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to enqueue trigger event",
+        )
     logger.info(
         "Trigger event enqueued",
         extra={"event_id": event.id, "subscription_id": subscription.id},

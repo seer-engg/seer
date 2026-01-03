@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from api.triggers import services as trigger_services
 from api.workflows import models as api_models
 from api.workflows import services as workflow_services
+from worker.tasks import triggers as worker_trigger_tasks
 from shared.database.workflow_models import (
     TriggerEvent,
     TriggerEventStatus,
@@ -68,12 +69,10 @@ async def test_generic_webhook_ingestion_creates_triggered_run(db_user, workflow
         ),
     )
 
-    dispatcher = trigger_services.trigger_run_dispatcher
+    async def immediate_enqueue(*_, **kwargs):
+        await trigger_services.process_trigger_run_job(**kwargs)
 
-    async def immediate_enqueue(job):
-        await dispatcher._process_job(job)  # noqa: SLF001 - test hook
-
-    monkeypatch.setattr(dispatcher, "enqueue", immediate_enqueue)
+    monkeypatch.setattr(worker_trigger_tasks.process_trigger_event, "kiq", immediate_enqueue)
 
     async def fake_execute(run, user, inputs, config_payload):
         return {"inputs": inputs}

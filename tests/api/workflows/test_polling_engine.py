@@ -11,6 +11,7 @@ from api.triggers.polling.adapters.base import PolledEvent
 from api.triggers.polling.engine import TriggerPollEngine
 from api.workflows import models as api_models
 from api.workflows import services as workflow_services
+from worker.tasks import triggers as worker_trigger_tasks
 from shared.database.models_oauth import OAuthConnection
 from shared.database.workflow_models import (
     TriggerEvent,
@@ -86,10 +87,10 @@ async def test_poll_engine_dispatches_polled_events(gmail_poll_subscription, mon
     subscription = gmail_poll_subscription
     enqueued_jobs = []
 
-    async def fake_enqueue(job):
-        enqueued_jobs.append(job)
+    async def fake_enqueue(*_, **kwargs):
+        enqueued_jobs.append(kwargs)
 
-    monkeypatch.setattr(trigger_services.trigger_run_dispatcher, "enqueue", fake_enqueue)
+    monkeypatch.setattr(worker_trigger_tasks.process_trigger_event, "kiq", fake_enqueue)
 
     engine = TriggerPollEngine()
     await engine._handle_events(subscription, [_sample_polled_event()])
@@ -105,10 +106,10 @@ async def test_poll_engine_dedupes_hash_only_events(gmail_poll_subscription, mon
     subscription = gmail_poll_subscription
     enqueued_jobs = []
 
-    async def fake_enqueue(job):
-        enqueued_jobs.append(job)
+    async def fake_enqueue(*_, **kwargs):
+        enqueued_jobs.append(kwargs)
 
-    monkeypatch.setattr(trigger_services.trigger_run_dispatcher, "enqueue", fake_enqueue)
+    monkeypatch.setattr(worker_trigger_tasks.process_trigger_event, "kiq", fake_enqueue)
 
     engine = TriggerPollEngine()
     occurred_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
