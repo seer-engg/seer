@@ -33,8 +33,12 @@ async def run_migrations() -> None:
         logger.info("Running database migrations...")
         # Command handles Tortoise initialization internally
         async with Command(tortoise_config=TORTOISE_ORM, app='models') as command:
-            await command.upgrade()
-        logger.info("✅ Database migrations applied successfully")
+            migrated = await command.upgrade()
+
+        if migrated:
+            logger.info(f"✅ Applied {len(migrated)} migration(s): {', '.join(migrated)}")
+        else:
+            logger.info("✅ Database already up-to-date, no migrations needed")
     except ImportError:
         logger.warning(
             "⚠️ Aerich not available. Migrations skipped. "
