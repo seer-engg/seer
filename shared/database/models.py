@@ -19,6 +19,7 @@ class User(models.Model):
     first_name = fields.CharField(max_length=255, null=True)
     last_name = fields.CharField(max_length=255, null=True)
     claims = fields.JSONField(null=True)
+    signup_source = fields.CharField(max_length=50, null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 
@@ -30,7 +31,9 @@ class User(models.Model):
         return f"User<{self.user_id}>"
 
     @classmethod
-    async def get_or_create_from_auth(cls, auth_user: "AuthenticatedUser") -> "User":
+    async def get_or_create_from_auth(
+        cls, auth_user: "AuthenticatedUser", signup_source: Optional[str] = None
+    ) -> "User":
         """Fetch or persist a user based on Clerk claims."""
         defaults: Dict[str, Any] = {
             "email": auth_user.email,
@@ -38,6 +41,10 @@ class User(models.Model):
             "last_name": auth_user.last_name,
             "claims": auth_user.claims,
         }
+
+        # Only set signup_source on creation, not on update
+        if signup_source:
+            defaults["signup_source"] = signup_source
 
         user, created = await cls.get_or_create(
             user_id=auth_user.user_id,
@@ -48,6 +55,9 @@ class User(models.Model):
 
         updated_fields = []
         for field, value in defaults.items():
+            # Don't update signup_source if user already exists
+            if field == "signup_source":
+                continue
             if getattr(user, field) != value:
                 setattr(user, field, value)
                 updated_fields.append(field)
@@ -68,6 +78,7 @@ class UserPublic(BaseModel):
     email: Optional[str] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    signup_source: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

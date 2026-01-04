@@ -91,7 +91,9 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
             claims=claims,
         )
         try:
-            db_user = await User.get_or_create_from_auth(auth_user)
+            # Capture signup_source from query params (for new user signups)
+            signup_source = request.query_params.get("signup_source")
+            db_user = await User.get_or_create_from_auth(auth_user, signup_source=signup_source)
         except Exception:  # pragma: no cover - defensive
             logger.exception("Failed to persist authenticated user")
             return JSONResponse(
@@ -186,7 +188,9 @@ class TokenDecodeWithoutValidationMiddleware(BaseHTTPMiddleware):
         )
 
         try:
-            db_user = await User.get_or_create_from_auth(auth_user)
+            # Capture signup_source from query params (for new user signups)
+            signup_source = request.query_params.get("signup_source")
+            db_user = await User.get_or_create_from_auth(auth_user, signup_source=signup_source)
         except Exception:
             logger.exception("Failed to persist user from decoded token")
             return JSONResponse(
