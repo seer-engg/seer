@@ -57,6 +57,10 @@ TAVILY_API_KEY=...  # For web search tools
 # OAuth Configuration (for cloud deployments)
 GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
+SUPABASE_CLIENT_ID=...
+SUPABASE_CLIENT_SECRET=...
+# Optional override (default https://api.supabase.com)
+SUPABASE_MANAGEMENT_API_BASE=...
 
 # Optional: Persistence and monitoring
 DATABASE_URL=...  # PostgreSQL for workflow persistence
@@ -114,6 +118,7 @@ uv run seer export <thread-id> --format markdown  # Export in markdown format
 | **AI Chat Assistant** | `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` |
 | **GitHub Integration** | `GITHUB_TOKEN`, `GITHUB_CLIENT_ID/SECRET` |
 | **Google Workspace** | `GOOGLE_CLIENT_ID/SECRET` |
+| **Supabase Management** | `SUPABASE_CLIENT_ID/SECRET` |
 | **Web Search** | `TAVILY_API_KEY` |
 | **Persistence** | `DATABASE_URL` (PostgreSQL) |
 | **Cloud Auth** | `CLERK_JWKS_URL`, `CLERK_ISSUER` |
@@ -121,10 +126,26 @@ uv run seer export <thread-id> --format markdown  # Export in markdown format
 **Supported Integrations:**
 - **Google Workspace**: Gmail, Google Drive, Google Sheets
 - **GitHub**: Repositories, Issues, Pull Requests
+- **Supabase**: Management API OAuth, project bindings, REST tools
 - **Web Tools**: Search, content fetching
 - **Database**: PostgreSQL with read/write controls
 
 Missing keys? Seer prompts interactively and supports OAuth flows.
+
+### Supabase projects (multi-credential integrations)
+
+Supabase support adds persisted resources plus non-OAuth secrets:
+
+1. Connect your Supabase management account via OAuth (`supabase_mgmt` provider).
+2. Browse projects with the existing resource picker (`supabase_project` type) and call `POST /integrations/supabase/projects/bind` to persist the selection.
+3. The binding stores project metadata in `integration_resources` and the anon/service-role API keys in `integration_secrets`.
+4. Workflow nodes reference the binding via `integration_resource_id`, and the credential resolver injects the REST URL + service key automatically (used by `supabase_table_query`).
+
+Related endpoints:
+
+- `GET /integrations/supabase/resources/bindings` – list persisted projects for the signed-in user.
+- `GET /integrations/resources/{resource_id}/secrets` – view secret fingerprints + metadata linked to a resource.
+- `DELETE /integrations/resources/{resource_id}` – revoke a resource binding and deactivate attached secrets.
 
 ### Key Features
 

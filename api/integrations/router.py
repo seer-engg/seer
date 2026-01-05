@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, Field
 from .oauth import oauth
 from .services import (
     store_oauth_connection,
@@ -7,28 +8,64 @@ from .services import (
     disconnect_provider,
     delete_connection_by_id,
     get_oauth_provider,
-    get_tool_connection_status,
     has_required_scopes,
     get_connection_for_provider,
     get_valid_access_token,
-    parse_scopes
+    parse_scopes,
+    list_integration_resources,
+    list_resource_secrets,
+    deactivate_integration_resource,
+    serialize_integration_resource,
+    serialize_integration_secret,
+    bind_supabase_project,
+    bind_supabase_project_manual,
 )
 from .resource_browser import ResourceBrowser
 import json
 import base64
 import os
 import logging
-import httpx
 from typing import Optional
 from datetime import datetime, timezone
 from shared.logger import get_logger
 from shared.database.models import User
+from api.integrations.providers import get_integration_provider
+from api.integrations.providers.base import OAuthAuthorizeContext, OAuthHelpers
 logger = get_logger("api.integrations.router")
+from shared.config import config
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
+
+class SupabaseBindRequest(BaseModel):
+    project_ref: str = Field(..., min_length=3, description="Supabase project reference")
+    connection_id: Optional[str] = Field(
+        default=None,
+        description="Specific Supabase OAuth connection ID (optional)",
+    )
+
+
+class SupabaseManualBindRequest(BaseModel):
+    project_ref: str = Field(..., min_length=3, description="Supabase project reference")
+    connection_id: Optional[str] = Field(
+        default=None,
+        description="Existing Supabase OAuth connection ID (skips manual secret input)",
+    )
+    project_name: Optional[str] = Field(
+        default=None,
+        description="Friendly project display name",
+    )
+    service_role_key: Optional[str] = Field(
+        default=None,
+        description="Supabase service role key (required without connection_id)",
+        min_length=8,
+    )
+    anon_key: Optional[str] = Field(
+        default=None,
+        description="Optional Supabase anon/public key",
+    )
 def encode_state(data: dict) -> str:
     return base64.urlsafe_b64encode(json.dumps(data).encode()).decode()
 
@@ -122,41 +159,78 @@ async def get_tools_connection_status(request: Request):
     results = []
     for tool in all_tools:
         tool_provider = tool.provider or tool.integration_type
-        if not tool_provider:
-            # Non-OAuth tool
-            results.append({
+        required_scopes = list(tool.required_scopes or [])
+        required_secrets = list(getattr(tool, "required_secrets", []) or [])
+        requires_oauth = bool(required_scopes)
+        requires_secrets = bool(required_secrets)
+        supports_tokenless_auth = not requires_oauth
+        auth_mode = "none"
+        if requires_oauth and requires_secrets:
+            auth_mode = "oauth_and_secrets"
+        elif requires_oauth:
+            auth_mode = "oauth"
+        elif requires_secrets:
+            auth_mode = "secrets"
+        
+        def build_result(extra: dict) -> dict:
+            base = {
                 "tool_name": tool.name,
                 "integration_type": tool.integration_type,
+                "requires_oauth_connection": requires_oauth,
+                "requires_secrets": requires_secrets,
+                "supports_tokenless_auth": supports_tokenless_auth,
+                "auth_mode": auth_mode,
+            }
+            base.update(extra)
+            return base
+        
+        if not tool_provider:
+            # Non-OAuth tool
+            results.append(build_result({
                 "provider": None,
                 "connected": True,  # Non-OAuth tools are always "connected"
                 "has_required_scopes": True,
                 "access_token_valid": True,  # Non-OAuth tools don't need tokens
                 "missing_scopes": [],
-                "connection_id": None
-            })
+                "connection_id": None,
+                "provider_account_id": None,
+                "has_refresh_token": False,
+            }))
             continue
         
         # Normalize to OAuth provider
         oauth_provider = get_oauth_provider(tool_provider)
+        conn_info = provider_connections.get(oauth_provider) if oauth_provider else None
         
-        # Check if user has connection for this provider
-        conn_info = provider_connections.get(oauth_provider)
+        if not requires_oauth:
+            # Tokens are optional; treat as connected even without an OAuth record
+            results.append(build_result({
+                "provider": oauth_provider,
+                "connected": True,
+                "has_required_scopes": True,
+                "access_token_valid": True,
+                "missing_scopes": [],
+                "connection_id": conn_info["connection_id"] if conn_info else None,
+                "provider_account_id": conn_info["provider_account_id"] if conn_info else None,
+                "has_refresh_token": conn_info["has_refresh_token"] if conn_info else False,
+            }))
+            continue
         
         if not conn_info:
-            results.append({
-                "tool_name": tool.name,
-                "integration_type": tool.integration_type,
+            results.append(build_result({
                 "provider": oauth_provider,
                 "connected": False,
                 "has_required_scopes": False,
                 "access_token_valid": False,  # No connection means no valid token
-                "missing_scopes": tool.required_scopes,
-                "connection_id": None
-            })
+                "missing_scopes": required_scopes,
+                "connection_id": None,
+                "provider_account_id": None,
+                "has_refresh_token": False,
+            }))
             continue
         
         # Check if connection has required scopes
-        has_scopes = has_required_scopes(conn_info["scopes"], tool.required_scopes)
+        has_scopes = has_required_scopes(conn_info["scopes"], required_scopes)
         
         # Check if access token is valid (exists and not expired)
         access_token_valid = conn_info.get("access_token_valid", False)
@@ -170,11 +244,9 @@ async def get_tools_connection_status(request: Request):
         
         # Find missing scopes - use parse_scopes() to handle both comma and space-separated formats
         granted_set = parse_scopes(conn_info["scopes"]) if conn_info["scopes"] else set()
-        missing = [s for s in tool.required_scopes if s not in granted_set]
+        missing = [s for s in required_scopes if s not in granted_set]
         
-        results.append({
-            "tool_name": tool.name,
-            "integration_type": tool.integration_type,
+        results.append(build_result({
             "provider": oauth_provider,
             "connected": fully_connected,  # True if scopes present AND access token valid
             "has_required_scopes": has_scopes,
@@ -182,8 +254,8 @@ async def get_tools_connection_status(request: Request):
             "has_refresh_token": has_refresh_token,  # Whether refresh token exists (for warnings)
             "missing_scopes": missing,
             "connection_id": conn_info["connection_id"],
-            "provider_account_id": conn_info["provider_account_id"]
-        })
+            "provider_account_id": conn_info["provider_account_id"],
+        }))
     
     return {"tools": results}
 
@@ -225,107 +297,69 @@ async def connect(
     if not scope:
         raise HTTPException(status_code=400, detail="scope parameter is required. Frontend must specify OAuth scopes.")
     
-    # Normalize to OAuth provider
     oauth_provider = get_oauth_provider(provider)
+    provider_impl = get_integration_provider(oauth_provider)
+    if not provider_impl:
+        raise HTTPException(status_code=400, detail=f"OAuth provider '{oauth_provider}' is not configured")
     
-    # Parse requested scopes
-    from .services import parse_scopes
     requested_scopes_list = list(parse_scopes(scope))
-    
-    # Check if user already has all required scopes
     user: User = request.state.db_user
     existing_connection = await get_connection_for_provider(user, oauth_provider)
-    
+
+    authorize_context = OAuthAuthorizeContext(
+        user=user,
+        oauth_provider=oauth_provider,
+        integration_type=integration_type or provider,
+        requested_scopes=requested_scopes_list,
+        existing_connection=existing_connection,
+        helpers=OAuthHelpers(has_required_scopes=has_required_scopes),
+    )
+
+    scope_string = provider_impl.get_oauth_scope(authorize_context)
+    normalized_scope_list = list(parse_scopes(scope_string))
+
     if existing_connection and existing_connection.scopes and existing_connection.refresh_token_enc:
-        # Check if user already has all requested scopes
-        if has_required_scopes(existing_connection.scopes, requested_scopes_list):
+        if has_required_scopes(existing_connection.scopes, normalized_scope_list):
             logger.info(
-                f"User already has all required scopes for {oauth_provider}. "
-                f"Requested: {requested_scopes_list}, Granted: {existing_connection.scopes[:100]}..."
+                "User already has all required scopes for %s. Requested=%s Granted=%s",
+                oauth_provider,
+                normalized_scope_list,
+                existing_connection.scopes[:100],
             )
-            # Return success without OAuth redirect
             final_redirect = redirect_to or f"{FRONTEND_URL}/settings/integrations"
             connected_param = integration_type or oauth_provider
             return RedirectResponse(url=f"{final_redirect}?connected={connected_param}")
-    
+
     redirect_uri = request.url_for('auth_callback', provider=oauth_provider)
-    
-    # Store user_id, scope, and final redirect in state
-    # Scope is stored so we can save it when token is received
+    if config.seer_mode == "cloud" and redirect_uri.scheme == "http":
+        redirect_uri = redirect_uri.replace(scheme="https")
+
     state_data = {
         'user_id': user.user_id,
         'user_email': user.email,
         'redirect_to': redirect_to or f"{FRONTEND_URL}/settings/integrations",
         'oauth_provider': oauth_provider,
-        'integration_type': integration_type or provider,  # Track which integration triggered this
-        'requested_scope': scope  # Store requested scope to save in callback
+        'integration_type': integration_type or provider,
+        'requested_scope': scope_string,
     }
-
-    logger.info(f"Starting OAuth flow: provider={oauth_provider}, integration_type={integration_type}, scopes={scope[:100]}...")
+    logger.info(
+        "Starting OAuth flow: provider=%s, integration_type=%s, scopes=%s",
+        oauth_provider,
+        integration_type,
+        scope_string[:100],
+    )
     state = encode_state(state_data)
-    
+
     client = oauth.create_client(oauth_provider)
-    
-    # For Google OAuth, always include OpenID scopes for userinfo
-    if oauth_provider == 'google':
-        # Always include openid scopes for userinfo
-        required_openid_scopes = ['openid', 'email', 'profile']
-        requested_set = set(requested_scopes_list)
-        required_set = set(required_openid_scopes)
-        
-        # Merge scopes - add required OpenID scopes if not present
-        merged_scopes = list(requested_set | required_set)
-        scope_string = ' '.join(merged_scopes)
-        
-        logger.info(f"Merged Google scopes - Requested: {requested_scopes_list}, Merged: {merged_scopes}")
-        kwargs = {'state': state, 'scope': scope_string}
-        kwargs['access_type'] = 'offline'
-        kwargs['prompt'] = 'consent'
-    else:
-        # For other providers, use scope as-is from frontend
-        kwargs = {'state': state, 'scope': scope}
-    
-    # For Google OAuth, conditionally use incremental authorization
-    # Only use include_granted_scopes when requesting NEW scopes in addition to existing ones
-    # This prevents Google from showing all previously granted scopes in the consent screen
-    # when the user only needs a subset of what they already have
-    # See: https://developers.google.com/identity/protocols/oauth2/web-server#incrementalAuth
-    # Note: When include_granted_scopes=true, Google's consent screen shows ALL scopes that will
-    # be in the final token (both existing and new), not just the new ones being requested.
-    # We only use it when we're actually requesting additional scopes beyond what's already granted.
-    if oauth_provider == 'google':
-        
-        # Only use incremental authorization if there's an existing connection AND
-        # we're requesting scopes that aren't already granted (accounting for hierarchy)
-        if existing_connection and existing_connection.scopes:
-            # Check which requested scopes are actually new (not satisfied by existing scopes)
-            new_scopes = []
-            for requested_scope in requested_scopes_list:
-                # Check if this specific scope is satisfied by existing scopes (handles hierarchy)
-                if not has_required_scopes(existing_connection.scopes, [requested_scope]):
-                    new_scopes.append(requested_scope)
-            
-            # Only use include_granted_scopes if we're requesting additional scopes
-            if new_scopes:
-                kwargs['include_granted_scopes'] = 'true'
-                logger.info(
-                    f"Using incremental authorization for {oauth_provider}. "
-                    f"Existing scopes: {existing_connection.scopes[:100]}..., "
-                    f"New scopes: {new_scopes}"
-                )
-            else:
-                # All requested scopes are satisfied by existing scopes (via hierarchy)
-                # This shouldn't happen since we check earlier, but handle gracefully
-                logger.info(
-                    f"All requested scopes already satisfied for {oauth_provider}. "
-                    f"Not using incremental authorization."
-                )
-        # If no existing connection, don't use incremental authorization (first-time connection)
-    
-    if redirect_uri.scheme == "http":
-        redirect_uri = redirect_uri.replace(scheme="https")
-        
-    return await client.authorize_redirect(request, redirect_uri, **kwargs)
+    authorize_kwargs = provider_impl.build_authorize_kwargs(
+        authorize_context,
+        state=state,
+        scope=scope_string,
+    )
+    authorize_kwargs.setdefault("state", state)
+    authorize_kwargs.setdefault("scope", scope_string)
+
+    return await client.authorize_redirect(request, redirect_uri, **authorize_kwargs)
 
 @router.get("/{provider}/callback", name="auth_callback")
 async def auth_callback(request: Request, provider: str):
@@ -377,86 +411,22 @@ async def auth_callback(request: Request, provider: str):
         f"has id_token: {has_id_token}"
     )
     
-    # Extract granted scopes from token response
-    # Use requested_scope instead of token.get('scope') to avoid storing
-    # all previously granted scopes when include_granted_scopes=true
-    # The requested_scope already includes merged OpenID scopes (openid, email, profile)
-    granted_scopes = requested_scope or token.get('scope') or ''
+    provider_impl = get_integration_provider(oauth_provider)
+    if not provider_impl:
+        raise HTTPException(status_code=400, detail=f"OAuth provider '{oauth_provider}' is not configured")
+
+    granted_scopes = provider_impl.resolve_granted_scopes(token=token, state_data=state_data)
     
-    # Log requested vs granted scopes for debugging
     requested_scopes_list = requested_scope.split() if requested_scope else []
     granted_scopes_list = token.get('scope', '').split() if token.get('scope') else []
     storing_scopes_list = granted_scopes.split() if granted_scopes else []
     logger.info(
         f"OAuth scopes - Requested: {requested_scopes_list}, "
-        f"Granted by Google: {granted_scopes_list}, "
-        f"Storing: {storing_scopes_list}, "
-        f"New scopes: {set(granted_scopes_list) - set(requested_scopes_list)}"
+        f"Provider granted: {granted_scopes_list}, "
+        f"Storing: {storing_scopes_list}"
     )
         
-    # Get user profile
-    if oauth_provider == 'google':
-        # Check if userinfo already parsed from ID token (OpenID Connect)
-        if 'userinfo' in token:
-            user_info = token['userinfo']
-            logger.info("Using userinfo from OIDC token")
-        else:
-            # Try authlib's userinfo method
-            try:
-                user_info = await client.userinfo(token=token)
-                logger.info("Fetched userinfo using authlib userinfo() method")
-            except Exception as e:
-                # Fallback: manual request with access_token
-                logger.warning(f"authlib userinfo() failed: {e}, falling back to manual request")
-                access_token = token.get('access_token')
-                if not access_token:
-                    logger.error(f"No access token in OAuth response. Token keys: {list(token.keys())}")
-                    raise HTTPException(
-                        status_code=500,
-                        detail="No access token in OAuth response. This may indicate an OAuth configuration issue."
-                    )
-                async with httpx.AsyncClient() as http_client:
-                    resp = await http_client.get(
-                        'https://www.googleapis.com/oauth2/v3/userinfo',
-                        headers={'Authorization': f'Bearer {access_token}'}
-                    )
-                    if resp.status_code != 200:
-                        logger.error(
-                            f"Google userinfo request failed with status {resp.status_code}: {resp.text[:500]}. "
-                            f"Token has access_token: {bool(access_token)}, token keys: {list(token.keys())}"
-                        )
-                        raise HTTPException(
-                            status_code=500,
-                            detail=f"Failed to fetch Google user profile: HTTP {resp.status_code}. "
-                                   f"Please ensure 'openid' scope is included in OAuth request."
-                        )
-                    user_info = resp.json()
-    elif oauth_provider == 'github':
-        # Extract access_token and make authenticated request
-        access_token = token.get('access_token')
-        if not access_token:
-            logger.error(f"No access token in OAuth response. Token keys: {list(token.keys())}")
-            raise HTTPException(
-                status_code=500,
-                detail="No access token in OAuth response. This may indicate an OAuth configuration issue."
-            )
-        async with httpx.AsyncClient() as http_client:
-            resp = await http_client.get(
-                'https://api.github.com/user',
-                headers={'Authorization': f'token {access_token}'}
-            )
-            if resp.status_code != 200:
-                logger.error(
-                    f"GitHub userinfo request failed with status {resp.status_code}: {resp.text[:500]}. "
-                    f"Token has access_token: {bool(access_token)}, token keys: {list(token.keys())}"
-                )
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to fetch GitHub user profile: HTTP {resp.status_code}"
-                )
-            user_info = resp.json()
-    else:
-        user_info = {}
+    user_info = await provider_impl.fetch_user_profile(client=client, token=token, state_data=state_data)
     
     # Store connection with OAuth provider (not integration type)
     # Scopes will be merged if connection already exists
@@ -542,6 +512,86 @@ async def delete_connection(connection_id: str, request: Request):
     user: User = request.state.db_user
     await delete_connection_by_id(user, connection_id)
     return {"status": "success"}
+
+
+# =============================================================================
+# PERSISTED RESOURCE ROUTES
+# =============================================================================
+
+@router.get("/{provider}/resources/bindings")
+async def list_persisted_resources(
+    request: Request,
+    provider: str,
+    resource_type: Optional[str] = Query(None, description="Filter by resource type (e.g., project)"),
+):
+    user: User = request.state.db_user
+    resources = await list_integration_resources(
+        user,
+        provider=provider,
+        resource_type=resource_type,
+    )
+    return {"items": [serialize_integration_resource(r) for r in resources]}
+
+
+@router.get("/resources/{resource_id}/secrets")
+async def list_resource_secret_bindings(request: Request, resource_id: int):
+    user: User = request.state.db_user
+    secrets = await list_resource_secrets(user, resource_id)
+    return {"items": [serialize_integration_secret(s) for s in secrets]}
+
+
+@router.delete("/resources/{resource_id}")
+async def delete_resource_binding(request: Request, resource_id: int):
+    user: User = request.state.db_user
+    resource = await deactivate_integration_resource(user, resource_id)
+    return {"resource": serialize_integration_resource(resource)}
+
+
+@router.post("/supabase/projects/bind")
+async def bind_supabase_project_route(request: Request, payload: SupabaseBindRequest):
+    """
+    Persist a Supabase project resource and sync its API keys into the vault.
+    """
+
+    user: User = request.state.db_user
+    resource = await bind_supabase_project(user, payload.project_ref, payload.connection_id)
+    secrets = await list_resource_secrets(user, resource.id)
+    return {
+        "resource": serialize_integration_resource(resource),
+        "secrets": [serialize_integration_secret(s) for s in secrets],
+    }
+
+
+@router.post("/supabase/projects/manual-bind")
+async def bind_supabase_project_manual_route(request: Request, payload: SupabaseManualBindRequest):
+    """
+    Persist a Supabase project using user-supplied secrets instead of OAuth.
+    Falls back to the OAuth binding flow when connection_id is provided.
+    """
+
+    user: User = request.state.db_user
+
+    if payload.connection_id:
+        resource = await bind_supabase_project(user, payload.project_ref, payload.connection_id)
+    else:
+        if not payload.service_role_key:
+            raise HTTPException(
+                status_code=400,
+                detail="service_role_key is required when connection_id is not provided",
+            )
+        resource = await bind_supabase_project_manual(
+            user,
+            project_ref=payload.project_ref,
+            service_role_key=payload.service_role_key,
+            project_name=payload.project_name,
+            anon_key=payload.anon_key,
+        )
+
+    secrets = await list_resource_secrets(user, resource.id)
+    return {
+        "resource": serialize_integration_resource(resource),
+        "secrets": [serialize_integration_secret(s) for s in secrets],
+    }
 
 
 # =============================================================================

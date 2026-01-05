@@ -29,7 +29,7 @@ The frontend will detect `x-resource-picker` and render a ResourcePicker compone
 that calls /api/integrations/{provider}/resources/{resource_type} to list resources.
 """
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Set, TypedDict
+from typing import Any, Dict, List, Optional, Set, TypedDict, NotRequired
 from shared.logger import get_logger
 
 logger = get_logger("shared.tools.base")
@@ -45,6 +45,14 @@ class ResourcePickerConfig(TypedDict, total=False):
     hierarchy: bool  # Enable folder/hierarchy navigation
     depends_on: str  # Another parameter this depends on (for nested resources)
     endpoint: str  # Custom endpoint override (optional)
+
+
+class DefaultResourceRequirement(TypedDict):
+    """Metadata describing a tool's preferred persisted resource binding."""
+
+    resource_type: str
+    provider: NotRequired[str]
+    required: NotRequired[bool]
 
 
 def _make_json_safe(value: Any, seen: Optional[Set[int]] = None) -> Any:
@@ -98,6 +106,8 @@ class BaseTool(ABC):
     required_scopes: List[str] = []
     integration_type: Optional[str] = None  # e.g., 'gmail', 'github', 'googledrive'
     provider: Optional[str] = None  # e.g., 'google', 'github' - OAuth provider for connections
+    required_secrets: List[str] = []
+    default_resource: Optional[DefaultResourceRequirement] = None
     
     @abstractmethod
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
@@ -182,6 +192,8 @@ class BaseTool(ABC):
             "required_scopes": self.required_scopes,
             "integration_type": self.integration_type,
             "provider": self.provider,
+            "required_secrets": list(self.required_secrets) if self.required_secrets else [],
+            "default_resource": self.default_resource,
             "parameters": schema,
             "output_schema": output_schema,
             "resource_pickers": resource_pickers  # Also include separately for convenience

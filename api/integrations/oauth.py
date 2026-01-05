@@ -28,3 +28,20 @@ oauth.register(
     client_kwargs={'scope': 'user:email'},  # Minimal default - frontend will override with specific scopes
 )
 
+
+def _supabase_base() -> str:
+    base = config.supabase_management_api_base or "https://api.supabase.com"
+    return base.rstrip("/")
+
+
+if config.supabase_client_id and config.supabase_client_secret:
+    oauth.register(
+        name='supabase_mgmt',
+        client_id=config.supabase_client_id,
+        client_secret=config.supabase_client_secret,
+        authorize_url=f"{_supabase_base()}/v1/oauth/authorize",
+        access_token_url=f"{_supabase_base()}/v1/oauth/token",
+        api_base_url=f"{_supabase_base()}/",
+        client_kwargs={'scope': 'read:projects'},
+    )
+
