@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Awaitable, Dict, List, Optional, Protocol, Set
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Protocol, Set
 
 from fastapi import HTTPException
 
 if TYPE_CHECKING:
     from shared.database.models import User
     from shared.database.models_integrations import IntegrationResource, IntegrationSecret
+    from shared.database.models_oauth import OAuthConnection
 
 
 class _ResourceUpserter(Protocol):
@@ -50,6 +51,25 @@ class ProviderContext:
     upsert_secret: _SecretUpserter
 
 
+@dataclass
+class OAuthHelpers:
+    """Helper callbacks providers can use for OAuth logic."""
+
+    has_required_scopes: Callable[[str, List[str]], bool]
+
+
+@dataclass
+class OAuthAuthorizeContext:
+    """Context shared with providers during /connect handling."""
+
+    user: "User"
+    oauth_provider: str
+    integration_type: Optional[str]
+    requested_scopes: List[str]
+    existing_connection: Optional["OAuthConnection"]
+    helpers: OAuthHelpers
+
+
 class IntegrationProvider:
     """Base provider with optional overrides for supported operations."""
 
@@ -79,6 +99,43 @@ class IntegrationProvider:
 
     def get_supported_resource_types(self) -> Set[str]:
         return self.resource_types
+
+    # -------------------------------------------------------------------------
+    # OAuth lifecycle hooks (optional)
+    # -------------------------------------------------------------------------
+
+    def get_oauth_scope(self, context: OAuthAuthorizeContext) -> str:
+        """Return the scope string that should be sent to the provider."""
+        return " ".join(context.requested_scopes)
+
+    def build_authorize_kwargs(
+        self,
+        context: OAuthAuthorizeContext,
+        *,
+        state: str,
+        scope: str,
+    ) -> Dict[str, Any]:
+        """Customize authorize_redirect kwargs."""
+        return {"state": state, "scope": scope}
+
+    def resolve_granted_scopes(
+        self,
+        *,
+        token: Dict[str, Any],
+        state_data: Dict[str, Any],
+    ) -> str:
+        """Determine which scopes should be persisted."""
+        return state_data.get("requested_scope") or token.get("scope") or ""
+
+    async def fetch_user_profile(
+        self,
+        *,
+        client: Any,
+        token: Dict[str, Any],
+        state_data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Return profile details for the connected account."""
+        return token.get("userinfo") or {}
 
 
 class ProviderRegistry:

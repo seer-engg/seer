@@ -155,3 +155,24 @@ class SupabaseProvider(IntegrationProvider):
         normalized = raw_name.lower()
         return mapping.get(normalized, f"supabase_{normalized}_key")
 
+    async def fetch_user_profile(
+        self,
+        *,
+        client: Any,
+        token: Dict[str, Any],
+        state_data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if not token.get("access_token"):
+            logger.error("Supabase token missing access_token. keys={keys}", extra={"keys": list(token.keys())})
+            raise HTTPException(
+                status_code=500,
+                detail="No access token in OAuth response. This may indicate an OAuth configuration issue.",
+            )
+        user_id = state_data.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="Missing user_id in OAuth state for Supabase")
+        return {
+            "id": user_id,
+            "integration_type": state_data.get("integration_type"),
+        }
+
