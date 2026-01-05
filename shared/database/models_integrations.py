@@ -18,6 +18,7 @@ class IntegrationResource(models.Model):
     oauth_connection = fields.ForeignKeyField(
         "models.OAuthConnection",
         related_name="resources",
+        null=True,
     )
     provider = fields.CharField(max_length=50)
     resource_type = fields.CharField(max_length=50)

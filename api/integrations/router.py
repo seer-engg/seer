@@ -18,6 +18,7 @@ from .services import (
     serialize_integration_resource,
     serialize_integration_secret,
     bind_supabase_project,
+    bind_supabase_project_manual,
 )
 from .resource_browser import ResourceBrowser
 import json
@@ -46,6 +47,25 @@ class SupabaseBindRequest(BaseModel):
     )
 
 
+class SupabaseManualBindRequest(BaseModel):
+    project_ref: str = Field(..., min_length=3, description="Supabase project reference")
+    connection_id: Optional[str] = Field(
+        default=None,
+        description="Existing Supabase OAuth connection ID (skips manual secret input)",
+    )
+    project_name: Optional[str] = Field(
+        default=None,
+        description="Friendly project display name",
+    )
+    service_role_key: Optional[str] = Field(
+        default=None,
+        description="Supabase service role key (required without connection_id)",
+        min_length=8,
+    )
+    anon_key: Optional[str] = Field(
+        default=None,
+        description="Optional Supabase anon/public key",
+    )
 def encode_state(data: dict) -> str:
     return base64.urlsafe_b64encode(json.dumps(data).encode()).decode()
 
@@ -500,6 +520,38 @@ async def bind_supabase_project_route(request: Request, payload: SupabaseBindReq
 
     user: User = request.state.db_user
     resource = await bind_supabase_project(user, payload.project_ref, payload.connection_id)
+    secrets = await list_resource_secrets(user, resource.id)
+    return {
+        "resource": serialize_integration_resource(resource),
+        "secrets": [serialize_integration_secret(s) for s in secrets],
+    }
+
+
+@router.post("/supabase/projects/manual-bind")
+async def bind_supabase_project_manual_route(request: Request, payload: SupabaseManualBindRequest):
+    """
+    Persist a Supabase project using user-supplied secrets instead of OAuth.
+    Falls back to the OAuth binding flow when connection_id is provided.
+    """
+
+    user: User = request.state.db_user
+
+    if payload.connection_id:
+        resource = await bind_supabase_project(user, payload.project_ref, payload.connection_id)
+    else:
+        if not payload.service_role_key:
+            raise HTTPException(
+                status_code=400,
+                detail="service_role_key is required when connection_id is not provided",
+            )
+        resource = await bind_supabase_project_manual(
+            user,
+            project_ref=payload.project_ref,
+            service_role_key=payload.service_role_key,
+            project_name=payload.project_name,
+            anon_key=payload.anon_key,
+        )
+
     secrets = await list_resource_secrets(user, resource.id)
     return {
         "resource": serialize_integration_resource(resource),

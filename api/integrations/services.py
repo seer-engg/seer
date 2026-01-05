@@ -467,7 +467,7 @@ async def deactivate_integration_resource(user: User, resource_id: int) -> Integ
 async def _upsert_integration_resource(
     *,
     user: User,
-    oauth_connection: OAuthConnection,
+    oauth_connection: Optional[OAuthConnection],
     provider: str,
     resource_type: str,
     resource_id: str,
@@ -481,30 +481,72 @@ async def _upsert_integration_resource(
         "resource_metadata": metadata or {},
         "status": "active",
     }
-    resource, created = await IntegrationResource.get_or_create(
+    lookup_filters = {
+        "user": user,
+        "provider": provider,
+        "resource_type": resource_type,
+        "resource_id": resource_id,
+        "oauth_connection": oauth_connection,
+    }
+    resource = await IntegrationResource.get_or_none(**lookup_filters)
+    if resource:
+        update_fields: List[str] = []
+        for field, value in defaults.items():
+            if getattr(resource, field) != value:
+                setattr(resource, field, value)
+                update_fields.append(field)
+        if update_fields:
+            update_fields.append("updated_at")
+            await resource.save(update_fields=update_fields)
+        return resource
+
+    return await IntegrationResource.create(
         user=user,
         oauth_connection=oauth_connection,
         provider=provider,
         resource_type=resource_type,
         resource_id=resource_id,
-        defaults=defaults,
+        resource_key=resource_key,
+        name=name,
+        resource_metadata=metadata or {},
+        status="active",
     )
-    if created:
-        return resource
-
-    update_fields: List[str] = []
-    for field, value in defaults.items():
-        if getattr(resource, field) != value:
-            setattr(resource, field, value)
-            update_fields.append(field)
-    if update_fields:
-        update_fields.append("updated_at")
-        await resource.save(update_fields=update_fields)
-    return resource
 
 
 def _fingerprint_secret(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _format_supabase_secret_name(raw_name: str) -> str:
+    mapping = {
+        "service_role": "supabase_service_role_key",
+        "service-role": "supabase_service_role_key",
+        "service": "supabase_service_role_key",
+        "anon": "supabase_anon_key",
+        "anon_key": "supabase_anon_key",
+    }
+    normalized = (raw_name or "").strip().lower()
+    if not normalized:
+        return "supabase_custom_key"
+    return mapping.get(normalized, f"supabase_{normalized}_key")
+
+
+def _build_manual_supabase_metadata(
+    *,
+    project_ref: str,
+    project_name: Optional[str],
+) -> Dict[str, Any]:
+    base_url = f"https://{project_ref}.supabase.co"
+    metadata: Dict[str, Any] = {
+        "project_ref": project_ref,
+        "binding_mode": "manual",
+        "name": project_name or project_ref,
+        "rest_url": f"{base_url}/rest/v1",
+        "auth_url": f"{base_url}/auth/v1",
+        "storage_url": f"{base_url}/storage/v1",
+        "functions_url": f"{base_url}/functions/v1",
+    }
+    return metadata
 
 
 async def _upsert_integration_secret(
@@ -579,3 +621,57 @@ async def bind_supabase_project(
         project_ref=project_ref,
         connection_id=connection_id,
     )
+
+
+async def bind_supabase_project_manual(
+    user: User,
+    *,
+    project_ref: str,
+    service_role_key: str,
+    project_name: Optional[str] = None,
+    anon_key: Optional[str] = None,
+) -> IntegrationResource:
+    normalized_ref = (project_ref or "").strip()
+    if not normalized_ref:
+        raise HTTPException(status_code=400, detail="project_ref is required")
+    if not service_role_key:
+        raise HTTPException(status_code=400, detail="service_role_key is required for manual binding")
+
+    resource_metadata = _build_manual_supabase_metadata(
+        project_ref=normalized_ref,
+        project_name=project_name,
+    )
+
+    resource = await _upsert_integration_resource(
+        user=user,
+        oauth_connection=None,
+        provider=SUPABASE_RESOURCE_PROVIDER,
+        resource_type=SUPABASE_RESOURCE_TYPE_PROJECT,
+        resource_id=normalized_ref,
+        resource_key=normalized_ref,
+        name=project_name or resource_metadata.get("name") or normalized_ref,
+        metadata=resource_metadata,
+    )
+
+    await _upsert_integration_secret(
+        user=user,
+        provider=SUPABASE_RESOURCE_PROVIDER,
+        name="supabase_service_role_key",
+        secret_type="api_key",
+        value_enc=service_role_key,
+        resource=resource,
+        metadata={"binding_mode": "manual"},
+    )
+
+    if anon_key:
+        await _upsert_integration_secret(
+            user=user,
+            provider=SUPABASE_RESOURCE_PROVIDER,
+            name="supabase_anon_key",
+            secret_type="api_key",
+            value_enc=anon_key,
+            resource=resource,
+            metadata={"binding_mode": "manual"},
+        )
+
+    return resource

@@ -16,7 +16,7 @@ class _ResourceUpserter(Protocol):
         self,
         *,
         user: "User",
-        oauth_connection,
+        oauth_connection: Optional["OAuthConnection"],
         provider: str,
         resource_type: str,
         resource_id: str,
