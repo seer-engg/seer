@@ -19,6 +19,37 @@ uv run seer dev
 
 That's it! No installation needed. Starts Docker services (Postgres, backend), installs dependencies in containers, tails logs, waits for readiness, and opens the workflow builder in your browser.
 
+### Deploy to Railway
+
+Deploy Seer to Railway with one click:
+
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/[TEMPLATE-ID])
+
+**What gets deployed:**
+- FastAPI backend server (public URL)
+- Background task worker
+- PostgreSQL database (16-alpine)
+- Redis cache/queue
+
+**Required setup:**
+1. Click the deploy button above
+2. Sign in to Railway (free account)
+3. Enter your `OPENAI_API_KEY`
+4. Click "Deploy"
+5. Wait 5-7 minutes for initial build
+6. Access your Seer instance at the generated Railway URL
+
+**Post-deployment:**
+- Add optional integrations in Settings → Variables:
+  - `TAVILY_API_KEY` - Web search
+  - `GOOGLE_CLIENT_ID/SECRET` - Google Workspace
+  - `GITHUB_CLIENT_ID/SECRET` - GitHub integration
+  - `ANTHROPIC_API_KEY` - Alternative to OpenAI
+
+**Estimated cost:** $15-30/month for production use (Railway free tier: $5/month credit)
+
+For detailed template creation instructions, see [RAILWAY_DEPLOYMENT.md](./RAILWAY_DEPLOYMENT.md).
+
 ### Installation (Optional)
 
 **Only needed if you want to use `seer` directly without `uv run`:**
