@@ -159,41 +159,78 @@ async def get_tools_connection_status(request: Request):
     results = []
     for tool in all_tools:
         tool_provider = tool.provider or tool.integration_type
-        if not tool_provider:
-            # Non-OAuth tool
-            results.append({
+        required_scopes = list(tool.required_scopes or [])
+        required_secrets = list(getattr(tool, "required_secrets", []) or [])
+        requires_oauth = bool(required_scopes)
+        requires_secrets = bool(required_secrets)
+        supports_tokenless_auth = not requires_oauth
+        auth_mode = "none"
+        if requires_oauth and requires_secrets:
+            auth_mode = "oauth_and_secrets"
+        elif requires_oauth:
+            auth_mode = "oauth"
+        elif requires_secrets:
+            auth_mode = "secrets"
+        
+        def build_result(extra: dict) -> dict:
+            base = {
                 "tool_name": tool.name,
                 "integration_type": tool.integration_type,
+                "requires_oauth_connection": requires_oauth,
+                "requires_secrets": requires_secrets,
+                "supports_tokenless_auth": supports_tokenless_auth,
+                "auth_mode": auth_mode,
+            }
+            base.update(extra)
+            return base
+        
+        if not tool_provider:
+            # Non-OAuth tool
+            results.append(build_result({
                 "provider": None,
                 "connected": True,  # Non-OAuth tools are always "connected"
                 "has_required_scopes": True,
                 "access_token_valid": True,  # Non-OAuth tools don't need tokens
                 "missing_scopes": [],
-                "connection_id": None
-            })
+                "connection_id": None,
+                "provider_account_id": None,
+                "has_refresh_token": False,
+            }))
             continue
         
         # Normalize to OAuth provider
         oauth_provider = get_oauth_provider(tool_provider)
+        conn_info = provider_connections.get(oauth_provider) if oauth_provider else None
         
-        # Check if user has connection for this provider
-        conn_info = provider_connections.get(oauth_provider)
+        if not requires_oauth:
+            # Tokens are optional; treat as connected even without an OAuth record
+            results.append(build_result({
+                "provider": oauth_provider,
+                "connected": True,
+                "has_required_scopes": True,
+                "access_token_valid": True,
+                "missing_scopes": [],
+                "connection_id": conn_info["connection_id"] if conn_info else None,
+                "provider_account_id": conn_info["provider_account_id"] if conn_info else None,
+                "has_refresh_token": conn_info["has_refresh_token"] if conn_info else False,
+            }))
+            continue
         
         if not conn_info:
-            results.append({
-                "tool_name": tool.name,
-                "integration_type": tool.integration_type,
+            results.append(build_result({
                 "provider": oauth_provider,
                 "connected": False,
                 "has_required_scopes": False,
                 "access_token_valid": False,  # No connection means no valid token
-                "missing_scopes": tool.required_scopes,
-                "connection_id": None
-            })
+                "missing_scopes": required_scopes,
+                "connection_id": None,
+                "provider_account_id": None,
+                "has_refresh_token": False,
+            }))
             continue
         
         # Check if connection has required scopes
-        has_scopes = has_required_scopes(conn_info["scopes"], tool.required_scopes)
+        has_scopes = has_required_scopes(conn_info["scopes"], required_scopes)
         
         # Check if access token is valid (exists and not expired)
         access_token_valid = conn_info.get("access_token_valid", False)
@@ -207,11 +244,9 @@ async def get_tools_connection_status(request: Request):
         
         # Find missing scopes - use parse_scopes() to handle both comma and space-separated formats
         granted_set = parse_scopes(conn_info["scopes"]) if conn_info["scopes"] else set()
-        missing = [s for s in tool.required_scopes if s not in granted_set]
+        missing = [s for s in required_scopes if s not in granted_set]
         
-        results.append({
-            "tool_name": tool.name,
-            "integration_type": tool.integration_type,
+        results.append(build_result({
             "provider": oauth_provider,
             "connected": fully_connected,  # True if scopes present AND access token valid
             "has_required_scopes": has_scopes,
@@ -219,8 +254,8 @@ async def get_tools_connection_status(request: Request):
             "has_refresh_token": has_refresh_token,  # Whether refresh token exists (for warnings)
             "missing_scopes": missing,
             "connection_id": conn_info["connection_id"],
-            "provider_account_id": conn_info["provider_account_id"]
-        })
+            "provider_account_id": conn_info["provider_account_id"],
+        }))
     
     return {"tools": results}
 
