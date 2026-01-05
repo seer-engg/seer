@@ -25,30 +25,11 @@ Deploy Seer to Railway with one click:
 
 [![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/[TEMPLATE-ID])
 
-**What gets deployed:**
-- FastAPI backend server (public URL)
-- Background task worker
-- PostgreSQL database (16-alpine)
-- Redis cache/queue
+**What gets deployed:** FastAPI backend, background worker, PostgreSQL, and Redis
 
-**Required setup:**
-1. Click the deploy button above
-2. Sign in to Railway (free account)
-3. Enter your `OPENAI_API_KEY`
-4. Click "Deploy"
-5. Wait 5-7 minutes for initial build
-6. Access your Seer instance at the generated Railway URL
+**Setup:** Click button, enter `OPENAI_API_KEY`, wait 5-7 minutes. Estimated cost: $15-30/month.
 
-**Post-deployment:**
-- Add optional integrations in Settings → Variables:
-  - `TAVILY_API_KEY` - Web search
-  - `GOOGLE_CLIENT_ID/SECRET` - Google Workspace
-  - `GITHUB_CLIENT_ID/SECRET` - GitHub integration
-  - `ANTHROPIC_API_KEY` - Alternative to OpenAI
-
-**Estimated cost:** $15-30/month for production use (Railway free tier: $5/month credit)
-
-For detailed template creation instructions, see [RAILWAY_DEPLOYMENT.md](./RAILWAY_DEPLOYMENT.md).
+For detailed deployment instructions, see [Railway Deployment Guide](./docs/deployment/RAILWAY.md).
 
 ### Installation (Optional)
 
@@ -75,31 +56,23 @@ seer dev  # Now you can use 'seer' directly
 
 ### Configuration
 
-Create a `.env` file (automatically loaded):
+Create a `.env` file:
 
 ```bash
-# Required for workflow execution and AI assistance
-OPENAI_API_KEY=...
-ANTHROPIC_API_KEY=...  # Alternative to OpenAI
+# Required
+OPENAI_API_KEY=sk-...
 
-# Integrations
-TAVILY_API_KEY=...  # For web search tools
-
-# OAuth Configuration (for cloud deployments)
+# Optional integrations (add as needed)
 GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
-SUPABASE_CLIENT_ID=...
-SUPABASE_CLIENT_SECRET=...
-# Optional override (default https://api.supabase.com)
-SUPABASE_MANAGEMENT_API_BASE=...
-
-# Optional: Persistence and monitoring
-DATABASE_URL=...  # PostgreSQL for workflow persistence
-REDIS_URL=redis://localhost:6379/0  # Taskiq broker/result backend
-
+TAVILY_API_KEY=...
 ```
 
-Check: `uv run seer config` or `seer config` (if installed)
+Docker automatically configures `DATABASE_URL` and `REDIS_URL`.
+
+**Check configuration:** `seer config` or `seer config --format json`
+
+For complete configuration options, see [Configuration Reference](./docs/advanced/CONFIGURATION.md).
 
 ### Usage
 
@@ -141,42 +114,18 @@ uv run seer export <thread-id> --format markdown  # Export in markdown format
 - **Redis** (port 6379): Taskiq message broker
 - **Taskiq Worker**: run `uv run taskiq worker worker.broker:broker` (or use Docker) to process triggers/polling/workflow runs
 
-### API Keys & Integrations
+### Integrations & API Keys
 
-| Feature | Required Keys |
-|---------|---------------|
-| **Workflow Execution** | `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` |
-| **AI Chat Assistant** | `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` |
-| **GitHub Integration** | `GITHUB_TOKEN`, `GITHUB_CLIENT_ID/SECRET` |
-| **Google Workspace** | `GOOGLE_CLIENT_ID/SECRET` |
-| **Supabase Management** | `SUPABASE_CLIENT_ID/SECRET` |
-| **Web Search** | `TAVILY_API_KEY` |
-| **Persistence** | `DATABASE_URL` (PostgreSQL) |
-| **Cloud Auth** | `CLERK_JWKS_URL`, `CLERK_ISSUER` |
+**Core Requirements:**
+- `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` - Required for workflow execution and AI assistance
 
-**Supported Integrations:**
-- **Google Workspace**: Gmail, Google Drive, Google Sheets
-- **GitHub**: Repositories, Issues, Pull Requests
-- **Supabase**: Management API OAuth, project bindings, REST tools
-- **Web Tools**: Search, content fetching
-- **Database**: PostgreSQL with read/write controls
+**Optional Integrations:**
+- **Google Workspace** - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (Gmail, Drive, Sheets)
+- **GitHub** - `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` (Repos, Issues, PRs)
+- **Supabase** - `SUPABASE_CLIENT_ID`, `SUPABASE_CLIENT_SECRET` ([Setup Guide](./docs/integrations/SUPABASE.md))
+- **Web Search** - `TAVILY_API_KEY`
 
-Missing keys? Seer prompts interactively and supports OAuth flows.
-
-### Supabase projects (multi-credential integrations)
-
-Supabase support adds persisted resources plus non-OAuth secrets:
-
-1. Connect your Supabase management account via OAuth (`supabase_mgmt` provider).
-2. Browse projects with the existing resource picker (`supabase_project` type) and call `POST /integrations/supabase/projects/bind` to persist the selection.
-3. The binding stores project metadata in `integration_resources` and the anon/service-role API keys in `integration_secrets`.
-4. Workflow nodes reference the binding via `integration_resource_id`, and the credential resolver injects the REST URL + service key automatically (used by `supabase_table_query`).
-
-Related endpoints:
-
-- `GET /integrations/supabase/resources/bindings` – list persisted projects for the signed-in user.
-- `GET /integrations/resources/{resource_id}/secrets` – view secret fingerprints + metadata linked to a resource.
-- `DELETE /integrations/resources/{resource_id}` – revoke a resource binding and deactivate attached secrets.
+For complete configuration options, see [Configuration Reference](./docs/advanced/CONFIGURATION.md).
 
 ### Key Features
 
@@ -207,17 +156,12 @@ Related endpoints:
 - Role-based access control
 - Audit trails and execution history
 
-### Workflow Triggers (beta)
+### Documentation
 
-- `GET /api/v1/triggers` exposes the trigger catalog (currently `webhook.generic`) including normalized event schemas.
-- Attach triggers to saved workflows via `/api/v1/trigger-subscriptions` to configure filters, `${event...}` bindings, and per-subscription webhook secrets.
-- Generic webhooks POST to `/api/v1/webhooks/generic/{subscription_id}` with the `X-Seer-Webhook-Secret` header; events are deduped, stored, and dispatched asynchronously.
-- Triggered runs are persisted in `workflow_runs` with `source="trigger"` plus links back to the originating subscription and event for observability.
-- A dedicated Taskiq worker handles trigger polling, webhook dispatch, and saved-workflow execution so the FastAPI app stays responsive. Start it with `taskiq worker worker.broker:broker` (remember to point `REDIS_URL` at your Redis instance).
-
-### Workflow Agent JSON Proposals
-
-- The workflow chat agent now calls `submit_workflow_spec` to emit complete, compiler-ready JSON specs (no more incremental patch ops).
-- Agent prompts include the trimmed WorkflowSpec schema plus a canonical example from `workflow_compiler/schema`.
-- Proposal APIs (`/api/agents/workflow/.../proposals`) return the captured spec so clients can preview or apply it directly.
-- Accepting a proposal replaces the workflow definition atomically with the validated spec; rejecting leaves the workflow untouched.
+- [Quick Start](#quick-start) - Get running in 60 seconds
+- [Railway Deployment](./docs/deployment/RAILWAY.md) - Production deployment guide
+- [Worker Setup](./worker/README.md) - Background task worker configuration
+- [Integrations](./docs/integrations/SUPABASE.md) - Google, GitHub, Supabase setup
+- [Advanced Features](./docs/advanced/) - Triggers, proposals, and more
+- [Configuration Reference](./docs/advanced/CONFIGURATION.md) - Complete configuration options
+- [Complete Documentation](./docs/) - Full documentation index

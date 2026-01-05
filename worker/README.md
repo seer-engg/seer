@@ -1,3 +1,5 @@
+> **[← Back to Main README](../README.md)** | **[Full Documentation](../docs/)**
+
 # Seer Worker
 
 Taskiq powers our background worker so that long-running operations do not block the FastAPI app. The worker listens on Redis Streams, fans out jobs, coordinates trigger polling, and keeps a database connection pool ready for workflow executions.
@@ -48,5 +50,11 @@ Docker compose already defines a `taskiq-worker` service that runs the same comm
 - The poll scheduler only runs inside the worker process. If you want to manually advance polling logic (for tests or prod debugging), enqueue `poll_triggers_once.kiq()` or run the task directly via `uv run taskiq run worker.tasks.polling:poll_triggers_once`.
 - Because Taskiq registers shutdown hooks, always let the worker exit cleanly (Ctrl+C) so the scheduler stops and DB connections close.
 - Enable debug logs by setting `LOG_LEVEL=DEBUG` to trace polling leases and workflow dispatches.
+
+## Related Documentation
+
+- [Workflow Triggers](../docs/advanced/TRIGGERS.md) - Trigger setup and configuration
+- [Configuration Reference](../docs/advanced/CONFIGURATION.md) - Complete configuration options
+- [Main README](../README.md) - Quick start and installation
 
 

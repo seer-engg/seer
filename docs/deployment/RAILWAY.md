@@ -1,3 +1,5 @@
+> **[← Back to Documentation Index](../README.md)**
+
 # Railway Deployment Guide for Seer
 
 This guide walks you through creating a Railway template for one-click Seer deployment. Railway templates are created through their UI, not declarative config files.
