@@ -50,6 +50,7 @@ class ResourceBrowser:
             raise ValueError(f"Unknown resource type: {resource_type}")
 
         provider_impl = self._get_provider()
+        logger.info(f"Listing resources for provider: {provider_impl.provider}")
         if not provider_impl.supports_resource_type(resource_type):
             raise HTTPException(
                 status_code=400,
