@@ -17,6 +17,7 @@ from starlette.middleware.sessions import SessionMiddleware
 import os
 from shared.logger import get_logger
 from shared.config import config
+from shared.analytics import analytics
 from api.router import router
 from api.integrations.router import router as integrations_router
 from api.tools.router import router as tools_router
@@ -33,6 +34,9 @@ logger = get_logger("api.main")
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
     logger.info("🚀 Starting Seer API server...")
+
+    # Initialize PostHog analytics
+    analytics.initialize()
 
     async with db_lifespan(app):
         logger.info("✅ Database initialized")
@@ -80,7 +84,10 @@ async def lifespan(app: FastAPI):
             finally:
                 if hasattr(app.state, "checkpointer"):
                     delattr(app.state, "checkpointer")
-    
+
+    # Shutdown PostHog on app shutdown
+    analytics.shutdown()
+
     logger.info("👋 Seer API server shutting down...")
 
 
@@ -129,6 +136,12 @@ app.add_middleware(
     expose_headers=["*"],
 )
 app.add_middleware(SessionMiddleware, secret_key=os.getenv("SECRET_KEY", "dev_secret_key"))
+
+# PostHog analytics middleware - track requests and flush events
+if config.is_posthog_configured:
+    from api.middleware.analytics import PostHogMiddleware
+    app.add_middleware(PostHogMiddleware)
+    logger.info("📊 PostHog analytics middleware enabled")
 
 # Exception handler to ensure CORS headers on errors
 @app.exception_handler(Exception)

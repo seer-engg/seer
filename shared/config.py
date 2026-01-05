@@ -123,6 +123,24 @@ class SeerConfig(BaseSettings):
         default=60,
         description="Lease timeout for poll locks in seconds.",
     )
+
+    # ============================================================================
+    # PostHog Analytics Configuration
+    # ============================================================================
+
+    posthog_api_key: Optional[str] = Field(
+        default=None,
+        description="PostHog API key for analytics tracking"
+    )
+    posthog_host: Optional[str] = Field(
+        default=None,
+        description="PostHog host URL (e.g., https://posthog-xyz.railway.app)"
+    )
+    posthog_enabled: bool = Field(
+        default=False,
+        description="Enable PostHog analytics tracking"
+    )
+
     # ============================================================================
     # Computed Properties
     # ============================================================================
@@ -153,6 +171,15 @@ class SeerConfig(BaseSettings):
     def is_clerk_configured(self) -> bool:
         """Check if Clerk authentication is configured."""
         return self.clerk_jwks_url is not None and self.clerk_issuer is not None
+
+    @property
+    def is_posthog_configured(self) -> bool:
+        """Check if PostHog is configured and enabled."""
+        return (
+            self.posthog_enabled
+            and self.posthog_api_key is not None
+            and self.posthog_host is not None
+        )
 
 # ============================================================================
 # Global Config Instance
