@@ -1,22 +1,21 @@
 import hashlib
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
-import httpx
 from fastapi import HTTPException
 
-from shared.config import config
+from api.integrations.constants import (
+    SUPABASE_OAUTH_PROVIDER,
+    SUPABASE_RESOURCE_PROVIDER,
+    SUPABASE_RESOURCE_TYPE_PROJECT,
+)
+from api.integrations.providers import ProviderContext, get_integration_provider
 from shared.database.models import User
 from shared.database.models_integrations import IntegrationResource, IntegrationSecret
 from shared.database.models_oauth import OAuthConnection
 from shared.logger import get_logger
 from shared.tools.oauth_manager import get_oauth_token
 logger = get_logger("api.integrations.services")
-
-SUPABASE_RESOURCE_PROVIDER = "supabase"
-SUPABASE_OAUTH_PROVIDER = "supabase_mgmt"
-SUPABASE_RESOURCE_TYPE_PROJECT = "project"
-
 
 def parse_scopes(scopes_str: str) -> Set[str]:
     """
@@ -611,93 +610,22 @@ async def _upsert_integration_secret(
 
 
 # =============================================================================
-# Supabase Helpers
+# Provider Dispatch Helpers
 # =============================================================================
 
-def _supabase_api_base() -> str:
-    base = config.supabase_management_api_base or "https://api.supabase.com"
-    return base.rstrip("/")
+
+def _build_provider_context() -> ProviderContext:
+    return ProviderContext(
+        upsert_resource=_upsert_integration_resource,
+        upsert_secret=_upsert_integration_secret,
+    )
 
 
-async def _supabase_request(method: str, path: str, access_token: str) -> Any:
-    url = f"{_supabase_api_base()}{path}"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Accept": "application/json",
-    }
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.request(method, url, headers=headers)
-            response.raise_for_status()
-            if response.text:
-                return response.json()
-            return None
-    except httpx.HTTPStatusError as exc:
-        logger.error(
-            "Supabase API error",
-            extra={"url": url, "status_code": exc.response.status_code, "body": exc.response.text[:200]},
-        )
-        raise HTTPException(status_code=exc.response.status_code, detail=f"Supabase API error: {exc.response.text[:200]}")
-    except Exception as exc:
-        logger.exception("Unexpected Supabase API error", extra={"url": url})
-        raise HTTPException(status_code=500, detail=f"Supabase API error: {str(exc)}")
-
-
-async def fetch_supabase_projects(access_token: str) -> List[Dict[str, Any]]:
-    data = await _supabase_request("GET", "/v1/projects", access_token)
-    if isinstance(data, list):
-        return data
-    return []
-
-
-async def fetch_supabase_project(access_token: str, project_ref: str) -> Dict[str, Any]:
-    project = await _supabase_request("GET", f"/v1/projects/{project_ref}", access_token)
-    if not project:
-        raise HTTPException(status_code=404, detail=f"Supabase project '{project_ref}' not found")
-    return project
-
-
-async def fetch_supabase_api_keys(access_token: str, project_ref: str) -> List[Dict[str, Any]]:
-    data = await _supabase_request("GET", f"/v1/projects/{project_ref}/api-keys", access_token)
-    if isinstance(data, list):
-        return data
-    return []
-
-
-def _format_supabase_secret_name(raw_name: str) -> str:
-    mapping = {
-        "service_role": "supabase_service_role_key",
-        "service-role": "supabase_service_role_key",
-        "service": "supabase_service_role_key",
-        "anon": "supabase_anon_key",
-        "anon_key": "supabase_anon_key",
-    }
-    normalized = raw_name.lower()
-    return mapping.get(normalized, f"supabase_{normalized}_key")
-
-
-async def _sync_supabase_project_secrets(
-    user: User,
-    resource: IntegrationResource,
-    api_keys: List[Dict[str, Any]],
-) -> None:
-    for entry in api_keys:
-        api_key = entry.get("api_key") or entry.get("key")
-        key_name = entry.get("name") or entry.get("key_name")
-        if not api_key or not key_name:
-            continue
-        await _upsert_integration_secret(
-            user=user,
-            provider=SUPABASE_RESOURCE_PROVIDER,
-            name=_format_supabase_secret_name(key_name),
-            secret_type="api_key",
-            value_enc=api_key,
-            resource=resource,
-            metadata={
-                "project_ref": resource.resource_key,
-                "supabase_key_name": key_name,
-            },
-        )
+def _require_provider(provider_name: str):
+    provider = get_integration_provider(provider_name)
+    if not provider:
+        raise HTTPException(status_code=500, detail=f"Integration provider '{provider_name}' is not configured")
+    return provider
 
 
 async def bind_supabase_project(
@@ -705,28 +633,11 @@ async def bind_supabase_project(
     project_ref: str,
     connection_id: Optional[str] = None,
 ) -> IntegrationResource:
-    if not project_ref:
-        raise HTTPException(status_code=400, detail="project_ref is required")
-
-    connection, access_token = await get_oauth_token(
-        user,
-        connection_id=connection_id,
-        provider=SUPABASE_OAUTH_PROVIDER,
-    )
-
-    project = await fetch_supabase_project(access_token, project_ref)
-    project_id = str(project.get("id") or project.get("project_id") or project_ref)
-    resource = await _upsert_integration_resource(
+    provider = _require_provider(SUPABASE_RESOURCE_PROVIDER)
+    return await provider.bind_resource(
+        context=_build_provider_context(),
         user=user,
-        oauth_connection=connection,
-        provider=SUPABASE_RESOURCE_PROVIDER,
         resource_type=SUPABASE_RESOURCE_TYPE_PROJECT,
-        resource_id=project_id,
-        resource_key=project.get("ref") or project_ref,
-        name=project.get("name"),
-        metadata=project,
+        project_ref=project_ref,
+        connection_id=connection_id,
     )
-
-    api_keys = await fetch_supabase_api_keys(access_token, project_ref)
-    await _sync_supabase_project_secrets(user, resource, api_keys)
-    return resource

@@ -15,7 +15,11 @@ from typing import Any, Dict, List, Optional
 import httpx
 from fastapi import HTTPException
 
-from api.integrations.services import fetch_supabase_projects
+from api.integrations.constants import (
+    SUPABASE_RESOURCE_PROVIDER,
+    SUPABASE_RESOURCE_TYPE_PROJECT,
+)
+from api.integrations.providers import get_integration_provider
 from shared.logger import get_logger
 
 logger = get_logger("api.integrations.resource_browser")
@@ -475,8 +479,15 @@ class ResourceBrowser:
         page_size: int,
     ) -> Dict[str, Any]:
         """List Supabase projects available via management API."""
+        provider = get_integration_provider(SUPABASE_RESOURCE_PROVIDER)
+        if not provider:
+            return {"items": [], "error": "Supabase provider unavailable", "next_page_token": None}
+
         try:
-            projects = await fetch_supabase_projects(self.access_token)
+            projects = await provider.list_remote_resources(
+                access_token=self.access_token,
+                resource_type=SUPABASE_RESOURCE_TYPE_PROJECT,
+            )
         except HTTPException as exc:
             return {"items": [], "error": exc.detail, "next_page_token": None}
         except Exception as exc:
