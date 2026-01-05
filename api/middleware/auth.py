@@ -12,6 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from shared.logger import get_logger
+from shared.analytics import analytics
 
 logger = get_logger("api.middleware.auth")
 from shared.database.models import User
@@ -100,6 +101,17 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
                 status_code=500,
                 content={"detail": "Unable to persist authenticated user"},
             )
+
+        # Identify user in PostHog for analytics
+        analytics.identify(
+            distinct_id=auth_user.user_id,
+            properties={
+                "email": auth_user.email,
+                "first_name": auth_user.first_name,
+                "last_name": auth_user.last_name,
+                "signup_source": db_user.signup_source if db_user.signup_source else None,
+            },
+        )
 
         request.state.user = auth_user
         request.state.db_user = db_user
@@ -197,6 +209,17 @@ class TokenDecodeWithoutValidationMiddleware(BaseHTTPMiddleware):
                 status_code=500,
                 content={"detail": "Failed to persist user from decoded token"},
             )
+
+        # Identify user in PostHog for analytics
+        analytics.identify(
+            distinct_id=auth_user.user_id,
+            properties={
+                "email": auth_user.email,
+                "first_name": auth_user.first_name,
+                "last_name": auth_user.last_name,
+                "signup_source": db_user.signup_source if db_user.signup_source else None,
+            },
+        )
 
         request.state.user = auth_user
         request.state.db_user = db_user
