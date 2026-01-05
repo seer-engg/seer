@@ -349,68 +349,6 @@ async def get_connection_for_provider(user: User, provider: str) -> Optional[OAu
         return None
 
 
-async def get_tool_connection_status(user: User, tool_name: str, required_scopes: List[str], provider: str) -> Dict[str, Any]:
-    """
-    Check if user has a connection with required scopes for a specific tool.
-    
-    Args:
-        user: User model instance
-        tool_name: Name of the tool
-        required_scopes: List of OAuth scopes required by the tool
-        provider: OAuth provider for the tool (google, github, etc.)
-    
-    Returns:
-        Dict with connection status information
-    """
-    oauth_provider = get_oauth_provider(provider)
-    
-    try:
-        connection = await OAuthConnection.get_or_none(
-            user=user,
-            provider=oauth_provider,
-            status="active"
-        )
-        
-        if not connection:
-            return {
-                "tool_name": tool_name,
-                "connected": False,
-                "has_required_scopes": False,
-                "missing_scopes": required_scopes,
-                "provider": oauth_provider,
-                "connection_id": None
-            }
-        
-        # Check if connection has all required scopes
-        granted_scopes = connection.scopes or ""
-        has_scopes = has_required_scopes(granted_scopes, required_scopes)
-        
-        # Find missing scopes (using parse_scopes to handle both comma and whitespace separators)
-        granted_set = parse_scopes(granted_scopes)
-        missing = [s for s in required_scopes if s not in granted_set]
-        
-        return {
-            "tool_name": tool_name,
-            "connected": True,
-            "has_required_scopes": has_scopes,
-            "missing_scopes": missing,
-            "provider": oauth_provider,
-            "connection_id": f"{oauth_provider}:{connection.id}",
-            "provider_account_id": connection.provider_account_id
-        }
-    except Exception as e:
-        logger.error(f"Error checking tool connection status: {e}")
-        return {
-            "tool_name": tool_name,
-            "connected": False,
-            "has_required_scopes": False,
-            "missing_scopes": required_scopes,
-            "provider": oauth_provider,
-            "connection_id": None,
-            "error": str(e)
-        }
-
-
 async def disconnect_provider(user: User, provider: str):
     """Disconnect all connections for a provider."""
     oauth_provider = get_oauth_provider(provider)

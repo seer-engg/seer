@@ -8,7 +8,6 @@ from .services import (
     disconnect_provider,
     delete_connection_by_id,
     get_oauth_provider,
-    get_tool_connection_status,
     has_required_scopes,
     get_connection_for_provider,
     get_valid_access_token,
