@@ -1,9 +1,21 @@
-from shared.database.models_oauth import OAuthConnection
-from shared.database.models import User
-from typing import Dict, Any, List, Optional, Set
+import hashlib
 from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, List, Optional, Set
+
+import httpx
+from fastapi import HTTPException
+
+from shared.config import config
+from shared.database.models import User
+from shared.database.models_integrations import IntegrationResource, IntegrationSecret
+from shared.database.models_oauth import OAuthConnection
 from shared.logger import get_logger
+from shared.tools.oauth_manager import get_oauth_token
 logger = get_logger("api.integrations.services")
+
+SUPABASE_RESOURCE_PROVIDER = "supabase"
+SUPABASE_OAUTH_PROVIDER = "supabase_mgmt"
+SUPABASE_RESOURCE_TYPE_PROJECT = "project"
 
 
 def parse_scopes(scopes_str: str) -> Set[str]:
@@ -173,6 +185,8 @@ def get_oauth_provider(integration_type: str) -> str:
     google_integrations = ['gmail', 'googlesheets', 'googledrive', 'google']
     if integration_type in google_integrations:
         return 'google'
+    if integration_type in ['supabase', 'supabase_mgmt']:
+        return SUPABASE_OAUTH_PROVIDER
     # For other providers, the integration type is the same as the provider
     return integration_type
 
@@ -435,60 +449,284 @@ async def get_valid_access_token(user: User, provider: str) -> Optional[str]:
     Returns:
         Valid access token or None if no connection exists
     """
-    from .oauth import oauth
-    import httpx
-    
     oauth_provider = get_oauth_provider(provider)
-    connection = await get_connection_for_provider(user, oauth_provider)
-    
-    if not connection:
-        return None
-    
-    # Check if token is expired
-    if connection.expires_at:
-        now = datetime.now(timezone.utc)
-        # Add a 5-minute buffer to refresh before expiration
-        if now >= connection.expires_at - timedelta(minutes=5):
-            # Token is expired or about to expire, try to refresh
-            if connection.refresh_token_enc:
-                try:
-                    # Refresh the token using authlib
-                    client = oauth.create_client(oauth_provider)
-                    
-                    if oauth_provider == 'google':
-                        # Google token refresh
-                        async with httpx.AsyncClient() as http_client:
-                            response = await http_client.post(
-                                'https://oauth2.googleapis.com/token',
-                                data={
-                                    'client_id': client.client_id,
-                                    'client_secret': client.client_secret,
-                                    'refresh_token': connection.refresh_token_enc,
-                                    'grant_type': 'refresh_token',
-                                }
-                            )
-                            
-                            if response.status_code == 200:
-                                token_data = response.json()
-                                connection.access_token_enc = token_data.get('access_token')
-                                if 'expires_in' in token_data:
-                                    connection.expires_at = datetime.now(timezone.utc) + timedelta(seconds=token_data['expires_in'])
-                                connection.updated_at = datetime.now(timezone.utc)
-                                await connection.save()
-                                logger.info(f"Refreshed access token for {oauth_provider}")
-                            else:
-                                logger.error(f"Failed to refresh token: {response.status_code} - {response.text[:200]}")
-                                return None
-                    else:
-                        # For other providers, implement as needed
-                        logger.warning(f"Token refresh not implemented for provider: {oauth_provider}")
-                        return connection.access_token_enc
-                        
-                except Exception as e:
-                    logger.error(f"Error refreshing token for {oauth_provider}: {e}")
-                    return None
-            else:
-                logger.warning(f"Token expired and no refresh token available for {oauth_provider}")
-                return None
-    
-    return connection.access_token_enc
+    try:
+        _, access_token = await get_oauth_token(user, provider=oauth_provider)
+        return access_token
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            return None
+        raise
+
+
+# =============================================================================
+# Integration Resource Helpers
+# =============================================================================
+
+def serialize_integration_resource(resource: IntegrationResource) -> Dict[str, Any]:
+    return {
+        "id": resource.id,
+        "provider": resource.provider,
+        "resource_type": resource.resource_type,
+        "resource_id": resource.resource_id,
+        "resource_key": resource.resource_key,
+        "name": resource.name,
+        "status": resource.status,
+        "metadata": resource.resource_metadata or {},
+        "oauth_connection_id": resource.oauth_connection_id,
+        "created_at": resource.created_at.isoformat() if resource.created_at else None,
+        "updated_at": resource.updated_at.isoformat() if resource.updated_at else None,
+    }
+
+
+def serialize_integration_secret(secret: IntegrationSecret) -> Dict[str, Any]:
+    return {
+        "id": secret.id,
+        "provider": secret.provider,
+        "name": secret.name,
+        "secret_type": secret.secret_type,
+        "resource_id": secret.resource_id,
+        "oauth_connection_id": secret.oauth_connection_id,
+        "value_fingerprint": secret.value_fingerprint,
+        "metadata": secret.metadata or {},
+        "status": secret.status,
+        "expires_at": secret.expires_at.isoformat() if secret.expires_at else None,
+        "created_at": secret.created_at.isoformat() if secret.created_at else None,
+        "updated_at": secret.updated_at.isoformat() if secret.updated_at else None,
+    }
+
+
+async def list_integration_resources(
+    user: User,
+    *,
+    provider: Optional[str] = None,
+    resource_type: Optional[str] = None,
+) -> List[IntegrationResource]:
+    queryset = IntegrationResource.filter(user=user, status="active")
+    if provider:
+        queryset = queryset.filter(provider=provider)
+    if resource_type:
+        queryset = queryset.filter(resource_type=resource_type)
+    return await queryset.order_by("-updated_at")
+
+
+async def list_resource_secrets(user: User, resource_id: int) -> List[IntegrationSecret]:
+    resource = await IntegrationResource.get_or_none(id=resource_id, user=user)
+    if not resource:
+        raise HTTPException(status_code=404, detail=f"Integration resource {resource_id} not found")
+    return await IntegrationSecret.filter(user=user, resource=resource, status="active").order_by("-updated_at")
+
+
+async def deactivate_integration_resource(user: User, resource_id: int) -> IntegrationResource:
+    resource = await IntegrationResource.get_or_none(id=resource_id, user=user)
+    if not resource:
+        raise HTTPException(status_code=404, detail=f"Integration resource {resource_id} not found")
+    resource.status = "revoked"
+    await resource.save(update_fields=["status", "updated_at"])
+    await IntegrationSecret.filter(resource=resource, user=user).update(status="revoked")
+    return resource
+
+
+async def _upsert_integration_resource(
+    *,
+    user: User,
+    oauth_connection: OAuthConnection,
+    provider: str,
+    resource_type: str,
+    resource_id: str,
+    resource_key: Optional[str],
+    name: Optional[str],
+    metadata: Optional[Dict[str, Any]],
+) -> IntegrationResource:
+    defaults = {
+        "resource_key": resource_key,
+        "name": name,
+        "resource_metadata": metadata or {},
+        "status": "active",
+    }
+    resource, created = await IntegrationResource.get_or_create(
+        user=user,
+        oauth_connection=oauth_connection,
+        provider=provider,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        defaults=defaults,
+    )
+    if created:
+        return resource
+
+    update_fields: List[str] = []
+    for field, value in defaults.items():
+        if getattr(resource, field) != value:
+            setattr(resource, field, value)
+            update_fields.append(field)
+    if update_fields:
+        update_fields.append("updated_at")
+        await resource.save(update_fields=update_fields)
+    return resource
+
+
+def _fingerprint_secret(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+async def _upsert_integration_secret(
+    *,
+    user: User,
+    provider: str,
+    name: str,
+    secret_type: str,
+    value_enc: str,
+    resource: Optional[IntegrationResource] = None,
+    oauth_connection: Optional[OAuthConnection] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> IntegrationSecret:
+    defaults = {
+        "secret_type": secret_type,
+        "value_enc": value_enc,
+        "value_fingerprint": _fingerprint_secret(value_enc),
+        "metadata": metadata or {},
+        "status": "active",
+    }
+    secret, created = await IntegrationSecret.get_or_create(
+        user=user,
+        provider=provider,
+        name=name,
+        resource=resource,
+        oauth_connection=oauth_connection,
+        defaults=defaults,
+    )
+    if created:
+        return secret
+
+    update_fields: List[str] = []
+    for field, value in defaults.items():
+        if getattr(secret, field) != value:
+            setattr(secret, field, value)
+            update_fields.append(field)
+    if update_fields:
+        update_fields.append("updated_at")
+        await secret.save(update_fields=update_fields)
+    return secret
+
+
+# =============================================================================
+# Supabase Helpers
+# =============================================================================
+
+def _supabase_api_base() -> str:
+    base = config.supabase_management_api_base or "https://api.supabase.com"
+    return base.rstrip("/")
+
+
+async def _supabase_request(method: str, path: str, access_token: str) -> Any:
+    url = f"{_supabase_api_base()}{path}"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.request(method, url, headers=headers)
+            response.raise_for_status()
+            if response.text:
+                return response.json()
+            return None
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "Supabase API error",
+            extra={"url": url, "status_code": exc.response.status_code, "body": exc.response.text[:200]},
+        )
+        raise HTTPException(status_code=exc.response.status_code, detail=f"Supabase API error: {exc.response.text[:200]}")
+    except Exception as exc:
+        logger.exception("Unexpected Supabase API error", extra={"url": url})
+        raise HTTPException(status_code=500, detail=f"Supabase API error: {str(exc)}")
+
+
+async def fetch_supabase_projects(access_token: str) -> List[Dict[str, Any]]:
+    data = await _supabase_request("GET", "/v1/projects", access_token)
+    if isinstance(data, list):
+        return data
+    return []
+
+
+async def fetch_supabase_project(access_token: str, project_ref: str) -> Dict[str, Any]:
+    project = await _supabase_request("GET", f"/v1/projects/{project_ref}", access_token)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Supabase project '{project_ref}' not found")
+    return project
+
+
+async def fetch_supabase_api_keys(access_token: str, project_ref: str) -> List[Dict[str, Any]]:
+    data = await _supabase_request("GET", f"/v1/projects/{project_ref}/api-keys", access_token)
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def _format_supabase_secret_name(raw_name: str) -> str:
+    mapping = {
+        "service_role": "supabase_service_role_key",
+        "service-role": "supabase_service_role_key",
+        "service": "supabase_service_role_key",
+        "anon": "supabase_anon_key",
+        "anon_key": "supabase_anon_key",
+    }
+    normalized = raw_name.lower()
+    return mapping.get(normalized, f"supabase_{normalized}_key")
+
+
+async def _sync_supabase_project_secrets(
+    user: User,
+    resource: IntegrationResource,
+    api_keys: List[Dict[str, Any]],
+) -> None:
+    for entry in api_keys:
+        api_key = entry.get("api_key") or entry.get("key")
+        key_name = entry.get("name") or entry.get("key_name")
+        if not api_key or not key_name:
+            continue
+        await _upsert_integration_secret(
+            user=user,
+            provider=SUPABASE_RESOURCE_PROVIDER,
+            name=_format_supabase_secret_name(key_name),
+            secret_type="api_key",
+            value_enc=api_key,
+            resource=resource,
+            metadata={
+                "project_ref": resource.resource_key,
+                "supabase_key_name": key_name,
+            },
+        )
+
+
+async def bind_supabase_project(
+    user: User,
+    project_ref: str,
+    connection_id: Optional[str] = None,
+) -> IntegrationResource:
+    if not project_ref:
+        raise HTTPException(status_code=400, detail="project_ref is required")
+
+    connection, access_token = await get_oauth_token(
+        user,
+        connection_id=connection_id,
+        provider=SUPABASE_OAUTH_PROVIDER,
+    )
+
+    project = await fetch_supabase_project(access_token, project_ref)
+    project_id = str(project.get("id") or project.get("project_id") or project_ref)
+    resource = await _upsert_integration_resource(
+        user=user,
+        oauth_connection=connection,
+        provider=SUPABASE_RESOURCE_PROVIDER,
+        resource_type=SUPABASE_RESOURCE_TYPE_PROJECT,
+        resource_id=project_id,
+        resource_key=project.get("ref") or project_ref,
+        name=project.get("name"),
+        metadata=project,
+    )
+
+    api_keys = await fetch_supabase_api_keys(access_token, project_ref)
+    await _sync_supabase_project_secrets(user, resource, api_keys)
+    return resource

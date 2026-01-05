@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, Field
 from .oauth import oauth
 from .services import (
     store_oauth_connection,
@@ -11,7 +12,14 @@ from .services import (
     has_required_scopes,
     get_connection_for_provider,
     get_valid_access_token,
-    parse_scopes
+    parse_scopes,
+    list_integration_resources,
+    list_resource_secrets,
+    deactivate_integration_resource,
+    serialize_integration_resource,
+    serialize_integration_secret,
+    bind_supabase_project,
+    SUPABASE_OAUTH_PROVIDER,
 )
 from .resource_browser import ResourceBrowser
 import json
@@ -24,10 +32,20 @@ from datetime import datetime, timezone
 from shared.logger import get_logger
 from shared.database.models import User
 logger = get_logger("api.integrations.router")
+from shared.config import config
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+
+class SupabaseBindRequest(BaseModel):
+    project_ref: str = Field(..., min_length=3, description="Supabase project reference")
+    connection_id: Optional[str] = Field(
+        default=None,
+        description="Specific Supabase OAuth connection ID (optional)",
+    )
+
 
 def encode_state(data: dict) -> str:
     return base64.urlsafe_b64encode(json.dumps(data).encode()).decode()
@@ -321,9 +339,9 @@ async def connect(
                     f"Not using incremental authorization."
                 )
         # If no existing connection, don't use incremental authorization (first-time connection)
-    
-    if redirect_uri.scheme == "http":
-        redirect_uri = redirect_uri.replace(scheme="https")
+    if config.seer_mode == "cloud":
+        if redirect_uri.scheme == "http":
+            redirect_uri = redirect_uri.replace(scheme="https")
         
     return await client.authorize_redirect(request, redirect_uri, **kwargs)
 
@@ -455,6 +473,20 @@ async def auth_callback(request: Request, provider: str):
                     detail=f"Failed to fetch GitHub user profile: HTTP {resp.status_code}"
                 )
             user_info = resp.json()
+    elif oauth_provider == SUPABASE_OAUTH_PROVIDER:
+        access_token = token.get('access_token')
+        if not access_token:
+            logger.error(f"No access token in OAuth response. Token keys: {list(token.keys())}")
+            raise HTTPException(
+                status_code=500,
+                detail="No access token in OAuth response. This may indicate an OAuth configuration issue."
+            )
+
+        user_info = {
+            'id': user_id,
+            'integration_type': integration_type,
+            
+        }
     else:
         user_info = {}
     
@@ -542,6 +574,54 @@ async def delete_connection(connection_id: str, request: Request):
     user: User = request.state.db_user
     await delete_connection_by_id(user, connection_id)
     return {"status": "success"}
+
+
+# =============================================================================
+# PERSISTED RESOURCE ROUTES
+# =============================================================================
+
+@router.get("/{provider}/resources/bindings")
+async def list_persisted_resources(
+    request: Request,
+    provider: str,
+    resource_type: Optional[str] = Query(None, description="Filter by resource type (e.g., project)"),
+):
+    user: User = request.state.db_user
+    resources = await list_integration_resources(
+        user,
+        provider=provider,
+        resource_type=resource_type,
+    )
+    return {"items": [serialize_integration_resource(r) for r in resources]}
+
+
+@router.get("/resources/{resource_id}/secrets")
+async def list_resource_secret_bindings(request: Request, resource_id: int):
+    user: User = request.state.db_user
+    secrets = await list_resource_secrets(user, resource_id)
+    return {"items": [serialize_integration_secret(s) for s in secrets]}
+
+
+@router.delete("/resources/{resource_id}")
+async def delete_resource_binding(request: Request, resource_id: int):
+    user: User = request.state.db_user
+    resource = await deactivate_integration_resource(user, resource_id)
+    return {"resource": serialize_integration_resource(resource)}
+
+
+@router.post("/supabase/projects/bind")
+async def bind_supabase_project_route(request: Request, payload: SupabaseBindRequest):
+    """
+    Persist a Supabase project resource and sync its API keys into the vault.
+    """
+
+    user: User = request.state.db_user
+    resource = await bind_supabase_project(user, payload.project_ref, payload.connection_id)
+    secrets = await list_resource_secrets(user, resource.id)
+    return {
+        "resource": serialize_integration_resource(resource),
+        "secrets": [serialize_integration_secret(s) for s in secrets],
+    }
 
 
 # =============================================================================

@@ -16,6 +16,7 @@ from shared.database.workflow_models import (
     WorkflowChatMessage,
     WorkflowProposal,
 )
+from shared.database.models_integrations import IntegrationResource, IntegrationSecret
 from shared.config import config
 
 logger = get_logger("shared.database")
@@ -86,7 +87,11 @@ __all__ = [
     "close_db",
     "WorkflowRecord",
     "WorkflowRun",
-    "WorkflowChatSession", "WorkflowChatMessage", "WorkflowProposal"
+    "WorkflowChatSession",
+    "WorkflowChatMessage",
+    "WorkflowProposal",
+    "IntegrationResource",
+    "IntegrationSecret",
 ]
 
 

@@ -11,7 +11,11 @@ The ResourceBrowser class handles:
 - Filtering by resource type (e.g., only spreadsheets)
 """
 from typing import Any, Dict, List, Optional
+
 import httpx
+from fastapi import HTTPException
+
+from api.integrations.services import fetch_supabase_projects
 from shared.logger import get_logger
 
 logger = get_logger("api.integrations.resource_browser")
@@ -91,6 +95,13 @@ class ResourceBrowser:
             "supports_hierarchy": False,
             "supports_search": False,
         },
+        # Supabase projects
+        "supabase_project": {
+            "display_field": "name",
+            "value_field": "ref",
+            "supports_hierarchy": False,
+            "supports_search": True,
+        },
     }
     
     def __init__(self, access_token: str, provider: str):
@@ -164,6 +175,8 @@ class ResourceBrowser:
             if not repo:
                 return {"items": [], "error": "repo is required"}
             return await self._list_github_branches(repo)
+        elif resource_type == "supabase_project":
+            return await self._list_supabase_projects(query, page_token, page_size)
         else:
             return {"items": [], "error": f"Resource type {resource_type} not implemented"}
     
@@ -454,6 +467,65 @@ class ResourceBrowser:
                 "items": [],
                 "error": str(e),
             }
+
+    async def _list_supabase_projects(
+        self,
+        query: Optional[str],
+        page_token: Optional[str],
+        page_size: int,
+    ) -> Dict[str, Any]:
+        """List Supabase projects available via management API."""
+        try:
+            projects = await fetch_supabase_projects(self.access_token)
+        except HTTPException as exc:
+            return {"items": [], "error": exc.detail, "next_page_token": None}
+        except Exception as exc:
+            logger.exception(f"Error listing Supabase projects: {exc}")
+            return {"items": [], "error": str(exc), "next_page_token": None}
+
+        if query:
+            query_lower = query.lower()
+            projects = [
+                p for p in projects
+                if query_lower in (p.get("name") or "").lower()
+                or query_lower in (p.get("ref") or "").lower()
+            ]
+
+        total = len(projects)
+        start_index = 0
+        if page_token:
+            try:
+                start_index = int(page_token)
+            except ValueError:
+                start_index = 0
+        end_index = start_index + page_size
+        sliced = projects[start_index:end_index]
+        next_page = str(end_index) if end_index < total else None
+
+        items = []
+        for project in sliced:
+            ref = project.get("ref") or project.get("project_ref")
+            project_id = project.get("id") or project.get("project_id")
+            items.append({
+                "id": ref or str(project_id),
+                "name": project.get("name") or ref or project_id,
+                "display_name": project.get("name") or ref or project_id,
+                "type": "project",
+                "project_id": project_id,
+                "project_ref": ref,
+                "organization_id": project.get("organization_id") or project.get("org_id"),
+                "region": project.get("region"),
+                "status": project.get("status"),
+                "rest_url": project.get("api_url") or project.get("restUrl"),
+            })
+
+        return {
+            "items": items,
+            "next_page_token": next_page,
+            "supports_hierarchy": False,
+            "supports_search": True,
+            "total_count": total,
+        }
     
     @classmethod
     def get_supported_resource_types(cls, provider: str) -> List[str]:

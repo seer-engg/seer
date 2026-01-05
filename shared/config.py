@@ -104,6 +104,13 @@ class SeerConfig(BaseSettings):
     GITHUB_CLIENT_ID: Optional[str] = Field(default=None, description="GitHub OAuth client ID")
     GITHUB_CLIENT_SECRET: Optional[str] = Field(default=None, description="GitHub OAuth client secret")
 
+    supabase_client_id: Optional[str] = Field(default=None, description="Supabase management OAuth client ID")
+    supabase_client_secret: Optional[str] = Field(default=None, description="Supabase management OAuth client secret")
+    supabase_management_api_base: str = Field(
+        default="https://api.supabase.com",
+        description="Supabase management API base URL",
+    )
+
     # ============================================================================
     # Trigger Poller
     # ============================================================================

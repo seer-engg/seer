@@ -76,6 +76,7 @@ TORTOISE_ORM: Dict[str, Any] = {
                 "api.projects.models",
                 "shared.database.models",
                 "shared.database.models_oauth",
+            "shared.database.models_integrations",
                 "shared.database.workflow_models",
                 "aerich.models",  # Required for Aerich migrations
             ],
