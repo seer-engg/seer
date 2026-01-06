@@ -241,13 +241,16 @@ Environment variables are loaded in this order (highest to lowest priority):
 
 ## Viewing Current Configuration
 
-```bash
-# Show all configuration
-seer config
+Configuration is loaded from environment variables and `.env` file in this priority order:
 
-# JSON output
-seer config --format json
-```
+1. System environment variables
+2. `.env` file in project root
+3. Defaults in `shared/config.py`
+
+You can view your active configuration by checking:
+- Your `.env` file for local overrides
+- `shared/config.py` for default values and structure
+- Docker container environment via `docker compose exec langgraph-server env | grep -E "OPENAI|ANTHROPIC|GOOGLE|GITHUB|TAVILY"`
 
 ---
 

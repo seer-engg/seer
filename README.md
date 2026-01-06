@@ -1,8 +1,6 @@
-## Seer (`seeragents`)
+## Seer
 
 Seer is a **workflow builder with fine-grained control** for creating and executing automated workflows with integrated tools and services. Build complex automation workflows with visual editing, AI-assisted development, and seamless integrations (Google Workspace, GitHub, and more).
-
-> **Note:** Package name is `seeragents` on PyPI (name conflict), but CLI command is `seer`.
 
 ### Core Architecture Principle
 
@@ -14,10 +12,10 @@ This principle guides our API design: workflows (deterministic, node-based execu
 
 ```bash
 git clone <repo> && cd seer
-uv run seer dev
+docker compose up
 ```
 
-That's it! No installation needed. Starts Docker services (Postgres, backend), installs dependencies in containers, tails logs, waits for readiness, and opens the workflow builder in your browser.
+That's it! Starts Docker services (Postgres, Redis, backend, worker), streams logs, and waits for readiness.
 
 ### Deploy to Railway
 
@@ -31,28 +29,11 @@ Deploy Seer to Railway with one click:
 
 For detailed deployment instructions, see [Railway Deployment Guide](./docs/deployment/RAILWAY.md).
 
-### Installation (Optional)
+### Using the Workflow Editor
 
-**Only needed if you want to use `seer` directly without `uv run`:**
-
-**CLI only (lightweight):**
-```bash
-pip install "seeragents[cli]"  # or: uv pip install "seeragents[cli]"
-```
-
-**Full installation:**
-```bash
-pip install seeragents  # or: uv pip install seeragents
-```
-
-**Local development:**
-```bash
-git clone <repo> && cd seer
-uv venv && source .venv/bin/activate
-uv pip install -e ".[cli]"  # Install CLI only
-rehash  # Refresh shell command cache (zsh) or restart terminal
-seer dev  # Now you can use 'seer' directly
-```
+After running `docker compose up`, the workflow editor is available at:
+- **Frontend**: http://localhost:5173/workflows?backend=http://localhost:8000
+- **Backend API**: http://localhost:8000
 
 ### Configuration
 
@@ -70,42 +51,32 @@ TAVILY_API_KEY=...
 
 Docker automatically configures `DATABASE_URL` and `REDIS_URL`.
 
-**Check configuration:** `seer config` or `seer config --format json`
-
 For complete configuration options, see [Configuration Reference](./docs/advanced/CONFIGURATION.md).
 
 ### Usage
 
-**Development:**
+**Start development environment:**
 ```bash
-uv run seer dev  # Recommended: no installation needed
-# or if installed:
-seer dev
+docker compose up
 ```
 
-**Configuration:**
+**View logs:**
 ```bash
-uv run seer config           # Show current configuration
-uv run seer config --format json  # JSON output format
+docker compose logs -f
 ```
 
-**Data Export:**
+**Stop services:**
 ```bash
-uv run seer export <thread-id>      # Export workflow execution results
-uv run seer export <thread-id> --format markdown  # Export in markdown format
+docker compose down
 ```
 
 ### Development Workflow
 
-**What runs where:**
-- **Local:** CLI tool (`seer` command) - lightweight (`click`/`rich` only)
-- **Docker:** Backend API, Postgres - all dependencies installed here
-
 **Steps:**
-1. Run: `uv run seer dev` (no installation needed!)
+1. Run: `docker compose up`
 2. Code changes hot-reload via volume mounts (uvicorn --reload)
 3. Access workflow builder at: http://localhost:5173/workflows?backend=http://localhost:8000
-4. View logs: `docker compose logs -f`
+4. View logs in the terminal or run: `docker compose logs -f`
 5. Stop: `docker compose down`
 
 **Services started:**
