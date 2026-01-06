@@ -247,7 +247,6 @@ async def chat_with_workflow_endpoint(
     )
 
     # Capture user message event
-    logger.info(f"ANALYTICS DEBUG: About to capture user message for user_id={user.user_id}, type={type(user.user_id)}")
     analytics.capture(
         distinct_id=user.user_id,
         event="chat_agent_message",
@@ -259,7 +258,6 @@ async def chat_with_workflow_endpoint(
             "deployment_mode": config.seer_mode,
         },
     )
-    logger.info(f"ANALYTICS DEBUG: User message capture completed")
     
     # Helper function to invoke agent with timeout
     async def invoke_agent_with_timeout(agent, messages, config, timeout=300.0):
@@ -706,7 +704,6 @@ async def chat_with_workflow_endpoint(
         )
 
         # Capture assistant message event
-        logger.info(f"ANALYTICS DEBUG: About to capture assistant message for user_id={user.user_id}, type={type(user.user_id)}")
         analytics.capture(
             distinct_id=user.user_id,
             event="chat_agent_message",
@@ -720,13 +717,10 @@ async def chat_with_workflow_endpoint(
                 "deployment_mode": config.seer_mode,
             },
         )
-        logger.info(f"ANALYTICS DEBUG: Assistant message capture completed")
 
         # Ensure PostHog events are sent before response returns
-        # Critical in async contexts where middleware flush may race with event processing
-        logger.info("ANALYTICS DEBUG: About to flush PostHog events...")
+        # Critical in containerized environments where consumer threads may not finish before shutdown
         analytics.flush()
-        logger.info("ANALYTICS DEBUG: PostHog flush completed")
 
         return ChatResponse(
             response=response_text,

@@ -61,7 +61,8 @@ class PostHogMiddleware(BaseHTTPMiddleware):
                 },
             )
 
-        # Flush events after each request to prevent data loss in serverless
+        # Flush events with timeout to ensure they're sent before container terminates
+        # In serverless/container environments, consumer threads may not finish before shutdown
         analytics.flush()
 
         return response
