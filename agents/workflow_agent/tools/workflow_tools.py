@@ -13,10 +13,12 @@ from agents.workflow_agent.context import (
     _current_thread_id,
     get_workflow_state_for_thread,
     set_proposed_spec_for_thread,
+    get_user_for_thread,
 )
 from shared.logger import get_logger
 from workflow_compiler.compiler.parse import parse_workflow_spec
-from workflow_compiler.errors import ValidationPhaseError
+from workflow_compiler.errors import ValidationPhaseError, TypeEnvironmentError, WorkflowCompilerError
+from workflow_compiler.runtime.global_compiler import WorkflowCompilerSingleton
 
 logger = get_logger(__name__)
 
@@ -103,6 +105,14 @@ def _coerce_spec_payload(raw_spec: Any) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _error_response(error_type: str, message: str, hint: Optional[str] = None) -> str:
+    """Create a standardized error response for workflow spec validation."""
+    response = {"status": "error", "error_type": error_type, "message": message}
+    if hint:
+        response["hint"] = hint
+    return json.dumps(response)
+
+
 @tool
 async def submit_workflow_spec(
     workflow_spec: Any,
@@ -110,6 +120,10 @@ async def submit_workflow_spec(
 ) -> str:
     """
     Validate and record a complete workflow specification produced by the agent.
+
+    This tool performs full compilation validation including type checking, reference
+    validation, and dependency checks. If validation fails, the error is returned so
+    you can fix the spec and retry.
 
     Args:
         workflow_spec: Full workflow JSON object conforming to workflow_compiler schema.
@@ -119,32 +133,49 @@ async def submit_workflow_spec(
 
     thread_id = _current_thread_id.get()
     if not thread_id:
-        return json.dumps(
-            {
-                "status": "error",
-                "message": "submit_workflow_spec requires an active thread_id context",
-            }
+        return _error_response(
+            "internal", "submit_workflow_spec requires an active thread_id context"
         )
 
     spec_dict = _coerce_spec_payload(workflow_spec)
     if spec_dict is None:
-        return json.dumps(
-            {
-                "status": "error",
-                "message": "workflow_spec must be an object that follows the compiler schema",
-            }
+        return _error_response(
+            "parsing", "workflow_spec must be an object that follows the compiler schema"
         )
 
+    # Phase 1: Pydantic validation
     try:
         validated_spec = parse_workflow_spec(spec_dict)
     except ValidationPhaseError as exc:
         logger.warning("Workflow spec validation failed", exc_info=exc)
-        return json.dumps(
-            {
-                "status": "error",
-                "message": f"Workflow spec validation failed: {exc}",
-            }
+        return _error_response("parsing", f"Workflow spec validation failed: {exc}")
+
+    # Phase 2: Full compilation validation
+    try:
+        user = get_user_for_thread(thread_id)
+        if not user:
+            return _error_response("internal", "User context not available for compilation validation")
+
+        compiler = WorkflowCompilerSingleton.instance()
+        await compiler.compile(user, spec_dict, checkpointer=None)
+
+    except TypeEnvironmentError as exc:
+        logger.warning("Workflow type environment validation failed", exc_info=exc)
+        return _error_response(
+            "type_environment",
+            f"Type validation failed: {exc}",
+            "Check that output schemas match input expectations. Common issue: field name mismatches like 'threadId' vs 'thread_id'."
         )
+    except ValidationPhaseError as exc:
+        logger.warning("Workflow reference validation failed", exc_info=exc)
+        return _error_response(
+            "validation",
+            f"Validation failed: {exc}",
+            "Check that all ${...} references point to valid variables."
+        )
+    except WorkflowCompilerError as exc:
+        logger.warning("Workflow compilation failed", exc_info=exc)
+        return _error_response("compilation", f"Compilation failed: {exc}")
 
     spec_payload = validated_spec.model_dump(mode="json")
     proposal_context = {"spec": spec_payload}

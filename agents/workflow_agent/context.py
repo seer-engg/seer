@@ -1,12 +1,16 @@
 # Context variable to track current thread_id in tool execution
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, TYPE_CHECKING
 from contextvars import ContextVar
 
 _current_thread_id: ContextVar[Optional[str]] = ContextVar('_current_thread_id', default=None)
 
+if TYPE_CHECKING:
+    from api.user.models import User
+
 # Global workflow state context (thread-safe via thread_id key)
 _workflow_state_context: Dict[str, Dict[str, Any]] = {}
 _proposed_specs_context: Dict[str, Dict[str, Any]] = {}
+_thread_user_map: Dict[str, "User"] = {}
 
 
 def set_workflow_state_for_thread(thread_id: str, workflow_state: Dict[str, Any]) -> None:
@@ -39,3 +43,15 @@ def clear_proposed_spec_for_thread(thread_id: Optional[str]) -> None:
     if not thread_id:
         return
     _proposed_specs_context.pop(thread_id, None)
+
+def set_user_for_thread(thread_id: str, user: "User") -> None:
+    """Store User object for a thread."""
+    _thread_user_map[thread_id] = user
+
+def get_user_for_thread(thread_id: str) -> Optional["User"]:
+    """Retrieve User object for a thread."""
+    return _thread_user_map.get(thread_id)
+
+def clear_user_for_thread(thread_id: str) -> None:
+    """Clear User object for a thread."""
+    _thread_user_map.pop(thread_id, None)

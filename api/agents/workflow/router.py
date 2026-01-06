@@ -5,6 +5,7 @@ from typing import Optional, Dict, List, Any, Tuple
 from fastapi import APIRouter, Request, HTTPException, Query
 from shared.logger import get_logger
 from shared.config import config
+from shared.analytics import analytics
 from copy import deepcopy
 
 from .models import (
@@ -42,6 +43,8 @@ from agents.workflow_agent import (
     set_workflow_state_for_thread,
     get_proposed_spec_for_thread,
     clear_proposed_spec_for_thread,
+    set_user_for_thread,
+    clear_user_for_thread,
 )
 from api.agents.checkpointer import get_checkpointer, get_checkpointer_with_retry, _recreate_checkpointer
 import uuid
@@ -120,6 +123,21 @@ async def _maybe_create_proposal_from_spec(
         return None, None, error_detail
     await proposal.fetch_related('created_by', 'workflow', 'session')
     proposal_public = WorkflowProposalPublic.model_validate(proposal, from_attributes=True)
+
+    # Capture workflow proposal creation event
+    analytics.capture(
+        distinct_id=user.user_id,
+        event="workflow_proposal_created",
+        properties={
+            "proposal_id": proposal.id,
+            "workflow_id": workflow.workflow_id if workflow else None,
+            "session_id": session.id if session else None,
+            "model": model_name,
+            "spec_node_count": len(spec.get("nodes", [])),
+            "deployment_mode": config.seer_mode,
+        },
+    )
+
     return proposal, proposal_public, None
 
 # Chat endpoints
@@ -204,9 +222,10 @@ async def chat_with_workflow_endpoint(
     
 
     # Store workflow_state in context for tools to access
-    
+
     if thread_id:
         set_workflow_state_for_thread(thread_id, workflow_state)
+        set_user_for_thread(thread_id, user)
     
     # Create agent with checkpointer and workflow_state
     agent = create_workflow_chat_agent(
@@ -226,6 +245,21 @@ async def chat_with_workflow_endpoint(
         role="user",
         content=chat_request.message,
     )
+
+    # Capture user message event
+    logger.info(f"ANALYTICS DEBUG: About to capture user message for user_id={user.user_id}, type={type(user.user_id)}")
+    analytics.capture(
+        distinct_id=user.user_id,
+        event="chat_agent_message",
+        properties={
+            "workflow_id": workflow_id,
+            "session_id": session_id,
+            "message_role": "user",
+            "message_length": len(chat_request.message),
+            "deployment_mode": config.seer_mode,
+        },
+    )
+    logger.info(f"ANALYTICS DEBUG: User message capture completed")
     
     # Helper function to invoke agent with timeout
     async def invoke_agent_with_timeout(agent, messages, config, timeout=300.0):
@@ -660,7 +694,7 @@ async def chat_with_workflow_endpoint(
             model_name=model,
             proposal_payload=proposal_payload,
         )
-        
+
         # Save assistant message to database
         await save_chat_message(
             session_id=session_id,
@@ -670,7 +704,30 @@ async def chat_with_workflow_endpoint(
             suggested_edits=proposal_payload,
             proposal=proposal,
         )
-        
+
+        # Capture assistant message event
+        logger.info(f"ANALYTICS DEBUG: About to capture assistant message for user_id={user.user_id}, type={type(user.user_id)}")
+        analytics.capture(
+            distinct_id=user.user_id,
+            event="chat_agent_message",
+            properties={
+                "workflow_id": workflow_id,
+                "session_id": session_id,
+                "message_role": "assistant",
+                "message_length": len(response_text),
+                "model": model,
+                "created_proposal": proposal_public is not None,
+                "deployment_mode": config.seer_mode,
+            },
+        )
+        logger.info(f"ANALYTICS DEBUG: Assistant message capture completed")
+
+        # Ensure PostHog events are sent before response returns
+        # Critical in async contexts where middleware flush may race with event processing
+        logger.info("ANALYTICS DEBUG: About to flush PostHog events...")
+        analytics.flush()
+        logger.info("ANALYTICS DEBUG: PostHog flush completed")
+
         return ChatResponse(
             response=response_text,
             proposal=proposal_public,
@@ -689,6 +746,7 @@ async def chat_with_workflow_endpoint(
         )
     finally:
         clear_proposed_spec_for_thread(thread_id)
+        clear_user_for_thread(thread_id)
 
 
 @router.post("/{workflow_id}/chat/sessions", response_model=ChatSession)
@@ -938,9 +996,23 @@ async def accept_proposal_endpoint(
     proposal_id: int,
 ) -> WorkflowProposalActionResponse:
     """Accept a workflow proposal and apply its changes."""
-    workflow = await get_workflow(_require_user(request), workflow_id)
+    user = _require_user(request)
+    workflow = await get_workflow(user, workflow_id)
     proposal, workflow = await accept_workflow_proposal(workflow, proposal_id)
     await proposal.fetch_related('created_by', 'workflow', 'session')
+
+    # Capture proposal acceptance event
+    analytics.capture(
+        distinct_id=user.user_id,
+        event="workflow_proposal_accepted",
+        properties={
+            "proposal_id": proposal_id,
+            "workflow_id": workflow_id,
+            "session_id": proposal.session.id if proposal.session else None,
+            "deployment_mode": config.seer_mode,
+        },
+    )
+
     return WorkflowProposalActionResponse(
         proposal=WorkflowProposalPublic.model_validate(proposal, from_attributes=True),
         workflow_graph=workflow_state_from_spec(workflow.spec),
@@ -954,9 +1026,23 @@ async def reject_proposal_endpoint(
     proposal_id: int,
 ) -> WorkflowProposalActionResponse:
     """Reject a workflow proposal without applying changes."""
-    workflow = await get_workflow(_require_user(request), workflow_id)
+    user = _require_user(request)
+    workflow = await get_workflow(user, workflow_id)
     proposal = await reject_workflow_proposal(workflow, proposal_id)
     await proposal.fetch_related('created_by', 'workflow', 'session')
+
+    # Capture proposal rejection event
+    analytics.capture(
+        distinct_id=user.user_id,
+        event="workflow_proposal_rejected",
+        properties={
+            "proposal_id": proposal_id,
+            "workflow_id": workflow_id,
+            "session_id": proposal.session.id if proposal.session else None,
+            "deployment_mode": config.seer_mode,
+        },
+    )
+
     return WorkflowProposalActionResponse(
         proposal=WorkflowProposalPublic.model_validate(proposal, from_attributes=True),
         workflow_graph=None,

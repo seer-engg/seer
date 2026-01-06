@@ -5,6 +5,9 @@ from .context import (
     set_workflow_state_for_thread,
     get_proposed_spec_for_thread,
     clear_proposed_spec_for_thread,
+    set_user_for_thread,
+    get_user_for_thread,
+    clear_user_for_thread,
 )
 __all__ = [
     "create_workflow_chat_agent",
@@ -13,4 +16,7 @@ __all__ = [
     "set_workflow_state_for_thread",
     "get_proposed_spec_for_thread",
     "clear_proposed_spec_for_thread",
+    "set_user_for_thread",
+    "get_user_for_thread",
+    "clear_user_for_thread",
 ]
