@@ -36,11 +36,15 @@ _poll_scheduler = None
 async def _on_worker_startup(_: TaskiqState) -> None:
     """Initialize shared resources before processing tasks."""
     from api.triggers.polling import TriggerPollScheduler  # lazy import
+    from shared.analytics import analytics  # PostHog analytics
 
     global _poll_scheduler
 
     logger.info("Initializing Taskiq worker")
     await init_db()
+
+    # Initialize PostHog for worker analytics
+    analytics.initialize()
 
     if config.trigger_poller_enabled:
         logger.info("Starting trigger poll scheduler in worker")
@@ -57,12 +61,17 @@ async def _on_worker_startup(_: TaskiqState) -> None:
 @broker.on_event(TaskiqEvents.WORKER_SHUTDOWN)
 async def _on_worker_shutdown(_: TaskiqState) -> None:
     """Clean up background services when worker exits."""
+    from shared.analytics import analytics  # PostHog analytics
     global _poll_scheduler
 
     if _poll_scheduler:
         logger.info("Stopping trigger poll scheduler")
         await _poll_scheduler.stop()
         _poll_scheduler = None
+
+    # Flush and shutdown PostHog before closing DB
+    analytics.flush()
+    analytics.shutdown()
 
     await close_db()
     logger.info("Taskiq worker shutdown complete")

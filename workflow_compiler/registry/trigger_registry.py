@@ -99,6 +99,19 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
             metadata={"polling": True, "integration": "gmail"},
         )
     )
+    registry.register(
+        TriggerDefinition(
+            key="schedule.cron",
+            title="Cron Schedule",
+            provider="schedule",
+            mode="polling",
+            description="Execute workflow on a cron schedule with timezone support.",
+            event_schema=_enveloped_event_schema(_cron_schedule_payload_schema()),
+            config_schema=_cron_schedule_config_schema(),
+            sample_event=_cron_schedule_sample_event(),
+            metadata={"polling": True, "integration": "schedule"},
+        )
+    )
 
 
 def _gmail_email_received_payload_schema() -> JsonSchema:
@@ -194,6 +207,62 @@ def _gmail_email_received_sample_event() -> Dict[str, Any]:
         "received_at": "2025-12-13T10:00:05Z",
         "data": payload,
         "raw": {"payload": payload},
+    }
+
+
+def _cron_schedule_payload_schema() -> JsonSchema:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "scheduled_time": {"type": "string", "format": "date-time"},
+            "actual_time": {"type": "string", "format": "date-time"},
+            "cron_expression": {"type": "string"},
+            "timezone": {"type": "string"},
+        },
+        "required": ["scheduled_time", "actual_time", "cron_expression", "timezone"],
+    }
+
+
+def _cron_schedule_config_schema() -> JsonSchema:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "cron_expression": {
+                "type": "string",
+                "description": "5-field cron expression (minute hour day month weekday)",
+                "pattern": r"^(\*|([0-9]|1[0-9]|2[0-9]|3[0-9]|4[0-9]|5[0-9])|\*/[0-9]+)(\s+(\*|([0-9]|1[0-9]|2[0-3])|\*/[0-9]+)){1}(\s+(\*|([1-9]|[12][0-9]|3[01])|\*/[0-9]+)){1}(\s+(\*|([1-9]|1[0-2])|\*/[0-9]+)){1}(\s+(\*|[0-6]|\*/[0-9]+)){1}$",
+            },
+            "timezone": {
+                "type": "string",
+                "description": "IANA timezone identifier (e.g., America/New_York, UTC)",
+                "default": "UTC",
+            },
+            "description": {
+                "type": "string",
+                "description": "Optional human-readable description of the schedule",
+            },
+        },
+        "required": ["cron_expression", "timezone"],
+    }
+
+
+def _cron_schedule_sample_event() -> Dict[str, Any]:
+    return {
+        "id": "evt_sample_schedule_cron",
+        "trigger_key": "schedule.cron",
+        "provider": "schedule",
+        "account_id": None,
+        "occurred_at": "2025-01-05T10:00:00Z",
+        "received_at": "2025-01-05T10:00:01Z",
+        "data": {
+            "scheduled_time": "2025-01-05T10:00:00Z",
+            "actual_time": "2025-01-05T10:00:01Z",
+            "cron_expression": "0 10 * * *",
+            "timezone": "America/New_York",
+        },
+        "raw": None,
     }
 
 

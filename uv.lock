@@ -615,6 +615,19 @@ wheels = [
 ]
 
 [[package]]
+name = "croniter"
+version = "6.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "python-dateutil" },
+    { name = "pytz" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ad/2f/44d1ae153a0e27be56be43465e5cb39b9650c781e001e7864389deb25090/croniter-6.0.0.tar.gz", hash = "sha256:37c504b313956114a983ece2c2b07790b1f1094fe9d81cc94739214748255577", size = 64481, upload-time = "2024-12-17T17:17:47.32Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/4b/290b4c3efd6417a8b0c284896de19b1d5855e6dbdb97d2a35e68fa42de85/croniter-6.0.0-py2.py3-none-any.whl", hash = "sha256:2f878c3856f17896979b2a4379ba1f09c83e374931ea15cc835c5dd2eee9b368", size = 25468, upload-time = "2024-12-17T17:17:45.359Z" },
+]
+
+[[package]]
 name = "cryptography"
 version = "44.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -3338,6 +3351,7 @@ dependencies = [
     { name = "authlib" },
     { name = "click" },
     { name = "coolname" },
+    { name = "croniter" },
     { name = "e2b" },
     { name = "e2b-code-interpreter" },
     { name = "fastapi" },
@@ -3358,6 +3372,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
+    { name = "pytz" },
     { name = "pyyaml" },
     { name = "requests" },
     { name = "rich" },
@@ -3393,6 +3408,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.1.0" },
     { name = "click", marker = "extra == 'cli'", specifier = ">=8.1.0" },
     { name = "coolname", specifier = "==2.2.0" },
+    { name = "croniter", specifier = ">=2.0.0" },
     { name = "e2b", specifier = "==2.4.0" },
     { name = "e2b-code-interpreter", specifier = "==2.2.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
@@ -3414,6 +3430,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-dotenv", marker = "extra == 'cli'", specifier = ">=1.0.0" },
+    { name = "pytz", specifier = ">=2024.1" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "requests", specifier = ">=2.32.3" },
     { name = "rich", specifier = ">=13.0.0" },

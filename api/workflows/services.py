@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
@@ -21,6 +22,7 @@ from shared.database.workflow_models import (
 )
 from shared.tools.base import list_tools as registry_list_tools
 from shared.config import config as shared_config
+from shared.analytics import analytics
 from workflow_compiler.errors import WorkflowCompilerError, ValidationPhaseError
 from workflow_compiler.runtime.global_compiler import WorkflowCompilerSingleton
 from workflow_compiler.registry.trigger_registry import trigger_registry
@@ -927,6 +929,26 @@ async def _execute_compiled_run(
         status=WorkflowRunStatus.RUNNING,
         started_at=_now(),
     )
+
+    # Track workflow execution start
+    start_time = time.time()
+    execution_mode = getattr(run, '_analytics_execution_mode', 'taskiq_worker')
+
+    # Capture workflow start event
+    analytics.capture(
+        distinct_id=user.user_id,
+        event="workflow_run_started",
+        properties={
+            "run_id": run.run_id,
+            "workflow_id": run.workflow.workflow_id if run.workflow else None,
+            "workflow_name": run.workflow.name if run.workflow else "draft",
+            "execution_mode": execution_mode,
+            "has_inputs": bool(inputs),
+            "input_keys": list(inputs.keys()) if inputs else [],
+            "deployment_mode": shared_config.seer_mode,
+        },
+    )
+
     checkpointer = await get_checkpointer()
     try:
         compiled = await compiler.compile(
@@ -940,6 +962,24 @@ async def _execute_compiled_run(
             finished_at=_now(),
             error=str(exc),
         )
+
+        # Capture compilation failure event
+        duration_ms = (time.time() - start_time) * 1000
+        analytics.capture(
+            distinct_id=user.user_id,
+            event="workflow_run_failed",
+            properties={
+                "run_id": run.run_id,
+                "workflow_id": run.workflow.workflow_id if run.workflow else None,
+                "workflow_name": run.workflow.name if run.workflow else "draft",
+                "execution_mode": execution_mode,
+                "duration_ms": round(duration_ms, 2),
+                "error_type": "CompilationError",
+                "error_message": str(exc)[:500],
+                "deployment_mode": shared_config.seer_mode,
+            },
+        )
+
         _raise_problem(
             type_uri=COMPILE_PROBLEM,
             title="Compilation failed",
@@ -967,6 +1007,24 @@ async def _execute_compiled_run(
             finished_at=_now(),
             error=str(exc),
         )
+
+        # Capture runtime failure event
+        duration_ms = (time.time() - start_time) * 1000
+        analytics.capture(
+            distinct_id=user.user_id,
+            event="workflow_run_failed",
+            properties={
+                "run_id": run.run_id,
+                "workflow_id": run.workflow.workflow_id if run.workflow else None,
+                "workflow_name": run.workflow.name if run.workflow else "draft",
+                "execution_mode": execution_mode,
+                "duration_ms": round(duration_ms, 2),
+                "error_type": "RuntimeError",
+                "error_message": str(exc)[:500],
+                "deployment_mode": shared_config.seer_mode,
+            },
+        )
+
         _raise_problem(
             type_uri=RUN_PROBLEM,
             title="Run failed",
@@ -980,12 +1038,35 @@ async def _execute_compiled_run(
             finished_at=_now(),
             error=str(exc),
         )
+
+        # Capture general exception event
+        duration_ms = (time.time() - start_time) * 1000
+        analytics.capture(
+            distinct_id=user.user_id,
+            event="workflow_run_failed",
+            properties={
+                "run_id": run.run_id,
+                "workflow_id": run.workflow.workflow_id if run.workflow else None,
+                "workflow_name": run.workflow.name if run.workflow else "draft",
+                "execution_mode": execution_mode,
+                "duration_ms": round(duration_ms, 2),
+                "error_type": "Exception",
+                "error_message": str(exc)[:500],
+                "deployment_mode": shared_config.seer_mode,
+            },
+        )
+
         _raise_problem(
             type_uri=RUN_PROBLEM,
             title="Run failed",
             detail=str(exc),
             status=400,
         )
+
+    # Store timing info for _complete_run to use
+    run._analytics_start_time = start_time
+    run._analytics_execution_mode = execution_mode
+
     return result
 
 
@@ -996,6 +1077,26 @@ async def _complete_run(run: WorkflowRun, output: Dict[str, Any]) -> WorkflowRun
         output=output,
     )
     await run.refresh_from_db()
+
+    # Capture workflow completion event
+    if hasattr(run, '_analytics_start_time'):
+        duration_ms = (time.time() - run._analytics_start_time) * 1000
+        execution_mode = getattr(run, '_analytics_execution_mode', 'unknown')
+
+        analytics.capture(
+            distinct_id=run.user.user_id,
+            event="workflow_run_completed",
+            properties={
+                "run_id": run.run_id,
+                "workflow_id": run.workflow.workflow_id if run.workflow else None,
+                "workflow_name": run.workflow.name if run.workflow else "draft",
+                "execution_mode": execution_mode,
+                "duration_ms": round(duration_ms, 2),
+                "output_keys": list(output.keys()) if output else [],
+                "deployment_mode": shared_config.seer_mode,
+            },
+        )
+
     return run
 
 
@@ -1007,6 +1108,9 @@ async def run_draft_workflow(user: User, payload: api_models.RunFromSpecRequest)
         inputs=payload.inputs,
         config_payload=payload.config,
     )
+    # Mark execution mode for tracking
+    run._analytics_execution_mode = "api_sync"
+
     output = await _execute_compiled_run(run, user, inputs=payload.inputs, config_payload=payload.config)
     run = await _complete_run(run, output)
     return _serialize_run(run)
@@ -1503,6 +1607,21 @@ async def run_saved_workflow(
     )
     try:
         await execute_saved_workflow_task.kiq(run_id=run.id, user_id=user.id)
+
+        # Capture async workflow start event (actual execution tracked in worker)
+        analytics.capture(
+            distinct_id=user.user_id,
+            event="workflow_run_started",
+            properties={
+                "run_id": run.run_id,
+                "workflow_id": record.workflow_id,
+                "workflow_name": record.name,
+                "execution_mode": "api_async",
+                "has_inputs": bool(payload.inputs),
+                "input_keys": list((payload.inputs or {}).keys()),
+                "deployment_mode": shared_config.seer_mode,
+            },
+        )
     except Exception as exc:
         logger.exception(
             "Failed to enqueue saved workflow run",
@@ -1536,6 +1655,9 @@ async def execute_saved_workflow_run(*, run_id: int, user_id: int) -> None:
 
     inputs = dict(run.inputs or {})
     config_payload = dict(run.config or {})
+
+    # Mark execution mode for tracking
+    run._analytics_execution_mode = "taskiq_worker"
 
     try:
         output = await _execute_compiled_run(
