@@ -1875,8 +1875,8 @@ async def run_saved_workflow(
             event="workflow_run_started",
             properties={
                 "run_id": run.run_id,
-                "workflow_id": record.workflow_id,
-                "workflow_name": record.name,
+                "workflow_id": workflow.id,
+                "workflow_name": workflow.name,
                 "execution_mode": "api_async",
                 "has_inputs": bool(payload.inputs),
                 "input_keys": list((payload.inputs or {}).keys()),
