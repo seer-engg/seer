@@ -628,6 +628,22 @@ def _serialize_version_summary(
     )
 
 
+def _serialize_version_list_item(
+    version: WorkflowVersion,
+    *,
+    latest_version_id: Optional[int],
+    published_version_id: Optional[int],
+) -> api_models.WorkflowVersionListItem:
+    summary = _serialize_version_summary(version)
+    if summary is None:
+        raise RuntimeError("Failed to serialize workflow version")
+    return api_models.WorkflowVersionListItem(
+        **summary.model_dump(),
+        is_latest=version.id == latest_version_id if latest_version_id else False,
+        is_published=version.id == published_version_id if published_version_id else False,
+    )
+
+
 async def _recent_version(workflow: Workflow) -> Optional[WorkflowVersion]:
     return await WorkflowVersion.filter(workflow=workflow).order_by("-created_at").first()
 
@@ -720,6 +736,34 @@ async def list_workflows(
 async def get_workflow(user: User, workflow_id: str) -> api_models.WorkflowResponse:
     workflow = await _get_workflow(user, workflow_id)
     return await _workflow_response(workflow)
+
+
+async def list_workflow_versions(user: User, workflow_id: str) -> api_models.WorkflowVersionListResponse:
+    workflow = await _get_workflow(user, workflow_id)
+    draft = workflow.draft or await WorkflowDraft.get(workflow=workflow)
+    versions = (
+        await WorkflowVersion.filter(workflow=workflow)
+        .order_by("-created_at")
+        .all()
+    )
+    published_version_obj: Optional[WorkflowVersion] = getattr(workflow, "published_version", None)
+    published_version_id = published_version_obj.id if isinstance(published_version_obj, WorkflowVersion) else None
+    latest_version_id = versions[0].id if versions else None
+    items = [
+        _serialize_version_list_item(
+            version,
+            latest_version_id=latest_version_id,
+            published_version_id=published_version_id,
+        )
+        for version in versions
+    ]
+    return api_models.WorkflowVersionListResponse(
+        workflow_id=workflow.workflow_id,
+        draft_revision=draft.revision,
+        versions=items,
+        latest_version_id=latest_version_id,
+        published_version_id=published_version_id,
+    )
 
 
 async def _get_workflow(user: User, workflow_id: str) -> Workflow:
@@ -834,6 +878,39 @@ async def patch_workflow_draft(
     await draft.save()
     await Workflow.filter(id=workflow.id).update(updated_at=_now())
     await workflow.fetch_related("draft")
+    return await _workflow_response(workflow)
+
+
+async def restore_workflow_version(
+    user: User,
+    workflow_id: str,
+    version_id: int,
+    payload: api_models.WorkflowVersionRestoreRequest,
+) -> api_models.WorkflowResponse:
+    workflow = await _get_workflow(user, workflow_id)
+    try:
+        version = await WorkflowVersion.get(id=version_id, workflow=workflow)
+    except DoesNotExist:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Version not found",
+            detail=f"Version '{version_id}' does not belong to workflow '{workflow_id}'",
+            status=404,
+        )
+    draft = workflow.draft or await WorkflowDraft.get(workflow=workflow)
+    if payload.base_revision is not None and payload.base_revision != draft.revision:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Draft revision mismatch",
+            detail="Draft has changed since last fetch",
+            status=409,
+        )
+    draft.spec = json.loads(json.dumps(version.spec or {}))
+    draft.revision += 1
+    draft.updated_by = user
+    await draft.save()
+    await Workflow.filter(id=workflow.id).update(updated_at=_now())
+    await workflow.fetch_related("draft", "published_version")
     return await _workflow_response(workflow)
 
 
@@ -1826,9 +1903,11 @@ __all__ = [
     "create_workflow",
     "list_workflows",
     "get_workflow",
+    "list_workflow_versions",
     "update_workflow",
     "apply_workflow_from_spec",
     "patch_workflow_draft",
+    "restore_workflow_version",
     "publish_workflow",
     "delete_workflow",
     "suggest_expression",

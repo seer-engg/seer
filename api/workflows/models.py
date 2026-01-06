@@ -195,12 +195,29 @@ class WorkflowPublishRequest(BaseModel):
     version_id: int
 
 
+class WorkflowVersionRestoreRequest(BaseModel):
+    base_revision: Optional[int] = None
+
+
 class WorkflowVersionSummary(BaseModel):
     version_id: int
     status: str
     version_number: Optional[int] = None
     created_from_draft_revision: Optional[int] = None
     created_at: datetime
+
+
+class WorkflowVersionListItem(WorkflowVersionSummary):
+    is_latest: bool = False
+    is_published: bool = False
+
+
+class WorkflowVersionListResponse(BaseModel):
+    workflow_id: str
+    draft_revision: int
+    versions: List[WorkflowVersionListItem] = Field(default_factory=list)
+    latest_version_id: Optional[int] = None
+    published_version_id: Optional[int] = None
 
 
 class WorkflowSummary(BaseModel):
@@ -350,10 +367,13 @@ __all__ = [
     "WorkflowUpdateRequest",
     "WorkflowDraftPatchRequest",
     "WorkflowPublishRequest",
+    "WorkflowVersionRestoreRequest",
     "WorkflowResponse",
     "WorkflowSummary",
     "WorkflowListResponse",
     "WorkflowVersionSummary",
+    "WorkflowVersionListResponse",
+    "WorkflowVersionListItem",
     "RunFromSpecRequest",
     "RunFromWorkflowRequest",
     "RunResponse",
