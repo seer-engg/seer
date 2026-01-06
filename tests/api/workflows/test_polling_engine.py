@@ -12,6 +12,7 @@ from api.triggers.polling.engine import TriggerPollEngine
 from api.workflows import models as api_models
 from api.workflows import services as workflow_services
 from worker.tasks import triggers as worker_trigger_tasks
+from worker.tasks import workflows as worker_workflow_tasks
 from shared.database.models_oauth import OAuthConnection
 from shared.database.workflow_models import (
     TriggerEvent,
@@ -30,8 +31,22 @@ async def _create_workflow(user, workflow_spec):
 
 
 @pytest_asyncio.fixture
-async def gmail_poll_subscription(db_user, workflow_spec):
+async def gmail_poll_subscription(db_user, workflow_spec, monkeypatch):
     workflow = await _create_workflow(db_user, workflow_spec)
+    async def immediate_run(*_, **kwargs):
+        await workflow_services.execute_saved_workflow_run(**kwargs)
+
+    monkeypatch.setattr(worker_workflow_tasks.execute_saved_workflow, "kiq", immediate_run)
+    run = await workflow_services.run_saved_workflow(
+        db_user,
+        workflow.workflow_id,
+        api_models.RunFromWorkflowRequest(inputs={"user_id": 11}),
+    )
+    await workflow_services.publish_workflow(
+        db_user,
+        workflow.workflow_id,
+        api_models.WorkflowPublishRequest(version_id=run.workflow_version_id),
+    )
     connection = await OAuthConnection.create(
         user=db_user,
         provider="gmail",

@@ -2,6 +2,7 @@
 Tool executor for running registered tools with unified credential resolution.
 """
 
+import time
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
@@ -10,6 +11,8 @@ from shared.database.models import User
 from shared.logger import get_logger
 from shared.tools.base import get_tool
 from shared.tools.credential_resolver import CredentialResolver, ResolvedCredentials
+from shared.analytics import analytics
+from shared.config import config
 
 logger = get_logger("shared.tools.executor")
 
@@ -53,18 +56,41 @@ async def execute_tool(
         logger.exception("Credential resolution failed", extra={"tool": tool_name})
         raise HTTPException(status_code=500, detail=f"Credential resolution failed: {str(exc)}") from exc
 
+    # Track tool execution timing and status
+    start_time = time.time()
+    success = True
+    error_type = None
+
     try:
         logger.info(f"Executing tool '{tool_name}' for user {user.user_id}")
         result = await _execute_with_optional_credentials(tool, resolved, arguments or {})
         logger.info(f"Tool '{tool_name}' executed successfully")
         return result
     except HTTPException:
+        success = False
+        error_type = "HTTPException"
         raise
     except Exception as e:
+        success = False
+        error_type = type(e).__name__
         logger.exception(f"Tool execution failed: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Tool execution failed: {str(e)}"
+        )
+    finally:
+        # Always capture tool execution event
+        duration_ms = (time.time() - start_time) * 1000
+        analytics.capture(
+            distinct_id=user.user_id,
+            event="tool_executed",
+            properties={
+                "tool_name": tool_name,
+                "duration_ms": round(duration_ms, 2),
+                "success": success,
+                "error_type": error_type,
+                "deployment_mode": config.seer_mode,
+            },
         )
 
 

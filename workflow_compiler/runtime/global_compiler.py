@@ -387,7 +387,15 @@ class WorkflowCompilerSingleton:
                 invocation["prompt"], invocation.get("inputs")
             )
             logger.info(f"Schema: {schema}")
-            structured_llm = llm.with_structured_output(schema, method="json_schema")
+
+            # Ensure schema has required top-level keys for LangChain
+            enriched_schema = {
+                "title": "Output",
+                "description": "Structured output schema",
+                **schema
+            }
+
+            structured_llm = llm.with_structured_output(enriched_schema, method="json_schema")
             response = structured_llm.invoke(prompt)
             return response
 

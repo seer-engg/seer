@@ -210,7 +210,7 @@ async def process_trigger_run_job(subscription_id: int, event_id: int) -> None:
     Invoked by Taskiq worker tasks to convert stored trigger events into workflow runs.
     """
     subscription = await TriggerSubscription.get(id=subscription_id)
-    await subscription.fetch_related("workflow", "user")
+    await subscription.fetch_related("workflow", "workflow__published_version", "user")
     event = await TriggerEvent.get(id=event_id)
 
     if not subscription.enabled:
@@ -243,7 +243,16 @@ async def process_trigger_run_job(subscription_id: int, event_id: int) -> None:
         )
         return
 
-    spec = WorkflowSpec.model_validate(workflow.spec)
+    published_version = workflow.published_version
+    if published_version is None:
+        await TriggerEvent.filter(id=event.id).update(
+            status=TriggerEventStatus.FAILED,
+            error={"detail": "Workflow has no published version"},
+        )
+        logger.error("Trigger run job processed (no published version)")
+        return
+
+    spec = WorkflowSpec.model_validate(published_version.spec)
     bindings = dict(subscription.bindings or {})
     try:
         resolved_inputs = workflow_services._evaluate_bindings(bindings, envelope)
@@ -268,18 +277,21 @@ async def process_trigger_run_job(subscription_id: int, event_id: int) -> None:
         )
         return
 
-    run = await WorkflowRun.create(
-        user=user,
+    run = await workflow_services._create_run_record(
+        user,
         workflow=workflow,
-        workflow_version=workflow.version,
-        spec=workflow.spec,
+        workflow_version=published_version,
+        spec=spec,
         inputs=resolved_inputs,
-        config={},
-        status=WorkflowRunStatus.QUEUED,
+        config_payload={},
         source=WorkflowRunSource.TRIGGER,
+    )
+    await WorkflowRun.filter(id=run.id).update(
         subscription=subscription,
         trigger_event=event,
     )
+    run.subscription = subscription
+    run.trigger_event = event
     logger.info(
         "Trigger run job processed (run created)"
     )

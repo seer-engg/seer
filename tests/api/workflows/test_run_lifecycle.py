@@ -30,6 +30,7 @@ async def test_run_lifecycle_from_saved_and_draft(db_user, workflow_spec, monkey
         api_models.RunFromWorkflowRequest(inputs={"user_id": TEST_USER_ID}),
     )
     assert saved_run.status == services.WorkflowRunStatus.SUCCEEDED.value
+    assert saved_run.workflow_version_id is not None
 
     status = await services.get_run_status(db_user, saved_run.run_id)
     assert status.run_id == saved_run.run_id
@@ -75,4 +76,39 @@ async def test_list_workflow_runs_returns_recent_runs(db_user, workflow_spec, mo
     assert latest_run.run_id == run.run_id
     assert latest_run.status == services.WorkflowRunStatus.SUCCEEDED.value
     assert latest_run.inputs.get("user_id") == TEST_USER_ID
+    assert latest_run.workflow_version_id is not None
+
+
+@pytest.mark.asyncio
+async def test_publish_promotes_version(db_user, workflow_spec, monkeypatch):
+    created = await services.create_workflow(
+        db_user,
+        api_models.WorkflowCreateRequest(
+            name="Workflow publish",
+            description=None,
+            spec=workflow_spec,
+            tags=[],
+        ),
+    )
+
+    async def immediate_run(*_, **kwargs):
+        await services.execute_saved_workflow_run(**kwargs)
+
+    monkeypatch.setattr(worker_workflow_tasks.execute_saved_workflow, "kiq", immediate_run)
+
+    run = await services.run_saved_workflow(
+        db_user,
+        created.workflow_id,
+        api_models.RunFromWorkflowRequest(inputs={"user_id": TEST_USER_ID}),
+    )
+    assert run.workflow_version_id is not None
+
+    published = await services.publish_workflow(
+        db_user,
+        created.workflow_id,
+        api_models.WorkflowPublishRequest(version_id=run.workflow_version_id),
+    )
+    assert published.published_version is not None
+    assert published.published_version.version_id == run.workflow_version_id
+    assert published.published_version.status == "RELEASED"
 
