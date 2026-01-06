@@ -6,6 +6,7 @@ from datetime import datetime
 from fastapi import APIRouter, Request, HTTPException, Query
 from pydantic import BaseModel, Field
 from shared.logger import get_logger
+from shared.database.workflow_models import Workflow, parse_workflow_public_id
 from .checkpointer import get_checkpointer
 
 logger = get_logger("api.agents.traces")
@@ -133,22 +134,20 @@ async def _get_workflow_name(workflow_id: Optional[str]) -> Optional[str]:
     """Lookup workflow name from database."""
     if not workflow_id:
         return None
-    
+
     try:
-        from shared.database.workflow_models import WorkflowRecord
-        
-        # Parse workflow_id (format: wf_123)
-        if workflow_id.startswith("wf_"):
-            try:
-                workflow_db_id = int(workflow_id[3:])
-                workflow = await WorkflowRecord.get_or_none(id=workflow_db_id)
-                if workflow:
-                    return workflow.name
-            except (ValueError, Exception) as e:
-                logger.debug(f"Could not lookup workflow name for {workflow_id}: {e}")
-    except Exception as e:
-        logger.debug(f"Error looking up workflow name: {e}")
-    
+        pk = parse_workflow_public_id(workflow_id)
+    except ValueError as exc:
+        logger.debug(f"Invalid workflow public id '{workflow_id}': {exc}")
+        return None
+
+    try:
+        workflow = await Workflow.get_or_none(id=pk)
+        if workflow:
+            return workflow.name
+    except Exception as exc:
+        logger.debug(f"Could not lookup workflow name for {workflow_id}: {exc}")
+
     return None
 
 

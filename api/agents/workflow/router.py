@@ -24,7 +24,6 @@ from .services import (
     accept_workflow_proposal,
     reject_workflow_proposal,
     workflow_state_snapshot,
-    workflow_state_from_spec,
 )
 
 from .chat_schema import (
@@ -877,7 +876,7 @@ async def resume_chat_endpoint(
     checkpointer = await get_checkpointer()
     
     # Get session by thread_id
-    session = await get_chat_session_by_thread_id(thread_id, workflow_id)
+    session = await get_chat_session_by_thread_id(thread_id, workflow)
     if not session:
         raise HTTPException(
             status_code=404,
@@ -992,7 +991,11 @@ async def accept_proposal_endpoint(
     """Accept a workflow proposal and apply its changes."""
     user = _require_user(request)
     workflow = await get_workflow(user, workflow_id)
-    proposal, workflow = await accept_workflow_proposal(workflow, proposal_id)
+    proposal, workflow = await accept_workflow_proposal(
+        workflow,
+        proposal_id,
+        actor=user,
+    )
     await proposal.fetch_related('created_by', 'workflow', 'session')
 
     # Capture proposal acceptance event
@@ -1009,7 +1012,7 @@ async def accept_proposal_endpoint(
 
     return WorkflowProposalActionResponse(
         proposal=WorkflowProposalPublic.model_validate(proposal, from_attributes=True),
-        workflow_graph=workflow_state_from_spec(workflow.spec),
+        workflow_graph=workflow_state_snapshot(workflow),
     )
 
 

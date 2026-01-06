@@ -10,10 +10,11 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import HTTPException
 from shared.database.models import User
 from shared.database.workflow_models import (
+    Workflow,
     WorkflowChatMessage,
     WorkflowChatSession,
+    WorkflowDraft,
     WorkflowProposal,
-    WorkflowRecord,
     parse_workflow_public_id,
 )
 from shared.logger import get_logger
@@ -75,29 +76,64 @@ def workflow_state_from_spec(spec: Dict[str, Any]) -> Dict[str, Any]:
     return _workflow_state_from_spec(spec)
 
 
-def workflow_state_snapshot(workflow: WorkflowRecord) -> Dict[str, Any]:
-    """Return the persisted workflow's latest state in ReactFlow-friendly format."""
-    if isinstance(workflow.spec, dict):
-        return workflow_state_from_spec(workflow.spec)
+def workflow_state_snapshot(workflow: Workflow) -> Dict[str, Any]:
+    """Return the workflow draft's latest state in ReactFlow-friendly format."""
+    draft: Optional[WorkflowDraft] = getattr(workflow, "draft", None)
+    if draft and isinstance(draft.spec, dict):
+        return workflow_state_from_spec(draft.spec)
     return {"nodes": [], "edges": []}
 
 
-async def _get_workflow_record(user: User, workflow_id: str) -> WorkflowRecord:
+async def _ensure_workflow_draft(workflow: Workflow) -> WorkflowDraft:
+    """
+    Ensure we return a resolved WorkflowDraft instance.
+
+    Tortoise attaches a relation manager to unfetched reverse one-to-one fields,
+    which is truthy but not the actual model instance. Explicitly check for that
+    to avoid accidentally returning the manager and blowing up downstream when
+    we try to mutate attributes such as `spec`.
+    """
+
+    draft_attr = getattr(workflow, "draft", None)
+    draft: Optional[WorkflowDraft] = (
+        draft_attr if isinstance(draft_attr, WorkflowDraft) else None
+    )
+
+    if draft is None:
+        draft = await WorkflowDraft.get_or_none(workflow=workflow)
+
+    if draft is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Workflow draft state not initialized",
+        )
+
+    # Cache the resolved draft on the workflow instance for future callers.
+    workflow.draft = draft
+    return draft
+
+
+async def _get_workflow(user: User, workflow_id: str) -> Workflow:
     """Resolve and authorize workflow by public id."""
     try:
         pk = parse_workflow_public_id(workflow_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid workflow id format") from exc
 
-    workflow = await WorkflowRecord.get_or_none(id=pk, user=user)
+    workflow = (
+        await Workflow.filter(id=pk, user=user)
+        .prefetch_related("draft")
+        .first()
+    )
     if not workflow:
         raise HTTPException(status_code=404, detail=f"Workflow '{workflow_id}' not found")
+    await workflow.fetch_related("draft")
     return workflow
 
 
-async def get_workflow(user: User, workflow_id: str) -> WorkflowRecord:
+async def get_workflow(user: User, workflow_id: str) -> Workflow:
     """Public accessor used by routers."""
-    return await _get_workflow_record(user, workflow_id)
+    return await _get_workflow(user, workflow_id)
 
 
 # ============================================================================
@@ -105,7 +141,7 @@ async def get_workflow(user: User, workflow_id: str) -> WorkflowRecord:
 # ============================================================================
 
 async def create_chat_session(
-    workflow: WorkflowRecord,
+    workflow: Workflow,
     user: User,
     thread_id: str,
     title: Optional[str] = None,
@@ -128,7 +164,7 @@ async def create_chat_session(
 
 async def get_chat_session(
     session_id: int,
-    workflow: WorkflowRecord,
+    workflow: Workflow,
 ) -> WorkflowChatSession:
     """
     Get a chat session with its messages.
@@ -159,7 +195,7 @@ async def get_chat_session(
 
 async def get_chat_session_by_thread_id(
     thread_id: str,
-    workflow: WorkflowRecord,
+    workflow: Workflow,
 ) -> Optional[WorkflowChatSession]:
     """
     Get a chat session by thread ID.
@@ -184,7 +220,7 @@ async def get_chat_session_by_thread_id(
 
 
 async def list_chat_sessions(
-    workflow: WorkflowRecord,
+    workflow: Workflow,
     user: User,
     limit: int = 50,
     offset: int = 0,
@@ -306,7 +342,7 @@ def _preview_from_spec(spec: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def create_workflow_proposal(
-    workflow: WorkflowRecord,
+    workflow: Workflow,
     session: Optional[WorkflowChatSession],
     user: User,
     summary: str,
@@ -335,7 +371,7 @@ async def create_workflow_proposal(
 
 
 async def get_workflow_proposal(
-    workflow: WorkflowRecord,
+    workflow: Workflow,
     proposal_id: int,
 ) -> WorkflowProposal:
     """Fetch a workflow proposal."""
@@ -346,9 +382,11 @@ async def get_workflow_proposal(
 
 
 async def accept_workflow_proposal(
-    workflow: WorkflowRecord,
+    workflow: Workflow,
     proposal_id: int,
-) -> Tuple[WorkflowProposal, WorkflowRecord]:
+    *,
+    actor: Optional[User] = None,
+) -> Tuple[WorkflowProposal, Workflow]:
     """Apply workflow proposal and mark accepted."""
     proposal = await get_workflow_proposal(workflow, proposal_id)
     if proposal.status != WorkflowProposal.STATUS_PENDING:
@@ -356,12 +394,16 @@ async def accept_workflow_proposal(
     
     workflow = await proposal.workflow
     normalized_spec = _normalize_spec(proposal.spec or {})
-    
-    workflow.spec = normalized_spec
-    workflow.version += 1
+    # draft = await _ensure_workflow_draft(workflow)
+    await workflow.fetch_related("draft")
+    draft = workflow.draft
+    draft.spec = normalized_spec
+    draft.revision += 1
+    if actor is not None:
+        draft.updated_by = actor
+    await draft.save()
     workflow.updated_at = datetime.utcnow()
     await workflow.save()
-    
     
     proposal.status = WorkflowProposal.STATUS_ACCEPTED
     proposal.applied_graph = normalized_spec
@@ -372,7 +414,7 @@ async def accept_workflow_proposal(
 
 
 async def reject_workflow_proposal(
-    workflow: WorkflowRecord,
+    workflow: Workflow,
     proposal_id: int,
 ) -> WorkflowProposal:
     """Reject workflow proposal."""

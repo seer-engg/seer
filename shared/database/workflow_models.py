@@ -233,22 +233,31 @@ class WorkflowRun(models.Model):
 
 class WorkflowChatSession(models.Model):
     """Chat session for workflow assistant."""
-    
+
     id = fields.IntField(primary_key=True)
-    workflow = fields.ForeignKeyField('models.WorkflowRecord', related_name='chat_sessions')
-    user = fields.ForeignKeyField('models.User', related_name='chat_sessions')
-    thread_id = fields.CharField(max_length=255, unique=True, db_index=True)  # LangGraph thread ID
-    title = fields.CharField(max_length=255, null=True)  # Optional title for the session
+    workflow = fields.ForeignKeyField("models.Workflow", related_name="chat_sessions")
+    user = fields.ForeignKeyField("models.User", related_name="chat_sessions")
+    thread_id = fields.CharField(
+        max_length=255,
+        unique=True,
+        db_index=True,
+        description="LangGraph thread ID",
+    )
+    title = fields.CharField(
+        max_length=255,
+        null=True,
+        description="Optional title for the session",
+    )
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
-    
+
     class Meta:
         table = "workflow_chat_sessions"
         ordering = ("-updated_at",)
-    
+
     def __str__(self) -> str:
-        return f"WorkflowChatSession<{self.workflow_id}:{self.thread_id}>"
-    
+        return f"WorkflowChatSession<{make_workflow_public_id(self.workflow_id)}:{self.thread_id}>"
+
     @property
     def workflow_public_id(self) -> str:
         """Expose wf_* identifier used by public APIs."""
@@ -356,15 +365,19 @@ class WorkflowChatMessage(models.Model):
 
 class WorkflowProposal(models.Model):
     """Reviewable workflow edit proposal."""
-    
+
     STATUS_PENDING = "pending"
     STATUS_ACCEPTED = "accepted"
     STATUS_REJECTED = "rejected"
-    
+
     id = fields.IntField(primary_key=True)
-    workflow = fields.ForeignKeyField('models.WorkflowRecord', related_name='proposals')
-    session = fields.ForeignKeyField('models.WorkflowChatSession', related_name='proposals', null=True)
-    created_by = fields.ForeignKeyField('models.User', related_name='workflow_proposals')
+    workflow = fields.ForeignKeyField("models.Workflow", related_name="proposals")
+    session = fields.ForeignKeyField(
+        "models.WorkflowChatSession",
+        related_name="proposals",
+        null=True,
+    )
+    created_by = fields.ForeignKeyField("models.User", related_name="workflow_proposals")
     summary = fields.CharField(max_length=512)
     spec = fields.JSONField()
     status = fields.CharField(max_length=20, default=STATUS_PENDING)
@@ -374,14 +387,14 @@ class WorkflowProposal(models.Model):
     decided_at = fields.DatetimeField(null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
-    
+
     class Meta:
         table = "workflow_proposals"
         ordering = ("-created_at",)
-    
+
     def __str__(self) -> str:
         return f"WorkflowProposal<{self.id}:{self.status}>"
-    
+
     @property
     def workflow_public_id(self) -> str:
         """Expose wf_* identifier used by public APIs."""
