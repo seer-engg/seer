@@ -183,15 +183,31 @@ class WorkflowCreateRequest(WorkflowBase):
 class WorkflowUpdateRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    spec: Optional[WorkflowSpec] = None
     tags: Optional[List[str]] = None
+
+
+class WorkflowDraftPatchRequest(BaseModel):
+    base_revision: Optional[int] = None
+    spec: WorkflowSpec
+
+
+class WorkflowPublishRequest(BaseModel):
+    version_id: int
+
+
+class WorkflowVersionSummary(BaseModel):
+    version_id: int
+    status: str
+    version_number: Optional[int] = None
+    created_from_draft_revision: Optional[int] = None
+    created_at: datetime
 
 
 class WorkflowSummary(BaseModel):
     workflow_id: str
     name: str
     description: Optional[str] = None
-    version: int
+    draft_revision: int
     created_at: datetime
     updated_at: datetime
 
@@ -200,6 +216,8 @@ class WorkflowResponse(WorkflowSummary):
     spec: WorkflowSpec
     tags: List[str] = Field(default_factory=list)
     meta: WorkflowMeta = Field(default_factory=WorkflowMeta)
+    published_version: Optional[WorkflowVersionSummary] = None
+    latest_version: Optional[WorkflowVersionSummary] = None
 
 
 class WorkflowListResponse(BaseModel):
@@ -227,6 +245,8 @@ class RunProgress(BaseModel):
 class RunResponse(BaseModel):
     run_id: str
     status: str
+    workflow_id: Optional[str] = None
+    workflow_version_id: Optional[int] = None
     created_at: datetime
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
@@ -238,6 +258,8 @@ class RunResponse(BaseModel):
 class RunResultResponse(BaseModel):
     run_id: str
     status: str
+    workflow_id: Optional[str] = None
+    workflow_version_id: Optional[int] = None
     output: Optional[Dict[str, Any]] = None
     state: Optional[Dict[str, Any]] = None
     metrics: Optional[Dict[str, Any]] = None
@@ -251,6 +273,7 @@ class RunHistoryResponse(BaseModel):
 class WorkflowRunSummary(BaseModel):
     run_id: str
     status: str
+    workflow_version_id: Optional[int] = None
     created_at: datetime
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
@@ -325,9 +348,12 @@ __all__ = [
     "WorkflowMeta",
     "WorkflowCreateRequest",
     "WorkflowUpdateRequest",
+    "WorkflowDraftPatchRequest",
+    "WorkflowPublishRequest",
     "WorkflowResponse",
     "WorkflowSummary",
     "WorkflowListResponse",
+    "WorkflowVersionSummary",
     "RunFromSpecRequest",
     "RunFromWorkflowRequest",
     "RunResponse",

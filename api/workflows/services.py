@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import secrets
 from datetime import datetime, timezone
+import hashlib
+import json
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from fastapi import HTTPException
@@ -12,9 +14,13 @@ from tortoise.exceptions import DoesNotExist
 from shared.database.models import User
 from shared.database.workflow_models import (
     TriggerSubscription,
-    WorkflowRecord,
+    Workflow,
+    WorkflowDraft,
     WorkflowRun,
+    WorkflowRunSource,
     WorkflowRunStatus,
+    WorkflowVersion,
+    WorkflowVersionStatus,
     make_workflow_public_id,
     parse_run_public_id,
     parse_workflow_public_id,
@@ -420,7 +426,7 @@ async def list_trigger_subscriptions(
 ) -> api_models.TriggerSubscriptionListResponse:
     query = TriggerSubscription.filter(user=user)
     if workflow_id:
-        workflow = await _get_workflow_record(user, workflow_id)
+        workflow = await _get_workflow(user, workflow_id)
         query = query.filter(workflow=workflow)
     subscriptions = await query.order_by("-created_at")
     return api_models.TriggerSubscriptionListResponse(
@@ -432,9 +438,10 @@ async def create_trigger_subscription(
     user: User,
     payload: api_models.TriggerSubscriptionCreateRequest,
 ) -> api_models.TriggerSubscriptionResponse:
-    workflow = await _get_workflow_record(user, payload.workflow_id)
+    workflow = await _get_workflow(user, payload.workflow_id)
+    draft = workflow.draft or await WorkflowDraft.get(workflow=workflow)
     definition = _load_trigger_definition(payload.trigger_key)
-    spec = WorkflowSpec.model_validate(workflow.spec)
+    spec = WorkflowSpec.model_validate(draft.spec)
     filters = dict(payload.filters or {})
     bindings = dict(payload.bindings or {})
     provider_config = dict(payload.provider_config or {})
@@ -470,8 +477,9 @@ async def update_trigger_subscription(
 ) -> api_models.TriggerSubscriptionResponse:
     subscription = await _get_trigger_subscription(user, subscription_id)
     definition = _load_trigger_definition(subscription.trigger_key)
-    workflow = await WorkflowRecord.get(id=subscription.workflow_id, user=user)
-    spec = WorkflowSpec.model_validate(workflow.spec)
+    await subscription.fetch_related("workflow")
+    draft = subscription.workflow.draft or await WorkflowDraft.get(workflow=subscription.workflow)
+    spec = WorkflowSpec.model_validate(draft.spec)
     if payload.filters is not None:
         new_filters = dict(payload.filters or {})
         _validate_filters_payload(new_filters, definition)
@@ -503,8 +511,9 @@ async def test_trigger_subscription(
     payload: api_models.TriggerSubscriptionTestRequest,
 ) -> api_models.TriggerSubscriptionTestResponse:
     subscription = await _get_trigger_subscription(user, subscription_id)
-    workflow = await WorkflowRecord.get(id=subscription.workflow_id, user=user)
-    spec = WorkflowSpec.model_validate(workflow.spec)
+    await subscription.fetch_related("workflow")
+    draft = subscription.workflow.draft or await WorkflowDraft.get(workflow=subscription.workflow)
+    spec = WorkflowSpec.model_validate(draft.spec)
     definition = _load_trigger_definition(subscription.trigger_key)
     event_payload = payload.event or definition.sample_event
     if event_payload is None:
@@ -592,29 +601,65 @@ async def compile_spec(user: User, payload: api_models.CompileRequest) -> api_mo
     return api_models.CompileResponse(warnings=warnings, artifacts=artifacts)
 
 
-def _workflow_summary(record: WorkflowRecord) -> api_models.WorkflowSummary:
+def _workflow_summary(workflow: Workflow) -> api_models.WorkflowSummary:
+    draft: Optional[WorkflowDraft] = getattr(workflow, "draft", None)
+    draft_revision = draft.revision if draft else 0
     return api_models.WorkflowSummary(
-        workflow_id=record.workflow_id,
-        name=record.name,
-        description=record.description,
-        version=record.version,
-        created_at=record.created_at,
-        updated_at=record.updated_at,
+        workflow_id=workflow.workflow_id,
+        name=workflow.name,
+        description=workflow.description,
+        draft_revision=draft_revision,
+        created_at=workflow.created_at,
+        updated_at=workflow.updated_at,
     )
 
 
-def _workflow_response(record: WorkflowRecord) -> api_models.WorkflowResponse:
-    spec = WorkflowSpec.model_validate(record.spec)
+def _serialize_version_summary(
+    version: Optional[WorkflowVersion],
+) -> Optional[api_models.WorkflowVersionSummary]:
+    if not version:
+        return None
+    return api_models.WorkflowVersionSummary(
+        version_id=version.id,
+        status=version.status.value if isinstance(version.status, WorkflowVersionStatus) else version.status,
+        version_number=version.version_number,
+        created_from_draft_revision=version.created_from_draft_revision,
+        created_at=version.created_at,
+    )
+
+
+async def _recent_version(workflow: Workflow) -> Optional[WorkflowVersion]:
+    return await WorkflowVersion.filter(workflow=workflow).order_by("-created_at").first()
+
+
+async def _workflow_response(workflow: Workflow) -> api_models.WorkflowResponse:
+    draft: Optional[WorkflowDraft] = getattr(workflow, "draft", None)
+    if draft is None:
+        draft = await WorkflowDraft.get_or_none(workflow=workflow)
+    if draft is None:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Missing draft",
+            detail="Workflow draft state not initialized",
+            status=500,
+        )
+    spec = WorkflowSpec.model_validate(draft.spec)
+    published_version_obj: Optional[WorkflowVersion] = getattr(workflow, "published_version", None)
+    if published_version_obj and not isinstance(published_version_obj, WorkflowVersion):
+        published_version_obj = None
+    latest_version = await _recent_version(workflow)
     return api_models.WorkflowResponse(
-        workflow_id=record.workflow_id,
-        name=record.name,
-        description=record.description,
-        version=record.version,
-        created_at=record.created_at,
-        updated_at=record.updated_at,
+        workflow_id=workflow.workflow_id,
+        name=workflow.name,
+        description=workflow.description,
+        draft_revision=draft.revision,
+        created_at=workflow.created_at,
+        updated_at=workflow.updated_at,
         spec=spec,
-        tags=list(record.tags or []),
-        meta=api_models.WorkflowMeta(last_compile_ok=record.last_compile_ok),
+        tags=list(workflow.tags or []),
+        meta=api_models.WorkflowMeta(last_compile_ok=(workflow.meta or {}).get("last_compile_ok", False)),
+        published_version=_serialize_version_summary(published_version_obj),
+        latest_version=_serialize_version_summary(latest_version),
     )
 
 
@@ -635,15 +680,22 @@ def _parse_workflow_cursor(cursor: Optional[str]) -> Optional[int]:
 
 
 async def create_workflow(user: User, payload: api_models.WorkflowCreateRequest) -> api_models.WorkflowResponse:
-    record = await WorkflowRecord.create(
+    spec_dict = _spec_to_dict(payload.spec)
+    workflow = await Workflow.create(
         user=user,
         name=payload.name,
         description=payload.description,
-        spec=_spec_to_dict(payload.spec),
-        version=1,
         tags=list(payload.tags or []),
+        meta={"last_compile_ok": False},
     )
-    return _workflow_response(record)
+    draft = await WorkflowDraft.create(
+        workflow=workflow,
+        spec=spec_dict,
+        revision=1,
+        updated_by=user,
+    )
+    await workflow.fetch_related("draft")
+    return await _workflow_response(workflow)
 
 
 async def list_workflows(
@@ -655,7 +707,7 @@ async def list_workflows(
     limit = max(1, min(limit, 100))
     cursor_pk = _parse_workflow_cursor(cursor)
 
-    query = WorkflowRecord.filter(user=user)
+    query = Workflow.filter(user=user).prefetch_related("draft")
     if cursor_pk:
         query = query.filter(id__lt=cursor_pk)
 
@@ -666,11 +718,11 @@ async def list_workflows(
 
 
 async def get_workflow(user: User, workflow_id: str) -> api_models.WorkflowResponse:
-    record = await _get_workflow_record(user, workflow_id)
-    return _workflow_response(record)
+    workflow = await _get_workflow(user, workflow_id)
+    return await _workflow_response(workflow)
 
 
-async def _get_workflow_record(user: User, workflow_id: str) -> WorkflowRecord:
+async def _get_workflow(user: User, workflow_id: str) -> Workflow:
     try:
         pk = parse_workflow_public_id(workflow_id)
     except ValueError:
@@ -680,15 +732,15 @@ async def _get_workflow_record(user: User, workflow_id: str) -> WorkflowRecord:
             detail="Workflow id is invalid",
             status=400,
         )
-    try:
-        return await WorkflowRecord.get(id=pk, user=user)
-    except DoesNotExist:
+    workflow = await Workflow.filter(id=pk, user=user).prefetch_related("draft", "published_version").first()
+    if workflow is None:
         _raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Workflow not found",
             detail=f"Workflow '{workflow_id}' not found",
             status=404,
         )
+    return workflow
 
 
 async def _get_trigger_subscription(user: User, subscription_id: int) -> TriggerSubscription:
@@ -701,15 +753,19 @@ async def _get_trigger_subscription(user: User, subscription_id: int) -> Trigger
             detail="Subscription id must be an integer",
             status=400,
         )
-    try:
-        return await TriggerSubscription.get(id=pk, user=user)
-    except DoesNotExist:
+    subscription = (
+        await TriggerSubscription.filter(id=pk, user=user)
+        .prefetch_related("workflow")
+        .first()
+    )
+    if subscription is None:
         _raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Trigger subscription not found",
             detail=f"Subscription '{subscription_id}' not found",
             status=404,
         )
+    return subscription
 
 
 async def update_workflow(
@@ -717,18 +773,15 @@ async def update_workflow(
     workflow_id: str,
     payload: api_models.WorkflowUpdateRequest,
 ) -> api_models.WorkflowResponse:
-    record = await _get_workflow_record(user, workflow_id)
+    workflow = await _get_workflow(user, workflow_id)
     if payload.name is not None:
-        record.name = payload.name
+        workflow.name = payload.name
     if payload.description is not None:
-        record.description = payload.description
+        workflow.description = payload.description
     if payload.tags is not None:
-        record.tags = list(payload.tags)
-    if payload.spec is not None:
-        record.spec = _spec_to_dict(payload.spec)
-        record.version += 1
-    await record.save()
-    return _workflow_response(record)
+        workflow.tags = list(payload.tags)
+    await workflow.save()
+    return await _workflow_response(workflow)
 
 
 async def apply_workflow_from_spec(
@@ -739,7 +792,7 @@ async def apply_workflow_from_spec(
     """
     Replace an existing workflow's spec with a validated WorkflowSpec payload.
     """
-    record = await _get_workflow_record(user, workflow_id)
+    workflow = await _get_workflow(user, workflow_id)
     try:
         spec = WorkflowSpec.model_validate(spec_payload)
     except Exception as exc:
@@ -750,15 +803,124 @@ async def apply_workflow_from_spec(
             status=400,
         )
 
-    record.spec = _spec_to_dict(spec)
-    record.version += 1
-    await record.save()
-    return _workflow_response(record)
+    draft = await WorkflowDraft.get(workflow=workflow)
+    draft.spec = _spec_to_dict(spec)
+    draft.revision += 1
+    draft.updated_by = user
+    await draft.save()
+    await Workflow.filter(id=workflow.id).update(updated_at=_now())
+    await workflow.fetch_related("draft")
+    return await _workflow_response(workflow)
+
+
+async def patch_workflow_draft(
+    user: User,
+    workflow_id: str,
+    payload: api_models.WorkflowDraftPatchRequest,
+) -> api_models.WorkflowResponse:
+    workflow = await _get_workflow(user, workflow_id)
+    draft = workflow.draft or await WorkflowDraft.get(workflow=workflow)
+    if payload.base_revision is not None and payload.base_revision != draft.revision:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Draft revision mismatch",
+            detail="Draft has changed since last fetch",
+            status=409,
+        )
+    spec = payload.spec
+    draft.spec = _spec_to_dict(spec)
+    draft.revision += 1
+    draft.updated_by = user
+    await draft.save()
+    await Workflow.filter(id=workflow.id).update(updated_at=_now())
+    await workflow.fetch_related("draft")
+    return await _workflow_response(workflow)
+
+
+async def _next_release_number(workflow: Workflow) -> int:
+    latest = (
+        await WorkflowVersion.filter(workflow=workflow, version_number__isnull=False)
+        .order_by("-version_number")
+        .first()
+    )
+    if latest is None or latest.version_number is None:
+        return 1
+    return latest.version_number + 1
+
+
+async def publish_workflow(
+    user: User,
+    workflow_id: str,
+    payload: api_models.WorkflowPublishRequest,
+) -> api_models.WorkflowResponse:
+    workflow = await _get_workflow(user, workflow_id)
+    try:
+        version = await WorkflowVersion.get(id=payload.version_id, workflow=workflow)
+    except DoesNotExist:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Version not found",
+            detail=f"Version '{payload.version_id}' does not belong to workflow '{workflow_id}'",
+            status=404,
+        )
+
+    previous_release = getattr(workflow, "published_version", None)
+    if previous_release and isinstance(previous_release, WorkflowVersion):
+        await WorkflowVersion.filter(id=previous_release.id).update(status=WorkflowVersionStatus.ARCHIVED)
+
+    release_number = await _next_release_number(workflow)
+    await WorkflowVersion.filter(id=version.id).update(
+        status=WorkflowVersionStatus.RELEASED,
+        version_number=release_number,
+    )
+    workflow.published_version = version
+    await Workflow.filter(id=workflow.id).update(
+        published_version_id=version.id,
+        updated_at=_now(),
+    )
+    # Refresh status for response
+    version.status = WorkflowVersionStatus.RELEASED
+    version.version_number = release_number
+
+    workflow = await _get_workflow(user, workflow_id)
+    return await _workflow_response(workflow)
 
 
 async def delete_workflow(user: User, workflow_id: str) -> None:
-    record = await _get_workflow_record(user, workflow_id)
-    await record.delete()
+    workflow = await _get_workflow(user, workflow_id)
+    await workflow.delete()
+
+
+def _hash_spec(spec_dict: Dict[str, Any]) -> str:
+    serialized = json.dumps(spec_dict, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(serialized).hexdigest()
+
+
+async def _ensure_draft_version(workflow: Workflow, user: User) -> WorkflowVersion:
+    draft = await WorkflowDraft.get(workflow=workflow)
+    spec_dict = json.loads(json.dumps(draft.spec or {}))
+    spec_hash = _hash_spec(spec_dict)
+    existing = (
+        await WorkflowVersion.filter(
+            workflow=workflow,
+            spec_hash=spec_hash,
+            status=WorkflowVersionStatus.DRAFT,
+            created_from_draft_revision=draft.revision,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if existing:
+        return existing
+    return await WorkflowVersion.create(
+        workflow=workflow,
+        status=WorkflowVersionStatus.DRAFT,
+        spec=spec_dict,
+        created_from_draft_revision=draft.revision,
+        created_by=user,
+        manifest=None,
+        spec_hash=spec_hash,
+    )
 
 
 def _type_env_from_compiled(compiled) -> TypeEnvironment:
@@ -850,26 +1012,37 @@ def typecheck_expression(user: User, payload: api_models.ExpressionTypecheckRequ
 async def _create_run_record(
     user: User,
     *,
-    workflow: Optional[WorkflowRecord],
+    workflow: Optional[Workflow],
+    workflow_version: Optional[WorkflowVersion],
     spec: WorkflowSpec,
     inputs: Dict[str, Any],
     config_payload: Dict[str, Any],
+    source: WorkflowRunSource = WorkflowRunSource.MANUAL,
 ) -> WorkflowRun:
-    return await WorkflowRun.create(
+    run = await WorkflowRun.create(
         user=user,
         workflow=workflow,
-        workflow_version=workflow.version if workflow else None,
+        workflow_version=workflow_version,
         spec=_spec_to_dict(spec),
         inputs=inputs or {},
         config=config_payload or {},
+        source=source,
         status=WorkflowRunStatus.QUEUED,
     )
+    await WorkflowRun.filter(id=run.id).update(thread_id=run.run_id)
+    run.thread_id = run.run_id
+    return run
 
 
 def _serialize_run(run: WorkflowRun) -> api_models.RunResponse:
+    workflow_public_id = (
+        make_workflow_public_id(run.workflow_id) if run.workflow_id else None
+    )
     return api_models.RunResponse(
         run_id=run.run_id,
         status=run.status.value if isinstance(run.status, WorkflowRunStatus) else run.status,
+        workflow_id=workflow_public_id,
+        workflow_version_id=run.workflow_version_id,
         created_at=run.created_at,
         started_at=run.started_at,
         finished_at=run.finished_at,
@@ -883,6 +1056,7 @@ def _serialize_run_summary(run: WorkflowRun) -> api_models.WorkflowRunSummary:
     return api_models.WorkflowRunSummary(
         run_id=run.run_id,
         status=run.status.value if isinstance(run.status, WorkflowRunStatus) else run.status,
+        workflow_version_id=run.workflow_version_id,
         created_at=run.created_at,
         started_at=run.started_at,
         finished_at=run.finished_at,
@@ -903,7 +1077,7 @@ def _build_run_config(run: WorkflowRun, config_payload: Optional[Dict[str, Any]]
     configurable = dict((base_config.get("configurable") or {}) or {})
     # Always use run.run_id as thread_id for checkpoint retrieval consistency
     # Don't use setdefault - explicitly set to ensure it matches execution config
-    configurable["thread_id"] = run.run_id
+    configurable["thread_id"] = run.thread_id or run.run_id
     base_config["configurable"] = configurable
     return base_config
 
@@ -1018,15 +1192,15 @@ async def list_workflow_runs(
     *,
     limit: int = 50,
 ) -> api_models.WorkflowRunListResponse:
-    record = await _get_workflow_record(user, workflow_id)
+    workflow = await _get_workflow(user, workflow_id)
     limit = max(1, min(limit, 100))
     runs = (
-        await WorkflowRun.filter(user=user, workflow=record)
+        await WorkflowRun.filter(user=user, workflow=workflow)
         .order_by("-created_at")
         .limit(limit)
     )
     return api_models.WorkflowRunListResponse(
-        workflow_id=record.workflow_id,
+        workflow_id=workflow.workflow_id,
         runs=[_serialize_run_summary(run) for run in runs],
     )
 
@@ -1485,18 +1659,28 @@ async def run_saved_workflow(
     workflow_id: str,
     payload: api_models.RunFromWorkflowRequest,
 ) -> api_models.RunResponse:
-    record = await _get_workflow_record(user, workflow_id)
-    if payload.version and payload.version != record.version:
-        _raise_problem(
-            type_uri=RUN_PROBLEM,
-            title="Workflow version mismatch",
-            detail="Requested version does not match saved workflow",
-            status=409,
-        )
-    spec = WorkflowSpec.model_validate(record.spec)
+    workflow = await _get_workflow(user, workflow_id)
+    if payload.version is not None:
+        version = await WorkflowVersion.filter(
+            workflow=workflow,
+            version_number=payload.version,
+            status=WorkflowVersionStatus.RELEASED,
+        ).first()
+        if version is None:
+            _raise_problem(
+                type_uri=RUN_PROBLEM,
+                title="Version not found",
+                detail=f"Version '{payload.version}' not found for workflow '{workflow_id}'",
+                status=404,
+            )
+    else:
+        version = await _ensure_draft_version(workflow, user)
+
+    spec = WorkflowSpec.model_validate(version.spec)
     run = await _create_run_record(
         user,
-        workflow=record,
+        workflow=workflow,
+        workflow_version=version,
         spec=spec,
         inputs=payload.inputs,
         config_payload=payload.config,
@@ -1600,9 +1784,14 @@ async def get_run_result(
 ) -> api_models.RunResultResponse:
     run = await _get_run(user, run_id)
     output = run.output or {}
+    workflow_public_id = (
+        make_workflow_public_id(run.workflow_id) if run.workflow_id else None
+    )
     return api_models.RunResultResponse(
         run_id=run.run_id,
         status=run.status.value if isinstance(run.status, WorkflowRunStatus) else run.status,
+        workflow_id=workflow_public_id,
+        workflow_version_id=run.workflow_version_id,
         output=output,
         state=None,
         metrics=run.metrics,
@@ -1638,6 +1827,9 @@ __all__ = [
     "list_workflows",
     "get_workflow",
     "update_workflow",
+    "apply_workflow_from_spec",
+    "patch_workflow_draft",
+    "publish_workflow",
     "delete_workflow",
     "suggest_expression",
     "typecheck_expression",

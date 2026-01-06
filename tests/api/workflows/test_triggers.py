@@ -9,6 +9,7 @@ from api.triggers import services as trigger_services
 from api.workflows import models as api_models
 from api.workflows import services as workflow_services
 from worker.tasks import triggers as worker_trigger_tasks
+from worker.tasks import workflows as worker_workflow_tasks
 from shared.database.workflow_models import (
     TriggerEvent,
     TriggerEventStatus,
@@ -25,6 +26,23 @@ async def _create_workflow(user, workflow_spec):
         spec=workflow_spec,
     )
     return await workflow_services.create_workflow(user, payload)
+
+
+async def _publish_latest_version(user, workflow, monkeypatch):
+    async def immediate_run(*_, **kwargs):
+        await workflow_services.execute_saved_workflow_run(**kwargs)
+
+    monkeypatch.setattr(worker_workflow_tasks.execute_saved_workflow, "kiq", immediate_run)
+    run = await workflow_services.run_saved_workflow(
+        user,
+        workflow.workflow_id,
+        api_models.RunFromWorkflowRequest(inputs={"user_id": 99}),
+    )
+    await workflow_services.publish_workflow(
+        user,
+        workflow.workflow_id,
+        api_models.WorkflowPublishRequest(version_id=run.workflow_version_id),
+    )
 
 
 @pytest.mark.asyncio
@@ -60,6 +78,7 @@ async def test_create_trigger_subscription_rejects_unknown_input(db_user, workfl
 @pytest.mark.asyncio
 async def test_generic_webhook_ingestion_creates_triggered_run(db_user, workflow_spec, monkeypatch):
     workflow = await _create_workflow(db_user, workflow_spec)
+    await _publish_latest_version(db_user, workflow, monkeypatch)
     subscription_response = await workflow_services.create_trigger_subscription(
         db_user,
         api_models.TriggerSubscriptionCreateRequest(

@@ -10,6 +10,9 @@ from tortoise import Tortoise
 from shared.logger import get_logger
 from shared.database.config import TORTOISE_ORM
 from shared.database.workflow_models import (
+    Workflow,
+    WorkflowDraft,
+    WorkflowVersion,
     WorkflowRecord,
     WorkflowRun,
     WorkflowChatSession,
@@ -85,6 +88,9 @@ __all__ = [
     "db_lifespan",
     "init_db",
     "close_db",
+    "Workflow",
+    "WorkflowDraft",
+    "WorkflowVersion",
     "WorkflowRecord",
     "WorkflowRun",
     "WorkflowChatSession",

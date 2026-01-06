@@ -142,6 +142,26 @@ async def update_workflow(request: Request, workflow_id: str, payload: api_model
     return await services.update_workflow(user, workflow_id, payload)
 
 
+@router.patch("/workflows/{workflow_id}/draft", response_model=api_models.WorkflowResponse)
+async def patch_workflow_draft(
+    request: Request,
+    workflow_id: str,
+    payload: api_models.WorkflowDraftPatchRequest,
+):
+    user = _require_user(request)
+    return await services.patch_workflow_draft(user, workflow_id, payload)
+
+
+@router.post("/workflows/{workflow_id}/publish", response_model=api_models.WorkflowResponse)
+async def publish_workflow(
+    request: Request,
+    workflow_id: str,
+    payload: api_models.WorkflowPublishRequest,
+):
+    user = _require_user(request)
+    return await services.publish_workflow(user, workflow_id, payload)
+
+
 @router.delete("/workflows/{workflow_id}", status_code=status.HTTP_200_OK)
 async def delete_workflow(request: Request, workflow_id: str):
     user = _require_user(request)
