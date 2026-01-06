@@ -54,6 +54,109 @@ def parse_run_public_id(value: str) -> int:
     return int(value.removeprefix(RUN_ID_PREFIX))
 
 
+class WorkflowVersionStatus(str, Enum):
+    DRAFT = "DRAFT"
+    RELEASED = "RELEASED"
+    ARCHIVED = "ARCHIVED"
+
+
+class Workflow(models.Model):
+    """New workflow entity that owns drafts, versions, and published state."""
+
+    id = fields.IntField(primary_key=True)
+    user = fields.ForeignKeyField("models.User", related_name="workflows")
+    name = fields.CharField(max_length=255)
+    description = fields.TextField(null=True)
+    tags = fields.JSONField(null=True)
+    meta = fields.JSONField(null=True)
+    published_version = fields.ForeignKeyField(
+        "models.WorkflowVersion",
+        related_name="published_workflows",
+        null=True,
+    )
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    class Meta:
+        table = "workflows"
+        ordering = ("-updated_at", "id")
+
+    def __str__(self) -> str:
+        return f"Workflow<{self.workflow_id}>"
+
+    @property
+    def workflow_id(self) -> str:
+        return make_workflow_public_id(self.id)
+
+
+class WorkflowDraft(models.Model):
+    """Mutable draft state for a workflow."""
+
+    id = fields.IntField(primary_key=True)
+    workflow = fields.OneToOneField(
+        "models.Workflow", related_name="draft", on_delete=fields.CASCADE
+    )
+    spec = fields.JSONField()
+    revision = fields.IntField(default=1)
+    updated_at = fields.DatetimeField(auto_now=True)
+    updated_by = fields.ForeignKeyField(
+        "models.User",
+        related_name="updated_workflow_drafts",
+        null=True,
+    )
+    validation_errors = fields.JSONField(null=True)
+    validation_warnings = fields.JSONField(null=True)
+
+    class Meta:
+        table = "workflow_drafts"
+
+    def __str__(self) -> str:
+        return f"WorkflowDraft<wf={self.workflow_id} rev={self.revision}>"
+
+    @property
+    def workflow_public_id(self) -> str:
+        return self.workflow.workflow_id
+
+
+class WorkflowVersion(models.Model):
+    """Immutable runnable workflow version."""
+
+    id = fields.IntField(primary_key=True)
+    workflow = fields.ForeignKeyField(
+        "models.Workflow", related_name="versions", on_delete=fields.CASCADE
+    )
+    status = fields.CharEnumField(
+        WorkflowVersionStatus,
+        max_length=20,
+        default=WorkflowVersionStatus.DRAFT,
+    )
+    spec = fields.JSONField()
+    created_from_draft_revision = fields.IntField(null=True)
+    created_at = fields.DatetimeField(auto_now_add=True)
+    created_by = fields.ForeignKeyField(
+        "models.User",
+        related_name="created_workflow_versions",
+        null=True,
+    )
+    manifest = fields.JSONField(null=True)
+    spec_hash = fields.CharField(max_length=64, null=True)
+    version_number = fields.IntField(null=True)
+
+    class Meta:
+        table = "workflow_versions"
+        ordering = ("-created_at", "id")
+        unique_together = (
+            ("workflow_id", "version_number"),
+        )
+
+    def __str__(self) -> str:
+        return f"WorkflowVersion<wf={self.workflow_id} status={self.status}>"
+
+    @property
+    def workflow_public_id(self) -> str:
+        return self.workflow.workflow_id
+
+
 class WorkflowRecord(models.Model):
     """Normalized workflow entity backed by WorkflowSpec JSON."""
 
@@ -87,9 +190,11 @@ class WorkflowRun(models.Model):
     id = fields.IntField(primary_key=True)
     user = fields.ForeignKeyField("models.User", related_name="workflow_runs")
     workflow = fields.ForeignKeyField(
-        "models.WorkflowRecord", related_name="runs", null=True
+        "models.Workflow", related_name="runs", null=True
     )
-    workflow_version = fields.IntField(null=True)
+    workflow_version = fields.ForeignKeyField(
+        "models.WorkflowVersion", related_name="runs", null=True
+    )
     spec = fields.JSONField()
     inputs = fields.JSONField(null=True)
     config = fields.JSONField(null=True)
@@ -107,6 +212,7 @@ class WorkflowRun(models.Model):
     )
     output = fields.JSONField(null=True)
     error = fields.TextField(null=True)
+    thread_id = fields.CharField(max_length=255, null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     started_at = fields.DatetimeField(null=True)
     finished_at = fields.DatetimeField(null=True)
@@ -155,7 +261,7 @@ class TriggerSubscription(models.Model):
     id = fields.IntField(primary_key=True)
     user = fields.ForeignKeyField("models.User", related_name="trigger_subscriptions")
     workflow = fields.ForeignKeyField(
-        "models.WorkflowRecord", related_name="trigger_subscriptions"
+        "models.Workflow", related_name="trigger_subscriptions"
     )
     trigger_key = fields.CharField(max_length=255)
     provider_connection_id = fields.IntField(null=True)
