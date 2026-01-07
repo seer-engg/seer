@@ -21,6 +21,9 @@ from .execution import (
     list_workflow_runs,
     run_draft_workflow,
     run_saved_workflow,
+    _execute_compiled_run,
+    _complete_run,
+    _create_run_record
 )
 
 # Import from expressions module
@@ -42,6 +45,8 @@ from .triggers import (
     list_trigger_subscriptions,
     test_trigger_subscription,
     update_trigger_subscription,
+    _evaluate_bindings,
+    _validate_resolved_inputs
 )
 
 # Import from workflows module
@@ -84,4 +89,9 @@ __all__ = [
     "list_workflow_runs",
     "get_run_status",
     "get_run_history",
+    "_evaluate_bindings",
+    "_execute_compiled_run",
+    "_complete_run",
+    "_create_run_record",
+    "_validate_resolved_inputs"
 ]
