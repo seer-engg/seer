@@ -18,26 +18,26 @@ import os
 from typing import Any, Dict, List
 
 from langchain_openai import ChatOpenAI
+from sqlmodel import select
 
 from shared.database.models import User
+from shared.database.base import init_db, close_db, async_session_maker
 from workflow_compiler.runtime import WorkflowCompilerSingleton
 from workflow_compiler.examples.gmail_common import GmailDemoService, fetch_oauth_credentials
 from workflow_compiler.registry.model_registry import ModelDefinition, ModelRegistry
 from workflow_compiler.registry.tool_registry import ToolDefinition, ToolRegistry
 from workflow_compiler.schema.models import JsonSchema
 from shared.tools.google.gmail import GmailReadTool
-from shared.database.config import TORTOISE_ORM
-from tortoise import Tortoise
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-async def init_tortoise():
-    await Tortoise.init(config=TORTOISE_ORM)
+async def init_database():
+    await init_db()
 
-async def close_tortoise():
-    await Tortoise.close_connections()
+async def close_database():
+    await close_db()
 
 TOOL_NAME = "gmail_read_emails"
 MODEL_ID = "gpt-5-nano"
@@ -137,15 +137,21 @@ from shared.database.models import User
 
 async def main() -> None:
     user_id = 1
-    await init_tortoise()
+    await init_database()
 
     spec = build_workflow_spec(read_schema)
     compiler = WorkflowCompilerSingleton.instance()
-    demo_user = await User.get(id=1)
-    compiled = compiler.compile(demo_user, spec)
-    summary = await compiled.ainvoke(inputs={"user_id": user_id})
-    print("Inbox summary:\n", summary.get("inbox_summary"))
-    await close_tortoise()
+
+    async with async_session_maker() as session:
+        stmt = select(User).where(User.id == 1)
+        result = await session.execute(stmt)
+        demo_user = result.scalar_one()
+
+        compiled = compiler.compile(demo_user, spec)
+        summary = await compiled.ainvoke(inputs={"user_id": user_id})
+        print("Inbox summary:\n", summary.get("inbox_summary"))
+
+    await close_database()
 
 
 if __name__ == "__main__":

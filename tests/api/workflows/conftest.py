@@ -3,20 +3,14 @@ from copy import deepcopy
 
 import pytest
 import pytest_asyncio
-from tortoise import Tortoise
+from sqlmodel import select
 from workflow_compiler.schema.models import WorkflowSpec
 
 from api.agents.checkpointer import close_checkpointer, get_checkpointer
 from api.workflows import services
 from shared.config import config as shared_config
-from shared.database.config import TORTOISE_ORM
+from shared.database.base import init_db, close_db
 from shared.database.models import User
-from shared.database.workflow_models import (
-    TriggerEvent,
-    TriggerSubscription,
-    WorkflowRecord,
-    WorkflowRun,
-)
 from tests.api.workflows.shared_data import (
     TEST_SCHEMA_DEFINITION,
     TEST_SCHEMA_ID,
@@ -38,9 +32,10 @@ def event_loop():
 
 
 @pytest_asyncio.fixture(scope="session", autouse=True)
-async def tortoise_db():
-    await Tortoise.init(config=TORTOISE_ORM)
+async def sqlmodel_db():
+    await init_db()
     yield
+    await close_db()
 
 
 @pytest_asyncio.fixture(scope="session", autouse=True)
@@ -70,8 +65,12 @@ def workflow_spec() -> WorkflowSpec:
 async def db_user():
     if TEST_USER_ID is None:
         pytest.skip("Provide TEST_USER_ID")
-    user = await User.get(id=TEST_USER_ID)
-    return user
+    from shared.database.base import async_session_maker
+    async with async_session_maker() as session:
+        stmt = select(User).where(User.id == TEST_USER_ID)
+        result = await session.execute(stmt)
+        user = result.scalar_one()
+        return user
 
 
 @pytest.fixture(scope="session", autouse=True)

@@ -2,5 +2,5 @@
 set -e
 
 echo "Running database migrations..."
-uv run aerich upgrade
+uv run alembic upgrade head
 echo "Migrations completed successfully"
