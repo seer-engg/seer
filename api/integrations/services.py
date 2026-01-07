@@ -22,8 +22,14 @@ def build_provider_connection_info(conn) -> dict:
     """Build provider connection info dict with token validity checks."""
     has_access_token = bool(conn.access_token_enc)
     has_refresh_token = bool(conn.refresh_token_enc)
-    is_token_expired = conn.expires_at < datetime.now(timezone.utc) if conn.expires_at else False
-    access_token_valid = (has_access_token and not is_token_expired) or has_refresh_token
+    # Compare timezone-naive datetimes (DB uses TIMESTAMP WITHOUT TIME ZONE)
+    now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+    is_token_expired = (
+        conn.expires_at < now_naive if conn.expires_at else False
+    )
+    access_token_valid = (
+        (has_access_token and not is_token_expired) or has_refresh_token
+    )
     return {
         "scopes": conn.scopes or "",
         "connection_id": f"{conn.provider}:{conn.id}",
@@ -35,7 +41,11 @@ def build_provider_connection_info(conn) -> dict:
 
 
 def determine_auth_mode(required_scopes: list, required_secrets: list) -> tuple:
-    """Determine auth mode for a tool. Returns (auth_mode, requires_oauth, requires_secrets, supports_tokenless_auth)."""
+    """Determine auth mode for a tool.
+
+    Returns (auth_mode, requires_oauth, requires_secrets,
+    supports_tokenless_auth).
+    """
     requires_oauth = bool(required_scopes)
     requires_secrets = bool(required_secrets)
     supports_tokenless_auth = not requires_oauth
@@ -50,7 +60,13 @@ def determine_auth_mode(required_scopes: list, required_secrets: list) -> tuple:
     return auth_mode, requires_oauth, requires_secrets, supports_tokenless_auth
 
 
-def build_tool_result_base(tool, auth_mode: str, requires_oauth: bool, requires_secrets: bool, supports_tokenless_auth: bool) -> dict:
+def build_tool_result_base(
+    tool,
+    auth_mode: str,
+    requires_oauth: bool,
+    requires_secrets: bool,
+    supports_tokenless_auth: bool,
+) -> dict:
     """Build base tool result dict."""
     return {
         "tool_name": tool.name,
@@ -111,10 +127,12 @@ def _extract_base_google_scope(scope: str) -> Optional[str]:
     - spreadsheets includes spreadsheets.readonly, etc.
 
     Args:
-        scope: Full scope string (e.g., "https://www.googleapis.com/auth/gmail.readonly")
+        scope: Full scope string
+            (e.g., "https://www.googleapis.com/auth/gmail.readonly")
 
     Returns:
-        Base scope string (e.g., "https://www.googleapis.com/auth/gmail") or None if not a Google scope
+        Base scope string (e.g., "https://www.googleapis.com/auth/gmail")
+        or None if not a Google scope
     """
     if "googleapis.com" not in scope:
         return None
@@ -133,15 +151,18 @@ def _extract_base_google_scope(scope: str) -> Optional[str]:
 
 def _scope_satisfies_requirement(granted_scope: str, required_scope: str) -> bool:
     """
-    Check if a granted scope satisfies a required scope, handling Google scope hierarchy.
+    Check if granted scope satisfies required scope (Google hierarchy).
 
     Hierarchy rules:
-    - Base scope (e.g., "gmail") satisfies all narrower scopes (e.g., "gmail.readonly", "gmail.modify")
-    - Narrower scopes do NOT satisfy broader scopes or other narrower scopes
+    - Base scope (e.g., "gmail") satisfies all narrower scopes
+      (e.g., "gmail.readonly", "gmail.modify")
+    - Narrower scopes do NOT satisfy broader scopes or other narrower
 
     Args:
-        granted_scope: Scope that user has (e.g., "https://www.googleapis.com/auth/gmail")
-        required_scope: Scope that is required (e.g., "https://www.googleapis.com/auth/gmail.readonly")
+        granted_scope: Scope that user has
+            (e.g., "https://www.googleapis.com/auth/gmail")
+        required_scope: Scope that is required
+            (e.g., "https://www.googleapis.com/auth/gmail.readonly")
 
     Returns:
         True if granted scope satisfies required scope
@@ -160,8 +181,9 @@ def _scope_satisfies_requirement(granted_scope: str, required_scope: str) -> boo
             if granted_scope == base_required:
                 return True
 
-        # Check if required scope is a base scope and granted scope is narrower
-        # This handles: granted="gmail.readonly", required="gmail" -> False (narrower doesn't satisfy broader)
+        # Check if required scope is a base scope and granted is narrower
+        # This handles: granted="gmail.readonly", required="gmail" -> False
+        # (narrower doesn't satisfy broader)
         base_granted = _extract_base_google_scope(granted_scope)
         if base_granted and not _extract_base_google_scope(required_scope):
             # Required is base scope, granted is narrower -> doesn't satisfy
@@ -173,20 +195,26 @@ def _scope_satisfies_requirement(granted_scope: str, required_scope: str) -> boo
 def has_required_scopes(granted_scopes: str, required_scopes: List[str]) -> bool:
     """
     Check if granted scopes include all required scopes.
-    Handles both whitespace-separated (Google) and comma-separated (GitHub) formats.
-    For Google APIs, handles scope hierarchy where broader scopes satisfy narrower ones.
+    Handles both whitespace-separated (Google) and comma-separated
+    (GitHub) formats. For Google APIs, handles scope hierarchy where
+    broader scopes satisfy narrower ones.
 
     Args:
-        granted_scopes: String of granted scopes (whitespace or comma separated)
+        granted_scopes: String of granted scopes
+            (whitespace or comma separated)
         required_scopes: List of required scope strings
 
     Returns:
-        True if all required scopes are granted (or satisfied by broader scopes for Google APIs)
+        True if all required scopes are granted (or satisfied by
+        broader scopes for Google APIs)
 
     Examples:
-        - has_required_scopes("gmail", ["gmail.readonly"]) -> True (broader satisfies narrower)
-        - has_required_scopes("gmail.readonly", ["gmail"]) -> False (narrower doesn't satisfy broader)
-        - has_required_scopes("gmail.readonly", ["gmail.readonly"]) -> True (exact match)
+        - has_required_scopes("gmail", ["gmail.readonly"]) -> True
+          (broader satisfies narrower)
+        - has_required_scopes("gmail.readonly", ["gmail"]) -> False
+          (narrower doesn't satisfy broader)
+        - has_required_scopes("gmail.readonly", ["gmail.readonly"])
+          -> True (exact match)
     """
     if not required_scopes:
         return True
@@ -319,7 +347,13 @@ async def store_oauth_connection(
         access_token = token.get('access_token')
         refresh_token = token.get('refresh_token')
         expires_at_ts = token.get('expires_at')
-        expires_at = datetime.fromtimestamp(expires_at_ts, tz=timezone.utc) if expires_at_ts else None
+        # Convert to timezone-naive for PostgreSQL TIMESTAMP WITHOUT TIME ZONE
+        if expires_at_ts:
+            expires_at = datetime.fromtimestamp(
+                expires_at_ts, tz=timezone.utc
+            ).replace(tzinfo=None)
+        else:
+            expires_at = None
 
         # Extract token_type (usually 'Bearer')
         token_type = token.get('token_type', 'Bearer')
@@ -344,11 +378,14 @@ async def store_oauth_connection(
             # IMPORTANT: Merge scopes instead of replacing them
             connection.scopes = merge_scopes(connection.scopes or "", granted_scopes)
             connection.token_type = token_type
-            connection.updated_at = datetime.now(timezone.utc)
+            connection.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
             session.add(connection)
             await session.commit()
             await session.refresh(connection)
-            logger.info(f"Updated existing connection for {oauth_provider}, merged scopes: {connection.scopes[:100]}...")
+            logger.info(
+                f"Updated existing connection for {oauth_provider}, "
+                f"merged scopes: {connection.scopes[:100]}..."
+            )
         else:
             connection = OAuthConnection(
                 user_id=user.id,
@@ -368,6 +405,7 @@ async def store_oauth_connection(
             logger.info(f"Created new connection for {oauth_provider}")
 
         return connection
+
 
 async def list_connections(user: User):
     """
@@ -555,7 +593,10 @@ async def list_resource_secrets(user: User, resource_id: int) -> List[Integratio
         )
         resource = result.scalar_one_or_none()
         if not resource:
-            raise HTTPException(status_code=404, detail=f"Integration resource {resource_id} not found")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Integration resource {resource_id} not found"
+            )
 
         # Get secrets
         result = await session.execute(
@@ -578,10 +619,13 @@ async def deactivate_integration_resource(user: User, resource_id: int) -> Integ
         )
         resource = result.scalar_one_or_none()
         if not resource:
-            raise HTTPException(status_code=404, detail=f"Integration resource {resource_id} not found")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Integration resource {resource_id} not found"
+            )
 
         resource.status = "revoked"
-        resource.updated_at = datetime.now(timezone.utc)
+        resource.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         session.add(resource)
 
         # Update related secrets
@@ -645,7 +689,7 @@ async def _upsert_integration_resource(
                 needs_update = True
 
             if needs_update:
-                resource.updated_at = datetime.now(timezone.utc)
+                resource.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 session.add(resource)
                 await session.commit()
                 await session.refresh(resource)
@@ -757,7 +801,7 @@ async def _upsert_integration_secret(
                 needs_update = True
 
             if needs_update:
-                secret.updated_at = datetime.now(timezone.utc)
+                secret.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 session.add(secret)
                 await session.commit()
                 await session.refresh(secret)
@@ -797,7 +841,10 @@ def _build_provider_context() -> ProviderContext:
 def _require_provider(provider_name: str):
     provider = get_integration_provider(provider_name)
     if not provider:
-        raise HTTPException(status_code=500, detail=f"Integration provider '{provider_name}' is not configured")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Integration provider '{provider_name}' is not configured"
+        )
     return provider
 
 
@@ -828,7 +875,10 @@ async def bind_supabase_project_manual(
     if not normalized_ref:
         raise HTTPException(status_code=400, detail="project_ref is required")
     if not service_role_key:
-        raise HTTPException(status_code=400, detail="service_role_key is required for manual binding")
+        raise HTTPException(
+            status_code=400,
+            detail="service_role_key is required for manual binding"
+        )
 
     resource_metadata = _build_manual_supabase_metadata(
         project_ref=normalized_ref,
