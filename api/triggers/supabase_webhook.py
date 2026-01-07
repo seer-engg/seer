@@ -30,6 +30,7 @@ class SupabaseWebhookError(Exception):
 async def create_database_webhook(
     subscription: TriggerSubscription,
     webhook_url: str,
+    secret: str,
 ) -> Dict[str, Any]:
     """
     Creates a Postgres trigger in the Supabase project that sends webhook events.
@@ -99,6 +100,7 @@ async def create_database_webhook(
         schema_name=schema_name,
         events=events,
         webhook_url=webhook_url,
+        secret=secret,
     )
 
     # Execute the SQL via Management API
@@ -207,6 +209,7 @@ def _build_trigger_sql(
     schema_name: str,
     events: List[str],
     webhook_url: str,
+    secret: str,
 ) -> str:
     """
     Generates SQL to create a Postgres trigger that sends webhook events.
@@ -241,7 +244,7 @@ BEGIN
   -- Send webhook using pg_net extension
   SELECT INTO request_id net.http_post(
     url := '{webhook_url}',
-    headers := '{{"Content-Type": "application/json"}}'::jsonb,
+    headers := '{{"Content-Type": "application/json", "X-Seer-Webhook-Secret": "{secret}"}}'::jsonb,
     body := payload
   );
   -- Return appropriate value based on operation
