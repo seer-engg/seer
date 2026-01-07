@@ -201,11 +201,6 @@ async def compile_workflow(request: Request, payload: api_models.CompileRequest)
     return services.compile_spec(user, payload)
 
 
-@router.post("/expr/suggest", response_model=api_models.ExpressionSuggestResponse)
-async def suggest_expression(request: Request, payload: api_models.ExpressionSuggestRequest):
-    user = _require_user(request)
-    return services.suggest_expression(user, payload)
-
 
 @router.post("/expr/typecheck", response_model=api_models.ExpressionTypecheckResponse)
 async def typecheck_expression(request: Request, payload: api_models.ExpressionTypecheckRequest):
@@ -241,28 +236,11 @@ async def get_run_status(request: Request, run_id: str):
     return await services.get_run_status(user, run_id)
 
 
-@router.get("/runs/{run_id}/result", response_model=api_models.RunResultResponse)
-async def get_run_result(request: Request, run_id: str, include_state: bool = Query(False)):
-    user = _require_user(request)
-    return await services.get_run_result(user, run_id, include_state=include_state)
-
-
-
 @router.get("/runs/{run_id}/history", response_model=api_models.RunHistoryResponse)
 async def get_run_history(request: Request, run_id: str):
     user = _require_user(request)
     return await services.get_run_history(user, run_id)
 
-@router.get("/runs/{run_id}/steps")
-async def get_run_steps(request: Request, run_id: str):
-    _require_user(request)
-    await services.list_run_steps(run_id=run_id)
-
-
-@router.post("/runs/{run_id}/cancel")
-async def cancel_run(request: Request, run_id: str):
-    _require_user(request)
-    await services.cancel_run(run_id=run_id)
 
 
 __all__ = ["router"]

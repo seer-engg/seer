@@ -14,7 +14,6 @@ from shared.database.models import User
 from shared.database.workflow_models import (
     TriggerEvent,
     TriggerSubscription,
-    WorkflowRecord,
     WorkflowRun,
 )
 from tests.api.workflows.shared_data import (

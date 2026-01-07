@@ -133,13 +133,14 @@ class CronScheduleAdapter(PollAdapter):
 
         # Check if the scheduled time has passed
         if now_utc < next_exec_utc:
-            # Not yet time - return empty result
-            logger.debug(
-                f"Cron schedule not yet due. Next: {next_exec_utc.isoformat()}, Now: {now_utc.isoformat()}",
-                extra={
-                    "subscription_id": ctx.subscription.id,
-                    "next_execution": next_exec_utc.isoformat(),
-                },
+            # Not yet time - return empty result but hint when to wake up
+            seconds_until_next = max(1, int((next_exec_utc - now_utc).total_seconds()))
+            logger.info(
+                f"""Cron schedule not yet due:
+                    subscription_id: {ctx.subscription.id},
+                    next_execution: {next_exec_utc.isoformat()},
+                    seconds_until_next: {seconds_until_next},
+                """,
             )
             return PollResult(
                 events=[],
@@ -149,6 +150,7 @@ class CronScheduleAdapter(PollAdapter):
                     "timezone": tz_name,
                 },
                 has_more=False,
+                rate_limit_hint=seconds_until_next,
             )
 
         # Time to fire!
@@ -183,10 +185,19 @@ class CronScheduleAdapter(PollAdapter):
             "timezone": tz_name,
         }
 
+        # Hint when to poll again by computing the following execution
+        try:
+            next_after_tz = croniter(cron_expr, next_exec_tz).get_next(datetime)
+            next_after_utc = next_after_tz.astimezone(timezone.utc)
+            seconds_until_following = max(1, int((next_after_utc - now_utc).total_seconds()))
+        except Exception:
+            seconds_until_following = None
+
         return PollResult(
             events=[event],
             cursor=new_cursor,
             has_more=False,
+            rate_limit_hint=seconds_until_following,
         )
 
 
