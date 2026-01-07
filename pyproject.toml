@@ -60,6 +60,9 @@ dev = [
     "pytest-asyncio>=1.3.0",
     "langgraph-cli[inmem]>=0.4.7",
     "taskiq[reload]>=0.12.1",
+    "flake8>=7.3.0",
+    "pylint>=4.0.4",
+    "radon>=6.0.1",
 ]
 
 [project.urls]
@@ -72,3 +75,37 @@ Issues = "https://github.com/seer-engg/seer/issues"
 asyncio_mode = "auto"
 log_cli="true"
 log_cli_level="WARNING"
+
+[tool.pylint.main]
+# Files or directories to be skipped
+ignore = ["alembic/versions", ".venv", "venv", "build", "dist"]
+# Use multiple processes to speed up Pylint
+jobs = 0
+# Load extensions
+load-plugins = ["pylint.extensions.mccabe"]
+
+[tool.pylint.format]
+# Maximum number of characters on a single line
+max-line-length = 100
+# Maximum number of lines in a module
+max-module-lines = 800
+
+[tool.pylint.design]
+# Maximum cyclomatic complexity for a function
+max-complexity = 10
+# Maximum number of arguments for function/method
+max-args = 7
+# Maximum number of branch for function/method body
+max-branches = 15
+# Maximum number of locals for function/method body
+max-locals = 20
+# Maximum number of statements in function/method body
+max-statements = 60
+
+[tool.pylint.messages_control]
+# Disable specific warnings that are too noisy
+disable = [
+    "missing-docstring",
+    "too-few-public-methods",
+    "fixme",
+]

@@ -57,6 +57,9 @@ async def db_lifespan(_: FastAPI) -> AsyncIterator[None]:
         logger.info("✅ Database closed")
 
 
+# Re-export database functions for backward compatibility
+from shared.database.base import init_db, close_db
+
 # Re-export models for backward compatibility
 from shared.database.models import (
     User,
@@ -86,6 +89,8 @@ from shared.database.models import (
 
 __all__ = [
     "db_lifespan",
+    "init_db",
+    "close_db",
     "User",
     "Project",
     "Workflow",

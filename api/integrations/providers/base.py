@@ -6,9 +6,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 from fastapi import HTTPException
 
 if TYPE_CHECKING:
-    from shared.database.models import User
-    from shared.database.models_integrations import IntegrationResource, IntegrationSecret
-    from shared.database.models_oauth import OAuthConnection
+    from shared.database.models import User, IntegrationResource, IntegrationSecret, OAuthConnection
 
 
 class _ResourceUpserter(Protocol):

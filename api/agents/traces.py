@@ -5,8 +5,10 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 from fastapi import APIRouter, Request, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlmodel import select
 from shared.logger import get_logger
-from shared.database.workflow_models import Workflow, parse_workflow_public_id
+from shared.database.models import Workflow, parse_workflow_public_id
+from shared.database.base import async_session_maker
 from .checkpointer import get_checkpointer
 
 logger = get_logger("api.agents.traces")
@@ -142,9 +144,13 @@ async def _get_workflow_name(workflow_id: Optional[str]) -> Optional[str]:
         return None
 
     try:
-        workflow = await Workflow.get_or_none(id=pk)
-        if workflow:
-            return workflow.name
+        async with async_session_maker() as session:
+            result = await session.execute(
+                select(Workflow).where(Workflow.id == pk)
+            )
+            workflow = result.scalar_one_or_none()
+            if workflow:
+                return workflow.name
     except Exception as exc:
         logger.debug(f"Could not lookup workflow name for {workflow_id}: {exc}")
 

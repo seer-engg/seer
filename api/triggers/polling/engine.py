@@ -5,8 +5,10 @@ from typing import List, Optional
 from uuid import uuid4
 
 from fastapi import HTTPException
-from tortoise.expressions import Q
-from tortoise.transactions import in_transaction
+from sqlmodel import select
+from sqlalchemy import or_
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from api.triggers.polling.adapters.base import (
     PollAdapterError,
@@ -20,7 +22,8 @@ from api.triggers.services import (
     _load_trigger_provider,
     _persist_event,
 )
-from shared.database.workflow_models import TriggerSubscription
+from shared.database.models import TriggerSubscription
+from shared.database.base import async_session_maker
 from shared.logger import get_logger
 from shared.tools.oauth_manager import get_oauth_token
 
@@ -69,20 +72,27 @@ class TriggerPollEngine:
 
     async def _lease_due_subscriptions(self, *, limit: int) -> List[TriggerSubscription]:
         now = _utcnow()
-        async with in_transaction() as conn:
-            queryset = (
-                TriggerSubscription.filter(
-                    enabled=True,
-                    next_poll_at__lte=now,
+        async with async_session_maker() as session:
+            # Build query with filters
+            stmt = (
+                select(TriggerSubscription)
+                .where(
+                    TriggerSubscription.enabled == True,
+                    TriggerSubscription.next_poll_at <= now,
+                    TriggerSubscription.poll_status != "disabled",
+                    or_(
+                        TriggerSubscription.poll_lock_owner.is_(None),
+                        TriggerSubscription.poll_lock_expires_at <= now
+                    )
                 )
-                .exclude(poll_status="disabled")
-                .filter(Q(poll_lock_owner__isnull=True) | Q(poll_lock_expires_at__lte=now))
-                .order_by("next_poll_at")
+                .order_by(TriggerSubscription.next_poll_at)
                 .limit(limit)
-                .using_db(conn)
-                .select_for_update(skip_locked=True)
+                .with_for_update(skip_locked=True)
             )
-            subscriptions = await queryset
+
+            result = await session.execute(stmt)
+            subscriptions = list(result.scalars().all())
+
             if not subscriptions:
                 return []
 
@@ -90,10 +100,14 @@ class TriggerPollEngine:
             for subscription in subscriptions:
                 subscription.poll_lock_owner = self.worker_id
                 subscription.poll_lock_expires_at = lock_expiry
-                await subscription.save(
-                    update_fields=["poll_lock_owner", "poll_lock_expires_at"],
-                    using_db=conn,
-                )
+                session.add(subscription)
+
+            await session.commit()
+
+            # Refresh all subscriptions to get updated state
+            for subscription in subscriptions:
+                await session.refresh(subscription)
+
             return subscriptions
 
     async def _process_subscription(self, subscription: TriggerSubscription) -> None:
@@ -116,7 +130,16 @@ class TriggerPollEngine:
             )
             return
 
-        await subscription.fetch_related("user")
+        # Load user relationship if not already loaded
+        if subscription.user is None:
+            async with async_session_maker() as session:
+                result = await session.execute(
+                    select(TriggerSubscription)
+                    .where(TriggerSubscription.id == subscription.id)
+                    .options(selectinload(TriggerSubscription.user))
+                )
+                subscription = result.scalar_one()
+
         user = subscription.user
         if user is None:
             logger.error(f"Missing user for subscription {subscription.id}")
@@ -247,17 +270,11 @@ class TriggerPollEngine:
         subscription.next_poll_at = next_poll
         subscription.poll_lock_owner = None
         subscription.poll_lock_expires_at = None
-        await subscription.save(
-            update_fields=[
-                "poll_cursor_json",
-                "poll_status",
-                "poll_error_json",
-                "poll_backoff_seconds",
-                "next_poll_at",
-                "poll_lock_owner",
-                "poll_lock_expires_at",
-            ]
-        )
+
+        async with async_session_maker() as session:
+            session.add(subscription)
+            await session.commit()
+            await session.refresh(subscription)
 
     async def _mark_backoff(
         self,
@@ -274,16 +291,11 @@ class TriggerPollEngine:
         subscription.next_poll_at = next_poll
         subscription.poll_lock_owner = None
         subscription.poll_lock_expires_at = None
-        await subscription.save(
-            update_fields=[
-                "poll_status",
-                "poll_error_json",
-                "poll_backoff_seconds",
-                "next_poll_at",
-                "poll_lock_owner",
-                "poll_lock_expires_at",
-            ]
-        )
+
+        async with async_session_maker() as session:
+            session.add(subscription)
+            await session.commit()
+            await session.refresh(subscription)
 
     async def _mark_error(
         self,
@@ -298,15 +310,11 @@ class TriggerPollEngine:
         subscription.next_poll_at = _utcnow() + timedelta(seconds=delay_seconds)
         subscription.poll_lock_owner = None
         subscription.poll_lock_expires_at = None
-        await subscription.save(
-            update_fields=[
-                "poll_status",
-                "poll_error_json",
-                "next_poll_at",
-                "poll_lock_owner",
-                "poll_lock_expires_at",
-            ]
-        )
+
+        async with async_session_maker() as session:
+            session.add(subscription)
+            await session.commit()
+            await session.refresh(subscription)
 
     async def _disable_subscription(
         self,
@@ -319,12 +327,9 @@ class TriggerPollEngine:
         subscription.poll_error_json = {"reason": reason, "detail": detail}
         subscription.poll_lock_owner = None
         subscription.poll_lock_expires_at = None
-        await subscription.save(
-            update_fields=[
-                "poll_status",
-                "poll_error_json",
-                "poll_lock_owner",
-                "poll_lock_expires_at",
-            ]
-        )
+
+        async with async_session_maker() as session:
+            session.add(subscription)
+            await session.commit()
+            await session.refresh(subscription)
 

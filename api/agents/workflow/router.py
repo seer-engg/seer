@@ -120,7 +120,24 @@ async def _maybe_create_proposal_from_spec(
     except HTTPException as exc:
         error_detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
         return None, None, error_detail
-    await proposal.fetch_related('created_by', 'workflow', 'session')
+
+    # Reload proposal with relationships
+    from shared.database.base import async_session_maker
+    from sqlmodel import select
+    from sqlalchemy.orm import selectinload
+    async with async_session_maker() as session_db:
+        stmt = (
+            select(WorkflowProposal)
+            .where(WorkflowProposal.id == proposal.id)
+            .options(
+                selectinload(WorkflowProposal.created_by),
+                selectinload(WorkflowProposal.workflow),
+                selectinload(WorkflowProposal.session)
+            )
+        )
+        result = await session_db.execute(stmt)
+        proposal = result.scalar_one()
+
     proposal_public = WorkflowProposalPublic.model_validate(proposal, from_attributes=True)
 
     # Capture workflow proposal creation event
@@ -976,9 +993,28 @@ async def get_proposal_endpoint(
     proposal_id: int,
 ) -> WorkflowProposalPublic:
     """Fetch a single workflow proposal."""
+    from shared.database.base import async_session_maker
+    from sqlmodel import select
+    from sqlalchemy.orm import selectinload
+    from shared.database.models import WorkflowProposal
+
     workflow = await get_workflow(_require_user(request), workflow_id)
     proposal = await get_workflow_proposal(workflow, proposal_id)
-    await proposal.fetch_related('created_by', 'workflow', 'session')
+
+    # Reload with relationships
+    async with async_session_maker() as session_db:
+        stmt = (
+            select(WorkflowProposal)
+            .where(WorkflowProposal.id == proposal.id)
+            .options(
+                selectinload(WorkflowProposal.created_by),
+                selectinload(WorkflowProposal.workflow),
+                selectinload(WorkflowProposal.session)
+            )
+        )
+        result = await session_db.execute(stmt)
+        proposal = result.scalar_one()
+
     return WorkflowProposalPublic.model_validate(proposal, from_attributes=True)
 
 
@@ -989,6 +1025,11 @@ async def accept_proposal_endpoint(
     proposal_id: int,
 ) -> WorkflowProposalActionResponse:
     """Accept a workflow proposal and apply its changes."""
+    from shared.database.base import async_session_maker
+    from sqlmodel import select
+    from sqlalchemy.orm import selectinload
+    from shared.database.models import WorkflowProposal
+
     user = _require_user(request)
     workflow = await get_workflow(user, workflow_id)
     proposal, workflow = await accept_workflow_proposal(
@@ -996,7 +1037,20 @@ async def accept_proposal_endpoint(
         proposal_id,
         actor=user,
     )
-    await proposal.fetch_related('created_by', 'workflow', 'session')
+
+    # Reload with relationships
+    async with async_session_maker() as session_db:
+        stmt = (
+            select(WorkflowProposal)
+            .where(WorkflowProposal.id == proposal.id)
+            .options(
+                selectinload(WorkflowProposal.created_by),
+                selectinload(WorkflowProposal.workflow),
+                selectinload(WorkflowProposal.session)
+            )
+        )
+        result = await session_db.execute(stmt)
+        proposal = result.scalar_one()
 
     # Capture proposal acceptance event
     analytics.capture(
@@ -1023,10 +1077,28 @@ async def reject_proposal_endpoint(
     proposal_id: int,
 ) -> WorkflowProposalActionResponse:
     """Reject a workflow proposal without applying changes."""
+    from shared.database.base import async_session_maker
+    from sqlmodel import select
+    from sqlalchemy.orm import selectinload
+    from shared.database.models import WorkflowProposal
+
     user = _require_user(request)
     workflow = await get_workflow(user, workflow_id)
     proposal = await reject_workflow_proposal(workflow, proposal_id)
-    await proposal.fetch_related('created_by', 'workflow', 'session')
+
+    # Reload with relationships
+    async with async_session_maker() as session_db:
+        stmt = (
+            select(WorkflowProposal)
+            .where(WorkflowProposal.id == proposal.id)
+            .options(
+                selectinload(WorkflowProposal.created_by),
+                selectinload(WorkflowProposal.workflow),
+                selectinload(WorkflowProposal.session)
+            )
+        )
+        result = await session_db.execute(stmt)
+        proposal = result.scalar_one()
 
     # Capture proposal rejection event
     analytics.capture(

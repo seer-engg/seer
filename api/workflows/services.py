@@ -10,10 +10,12 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from fastapi import HTTPException
 from jsonschema import Draft7Validator, ValidationError as JsonSchemaValidationError
-from tortoise.exceptions import DoesNotExist
+from sqlmodel import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from shared.database.models import User
-from shared.database.workflow_models import (
+from shared.database.models import (
     TriggerSubscription,
     Workflow,
     WorkflowDraft,
@@ -26,6 +28,7 @@ from shared.database.workflow_models import (
     parse_run_public_id,
     parse_workflow_public_id,
 )
+from shared.database.base import async_session_maker
 from shared.tools.base import list_tools as registry_list_tools
 from shared.config import config as shared_config
 from shared.analytics import analytics
@@ -426,50 +429,62 @@ async def list_trigger_subscriptions(
     *,
     workflow_id: Optional[str] = None,
 ) -> api_models.TriggerSubscriptionListResponse:
-    query = TriggerSubscription.filter(user=user)
-    if workflow_id:
-        workflow = await _get_workflow(user, workflow_id)
-        query = query.filter(workflow=workflow)
-    subscriptions = await query.order_by("-created_at")
-    return api_models.TriggerSubscriptionListResponse(
-        items=[_serialize_subscription(item) for item in subscriptions],
-    )
+    async with async_session_maker() as session:
+        stmt = select(TriggerSubscription).where(TriggerSubscription.user_id == user.id)
+        if workflow_id:
+            workflow = await _get_workflow(user, workflow_id, session)
+            stmt = stmt.where(TriggerSubscription.workflow_id == workflow.id)
+        stmt = stmt.order_by(TriggerSubscription.created_at.desc())
+        result = await session.execute(stmt)
+        subscriptions = result.scalars().all()
+        return api_models.TriggerSubscriptionListResponse(
+            items=[_serialize_subscription(item) for item in subscriptions],
+        )
 
 
 async def create_trigger_subscription(
     user: User,
     payload: api_models.TriggerSubscriptionCreateRequest,
 ) -> api_models.TriggerSubscriptionResponse:
-    workflow = await _get_workflow(user, payload.workflow_id)
-    draft = workflow.draft or await WorkflowDraft.get(workflow=workflow)
-    definition = _load_trigger_definition(payload.trigger_key)
-    spec = WorkflowSpec.model_validate(draft.spec)
-    filters = dict(payload.filters or {})
-    bindings = dict(payload.bindings or {})
-    provider_config = dict(payload.provider_config or {})
-    _validate_filters_payload(filters, definition)
-    _validate_bindings_against_workflow(bindings, spec, definition.event_schema)
-    secret = _generate_subscription_secret() if _should_emit_webhook_url(payload.trigger_key) else None
-    subscription = await TriggerSubscription.create(
-        user=user,
-        workflow=workflow,
-        trigger_key=payload.trigger_key,
-        provider_connection_id=payload.provider_connection_id,
-        enabled=payload.enabled,
-        filters=filters,
-        bindings=bindings,
-        provider_config=provider_config,
-        secret_token=secret,
-    )
-    return _serialize_subscription(subscription)
+    async with async_session_maker() as session:
+        workflow = await _get_workflow(user, payload.workflow_id, session)
+        draft = workflow.draft
+        if not draft:
+            stmt = select(WorkflowDraft).where(WorkflowDraft.workflow_id == workflow.id)
+            result = await session.execute(stmt)
+            draft = result.scalar_one()
+        definition = _load_trigger_definition(payload.trigger_key)
+        spec = WorkflowSpec.model_validate(draft.spec)
+        filters = dict(payload.filters or {})
+        bindings = dict(payload.bindings or {})
+        provider_config = dict(payload.provider_config or {})
+        _validate_filters_payload(filters, definition)
+        _validate_bindings_against_workflow(bindings, spec, definition.event_schema)
+        secret = _generate_subscription_secret() if _should_emit_webhook_url(payload.trigger_key) else None
+        subscription = TriggerSubscription(
+            user_id=user.id,
+            workflow_id=workflow.id,
+            trigger_key=payload.trigger_key,
+            provider_connection_id=payload.provider_connection_id,
+            enabled=payload.enabled,
+            filters=filters,
+            bindings=bindings,
+            provider_config=provider_config,
+            secret_token=secret,
+        )
+        session.add(subscription)
+        await session.commit()
+        await session.refresh(subscription)
+        return _serialize_subscription(subscription)
 
 
 async def get_trigger_subscription(
     user: User,
     subscription_id: int,
 ) -> api_models.TriggerSubscriptionResponse:
-    subscription = await _get_trigger_subscription(user, subscription_id)
-    return _serialize_subscription(subscription)
+    async with async_session_maker() as session:
+        subscription = await _get_trigger_subscription(user, subscription_id, session)
+        return _serialize_subscription(subscription)
 
 
 async def update_trigger_subscription(
@@ -477,34 +492,50 @@ async def update_trigger_subscription(
     subscription_id: int,
     payload: api_models.TriggerSubscriptionUpdateRequest,
 ) -> api_models.TriggerSubscriptionResponse:
-    subscription = await _get_trigger_subscription(user, subscription_id)
-    definition = _load_trigger_definition(subscription.trigger_key)
-    await subscription.fetch_related("workflow")
-    draft = subscription.workflow.draft or await WorkflowDraft.get(workflow=subscription.workflow)
-    spec = WorkflowSpec.model_validate(draft.spec)
-    if payload.filters is not None:
-        new_filters = dict(payload.filters or {})
-        _validate_filters_payload(new_filters, definition)
-        subscription.filters = new_filters
-    if payload.bindings is not None:
-        new_bindings = dict(payload.bindings or {})
-        _validate_bindings_against_workflow(new_bindings, spec, definition.event_schema)
-        subscription.bindings = new_bindings
-    if payload.provider_connection_id is not None:
-        subscription.provider_connection_id = payload.provider_connection_id
-    if payload.provider_config is not None:
-        subscription.provider_config = dict(payload.provider_config or {})
-    if payload.enabled is not None:
-        subscription.enabled = payload.enabled
-    if _should_emit_webhook_url(subscription.trigger_key) and not subscription.secret_token:
-        subscription.secret_token = _generate_subscription_secret()
-    await subscription.save()
-    return _serialize_subscription(subscription)
+    async with async_session_maker() as session:
+        subscription = await _get_trigger_subscription(user, subscription_id, session)
+        definition = _load_trigger_definition(subscription.trigger_key)
+
+        # Load workflow and draft
+        stmt = select(Workflow).where(Workflow.id == subscription.workflow_id).options(selectinload(Workflow.draft))
+        result = await session.execute(stmt)
+        workflow = result.scalar_one()
+
+        draft = workflow.draft
+        if not draft:
+            stmt = select(WorkflowDraft).where(WorkflowDraft.workflow_id == workflow.id)
+            result = await session.execute(stmt)
+            draft = result.scalar_one()
+
+        spec = WorkflowSpec.model_validate(draft.spec)
+        if payload.filters is not None:
+            new_filters = dict(payload.filters or {})
+            _validate_filters_payload(new_filters, definition)
+            subscription.filters = new_filters
+        if payload.bindings is not None:
+            new_bindings = dict(payload.bindings or {})
+            _validate_bindings_against_workflow(new_bindings, spec, definition.event_schema)
+            subscription.bindings = new_bindings
+        if payload.provider_connection_id is not None:
+            subscription.provider_connection_id = payload.provider_connection_id
+        if payload.provider_config is not None:
+            subscription.provider_config = dict(payload.provider_config or {})
+        if payload.enabled is not None:
+            subscription.enabled = payload.enabled
+        if _should_emit_webhook_url(subscription.trigger_key) and not subscription.secret_token:
+            subscription.secret_token = _generate_subscription_secret()
+
+        session.add(subscription)
+        await session.commit()
+        await session.refresh(subscription)
+        return _serialize_subscription(subscription)
 
 
 async def delete_trigger_subscription(user: User, subscription_id: int) -> None:
-    subscription = await _get_trigger_subscription(user, subscription_id)
-    await subscription.delete()
+    async with async_session_maker() as session:
+        subscription = await _get_trigger_subscription(user, subscription_id, session)
+        await session.delete(subscription)
+        await session.commit()
 
 
 async def test_trigger_subscription(
@@ -512,26 +543,37 @@ async def test_trigger_subscription(
     subscription_id: int,
     payload: api_models.TriggerSubscriptionTestRequest,
 ) -> api_models.TriggerSubscriptionTestResponse:
-    subscription = await _get_trigger_subscription(user, subscription_id)
-    await subscription.fetch_related("workflow")
-    draft = subscription.workflow.draft or await WorkflowDraft.get(workflow=subscription.workflow)
-    spec = WorkflowSpec.model_validate(draft.spec)
-    definition = _load_trigger_definition(subscription.trigger_key)
-    event_payload = payload.event or definition.sample_event
-    if event_payload is None:
-        _raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Event payload required",
-            detail="Provide an event payload or configure a trigger sample.",
-            status=400,
-        )
-    _validate_event_payload(event_payload, definition.event_schema)
-    try:
-        resolved = _evaluate_bindings(dict(subscription.bindings or {}), event_payload)
-    except ValueError as exc:
-        return api_models.TriggerSubscriptionTestResponse(inputs={}, errors=[str(exc)])
-    errors = _validate_resolved_inputs(resolved, spec)
-    return api_models.TriggerSubscriptionTestResponse(inputs=resolved, errors=errors)
+    async with async_session_maker() as session:
+        subscription = await _get_trigger_subscription(user, subscription_id, session)
+
+        # Load workflow and draft
+        stmt = select(Workflow).where(Workflow.id == subscription.workflow_id).options(selectinload(Workflow.draft))
+        result = await session.execute(stmt)
+        workflow = result.scalar_one()
+
+        draft = workflow.draft
+        if not draft:
+            stmt = select(WorkflowDraft).where(WorkflowDraft.workflow_id == workflow.id)
+            result = await session.execute(stmt)
+            draft = result.scalar_one()
+
+        spec = WorkflowSpec.model_validate(draft.spec)
+        definition = _load_trigger_definition(subscription.trigger_key)
+        event_payload = payload.event or definition.sample_event
+        if event_payload is None:
+            _raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Event payload required",
+                detail="Provide an event payload or configure a trigger sample.",
+                status=400,
+            )
+        _validate_event_payload(event_payload, definition.event_schema)
+        try:
+            resolved = _evaluate_bindings(dict(subscription.bindings or {}), event_payload)
+        except ValueError as exc:
+            return api_models.TriggerSubscriptionTestResponse(inputs={}, errors=[str(exc)])
+        errors = _validate_resolved_inputs(resolved, spec)
+        return api_models.TriggerSubscriptionTestResponse(inputs=resolved, errors=errors)
 
 
 async def resolve_schema(schema_id: str) -> api_models.SchemaResponse:
@@ -646,14 +688,18 @@ def _serialize_version_list_item(
     )
 
 
-async def _recent_version(workflow: Workflow) -> Optional[WorkflowVersion]:
-    return await WorkflowVersion.filter(workflow=workflow).order_by("-created_at").first()
+async def _recent_version(workflow: Workflow, session: AsyncSession) -> Optional[WorkflowVersion]:
+    stmt = select(WorkflowVersion).where(WorkflowVersion.workflow_id == workflow.id).order_by(WorkflowVersion.created_at.desc())
+    result = await session.execute(stmt)
+    return result.scalars().first()
 
 
-async def _workflow_response(workflow: Workflow) -> api_models.WorkflowResponse:
+async def _workflow_response(workflow: Workflow, session: AsyncSession) -> api_models.WorkflowResponse:
     draft: Optional[WorkflowDraft] = getattr(workflow, "draft", None)
     if draft is None:
-        draft = await WorkflowDraft.get_or_none(workflow=workflow)
+        stmt = select(WorkflowDraft).where(WorkflowDraft.workflow_id == workflow.id)
+        result = await session.execute(stmt)
+        draft = result.scalar_one_or_none()
     if draft is None:
         _raise_problem(
             type_uri=VALIDATION_PROBLEM,
@@ -665,7 +711,7 @@ async def _workflow_response(workflow: Workflow) -> api_models.WorkflowResponse:
     published_version_obj: Optional[WorkflowVersion] = getattr(workflow, "published_version", None)
     if published_version_obj and not isinstance(published_version_obj, WorkflowVersion):
         published_version_obj = None
-    latest_version = await _recent_version(workflow)
+    latest_version = await _recent_version(workflow, session)
     return api_models.WorkflowResponse(
         workflow_id=workflow.workflow_id,
         name=workflow.name,
@@ -699,21 +745,31 @@ def _parse_workflow_cursor(cursor: Optional[str]) -> Optional[int]:
 
 async def create_workflow(user: User, payload: api_models.WorkflowCreateRequest) -> api_models.WorkflowResponse:
     spec_dict = _spec_to_dict(payload.spec)
-    workflow = await Workflow.create(
-        user=user,
-        name=payload.name,
-        description=payload.description,
-        tags=list(payload.tags or []),
-        meta={"last_compile_ok": False},
-    )
-    draft = await WorkflowDraft.create(
-        workflow=workflow,
-        spec=spec_dict,
-        revision=1,
-        updated_by=user,
-    )
-    await workflow.fetch_related("draft")
-    return await _workflow_response(workflow)
+    async with async_session_maker() as session:
+        workflow = Workflow(
+            user_id=user.id,
+            name=payload.name,
+            description=payload.description,
+            tags=list(payload.tags or []),
+            meta={"last_compile_ok": False},
+        )
+        session.add(workflow)
+        await session.commit()
+        await session.refresh(workflow)
+
+        draft = WorkflowDraft(
+            workflow_id=workflow.id,
+            spec=spec_dict,
+            revision=1,
+            updated_by_id=user.id,
+        )
+        session.add(draft)
+        await session.commit()
+        await session.refresh(draft)
+
+        # Attach draft to workflow for response generation
+        workflow.draft = draft
+        return await _workflow_response(workflow, session)
 
 
 async def list_workflows(
@@ -725,50 +781,59 @@ async def list_workflows(
     limit = max(1, min(limit, 100))
     cursor_pk = _parse_workflow_cursor(cursor)
 
-    query = Workflow.filter(user=user).prefetch_related("draft")
-    if cursor_pk:
-        query = query.filter(id__lt=cursor_pk)
+    async with async_session_maker() as session:
+        stmt = select(Workflow).where(Workflow.user_id == user.id).options(selectinload(Workflow.draft))
+        if cursor_pk:
+            stmt = stmt.where(Workflow.id < cursor_pk)
 
-    records = await query.order_by("-id").limit(limit + 1)
-    items = [_workflow_summary(record) for record in records[:limit]]
-    next_cursor = items[-1].workflow_id if len(records) > limit and items else None
-    return api_models.WorkflowListResponse(items=items, next_cursor=next_cursor)
+        stmt = stmt.order_by(Workflow.id.desc()).limit(limit + 1)
+        result = await session.execute(stmt)
+        records = result.scalars().all()
+        items = [_workflow_summary(record) for record in records[:limit]]
+        next_cursor = items[-1].workflow_id if len(records) > limit and items else None
+        return api_models.WorkflowListResponse(items=items, next_cursor=next_cursor)
 
 
 async def get_workflow(user: User, workflow_id: str) -> api_models.WorkflowResponse:
-    workflow = await _get_workflow(user, workflow_id)
-    return await _workflow_response(workflow)
+    async with async_session_maker() as session:
+        workflow = await _get_workflow(user, workflow_id, session)
+        return await _workflow_response(workflow, session)
 
 
 async def list_workflow_versions(user: User, workflow_id: str) -> api_models.WorkflowVersionListResponse:
-    workflow = await _get_workflow(user, workflow_id)
-    draft = workflow.draft or await WorkflowDraft.get(workflow=workflow)
-    versions = (
-        await WorkflowVersion.filter(workflow=workflow)
-        .order_by("-created_at")
-        .all()
-    )
-    published_version_obj: Optional[WorkflowVersion] = getattr(workflow, "published_version", None)
-    published_version_id = published_version_obj.id if isinstance(published_version_obj, WorkflowVersion) else None
-    latest_version_id = versions[0].id if versions else None
-    items = [
-        _serialize_version_list_item(
-            version,
+    async with async_session_maker() as session:
+        workflow = await _get_workflow(user, workflow_id, session)
+        draft = workflow.draft
+        if not draft:
+            stmt = select(WorkflowDraft).where(WorkflowDraft.workflow_id == workflow.id)
+            result = await session.execute(stmt)
+            draft = result.scalar_one()
+
+        stmt = select(WorkflowVersion).where(WorkflowVersion.workflow_id == workflow.id).order_by(WorkflowVersion.created_at.desc())
+        result = await session.execute(stmt)
+        versions = result.scalars().all()
+
+        published_version_obj: Optional[WorkflowVersion] = getattr(workflow, "published_version", None)
+        published_version_id = published_version_obj.id if isinstance(published_version_obj, WorkflowVersion) else None
+        latest_version_id = versions[0].id if versions else None
+        items = [
+            _serialize_version_list_item(
+                version,
+                latest_version_id=latest_version_id,
+                published_version_id=published_version_id,
+            )
+            for version in versions
+        ]
+        return api_models.WorkflowVersionListResponse(
+            workflow_id=workflow.workflow_id,
+            draft_revision=draft.revision,
+            versions=items,
             latest_version_id=latest_version_id,
             published_version_id=published_version_id,
         )
-        for version in versions
-    ]
-    return api_models.WorkflowVersionListResponse(
-        workflow_id=workflow.workflow_id,
-        draft_revision=draft.revision,
-        versions=items,
-        latest_version_id=latest_version_id,
-        published_version_id=published_version_id,
-    )
 
 
-async def _get_workflow(user: User, workflow_id: str) -> Workflow:
+async def _get_workflow(user: User, workflow_id: str, session: AsyncSession) -> Workflow:
     try:
         pk = parse_workflow_public_id(workflow_id)
     except ValueError:
@@ -778,7 +843,13 @@ async def _get_workflow(user: User, workflow_id: str) -> Workflow:
             detail="Workflow id is invalid",
             status=400,
         )
-    workflow = await Workflow.filter(id=pk, user=user).prefetch_related("draft", "published_version").first()
+    stmt = (
+        select(Workflow)
+        .where(Workflow.id == pk, Workflow.user_id == user.id)
+        .options(selectinload(Workflow.draft), selectinload(Workflow.published_version))
+    )
+    result = await session.execute(stmt)
+    workflow = result.scalar_one_or_none()
     if workflow is None:
         _raise_problem(
             type_uri=VALIDATION_PROBLEM,
@@ -789,7 +860,7 @@ async def _get_workflow(user: User, workflow_id: str) -> Workflow:
     return workflow
 
 
-async def _get_trigger_subscription(user: User, subscription_id: int) -> TriggerSubscription:
+async def _get_trigger_subscription(user: User, subscription_id: int, session: AsyncSession) -> TriggerSubscription:
     try:
         pk = int(subscription_id)
     except (TypeError, ValueError):
@@ -799,11 +870,13 @@ async def _get_trigger_subscription(user: User, subscription_id: int) -> Trigger
             detail="Subscription id must be an integer",
             status=400,
         )
-    subscription = (
-        await TriggerSubscription.filter(id=pk, user=user)
-        .prefetch_related("workflow")
-        .first()
+    stmt = (
+        select(TriggerSubscription)
+        .where(TriggerSubscription.id == pk, TriggerSubscription.user_id == user.id)
+        .options(selectinload(TriggerSubscription.workflow))
     )
+    result = await session.execute(stmt)
+    subscription = result.scalar_one_or_none()
     if subscription is None:
         _raise_problem(
             type_uri=VALIDATION_PROBLEM,
@@ -819,15 +892,18 @@ async def update_workflow(
     workflow_id: str,
     payload: api_models.WorkflowUpdateRequest,
 ) -> api_models.WorkflowResponse:
-    workflow = await _get_workflow(user, workflow_id)
-    if payload.name is not None:
-        workflow.name = payload.name
-    if payload.description is not None:
-        workflow.description = payload.description
-    if payload.tags is not None:
-        workflow.tags = list(payload.tags)
-    await workflow.save()
-    return await _workflow_response(workflow)
+    async with async_session_maker() as session:
+        workflow = await _get_workflow(user, workflow_id, session)
+        if payload.name is not None:
+            workflow.name = payload.name
+        if payload.description is not None:
+            workflow.description = payload.description
+        if payload.tags is not None:
+            workflow.tags = list(payload.tags)
+        session.add(workflow)
+        await session.commit()
+        await session.refresh(workflow)
+        return await _workflow_response(workflow, session)
 
 
 async def apply_workflow_from_spec(
@@ -838,25 +914,36 @@ async def apply_workflow_from_spec(
     """
     Replace an existing workflow's spec with a validated WorkflowSpec payload.
     """
-    workflow = await _get_workflow(user, workflow_id)
-    try:
-        spec = WorkflowSpec.model_validate(spec_payload)
-    except Exception as exc:
-        _raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Invalid workflow spec",
-            detail=str(exc),
-            status=400,
-        )
+    async with async_session_maker() as session:
+        workflow = await _get_workflow(user, workflow_id, session)
+        try:
+            spec = WorkflowSpec.model_validate(spec_payload)
+        except Exception as exc:
+            _raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Invalid workflow spec",
+                detail=str(exc),
+                status=400,
+            )
 
-    draft = await WorkflowDraft.get(workflow=workflow)
-    draft.spec = _spec_to_dict(spec)
-    draft.revision += 1
-    draft.updated_by = user
-    await draft.save()
-    await Workflow.filter(id=workflow.id).update(updated_at=_now())
-    await workflow.fetch_related("draft")
-    return await _workflow_response(workflow)
+        stmt = select(WorkflowDraft).where(WorkflowDraft.workflow_id == workflow.id)
+        result = await session.execute(stmt)
+        draft = result.scalar_one()
+
+        draft.spec = _spec_to_dict(spec)
+        draft.revision += 1
+        draft.updated_by_id = user.id
+        session.add(draft)
+        await session.commit()
+
+        workflow.updated_at = _now()
+        session.add(workflow)
+        await session.commit()
+        await session.refresh(workflow)
+
+        # Reload draft for response
+        workflow.draft = draft
+        return await _workflow_response(workflow, session)
 
 
 async def patch_workflow_draft(
@@ -864,23 +951,36 @@ async def patch_workflow_draft(
     workflow_id: str,
     payload: api_models.WorkflowDraftPatchRequest,
 ) -> api_models.WorkflowResponse:
-    workflow = await _get_workflow(user, workflow_id)
-    draft = workflow.draft or await WorkflowDraft.get(workflow=workflow)
-    if payload.base_revision is not None and payload.base_revision != draft.revision:
-        _raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Draft revision mismatch",
-            detail="Draft has changed since last fetch",
-            status=409,
-        )
-    spec = payload.spec
-    draft.spec = _spec_to_dict(spec)
-    draft.revision += 1
-    draft.updated_by = user
-    await draft.save()
-    await Workflow.filter(id=workflow.id).update(updated_at=_now())
-    await workflow.fetch_related("draft")
-    return await _workflow_response(workflow)
+    async with async_session_maker() as session:
+        workflow = await _get_workflow(user, workflow_id, session)
+        draft = workflow.draft
+        if not draft:
+            stmt = select(WorkflowDraft).where(WorkflowDraft.workflow_id == workflow.id)
+            result = await session.execute(stmt)
+            draft = result.scalar_one()
+
+        if payload.base_revision is not None and payload.base_revision != draft.revision:
+            _raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Draft revision mismatch",
+                detail="Draft has changed since last fetch",
+                status=409,
+            )
+        spec = payload.spec
+        draft.spec = _spec_to_dict(spec)
+        draft.revision += 1
+        draft.updated_by_id = user.id
+        session.add(draft)
+        await session.commit()
+
+        workflow.updated_at = _now()
+        session.add(workflow)
+        await session.commit()
+        await session.refresh(workflow)
+
+        # Reload draft for response
+        workflow.draft = draft
+        return await _workflow_response(workflow, session)
 
 
 async def restore_workflow_version(
@@ -889,39 +989,62 @@ async def restore_workflow_version(
     version_id: int,
     payload: api_models.WorkflowVersionRestoreRequest,
 ) -> api_models.WorkflowResponse:
-    workflow = await _get_workflow(user, workflow_id)
-    try:
-        version = await WorkflowVersion.get(id=version_id, workflow=workflow)
-    except DoesNotExist:
-        _raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Version not found",
-            detail=f"Version '{version_id}' does not belong to workflow '{workflow_id}'",
-            status=404,
+    async with async_session_maker() as session:
+        workflow = await _get_workflow(user, workflow_id, session)
+        stmt = select(WorkflowVersion).where(WorkflowVersion.id == version_id, WorkflowVersion.workflow_id == workflow.id)
+        result = await session.execute(stmt)
+        version = result.scalar_one_or_none()
+        if version is None:
+            _raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Version not found",
+                detail=f"Version '{version_id}' does not belong to workflow '{workflow_id}'",
+                status=404,
+            )
+
+        draft = workflow.draft
+        if not draft:
+            stmt = select(WorkflowDraft).where(WorkflowDraft.workflow_id == workflow.id)
+            result = await session.execute(stmt)
+            draft = result.scalar_one()
+
+        if payload.base_revision is not None and payload.base_revision != draft.revision:
+            _raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Draft revision mismatch",
+                detail="Draft has changed since last fetch",
+                status=409,
+            )
+        draft.spec = json.loads(json.dumps(version.spec or {}))
+        draft.revision += 1
+        draft.updated_by_id = user.id
+        session.add(draft)
+        await session.commit()
+
+        workflow.updated_at = _now()
+        session.add(workflow)
+        await session.commit()
+
+        # Reload for response
+        await session.refresh(workflow)
+        stmt = (
+            select(Workflow)
+            .where(Workflow.id == workflow.id)
+            .options(selectinload(Workflow.draft), selectinload(Workflow.published_version))
         )
-    draft = workflow.draft or await WorkflowDraft.get(workflow=workflow)
-    if payload.base_revision is not None and payload.base_revision != draft.revision:
-        _raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Draft revision mismatch",
-            detail="Draft has changed since last fetch",
-            status=409,
-        )
-    draft.spec = json.loads(json.dumps(version.spec or {}))
-    draft.revision += 1
-    draft.updated_by = user
-    await draft.save()
-    await Workflow.filter(id=workflow.id).update(updated_at=_now())
-    await workflow.fetch_related("draft", "published_version")
-    return await _workflow_response(workflow)
+        result = await session.execute(stmt)
+        workflow = result.scalar_one()
+        return await _workflow_response(workflow, session)
 
 
-async def _next_release_number(workflow: Workflow) -> int:
-    latest = (
-        await WorkflowVersion.filter(workflow=workflow, version_number__isnull=False)
-        .order_by("-version_number")
-        .first()
+async def _next_release_number(workflow: Workflow, session: AsyncSession) -> int:
+    stmt = (
+        select(WorkflowVersion)
+        .where(WorkflowVersion.workflow_id == workflow.id, WorkflowVersion.version_number.isnot(None))
+        .order_by(WorkflowVersion.version_number.desc())
     )
+    result = await session.execute(stmt)
+    latest = result.scalars().first()
     if latest is None or latest.version_number is None:
         return 1
     return latest.version_number + 1
@@ -932,42 +1055,46 @@ async def publish_workflow(
     workflow_id: str,
     payload: api_models.WorkflowPublishRequest,
 ) -> api_models.WorkflowResponse:
-    workflow = await _get_workflow(user, workflow_id)
-    try:
-        version = await WorkflowVersion.get(id=payload.version_id, workflow=workflow)
-    except DoesNotExist:
-        _raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Version not found",
-            detail=f"Version '{payload.version_id}' does not belong to workflow '{workflow_id}'",
-            status=404,
-        )
+    async with async_session_maker() as session:
+        workflow = await _get_workflow(user, workflow_id, session)
+        stmt = select(WorkflowVersion).where(WorkflowVersion.id == payload.version_id, WorkflowVersion.workflow_id == workflow.id)
+        result = await session.execute(stmt)
+        version = result.scalar_one_or_none()
+        if version is None:
+            _raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Version not found",
+                detail=f"Version '{payload.version_id}' does not belong to workflow '{workflow_id}'",
+                status=404,
+            )
 
-    previous_release = getattr(workflow, "published_version", None)
-    if previous_release and isinstance(previous_release, WorkflowVersion):
-        await WorkflowVersion.filter(id=previous_release.id).update(status=WorkflowVersionStatus.ARCHIVED)
+        previous_release = getattr(workflow, "published_version", None)
+        if previous_release and isinstance(previous_release, WorkflowVersion):
+            previous_release.status = WorkflowVersionStatus.ARCHIVED
+            session.add(previous_release)
+            await session.commit()
 
-    release_number = await _next_release_number(workflow)
-    await WorkflowVersion.filter(id=version.id).update(
-        status=WorkflowVersionStatus.RELEASED,
-        version_number=release_number,
-    )
-    workflow.published_version = version
-    await Workflow.filter(id=workflow.id).update(
-        published_version_id=version.id,
-        updated_at=_now(),
-    )
-    # Refresh status for response
-    version.status = WorkflowVersionStatus.RELEASED
-    version.version_number = release_number
+        release_number = await _next_release_number(workflow, session)
+        version.status = WorkflowVersionStatus.RELEASED
+        version.version_number = release_number
+        session.add(version)
+        await session.commit()
 
-    workflow = await _get_workflow(user, workflow_id)
-    return await _workflow_response(workflow)
+        workflow.published_version_id = version.id
+        workflow.updated_at = _now()
+        session.add(workflow)
+        await session.commit()
+
+        # Reload workflow for response
+        workflow = await _get_workflow(user, workflow_id, session)
+        return await _workflow_response(workflow, session)
 
 
 async def delete_workflow(user: User, workflow_id: str) -> None:
-    workflow = await _get_workflow(user, workflow_id)
-    await workflow.delete()
+    async with async_session_maker() as session:
+        workflow = await _get_workflow(user, workflow_id, session)
+        await session.delete(workflow)
+        await session.commit()
 
 
 def _hash_spec(spec_dict: Dict[str, Any]) -> str:
@@ -975,31 +1102,41 @@ def _hash_spec(spec_dict: Dict[str, Any]) -> str:
     return hashlib.sha256(serialized).hexdigest()
 
 
-async def _ensure_draft_version(workflow: Workflow, user: User) -> WorkflowVersion:
-    draft = await WorkflowDraft.get(workflow=workflow)
+async def _ensure_draft_version(workflow: Workflow, user: User, session: AsyncSession) -> WorkflowVersion:
+    stmt = select(WorkflowDraft).where(WorkflowDraft.workflow_id == workflow.id)
+    result = await session.execute(stmt)
+    draft = result.scalar_one()
+
     spec_dict = json.loads(json.dumps(draft.spec or {}))
     spec_hash = _hash_spec(spec_dict)
-    existing = (
-        await WorkflowVersion.filter(
-            workflow=workflow,
-            spec_hash=spec_hash,
-            status=WorkflowVersionStatus.DRAFT,
-            created_from_draft_revision=draft.revision,
+    stmt = (
+        select(WorkflowVersion)
+        .where(
+            WorkflowVersion.workflow_id == workflow.id,
+            WorkflowVersion.spec_hash == spec_hash,
+            WorkflowVersion.status == WorkflowVersionStatus.DRAFT,
+            WorkflowVersion.created_from_draft_revision == draft.revision,
         )
-        .order_by("-created_at")
-        .first()
+        .order_by(WorkflowVersion.created_at.desc())
     )
+    result = await session.execute(stmt)
+    existing = result.scalars().first()
     if existing:
         return existing
-    return await WorkflowVersion.create(
-        workflow=workflow,
+
+    version = WorkflowVersion(
+        workflow_id=workflow.id,
         status=WorkflowVersionStatus.DRAFT,
         spec=spec_dict,
         created_from_draft_revision=draft.revision,
-        created_by=user,
+        created_by_id=user.id,
         manifest=None,
         spec_hash=spec_hash,
     )
+    session.add(version)
+    await session.commit()
+    await session.refresh(version)
+    return version
 
 
 def _type_env_from_compiled(compiled) -> TypeEnvironment:
@@ -1097,19 +1234,27 @@ async def _create_run_record(
     inputs: Dict[str, Any],
     config_payload: Dict[str, Any],
     source: WorkflowRunSource = WorkflowRunSource.MANUAL,
+    session: AsyncSession,
 ) -> WorkflowRun:
-    run = await WorkflowRun.create(
-        user=user,
-        workflow=workflow,
-        workflow_version=workflow_version,
+    run = WorkflowRun(
+        user_id=user.id,
+        workflow_id=workflow.id if workflow else None,
+        workflow_version_id=workflow_version.id if workflow_version else None,
         spec=_spec_to_dict(spec),
         inputs=inputs or {},
         config=config_payload or {},
         source=source,
         status=WorkflowRunStatus.QUEUED,
     )
-    await WorkflowRun.filter(id=run.id).update(thread_id=run.run_id)
+    session.add(run)
+    await session.commit()
+    await session.refresh(run)
+
+    # Update thread_id to match run_id
     run.thread_id = run.run_id
+    session.add(run)
+    await session.commit()
+    await session.refresh(run)
     return run
 
 
@@ -1167,6 +1312,7 @@ async def _execute_compiled_run(
     *,
     inputs: Dict[str, Any],
     config_payload: Dict[str, Any],
+    session: AsyncSession,
 ) -> Dict[str, Any]:
     logger.debug(
         "Preparing workflow run '%s' (workflow_id=%s) inputs_keys=%s config_payload_keys=%s user_id=%s",
@@ -1176,10 +1322,10 @@ async def _execute_compiled_run(
         sorted((config_payload or {}).keys()),
         getattr(user, "id", None),
     )
-    await WorkflowRun.filter(id=run.id).update(
-        status=WorkflowRunStatus.RUNNING,
-        started_at=_now(),
-    )
+    run.status = WorkflowRunStatus.RUNNING
+    run.started_at = _now()
+    session.add(run)
+    await session.commit()
 
     # Track workflow execution start
     start_time = time.time()
@@ -1208,11 +1354,11 @@ async def _execute_compiled_run(
             checkpointer=checkpointer,
         )
     except WorkflowCompilerError as exc:
-        await WorkflowRun.filter(id=run.id).update(
-            status=WorkflowRunStatus.FAILED,
-            finished_at=_now(),
-            error=str(exc),
-        )
+        run.status = WorkflowRunStatus.FAILED
+        run.finished_at = _now()
+        run.error = str(exc)
+        session.add(run)
+        await session.commit()
 
         # Capture compilation failure event
         duration_ms = (time.time() - start_time) * 1000
@@ -1253,11 +1399,11 @@ async def _execute_compiled_run(
         result = await compiled.ainvoke(inputs or {}, config=effective_config)
     except WorkflowCompilerError as exc:
         print(f"{traceback.format_exc()}")
-        await WorkflowRun.filter(id=run.id).update(
-            status=WorkflowRunStatus.FAILED,
-            finished_at=_now(),
-            error=str(exc),
-        )
+        run.status = WorkflowRunStatus.FAILED
+        run.finished_at = _now()
+        run.error = str(exc)
+        session.add(run)
+        await session.commit()
 
         # Capture runtime failure event
         duration_ms = (time.time() - start_time) * 1000
@@ -1284,11 +1430,11 @@ async def _execute_compiled_run(
         )
     except Exception as exc:
         print(f"{traceback.format_exc()}")
-        await WorkflowRun.filter(id=run.id).update(
-            status=WorkflowRunStatus.FAILED,
-            finished_at=_now(),
-            error=str(exc),
-        )
+        run.status = WorkflowRunStatus.FAILED
+        run.finished_at = _now()
+        run.error = str(exc)
+        session.add(run)
+        await session.commit()
 
         # Capture general exception event
         duration_ms = (time.time() - start_time) * 1000
@@ -1321,13 +1467,13 @@ async def _execute_compiled_run(
     return result
 
 
-async def _complete_run(run: WorkflowRun, output: Dict[str, Any]) -> WorkflowRun:
-    await WorkflowRun.filter(id=run.id).update(
-        status=WorkflowRunStatus.SUCCEEDED,
-        finished_at=_now(),
-        output=output,
-    )
-    await run.refresh_from_db()
+async def _complete_run(run: WorkflowRun, output: Dict[str, Any], session: AsyncSession) -> WorkflowRun:
+    run.status = WorkflowRunStatus.SUCCEEDED
+    run.finished_at = _now()
+    run.output = output
+    session.add(run)
+    await session.commit()
+    await session.refresh(run)
 
     # Capture workflow completion event
     if hasattr(run, '_analytics_start_time'):
@@ -1352,19 +1498,22 @@ async def _complete_run(run: WorkflowRun, output: Dict[str, Any]) -> WorkflowRun
 
 
 async def run_draft_workflow(user: User, payload: api_models.RunFromSpecRequest) -> api_models.RunResponse:
-    run = await _create_run_record(
-        user,
-        workflow=None,
-        spec=payload.spec,
-        inputs=payload.inputs,
-        config_payload=payload.config,
-    )
-    # Mark execution mode for tracking
-    run._analytics_execution_mode = "api_sync"
+    async with async_session_maker() as session:
+        run = await _create_run_record(
+            user,
+            workflow=None,
+            workflow_version=None,
+            spec=payload.spec,
+            inputs=payload.inputs,
+            config_payload=payload.config,
+            session=session,
+        )
+        # Mark execution mode for tracking
+        run._analytics_execution_mode = "api_sync"
 
-    output = await _execute_compiled_run(run, user, inputs=payload.inputs, config_payload=payload.config)
-    run = await _complete_run(run, output)
-    return _serialize_run(run)
+        output = await _execute_compiled_run(run, user, inputs=payload.inputs, config_payload=payload.config, session=session)
+        run = await _complete_run(run, output, session)
+        return _serialize_run(run)
 
 
 async def list_workflow_runs(
@@ -1373,17 +1522,21 @@ async def list_workflow_runs(
     *,
     limit: int = 50,
 ) -> api_models.WorkflowRunListResponse:
-    workflow = await _get_workflow(user, workflow_id)
-    limit = max(1, min(limit, 100))
-    runs = (
-        await WorkflowRun.filter(user=user, workflow=workflow)
-        .order_by("-created_at")
-        .limit(limit)
-    )
-    return api_models.WorkflowRunListResponse(
-        workflow_id=workflow.workflow_id,
-        runs=[_serialize_run_summary(run) for run in runs],
-    )
+    async with async_session_maker() as session:
+        workflow = await _get_workflow(user, workflow_id, session)
+        limit = max(1, min(limit, 100))
+        stmt = (
+            select(WorkflowRun)
+            .where(WorkflowRun.user_id == user.id, WorkflowRun.workflow_id == workflow.id)
+            .order_by(WorkflowRun.created_at.desc())
+            .limit(limit)
+        )
+        result = await session.execute(stmt)
+        runs = result.scalars().all()
+        return api_models.WorkflowRunListResponse(
+            workflow_id=workflow.workflow_id,
+            runs=[_serialize_run_summary(run) for run in runs],
+        )
 
 
 def _snapshot_to_dict(snapshot: Any) -> Dict[str, Any]:
@@ -1510,7 +1663,7 @@ def _build_execution_graph(workflow_spec: Optional[WorkflowSpec]) -> Dict[str, A
 async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryResponse:
     """
     Get workflow execution history with node-based traces.
-    
+
     Returns node execution traces extracted from the latest checkpoint,
     enriched with workflow spec metadata.
     """
@@ -1521,7 +1674,8 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
             detail="LangGraph checkpointer is not configured",
             status=503,
         )
-    run = await _get_run(user, run_id)
+    async with async_session_maker() as session:
+        run = await _get_run(user, run_id, session)
     checkpointer = await get_checkpointer()
     if checkpointer is None:
         _raise_problem(
@@ -1840,112 +1994,121 @@ async def run_saved_workflow(
     workflow_id: str,
     payload: api_models.RunFromWorkflowRequest,
 ) -> api_models.RunResponse:
-    workflow = await _get_workflow(user, workflow_id)
-    if payload.version is not None:
-        version = await WorkflowVersion.filter(
+    async with async_session_maker() as session:
+        workflow = await _get_workflow(user, workflow_id, session)
+        if payload.version is not None:
+            stmt = select(WorkflowVersion).where(
+                WorkflowVersion.workflow_id == workflow.id,
+                WorkflowVersion.version_number == payload.version,
+                WorkflowVersion.status == WorkflowVersionStatus.RELEASED,
+            )
+            result = await session.execute(stmt)
+            version = result.scalars().first()
+            if version is None:
+                _raise_problem(
+                    type_uri=RUN_PROBLEM,
+                    title="Version not found",
+                    detail=f"Version '{payload.version}' not found for workflow '{workflow_id}'",
+                    status=404,
+                )
+        else:
+            version = await _ensure_draft_version(workflow, user, session)
+
+        spec = WorkflowSpec.model_validate(version.spec)
+        run = await _create_run_record(
+            user,
             workflow=workflow,
-            version_number=payload.version,
-            status=WorkflowVersionStatus.RELEASED,
-        ).first()
-        if version is None:
+            workflow_version=version,
+            spec=spec,
+            inputs=payload.inputs,
+            config_payload=payload.config,
+            session=session,
+        )
+        try:
+            await execute_saved_workflow_task.kiq(run_id=run.id, user_id=user.id)
+
+            # Capture async workflow start event (actual execution tracked in worker)
+            analytics.capture(
+                distinct_id=user.user_id,
+                event="workflow_run_started",
+                properties={
+                    "run_id": run.run_id,
+                    "workflow_id": workflow.id,
+                    "workflow_name": workflow.name,
+                    "execution_mode": "api_async",
+                    "has_inputs": bool(payload.inputs),
+                    "input_keys": list((payload.inputs or {}).keys()),
+                    "deployment_mode": shared_config.seer_mode,
+                },
+            )
+        except Exception as exc:
+            logger.exception(
+                "Failed to enqueue saved workflow run",
+                extra={"workflow_id": workflow_id, "run_id": run.run_id},
+            )
+            run.status = WorkflowRunStatus.FAILED
+            run.finished_at = _now()
+            run.error = {"detail": f"Failed to enqueue workflow run: {exc}"}
+            session.add(run)
+            await session.commit()
+            await session.refresh(run)
             _raise_problem(
                 type_uri=RUN_PROBLEM,
-                title="Version not found",
-                detail=f"Version '{payload.version}' not found for workflow '{workflow_id}'",
-                status=404,
+                title="Failed to enqueue workflow run",
+                detail="An error occurred while queuing the workflow execution.",
+                status=500,
             )
-    else:
-        version = await _ensure_draft_version(workflow, user)
-
-    spec = WorkflowSpec.model_validate(version.spec)
-    run = await _create_run_record(
-        user,
-        workflow=workflow,
-        workflow_version=version,
-        spec=spec,
-        inputs=payload.inputs,
-        config_payload=payload.config,
-    )
-    try:
-        await execute_saved_workflow_task.kiq(run_id=run.id, user_id=user.id)
-
-        # Capture async workflow start event (actual execution tracked in worker)
-        analytics.capture(
-            distinct_id=user.user_id,
-            event="workflow_run_started",
-            properties={
-                "run_id": run.run_id,
-                "workflow_id": workflow.id,
-                "workflow_name": workflow.name,
-                "execution_mode": "api_async",
-                "has_inputs": bool(payload.inputs),
-                "input_keys": list((payload.inputs or {}).keys()),
-                "deployment_mode": shared_config.seer_mode,
-            },
-        )
-    except Exception as exc:
-        logger.exception(
-            "Failed to enqueue saved workflow run",
-            extra={"workflow_id": workflow_id, "run_id": run.run_id},
-        )
-        await WorkflowRun.filter(id=run.id).update(
-            status=WorkflowRunStatus.FAILED,
-            finished_at=_now(),
-            error={"detail": f"Failed to enqueue workflow run: {exc}"},
-        )
-        await run.refresh_from_db()
-        _raise_problem(
-            type_uri=RUN_PROBLEM,
-            title="Failed to enqueue workflow run",
-            detail="An error occurred while queuing the workflow execution.",
-            status=500,
-        )
-    return _serialize_run(run)
+        return _serialize_run(run)
 
 
 async def execute_saved_workflow_run(*, run_id: int, user_id: int) -> None:
     """
     Execute a saved workflow run asynchronously (invoked by Taskiq worker).
     """
-    run = await WorkflowRun.get(id=run_id)
-    await run.fetch_related("workflow", "user")
+    async with async_session_maker() as session:
+        stmt = select(WorkflowRun).where(WorkflowRun.id == run_id).options(selectinload(WorkflowRun.workflow), selectinload(WorkflowRun.user))
+        result = await session.execute(stmt)
+        run = result.scalar_one()
 
-    user = run.user
-    if user is None or getattr(user, "id", None) != user_id:
-        user = await User.get(id=user_id)
+        user = run.user
+        if user is None or getattr(user, "id", None) != user_id:
+            stmt = select(User).where(User.id == user_id)
+            result = await session.execute(stmt)
+            user = result.scalar_one()
 
-    inputs = dict(run.inputs or {})
-    config_payload = dict(run.config or {})
+        inputs = dict(run.inputs or {})
+        config_payload = dict(run.config or {})
 
-    # Mark execution mode for tracking
-    run._analytics_execution_mode = "taskiq_worker"
+        # Mark execution mode for tracking
+        run._analytics_execution_mode = "taskiq_worker"
 
-    try:
-        output = await _execute_compiled_run(
-            run,
-            user,
-            inputs=inputs,
-            config_payload=config_payload,
-        )
-        await _complete_run(run, output)
-    except HTTPException:
-        logger.exception(
-            "Saved workflow run failed",
-            extra={"run_id": run.run_id, "workflow_id": getattr(run.workflow, "workflow_id", None)},
-        )
-        raise
-    except Exception:
-        logger.exception(
-            "Unexpected error during saved workflow run",
-            extra={"run_id": run.run_id, "workflow_id": getattr(run.workflow, "workflow_id", None)},
-        )
-        raise
+        try:
+            output = await _execute_compiled_run(
+                run,
+                user,
+                inputs=inputs,
+                config_payload=config_payload,
+                session=session,
+            )
+            await _complete_run(run, output, session)
+        except HTTPException:
+            logger.exception(
+                "Saved workflow run failed",
+                extra={"run_id": run.run_id, "workflow_id": getattr(run.workflow, "workflow_id", None)},
+            )
+            raise
+        except Exception:
+            logger.exception(
+                "Unexpected error during saved workflow run",
+                extra={"run_id": run.run_id, "workflow_id": getattr(run.workflow, "workflow_id", None)},
+            )
+            raise
 
 
-async def _get_run(user: User, run_id: str) -> WorkflowRun:
+async def _get_run(user: User, run_id: str, session: AsyncSession) -> WorkflowRun:
     """
     Get a workflow run by ID, prefetching the workflow relationship.
-    
+
     Prefetches the workflow ForeignKey to avoid QuerySet issues when accessing
     run.workflow.workflow_id later.
     """
@@ -1958,8 +2121,9 @@ async def _get_run(user: User, run_id: str) -> WorkflowRun:
             detail="Run id is invalid",
             status=400,
         )
-    # Use filter().prefetch_related().first() instead of .get() to prefetch workflow
-    run = await WorkflowRun.filter(id=pk, user=user).prefetch_related('workflow').first()
+    stmt = select(WorkflowRun).where(WorkflowRun.id == pk, WorkflowRun.user_id == user.id).options(selectinload(WorkflowRun.workflow))
+    result = await session.execute(stmt)
+    run = result.scalar_one_or_none()
     if not run:
         _raise_problem(
             type_uri=RUN_PROBLEM,
@@ -1971,8 +2135,9 @@ async def _get_run(user: User, run_id: str) -> WorkflowRun:
 
 
 async def get_run_status(user: User, run_id: str) -> api_models.RunResponse:
-    run = await _get_run(user, run_id)
-    return _serialize_run(run)
+    async with async_session_maker() as session:
+        run = await _get_run(user, run_id, session)
+        return _serialize_run(run)
 
 
 async def get_run_result(
@@ -1981,20 +2146,21 @@ async def get_run_result(
     *,
     include_state: bool = False,
 ) -> api_models.RunResultResponse:
-    run = await _get_run(user, run_id)
-    output = run.output or {}
-    workflow_public_id = (
-        make_workflow_public_id(run.workflow_id) if run.workflow_id else None
-    )
-    return api_models.RunResultResponse(
-        run_id=run.run_id,
-        status=run.status.value if isinstance(run.status, WorkflowRunStatus) else run.status,
-        workflow_id=workflow_public_id,
-        workflow_version_id=run.workflow_version_id,
-        output=output,
-        state=None,
-        metrics=run.metrics,
-    )
+    async with async_session_maker() as session:
+        run = await _get_run(user, run_id, session)
+        output = run.output or {}
+        workflow_public_id = (
+            make_workflow_public_id(run.workflow_id) if run.workflow_id else None
+        )
+        return api_models.RunResultResponse(
+            run_id=run.run_id,
+            status=run.status.value if isinstance(run.status, WorkflowRunStatus) else run.status,
+            workflow_id=workflow_public_id,
+            workflow_version_id=run.workflow_version_id,
+            output=output,
+            state=None,
+            metrics=run.metrics,
+        )
 
 
 async def list_run_steps(*_: Any, **__: Any) -> None:

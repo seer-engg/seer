@@ -4,10 +4,10 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
 from fastapi import HTTPException
+from sqlmodel import select
 
-from shared.database.models import User
-from shared.database.models_integrations import IntegrationResource, IntegrationSecret
-from shared.database.models_oauth import OAuthConnection
+from shared.database.models import User, IntegrationResource, IntegrationSecret, OAuthConnection
+from shared.database.base import async_session_maker
 from shared.logger import get_logger
 from shared.tools.base import BaseTool
 from shared.tools.oauth_manager import get_oauth_token
@@ -101,11 +101,15 @@ class CredentialResolver:
         resource: Optional[IntegrationResource] = None
 
         if resource_id:
-            resource = await IntegrationResource.get_or_none(
-                id=resource_id,
-                user=self.user,
-                status="active",
-            )
+            async with async_session_maker() as session:
+                stmt = select(IntegrationResource).where(
+                    IntegrationResource.id == resource_id,
+                    IntegrationResource.user_id == self.user.id,
+                    IntegrationResource.status == "active"
+                )
+                result = await session.execute(stmt)
+                resource = result.scalar_one_or_none()
+
             if not resource:
                 raise HTTPException(status_code=404, detail=f"Integration resource {resource_id} not found")
             if provider and resource.provider != provider:
@@ -168,24 +172,46 @@ class CredentialResolver:
         resource: Optional[IntegrationResource],
         connection: Optional[OAuthConnection],
     ) -> Optional[IntegrationSecret]:
-        filters = {
-            "user": self.user,
-            "provider": provider,
-            "name": name,
-            "status": "active",
-        }
+        async with async_session_maker() as session:
+            # Try resource-specific secret first
+            if resource:
+                stmt = select(IntegrationSecret).where(
+                    IntegrationSecret.user_id == self.user.id,
+                    IntegrationSecret.provider == provider,
+                    IntegrationSecret.name == name,
+                    IntegrationSecret.status == "active",
+                    IntegrationSecret.resource_id == resource.id
+                )
+                result = await session.execute(stmt)
+                secret = result.scalar_one_or_none()
+                if secret:
+                    return secret
 
-        if resource:
-            secret = await IntegrationSecret.get_or_none(**filters, resource=resource)
-            if secret:
-                return secret
+            # Try connection-specific secret
+            if connection:
+                stmt = select(IntegrationSecret).where(
+                    IntegrationSecret.user_id == self.user.id,
+                    IntegrationSecret.provider == provider,
+                    IntegrationSecret.name == name,
+                    IntegrationSecret.status == "active",
+                    IntegrationSecret.oauth_connection_id == connection.id
+                )
+                result = await session.execute(stmt)
+                secret = result.scalar_one_or_none()
+                if secret:
+                    return secret
 
-        if connection:
-            secret = await IntegrationSecret.get_or_none(**filters, oauth_connection=connection)
-            if secret:
-                return secret
-
-        return await IntegrationSecret.get_or_none(**filters, resource=None, oauth_connection=None)
+            # Try global secret
+            stmt = select(IntegrationSecret).where(
+                IntegrationSecret.user_id == self.user.id,
+                IntegrationSecret.provider == provider,
+                IntegrationSecret.name == name,
+                IntegrationSecret.status == "active",
+                IntegrationSecret.resource_id == None,
+                IntegrationSecret.oauth_connection_id == None
+            )
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none()
 
     async def _find_default_resource(
         self,
@@ -201,24 +227,27 @@ class CredentialResolver:
         if not provider_name:
             return None
 
-        filters = {
-            "user": self.user,
-            "provider": provider_name,
-            "resource_type": resource_type,
-            "status": "active",
-        }
-
-        queryset = IntegrationResource.filter(**filters)
-        if connection:
-            queryset = queryset.filter(oauth_connection=connection)
-
-        resource = await queryset.order_by("-updated_at").first()
-        if resource:
-            logger.info(
-                "Resolved default resource",
-                extra={"resource_id": resource.id, "provider": provider_name, "resource_type": resource_type},
+        async with async_session_maker() as session:
+            stmt = select(IntegrationResource).where(
+                IntegrationResource.user_id == self.user.id,
+                IntegrationResource.provider == provider_name,
+                IntegrationResource.resource_type == resource_type,
+                IntegrationResource.status == "active"
             )
-        return resource
+
+            if connection:
+                stmt = stmt.where(IntegrationResource.oauth_connection_id == connection.id)
+
+            stmt = stmt.order_by(IntegrationResource.updated_at.desc())
+            result = await session.execute(stmt)
+            resource = result.scalars().first()
+
+            if resource:
+                logger.info(
+                    "Resolved default resource",
+                    extra={"resource_id": resource.id, "provider": provider_name, "resource_type": resource_type},
+                )
+            return resource
 
     @staticmethod
     def _extract_resource_id(arguments: Dict[str, Any]) -> Optional[int]:

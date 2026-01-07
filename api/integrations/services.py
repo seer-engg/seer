@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
 from fastapi import HTTPException
+from sqlmodel import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.integrations.constants import (
     SUPABASE_OAUTH_PROVIDER,
@@ -10,9 +12,8 @@ from api.integrations.constants import (
     SUPABASE_RESOURCE_TYPE_PROJECT,
 )
 from api.integrations.providers import ProviderContext, get_integration_provider
-from shared.database.models import User
-from shared.database.models_integrations import IntegrationResource, IntegrationSecret
-from shared.database.models_oauth import OAuthConnection
+from shared.database.models import User, IntegrationResource, IntegrationSecret, OAuthConnection
+from shared.database.base import async_session_maker
 from shared.logger import get_logger
 from shared.tools.oauth_manager import get_oauth_token
 logger = get_logger("api.integrations.services")
@@ -243,7 +244,7 @@ async def store_oauth_connection(
     Store OAuth connection with granted scopes.
     Connections are stored by OAuth provider (e.g., 'google') and scopes are merged
     when the same provider is connected again with different scopes.
-    
+
     Args:
         user_id: User ID
         provider: OAuth provider name (google, github, etc.) - NOT integration type
@@ -254,63 +255,75 @@ async def store_oauth_connection(
     """
     # Normalize provider to OAuth provider
     oauth_provider = get_oauth_provider(provider)
-    
+
     logger.info(f"Storing OAuth connection: user_id={user_id}, oauth_provider={oauth_provider}, "
                 f"integration_type={integration_type}, scopes={granted_scopes[:100]}...")
-    
-    # Find user
-    user = await User.get(user_id=user_id)
-    
-    # Extract provider account id
-    provider_account_id = extract_provider_account_id(oauth_provider, profile)
-        
-    provider_metadata = profile
-        
-    # Tokens
-    access_token = token.get('access_token')
-    refresh_token = token.get('refresh_token')
-    expires_at_ts = token.get('expires_at')
-    expires_at = datetime.fromtimestamp(expires_at_ts, tz=timezone.utc) if expires_at_ts else None
-    
-    # Extract token_type (usually 'Bearer')
-    token_type = token.get('token_type', 'Bearer')
-    
-    # Update or Create - always use OAuth provider (not integration type)
-    connection = await OAuthConnection.get_or_none(
-        user=user,
-        provider=oauth_provider,
-        provider_account_id=provider_account_id
-    )
-    
-    if connection:
-        connection.access_token_enc = access_token
-        if refresh_token:
-            connection.refresh_token_enc = refresh_token
-        connection.provider_metadata = provider_metadata
-        connection.status = "active"
-        connection.expires_at = expires_at
-        # IMPORTANT: Merge scopes instead of replacing them
-        connection.scopes = merge_scopes(connection.scopes or "", granted_scopes)
-        connection.token_type = token_type
-        connection.updated_at = datetime.now(timezone.utc)
-        await connection.save()
-        logger.info(f"Updated existing connection for {oauth_provider}, merged scopes: {connection.scopes[:100]}...")
-    else:
-        connection = await OAuthConnection.create(
-            user=user,
-            provider=oauth_provider,
-            provider_account_id=provider_account_id,
-            access_token_enc=access_token,
-            refresh_token_enc=refresh_token,
-            provider_metadata=provider_metadata,
-            status="active",
-            expires_at=expires_at,
-            scopes=granted_scopes,
-            token_type=token_type
+
+    async with async_session_maker() as session:
+        # Find user
+        result = await session.execute(
+            select(User).where(User.user_id == user_id)
         )
-        logger.info(f"Created new connection for {oauth_provider}")
-        
-    return connection
+        user = result.scalar_one()
+
+        # Extract provider account id
+        provider_account_id = extract_provider_account_id(oauth_provider, profile)
+
+        provider_metadata = profile
+
+        # Tokens
+        access_token = token.get('access_token')
+        refresh_token = token.get('refresh_token')
+        expires_at_ts = token.get('expires_at')
+        expires_at = datetime.fromtimestamp(expires_at_ts, tz=timezone.utc) if expires_at_ts else None
+
+        # Extract token_type (usually 'Bearer')
+        token_type = token.get('token_type', 'Bearer')
+
+        # Update or Create - always use OAuth provider (not integration type)
+        result = await session.execute(
+            select(OAuthConnection).where(
+                OAuthConnection.user_id == user.id,
+                OAuthConnection.provider == oauth_provider,
+                OAuthConnection.provider_account_id == provider_account_id
+            )
+        )
+        connection = result.scalar_one_or_none()
+
+        if connection:
+            connection.access_token_enc = access_token
+            if refresh_token:
+                connection.refresh_token_enc = refresh_token
+            connection.provider_metadata = provider_metadata
+            connection.status = "active"
+            connection.expires_at = expires_at
+            # IMPORTANT: Merge scopes instead of replacing them
+            connection.scopes = merge_scopes(connection.scopes or "", granted_scopes)
+            connection.token_type = token_type
+            connection.updated_at = datetime.now(timezone.utc)
+            session.add(connection)
+            await session.commit()
+            await session.refresh(connection)
+            logger.info(f"Updated existing connection for {oauth_provider}, merged scopes: {connection.scopes[:100]}...")
+        else:
+            connection = OAuthConnection(
+                user_id=user.id,
+                provider=oauth_provider,
+                provider_account_id=provider_account_id,
+                access_token_enc=access_token,
+                refresh_token_enc=refresh_token,
+                provider_metadata=provider_metadata,
+                status="active",
+                expires_at=expires_at,
+                scopes=granted_scopes,
+                token_type=token_type
+            )
+            session.add(connection)
+            await session.commit()
+            await session.refresh(connection)
+            logger.info(f"Created new connection for {oauth_provider}")
+
+        return connection
 
 async def list_connections(user: User):
     """
@@ -318,8 +331,15 @@ async def list_connections(user: User):
     """
     try:
         logger.info(f"Listing connections for user {user.user_id}")
-        connections = await OAuthConnection.filter(user=user, status="active").all()
-        return connections
+        async with async_session_maker() as session:
+            result = await session.execute(
+                select(OAuthConnection).where(
+                    OAuthConnection.user_id == user.id,
+                    OAuthConnection.status == "active"
+                )
+            )
+            connections = list(result.scalars().all())
+            return connections
     except Exception as e:
         logger.error(f"Error listing connections for user {user.user_id}: {e}")
         return []
@@ -328,22 +348,26 @@ async def list_connections(user: User):
 async def get_connection_for_provider(user: User, provider: str) -> Optional[OAuthConnection]:
     """
     Get active OAuth connection for a specific provider.
-    
+
     Args:
         user: User model instance
         provider: OAuth provider name (google, github, etc.)
-    
+
     Returns:
         OAuthConnection if found, None otherwise
     """
     oauth_provider = get_oauth_provider(provider)
     try:
-        connection = await OAuthConnection.get_or_none(
-            user=user,
-            provider=oauth_provider,
-            status="active"
-        )
-        return connection
+        async with async_session_maker() as session:
+            result = await session.execute(
+                select(OAuthConnection).where(
+                    OAuthConnection.user_id == user.id,
+                    OAuthConnection.provider == oauth_provider,
+                    OAuthConnection.status == "active"
+                )
+            )
+            connection = result.scalar_one_or_none()
+            return connection
     except Exception as e:
         logger.error(f"Error getting connection for provider {provider}: {e}")
         return None
@@ -353,8 +377,19 @@ async def disconnect_provider(user: User, provider: str):
     """Disconnect all connections for a provider."""
     oauth_provider = get_oauth_provider(provider)
     try:
-        # Soft delete (revoke) all connections for this provider
-        await OAuthConnection.filter(user=user, provider=oauth_provider).update(status="revoked")
+        async with async_session_maker() as session:
+            # Soft delete (revoke) all connections for this provider
+            result = await session.execute(
+                select(OAuthConnection).where(
+                    OAuthConnection.user_id == user.id,
+                    OAuthConnection.provider == oauth_provider
+                )
+            )
+            connections = result.scalars().all()
+            for connection in connections:
+                connection.status = "revoked"
+                session.add(connection)
+            await session.commit()
     except Exception as e:
         logger.error(f"Error disconnecting provider {provider} for user {user.user_id}: {e}")
         raise
@@ -368,8 +403,19 @@ async def delete_connection_by_id(user: User, connection_id: str):
             _, db_id = connection_id.split(":", 1)
         else:
             db_id = connection_id
-            
-        await OAuthConnection.filter(id=int(db_id), user=user).update(status="revoked")
+
+        async with async_session_maker() as session:
+            result = await session.execute(
+                select(OAuthConnection).where(
+                    OAuthConnection.id == int(db_id),
+                    OAuthConnection.user_id == user.id
+                )
+            )
+            connection = result.scalar_one_or_none()
+            if connection:
+                connection.status = "revoked"
+                session.add(connection)
+                await session.commit()
     except Exception as e:
         logger.error(f"Error deleting connection {connection_id} for user {user.user_id}: {e}")
         raise
@@ -439,29 +485,76 @@ async def list_integration_resources(
     provider: Optional[str] = None,
     resource_type: Optional[str] = None,
 ) -> List[IntegrationResource]:
-    queryset = IntegrationResource.filter(user=user, status="active")
-    if provider:
-        queryset = queryset.filter(provider=provider)
-    if resource_type:
-        queryset = queryset.filter(resource_type=resource_type)
-    return await queryset.order_by("-updated_at")
+    async with async_session_maker() as session:
+        stmt = select(IntegrationResource).where(
+            IntegrationResource.user_id == user.id,
+            IntegrationResource.status == "active"
+        )
+        if provider:
+            stmt = stmt.where(IntegrationResource.provider == provider)
+        if resource_type:
+            stmt = stmt.where(IntegrationResource.resource_type == resource_type)
+        stmt = stmt.order_by(IntegrationResource.updated_at.desc())
+
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
 
 
 async def list_resource_secrets(user: User, resource_id: int) -> List[IntegrationSecret]:
-    resource = await IntegrationResource.get_or_none(id=resource_id, user=user)
-    if not resource:
-        raise HTTPException(status_code=404, detail=f"Integration resource {resource_id} not found")
-    return await IntegrationSecret.filter(user=user, resource=resource, status="active").order_by("-updated_at")
+    async with async_session_maker() as session:
+        # Check resource exists
+        result = await session.execute(
+            select(IntegrationResource).where(
+                IntegrationResource.id == resource_id,
+                IntegrationResource.user_id == user.id
+            )
+        )
+        resource = result.scalar_one_or_none()
+        if not resource:
+            raise HTTPException(status_code=404, detail=f"Integration resource {resource_id} not found")
+
+        # Get secrets
+        result = await session.execute(
+            select(IntegrationSecret).where(
+                IntegrationSecret.user_id == user.id,
+                IntegrationSecret.resource_id == resource_id,
+                IntegrationSecret.status == "active"
+            ).order_by(IntegrationSecret.updated_at.desc())
+        )
+        return list(result.scalars().all())
 
 
 async def deactivate_integration_resource(user: User, resource_id: int) -> IntegrationResource:
-    resource = await IntegrationResource.get_or_none(id=resource_id, user=user)
-    if not resource:
-        raise HTTPException(status_code=404, detail=f"Integration resource {resource_id} not found")
-    resource.status = "revoked"
-    await resource.save(update_fields=["status", "updated_at"])
-    await IntegrationSecret.filter(resource=resource, user=user).update(status="revoked")
-    return resource
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(IntegrationResource).where(
+                IntegrationResource.id == resource_id,
+                IntegrationResource.user_id == user.id
+            )
+        )
+        resource = result.scalar_one_or_none()
+        if not resource:
+            raise HTTPException(status_code=404, detail=f"Integration resource {resource_id} not found")
+
+        resource.status = "revoked"
+        resource.updated_at = datetime.now(timezone.utc)
+        session.add(resource)
+
+        # Update related secrets
+        result = await session.execute(
+            select(IntegrationSecret).where(
+                IntegrationSecret.resource_id == resource_id,
+                IntegrationSecret.user_id == user.id
+            )
+        )
+        secrets = result.scalars().all()
+        for secret in secrets:
+            secret.status = "revoked"
+            session.add(secret)
+
+        await session.commit()
+        await session.refresh(resource)
+        return resource
 
 
 async def _upsert_integration_resource(
@@ -475,42 +568,61 @@ async def _upsert_integration_resource(
     name: Optional[str],
     metadata: Optional[Dict[str, Any]],
 ) -> IntegrationResource:
-    defaults = {
-        "resource_key": resource_key,
-        "name": name,
-        "resource_metadata": metadata or {},
-        "status": "active",
-    }
-    lookup_filters = {
-        "user": user,
-        "provider": provider,
-        "resource_type": resource_type,
-        "resource_id": resource_id,
-        "oauth_connection": oauth_connection,
-    }
-    resource = await IntegrationResource.get_or_none(**lookup_filters)
-    if resource:
-        update_fields: List[str] = []
-        for field, value in defaults.items():
-            if getattr(resource, field) != value:
-                setattr(resource, field, value)
-                update_fields.append(field)
-        if update_fields:
-            update_fields.append("updated_at")
-            await resource.save(update_fields=update_fields)
-        return resource
+    async with async_session_maker() as session:
+        # Try to find existing resource
+        stmt = select(IntegrationResource).where(
+            IntegrationResource.user_id == user.id,
+            IntegrationResource.provider == provider,
+            IntegrationResource.resource_type == resource_type,
+            IntegrationResource.resource_id == resource_id
+        )
+        if oauth_connection:
+            stmt = stmt.where(IntegrationResource.oauth_connection_id == oauth_connection.id)
+        else:
+            stmt = stmt.where(IntegrationResource.oauth_connection_id.is_(None))
 
-    return await IntegrationResource.create(
-        user=user,
-        oauth_connection=oauth_connection,
-        provider=provider,
-        resource_type=resource_type,
-        resource_id=resource_id,
-        resource_key=resource_key,
-        name=name,
-        resource_metadata=metadata or {},
-        status="active",
-    )
+        result = await session.execute(stmt)
+        resource = result.scalar_one_or_none()
+
+        if resource:
+            # Update existing resource
+            needs_update = False
+            if resource.resource_key != resource_key:
+                resource.resource_key = resource_key
+                needs_update = True
+            if resource.name != name:
+                resource.name = name
+                needs_update = True
+            if resource.resource_metadata != (metadata or {}):
+                resource.resource_metadata = metadata or {}
+                needs_update = True
+            if resource.status != "active":
+                resource.status = "active"
+                needs_update = True
+
+            if needs_update:
+                resource.updated_at = datetime.now(timezone.utc)
+                session.add(resource)
+                await session.commit()
+                await session.refresh(resource)
+            return resource
+
+        # Create new resource
+        resource = IntegrationResource(
+            user_id=user.id,
+            oauth_connection_id=oauth_connection.id if oauth_connection else None,
+            provider=provider,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            resource_key=resource_key,
+            name=name,
+            resource_metadata=metadata or {},
+            status="active",
+        )
+        session.add(resource)
+        await session.commit()
+        await session.refresh(resource)
+        return resource
 
 
 def _fingerprint_secret(value: str) -> str:
@@ -560,33 +672,70 @@ async def _upsert_integration_secret(
     oauth_connection: Optional[OAuthConnection] = None,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> IntegrationSecret:
-    defaults = {
-        "secret_type": secret_type,
-        "value_enc": value_enc,
-        "value_fingerprint": _fingerprint_secret(value_enc),
-        "metadata": metadata or {},
-        "status": "active",
-    }
-    secret, created = await IntegrationSecret.get_or_create(
-        user=user,
-        provider=provider,
-        name=name,
-        resource=resource,
-        oauth_connection=oauth_connection,
-        defaults=defaults,
-    )
-    if created:
-        return secret
+    async with async_session_maker() as session:
+        # Try to find existing secret
+        stmt = select(IntegrationSecret).where(
+            IntegrationSecret.user_id == user.id,
+            IntegrationSecret.provider == provider,
+            IntegrationSecret.name == name
+        )
+        if resource:
+            stmt = stmt.where(IntegrationSecret.resource_id == resource.id)
+        else:
+            stmt = stmt.where(IntegrationSecret.resource_id.is_(None))
+        if oauth_connection:
+            stmt = stmt.where(IntegrationSecret.oauth_connection_id == oauth_connection.id)
+        else:
+            stmt = stmt.where(IntegrationSecret.oauth_connection_id.is_(None))
 
-    update_fields: List[str] = []
-    for field, value in defaults.items():
-        if getattr(secret, field) != value:
-            setattr(secret, field, value)
-            update_fields.append(field)
-    if update_fields:
-        update_fields.append("updated_at")
-        await secret.save(update_fields=update_fields)
-    return secret
+        result = await session.execute(stmt)
+        secret = result.scalar_one_or_none()
+
+        fingerprint = _fingerprint_secret(value_enc)
+
+        if secret:
+            # Update existing secret
+            needs_update = False
+            if secret.secret_type != secret_type:
+                secret.secret_type = secret_type
+                needs_update = True
+            if secret.value_enc != value_enc:
+                secret.value_enc = value_enc
+                needs_update = True
+            if secret.value_fingerprint != fingerprint:
+                secret.value_fingerprint = fingerprint
+                needs_update = True
+            if secret.metadata != (metadata or {}):
+                secret.metadata = metadata or {}
+                needs_update = True
+            if secret.status != "active":
+                secret.status = "active"
+                needs_update = True
+
+            if needs_update:
+                secret.updated_at = datetime.now(timezone.utc)
+                session.add(secret)
+                await session.commit()
+                await session.refresh(secret)
+            return secret
+
+        # Create new secret
+        secret = IntegrationSecret(
+            user_id=user.id,
+            provider=provider,
+            name=name,
+            secret_type=secret_type,
+            value_enc=value_enc,
+            value_fingerprint=fingerprint,
+            metadata=metadata or {},
+            status="active",
+            resource_id=resource.id if resource else None,
+            oauth_connection_id=oauth_connection.id if oauth_connection else None,
+        )
+        session.add(secret)
+        await session.commit()
+        await session.refresh(secret)
+        return secret
 
 
 # =============================================================================

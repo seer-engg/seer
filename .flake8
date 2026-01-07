@@ -1,0 +1,33 @@
+[flake8]
+# Maximum line length
+max-line-length = 100
+
+# Maximum cyclomatic complexity (McCabe)
+max-complexity = 10
+
+# Directories to exclude
+exclude =
+    .git,
+    __pycache__,
+    .venv,
+    venv,
+    .env,
+    env,
+    alembic/versions,
+    build,
+    dist,
+    *.egg-info
+
+# Ignore specific errors
+# E203: whitespace before ':'
+# W503: line break before binary operator
+extend-ignore = E203,W503
+
+# Show source code for each error
+show-source = True
+
+# Show statistics for errors
+statistics = True
+
+# Count errors
+count = True

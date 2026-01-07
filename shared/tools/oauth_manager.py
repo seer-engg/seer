@@ -5,10 +5,11 @@ from typing import Optional, Tuple
 
 import httpx
 from fastapi import HTTPException
+from sqlmodel import select
 
 from shared.config import config
-from shared.database.models import User
-from shared.database.models_oauth import OAuthConnection
+from shared.database.models import User, OAuthConnection
+from shared.database.base import async_session_maker
 from shared.logger import get_logger
 
 logger = get_logger("shared.tools.oauth_manager")
@@ -72,7 +73,12 @@ async def refresh_oauth_token(connection: OAuthConnection) -> OAuthConnection:
         if "scope" in token_data:
             connection.scopes = token_data["scope"]
         connection.updated_at = datetime.now(timezone.utc)
-        await connection.save()
+
+        async with async_session_maker() as session:
+            session.add(connection)
+            await session.commit()
+            await session.refresh(connection)
+
         logger.info("OAuth token refreshed", extra={"connection_id": connection.id})
         return connection
     except httpx.HTTPStatusError as exc:
@@ -94,36 +100,48 @@ async def get_oauth_token(
     """
     Resolve an OAuth connection for the user, refreshing tokens if expired.
     """
-
-    if connection_id:
-        if ":" in connection_id:
-            _, db_id = connection_id.split(":", 1)
-        else:
-            db_id = connection_id
-        try:
-            connection = await OAuthConnection.get(id=int(db_id), user=user, status="active")
-        except Exception:
-            raise HTTPException(status_code=404, detail=f"OAuth connection {connection_id} not found")
-    elif provider:
-        connection = await OAuthConnection.get_or_none(user=user, provider=provider, status="active")
-        if not connection:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No active OAuth connection found for provider: {provider}",
+    async with async_session_maker() as session:
+        if connection_id:
+            if ":" in connection_id:
+                _, db_id = connection_id.split(":", 1)
+            else:
+                db_id = connection_id
+            try:
+                stmt = select(OAuthConnection).where(
+                    OAuthConnection.id == int(db_id),
+                    OAuthConnection.user_id == user.id,
+                    OAuthConnection.status == "active"
+                )
+                result = await session.execute(stmt)
+                connection = result.scalar_one()
+            except Exception:
+                raise HTTPException(status_code=404, detail=f"OAuth connection {connection_id} not found")
+        elif provider:
+            stmt = select(OAuthConnection).where(
+                OAuthConnection.user_id == user.id,
+                OAuthConnection.provider == provider,
+                OAuthConnection.status == "active"
             )
-    else:
-        raise HTTPException(status_code=400, detail="Either connection_id or provider must be provided")
+            result = await session.execute(stmt)
+            connection = result.scalar_one_or_none()
+            if not connection:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No active OAuth connection found for provider: {provider}",
+                )
+        else:
+            raise HTTPException(status_code=400, detail="Either connection_id or provider must be provided")
 
-    if connection.expires_at and connection.expires_at < datetime.now(timezone.utc):
-        connection = await refresh_oauth_token(connection)
+        if connection.expires_at and connection.expires_at < datetime.now(timezone.utc):
+            connection = await refresh_oauth_token(connection)
 
-    if not connection.access_token_enc:
-        raise HTTPException(
-            status_code=401,
-            detail=f"No access token available for connection {connection.id}",
-        )
+        if not connection.access_token_enc:
+            raise HTTPException(
+                status_code=401,
+                detail=f"No access token available for connection {connection.id}",
+            )
 
-    return connection, connection.access_token_enc
+        return connection, connection.access_token_enc
 
 
 __all__ = ["get_oauth_token", "refresh_oauth_token"]

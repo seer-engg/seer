@@ -8,8 +8,12 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
-from shared.database.models import User
-from shared.database.workflow_models import (
+from sqlmodel import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from shared.database.models import (
+    User,
     Workflow,
     WorkflowChatMessage,
     WorkflowChatSession,
@@ -17,6 +21,7 @@ from shared.database.workflow_models import (
     WorkflowProposal,
     parse_workflow_public_id,
 )
+from shared.database.base import async_session_maker
 from shared.logger import get_logger
 
 
@@ -84,23 +89,19 @@ def workflow_state_snapshot(workflow: Workflow) -> Dict[str, Any]:
     return {"nodes": [], "edges": []}
 
 
-async def _ensure_workflow_draft(workflow: Workflow) -> WorkflowDraft:
+async def _ensure_workflow_draft(session: AsyncSession, workflow: Workflow) -> WorkflowDraft:
     """
     Ensure we return a resolved WorkflowDraft instance.
-
-    Tortoise attaches a relation manager to unfetched reverse one-to-one fields,
-    which is truthy but not the actual model instance. Explicitly check for that
-    to avoid accidentally returning the manager and blowing up downstream when
-    we try to mutate attributes such as `spec`.
     """
-
     draft_attr = getattr(workflow, "draft", None)
     draft: Optional[WorkflowDraft] = (
         draft_attr if isinstance(draft_attr, WorkflowDraft) else None
     )
 
     if draft is None:
-        draft = await WorkflowDraft.get_or_none(workflow=workflow)
+        stmt = select(WorkflowDraft).where(WorkflowDraft.workflow_id == workflow.id)
+        result = await session.execute(stmt)
+        draft = result.scalar_one_or_none()
 
     if draft is None:
         raise HTTPException(
@@ -113,27 +114,30 @@ async def _ensure_workflow_draft(workflow: Workflow) -> WorkflowDraft:
     return draft
 
 
-async def _get_workflow(user: User, workflow_id: str) -> Workflow:
+async def _get_workflow(session: AsyncSession, user: User, workflow_id: str) -> Workflow:
     """Resolve and authorize workflow by public id."""
     try:
         pk = parse_workflow_public_id(workflow_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid workflow id format") from exc
 
-    workflow = (
-        await Workflow.filter(id=pk, user=user)
-        .prefetch_related("draft")
-        .first()
+    stmt = (
+        select(Workflow)
+        .where(Workflow.id == pk, Workflow.user_id == user.id)
+        .options(selectinload(Workflow.draft))
     )
+    result = await session.execute(stmt)
+    workflow = result.scalar_one_or_none()
+
     if not workflow:
         raise HTTPException(status_code=404, detail=f"Workflow '{workflow_id}' not found")
-    await workflow.fetch_related("draft")
     return workflow
 
 
 async def get_workflow(user: User, workflow_id: str) -> Workflow:
     """Public accessor used by routers."""
-    return await _get_workflow(user, workflow_id)
+    async with async_session_maker() as session:
+        return await _get_workflow(session, user, workflow_id)
 
 
 # ============================================================================
@@ -149,17 +153,24 @@ async def create_chat_session(
     """
     Create a new chat session for a workflow.
     """
-    session = await WorkflowChatSession.create(
-        workflow=workflow,
-        user=user,
-        thread_id=thread_id,
-        title=title,
-    )
+    async with async_session_maker() as session_db:
+        session = WorkflowChatSession(
+            workflow_id=workflow.id,
+            user_id=user.id,
+            thread_id=thread_id,
+            title=title,
+        )
+        session_db.add(session)
+        await session_db.commit()
+        await session_db.refresh(session)
 
-    await session.fetch_related("user")
+        # Load user relationship
+        stmt = select(WorkflowChatSession).where(WorkflowChatSession.id == session.id).options(selectinload(WorkflowChatSession.user))
+        result = await session_db.execute(stmt)
+        session = result.scalar_one()
 
-    logger.info(f"Created chat session {session.id} for workflow {workflow.workflow_id}")
-    return session
+        logger.info(f"Created chat session {session.id} for workflow {workflow.workflow_id}")
+        return session
 
 
 async def get_chat_session(
@@ -168,29 +179,36 @@ async def get_chat_session(
 ) -> WorkflowChatSession:
     """
     Get a chat session with its messages.
-    
+
     Args:
         session_id: Session ID
         workflow_id: Workflow ID (for authorization)
-        
+
     Returns:
         Chat session with messages
-        
+
     Raises:
         HTTPException: If session not found or unauthorized
     """
-    session = await WorkflowChatSession.filter(
-        id=session_id,
-        workflow=workflow,
-    ).prefetch_related('user').first()
-    
-    if not session:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Chat session {session_id} not found"
+    async with async_session_maker() as session_db:
+        stmt = (
+            select(WorkflowChatSession)
+            .where(
+                WorkflowChatSession.id == session_id,
+                WorkflowChatSession.workflow_id == workflow.id
+            )
+            .options(selectinload(WorkflowChatSession.user))
         )
-    
-    return session
+        result = await session_db.execute(stmt)
+        session = result.scalar_one_or_none()
+
+        if not session:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Chat session {session_id} not found"
+            )
+
+        return session
 
 
 async def get_chat_session_by_thread_id(
@@ -199,24 +217,28 @@ async def get_chat_session_by_thread_id(
 ) -> Optional[WorkflowChatSession]:
     """
     Get a chat session by thread ID.
-    
+
     Args:
         thread_id: LangGraph thread ID
         workflow_id: Workflow ID (for authorization)
         user_id: User ID for authorization (None in self-hosted mode)
-        
+
     Returns:
         Chat session if found, None otherwise
     """
-    session = await WorkflowChatSession.filter(
-        thread_id=thread_id,
-        workflow=workflow,
-    ).prefetch_related('user').first()
-    
-    if not session:
-        return None
-    
-    return session
+    async with async_session_maker() as session_db:
+        stmt = (
+            select(WorkflowChatSession)
+            .where(
+                WorkflowChatSession.thread_id == thread_id,
+                WorkflowChatSession.workflow_id == workflow.id
+            )
+            .options(selectinload(WorkflowChatSession.user))
+        )
+        result = await session_db.execute(stmt)
+        session = result.scalar_one_or_none()
+
+        return session
 
 
 async def list_chat_sessions(
@@ -227,22 +249,32 @@ async def list_chat_sessions(
 ) -> List[WorkflowChatSession]:
     """
     List chat sessions for a workflow.
-    
+
     Args:
         workflow_id: Workflow ID
         user: User
         limit: Maximum number of sessions to return
         offset: Number of sessions to skip
-        
+
     Returns:
         List of chat sessions
     """
-    sessions = await WorkflowChatSession.filter(
-        workflow=workflow,
-        user=user,
-    ).prefetch_related('user').order_by('-created_at').offset(offset).limit(limit).all()
-    
-    return sessions
+    async with async_session_maker() as session_db:
+        stmt = (
+            select(WorkflowChatSession)
+            .where(
+                WorkflowChatSession.workflow_id == workflow.id,
+                WorkflowChatSession.user_id == user.id
+            )
+            .options(selectinload(WorkflowChatSession.user))
+            .order_by(WorkflowChatSession.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        result = await session_db.execute(stmt)
+        sessions = result.scalars().all()
+
+        return list(sessions)
 
 
 async def save_chat_message(
@@ -256,7 +288,7 @@ async def save_chat_message(
 ) -> WorkflowChatMessage:
     """
     Save a chat message to the database.
-    
+
     Args:
         session_id: Session ID
         role: Message role ('user' or 'assistant')
@@ -265,30 +297,39 @@ async def save_chat_message(
         suggested_edits: Optional suggested workflow edits
         metadata: Optional metadata (model used, etc.)
         proposal: Optional proposal linked to this message
-        
+
     Returns:
         Created message
     """
-    session = await WorkflowChatSession.get_or_none(id=session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Chat session not found")
-    
-    # Update session updated_at timestamp
-    session.updated_at = datetime.utcnow()
-    await session.save()
-    
-    message = await WorkflowChatMessage.create(
-        session=session,
-        proposal=proposal,
-        role=role,
-        content=content,
-        thinking=thinking,
-        suggested_edits=suggested_edits,
-        metadata=metadata,
-    )
-    
-    logger.debug(f"Saved chat message {message.id} to session {session_id}")
-    return message
+    async with async_session_maker() as session_db:
+        # Get session
+        stmt = select(WorkflowChatSession).where(WorkflowChatSession.id == session_id)
+        result = await session_db.execute(stmt)
+        session = result.scalar_one_or_none()
+
+        if not session:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+
+        # Update session updated_at timestamp
+        session.updated_at = datetime.utcnow()
+        session_db.add(session)
+
+        # Create message
+        message = WorkflowChatMessage(
+            session_id=session_id,
+            proposal_id=proposal.id if proposal else None,
+            role=role,
+            content=content,
+            thinking=thinking,
+            suggested_edits=suggested_edits,
+            metadata=metadata,
+        )
+        session_db.add(message)
+        await session_db.commit()
+        await session_db.refresh(message)
+
+        logger.debug(f"Saved chat message {message.id} to session {session_id}")
+        return message
 
 
 async def load_chat_history(
@@ -296,18 +337,28 @@ async def load_chat_history(
 ) -> List[WorkflowChatMessage]:
     """
     Load chat history for a session.
-    
+
     Args:
         session_id: Session ID
-        
+
     Returns:
         List of messages ordered by creation time
     """
-    messages = await WorkflowChatMessage.filter(
-        session_id=session_id
-    ).prefetch_related('proposal__created_by', 'proposal__workflow', 'proposal__session').order_by('created_at').all()
-    
-    return messages
+    async with async_session_maker() as session_db:
+        stmt = (
+            select(WorkflowChatMessage)
+            .where(WorkflowChatMessage.session_id == session_id)
+            .options(
+                selectinload(WorkflowChatMessage.proposal).selectinload(WorkflowProposal.created_by),
+                selectinload(WorkflowChatMessage.proposal).selectinload(WorkflowProposal.workflow),
+                selectinload(WorkflowChatMessage.proposal).selectinload(WorkflowProposal.session)
+            )
+            .order_by(WorkflowChatMessage.created_at)
+        )
+        result = await session_db.execute(stmt)
+        messages = result.scalars().all()
+
+        return list(messages)
 
 
 def _normalize_spec(spec: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -356,18 +407,23 @@ async def create_workflow_proposal(
     safe_summary = (summary or "").strip() or "Workflow changes"
     if len(safe_summary) > 512:
         safe_summary = f"{safe_summary[:509]}..."
-    
-    proposal = await WorkflowProposal.create(
-        workflow=workflow,
-        session=session,
-        created_by=user,
-        summary=safe_summary,
-        spec=normalized_spec,
-        preview_graph=preview_graph,
-        status=WorkflowProposal.STATUS_PENDING,
-        metadata=metadata,
-    )
-    return proposal
+
+    async with async_session_maker() as session_db:
+        proposal = WorkflowProposal(
+            workflow_id=workflow.id,
+            session_id=session.id if session else None,
+            created_by_id=user.id,
+            summary=safe_summary,
+            spec=normalized_spec,
+            preview_graph=preview_graph,
+            status=WorkflowProposal.STATUS_PENDING,
+            metadata=metadata,
+        )
+        session_db.add(proposal)
+        await session_db.commit()
+        await session_db.refresh(proposal)
+
+        return proposal
 
 
 async def get_workflow_proposal(
@@ -375,10 +431,17 @@ async def get_workflow_proposal(
     proposal_id: int,
 ) -> WorkflowProposal:
     """Fetch a workflow proposal."""
-    proposal = await WorkflowProposal.get_or_none(id=proposal_id, workflow=workflow)
-    if not proposal:
-        raise HTTPException(status_code=404, detail="Proposal not found")
-    return proposal
+    async with async_session_maker() as session_db:
+        stmt = select(WorkflowProposal).where(
+            WorkflowProposal.id == proposal_id,
+            WorkflowProposal.workflow_id == workflow.id
+        )
+        result = await session_db.execute(stmt)
+        proposal = result.scalar_one_or_none()
+
+        if not proposal:
+            raise HTTPException(status_code=404, detail="Proposal not found")
+        return proposal
 
 
 async def accept_workflow_proposal(
@@ -388,29 +451,43 @@ async def accept_workflow_proposal(
     actor: Optional[User] = None,
 ) -> Tuple[WorkflowProposal, Workflow]:
     """Apply workflow proposal and mark accepted."""
-    proposal = await get_workflow_proposal(workflow, proposal_id)
-    if proposal.status != WorkflowProposal.STATUS_PENDING:
-        raise HTTPException(status_code=400, detail="Proposal is not pending")
-    
-    workflow = await proposal.workflow
-    normalized_spec = _normalize_spec(proposal.spec or {})
-    # draft = await _ensure_workflow_draft(workflow)
-    await workflow.fetch_related("draft")
-    draft = workflow.draft
-    draft.spec = normalized_spec
-    draft.revision += 1
-    if actor is not None:
-        draft.updated_by = actor
-    await draft.save()
-    workflow.updated_at = datetime.utcnow()
-    await workflow.save()
-    
-    proposal.status = WorkflowProposal.STATUS_ACCEPTED
-    proposal.applied_graph = normalized_spec
-    proposal.decided_at = datetime.utcnow()
-    await proposal.save()
-    
-    return proposal, workflow
+    async with async_session_maker() as session_db:
+        # Get proposal
+        proposal = await get_workflow_proposal(workflow, proposal_id)
+        if proposal.status != WorkflowProposal.STATUS_PENDING:
+            raise HTTPException(status_code=400, detail="Proposal is not pending")
+
+        # Get workflow with draft
+        stmt = select(Workflow).where(Workflow.id == workflow.id).options(selectinload(Workflow.draft))
+        result = await session_db.execute(stmt)
+        workflow = result.scalar_one()
+
+        normalized_spec = _normalize_spec(proposal.spec or {})
+        draft = workflow.draft
+        draft.spec = normalized_spec
+        draft.revision += 1
+        if actor is not None:
+            draft.updated_by_id = actor.id
+        session_db.add(draft)
+
+        workflow.updated_at = datetime.utcnow()
+        session_db.add(workflow)
+
+        # Update proposal
+        stmt = select(WorkflowProposal).where(WorkflowProposal.id == proposal_id)
+        result = await session_db.execute(stmt)
+        proposal = result.scalar_one()
+
+        proposal.status = WorkflowProposal.STATUS_ACCEPTED
+        proposal.applied_graph = normalized_spec
+        proposal.decided_at = datetime.utcnow()
+        session_db.add(proposal)
+
+        await session_db.commit()
+        await session_db.refresh(proposal)
+        await session_db.refresh(workflow)
+
+        return proposal, workflow
 
 
 async def reject_workflow_proposal(
@@ -418,13 +495,23 @@ async def reject_workflow_proposal(
     proposal_id: int,
 ) -> WorkflowProposal:
     """Reject workflow proposal."""
-    proposal = await get_workflow_proposal(workflow, proposal_id)
-    if proposal.status != WorkflowProposal.STATUS_PENDING:
-        raise HTTPException(status_code=400, detail="Proposal is not pending")
-    
-    proposal.status = WorkflowProposal.STATUS_REJECTED
-    proposal.decided_at = datetime.utcnow()
-    await proposal.save()
-    return proposal
+    async with async_session_maker() as session_db:
+        proposal = await get_workflow_proposal(workflow, proposal_id)
+        if proposal.status != WorkflowProposal.STATUS_PENDING:
+            raise HTTPException(status_code=400, detail="Proposal is not pending")
+
+        # Reload in current session
+        stmt = select(WorkflowProposal).where(WorkflowProposal.id == proposal_id)
+        result = await session_db.execute(stmt)
+        proposal = result.scalar_one()
+
+        proposal.status = WorkflowProposal.STATUS_REJECTED
+        proposal.decided_at = datetime.utcnow()
+        session_db.add(proposal)
+
+        await session_db.commit()
+        await session_db.refresh(proposal)
+
+        return proposal
 
 
