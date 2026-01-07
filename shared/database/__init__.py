@@ -1,15 +1,66 @@
-from __future__ import annotations
-
-import os
+"""Database initialization with SQLModel."""
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
-
 from fastapi import FastAPI
-from tortoise import Tortoise
+import subprocess
 
 from shared.logger import get_logger
-from shared.database.config import TORTOISE_ORM
-from shared.database.workflow_models import (
+from shared.database.base import close_db
+from shared.config import config
+
+# Import all models to ensure they're registered
+from shared.database import models  # noqa
+
+logger = get_logger("shared.database")
+
+
+async def run_alembic_migrations() -> None:
+    """Run Alembic migrations."""
+    if not config.AUTO_APPLY_DATABASE_MIGRATIONS:
+        logger.info("⏭️  Auto-migrations disabled. Skipping Alembic.")
+        return
+
+    try:
+        logger.info("🔄 Running Alembic migrations...")
+        result = subprocess.run(
+            ["uv", "run", "alembic", "upgrade", "head"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        logger.info("✅ Alembic migrations completed successfully")
+        if result.stdout:
+            logger.debug(f"Alembic output: {result.stdout}")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"❌ Alembic migration failed: {e.stderr}")
+        raise
+    except Exception as e:
+        logger.error(f"❌ Alembic error: {e}")
+        raise
+
+
+@asynccontextmanager
+async def db_lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """FastAPI lifespan handler for database."""
+    logger.info("🚀 Initializing database...")
+
+    # Run migrations
+    await run_alembic_migrations()
+
+    logger.info("✅ Database ready")
+
+    try:
+        yield
+    finally:
+        logger.info("🔌 Closing database connections...")
+        await close_db()
+        logger.info("✅ Database closed")
+
+
+# Re-export models for backward compatibility
+from shared.database.models import (
+    User,
+    Project,
     Workflow,
     WorkflowDraft,
     WorkflowVersion,
@@ -18,80 +69,25 @@ from shared.database.workflow_models import (
     WorkflowChatSession,
     WorkflowChatMessage,
     WorkflowProposal,
+    TriggerSubscription,
+    TriggerEvent,
+    OAuthConnection,
+    IntegrationResource,
+    IntegrationSecret,
+    WorkflowRunStatus,
+    WorkflowRunSource,
+    WorkflowVersionStatus,
+    TriggerEventStatus,
+    make_workflow_public_id,
+    parse_workflow_public_id,
+    make_run_public_id,
+    parse_run_public_id,
 )
-from shared.database.models_integrations import IntegrationResource, IntegrationSecret
-from shared.config import config
-
-logger = get_logger("shared.database")
-
-
-async def run_migrations() -> None:
-    """Run Aerich migrations to update database schema.
-    
-    This function runs automatically on startup to ensure existing users
-    upgrading from older versions get their databases migrated seamlessly.
-    """
-    try:
-        from aerich import Command
-        
-        logger.info("Running database migrations...")
-        # Command handles Tortoise initialization internally
-        async with Command(tortoise_config=TORTOISE_ORM, app='models') as command:
-            migrated = await command.upgrade()
-
-        if migrated:
-            logger.info(f"✅ Applied {len(migrated)} migration(s): {', '.join(migrated)}")
-        else:
-            logger.info("✅ Database already up-to-date, no migrations needed")
-    except ImportError:
-        logger.warning(
-            "⚠️ Aerich not available. Migrations skipped. "
-            "Install aerich to enable automatic migrations: pip install aerich"
-        )
-    except Exception as e:
-        logger.error(
-            f"❌ Migration failed: {e}. "
-            "Database schema may be out of sync. Please fix migrations before starting the application.",
-            exc_info=True,
-        )
-        raise  # Fail fast - migrations are critical
-
-
-async def init_db() -> None:
-    """Initialize Tortoise ORM with the configured settings."""
-    
-    # Run migrations first (Command handles Tortoise initialization)
-    if config.AUTO_APPLY_DATABASE_MIGRATIONS:
-        logger.info("Auto-applying database migrations...")
-        await run_migrations()
-    else:
-        logger.info("Database migrations will not be applied automatically. Please run migrations manually.")
-    
-    # Initialize Tortoise for the application (Command closes connections on exit)
-    await Tortoise.init(config=TORTOISE_ORM)
-
-
-async def close_db() -> None:
-    """Close all ORM connections."""
-    await Tortoise.close_connections()
-
-
-@asynccontextmanager
-async def db_lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """FastAPI lifespan handler for database management."""
-    logger.info("Initializing database connections")
-    await init_db()
-    try:
-        yield
-    finally:
-        logger.info("Closing database connections")
-        await close_db()
-
 
 __all__ = [
     "db_lifespan",
-    "init_db",
-    "close_db",
+    "User",
+    "Project",
     "Workflow",
     "WorkflowDraft",
     "WorkflowVersion",
@@ -100,8 +96,17 @@ __all__ = [
     "WorkflowChatSession",
     "WorkflowChatMessage",
     "WorkflowProposal",
+    "TriggerSubscription",
+    "TriggerEvent",
+    "OAuthConnection",
     "IntegrationResource",
     "IntegrationSecret",
+    "WorkflowRunStatus",
+    "WorkflowRunSource",
+    "WorkflowVersionStatus",
+    "TriggerEventStatus",
+    "make_workflow_public_id",
+    "parse_workflow_public_id",
+    "make_run_public_id",
+    "parse_run_public_id",
 ]
-
-
