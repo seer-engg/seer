@@ -39,9 +39,15 @@ run_alembic() {
         # Already in Docker, run directly
         $RUN_CMD alembic "$@"
     elif [ "$DOCKER_AVAILABLE" = true ]; then
-        # Run via docker-compose
-        echo -e "${BLUE}Running in Docker container...${NC}"
-        docker-compose exec langgraph-server uv run alembic "$@"
+        # Try to run via docker-compose, fall back to local if service not running
+        echo -e "${BLUE}Checking if langgraph-server is running...${NC}"
+        if docker-compose ps langgraph-server | grep -q "Up"; then
+            echo -e "${BLUE}Running in Docker container...${NC}"
+            docker-compose exec langgraph-server uv run alembic "$@"
+        else
+            echo -e "${YELLOW}langgraph-server not running, executing locally...${NC}"
+            uv run alembic "$@"
+        fi
     else
         # Run locally
         echo -e "${BLUE}Running locally...${NC}"

@@ -45,6 +45,20 @@ def has_docker_compose() -> bool:
         return False
 
 
+def is_service_running(service: str) -> bool:
+    """Check if a docker-compose service is running"""
+    try:
+        result = subprocess.run(
+            ['docker-compose', 'ps', service],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return 'Up' in result.stdout
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
 def run_alembic(args: list[str]) -> int:
     """Run alembic command in appropriate environment"""
     in_docker = is_in_docker()
@@ -53,13 +67,16 @@ def run_alembic(args: list[str]) -> int:
     if in_docker:
         # Already in Docker, run directly
         cmd = ['uv', 'run', 'alembic'] + args
-    elif docker_available:
-        # Run via docker-compose
+    elif docker_available and is_service_running('langgraph-server'):
+        # Run via docker-compose if service is running
         print_colored("Running in Docker container...", Colors.BLUE)
         cmd = ['docker-compose', 'exec', 'langgraph-server', 'uv', 'run', 'alembic'] + args
     else:
-        # Run locally
-        print_colored("Running locally...", Colors.BLUE)
+        # Run locally (service not running or docker not available)
+        if docker_available:
+            print_colored("langgraph-server not running, executing locally...", Colors.YELLOW)
+        else:
+            print_colored("Running locally...", Colors.BLUE)
         cmd = ['uv', 'run', 'alembic'] + args
 
     result = subprocess.run(cmd)
