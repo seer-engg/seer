@@ -23,6 +23,7 @@ class TriggerDefinition:
     config_schema: Optional[JsonSchema] = None
     sample_event: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    requires_connection: bool = True
 
 
 class TriggerRegistry:
@@ -110,6 +111,7 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
             config_schema=_cron_schedule_config_schema(),
             sample_event=_cron_schedule_sample_event(),
             metadata={"polling": True, "integration": "schedule"},
+            requires_connection=False,
         )
     )
 

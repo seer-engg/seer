@@ -66,6 +66,14 @@ def _load_trigger_provider(trigger_key: str) -> str:
     return definition.provider
 
 
+def _trigger_requires_connection(trigger_key: str) -> bool:
+    definition = trigger_registry.maybe_get(trigger_key)
+    if definition is None:
+        # Fail closed for unknown triggers; poll engine will disable them.
+        return True
+    return definition.requires_connection
+
+
 def _build_event_envelope(
     *,
     trigger_key: str,
