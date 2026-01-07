@@ -88,6 +88,19 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
     )
     registry.register(
         TriggerDefinition(
+            key="webhook.supabase.db_changes",
+            title="Supabase – Database Changes",
+            provider="supabase",
+            mode="webhook",
+            description="Receive real-time webhooks when rows are inserted, updated, or deleted in Supabase tables.",
+            event_schema=_enveloped_event_schema(_supabase_db_changes_payload_schema()),
+            config_schema=_supabase_db_changes_config_schema(),
+            sample_event=_supabase_db_changes_sample_event(),
+            metadata={"integration": "supabase", "requires_webhook_setup": True},
+        )
+    )
+    registry.register(
+        TriggerDefinition(
             key="poll.gmail.email_received",
             title="Gmail – New Email",
             provider="gmail",
@@ -180,6 +193,76 @@ def _gmail_email_received_config_schema() -> JsonSchema:
                 "description": "Overlap window in milliseconds to re-read recent messages for dedupe safety.",
             },
         },
+    }
+
+
+def _supabase_db_changes_payload_schema() -> JsonSchema:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "type": {"type": "string", "enum": ["INSERT", "UPDATE", "DELETE"]},
+            "table": {"type": "string"},
+            "schema": {"type": "string"},
+            "record": {"type": ["object", "null"]},
+            "old_record": {"type": ["object", "null"]},
+        },
+        "required": ["type", "table", "schema"],
+    }
+
+
+def _supabase_db_changes_config_schema() -> JsonSchema:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "integration_resource_id": {
+                "type": "integer",
+                "description": "The Supabase project resource ID (from IntegrationResource table).",
+            },
+            "table": {
+                "type": "string",
+                "description": "The table name to monitor (e.g., 'orders', 'users').",
+            },
+            "schema": {
+                "type": "string",
+                "default": "public",
+                "description": "The database schema name (defaults to 'public').",
+            },
+            "events": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["INSERT", "UPDATE", "DELETE"]},
+                "minItems": 1,
+                "description": "Database operations to trigger on.",
+            },
+        },
+        "required": ["integration_resource_id", "table", "events"],
+    }
+
+
+def _supabase_db_changes_sample_event() -> Dict[str, Any]:
+    payload = {
+        "type": "INSERT",
+        "table": "orders",
+        "schema": "public",
+        "record": {
+            "id": 123,
+            "user_id": 456,
+            "total": 99.99,
+            "status": "pending",
+            "created_at": "2026-01-06T10:00:00Z",
+        },
+        "old_record": None,
+    }
+    return {
+        "id": "evt_sample_webhook_supabase_db_changes",
+        "trigger_key": "webhook.supabase.db_changes",
+        "provider": "supabase",
+        "account_id": None,
+        "occurred_at": "2026-01-06T10:00:00Z",
+        "received_at": "2026-01-06T10:00:01Z",
+        "data": payload,
+        "raw": {"payload": payload},
     }
 
 

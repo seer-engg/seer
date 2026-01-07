@@ -130,6 +130,14 @@ class SeerConfig(BaseSettings):
         default=60,
         description="Lease timeout for poll locks in seconds.",
     )
+    
+    # ============================================================================
+    # Webhook Configuration
+    # ============================================================================
+    webhook_base_url: Optional[str] = Field(
+        default=None,
+        description="Base URL for webhook callbacks (e.g., https://seer.example.com). Used by external services to send webhooks. Defaults to http://localhost:8000 if not set.",
+    )
 
     # ============================================================================
     # PostHog Analytics Configuration
