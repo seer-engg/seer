@@ -324,7 +324,7 @@ async def create_trigger_subscription(
             webhook_base_url = shared_config.webhook_base_url or "http://localhost:8000"
             full_webhook_url = f"{webhook_base_url.rstrip('/')}/api/v1/webhooks/generic/{subscription.id}"
             if secret:
-                full_webhook_url += f"?secret={secret}"
+                full_webhook_url += f"?seer_secret={secret}"
 
             # Create the Postgres trigger in Supabase
             webhook_metadata = await create_database_webhook(subscription, full_webhook_url)

@@ -13,6 +13,7 @@ from shared.tool_hub.models import Tool
 from shared.config import config
 
 logger = get_logger("shared.tool_hub.index_manager")
+import threading
 
 
 async def generate_tool_index(
@@ -77,26 +78,13 @@ async def generate_tool_index(
             tools_by_integration_objects[integration_type] = tool_objects
         
         # Ingest tools for each integration
-        total_ingested = 0
         for integration_type, tools in tools_by_integration_objects.items():
             logger.info(f"Ingesting {len(tools)} tools for integration: {integration_type}")
             try:
-                await toolhub.ingest(tools, integration_name=integration_type)
-                total_ingested += len(tools)
+                threading.Thread(target=toolhub.ingest, args=(tools, integration_type)).start()
             except Exception as e:
                 logger.error(f"Failed to ingest tools for {integration_type}: {e}")
                 continue
-        
-        logger.info(f"✅ Tool index generation complete. Ingested {total_ingested} tools.")
-        
-        # Verify index was created
-        if toolhub.index_exists():
-            stats = toolhub.get_index_stats()
-            logger.info(f"Index verification: {stats}")
-            return True
-        else:
-            logger.error("Index generation completed but index verification failed.")
-            return False
             
     except Exception as e:
         logger.exception(f"Error generating tool index: {e}")
