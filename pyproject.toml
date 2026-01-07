@@ -63,6 +63,7 @@ dev = [
     "flake8>=7.3.0",
     "pylint>=4.0.4",
     "radon>=6.0.1",
+    "pre-commit>=4.0.1",
 ]
 
 [project.urls]
@@ -88,7 +89,7 @@ load-plugins = ["pylint.extensions.mccabe"]
 # Maximum number of characters on a single line
 max-line-length = 100
 # Maximum number of lines in a module
-max-module-lines = 800
+max-module-lines = 600
 
 [tool.pylint.design]
 # Maximum cyclomatic complexity for a function
