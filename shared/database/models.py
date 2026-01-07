@@ -217,7 +217,7 @@ class Workflow(SQLModel, table=True):
     description: Optional[str] = Field(default=None, sa_column=Column(Text))
     tags: Optional[dict] = Field(default=None, sa_column=Column(JSONB))
     meta: Optional[dict] = Field(default=None, sa_column=Column(JSONB))
-    published_version_id: Optional[int] = Field(default=None)
+    published_version_id: Optional[int] = Field(default=None, foreign_key="workflow_versions.id")
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now, index=True)
 
@@ -227,6 +227,13 @@ class Workflow(SQLModel, table=True):
     draft: Optional["WorkflowDraft"] = Relationship(
         back_populates="workflow",
         sa_relationship_kwargs={"uselist": False}
+    )
+    published_version: Optional["WorkflowVersion"] = Relationship(
+        sa_relationship_kwargs={
+            "uselist": False,
+            "foreign_keys": "[Workflow.published_version_id]",
+            "post_update": True
+        }
     )
     runs: list["WorkflowRun"] = Relationship(back_populates="workflow")
     chat_sessions: list["WorkflowChatSession"] = Relationship(back_populates="workflow")
