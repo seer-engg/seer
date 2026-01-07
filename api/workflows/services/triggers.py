@@ -150,6 +150,7 @@ def _validate_bindings_against_workflow(
     bindings: Dict[str, Any],
     spec: WorkflowSpec,
     event_schema: Dict[str, Any],
+    trigger_definition=None,
 ) -> None:
     """
     Validate trigger bindings against workflow input schema.
@@ -160,7 +161,29 @@ def _validate_bindings_against_workflow(
     as "late-bound" - they will be validated at runtime instead of subscription
     creation time. This enables triggers to work with workflows that don't
     define input schemas.
+
+    For auto-binding triggers (e.g., Form trigger), bindings should be empty
+    and will be auto-generated from workflow inputs.
     """
+    # Handle auto-binding mode (Form trigger)
+    if trigger_definition and trigger_definition.binding_mode == "auto":
+        if not spec.inputs:
+            _raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Form trigger requires workflow inputs",
+                detail="Workflows using form triggers must define inputs that match the form fields.",
+                status=400,
+            )
+        if bindings:
+            _raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Form trigger does not accept manual bindings",
+                detail="Form triggers automatically map form fields to workflow inputs. Do not provide bindings.",
+                status=400,
+            )
+        # Validation passes - bindings will be auto-generated
+        return
+
     if not bindings:
         return
 
@@ -380,7 +403,12 @@ async def create_trigger_subscription(
         bindings = dict(payload.bindings or {})
         provider_config = dict(payload.provider_config or {})
         _validate_filters_payload(filters, definition)
-        _validate_bindings_against_workflow(bindings, spec, definition.event_schema)
+        _validate_bindings_against_workflow(bindings, spec, definition.event_schema, definition)
+
+        # Auto-generate bindings for form triggers
+        if definition.binding_mode == "auto":
+            bindings = {name: f"${{event.data.{name}}}" for name in spec.inputs.keys()}
+
         secret = _generate_subscription_secret() if _should_emit_webhook_url(payload.trigger_key) else None
         subscription = TriggerSubscription(
             user_id=user.id,
@@ -437,7 +465,7 @@ async def update_trigger_subscription(
             subscription.filters = new_filters
         if payload.bindings is not None:
             new_bindings = dict(payload.bindings or {})
-            _validate_bindings_against_workflow(new_bindings, spec, definition.event_schema)
+            _validate_bindings_against_workflow(new_bindings, spec, definition.event_schema, definition)
             subscription.bindings = new_bindings
         if payload.provider_connection_id is not None:
             subscription.provider_connection_id = payload.provider_connection_id

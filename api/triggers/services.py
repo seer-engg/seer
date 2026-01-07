@@ -6,7 +6,6 @@ from uuid import uuid4
 
 from fastapi import HTTPException, status
 from sqlmodel import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 
@@ -16,7 +15,6 @@ from shared.database.models import (
     TriggerSubscription,
     WorkflowRun,
     WorkflowRunSource,
-    WorkflowRunStatus,
 )
 from shared.database.base import async_session_maker
 from workflow_compiler.registry.trigger_registry import trigger_registry
@@ -230,7 +228,9 @@ async def process_trigger_run_job(subscription_id: int, event_id: int) -> None:
             select(TriggerSubscription)
             .where(TriggerSubscription.id == subscription_id)
             .options(
-                selectinload(TriggerSubscription.workflow).selectinload(lambda w: w.published_version),
+                selectinload(TriggerSubscription.workflow).selectinload(
+                    lambda w: w.published_version
+                ),
                 selectinload(TriggerSubscription.user)
             )
         )
@@ -415,3 +415,161 @@ async def _dispatch_trigger_event(
         session.add(event_db)
         await session.commit()
 
+
+async def handle_form_submission(
+    subscription_id: int,
+    form_data: Dict[str, Any],
+    headers: Mapping[str, str],
+    provider_event_id: Optional[str] = None,
+) -> TriggerEvent:
+    """
+    Handle form submission from public form page.
+
+    Creates a trigger event with form data and routes it to the workflow.
+    No authentication required - public endpoint.
+    """
+    subscription = await _get_active_subscription(subscription_id)
+
+    # Verify this is a form trigger
+    if subscription.trigger_key != "trigger.form":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This subscription is not a form trigger",
+        )
+
+    # Build event payload with form data
+    event_id = provider_event_id or f"form_{uuid4().hex}"
+    occurred_at = _utcnow()
+
+    event_payload = {
+        "id": event_id,
+        "trigger_key": "trigger.form",
+        "provider": "form",
+        "account_id": None,
+        "occurred_at": occurred_at.isoformat(),
+        "received_at": _utcnow().isoformat(),
+        "data": form_data,  # Form fields directly as data
+        "raw": {"headers": dict(headers), "form_data": form_data},
+    }
+
+    async with async_session_maker() as session:
+        # Create trigger event
+        event = TriggerEvent(
+            subscription_id=subscription.id,
+            provider_event_id=event_id,
+            occurred_at=occurred_at,
+            payload=event_payload,
+            status=TriggerEventStatus.PENDING,
+        )
+        session.add(event)
+
+        try:
+            await session.commit()
+            await session.refresh(event)
+        except IntegrityError:
+            logger.warning(
+                "Duplicate form submission event",
+                extra={"provider_event_id": event_id, "subscription_id": subscription.id},
+            )
+            await session.rollback()
+            stmt = select(TriggerEvent).where(
+                TriggerEvent.subscription_id == subscription.id,
+                TriggerEvent.provider_event_id == event_id,
+            )
+            result = await session.execute(stmt)
+            return result.scalar_one()
+
+        logger.info(
+            "Form submission event created",
+            extra={"event_id": event.id, "subscription_id": subscription.id},
+        )
+
+        # Route event to workflow
+        try:
+            await process_trigger_event_task.kiq(subscription_id=subscription.id, event_id=event.id)
+        except Exception:
+            logger.exception(
+                "Failed to enqueue form submission event",
+                extra={"event_id": event.id, "subscription_id": subscription.id},
+            )
+            stmt = select(TriggerEvent).where(TriggerEvent.id == event.id)
+            result = await session.execute(stmt)
+            event_db = result.scalar_one()
+            event_db.status = TriggerEventStatus.FAILED
+            event_db.error = {"detail": "Failed to enqueue form submission"}
+            session.add(event_db)
+            await session.commit()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to process form submission",
+            )
+
+        stmt = select(TriggerEvent).where(TriggerEvent.id == event.id)
+        result = await session.execute(stmt)
+        event_db = result.scalar_one()
+        event_db.status = TriggerEventStatus.ROUTED
+        session.add(event_db)
+        await session.commit()
+
+        return event
+
+
+async def get_form_trigger_info(subscription_id: int) -> Dict[str, Any]:
+    """
+    Get information about a form trigger for rendering the public form.
+
+    Returns form fields (from workflow inputs), workflow name, description, etc.
+    No authentication required - public endpoint.
+    """
+    subscription = await _get_active_subscription(subscription_id)
+
+    # Verify this is a form trigger
+    if subscription.trigger_key != "trigger.form":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This subscription is not a form trigger",
+        )
+
+    async with async_session_maker() as session:
+        # Load workflow and draft to get spec
+        stmt = (
+            select(TriggerSubscription)
+            .where(TriggerSubscription.id == subscription_id)
+            .options(selectinload(TriggerSubscription.workflow))
+        )
+        result = await session.execute(stmt)
+        subscription_with_workflow = result.scalar_one()
+        workflow = subscription_with_workflow.workflow
+
+        # Get workflow spec from draft
+        from shared.database.models import WorkflowDraft
+        stmt = select(WorkflowDraft).where(WorkflowDraft.workflow_id == workflow.id)
+        result = await session.execute(stmt)
+        draft = result.scalar_one_or_none()
+
+        if not draft:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Workflow draft not found",
+            )
+
+        spec = WorkflowSpec.model_validate(draft.spec)
+
+        # Build form fields from workflow inputs
+        form_fields = []
+        for name, input_def in (spec.inputs or {}).items():
+            form_fields.append({
+                "name": name,
+                "label": input_def.description or name.replace("_", " ").title(),
+                "type": input_def.type.value,
+                "required": input_def.required,
+                "default": input_def.default,
+            })
+
+        return {
+            "subscription_id": subscription_id,
+            "workflow_name": workflow.name,
+            "workflow_description": workflow.description,
+            "form_fields": form_fields,
+            "form_url": f"/v1/forms/{subscription_id}/submit",
+        }

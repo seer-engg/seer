@@ -23,6 +23,7 @@ class TriggerDefinition:
     config_schema: Optional[JsonSchema] = None
     sample_event: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    binding_mode: str = "explicit"  # "explicit" (manual bindings) or "auto" (form trigger)
 
 
 class TriggerRegistry:
@@ -110,6 +111,18 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
             config_schema=_cron_schedule_config_schema(),
             sample_event=_cron_schedule_sample_event(),
             metadata={"polling": True, "integration": "schedule"},
+        )
+    )
+    registry.register(
+        TriggerDefinition(
+            key="trigger.form",
+            title="Form Submission",
+            provider="form",
+            mode="form",
+            description="Trigger workflow via public form submission. Form fields are auto-mapped to workflow inputs.",
+            event_schema=_default_event_envelope_schema(),  # Dynamic schema based on workflow inputs
+            binding_mode="auto",  # Auto-generate bindings from form fields
+            metadata={"hosted_form": True},
         )
     )
 
@@ -271,4 +284,3 @@ _register_builtin_triggers(trigger_registry)
 
 
 __all__ = ["TriggerDefinition", "TriggerRegistry", "trigger_registry"]
-
