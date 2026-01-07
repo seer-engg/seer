@@ -1,7 +1,7 @@
 """
 Workflow API router for CRUD and execution endpoints.
 """
-from typing import Optional, Dict, List, Any, Tuple
+from typing import Optional, Dict, Any, Tuple
 from fastapi import APIRouter, Request, HTTPException, Query
 from shared.logger import get_logger
 from shared.config import config
@@ -29,7 +29,6 @@ from .services import (
     get_workflow,
     create_chat_session,
     get_chat_session,
-    get_chat_session_by_thread_id,
     list_chat_sessions,
     save_chat_message,
     load_chat_history,
@@ -53,24 +52,20 @@ from agents.workflow_agent import (
     create_workflow_chat_agent,
     extract_thinking_from_messages,
     _current_thread_id,
-    set_workflow_state_for_thread,
     get_proposed_spec_for_thread,
     clear_proposed_spec_for_thread,
-    set_user_for_thread,
     clear_user_for_thread,
 )
-from api.agents.checkpointer import get_checkpointer, get_checkpointer_with_retry, _recreate_checkpointer
+from api.agents.checkpointer import get_checkpointer
 import uuid
-import json
-import asyncio
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from langchain_core.messages import HumanMessage
 
 # Import psycopg for error type checking
 try:
     import psycopg
 except ImportError:
     psycopg = None
-from shared.database.models import User, UserPublic
+from shared.database.models import User, UserPublic, WorkflowProposal
 
 logger = get_logger(__name__)
 
@@ -82,6 +77,61 @@ def _require_user(request: Request) -> User:
     if user is None:
         raise HTTPException(status_code=401, detail="Unauthorized")
     return user
+
+
+def _validate_resume_data(resume_data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    """Validate resume_data contains required fields. Returns (thread_id, command_data)."""
+    thread_id = resume_data.get("thread_id")
+    if not thread_id:
+        raise HTTPException(status_code=400, detail="thread_id is required in resume_data")
+    command_data = resume_data.get("command", {})
+    if not command_data:
+        raise HTTPException(status_code=400, detail="command is required in resume_data")
+    return thread_id, command_data
+
+
+async def _get_session_for_thread(thread_id: str, workflow) -> Any:
+    """Get chat session by thread_id with error handling."""
+    from .services import get_chat_session_by_thread_id
+    session = await get_chat_session_by_thread_id(thread_id, workflow)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Chat session not found for thread_id: {thread_id}")
+    return session
+
+
+async def _reload_proposal_with_relationships(proposal_id: int):
+    """Reload proposal with all relationships (created_by, workflow, session)."""
+    from shared.database.base import async_session_maker
+    from sqlmodel import select
+    from sqlalchemy.orm import selectinload
+    from shared.database.models import WorkflowProposal
+
+    async with async_session_maker() as session_db:
+        stmt = (
+            select(WorkflowProposal)
+            .where(WorkflowProposal.id == proposal_id)
+            .options(
+                selectinload(WorkflowProposal.created_by),
+                selectinload(WorkflowProposal.workflow),
+                selectinload(WorkflowProposal.session)
+            )
+        )
+        result = await session_db.execute(stmt)
+        return result.scalar_one()
+
+
+def _track_proposal_event(user: User, event_name: str, proposal_id: int, workflow_id: str, proposal) -> None:
+    """Track proposal analytics event (accept/reject)."""
+    analytics.capture(
+        distinct_id=user.user_id,
+        event=event_name,
+        properties={
+            "proposal_id": proposal_id,
+            "workflow_id": workflow_id,
+            "session_id": proposal.session.id if proposal.session else None,
+            "deployment_mode": config.seer_mode,
+        },
+    )
 
 
 def _summarize_spec(spec: Dict[str, Any]) -> str:
@@ -326,7 +376,7 @@ async def create_chat_session_endpoint(
     print(f"Creating chat session for workflow {workflow_id}")
     user = _require_user(request)
     workflow = await get_workflow(user, workflow_id)
-    
+
     thread_id = f"workflow-{workflow_id}-{uuid.uuid4().hex}"
     session = await create_chat_session(
         workflow=workflow,
@@ -334,7 +384,7 @@ async def create_chat_session_endpoint(
         thread_id=thread_id,
         title=session_data.title,
     )
-    
+
     return ChatSession(
         id=session.id,
         workflow_id=workflow.workflow_id,
@@ -358,7 +408,7 @@ async def list_chat_sessions_endpoint(
     user = _require_user(request)
     workflow = await get_workflow(user, workflow_id)
     sessions = await list_chat_sessions(workflow, user, limit=limit, offset=offset)
-    
+
     return [
         ChatSession(
             id=session.id,
@@ -383,9 +433,9 @@ async def get_chat_session_endpoint(
     user = _require_user(request)
     workflow = await get_workflow(user, workflow_id)
     session = await get_chat_session(session_id, workflow)
-    
+
     messages = await load_chat_history(session_id)
-    
+
     return ChatSessionWithMessages(
         id=session.id,
         workflow_id=workflow.workflow_id,
@@ -419,117 +469,65 @@ async def resume_chat_endpoint(
 ) -> ChatResponse:
     """
     Resume a chat session after an interrupt (e.g., clarification question).
-    
+
     This endpoint handles resuming agent execution after a LangGraph interrupt.
     The resume_data should contain a Command object with resume information.
     """
     from langgraph.types import Command
-    
+    from .chat_helpers import _extract_response_text, _save_assistant_message_to_db, _build_chat_response
+
     logger.info(f"Resume request received: workflow_id={workflow_id}")
     user = _require_user(request)
-    
-    # Verify workflow exists
     workflow = await get_workflow(user, workflow_id)
-    
-    # Extract thread_id and command from resume_data
-    thread_id = resume_data.get("thread_id")
-    if not thread_id:
-        raise HTTPException(
-            status_code=400,
-            detail="thread_id is required in resume_data"
-        )
-    
-    command_data = resume_data.get("command", {})
-    if not command_data:
-        raise HTTPException(
-            status_code=400,
-            detail="command is required in resume_data"
-        )
-    
-    # Get checkpointer
+
+    thread_id, command_data = _validate_resume_data(resume_data)
     checkpointer = await get_checkpointer()
-    
-    # Get session by thread_id
-    session = await get_chat_session_by_thread_id(thread_id, workflow)
-    if not session:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Chat session not found for thread_id: {thread_id}"
-        )
-    
+    session = await _get_session_for_thread(thread_id, workflow)
     session_id = session.id
-    
+
     # Get current workflow state (deep copy to avoid mutating DB graph)
     workflow_state = deepcopy(workflow_state_snapshot(workflow))
-    
+
     # Create agent
     agent = create_workflow_chat_agent(
         model=config.default_llm_model,
         checkpointer=checkpointer,
         workflow_state=workflow_state,
     )
-    
+
     # Create Command object for resuming
     resume_command = Command(**command_data)
-    
+
     # Resume agent execution
     config_dict = {
         "configurable": {
             "thread_id": thread_id,
         },
     }
-    
+
     # Set thread_id in context variable for tools to access
     token = None
     if thread_id:
         token = _current_thread_id.set(thread_id)
     try:
-        # Resume the agent with the command
         result = await agent.ainvoke(resume_command, config=config_dict)
-        
-        # Extract response
-        agent_messages = result.get("messages", [])
-        if not agent_messages:
+
+        response_text = _extract_response_text(result)
+        if not response_text or response_text == "No response from agent":
             response_text = "I've received your response. Let me continue..."
-        else:
-            # Get last assistant message
-            last_msg = agent_messages[-1]
-            if hasattr(last_msg, "content"):
-                response_text = last_msg.content
-            else:
-                response_text = str(last_msg)
-        
-        # Extract thinking steps
+
+        agent_messages = result.get("messages", [])
         thinking_steps = extract_thinking_from_messages(agent_messages)
-        
         proposal_payload = get_proposed_spec_for_thread(thread_id)
+
         proposal, proposal_public, proposal_error = await _maybe_create_proposal_from_spec(
-            workflow=workflow,
-            session=session,
-            user=user,
-            model_name=config.default_llm_model,
-            proposal_payload=proposal_payload,
+            workflow=workflow, session=session, user=user,
+            model_name=config.default_llm_model, proposal_payload=proposal_payload
         )
-        
-        # Save assistant message to database
-        await save_chat_message(
-            session_id=session_id,
-            role="assistant",
-            content=response_text,
-            thinking="\n".join(thinking_steps) if thinking_steps else None,
-            suggested_edits=proposal_payload,
-            proposal=proposal,
-        )
-        
-        return ChatResponse(
-            response=response_text,
-            proposal=proposal_public,
-            proposal_error=proposal_error,
-            session_id=session_id,
-            thread_id=thread_id,
-            thinking=thinking_steps if thinking_steps else None,
-            interrupt_required=False,
-        )
+
+        await _save_assistant_message_to_db(session_id, response_text, thinking_steps, proposal_payload, proposal)
+
+        return _build_chat_response(response_text, proposal_public, proposal_error, session_id, thread_id, thinking_steps, False, None)
     except Exception as e:
         logger.error(f"Error resuming chat: {e}", exc_info=True)
         raise HTTPException(
@@ -550,28 +548,9 @@ async def get_proposal_endpoint(
     proposal_id: int,
 ) -> WorkflowProposalPublic:
     """Fetch a single workflow proposal."""
-    from shared.database.base import async_session_maker
-    from sqlmodel import select
-    from sqlalchemy.orm import selectinload
-    from shared.database.models import WorkflowProposal
-
     workflow = await get_workflow(_require_user(request), workflow_id)
     proposal = await get_workflow_proposal(workflow, proposal_id)
-
-    # Reload with relationships
-    async with async_session_maker() as session_db:
-        stmt = (
-            select(WorkflowProposal)
-            .where(WorkflowProposal.id == proposal.id)
-            .options(
-                selectinload(WorkflowProposal.created_by),
-                selectinload(WorkflowProposal.workflow),
-                selectinload(WorkflowProposal.session)
-            )
-        )
-        result = await session_db.execute(stmt)
-        proposal = result.scalar_one()
-
+    proposal = await _reload_proposal_with_relationships(proposal.id)
     return WorkflowProposalPublic.model_validate(proposal, from_attributes=True)
 
 
@@ -582,45 +561,11 @@ async def accept_proposal_endpoint(
     proposal_id: int,
 ) -> WorkflowProposalActionResponse:
     """Accept a workflow proposal and apply its changes."""
-    from shared.database.base import async_session_maker
-    from sqlmodel import select
-    from sqlalchemy.orm import selectinload
-    from shared.database.models import WorkflowProposal
-
     user = _require_user(request)
     workflow = await get_workflow(user, workflow_id)
-    proposal, workflow = await accept_workflow_proposal(
-        workflow,
-        proposal_id,
-        actor=user,
-    )
-
-    # Reload with relationships
-    async with async_session_maker() as session_db:
-        stmt = (
-            select(WorkflowProposal)
-            .where(WorkflowProposal.id == proposal.id)
-            .options(
-                selectinload(WorkflowProposal.created_by),
-                selectinload(WorkflowProposal.workflow),
-                selectinload(WorkflowProposal.session)
-            )
-        )
-        result = await session_db.execute(stmt)
-        proposal = result.scalar_one()
-
-    # Capture proposal acceptance event
-    analytics.capture(
-        distinct_id=user.user_id,
-        event="workflow_proposal_accepted",
-        properties={
-            "proposal_id": proposal_id,
-            "workflow_id": workflow_id,
-            "session_id": proposal.session.id if proposal.session else None,
-            "deployment_mode": config.seer_mode,
-        },
-    )
-
+    proposal, workflow = await accept_workflow_proposal(workflow, proposal_id, actor=user)
+    proposal = await _reload_proposal_with_relationships(proposal.id)
+    _track_proposal_event(user, "workflow_proposal_accepted", proposal_id, workflow_id, proposal)
     return WorkflowProposalActionResponse(
         proposal=WorkflowProposalPublic.model_validate(proposal, from_attributes=True),
         workflow_graph=workflow_state_snapshot(workflow),
@@ -634,41 +579,11 @@ async def reject_proposal_endpoint(
     proposal_id: int,
 ) -> WorkflowProposalActionResponse:
     """Reject a workflow proposal without applying changes."""
-    from shared.database.base import async_session_maker
-    from sqlmodel import select
-    from sqlalchemy.orm import selectinload
-    from shared.database.models import WorkflowProposal
-
     user = _require_user(request)
     workflow = await get_workflow(user, workflow_id)
     proposal = await reject_workflow_proposal(workflow, proposal_id)
-
-    # Reload with relationships
-    async with async_session_maker() as session_db:
-        stmt = (
-            select(WorkflowProposal)
-            .where(WorkflowProposal.id == proposal.id)
-            .options(
-                selectinload(WorkflowProposal.created_by),
-                selectinload(WorkflowProposal.workflow),
-                selectinload(WorkflowProposal.session)
-            )
-        )
-        result = await session_db.execute(stmt)
-        proposal = result.scalar_one()
-
-    # Capture proposal rejection event
-    analytics.capture(
-        distinct_id=user.user_id,
-        event="workflow_proposal_rejected",
-        properties={
-            "proposal_id": proposal_id,
-            "workflow_id": workflow_id,
-            "session_id": proposal.session.id if proposal.session else None,
-            "deployment_mode": config.seer_mode,
-        },
-    )
-
+    proposal = await _reload_proposal_with_relationships(proposal.id)
+    _track_proposal_event(user, "workflow_proposal_rejected", proposal_id, workflow_id, proposal)
     return WorkflowProposalActionResponse(
         proposal=WorkflowProposalPublic.model_validate(proposal, from_attributes=True),
         workflow_graph=None,
@@ -676,4 +591,3 @@ async def reject_proposal_endpoint(
 
 
 __all__ = ["router"]
-

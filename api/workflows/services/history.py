@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+from fastapi import HTTPException
 from sqlmodel import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -60,121 +61,123 @@ def _snapshot_to_dict(snapshot: Any) -> Dict[str, Any]:
     return serializable
 
 
+def _find_node_in_spec(nodes: List[Node], target_id: str) -> Optional[Node]:
+    """Recursively find node by ID in workflow spec, handling nested structures."""
+    for node in nodes:
+        if node.id == target_id:
+            return node
+        # Handle nested nodes in IfNode and ForEachNode
+        if isinstance(node, IfNode):
+            found = _find_node_in_spec(node.then, target_id)
+            if found:
+                return found
+            found = _find_node_in_spec(node.else_, target_id)
+            if found:
+                return found
+        elif isinstance(node, ForEachNode):
+            found = _find_node_in_spec(node.body, target_id)
+            if found:
+                return found
+    return None
+
+
+def _enrich_with_tool_node_data(enriched: Dict[str, Any], node: ToolNode) -> None:
+    """Add ToolNode-specific metadata to enriched trace."""
+    enriched["tool_name"] = node.tool
+    enriched["output_key"] = node.out
+    if node.expect_output:
+        enriched["expect_output"] = (
+            node.expect_output.model_dump()
+            if hasattr(node.expect_output, "model_dump")
+            else node.expect_output
+        )
+
+
+def _enrich_with_llm_node_data(enriched: Dict[str, Any], node: LLMNode) -> None:
+    """Add LLMNode-specific metadata to enriched trace."""
+    enriched["model"] = node.model
+    enriched["output_key"] = node.out
+    if node.prompt:
+        enriched["prompt_template"] = node.prompt
+    if node.temperature is not None:
+        enriched["temperature"] = node.temperature
+    if node.output:
+        enriched["output_schema"] = (
+            node.output.model_dump()
+            if hasattr(node.output, "model_dump")
+            else node.output
+        )
+
+
 def _enrich_node_with_spec(
-    node_trace: Dict[str, Any],
-    node_id: str,
-    workflow_spec: Optional[WorkflowSpec],
+    node_trace: Dict[str, Any], node_id: str, workflow_spec: Optional[WorkflowSpec]
 ) -> Dict[str, Any]:
-    """
-    Enrich node trace with workflow spec metadata.
-
-    Args:
-        node_trace: Node execution trace data
-        node_id: Node identifier
-        workflow_spec: Workflow specification
-
-    Returns:
-        Enriched node trace with tool/LLM metadata
-    """
+    """Enrich node trace with workflow spec metadata (tool/LLM details)."""
     enriched = node_trace.copy()
 
-    if workflow_spec:
-        # Find node in spec
-        def find_node(nodes: List[Node], target_id: str) -> Optional[Node]:
-            for node in nodes:
-                if node.id == target_id:
-                    return node
-                # Handle nested nodes in IfNode and ForEachNode
-                if isinstance(node, IfNode):
-                    found = find_node(node.then, target_id)
-                    if found:
-                        return found
-                    found = find_node(node.else_, target_id)
-                    if found:
-                        return found
-                elif isinstance(node, ForEachNode):
-                    found = find_node(node.body, target_id)
-                    if found:
-                        return found
-            return None
+    if not workflow_spec:
+        return enriched
 
-        node = find_node(workflow_spec.nodes, node_id)
-        if node:
-            if isinstance(node, ToolNode):
-                enriched["tool_name"] = node.tool
-                enriched["output_key"] = node.out
-                if node.expect_output:
-                    enriched["expect_output"] = node.expect_output.model_dump() if hasattr(node.expect_output, "model_dump") else node.expect_output
-            elif isinstance(node, LLMNode):
-                enriched["model"] = node.model
-                enriched["output_key"] = node.out
-                if node.prompt:
-                    enriched["prompt_template"] = node.prompt
-                if node.temperature is not None:
-                    enriched["temperature"] = node.temperature
-                if node.output:
-                    enriched["output_schema"] = node.output.model_dump() if hasattr(node.output, "model_dump") else node.output
+    node = _find_node_in_spec(workflow_spec.nodes, node_id)
+    if node:
+        if isinstance(node, ToolNode):
+            _enrich_with_tool_node_data(enriched, node)
+        elif isinstance(node, LLMNode):
+            _enrich_with_llm_node_data(enriched, node)
 
     return enriched
 
 
-def _build_execution_graph(workflow_spec: Optional[WorkflowSpec]) -> Dict[str, Any]:
-    """
-    Build execution graph structure from workflow spec.
+def _build_node_label(node: Node) -> str:
+    """Build display label for node based on type."""
+    node_id = node.id
+    if isinstance(node, ToolNode):
+        return f"{node_id} ({node.tool})"
+    elif isinstance(node, LLMNode):
+        return f"{node_id} (LLM)"
+    return node_id
 
-    Args:
-        workflow_spec: Workflow specification
 
-    Returns:
-        Graph structure with nodes and edges
-    """
-    if not workflow_spec:
-        return {"nodes": [], "edges": []}
+def _collect_nodes_recursive(node: Node, nodes_list: List[Dict[str, Any]]) -> None:
+    """Recursively collect all nodes from workflow spec, including nested nodes."""
+    node_id = node.id
+    node_type = node.type if hasattr(node, "type") else "unknown"
+    label = _build_node_label(node)
 
-    nodes = []
+    nodes_list.append({"id": node_id, "type": node_type, "label": label})
+
+    # Process children for composite nodes
+    if isinstance(node, IfNode):
+        for child in node.then:
+            _collect_nodes_recursive(child, nodes_list)
+        for child in node.else_:
+            _collect_nodes_recursive(child, nodes_list)
+    elif isinstance(node, ForEachNode):
+        for child in node.body:
+            _collect_nodes_recursive(child, nodes_list)
+
+
+def _extract_edges_from_reactflow(workflow_spec: WorkflowSpec) -> List[Dict[str, str]]:
+    """Extract edges from reactflow_graph metadata."""
     edges = []
-
-    def collect_nodes(node: Node):
-        """Recursively collect all nodes from the workflow spec."""
-        node_id = node.id
-        node_type = node.type if hasattr(node, "type") else "unknown"
-
-        # Build label
-        label = node_id
-        if isinstance(node, ToolNode):
-            label = f"{node_id} ({node.tool})"
-        elif isinstance(node, LLMNode):
-            label = f"{node_id} (LLM)"
-
-        nodes.append({
-            "id": node_id,
-            "type": node_type,
-            "label": label,
-        })
-
-        # Process children for composite nodes
-        if isinstance(node, IfNode):
-            for child in node.then:
-                collect_nodes(child)
-            for child in node.else_:
-                collect_nodes(child)
-        elif isinstance(node, ForEachNode):
-            for child in node.body:
-                collect_nodes(child)
-
-    # Collect all nodes
-    for node in workflow_spec.nodes:
-        collect_nodes(node)
-
-    # Get edges from reactflow_graph in meta (contains actual graph connections)
     rf_graph = workflow_spec.meta.get("reactflow_graph") if workflow_spec.meta else None
     if rf_graph and isinstance(rf_graph, dict) and "edges" in rf_graph:
         for edge in rf_graph["edges"]:
             if isinstance(edge, dict) and "source" in edge and "target" in edge:
-                edges.append({
-                    "source": edge["source"],
-                    "target": edge["target"],
-                })
+                edges.append({"source": edge["source"], "target": edge["target"]})
+    return edges
+
+
+def _build_execution_graph(workflow_spec: Optional[WorkflowSpec]) -> Dict[str, Any]:
+    """Build execution graph structure (nodes and edges) from workflow spec."""
+    if not workflow_spec:
+        return {"nodes": [], "edges": []}
+
+    nodes = []
+    for node in workflow_spec.nodes:
+        _collect_nodes_recursive(node, nodes)
+
+    edges = _extract_edges_from_reactflow(workflow_spec)
 
     return {"nodes": nodes, "edges": edges}
 
@@ -228,19 +231,7 @@ async def _retrieve_checkpoint(
     run_id: str,
     logger,
 ):
-    """
-    Retrieve checkpoint tuple with fallback strategies.
-
-    Tries:
-    1. Direct checkpoint retrieval with provided config
-    2. Retry with explicit checkpoint_ns=""
-    3. Diagnostic logging if no checkpoints found
-
-    Returns:
-        Checkpoint tuple if found, None otherwise
-    Raises:
-        HTTPException with RUN_PROBLEM if checkpoint retrieval fails
-    """
+    """Retrieve checkpoint tuple with fallback: direct → checkpoint_ns="" → diagnostics."""
     try:
         state_tuple = await checkpointer.aget_tuple(config)
         if state_tuple:
@@ -313,15 +304,7 @@ async def _extract_node_traces_from_state(
     run_id: str,
     logger,
 ) -> List[Dict[str, Any]]:
-    """
-    Extract node execution traces from compiled graph state.
-
-    Accesses full state via compiled.workflow.graph.aget_state() and
-    extracts all _trace_* keys, enriching them with workflow spec metadata.
-
-    Returns:
-        List of node trace dictionaries with enrichment
-    """
+    """Extract _trace_* keys from graph state and enrich with workflow spec metadata."""
     nodes = []
     trace_keys_found = set()
 
@@ -621,7 +604,7 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
 
     try:
         # Retrieve checkpoint with fallback logic
-        state_tuple = await _retrieve_checkpoint(checkpointer, config, run.run_id, logger)
+        await _retrieve_checkpoint(checkpointer, config, run.run_id, logger)
 
         # Extract node traces (try graph state first, fall back to checkpoint iteration)
         logger.info(

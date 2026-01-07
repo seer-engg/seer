@@ -4,7 +4,6 @@ from typing import Any, Dict, List, Optional, Set
 
 from fastapi import HTTPException
 from sqlmodel import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.integrations.constants import (
     SUPABASE_OAUTH_PROVIDER,
@@ -18,20 +17,65 @@ from shared.logger import get_logger
 from shared.tools.oauth_manager import get_oauth_token
 logger = get_logger("api.integrations.services")
 
+
+def build_provider_connection_info(conn) -> dict:
+    """Build provider connection info dict with token validity checks."""
+    has_access_token = bool(conn.access_token_enc)
+    has_refresh_token = bool(conn.refresh_token_enc)
+    is_token_expired = conn.expires_at < datetime.now(timezone.utc) if conn.expires_at else False
+    access_token_valid = (has_access_token and not is_token_expired) or has_refresh_token
+    return {
+        "scopes": conn.scopes or "",
+        "connection_id": f"{conn.provider}:{conn.id}",
+        "provider_account_id": conn.provider_account_id,
+        "has_refresh_token": has_refresh_token,
+        "access_token_valid": access_token_valid,
+        "connection": conn
+    }
+
+
+def determine_auth_mode(required_scopes: list, required_secrets: list) -> tuple:
+    """Determine auth mode for a tool. Returns (auth_mode, requires_oauth, requires_secrets, supports_tokenless_auth)."""
+    requires_oauth = bool(required_scopes)
+    requires_secrets = bool(required_secrets)
+    supports_tokenless_auth = not requires_oauth
+    if requires_oauth and requires_secrets:
+        auth_mode = "oauth_and_secrets"
+    elif requires_oauth:
+        auth_mode = "oauth"
+    elif requires_secrets:
+        auth_mode = "secrets"
+    else:
+        auth_mode = "none"
+    return auth_mode, requires_oauth, requires_secrets, supports_tokenless_auth
+
+
+def build_tool_result_base(tool, auth_mode: str, requires_oauth: bool, requires_secrets: bool, supports_tokenless_auth: bool) -> dict:
+    """Build base tool result dict."""
+    return {
+        "tool_name": tool.name,
+        "integration_type": tool.integration_type,
+        "requires_oauth_connection": requires_oauth,
+        "requires_secrets": requires_secrets,
+        "supports_tokenless_auth": supports_tokenless_auth,
+        "auth_mode": auth_mode,
+    }
+
+
 def parse_scopes(scopes_str: str) -> Set[str]:
     """
     Parse a scopes string into a set of individual scopes.
     Handles both whitespace-separated (Google) and comma-separated (GitHub) formats.
-    
+
     Args:
         scopes_str: String containing scopes (either whitespace or comma separated)
-    
+
     Returns:
         Set of individual scope strings
     """
     if not scopes_str:
         return set()
-    
+
     # If scopes contain commas, split by comma; otherwise split by whitespace
     if ',' in scopes_str:
         return set(s.strip() for s in scopes_str.split(',') if s.strip())
@@ -43,11 +87,11 @@ def merge_scopes(existing_scopes: str, new_scopes: str) -> str:
     """
     Merge existing scopes with new scopes, removing duplicates.
     Handles both whitespace-separated (Google) and comma-separated (GitHub) formats.
-    
+
     Args:
         existing_scopes: String of existing scopes (whitespace or comma separated)
         new_scopes: String of new scopes to add (whitespace or comma separated)
-    
+
     Returns:
         Space-separated string of merged scopes (normalized to whitespace-separated)
     """
@@ -60,52 +104,52 @@ def merge_scopes(existing_scopes: str, new_scopes: str) -> str:
 def _extract_base_google_scope(scope: str) -> Optional[str]:
     """
     Extract base scope from a Google API scope by removing common suffixes.
-    
+
     For Google APIs, broader scopes include narrower ones:
     - gmail includes gmail.readonly, gmail.modify, gmail.send, etc.
     - drive includes drive.readonly, drive.file, etc.
     - spreadsheets includes spreadsheets.readonly, etc.
-    
+
     Args:
         scope: Full scope string (e.g., "https://www.googleapis.com/auth/gmail.readonly")
-    
+
     Returns:
         Base scope string (e.g., "https://www.googleapis.com/auth/gmail") or None if not a Google scope
     """
     if "googleapis.com" not in scope:
         return None
-    
+
     # Common Google scope suffixes to remove
     suffixes = [".readonly", ".modify", ".send", ".compose", ".labels", ".file", ".metadata"]
-    
+
     base_scope = scope
     for suffix in suffixes:
         if scope.endswith(suffix):
             base_scope = scope[:-len(suffix)]
             break
-    
+
     return base_scope if base_scope != scope else None
 
 
 def _scope_satisfies_requirement(granted_scope: str, required_scope: str) -> bool:
     """
     Check if a granted scope satisfies a required scope, handling Google scope hierarchy.
-    
+
     Hierarchy rules:
     - Base scope (e.g., "gmail") satisfies all narrower scopes (e.g., "gmail.readonly", "gmail.modify")
     - Narrower scopes do NOT satisfy broader scopes or other narrower scopes
-    
+
     Args:
         granted_scope: Scope that user has (e.g., "https://www.googleapis.com/auth/gmail")
         required_scope: Scope that is required (e.g., "https://www.googleapis.com/auth/gmail.readonly")
-    
+
     Returns:
         True if granted scope satisfies required scope
     """
     # Exact match always satisfies
     if granted_scope == required_scope:
         return True
-    
+
     # For Google APIs, check hierarchy
     if "googleapis.com" in required_scope and "googleapis.com" in granted_scope:
         # Extract base scope from required scope
@@ -115,14 +159,14 @@ def _scope_satisfies_requirement(granted_scope: str, required_scope: str) -> boo
             # This handles: granted="gmail", required="gmail.readonly" -> True
             if granted_scope == base_required:
                 return True
-        
+
         # Check if required scope is a base scope and granted scope is narrower
         # This handles: granted="gmail.readonly", required="gmail" -> False (narrower doesn't satisfy broader)
         base_granted = _extract_base_google_scope(granted_scope)
         if base_granted and not _extract_base_google_scope(required_scope):
             # Required is base scope, granted is narrower -> doesn't satisfy
             return False
-    
+
     return False
 
 
@@ -131,14 +175,14 @@ def has_required_scopes(granted_scopes: str, required_scopes: List[str]) -> bool
     Check if granted scopes include all required scopes.
     Handles both whitespace-separated (Google) and comma-separated (GitHub) formats.
     For Google APIs, handles scope hierarchy where broader scopes satisfy narrower ones.
-    
+
     Args:
         granted_scopes: String of granted scopes (whitespace or comma separated)
         required_scopes: List of required scope strings
-    
+
     Returns:
         True if all required scopes are granted (or satisfied by broader scopes for Google APIs)
-    
+
     Examples:
         - has_required_scopes("gmail", ["gmail.readonly"]) -> True (broader satisfies narrower)
         - has_required_scopes("gmail.readonly", ["gmail"]) -> False (narrower doesn't satisfy broader)
@@ -146,15 +190,15 @@ def has_required_scopes(granted_scopes: str, required_scopes: List[str]) -> bool
     """
     if not required_scopes:
         return True
-    
+
     granted_set = parse_scopes(granted_scopes)
-    
+
     # Check each required scope
     for required_scope in required_scopes:
         # First check for exact match
         if required_scope in granted_set:
             continue
-        
+
         # For Google APIs, check if any granted scope satisfies the requirement via hierarchy
         if "googleapis.com" in required_scope:
             satisfied = False
@@ -167,7 +211,7 @@ def has_required_scopes(granted_scopes: str, required_scopes: List[str]) -> bool
         else:
             # For non-Google providers, require exact match
             return False
-    
+
     return True
 
 
@@ -175,10 +219,10 @@ def get_oauth_provider(integration_type: str) -> str:
     """
     Map integration type to OAuth provider.
     Multiple integration types can share the same OAuth provider.
-    
+
     Args:
         integration_type: Integration type (gmail, googlesheets, googledrive, etc.)
-    
+
     Returns:
         OAuth provider name (google, github, etc.)
     """
@@ -195,14 +239,14 @@ def extract_provider_account_id(oauth_provider: str, profile: Dict[str, Any]) ->
     """
     Extract provider_account_id from profile.
     Raises ValueError if required fields are missing.
-    
+
     Args:
         oauth_provider: OAuth provider name (google, github, etc.)
         profile: User profile dictionary from OAuth provider
-    
+
     Returns:
         provider_account_id string
-    
+
     Raises:
         ValueError: If required fields are missing from profile
     """
@@ -424,11 +468,11 @@ async def delete_connection_by_id(user: User, connection_id: str):
 async def get_valid_access_token(user: User, provider: str) -> Optional[str]:
     """
     Get a valid access token for a provider, refreshing if needed.
-    
+
     Args:
         user: User model instance
         provider: OAuth provider name (google, github, etc.)
-    
+
     Returns:
         Valid access token or None if no connection exists
     """

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 
@@ -26,6 +26,53 @@ class SupabaseResourceProvider(ResourceProvider):
         },
     }
 
+    def _filter_projects_by_query(self, projects: List[Dict[str, Any]], query: Optional[str]) -> List[Dict[str, Any]]:
+        """Filter projects by search query matching name or ref."""
+        if not query:
+            return projects
+
+        query_lower = query.lower()
+        return [
+            project
+            for project in projects
+            if query_lower in (project.get("name") or "").lower()
+            or query_lower in (project.get("ref") or "").lower()
+        ]
+
+    def _paginate_projects(self, projects: List[Dict[str, Any]], page_token: Optional[str], page_size: int) -> tuple:
+        """Paginate projects list. Returns (sliced_projects, next_page_token)."""
+        total = len(projects)
+        start_index = 0
+        if page_token:
+            try:
+                start_index = int(page_token)
+            except ValueError:
+                start_index = 0
+
+        end_index = start_index + page_size
+        sliced = projects[start_index:end_index]
+        next_page = str(end_index) if end_index < total else None
+
+        return sliced, next_page, total
+
+    def _format_project_item(self, project: Dict[str, Any]) -> Dict[str, Any]:
+        """Format project data into resource item format."""
+        ref = project.get("ref") or project.get("project_ref")
+        project_id = project.get("id") or project.get("project_id")
+
+        return {
+            "id": ref or str(project_id),
+            "name": project.get("name") or ref or project_id,
+            "display_name": project.get("name") or ref or project_id,
+            "type": "project",
+            "project_id": project_id,
+            "project_ref": ref,
+            "organization_id": project.get("organization_id") or project.get("org_id"),
+            "region": project.get("region"),
+            "status": project.get("status"),
+            "rest_url": project.get("api_url") or project.get("restUrl"),
+        }
+
     async def list_resources(
         self,
         *,
@@ -45,6 +92,7 @@ class SupabaseResourceProvider(ResourceProvider):
         if not provider:
             return {"items": [], "error": "Supabase provider unavailable", "next_page_token": None}
 
+        # Fetch projects from provider
         try:
             projects = await provider.list_remote_resources(
                 access_token=access_token,
@@ -56,44 +104,12 @@ class SupabaseResourceProvider(ResourceProvider):
             logger.exception("Error listing Supabase projects: %s", exc)
             return {"items": [], "error": str(exc), "next_page_token": None}
 
-        if query:
-            query_lower = query.lower()
-            projects = [
-                project
-                for project in projects
-                if query_lower in (project.get("name") or "").lower()
-                or query_lower in (project.get("ref") or "").lower()
-            ]
+        # Filter and paginate
+        filtered = self._filter_projects_by_query(projects, query)
+        sliced, next_page, total = self._paginate_projects(filtered, page_token, page_size)
 
-        total = len(projects)
-        start_index = 0
-        if page_token:
-            try:
-                start_index = int(page_token)
-            except ValueError:
-                start_index = 0
-        end_index = start_index + page_size
-        sliced = projects[start_index:end_index]
-        next_page = str(end_index) if end_index < total else None
-
-        items = []
-        for project in sliced:
-            ref = project.get("ref") or project.get("project_ref")
-            project_id = project.get("id") or project.get("project_id")
-            items.append(
-                {
-                    "id": ref or str(project_id),
-                    "name": project.get("name") or ref or project_id,
-                    "display_name": project.get("name") or ref or project_id,
-                    "type": "project",
-                    "project_id": project_id,
-                    "project_ref": ref,
-                    "organization_id": project.get("organization_id") or project.get("org_id"),
-                    "region": project.get("region"),
-                    "status": project.get("status"),
-                    "rest_url": project.get("api_url") or project.get("restUrl"),
-                }
-            )
+        # Format items
+        items = [self._format_project_item(project) for project in sliced]
 
         return {
             "items": items,
@@ -102,4 +118,3 @@ class SupabaseResourceProvider(ResourceProvider):
             "supports_search": True,
             "total_count": total,
         }
-

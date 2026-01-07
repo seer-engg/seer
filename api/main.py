@@ -19,7 +19,6 @@ from shared.logger import get_logger
 from shared.config import config
 from shared.analytics import analytics
 from api.router import router
-from api.integrations.router import router as integrations_router
 from api.tools.router import router as tools_router
 from api.agents.checkpointer import checkpointer_lifespan
 from shared.database import db_lifespan
@@ -28,6 +27,45 @@ from shared.database import db_lifespan
 # Note: model_block removed - use LLM block in workflows instead
 
 logger = get_logger("api.main")
+
+
+async def _init_tool_index_background():
+    """Initialize tool index in background task."""
+    try:
+        from shared.tool_hub.index_manager import ensure_tool_index_exists
+        from shared.tool_hub.singleton import set_toolhub_instance
+
+        toolhub = await ensure_tool_index_exists(
+            auto_generate=config.tool_index_auto_generate
+        )
+        if toolhub:
+            set_toolhub_instance(toolhub)
+            logger.info("✅ Tool index initialized")
+        else:
+            logger.warning("⚠️ Tool index initialization skipped or failed")
+    except Exception as e:
+        logger.error(f"Error initializing tool index: {e}", exc_info=True)
+
+
+def _start_tool_index_init(app: FastAPI):
+    """Start tool index initialization as background task if enabled."""
+    if not config.tool_index_auto_generate:
+        return
+
+    try:
+        import asyncio
+        task = asyncio.create_task(_init_tool_index_background())
+        app.state.tool_index_init_task = task
+    except Exception as e:
+        logger.warning(f"Could not initialize tool index: {e}. Tool search may not work.")
+
+
+def _log_trigger_poller_status():
+    """Log trigger poller status based on configuration."""
+    if config.trigger_poller_enabled:
+        logger.info("Trigger poller enabled – handled by Taskiq worker")
+    else:
+        logger.info("⏸ Trigger poller disabled via configuration")
 
 
 @asynccontextmanager
@@ -44,41 +82,10 @@ async def lifespan(app: FastAPI):
             if checkpointer is not None:
                 app.state.checkpointer = checkpointer
             logger.info("✅ Checkpointer initialized")
-            if config.trigger_poller_enabled:
-                logger.info("Trigger poller enabled – handled by Taskiq worker")
-            else:
-                logger.info("⏸ Trigger poller disabled via configuration")
 
-            # Initialize tool index (non-blocking)
-            if config.tool_index_auto_generate:
-                try:
-                    from shared.tool_hub.index_manager import ensure_tool_index_exists
-                    import asyncio
-                    
-                    # Run index initialization in background to not block startup
-                    async def init_tool_index():
-                        try:
-                            toolhub = await ensure_tool_index_exists(
-                                auto_generate=config.tool_index_auto_generate
-                            )
-                            if toolhub:
-                                # Pre-populate the shared singleton with the initialized instance
-                                from shared.tool_hub.singleton import set_toolhub_instance
-                                set_toolhub_instance(toolhub)
-                                logger.info("✅ Tool index initialized")
-                            else:
-                                logger.warning("⚠️ Tool index initialization skipped or failed")
-                        except Exception as e:
-                            logger.error(f"Error initializing tool index: {e}", exc_info=True)
-                    
-                    # Start index initialization as background task (don't await to not block startup)
-                    # The task will run in the background
-                    task = asyncio.create_task(init_tool_index())
-                    # Store task reference to prevent garbage collection
-                    app.state.tool_index_init_task = task
-                except Exception as e:
-                    logger.warning(f"Could not initialize tool index: {e}. Tool search may not work.")
-            
+            _log_trigger_poller_status()
+            _start_tool_index_init(app)
+
             try:
                 yield
             finally:
@@ -107,7 +114,7 @@ if config.is_cloud_mode:
         raise ValueError("Cloud mode requires Clerk configuration. Set CLERK_JWKS_URL and CLERK_ISSUER environment variables.")
     logger.info("🔐 Cloud mode: Using Clerk authentication")
     from api.middleware.auth import ClerkAuthMiddleware
-    
+
     app.add_middleware(
         ClerkAuthMiddleware,
         jwks_url=config.clerk_jwks_url,
@@ -149,13 +156,13 @@ async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler that ensures CORS headers are included."""
     error_logger = get_logger("api.main.errors")
     error_logger.error(f"Unhandled exception: {exc}", exc_info=True)
-    
+
     # Create error response with CORS headers
     response = JSONResponse(
         status_code=500,
         content={"detail": "Internal server error"},
     )
-    
+
     # Add CORS headers manually
     origin = request.headers.get("origin")
     if origin:
@@ -163,10 +170,10 @@ async def global_exception_handler(request: Request, exc: Exception):
         response.headers["Access-Control-Allow-Credentials"] = "true"
     else:
         response.headers["Access-Control-Allow-Origin"] = "*"
-    
+
     response.headers["Access-Control-Allow-Methods"] = "*"
     response.headers["Access-Control-Allow-Headers"] = "*"
-    
+
     return response
 
 
@@ -199,4 +206,3 @@ if __name__ == "__main__":
         port=8000,
         reload=True,
     )
-

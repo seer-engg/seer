@@ -117,7 +117,8 @@ class TriggerPollEngine:
 
             return subscriptions
 
-    async def _process_subscription(self, subscription: TriggerSubscription) -> None:
+    async def _validate_adapter(self, subscription: TriggerSubscription):
+        """Validate adapter exists for subscription. Returns adapter or None."""
         adapter = adapter_registry.get(subscription.trigger_key)
         if adapter is None:
             logger.error(
@@ -125,8 +126,10 @@ class TriggerPollEngine:
                 extra={"subscription_id": subscription.id, "trigger_key": subscription.trigger_key},
             )
             await self._disable_subscription(subscription, reason="missing_adapter")
-            return
+        return adapter
 
+    async def _validate_provider_connection(self, subscription: TriggerSubscription) -> bool:
+        """Validate provider connection exists. Returns True if valid."""
         if subscription.provider_connection_id is None:
             logger.error(f"Missing provider connection for subscription {subscription.id}")
             await self._mark_error(
@@ -135,9 +138,11 @@ class TriggerPollEngine:
                 detail={"trigger_key": subscription.trigger_key},
                 delay_seconds=max(subscription.poll_interval_seconds, 60),
             )
-            return
+            return False
+        return True
 
-        # Load user relationship if not already loaded
+    async def _load_user_if_needed(self, subscription: TriggerSubscription) -> TriggerSubscription:
+        """Load user relationship if not already loaded."""
         if subscription.user is None:
             async with async_session_maker() as session:
                 result = await session.execute(
@@ -146,70 +151,96 @@ class TriggerPollEngine:
                     .options(selectinload(TriggerSubscription.user))
                 )
                 subscription = result.scalar_one()
+        return subscription
 
-        user = subscription.user
-        if user is None:
+    async def _validate_user(self, subscription: TriggerSubscription) -> bool:
+        """Validate user exists. Returns True if valid."""
+        if subscription.user is None:
             logger.error(f"Missing user for subscription {subscription.id}")
             await self._disable_subscription(subscription, reason="missing_user")
-            return
+            return False
+        return True
 
-        try:
-            connection, access_token = await get_oauth_token(
-                user,
-                connection_id=str(subscription.provider_connection_id),
+    async def _handle_oauth_error(self, subscription: TriggerSubscription, exc: HTTPException) -> None:
+        """Handle OAuth token errors (disable or mark error based on status code)."""
+        should_disable = exc.status_code in {401, 403, 404}
+        if should_disable:
+            logger.error(f"OAuth error for subscription {subscription.id}: {exc.detail}")
+            await self._disable_subscription(
+                subscription,
+                reason="oauth_error",
+                detail={"status_code": exc.status_code, "detail": exc.detail},
             )
-        except HTTPException as exc:
-            should_disable = exc.status_code in {401, 403, 404}
-            if should_disable:
-                logger.error(f"OAuth error for subscription {subscription.id}: {exc.detail}")
-                await self._disable_subscription(
-                    subscription,
-                    reason="oauth_error",
-                    detail={"status_code": exc.status_code, "detail": exc.detail},
-                )
-            else:
-                await self._mark_error(
-                    subscription,
-                    reason="oauth_error",
-                    detail={"status_code": exc.status_code, "detail": exc.detail},
-                    delay_seconds=subscription.poll_interval_seconds,
-                )
-            return
+        else:
+            await self._mark_error(
+                subscription,
+                reason="oauth_error",
+                detail={"status_code": exc.status_code, "detail": exc.detail},
+                delay_seconds=subscription.poll_interval_seconds,
+            )
 
-        ctx = PollContext(
-            subscription=subscription,
-            user=user,
-            connection=connection,
-            access_token=access_token,
-        )
-
-        cursor = subscription.poll_cursor_json or None
-        if cursor is None:
-            cursor = await adapter.bootstrap_cursor(ctx)
-
-        try:
-            result = await adapter.poll(ctx, cursor)
-        except PollAdapterError as exc:
-            logger.error(f"Poll adapter error for subscription {subscription.id}: {exc.detail}")
-            if exc.permanent:
-                logger.error(f"Permanent poll adapter error for subscription {subscription.id}")
-                await self._disable_subscription(
-                    subscription, reason="adapter_permanent_error", detail=exc.detail
-                )
-                return
+    async def _handle_poll_adapter_error(self, subscription: TriggerSubscription, exc: PollAdapterError) -> None:
+        """Handle poll adapter errors (disable if permanent, backoff otherwise)."""
+        logger.error(f"Poll adapter error for subscription {subscription.id}: {exc.detail}")
+        if exc.permanent:
+            logger.error(f"Permanent poll adapter error for subscription {subscription.id}")
+            await self._disable_subscription(
+                subscription, reason="adapter_permanent_error", detail=exc.detail
+            )
+        else:
             backoff = exc.backoff_seconds or min(subscription.poll_interval_seconds * 2, 600)
-            logger.error(
-                f"Backoff poll adapter error for subscription "
-                f"{subscription.id}: {backoff}"
-            )
+            logger.error(f"Backoff poll adapter error for subscription {subscription.id}: {backoff}")
             await self._mark_backoff(
                 subscription,
                 reason="adapter_error",
                 detail=exc.detail or {"message": str(exc)},
                 backoff_seconds=backoff,
             )
+
+    async def _process_subscription(self, subscription: TriggerSubscription) -> None:
+        # Validate adapter exists
+        adapter = await self._validate_adapter(subscription)
+        if not adapter:
             return
 
+        # Validate provider connection
+        if not await self._validate_provider_connection(subscription):
+            return
+
+        # Load and validate user
+        subscription = await self._load_user_if_needed(subscription)
+        if not await self._validate_user(subscription):
+            return
+
+        # Get OAuth token
+        try:
+            connection, access_token = await get_oauth_token(
+                subscription.user,
+                connection_id=str(subscription.provider_connection_id),
+            )
+        except HTTPException as exc:
+            await self._handle_oauth_error(subscription, exc)
+            return
+
+        # Build poll context
+        ctx = PollContext(
+            subscription=subscription,
+            user=subscription.user,
+            connection=connection,
+            access_token=access_token,
+        )
+
+        # Get or bootstrap cursor
+        cursor = subscription.poll_cursor_json or await adapter.bootstrap_cursor(ctx)
+
+        # Poll for events
+        try:
+            result = await adapter.poll(ctx, cursor)
+        except PollAdapterError as exc:
+            await self._handle_poll_adapter_error(subscription, exc)
+            return
+
+        # Handle successful poll
         await self._handle_events(subscription, result.events)
         await self._mark_success(
             subscription,

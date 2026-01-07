@@ -57,15 +57,9 @@ def _hash_spec(spec_dict: Dict[str, Any]) -> str:
 
 
 async def _ensure_draft_version(workflow: Workflow, user: User, session: AsyncSession) -> WorkflowVersion:
-    """
-    Ensure a draft version exists for the workflow's current draft.
-
-    Creates a new draft version if one doesn't exist for the current draft revision.
-    """
-    stmt = select(WorkflowDraft).where(WorkflowDraft.workflow_id == workflow.id)
-    result = await session.execute(stmt)
+    """Ensure a draft version exists for the workflow's current draft."""
+    result = await session.execute(select(WorkflowDraft).where(WorkflowDraft.workflow_id == workflow.id))
     draft = result.scalar_one()
-
     spec_dict = json.loads(json.dumps(draft.spec or {}))
     spec_hash = _hash_spec(spec_dict)
     stmt = (
@@ -186,12 +180,7 @@ def _track_workflow_execution_start(
     inputs: Dict[str, Any],
     execution_mode: str,
 ) -> float:
-    """
-    Track workflow execution start event.
-
-    Returns:
-        Start time (for duration calculation)
-    """
+    """Track workflow execution start event. Returns start time for duration calculation."""
     start_time = time.time()
     analytics.capture(
         distinct_id=user.user_id,
@@ -209,70 +198,22 @@ def _track_workflow_execution_start(
     return start_time
 
 
-async def _compile_workflow_for_run(
-    user: User,
-    run: WorkflowRun,
-    checkpointer,
-):
-    """
-    Compile workflow for execution.
-
-    Returns:
-        Compiled workflow object
-
-    Raises:
-        WorkflowCompilerError: If compilation fails
-    """
-    return await compiler.compile(
-        user,
-        run.spec,
-        checkpointer=checkpointer,
-    )
+async def _compile_workflow_for_run(user: User, run: WorkflowRun, checkpointer):
+    """Compile workflow for execution."""
+    return await compiler.compile(user, run.spec, checkpointer=checkpointer)
 
 
-async def _invoke_workflow_with_config(
-    compiled,
-    run: WorkflowRun,
-    inputs: Dict[str, Any],
-    config_payload: Dict[str, Any],
-    logger,
-) -> Dict[str, Any]:
-    """
-    Invoke compiled workflow with runtime config.
-
-    Returns:
-        Workflow execution result
-
-    Raises:
-        Exception: If execution fails
-    """
+async def _invoke_workflow_with_config(compiled, run: WorkflowRun, inputs: Dict[str, Any], config_payload: Dict[str, Any], logger) -> Dict[str, Any]:
+    """Invoke compiled workflow with runtime config."""
     run_config = dict(config_payload or {})
-    logger.debug(
-        "Invoking compiled workflow for run '%s' with config_keys=%s",
-        run.run_id,
-        sorted(run_config.keys()),
-    )
+    logger.debug("Invoking compiled workflow for run '%s' with config_keys=%s", run.run_id, sorted(run_config.keys()))
     effective_config = _build_run_config(run, run_config)
-    logger.info(
-        f"Executing workflow run '{run.run_id}' with config: {effective_config}",
-        extra={"run_id": run.run_id, "config": effective_config}
-    )
+    logger.info(f"Executing workflow run '{run.run_id}' with config: {effective_config}", extra={"run_id": run.run_id, "config": effective_config})
     return await compiled.ainvoke(inputs or {}, config=effective_config)
 
 
-async def _handle_compilation_failure(
-    exc: WorkflowCompilerError,
-    run: WorkflowRun,
-    user: User,
-    start_time: float,
-    execution_mode: str,
-    session: AsyncSession,
-) -> None:
-    """
-    Handle compilation failure with analytics tracking.
-
-    Updates run status, tracks analytics, and raises HTTPException.
-    """
+async def _handle_compilation_failure(exc: WorkflowCompilerError, run: WorkflowRun, user: User, start_time: float, execution_mode: str, session: AsyncSession) -> None:
+    """Handle compilation failure with analytics tracking."""
     run.status = WorkflowRunStatus.FAILED
     run.finished_at = _now()
     run.error = str(exc)
@@ -303,20 +244,8 @@ async def _handle_compilation_failure(
     )
 
 
-async def _handle_execution_failure(
-    exc: Exception,
-    run: WorkflowRun,
-    user: User,
-    start_time: float,
-    execution_mode: str,
-    session: AsyncSession,
-    is_compiler_error: bool = False,
-) -> None:
-    """
-    Handle execution failure with analytics tracking.
-
-    Consolidates error handling for WorkflowCompilerError and general exceptions.
-    """
+async def _handle_execution_failure(exc: Exception, run: WorkflowRun, user: User, start_time: float, execution_mode: str, session: AsyncSession, is_compiler_error: bool = False) -> None:
+    """Handle execution failure with analytics tracking."""
     print(f"{traceback.format_exc()}")
 
     run.status = WorkflowRunStatus.FAILED
@@ -356,19 +285,8 @@ async def _handle_execution_failure(
 # ===== Core Execution Functions =====
 
 
-async def _execute_compiled_run(
-    run: WorkflowRun,
-    user: User,
-    *,
-    inputs: Dict[str, Any],
-    config_payload: Dict[str, Any],
-    session: AsyncSession,
-) -> Dict[str, Any]:
-    """
-    Execute a compiled workflow run.
-
-    Handles compilation, execution, and error tracking.
-    """
+async def _execute_compiled_run(run: WorkflowRun, user: User, *, inputs: Dict[str, Any], config_payload: Dict[str, Any], session: AsyncSession) -> Dict[str, Any]:
+    """Execute a compiled workflow run. Handles compilation, execution, and error tracking."""
     logger.debug(
         "Preparing workflow run '%s' (workflow_id=%s) inputs_keys=%s config_payload_keys=%s user_id=%s",
         run.run_id,
@@ -407,16 +325,8 @@ async def _execute_compiled_run(
     return result
 
 
-async def _complete_run(run: WorkflowRun, output: Dict[str, Any], session: AsyncSession) -> WorkflowRun:
-    """Mark workflow run as succeeded and capture analytics."""
-    run.status = WorkflowRunStatus.SUCCEEDED
-    run.finished_at = _now()
-    run.output = output
-    session.add(run)
-    await session.commit()
-    await session.refresh(run)
-
-    # Capture workflow completion event
+def _track_workflow_completion(run: WorkflowRun, output: Dict[str, Any]) -> None:
+    """Track workflow completion analytics event."""
     if hasattr(run, '_analytics_start_time'):
         duration_ms = (time.time() - run._analytics_start_time) * 1000
         execution_mode = getattr(run, '_analytics_execution_mode', 'unknown')
@@ -435,6 +345,54 @@ async def _complete_run(run: WorkflowRun, output: Dict[str, Any], session: Async
             },
         )
 
+
+def _track_async_workflow_start(user: User, run: WorkflowRun, workflow: Workflow, inputs: Optional[Dict[str, Any]]) -> None:
+    """Track async workflow start event."""
+    analytics.capture(
+        distinct_id=user.user_id,
+        event="workflow_run_started",
+        properties={
+            "run_id": run.run_id,
+            "workflow_id": workflow.id,
+            "workflow_name": workflow.name,
+            "execution_mode": "api_async",
+            "has_inputs": bool(inputs),
+            "input_keys": list((inputs or {}).keys()),
+            "deployment_mode": shared_config.seer_mode,
+        },
+    )
+
+
+async def _handle_enqueue_failure(run: WorkflowRun, workflow_id: str, exc: Exception, session: AsyncSession) -> None:
+    """Handle workflow enqueue failure."""
+    logger.exception(
+        "Failed to enqueue saved workflow run",
+        extra={"workflow_id": workflow_id, "run_id": run.run_id},
+    )
+    run.status = WorkflowRunStatus.FAILED
+    run.finished_at = _now()
+    run.error = {"detail": f"Failed to enqueue workflow run: {exc}"}
+    session.add(run)
+    await session.commit()
+    await session.refresh(run)
+    _raise_problem(
+        type_uri=RUN_PROBLEM,
+        title="Failed to enqueue workflow run",
+        detail="An error occurred while queuing the workflow execution.",
+        status=500,
+    )
+
+
+async def _complete_run(run: WorkflowRun, output: Dict[str, Any], session: AsyncSession) -> WorkflowRun:
+    """Mark workflow run as succeeded and capture analytics."""
+    run.status = WorkflowRunStatus.SUCCEEDED
+    run.finished_at = _now()
+    run.output = output
+    session.add(run)
+    await session.commit()
+    await session.refresh(run)
+
+    _track_workflow_completion(run, output)
     return run
 
 
@@ -537,38 +495,9 @@ async def run_saved_workflow(
         )
         try:
             await execute_saved_workflow_task.kiq(run_id=run.id, user_id=user.id)
-
-            # Capture async workflow start event (actual execution tracked in worker)
-            analytics.capture(
-                distinct_id=user.user_id,
-                event="workflow_run_started",
-                properties={
-                    "run_id": run.run_id,
-                    "workflow_id": workflow.id,
-                    "workflow_name": workflow.name,
-                    "execution_mode": "api_async",
-                    "has_inputs": bool(payload.inputs),
-                    "input_keys": list((payload.inputs or {}).keys()),
-                    "deployment_mode": shared_config.seer_mode,
-                },
-            )
+            _track_async_workflow_start(user, run, workflow, payload.inputs)
         except Exception as exc:
-            logger.exception(
-                "Failed to enqueue saved workflow run",
-                extra={"workflow_id": workflow_id, "run_id": run.run_id},
-            )
-            run.status = WorkflowRunStatus.FAILED
-            run.finished_at = _now()
-            run.error = {"detail": f"Failed to enqueue workflow run: {exc}"}
-            session.add(run)
-            await session.commit()
-            await session.refresh(run)
-            _raise_problem(
-                type_uri=RUN_PROBLEM,
-                title="Failed to enqueue workflow run",
-                detail="An error occurred while queuing the workflow execution.",
-                status=500,
-            )
+            await _handle_enqueue_failure(run, workflow_id, exc, session)
         return _serialize_run(run)
 
 

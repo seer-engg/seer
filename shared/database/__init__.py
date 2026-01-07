@@ -63,7 +63,7 @@ async def db_lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 # Re-export database functions for backward compatibility
-from shared.database.base import init_db  # noqa: E402, F401
+from shared.database.base import init_db, close_db  # noqa: E402, F401
 
 # Re-export models for backward compatibility
 from shared.database.models import (

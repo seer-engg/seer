@@ -2,7 +2,6 @@
 from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 from datetime import datetime
-import uuid
 
 
 class ThreadCreate(BaseModel):
@@ -69,4 +68,3 @@ class ErrorResponse(BaseModel):
     """Error response model."""
     detail: str
     error_type: Optional[str] = None
-

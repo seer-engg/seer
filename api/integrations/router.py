@@ -19,14 +19,15 @@ from .services import (
     serialize_integration_secret,
     bind_supabase_project,
     bind_supabase_project_manual,
+    build_provider_connection_info,
+    determine_auth_mode,
+    build_tool_result_base,
 )
 from .resource_browser import ResourceBrowser
 import json
 import base64
 import os
-import logging
 from typing import Optional
-from datetime import datetime, timezone
 from shared.logger import get_logger
 from shared.database.models import User
 from api.integrations.providers import get_integration_provider
@@ -81,7 +82,7 @@ def decode_state(state: str) -> dict:
 async def list_integrations(request: Request):
     """
     List all integration connections for the current user.
-    
+
     Returns connections organized by OAuth provider with scope information.
     Frontend can use this to determine which tools are connected.
     """
@@ -92,9 +93,9 @@ async def list_integrations(request: Request):
     for conn in connections:
         # Construct composite ID so frontend can use it for deletion if needed
         composite_id = f"{conn.provider}:{conn.id}"
-        
+
         res.append({
-            "id": composite_id, 
+            "id": composite_id,
             "status": "ACTIVE" if conn.status == 'active' else "INACTIVE",
             "user_id": user.user_id,
             "toolkit": {
@@ -113,77 +114,30 @@ async def list_integrations(request: Request):
 
 @router.get("/tools/status")
 async def get_tools_connection_status(request: Request):
-    """
-    Get connection status for all tools.
-    
-    Returns a list of all tools with their connection status based on
-    whether the user has a connection with the required scopes.
-    
-    This is the primary endpoint for frontend to check which tools are connected.
-    """
+    """Get connection status for all tools with OAuth/secret requirements."""
     from shared.tools.base import list_tools as get_all_tools
-    
     user: User = request.state.db_user
     logger.info(f"Getting tools connection status for user {user.user_id}")
-    
-    # Get all connections for this user
+
     connections = await list_connections(user)
-    
-    # Build a map of provider -> connection with scopes, token status, and refresh_token status
-    provider_connections = {}
-    for conn in connections:
-        # Check if access token exists and is valid
-        has_access_token = bool(conn.access_token_enc)
-        has_refresh_token = bool(conn.refresh_token_enc)
-        is_token_expired = False
-        if conn.expires_at:
-            is_token_expired = conn.expires_at < datetime.now(timezone.utc)
-        
-        # Access token is valid if:
-        # 1. Token exists and is not expired, OR
-        # 2. Refresh token exists (can get new access token even if current one is expired or missing)
-        access_token_valid = (has_access_token and not is_token_expired) or has_refresh_token
-        
-        provider_connections[conn.provider] = {
-            "scopes": conn.scopes or "",
-            "connection_id": f"{conn.provider}:{conn.id}",
-            "provider_account_id": conn.provider_account_id,
-            "has_refresh_token": has_refresh_token,  # Check if refresh_token exists
-            "access_token_valid": access_token_valid,  # Whether access token exists and (not expired or can be refreshed)
-            "connection": conn  # Store connection object for token checks
-        }
-    
+    provider_connections = {conn.provider: build_provider_connection_info(conn) for conn in connections}
+
     # Get all registered tools
     all_tools = get_all_tools()
-    
+
     results = []
     for tool in all_tools:
         tool_provider = tool.provider or tool.integration_type
         required_scopes = list(tool.required_scopes or [])
         required_secrets = list(getattr(tool, "required_secrets", []) or [])
-        requires_oauth = bool(required_scopes)
-        requires_secrets = bool(required_secrets)
-        supports_tokenless_auth = not requires_oauth
-        auth_mode = "none"
-        if requires_oauth and requires_secrets:
-            auth_mode = "oauth_and_secrets"
-        elif requires_oauth:
-            auth_mode = "oauth"
-        elif requires_secrets:
-            auth_mode = "secrets"
-        
+        auth_mode, requires_oauth, requires_secrets, supports_tokenless_auth = determine_auth_mode(required_scopes, required_secrets)
+        base_result = build_tool_result_base(tool, auth_mode, requires_oauth, requires_secrets, supports_tokenless_auth)
+
         def build_result(extra: dict) -> dict:
-            base = {
-                "tool_name": tool.name,
-                "integration_type": tool.integration_type,
-                "requires_oauth_connection": requires_oauth,
-                "requires_secrets": requires_secrets,
-                "supports_tokenless_auth": supports_tokenless_auth,
-                "auth_mode": auth_mode,
-            }
-            base.update(extra)
-            return base
-        
+            result = base_result.copy()
+            result.update(extra)
+            return result
+
         if not tool_provider:
             # Non-OAuth tool
             results.append(build_result({
@@ -197,11 +151,11 @@ async def get_tools_connection_status(request: Request):
                 "has_refresh_token": False,
             }))
             continue
-        
+
         # Normalize to OAuth provider
         oauth_provider = get_oauth_provider(tool_provider)
         conn_info = provider_connections.get(oauth_provider) if oauth_provider else None
-        
+
         if not requires_oauth:
             # Tokens are optional; treat as connected even without an OAuth record
             results.append(build_result({
@@ -215,7 +169,7 @@ async def get_tools_connection_status(request: Request):
                 "has_refresh_token": conn_info["has_refresh_token"] if conn_info else False,
             }))
             continue
-        
+
         if not conn_info:
             results.append(build_result({
                 "provider": oauth_provider,
@@ -228,24 +182,24 @@ async def get_tools_connection_status(request: Request):
                 "has_refresh_token": False,
             }))
             continue
-        
+
         # Check if connection has required scopes
         has_scopes = has_required_scopes(conn_info["scopes"], required_scopes)
-        
+
         # Check if access token is valid (exists and not expired)
         access_token_valid = conn_info.get("access_token_valid", False)
-        
+
         # Check if refresh_token exists (needed for token refresh)
         has_refresh_token = conn_info.get("has_refresh_token", False)
-        
+
         # Connection is functional if scopes present AND access token valid
         # Access token is valid if: (exists and not expired) OR refresh token exists
         fully_connected = has_scopes and access_token_valid
-        
+
         # Find missing scopes - use parse_scopes() to handle both comma and space-separated formats
         granted_set = parse_scopes(conn_info["scopes"]) if conn_info["scopes"] else set()
         missing = [s for s in required_scopes if s not in granted_set]
-        
+
         results.append(build_result({
             "provider": oauth_provider,
             "connected": fully_connected,  # True if scopes present AND access token valid
@@ -256,7 +210,7 @@ async def get_tools_connection_status(request: Request):
             "connection_id": conn_info["connection_id"],
             "provider_account_id": conn_info["provider_account_id"],
         }))
-    
+
     return {"tools": results}
 
 
@@ -270,38 +224,17 @@ async def connect(
     provider: str,
     redirect_to: str = Query(None),
     scope: str = Query(...),  # OAuth scope from frontend (REQUIRED - frontend controls scopes)
-    integration_type: str = Query(None),  # Integration type for tracking (e.g., 'gmail', 'googlesheets')
+    integration_type: str = Query(None),
 ):
-    """
-    Start OAuth flow for a provider.
-    
-    Args:
-        provider: OAuth provider name (google, github)
-        redirect_to: Redirect URL after auth
-        scope: OAuth scope from frontend (REQUIRED - frontend controls which scopes to request)
-        integration_type: Optional integration type that triggered this connection (for tracking)
-    
-    Note:
-        Frontend must always pass scope parameter. This ensures frontend controls
-        which permissions are requested (read-only is core differentiation).
-        
-        Connections are stored by OAuth provider (e.g., 'google'), not integration type.
-        Multiple integration types (gmail, googlesheets, googledrive) share the same Google connection.
-        
-        If user already has all required scopes, OAuth is skipped and success is returned immediately.
-        For Google OAuth, incremental authorization (include_granted_scopes=true) is only used when
-        requesting NEW scopes in addition to existing ones, to avoid showing all previously granted
-        scopes in the consent screen.
-    """
-    
+    """Start OAuth flow for a provider. Skips if user already has required scopes."""
     if not scope:
         raise HTTPException(status_code=400, detail="scope parameter is required. Frontend must specify OAuth scopes.")
-    
+
     oauth_provider = get_oauth_provider(provider)
     provider_impl = get_integration_provider(oauth_provider)
     if not provider_impl:
         raise HTTPException(status_code=400, detail=f"OAuth provider '{oauth_provider}' is not configured")
-    
+
     requested_scopes_list = list(parse_scopes(scope))
     user: User = request.state.db_user
     existing_connection = await get_connection_for_provider(user, oauth_provider)
@@ -363,29 +296,23 @@ async def connect(
 
 @router.get("/{provider}/callback", name="auth_callback")
 async def auth_callback(request: Request, provider: str):
-    """
-    Handle OAuth callback from provider.
-    
-    Stores connection with OAuth provider (e.g., 'google'), merging scopes
-    if a connection already exists for this provider.
-    """
-    # Normalize to OAuth provider
+    """Handle OAuth callback from provider, stores connection and merges scopes."""
     oauth_provider = get_oauth_provider(provider)
-    
+
     client = oauth.create_client(oauth_provider)
     try:
         token = await client.authorize_access_token(request)
     except Exception as e:
         logger.error(f"OAuth callback error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
-    
+
     # Retrieve user_id from state
     # Authlib validates state match, but we need to extract data from it.
     state = request.query_params.get('state')
     if not state:
         raise HTTPException(status_code=400, detail="Missing state")
-         
-    try:  
+
+    try:
         state_data = decode_state(state)
         user_id = state_data.get('user_id')
         redirect_to = state_data.get('redirect_to')
@@ -393,12 +320,12 @@ async def auth_callback(request: Request, provider: str):
         integration_type = state_data.get('integration_type')  # Track which integration triggered this
     except:
         raise HTTPException(status_code=400, detail="Invalid state")
-    
+
     if not user_id:
         raise HTTPException(status_code=400, detail="Missing user_id in state")
-    
+
     logger.info(f"OAuth callback: provider={oauth_provider}, integration_type={integration_type}")
-    
+
     # Log token structure for debugging (without sensitive values)
     token_keys = list(token.keys())
     has_userinfo = 'userinfo' in token
@@ -410,13 +337,13 @@ async def auth_callback(request: Request, provider: str):
         f"has access_token: {has_access_token}, "
         f"has id_token: {has_id_token}"
     )
-    
+
     provider_impl = get_integration_provider(oauth_provider)
     if not provider_impl:
         raise HTTPException(status_code=400, detail=f"OAuth provider '{oauth_provider}' is not configured")
 
     granted_scopes = provider_impl.resolve_granted_scopes(token=token, state_data=state_data)
-    
+
     requested_scopes_list = requested_scope.split() if requested_scope else []
     granted_scopes_list = token.get('scope', '').split() if token.get('scope') else []
     storing_scopes_list = granted_scopes.split() if granted_scopes else []
@@ -425,9 +352,9 @@ async def auth_callback(request: Request, provider: str):
         f"Provider granted: {granted_scopes_list}, "
         f"Storing: {storing_scopes_list}"
     )
-        
+
     user_info = await provider_impl.fetch_user_profile(client=client, token=token, state_data=state_data)
-    
+
     # Store connection with OAuth provider (not integration type)
     # Scopes will be merged if connection already exists
     await store_oauth_connection(
@@ -438,34 +365,22 @@ async def auth_callback(request: Request, provider: str):
         granted_scopes=granted_scopes,
         integration_type=integration_type
     )
-    
+
     # Return with integration_type so frontend knows which tool was connected
     connected_param = integration_type or oauth_provider
     return RedirectResponse(url=f"{redirect_to}?connected={connected_param}")
 
 @router.get("/{integration_type}/status")
 async def get_integration_status(request: Request, integration_type: str):
-    """
-    Get connection status for a specific integration type.
-    
-    This checks if the user has a connection with the required scopes for
-    all tools belonging to this integration type.
-    
-    Args:
-        integration_type: Integration type (gmail, googlesheets, googledrive, github, etc.)
-    
-    Returns:
-        Connection status including whether all required scopes are granted
-    """
+    """Get connection status for a specific integration type (gmail, googlesheets, github, etc.)."""
     from shared.tools.base import list_tools as get_all_tools
-    
     user: User = request.state.db_user
     oauth_provider = get_oauth_provider(integration_type)
-    
+
     # Get connection for this provider
     connections = await list_connections(user)
     conn = next((c for c in connections if c.provider == oauth_provider), None)
-    
+
     if not conn:
         return {
             "integration_type": integration_type,
@@ -476,19 +391,19 @@ async def get_integration_status(request: Request, integration_type: str):
             "missing_scopes": [],
             "connection_id": None
         }
-    
+
     # Get all tools for this integration type and collect required scopes
     all_tools = get_all_tools()
     integration_tools = [t for t in all_tools if t.integration_type == integration_type]
-    
+
     # Collect all unique required scopes for this integration
     all_required_scopes = set()
     for tool in integration_tools:
         all_required_scopes.update(tool.required_scopes)
-    
+
     granted_scopes = set(conn.scopes.split()) if conn.scopes else set()
     missing = list(all_required_scopes - granted_scopes)
-    
+
     return {
         "integration_type": integration_type,
         "provider": oauth_provider,
@@ -564,11 +479,7 @@ async def bind_supabase_project_route(request: Request, payload: SupabaseBindReq
 
 @router.post("/supabase/projects/manual-bind")
 async def bind_supabase_project_manual_route(request: Request, payload: SupabaseManualBindRequest):
-    """
-    Persist a Supabase project using user-supplied secrets instead of OAuth.
-    Falls back to the OAuth binding flow when connection_id is provided.
-    """
-
+    """Persist Supabase project using manual secrets or OAuth connection_id."""
     user: User = request.state.db_user
 
     if payload.connection_id:
@@ -602,7 +513,7 @@ async def bind_supabase_project_manual_route(request: Request, payload: Supabase
 async def list_resource_types(request: Request):
     """
     List all supported resource types across all providers.
-    
+
     Returns configuration info for each resource type including
     whether it supports hierarchy, search, and dependencies.
     """
@@ -614,7 +525,7 @@ async def list_resource_types(request: Request):
             if info:
                 info["provider"] = provider
                 all_types[rt] = info
-    
+
     return {"resource_types": all_types}
 
 
@@ -622,7 +533,7 @@ async def list_resource_types(request: Request):
 async def list_provider_resource_types(request: Request, provider: str):
     """
     List supported resource types for a specific provider.
-    
+
     Args:
         provider: OAuth provider (google, github, etc.)
     """
@@ -632,7 +543,7 @@ async def list_provider_resource_types(request: Request, provider: str):
         info = ResourceBrowser.get_resource_type_info(rt)
         if info:
             result[rt] = info
-    
+
     return {"provider": provider, "resource_types": result}
 
 
@@ -645,30 +556,11 @@ async def browse_resources(
     parent_id: Optional[str] = Query(None, description="Parent folder ID for hierarchy navigation"),
     page_token: Optional[str] = Query(None, description="Pagination token"),
     page_size: int = Query(50, ge=1, le=100, description="Number of items per page"),
-    # Dependent parameter values (JSON encoded)
     depends_on: Optional[str] = Query(None, description="JSON object of dependent parameter values"),
 ):
-    """
-    Browse resources of a specific type.
-    
-    This endpoint powers the ResourcePicker UI component, allowing users
-    to browse and select resources (files, spreadsheets, repos, etc.)
-    instead of manually entering IDs.
-    
-    Args:
-        provider: OAuth provider (google, github)
-        resource_type: Type of resource to browse (google_spreadsheet, github_repo, etc.)
-        q: Optional search query
-        parent_id: Parent folder ID for hierarchical navigation (Google Drive)
-        page_token: Token for pagination
-        page_size: Number of results per page (max 100)
-        depends_on: JSON object with values for dependent parameters
-    
-    Returns:
-        List of resources with metadata for display
-    """
+    """Browse resources (files, spreadsheets, repos) for ResourcePicker UI."""
     user: User = request.state.db_user
-    
+
     # Get valid access token
     access_token = await get_valid_access_token(user, provider)
     if not access_token:
@@ -676,7 +568,7 @@ async def browse_resources(
             status_code=401,
             detail=f"No active {provider} connection. Please connect your {provider} account first."
         )
-    
+
     # Parse depends_on if provided
     depends_on_values = None
     if depends_on:
@@ -684,10 +576,10 @@ async def browse_resources(
             depends_on_values = json.loads(depends_on)
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid depends_on JSON")
-    
+
     # Create browser and list resources
     browser = ResourceBrowser(access_token, provider)
-    
+
     try:
         result = await browser.list_resources(
             resource_type=resource_type,
@@ -697,13 +589,13 @@ async def browse_resources(
             page_size=page_size,
             depends_on_values=depends_on_values,
         )
-        
+
         if "error" in result and result["error"]:
             logger.error(f"Resource browser error: {result['error']}")
             raise HTTPException(status_code=500, detail=result["error"])
-        
+
         return result
-        
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

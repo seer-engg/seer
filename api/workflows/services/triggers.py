@@ -14,7 +14,6 @@ from api.workflows import models as api_models
 from api.workflows.services._shared import (
     VALIDATION_PROBLEM,
     _raise_problem,
-    _spec_to_dict,
 )
 from shared.database.base import async_session_maker
 from shared.database.models import (
@@ -146,6 +145,60 @@ def _literal_value_matches_input(value: Any, input_def: InputDef) -> bool:
     return True
 
 
+def _validate_auto_binding_mode(spec: WorkflowSpec, bindings: Dict[str, Any]) -> None:
+    """Validate auto-binding trigger configuration (e.g., Form trigger)."""
+    if not spec.inputs:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Form trigger requires workflow inputs",
+            detail="Workflows using form triggers must define inputs that match the form fields.",
+            status=400,
+        )
+    if bindings:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Form trigger does not accept manual bindings",
+            detail="Form triggers automatically map form fields to workflow inputs. Do not provide bindings.",
+            status=400,
+        )
+
+
+def _validate_expression_binding(
+    input_name: str,
+    binding: str,
+    input_def: InputDef,
+    event_schema: Dict[str, Any],
+) -> Optional[api_models.ProblemError]:
+    """Validate expression binding against input schema. Returns error or None."""
+    try:
+        path = _extract_event_path(binding)
+        fragment = _resolve_schema_for_path(event_schema or {}, path)
+    except ValueError as exc:
+        return api_models.ProblemError(
+            code="INVALID_BINDING", message=str(exc), expression=binding
+        )
+
+    if not _schema_fragment_matches_input(fragment, input_def):
+        return api_models.ProblemError(
+            code="TYPE_MISMATCH",
+            message=f"Binding for '{input_name}' is incompatible with expected input type '{input_def.type.value}'",
+            expression=binding,
+        )
+    return None
+
+
+def _validate_literal_binding(
+    input_name: str, binding: Any, input_def: InputDef
+) -> Optional[api_models.ProblemError]:
+    """Validate literal binding value. Returns error or None."""
+    if not _literal_value_matches_input(binding, input_def):
+        return api_models.ProblemError(
+            code="TYPE_MISMATCH",
+            message=f"Literal binding for '{input_name}' has incompatible type",
+        )
+    return None
+
+
 def _validate_bindings_against_workflow(
     bindings: Dict[str, Any],
     spec: WorkflowSpec,
@@ -167,28 +220,13 @@ def _validate_bindings_against_workflow(
     """
     # Handle auto-binding mode (Form trigger)
     if trigger_definition and trigger_definition.binding_mode == "auto":
-        if not spec.inputs:
-            _raise_problem(
-                type_uri=VALIDATION_PROBLEM,
-                title="Form trigger requires workflow inputs",
-                detail="Workflows using form triggers must define inputs that match the form fields.",
-                status=400,
-            )
-        if bindings:
-            _raise_problem(
-                type_uri=VALIDATION_PROBLEM,
-                title="Form trigger does not accept manual bindings",
-                detail="Form triggers automatically map form fields to workflow inputs. Do not provide bindings.",
-                status=400,
-            )
-        # Validation passes - bindings will be auto-generated
+        _validate_auto_binding_mode(spec, bindings)
         return
 
     if not bindings:
         return
 
     # Allow late-bound inputs for workflows without input schema
-    # These bindings will be validated at runtime when the trigger fires
     if not spec.inputs:
         return
 
@@ -203,35 +241,15 @@ def _validate_bindings_against_workflow(
                 )
             )
             continue
+
         if _is_expression(binding):
-            try:
-                path = _extract_event_path(binding)
-                fragment = _resolve_schema_for_path(event_schema or {}, path)
-            except ValueError as exc:
-                errors.append(
-                    api_models.ProblemError(
-                        code="INVALID_BINDING",
-                        message=str(exc),
-                        expression=binding,
-                    )
-                )
-                continue
-            if not _schema_fragment_matches_input(fragment, input_def):
-                errors.append(
-                    api_models.ProblemError(
-                        code="TYPE_MISMATCH",
-                        message=f"Binding for '{input_name}' is incompatible with expected input type '{input_def.type.value}'",
-                        expression=binding,
-                    )
-                )
+            error = _validate_expression_binding(input_name, binding, input_def, event_schema)
         else:
-            if not _literal_value_matches_input(binding, input_def):
-                errors.append(
-                    api_models.ProblemError(
-                        code="TYPE_MISMATCH",
-                        message=f"Literal binding for '{input_name}' has incompatible type",
-                    )
-                )
+            error = _validate_literal_binding(input_name, binding, input_def)
+
+        if error:
+            errors.append(error)
+
     if errors:
         _raise_problem(
             type_uri=VALIDATION_PROBLEM,
