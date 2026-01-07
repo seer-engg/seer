@@ -144,6 +144,11 @@ class SeerConfig(BaseSettings):
         description="Enable PostHog analytics tracking"
     )
 
+    webhook_base_url: Optional[str] = Field(
+        default=None,
+        description="Base URL for webhook callbacks (e.g., https://seer.example.com). Used by external services to send webhooks. Defaults to http://localhost:8000 if not set.",
+    )
+
     # ============================================================================
     # Computed Properties
     # ============================================================================

@@ -50,6 +50,11 @@ import traceback
 
 from api.agents.checkpointer import get_checkpointer
 from worker.tasks.workflows import execute_saved_workflow as execute_saved_workflow_task
+from api.triggers.supabase_webhook import (
+    create_database_webhook,
+    delete_database_webhook,
+    SupabaseWebhookError,
+)
 
 compiler = WorkflowCompilerSingleton.instance()
 logger = logging.getLogger(__name__)
@@ -353,6 +358,8 @@ def _should_emit_webhook_url(trigger_key: str) -> bool:
 def _build_webhook_url(subscription_id: int, trigger_key: str) -> Optional[str]:
     if trigger_key == "webhook.generic":
         return f"/v1/webhooks/generic/{subscription_id}"
+    elif trigger_key == "webhook.supabase.db_changes":
+        return f"/v1/webhooks/generic/{subscription_id}"
     return None
 
 
@@ -461,6 +468,32 @@ async def create_trigger_subscription(
         provider_config=provider_config,
         secret_token=secret,
     )
+    # For Supabase webhook triggers, create the database trigger
+    if payload.trigger_key == "webhook.supabase.db_changes" and secret:
+        try:
+            # Build full webhook URL with domain and secret
+            webhook_base_url = shared_config.webhook_base_url or "http://localhost:8000"
+            full_webhook_url = f"{webhook_base_url.rstrip('/')}/api/v1/webhooks/generic/{subscription.id}"
+            if secret:
+                full_webhook_url += f"?secret={secret}"
+
+            # Create the Postgres trigger in Supabase
+            webhook_metadata = await create_database_webhook(subscription, full_webhook_url)
+            logger.info(
+                "Created Supabase webhook",
+                extra={"subscription_id": subscription.id, "metadata": webhook_metadata}
+            )
+        except SupabaseWebhookError as exc:
+            # Rollback: delete the subscription and re-raise
+            logger.error(
+                "Failed to create Supabase webhook, rolling back subscription",
+                extra={"subscription_id": subscription.id, "error": str(exc)}
+            )
+            await subscription.delete()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create Supabase webhook: {str(exc)}"
+            )
     return _serialize_subscription(subscription)
 
 
@@ -504,6 +537,16 @@ async def update_trigger_subscription(
 
 async def delete_trigger_subscription(user: User, subscription_id: int) -> None:
     subscription = await _get_trigger_subscription(user, subscription_id)
+     # For Supabase webhook triggers, clean up the database trigger
+    if subscription.trigger_key == "webhook.supabase.db_changes":
+        try:
+            await delete_database_webhook(subscription)
+        except Exception as exc:
+            # Log but don't block deletion - trigger cleanup is best-effort
+            logger.warning(
+                "Failed to delete Supabase webhook (non-fatal)",
+                extra={"subscription_id": subscription_id, "error": str(exc)}
+            )
     await subscription.delete()
 
 
