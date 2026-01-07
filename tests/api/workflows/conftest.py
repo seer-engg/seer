@@ -5,9 +5,9 @@ import pytest
 import pytest_asyncio
 from sqlmodel import select
 from workflow_compiler.schema.models import WorkflowSpec
+from workflow_compiler.runtime.global_compiler import WorkflowCompilerSingleton
 
 from api.agents.checkpointer import close_checkpointer, get_checkpointer
-from api.workflows import services
 from shared.config import config as shared_config
 from shared.database.base import init_db, close_db
 from shared.database.models import User
@@ -75,7 +75,8 @@ async def db_user():
 
 @pytest.fixture(scope="session", autouse=True)
 def register_test_schema():
-    services.compiler.schema_registry.register(TEST_SCHEMA_ID, TEST_SCHEMA_DEFINITION)
+    compiler = WorkflowCompilerSingleton.instance()
+    compiler.schema_registry.register(TEST_SCHEMA_ID, TEST_SCHEMA_DEFINITION)
 
 
 # @pytest_asyncio.fixture(autouse=True)
