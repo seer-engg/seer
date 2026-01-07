@@ -1,6 +1,6 @@
 """PostgreSQL checkpointer management for LangGraph."""
 from contextlib import asynccontextmanager
-from typing import Optional, Any, AsyncContextManager
+from typing import Optional, AsyncContextManager
 import asyncio
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -10,6 +10,16 @@ from shared.config import config
 from shared.logger import get_logger
 
 logger = get_logger("api.checkpointer")
+
+
+def convert_sqlalchemy_url_to_psycopg(url: str) -> str:
+    """Convert SQLAlchemy URL format to psycopg connection string format."""
+    # Convert postgresql+asyncpg:// to postgresql://
+    if url.startswith("postgresql+asyncpg://"):
+        return url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    elif url.startswith("postgresql+psycopg://"):
+        return url.replace("postgresql+psycopg://", "postgresql://", 1)
+    return url
 
 
 @asynccontextmanager
@@ -58,36 +68,44 @@ _checkpointer_lock = asyncio.Lock()
 async def get_checkpointer() -> Optional[AsyncPostgresSaver]:
     """
     Get or create the async PostgreSQL checkpointer.
-    
+
     Uses connection pooling for efficient database access.
     Returns None if DATABASE_URL is not configured or initialization fails.
     """
     global _checkpointer, _checkpointer_cm
-    
+
     if _checkpointer is not None:
         return _checkpointer
-    
+
     async with _checkpointer_lock:
         # Double-check after acquiring lock
         if _checkpointer is not None:
             return _checkpointer
-        
+
         if not config.DATABASE_URL:
-            logger.warning("DATABASE_URL not configured, workflows will run without checkpointing")
+            logger.warning(
+                "DATABASE_URL not configured, "
+                "workflows will run without checkpointing"
+            )
             return None
-        
+
         logger.info("Initializing AsyncPostgresSaver checkpointer")
         try:
             global _checkpointer_cm
-            _checkpointer_cm = open_checkpointer(config.DATABASE_URL)
+            # Convert SQLAlchemy URL to psycopg format
+            psycopg_url = convert_sqlalchemy_url_to_psycopg(config.DATABASE_URL)
+            _checkpointer_cm = open_checkpointer(psycopg_url)
 
             _checkpointer = await _checkpointer_cm.__aenter__()
 
             # Verify checkpointer has required methods before returning
             if not hasattr(_checkpointer, 'get_next_version'):
-                logger.warning("Checkpointer missing get_next_version method - this may cause issues")
+                logger.warning(
+                    "Checkpointer missing get_next_version method "
+                    "- this may cause issues"
+                )
                 # Don't fail here - let graph_builder handle it gracefully
-            
+
             return _checkpointer
         except Exception as e:
             logger.error(f"Failed to initialize checkpointer: {e}", exc_info=True)
@@ -99,7 +117,7 @@ async def get_checkpointer() -> Optional[AsyncPostgresSaver]:
 async def close_checkpointer():
     """Close the checkpointer connection pool."""
     global _checkpointer, _checkpointer_cm
-    
+
     if _checkpointer_cm is not None:
         try:
             # Exit the context manager properly
@@ -136,17 +154,17 @@ async def _is_checkpointer_healthy(checkpointer: AsyncPostgresSaver) -> bool:
 async def _recreate_checkpointer() -> Optional[AsyncPostgresSaver]:
     """Recreate checkpointer if connection is stale."""
     global _checkpointer, _checkpointer_cm
-    
+
     # Close existing checkpointer
     if _checkpointer_cm is not None:
         try:
             await _checkpointer_cm.__aexit__(None, None, None)
         except Exception as e:
             logger.warning(f"Error closing stale checkpointer: {e}")
-    
+
     _checkpointer = None
     _checkpointer_cm = None
-    
+
     # Recreate
     return await get_checkpointer()
 
@@ -154,15 +172,15 @@ async def _recreate_checkpointer() -> Optional[AsyncPostgresSaver]:
 async def get_checkpointer_with_retry() -> Optional[AsyncPostgresSaver]:
     """Get checkpointer with automatic reconnection on failure."""
     checkpointer = await get_checkpointer()
-    
+
     if checkpointer is None:
         return None
-    
+
     # Check health
     if not await _is_checkpointer_healthy(checkpointer):
         logger.warning("Checkpointer connection is stale, recreating...")
         checkpointer = await _recreate_checkpointer()
-    
+
     return checkpointer
 
 
@@ -170,7 +188,7 @@ async def get_checkpointer_with_retry() -> Optional[AsyncPostgresSaver]:
 async def checkpointer_lifespan():
     """
     Context manager for checkpointer lifecycle.
-    
+
     Use with FastAPI lifespan for proper initialization/cleanup.
     """
     checkpointer = None
@@ -181,4 +199,3 @@ async def checkpointer_lifespan():
     finally:
         # Cleanup on shutdown
         await close_checkpointer()
-

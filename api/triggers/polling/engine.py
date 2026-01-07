@@ -7,7 +7,6 @@ from uuid import uuid4
 from fastapi import HTTPException
 from sqlmodel import select
 from sqlalchemy import or_
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from api.triggers.polling.adapters.base import (
@@ -31,7 +30,12 @@ logger = get_logger(__name__)
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    """
+    Return current UTC time as timezone-naive datetime.
+
+    For PostgreSQL TIMESTAMP WITHOUT TIME ZONE compatibility.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class TriggerPollEngine:
@@ -61,7 +65,10 @@ class TriggerPollEngine:
             except Exception:
                 logger.exception(
                     "Failed to process trigger subscription",
-                    extra={"subscription_id": subscription.id, "trigger_key": subscription.trigger_key},
+                    extra={
+                        "subscription_id": subscription.id,
+                        "trigger_key": subscription.trigger_key
+                    },
                 )
                 await self._mark_error(
                     subscription,
@@ -77,7 +84,7 @@ class TriggerPollEngine:
             stmt = (
                 select(TriggerSubscription)
                 .where(
-                    TriggerSubscription.enabled == True,
+                    TriggerSubscription.enabled.is_(True),
                     TriggerSubscription.next_poll_at <= now,
                     TriggerSubscription.poll_status != "disabled",
                     or_(
@@ -191,7 +198,10 @@ class TriggerPollEngine:
                 )
                 return
             backoff = exc.backoff_seconds or min(subscription.poll_interval_seconds * 2, 600)
-            logger.error(f"Backoff poll adapter error for subscription {subscription.id}: {backoff}")
+            logger.error(
+                f"Backoff poll adapter error for subscription "
+                f"{subscription.id}: {backoff}"
+            )
             await self._mark_backoff(
                 subscription,
                 reason="adapter_error",
@@ -332,4 +342,3 @@ class TriggerPollEngine:
             session.add(subscription)
             await session.commit()
             await session.refresh(subscription)
-

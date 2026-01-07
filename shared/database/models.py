@@ -9,8 +9,9 @@ All models use SQLModel which integrates with:
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, ClassVar, TYPE_CHECKING
+from pydantic import BaseModel
 from sqlmodel import Field, SQLModel, Relationship, Column
-from sqlalchemy import Index, UniqueConstraint, String, Integer, BigInteger, Text
+from sqlalchemy import Index, UniqueConstraint, BigInteger, Text
 from sqlalchemy.dialects.postgresql import JSONB
 
 if TYPE_CHECKING:
@@ -52,7 +53,12 @@ class TriggerEventStatus(str, Enum):
 # ====================
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    """
+    Return current UTC time as timezone-naive datetime.
+
+    For PostgreSQL TIMESTAMP WITHOUT TIME ZONE compatibility.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 WORKFLOW_ID_PREFIX = "wf_"
@@ -77,6 +83,22 @@ def parse_run_public_id(value: str) -> int:
     if not value.startswith(RUN_ID_PREFIX):
         raise ValueError("Invalid run_id format")
     return int(value.removeprefix(RUN_ID_PREFIX))
+
+
+# ====================
+# Public Schemas (API Response Models)
+# ====================
+
+class UserPublic(BaseModel):
+    """Public user information for API responses."""
+    id: int
+    user_id: str
+    email: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
 
 
 # ====================
@@ -107,10 +129,16 @@ class User(SQLModel, table=True):
     oauth_connections: list["OAuthConnection"] = Relationship(back_populates="user")
     integration_resources: list["IntegrationResource"] = Relationship(back_populates="user")
     integration_secrets: list["IntegrationSecret"] = Relationship(back_populates="user")
-    projects: list["Project"] = Relationship(back_populates="user", sa_relationship_kwargs={"foreign_keys": "Project.user_id"})
+    projects: list["Project"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"foreign_keys": "Project.user_id"}
+    )
 
     @staticmethod
-    async def get_or_create_from_auth(auth_user: "AuthenticatedUser", signup_source: Optional[str] = None) -> "User":
+    async def get_or_create_from_auth(
+        auth_user: "AuthenticatedUser",
+        signup_source: Optional[str] = None
+    ) -> "User":
         """Fetch or persist a user based on Clerk claims."""
         from sqlmodel import select
         from shared.database.base import async_session_maker
@@ -173,7 +201,10 @@ class Project(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utc_now)
 
     # Relationships
-    user: Optional[User] = Relationship(back_populates="projects", sa_relationship_kwargs={"foreign_keys": "Project.user_id"})
+    user: Optional[User] = Relationship(
+        back_populates="projects",
+        sa_relationship_kwargs={"foreign_keys": "Project.user_id"}
+    )
 
 
 class Workflow(SQLModel, table=True):
@@ -186,17 +217,17 @@ class Workflow(SQLModel, table=True):
     description: Optional[str] = Field(default=None, sa_column=Column(Text))
     tags: Optional[dict] = Field(default=None, sa_column=Column(JSONB))
     meta: Optional[dict] = Field(default=None, sa_column=Column(JSONB))
-    published_version_id: Optional[int] = Field(
-        default=None,
-        foreign_key="workflow_versions.id"
-    )
+    published_version_id: Optional[int] = Field(default=None)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now, index=True)
 
     # Relationships
     user: User = Relationship(back_populates="workflows")
     versions: list["WorkflowVersion"] = Relationship(back_populates="workflow")
-    draft: Optional["WorkflowDraft"] = Relationship(back_populates="workflow", sa_relationship_kwargs={"uselist": False})
+    draft: Optional["WorkflowDraft"] = Relationship(
+        back_populates="workflow",
+        sa_relationship_kwargs={"uselist": False}
+    )
     runs: list["WorkflowRun"] = Relationship(back_populates="workflow")
     chat_sessions: list["WorkflowChatSession"] = Relationship(back_populates="workflow")
     proposals: list["WorkflowProposal"] = Relationship(back_populates="workflow")
@@ -216,7 +247,7 @@ class WorkflowVersion(SQLModel, table=True):
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    workflow_id: int = Field(foreign_key="workflows.id", index=True)
+    workflow_id: int = Field(foreign_key="workflows.id")
     status: WorkflowVersionStatus = Field(default=WorkflowVersionStatus.DRAFT, max_length=20)
     spec: dict = Field(sa_column=Column(JSONB))
     created_from_draft_revision: Optional[int] = None
@@ -365,7 +396,9 @@ class WorkflowProposal(SQLModel, table=True):
     status: str = Field(max_length=20, default=STATUS_PENDING)
     preview_graph: Optional[dict] = Field(default=None, sa_column=Column(JSONB))
     applied_graph: Optional[dict] = Field(default=None, sa_column=Column(JSONB))
-    proposal_metadata: Optional[dict] = Field(default=None, sa_column=Column(JSONB, name="metadata"))
+    proposal_metadata: Optional[dict] = Field(
+        default=None, sa_column=Column(JSONB, name="metadata")
+    )
     decided_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=utc_now, index=True)
     updated_at: datetime = Field(default_factory=utc_now)
@@ -455,7 +488,10 @@ class OAuthConnection(SQLModel, table=True):
     """Database model for storing OAuth connections/tokens."""
     __tablename__ = "oauth_connections"
     __table_args__ = (
-        UniqueConstraint('user_id', 'provider', 'provider_account_id', name='uq_oauth_user_provider_account'),
+        UniqueConstraint(
+            'user_id', 'provider', 'provider_account_id',
+            name='uq_oauth_user_provider_account'
+        ),
     )
 
     id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, primary_key=True))
@@ -482,8 +518,14 @@ class IntegrationResource(SQLModel, table=True):
     """Connected resources from integrations."""
     __tablename__ = "integration_resources"
     __table_args__ = (
-        Index('ix_integration_resources_user_provider_type', 'user_id', 'provider', 'resource_type'),
-        UniqueConstraint('oauth_connection_id', 'resource_type', 'resource_id', name='uq_resource_connection_type_id'),
+        Index(
+            'ix_integration_resources_user_provider_type',
+            'user_id', 'provider', 'resource_type'
+        ),
+        UniqueConstraint(
+            'oauth_connection_id', 'resource_type', 'resource_id',
+            name='uq_resource_connection_type_id'
+        ),
     )
 
     id: Optional[int] = Field(default=None, sa_column=Column(BigInteger, primary_key=True))

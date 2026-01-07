@@ -43,10 +43,10 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
       REDIS_URL: "redis://redis:6379/0"
       UV_LINK_MODE: "copy"  # Use copy mode to avoid hardlink warnings in Docker volumes
-      AUTO_APPLY_DATABASE_MIGRATIONS: "True"
+      AUTO_APPLY_DATABASE_MIGRATIONS: "False"
     volumes:
       - ./:/app  # Mount source code for instant updates in development (overrides COPY in Dockerfile)
       - /app/.venv  # Exclude local .venv (Docker will create its own venv)
@@ -70,7 +70,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
       REDIS_URL: "redis://redis:6379/0"
       UV_LINK_MODE: "copy"
     volumes:
