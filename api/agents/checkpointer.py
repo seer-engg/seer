@@ -4,11 +4,50 @@ from typing import Optional, Any, AsyncContextManager
 import asyncio
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from infra.checkpointer import open_checkpointer
+from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
 from shared.config import config
 from shared.logger import get_logger
 
 logger = get_logger("api.checkpointer")
+
+
+@asynccontextmanager
+async def open_checkpointer(
+    dsn: str,
+    *,
+    max_size: int = 10,
+    pipeline: bool = False,
+    prepare_threshold: int = 0,
+):
+    """
+    Open a pooled AsyncPostgresSaver checkpointer for the caller's lifespan.
+
+    The returned saver keeps its underlying psycopg pool open until the context
+    exits, ensuring LangGraph graphs can call methods like ainvoke/aget_state_history
+    safely across the entire runtime of the workflow.
+    """
+    pool = AsyncConnectionPool(
+        conninfo=dsn,
+        max_size=max_size,
+        kwargs={
+            "autocommit": True,
+            "row_factory": dict_row,
+            "prepare_threshold": prepare_threshold,
+        },
+    )
+
+    await pool.open()
+    saver = AsyncPostgresSaver(pool)
+
+    # Safe to call more than once; ensures checkpoint tables exist.
+    await saver.setup()
+
+    try:
+        yield saver
+    finally:
+        await pool.close()
+
 
 # Global checkpointer instance and context manager
 _checkpointer: Optional[AsyncPostgresSaver] = None
