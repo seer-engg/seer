@@ -148,6 +148,10 @@ class SeerConfig(BaseSettings):
         default=None,
         description="Base URL for webhook callbacks (e.g., https://seer.example.com). Used by external services to send webhooks. Defaults to http://localhost:8000 if not set.",
     )
+    REDIRECT_URI_SCHEME: str = Field(
+        default="http",
+        description="Scheme for redirect URIs (e.g., https or http)"
+    )
 
     # ============================================================================
     # Computed Properties
