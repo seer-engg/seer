@@ -16,7 +16,7 @@ from api.workflows.services.shared import (
     _get_workflow
 )
 
-from shared.database.workflow_models import (
+from shared.database import (
     User,
     Workflow,
     WorkflowDraft,

@@ -16,8 +16,17 @@ from shared.database.workflow_models import (
     WorkflowChatSession,
     WorkflowChatMessage,
     WorkflowProposal,
+    parse_workflow_public_id,
+    WorkflowRunStatus,
+    WorkflowRunSource,
+    TriggerEventStatus,
+    make_workflow_public_id,
+    WorkflowVersionStatus,
+    parse_run_public_id,
+    TriggerSubscription
 )
 from shared.database.models_integrations import IntegrationResource, IntegrationSecret
+from shared.database.models import User
 
 logger = get_logger("shared.database")
 
@@ -50,6 +59,7 @@ __all__ = [
     "db_lifespan",
     "init_db",
     "close_db",
+    "parse_workflow_public_id",
     "Workflow",
     "WorkflowDraft",
     "WorkflowVersion",
@@ -59,4 +69,12 @@ __all__ = [
     "WorkflowProposal",
     "IntegrationResource",
     "IntegrationSecret",
+    "User",
+    "WorkflowRunStatus",
+    "WorkflowRunSource",
+    "TriggerEventStatus",
+    "make_workflow_public_id",
+    "WorkflowVersionStatus",
+    "parse_run_public_id",
+    "TriggerSubscription",
 ]

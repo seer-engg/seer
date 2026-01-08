@@ -24,7 +24,7 @@ from api.workflows.services.shared import (
 from api.agents.checkpointer import get_checkpointer
 from shared.analytics import analytics
 from shared.config import config as shared_config
-from shared.database.workflow_models import (
+from shared.database import (
     User,
     Workflow,
     WorkflowDraft,

@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional, Sequence
 from fastapi import HTTPException
 
 from api.workflows import models as api_models
-from shared.database.workflow_models import (
+from shared.database import (
     WorkflowRun,
     Workflow,
     parse_workflow_public_id,
