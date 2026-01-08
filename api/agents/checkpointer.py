@@ -1,6 +1,6 @@
 """PostgreSQL checkpointer management for LangGraph."""
 from contextlib import asynccontextmanager
-from typing import Optional, Any, AsyncContextManager
+from typing import Optional, AsyncContextManager
 import asyncio
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -17,7 +17,7 @@ async def open_checkpointer(
     dsn: str,
     *,
     max_size: int = 10,
-    pipeline: bool = False,
+    _pipeline: bool = False,  # pylint: disable=unused-argument
     prepare_threshold: int = 0,
 ):
     """
@@ -50,9 +50,9 @@ async def open_checkpointer(
 
 
 # Global checkpointer instance and context manager
-_checkpointer: Optional[AsyncPostgresSaver] = None
-_checkpointer_cm: Optional[AsyncContextManager[AsyncPostgresSaver]] = None
-_checkpointer_lock = asyncio.Lock()
+_CHECKPOINTER: Optional[AsyncPostgresSaver] = None
+_CHECKPOINTER_CM: Optional[AsyncContextManager[AsyncPostgresSaver]] = None
+_CHECKPOINTER_LOCK = asyncio.Lock()
 
 
 async def get_checkpointer() -> Optional[AsyncPostgresSaver]:
@@ -62,15 +62,15 @@ async def get_checkpointer() -> Optional[AsyncPostgresSaver]:
     Uses connection pooling for efficient database access.
     Returns None if DATABASE_URL is not configured or initialization fails.
     """
-    global _checkpointer, _checkpointer_cm
+    global _CHECKPOINTER, _CHECKPOINTER_CM  # pylint: disable=global-statement
 
-    if _checkpointer is not None:
-        return _checkpointer
+    if _CHECKPOINTER is not None:
+        return _CHECKPOINTER
 
-    async with _checkpointer_lock:
+    async with _CHECKPOINTER_LOCK:
         # Double-check after acquiring lock
-        if _checkpointer is not None:
-            return _checkpointer
+        if _CHECKPOINTER is not None:
+            return _CHECKPOINTER
 
         if not config.DATABASE_URL:
             logger.warning("DATABASE_URL not configured, workflows will run without checkpointing")
@@ -78,39 +78,40 @@ async def get_checkpointer() -> Optional[AsyncPostgresSaver]:
 
         logger.info("Initializing AsyncPostgresSaver checkpointer")
         try:
-            global _checkpointer_cm
-            _checkpointer_cm = open_checkpointer(config.DATABASE_URL)
+            global _CHECKPOINTER_CM  # pylint: disable=global-statement
+            _CHECKPOINTER_CM = open_checkpointer(config.DATABASE_URL)
 
-            _checkpointer = await _checkpointer_cm.__aenter__()
+            # Hold the context across app lifetime; suppress dunder-call warnings
+            _CHECKPOINTER = await _CHECKPOINTER_CM.__aenter__()  # pylint: disable=unnecessary-dunder-call,no-member
 
             # Verify checkpointer has required methods before returning
-            if not hasattr(_checkpointer, 'get_next_version'):
+            if not hasattr(_CHECKPOINTER, 'get_next_version'):
                 logger.warning("Checkpointer missing get_next_version method - this may cause issues")
                 # Don't fail here - let graph_builder handle it gracefully
 
-            return _checkpointer
+            return _CHECKPOINTER
         except Exception as e:
-            logger.error(f"Failed to initialize checkpointer: {e}", exc_info=True)
-            _checkpointer = None
-            _checkpointer_cm = None
+            logger.error("Failed to initialize checkpointer: %s", e, exc_info=True)
+            _CHECKPOINTER = None
+            _CHECKPOINTER_CM = None
             return None
 
 
 async def close_checkpointer():
     """Close the checkpointer connection pool."""
-    global _checkpointer, _checkpointer_cm
+    global _CHECKPOINTER, _CHECKPOINTER_CM  # pylint: disable=global-statement
 
-    if _checkpointer_cm is not None:
+    if _CHECKPOINTER_CM is not None:
         try:
             # Exit the context manager properly
             logger.info("Closing checkpointer connection")
-            await _checkpointer_cm.__aexit__(None, None, None)
-            _checkpointer = None
-            _checkpointer_cm = None
+            await _CHECKPOINTER_CM.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call,no-member
+            _CHECKPOINTER = None
+            _CHECKPOINTER_CM = None
         except Exception as e:
-            logger.warning(f"Error closing checkpointer: {e}")
-            _checkpointer = None
-            _checkpointer_cm = None
+            logger.warning("Error closing checkpointer: %s", e)
+            _CHECKPOINTER = None
+            _CHECKPOINTER_CM = None
 
 
 async def _is_checkpointer_healthy(checkpointer: AsyncPostgresSaver) -> bool:
@@ -129,23 +130,23 @@ async def _is_checkpointer_healthy(checkpointer: AsyncPostgresSaver) -> bool:
         logger.warning("Checkpointer health check timed out")
         return False
     except Exception as e:
-        logger.debug(f"Checkpointer health check failed: {e}")
+        logger.debug("Checkpointer health check failed: %s", e)
         return False
 
 
 async def _recreate_checkpointer() -> Optional[AsyncPostgresSaver]:
     """Recreate checkpointer if connection is stale."""
-    global _checkpointer, _checkpointer_cm
+    global _CHECKPOINTER, _CHECKPOINTER_CM  # pylint: disable=global-statement
 
     # Close existing checkpointer
-    if _checkpointer_cm is not None:
+    if _CHECKPOINTER_CM is not None:
         try:
-            await _checkpointer_cm.__aexit__(None, None, None)
+            await _CHECKPOINTER_CM.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call,no-member
         except Exception as e:
-            logger.warning(f"Error closing stale checkpointer: {e}")
+            logger.warning("Error closing stale checkpointer: %s", e)
 
-    _checkpointer = None
-    _checkpointer_cm = None
+    _CHECKPOINTER = None
+    _CHECKPOINTER_CM = None
 
     # Recreate
     return await get_checkpointer()

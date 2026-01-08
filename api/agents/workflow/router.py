@@ -1,12 +1,36 @@
 """
 Workflow API router for CRUD and execution endpoints.
 """
-from typing import Optional, Dict, List, Any, Tuple
+# pylint: disable=too-many-lines
+from typing import Optional, Dict, Any, Tuple
+from copy import deepcopy
+import uuid
+import asyncio
+
 from fastapi import APIRouter, Request, HTTPException, Query
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from langgraph.types import Command
+
 from shared.logger import get_logger
 from shared.config import config
 from shared.analytics import analytics
-from copy import deepcopy
+from shared.database.models import User, UserPublic
+
+from agents.workflow_agent import (
+    create_workflow_chat_agent,
+    extract_thinking_from_messages,
+    _current_thread_id,
+    set_workflow_state_for_thread,
+    get_proposed_spec_for_thread,
+    clear_proposed_spec_for_thread,
+    set_user_for_thread,
+    clear_user_for_thread,
+)
+from api.agents.checkpointer import (
+    get_checkpointer,
+    get_checkpointer_with_retry,
+    _recreate_checkpointer,
+)
 
 from .models import (
     WorkflowProposalPublic,
@@ -35,28 +59,12 @@ from .chat_schema import (
     ChatMessage,
     WorkflowProposalActionResponse,
 )
-from agents.workflow_agent import (
-    create_workflow_chat_agent,
-    extract_thinking_from_messages,
-    _current_thread_id,
-    set_workflow_state_for_thread,
-    get_proposed_spec_for_thread,
-    clear_proposed_spec_for_thread,
-    set_user_for_thread,
-    clear_user_for_thread,
-)
-from api.agents.checkpointer import get_checkpointer, get_checkpointer_with_retry, _recreate_checkpointer
-import uuid
-import json
-import asyncio
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 # Import psycopg for error type checking
 try:
     import psycopg
 except ImportError:
     psycopg = None
-from shared.database.models import User, UserPublic
 
 logger = get_logger(__name__)
 
@@ -142,7 +150,7 @@ async def _maybe_create_proposal_from_spec(
 # Chat endpoints
 
 @router.post("/{workflow_id}/chat", response_model=ChatResponse)
-async def chat_with_workflow_endpoint(
+async def chat_with_workflow_endpoint(  # pylint: disable=too-many-statements, too-many-branches, too-many-locals, too-many-nested-blocks
     request: Request,
     workflow_id: str,
     chat_request: ChatRequest,
@@ -153,7 +161,11 @@ async def chat_with_workflow_endpoint(
     The assistant can analyze the workflow and suggest edits.
     Supports session persistence and human-in-the-loop interrupts.
     """
-    logger.info(f"Chat request received: workflow_id={workflow_id}, message_length={len(chat_request.message)}")
+    logger.info(
+        "Chat request received: workflow_id=%s, message_length=%d",
+        workflow_id,
+        len(chat_request.message),
+    )
     user = _require_user(request)
 
     # Verify workflow exists and user has access
@@ -259,9 +271,11 @@ async def chat_with_workflow_endpoint(
     )
 
     # Helper function to invoke agent with timeout
-    async def invoke_agent_with_timeout(agent, messages, config, timeout=300.0):
+    async def invoke_agent_with_timeout(agent, messages, invoke_config, timeout=300.0):
         """Invoke agent with timeout to prevent indefinite hangs."""
-        thread_id = config.get('configurable', {}).get('thread_id') if config else None
+        thread_id = (
+            invoke_config.get('configurable', {}).get('thread_id') if invoke_config else None
+        )
         # Set thread_id in context variable for tools to access
         if thread_id:
             token = _current_thread_id.set(thread_id)
@@ -269,15 +283,20 @@ async def chat_with_workflow_endpoint(
             token = None
         try:
             return await asyncio.wait_for(
-                agent.ainvoke(messages, config=config),
+                agent.ainvoke(messages, config=invoke_config),
                 timeout=timeout
             )
-        except asyncio.TimeoutError:
-            logger.error(f"Agent invocation timed out after {timeout} seconds for thread {thread_id or 'unknown'}")
+        except asyncio.TimeoutError as exc:
+            thread_label = thread_id or 'unknown'
+            logger.error(
+                "Agent invocation timed out after %s seconds for thread %s",
+                timeout,
+                thread_label,
+            )
             raise HTTPException(
                 status_code=504,
                 detail="Request timed out. The agent took too long to respond."
-            )
+            ) from exc
         finally:
             # Reset context variable
             if token is not None:
@@ -295,7 +314,7 @@ async def chat_with_workflow_endpoint(
         # Check for incomplete tool calls in state before invoking
         has_incomplete_tool_calls = False
         if checkpointer and thread_id:
-            logger.debug(f"Checking checkpointer health for thread {thread_id}")
+            logger.debug("Checking checkpointer health for thread %s", thread_id)
             try:
                 # Check health and reconnect if needed
                 checkpointer = await get_checkpointer_with_retry()
@@ -345,22 +364,26 @@ async def chat_with_workflow_endpoint(
                             # If any tool_call_ids don't have corresponding ToolMessages, it's incomplete
                             if tool_call_ids - tool_response_ids:
                                 has_incomplete_tool_calls = True
+                                missing = tool_call_ids - tool_response_ids
                                 logger.warning(
-                                    f"Found incomplete tool calls. Missing responses for: {tool_call_ids - tool_response_ids}"
+                                    "Found incomplete tool calls. Missing responses for: %s",
+                                    missing,
                                 )
                                 break
-            except (Exception, ConnectionError, EOFError) as e:
+            except Exception as err:
                 # Check if it's a connection error
                 is_connection_error = (
-                    (psycopg and isinstance(e, psycopg.OperationalError)) or
-                    isinstance(e, ConnectionError) or
-                    isinstance(e, EOFError) or
-                    "connection is closed" in str(e).lower() or
-                    "ssl syscall error" in str(e).lower()
+                    (psycopg and isinstance(err, psycopg.OperationalError)) or
+                    isinstance(err, (ConnectionError, EOFError)) or
+                    "connection is closed" in str(err).lower() or
+                    "ssl syscall error" in str(err).lower()
                 )
 
                 if is_connection_error:
-                    logger.warning(f"Connection error during state check: {e}, attempting reconnection...")
+                    logger.warning(
+                        "Connection error during state check: %s, attempting reconnection...",
+                        err,
+                    )
                     try:
                         checkpointer = await _recreate_checkpointer()
                         if checkpointer:
@@ -399,26 +422,40 @@ async def chat_with_workflow_endpoint(
 
                                         if tool_call_ids - tool_response_ids:
                                             has_incomplete_tool_calls = True
+                                            missing_after_reconnect = tool_call_ids - tool_response_ids
                                             logger.warning(
-                                                f"Found incomplete tool calls after reconnection. Missing responses for: {tool_call_ids - tool_response_ids}"
+                                                "Found incomplete tool calls after reconnection. Missing responses for: %s",
+                                                missing_after_reconnect,
                                             )
                                             break
                             except Exception as retry_error:
-                                logger.error(f"State check failed after reconnection: {retry_error}")
+                                logger.error(
+                                    "State check failed after reconnection: %s",
+                                    retry_error,
+                                )
                                 has_incomplete_tool_calls = False
                         else:
                             logger.warning("Failed to recreate checkpointer, proceeding without state check")
                             has_incomplete_tool_calls = False
                     except Exception as reconnect_error:
-                        logger.error(f"Error during checkpointer reconnection: {reconnect_error}")
+                        logger.error(
+                            "Error during checkpointer reconnection: %s",
+                            reconnect_error,
+                        )
                         has_incomplete_tool_calls = False
                 else:
-                    logger.warning(f"Error checking state for incomplete tool calls: {e}. Proceeding with normal invocation.")
+                    logger.warning(
+                        "Error checking state for incomplete tool calls: %s. Proceeding with normal invocation.",
+                        err,
+                    )
                     has_incomplete_tool_calls = False
 
         # Handle incomplete tool calls if detected
         if has_incomplete_tool_calls:
-            logger.warning(f"Incomplete tool calls detected in thread {thread_id}, attempting recovery...")
+            logger.warning(
+                "Incomplete tool calls detected in thread %s, attempting recovery...",
+                thread_id,
+            )
 
             # Option A: Get previous checkpoint without incomplete calls
             if checkpointer:
@@ -450,7 +487,10 @@ async def chat_with_workflow_endpoint(
                                 timeout=10.0  # 10 second timeout for listing checkpoints
                             )
                         except asyncio.TimeoutError:
-                            logger.error(f"Checkpoint listing timed out for thread {thread_id}")
+                            logger.error(
+                                "Checkpoint listing timed out for thread %s",
+                                thread_id,
+                            )
                             checkpoints = []
                         # Find the last checkpoint that doesn't have incomplete tool calls
                         safe_checkpoint = None
@@ -512,7 +552,11 @@ async def chat_with_workflow_endpoint(
                                 "checkpoint_id": safe_checkpoint.config["configurable"]["checkpoint_id"]
                             }
                         }
-                        logger.info(f"Resuming from safe checkpoint: {prev_config['configurable']['checkpoint_id']}")
+                        checkpoint_id_safe = prev_config['configurable']['checkpoint_id']
+                        logger.info(
+                            "Resuming from safe checkpoint: %s",
+                            checkpoint_id_safe,
+                        )
                         result = await invoke_agent_with_timeout(
                             agent,
                             {"messages": [user_msg]},
@@ -520,7 +564,10 @@ async def chat_with_workflow_endpoint(
                         )
                     else:
                         # Option B: Delete thread and start fresh
-                        logger.warning(f"No safe checkpoint found, deleting thread {thread_id} and starting fresh")
+                        logger.warning(
+                            "No safe checkpoint found, deleting thread %s and starting fresh",
+                            thread_id,
+                        )
                         # Use async delete_thread if available, otherwise wrap sync call
                         if hasattr(checkpointer, 'adelete_thread'):
                             await checkpointer.adelete_thread(thread_id)
@@ -531,18 +578,20 @@ async def chat_with_workflow_endpoint(
                             {"messages": [user_msg]},
                             config_dict,
                         )
-                except (Exception, ConnectionError, EOFError) as e:
+                except Exception as err:
                     # Check if it's a connection error
                     is_connection_error = (
-                        (psycopg and isinstance(e, psycopg.OperationalError)) or
-                        isinstance(e, ConnectionError) or
-                        isinstance(e, EOFError) or
-                        "connection is closed" in str(e).lower() or
-                        "ssl syscall error" in str(e).lower()
+                        (psycopg and isinstance(err, psycopg.OperationalError)) or
+                        isinstance(err, (ConnectionError, EOFError)) or
+                        "connection is closed" in str(err).lower() or
+                        "ssl syscall error" in str(err).lower()
                     )
 
                     if is_connection_error:
-                        logger.warning(f"Connection error during checkpoint recovery: {e}, attempting reconnection...")
+                        logger.warning(
+                            "Connection error during checkpoint recovery: %s, attempting reconnection...",
+                            err,
+                        )
                         try:
                             checkpointer = await _recreate_checkpointer()
                             if checkpointer:
@@ -564,14 +613,21 @@ async def chat_with_workflow_endpoint(
                                     config_dict,
                                 )
                         except Exception as reconnect_error:
-                            logger.error(f"Error during checkpointer reconnection in recovery: {reconnect_error}")
+                            logger.error(
+                                "Error during checkpointer reconnection in recovery: %s",
+                                reconnect_error,
+                            )
                             result = await invoke_agent_with_timeout(
                                 agent,
                                 {"messages": [user_msg]},
                                 config_dict,
                             )
                     else:
-                        logger.error(f"Error recovering from incomplete state: {e}", exc_info=True)
+                        logger.error(
+                            "Error recovering from incomplete state: %s",
+                            err,
+                            exc_info=True,
+                        )
                         # Fallback: delete thread
                         fresh_checkpointer = await get_checkpointer()
                         if fresh_checkpointer:
@@ -594,13 +650,21 @@ async def chat_with_workflow_endpoint(
                 )
         else:
             # Normal invocation - state is clean
-            logger.info(f"Invoking agent for thread {thread_id} with checkpointer={'enabled' if checkpointer else 'disabled'}")
+            checkpoint_status = 'enabled' if checkpointer else 'disabled'
+            logger.info(
+                "Invoking agent for thread %s with checkpointer=%s",
+                thread_id,
+                checkpoint_status,
+            )
             result = await invoke_agent_with_timeout(
                 agent,
                 {"messages": [user_msg]},
                 config_dict,
             )
-            logger.debug(f"Agent invocation completed for thread {thread_id}, checkpoint should be saved automatically by LangGraph")
+            logger.debug(
+                "Agent invocation completed for thread %s, checkpoint should be saved automatically by LangGraph",
+                thread_id,
+            )
 
         # Check for interrupts (from ask_clarifying_question or other interrupt calls)
         interrupt_required = False
@@ -650,7 +714,7 @@ async def chat_with_workflow_endpoint(
                 else:
                     interrupt_data = {"value": current_state.interrupt}
         except Exception as e:
-            logger.debug(f"Could not check state for interrupts: {e}")
+            logger.debug("Could not check state for interrupts: %s", e)
 
         # Extract response
         agent_messages = result.get("messages", []) if isinstance(result, dict) else []
@@ -664,7 +728,12 @@ async def chat_with_workflow_endpoint(
             else:
                 response_text = str(last_msg)
 
-        logger.info(f"Agent completed for thread {thread_id}, response_length={len(response_text)}, interrupt_required={interrupt_required}")
+        logger.info(
+            "Agent completed for thread %s, response_length=%d, interrupt_required=%s",
+            thread_id,
+            len(response_text),
+            interrupt_required,
+        )
 
         # Verify checkpoint was saved after agent invocation
         if checkpointer and thread_id:
@@ -674,11 +743,23 @@ async def chat_with_workflow_endpoint(
                 state_tuple = await checkpointer.aget_tuple(verify_config)
                 if state_tuple:
                     checkpoint_id = state_tuple.config.get("configurable", {}).get("checkpoint_id")
-                    logger.info(f"Checkpoint verified for thread {thread_id}, checkpoint_id={checkpoint_id}")
+                    logger.info(
+                        "Checkpoint verified for thread %s, checkpoint_id=%s",
+                        thread_id,
+                        checkpoint_id,
+                    )
                 else:
-                    logger.warning(f"No checkpoint found for thread {thread_id} after agent invocation")
+                    logger.warning(
+                        "No checkpoint found for thread %s after agent invocation",
+                        thread_id,
+                    )
             except Exception as e:
-                logger.error(f"Error verifying checkpoint for thread {thread_id}: {e}", exc_info=True)
+                logger.error(
+                    "Error verifying checkpoint for thread %s: %s",
+                    thread_id,
+                    e,
+                    exc_info=True,
+                )
 
         # Extract thinking steps
         thinking_steps = extract_thinking_from_messages(agent_messages)
@@ -732,11 +813,11 @@ async def chat_with_workflow_endpoint(
             interrupt_data=interrupt_data,
         )
     except Exception as e:
-        logger.error(f"Error in workflow chat: {e}", exc_info=True)
+        logger.error("Error in workflow chat: %s", e, exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Failed to process chat request: {str(e)}"
-        )
+        ) from e
     finally:
         clear_proposed_spec_for_thread(thread_id)
         clear_user_for_thread(thread_id)
@@ -849,9 +930,7 @@ async def resume_chat_endpoint(
     This endpoint handles resuming agent execution after a LangGraph interrupt.
     The resume_data should contain a Command object with resume information.
     """
-    from langgraph.types import Command
-
-    logger.info(f"Resume request received: workflow_id={workflow_id}")
+    logger.info("Resume request received: workflow_id=%s", workflow_id)
     user = _require_user(request)
 
     # Verify workflow exists
@@ -957,11 +1036,11 @@ async def resume_chat_endpoint(
             interrupt_required=False,
         )
     except Exception as e:
-        logger.error(f"Error resuming chat: {e}", exc_info=True)
+        logger.error("Error resuming chat: %s", e, exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Failed to resume chat: {str(e)}"
-        )
+        ) from e
     finally:
         # Reset context variable
         if token is not None:

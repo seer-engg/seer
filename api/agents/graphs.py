@@ -1,5 +1,5 @@
 """Graph registry and compilation for the FastAPI server."""
-from typing import Dict
+from typing import Dict, Callable, Any
 from langgraph.graph import StateGraph
 
 from api.agents.checkpointer import get_checkpointer
@@ -8,8 +8,8 @@ from shared.logger import get_logger
 logger = get_logger("api.graphs")
 
 # Registry of available graphs
-_GRAPH_BUILDERS: Dict[str, callable] = {}
-_COMPILED_GRAPHS: Dict[str, any] = {}
+_GRAPH_BUILDERS: Dict[str, Callable[[], StateGraph]] = {}
+_COMPILED_GRAPHS: Dict[str, Any] = {}
 
 
 def register_graph(name: str):
@@ -22,13 +22,19 @@ def register_graph(name: str):
 
 def _get_eval_agent_workflow() -> StateGraph:
     """Get the eval_agent workflow (uncompiled)."""
-    from agents.eval_agent.graph import build_graph
+    try:
+        from agents.eval_agent.graph import build_graph  # pylint: disable=import-outside-toplevel, no-name-in-module
+    except ImportError as exc:  # pragma: no cover - environment-dependent
+        raise ValueError("eval_agent graph is not available") from exc
     return build_graph()
 
 
 def _get_supervisor_workflow() -> StateGraph:
     """Get the supervisor workflow (uncompiled)."""
-    from agents.supervisor.graph import build_graph
+    try:
+        from agents.supervisor.graph import build_graph  # pylint: disable=import-outside-toplevel, no-name-in-module
+    except ImportError as exc:  # pragma: no cover - environment-dependent
+        raise ValueError("supervisor graph is not available") from exc
     return build_graph()
 
 
@@ -63,7 +69,7 @@ async def get_compiled_graph(graph_name: str):
         return _COMPILED_GRAPHS[graph_name]
 
     # Build and compile
-    logger.info(f"Building graph: {graph_name}")
+    logger.info("Building graph: %s", graph_name)
     workflow = GRAPH_BUILDERS[graph_name]()
 
     # Get async checkpointer
@@ -74,7 +80,7 @@ async def get_compiled_graph(graph_name: str):
 
     # Cache
     _COMPILED_GRAPHS[graph_name] = compiled
-    logger.info(f"Graph {graph_name} compiled and cached")
+    logger.info("Graph %s compiled and cached", graph_name)
 
     return compiled
 

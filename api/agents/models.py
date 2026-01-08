@@ -1,8 +1,8 @@
 """Pydantic models for the FastAPI server."""
-from typing import Any, Dict, List, Literal, Optional
-from pydantic import BaseModel, Field
 from datetime import datetime
-import uuid
+from typing import Any, Dict, List, Literal, Optional
+
+from pydantic import BaseModel, Field
 
 
 class ThreadCreate(BaseModel):
