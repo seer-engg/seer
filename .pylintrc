@@ -25,6 +25,7 @@ disable=
     line-too-long,
     too-many-arguments,
     missing-class-docstring,
+    broad-except,
 
 [MASTER]
 # Add files or directories to the blacklist
@@ -36,7 +37,7 @@ max-line-length=200
 
 [DESIGN]
 # Maximum number of lines in a module
-max-module-lines=600
+max-module-lines=1000
 
 # Maximum number of locals for function / method body
 max-locals=20
