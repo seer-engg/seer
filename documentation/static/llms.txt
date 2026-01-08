@@ -1,0 +1,56 @@
+# Seer Documentation
+
+Seer is a workflow builder with fine-grained control for creating and executing automated workflows with integrated tools and services.
+
+## Documentation Structure
+
+### Getting Started
+- Quick Start: https://docs.getseer.dev/
+- Configuration: https://docs.getseer.dev/advanced/CONFIGURATION
+- Deployment: https://docs.getseer.dev/deployment/RAILWAY
+
+### Core Features
+- Visual workflow builder with drag-and-drop interface
+- AI-assisted development and debugging
+- Rich integrations (Google Workspace, GitHub, Supabase)
+- Advanced execution engine with streaming and interrupts
+- Enterprise-ready with OAuth and RBAC
+
+### Integrations
+- Supabase: https://docs.getseer.dev/integrations/SUPABASE
+- Google Workspace (Gmail, Drive, Sheets)
+- GitHub (Repositories, Issues, PRs)
+- Web Tools and APIs
+
+### Advanced
+- Workflow Triggers: https://docs.getseer.dev/advanced/TRIGGERS
+- Workflow Proposals: https://docs.getseer.dev/advanced/WORKFLOW_PROPOSALS
+- Configuration Reference: https://docs.getseer.dev/advanced/CONFIGURATION
+
+## Quick Start
+
+```bash
+git clone <repo> && cd seer
+docker compose up
+```
+
+Access the workflow editor at: http://localhost:5173/workflows?backend=http://localhost:8000
+
+## Key Integrations
+
+**Required:**
+- `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` - For workflow execution and AI assistance
+
+**Optional:**
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` - Google Workspace
+- `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` - GitHub integration
+- `SUPABASE_CLIENT_ID`, `SUPABASE_CLIENT_SECRET` - Supabase
+- `TAVILY_API_KEY` - Web search
+
+## Architecture Principle
+
+If workflows and agents are fundamentally different at the UI layer, they should be different at the API layer. We maintain separate APIs for workflows (deterministic, node-based) and agents (dynamic, message-based) to reduce complexity and improve maintainability.
+
+## Full Documentation
+
+For complete documentation with all details, see: https://docs.getseer.dev/llms-full.txt

@@ -1,0 +1,23 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "build",
+  "installCommand": "npm install",
+  "framework": null,
+  "devCommand": "npm run start",
+  "routes": [
+    {
+      "src": "/llms.txt",
+      "dest": "/llms.txt",
+      "headers": {
+        "Content-Type": "text/plain"
+      }
+    },
+    {
+      "src": "/llms-full.txt",
+      "dest": "/llms-full.txt",
+      "headers": {
+        "Content-Type": "text/plain"
+      }
+    }
+  ]
+}

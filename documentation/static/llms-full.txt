@@ -1,0 +1,835 @@
+# Seer - Complete Documentation
+
+Seer is a workflow builder with fine-grained control for creating and executing automated workflows with integrated tools and services.
+
+## Table of Contents
+
+1. Getting Started
+2. Configuration Reference
+3. Workflow Triggers
+4. Workflow Proposals
+5. Railway Deployment
+6. Supabase Integration
+
+---
+
+# 1. Getting Started with Seer
+
+Seer is a **workflow builder with fine-grained control** for creating and executing automated workflows with integrated tools and services. Build complex automation workflows with visual editing, AI-assisted development, and seamless integrations (Google Workspace, GitHub, and more).
+
+## Core Architecture Principle
+
+**If workflows and agents are fundamentally different at the UI layer, they should be different at the API layer.**
+
+This principle guides our API design: workflows (deterministic, node-based execution) and agents (dynamic, message-based conversations) have distinct mental models, data structures, and user needs. Rather than forcing unification through pattern matching or transformation layers, we maintain separate APIs and components that align with their fundamental differences. This reduces complexity, improves maintainability, and ensures each system can evolve independently.
+
+## Quick Start
+
+Get Seer running in 60 seconds:
+
+```bash
+git clone <repo> && cd seer
+docker compose up
+```
+
+That's it! This starts all Docker services (Postgres, Redis, backend, worker), streams logs, and waits for readiness.
+
+## Using the Workflow Editor
+
+After running `docker compose up`, the workflow editor is available at:
+- **Frontend**: http://localhost:5173/workflows?backend=http://localhost:8000
+- **Backend API**: http://localhost:8000
+
+## Configuration
+
+Create a `.env` file in your project root:
+
+```bash
+# Required
+OPENAI_API_KEY=sk-...
+
+# Optional integrations (add as needed)
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+TAVILY_API_KEY=...
+```
+
+Docker automatically configures `DATABASE_URL` and `REDIS_URL`.
+
+## Key Features
+
+### 🛠️ Visual Workflow Builder
+- Drag-and-drop interface for creating automation workflows
+- Node-based editor with custom blocks and integrations
+- Real-time workflow validation and execution
+
+### 🤖 AI-Assisted Development
+- Chat interface for workflow design and debugging
+- AI suggestions for workflow improvements
+- Intelligent error handling and recovery
+
+### 🔗 Rich Integrations
+- **Google Workspace**: Gmail, Drive, Sheets with OAuth
+- **GitHub**: Repository management, issues, PRs
+- **Web Tools**: Search, content fetching, APIs
+- **Databases**: PostgreSQL with approval-based write controls
+
+### ⚡ Advanced Execution Engine
+- Streaming execution with real-time updates
+- Interrupt handling for human-in-the-loop workflows
+- Persistent state management with PostgreSQL
+
+### 🔒 Enterprise-Ready
+- Self-hosted or cloud deployment options
+- OAuth-based authentication (Clerk integration)
+- Role-based access control
+- Audit trails and execution history
+
+## Development Workflow
+
+**Steps:**
+1. Run: `docker compose up`
+2. Code changes hot-reload via volume mounts (uvicorn --reload)
+3. Access workflow builder at: http://localhost:5173/workflows?backend=http://localhost:8000
+4. View logs in the terminal or run: `docker compose logs -f`
+5. Stop: `docker compose down`
+
+**Services started:**
+- **Backend API** (port 8000): FastAPI server with workflow execution engine
+- **Postgres** (port 5432): Workflow and user data persistence
+- **Redis** (port 6379): Taskiq message broker
+- **Taskiq Worker**: Run `uv run taskiq worker worker.broker:broker` to process triggers/polling/workflow runs
+
+---
+
+# 2. Configuration Reference
+
+Complete environment variable reference for Seer configuration.
+
+## Quick Start Configuration
+
+```bash
+# Required
+OPENAI_API_KEY=sk-...
+
+# Optional integrations
+GOOGLE_CLIENT_ID=your-client-id
+GOOGLE_CLIENT_SECRET=your-secret
+GITHUB_CLIENT_ID=your-github-client-id
+GITHUB_CLIENT_SECRET=your-github-secret
+```
+
+## Core Settings
+
+### Database Configuration
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `DATABASE_URL` | PostgreSQL connection string | `postgresql://seer:seer@postgres:5432/seer` | Yes |
+
+**Docker Compose:** Automatically configured via service dependencies.
+
+**Manual/Production:** Use format `postgresql://user:password@host:port/dbname`
+
+**Best Practices:**
+- Use connection pooling in production (PgBouncer recommended)
+- Enable SSL for production connections: `?sslmode=require`
+- Consider read replicas for high-traffic deployments
+
+### Redis Configuration
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `REDIS_URL` | Redis connection string | `redis://redis:6379/0` | Yes |
+
+**Docker Compose:** Automatically configured.
+
+**Manual/Production:** Use format `redis://host:port/db` or `redis://password@host:port/db`
+
+**Best Practices:**
+- Use Redis 6+ for ACL support
+- Configure maxmemory and eviction policies
+- Enable persistence (AOF) for production
+- Consider Redis Sentinel or Cluster for HA
+
+## AI & LLM Configuration
+
+### OpenAI
+
+| Variable | Description | How to Get |
+|----------|-------------|------------|
+| `OPENAI_API_KEY` | OpenAI API key for GPT models | [OpenAI API Keys](https://platform.openai.com/api-keys) |
+
+**Models Used:** GPT-4, GPT-3.5-turbo for workflow generation, chat, and AI assistance.
+
+### Anthropic (Alternative to OpenAI)
+
+| Variable | Description | How to Get |
+|----------|-------------|------------|
+| `ANTHROPIC_API_KEY` | Anthropic API key for Claude models | [Anthropic Console](https://console.anthropic.com/) |
+
+**Models Used:** Claude 3 Opus, Claude 3 Sonnet for workflow generation and chat.
+
+**Note:** Either `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` is required. If both are provided, OpenAI is used by default.
+
+## Authentication & Authorization
+
+### Clerk (OAuth Provider)
+
+| Variable | Description | How to Get |
+|----------|-------------|------------|
+| `CLERK_SECRET_KEY` | Clerk secret key for auth | [Clerk Dashboard](https://dashboard.clerk.com/) |
+| `CLERK_PUBLISHABLE_KEY` | Clerk publishable key | Same as above |
+
+**Setup:**
+1. Create a Clerk application
+2. Configure allowed redirect URLs: `http://localhost:8000/auth/callback`
+3. Enable Google OAuth in Clerk dashboard
+4. Copy API keys from Settings → API Keys
+
+### Google OAuth (Optional)
+
+| Variable | Description | How to Get |
+|----------|-------------|------------|
+| `GOOGLE_CLIENT_ID` | Google OAuth client ID | [Google Cloud Console](https://console.cloud.google.com/) |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | Same as above |
+| `GOOGLE_REDIRECT_URI` | OAuth redirect URI | Set to `http://localhost:8000/integrations/google/callback` |
+
+**Setup:**
+1. Create a project in Google Cloud Console
+2. Enable APIs: Gmail API, Google Drive API, Google Sheets API
+3. Configure OAuth consent screen
+4. Create OAuth 2.0 credentials (Web application)
+5. Add authorized redirect URIs
+
+**Scopes Used:**
+- Gmail: `https://www.googleapis.com/auth/gmail.readonly`, `gmail.send`
+- Drive: `https://www.googleapis.com/auth/drive.readonly`
+- Sheets: `https://www.googleapis.com/auth/spreadsheets.readonly`
+
+### GitHub OAuth (Optional)
+
+| Variable | Description | How to Get |
+|----------|-------------|------------|
+| `GITHUB_CLIENT_ID` | GitHub OAuth app client ID | [GitHub Settings → Developer Settings](https://github.com/settings/developers) |
+| `GITHUB_CLIENT_SECRET` | GitHub OAuth app secret | Same as above |
+| `GITHUB_REDIRECT_URI` | OAuth redirect URI | Set to `http://localhost:8000/integrations/github/callback` |
+
+**Setup:**
+1. Create a new OAuth App in GitHub Settings
+2. Set Homepage URL: `http://localhost:8000`
+3. Set Authorization callback URL: `http://localhost:8000/integrations/github/callback`
+4. Copy Client ID and generate a Client Secret
+
+**Scopes Used:** `repo`, `read:user`, `user:email`
+
+### Supabase OAuth (Optional)
+
+| Variable | Description | How to Get |
+|----------|-------------|------------|
+| `SUPABASE_CLIENT_ID` | Supabase OAuth client ID | [Supabase Dashboard](https://app.supabase.com/) |
+| `SUPABASE_CLIENT_SECRET` | Supabase OAuth client secret | Same as above |
+| `SUPABASE_REDIRECT_URI` | OAuth redirect URI | Set to `http://localhost:8000/integrations/supabase/callback` |
+
+**Setup:** See Supabase Integration guide.
+
+## Web Services & APIs
+
+### Web Search
+
+| Variable | Description | How to Get |
+|----------|-------------|------------|
+| `TAVILY_API_KEY` | API key for web search capabilities | [Tavily](https://tavily.com/) |
+
+### Tool Search (Optional)
+
+| Variable | Description | How to Get |
+|----------|-------------|------------|
+| `PINECONE_API_KEY` | Pinecone API key for semantic tool search | [Pinecone](https://app.pinecone.io/) |
+| `PINECONE_INDEX_NAME` | Pinecone index name | Create in Pinecone console |
+| `CONTEXT7_API_KEY` | Context7 API key for MCP tools | [Context7](https://context7.com/) |
+
+## Server Configuration
+
+### API Server
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HOST` | API server host | `0.0.0.0` |
+| `PORT` | API server port | `8000` |
+| `BACKEND_CORS_ORIGINS` | CORS allowed origins (JSON array) | `["http://localhost:5173"]` |
+| `LOG_LEVEL` | Logging level | `info` |
+
+**Example:**
+```bash
+BACKEND_CORS_ORIGINS='["http://localhost:5173","https://your-frontend.com"]'
+```
+
+### Worker Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TASKIQ_WORKER_CONCURRENCY` | Number of concurrent tasks | `4` |
+
+See Worker Documentation for detailed setup instructions.
+
+## Development vs Production
+
+### Development Setup (.env.local)
+
+```bash
+# Minimal required for local dev
+OPENAI_API_KEY=sk-...
+DATABASE_URL=postgresql://seer:seer@localhost:5432/seer
+REDIS_URL=redis://localhost:6379/0
+CLERK_SECRET_KEY=sk_test_...
+```
+
+### Production Setup (.env.production)
+
+```bash
+# Production configuration
+OPENAI_API_KEY=sk-prod-...
+DATABASE_URL=postgresql://user:password@prod-db:5432/seer?sslmode=require
+REDIS_URL=redis://password@prod-redis:6379/0
+CLERK_SECRET_KEY=sk_live_...
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+GITHUB_CLIENT_ID=...
+GITHUB_CLIENT_SECRET=...
+LOG_LEVEL=warning
+BACKEND_CORS_ORIGINS='["https://app.getseer.dev"]'
+```
+
+**Security Best Practices:**
+- Use secrets management (Railway Secrets, AWS Secrets Manager, HashiCorp Vault)
+- Rotate API keys regularly
+- Enable SSL/TLS for all connections
+- Use environment-specific OAuth redirect URIs
+- Never commit `.env` files to version control
+
+## Verification
+
+After configuration, verify your setup:
+
+```bash
+# Start services
+docker compose up
+
+# Check logs for successful initialization
+docker compose logs api | grep "Started server"
+
+# Test API health endpoint
+curl http://localhost:8000/health
+
+# Test workflow execution
+# Access http://localhost:5173/workflows?backend=http://localhost:8000
+```
+
+---
+
+# 3. Workflow Triggers
+
+## Overview
+Workflow triggers allow workflows to be executed automatically in response to events.
+
+**Supported Trigger Types:**
+- **Polling:** Regularly check external data sources (email, databases, APIs)
+- **Webhooks:** React to HTTP POST requests from external services
+- **Scheduled:** Cron-based time triggers
+- **Form Hosted:** Custom form submissions that trigger workflows
+
+**Status:** Beta - API may change in minor versions
+
+## Architecture
+
+Triggers are processed by a dedicated Taskiq worker that:
+- Polls data sources at configured intervals
+- Receives and validates webhook payloads
+- Executes scheduled tasks via cron
+- Handles form submissions
+- Dispatches workflow runs to the execution engine
+
+## Worker Setup
+- A dedicated Taskiq worker handles trigger polling, webhook dispatch, and saved-workflow execution so the FastAPI app stays responsive.
+- Start it with `taskiq worker worker.broker:broker` (remember to point `REDIS_URL` at your Redis instance).
+
+## Trigger Configuration
+
+### Polling Triggers
+
+Poll external data sources at regular intervals:
+
+```json
+{
+  "type": "polling",
+  "config": {
+    "interval": 300,
+    "source": "gmail",
+    "query": "is:unread label:important"
+  }
+}
+```
+
+### Webhook Triggers
+
+Receive HTTP POST requests:
+
+```json
+{
+  "type": "webhook",
+  "config": {
+    "path": "/webhooks/custom-trigger",
+    "authentication": "bearer_token"
+  }
+}
+```
+
+### Scheduled Triggers
+
+Run workflows on a cron schedule:
+
+```json
+{
+  "type": "scheduled",
+  "config": {
+    "cron": "0 9 * * MON-FRI",
+    "timezone": "America/New_York"
+  }
+}
+```
+
+### Form Hosted Triggers
+
+Create custom forms that trigger workflows:
+
+```json
+{
+  "type": "form.hosted",
+  "config": {
+    "fields": [
+      {"name": "email", "type": "email", "required": true},
+      {"name": "message", "type": "text", "required": true}
+    ]
+  }
+}
+```
+
+## API Endpoints
+
+### Create Trigger
+
+```bash
+POST /api/workflows/{workflow_id}/triggers
+```
+
+### List Triggers
+
+```bash
+GET /api/workflows/{workflow_id}/triggers
+```
+
+### Update Trigger
+
+```bash
+PATCH /api/workflows/{workflow_id}/triggers/{trigger_id}
+```
+
+### Delete Trigger
+
+```bash
+DELETE /api/workflows/{workflow_id}/triggers/{trigger_id}
+```
+
+## Best Practices
+
+- Use appropriate polling intervals (avoid excessive API calls)
+- Implement webhook authentication
+- Handle trigger failures gracefully
+- Monitor trigger execution logs
+- Test triggers in development before production
+
+---
+
+# 4. Workflow Proposals
+
+## Overview
+The workflow chat agent can generate complete, compiler-ready workflow specifications.
+
+**Key Features:**
+- AI-generated workflow JSON from natural language
+- Validation against workflow schema
+- Integration with workflow compiler
+- Iterative refinement through conversation
+
+## How It Works
+
+1. User describes workflow in natural language
+2. AI generates structured workflow JSON
+3. System validates against schema
+4. Workflow compiles to executable format
+5. User can refine through follow-up questions
+
+## Proposal Format
+
+Workflow proposals follow the Seer workflow schema:
+
+```json
+{
+  "blocks": [
+    {
+      "id": "start",
+      "type": "start",
+      "data": {}
+    },
+    {
+      "id": "send_email",
+      "type": "tools.gmail.send",
+      "data": {
+        "to": "user@example.com",
+        "subject": "Hello",
+        "body": "World"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "start",
+      "target": "send_email"
+    }
+  ]
+}
+```
+
+## Example Conversation
+
+**User:** "Create a workflow that sends me an email every morning with my unread Gmail messages"
+
+**AI Response:**
+```json
+{
+  "proposal": {
+    "blocks": [
+      {
+        "id": "trigger",
+        "type": "trigger.scheduled",
+        "data": {
+          "cron": "0 9 * * *"
+        }
+      },
+      {
+        "id": "fetch_emails",
+        "type": "tools.gmail.list",
+        "data": {
+          "query": "is:unread"
+        }
+      },
+      {
+        "id": "send_summary",
+        "type": "tools.gmail.send",
+        "data": {
+          "to": "me",
+          "subject": "Daily Unread Email Summary",
+          "body": "{{fetch_emails.messages}}"
+        }
+      }
+    ],
+    "edges": [
+      {"source": "trigger", "target": "fetch_emails"},
+      {"source": "fetch_emails", "target": "send_summary"}
+    ]
+  }
+}
+```
+
+## Validation & Compilation
+
+Proposals are automatically:
+- Validated against workflow schema
+- Type-checked for block compatibility
+- Compiled to executable format
+- Tested for syntax errors
+
+## Best Practices
+
+- Provide clear, specific workflow descriptions
+- Include example data when relevant
+- Iterate based on validation feedback
+- Review generated workflows before deployment
+
+---
+
+# 5. Railway Deployment Guide
+
+This guide walks you through creating a Railway template for one-click Seer deployment.
+
+## Overview
+
+The Seer Railway deployment consists of 4 services:
+1. **PostgreSQL** - Database (Railway-managed)
+2. **Redis** - Task queue and cache (Railway-managed)
+3. **seer-api** - FastAPI backend server (custom)
+4. **seer-worker** - Background task worker (custom)
+
+## Prerequisites
+
+- Railway account ([Sign up](https://railway.app))
+- GitHub repository with Seer code
+- Basic understanding of environment variables
+
+## Step 1: Initial Manual Deployment
+
+### 1.1 Create New Railway Project
+
+1. Go to [Railway](https://railway.app)
+2. Sign in to your account
+3. Click "New Project"
+4. Select "Deploy from GitHub repo"
+5. Choose your Seer repository
+
+### 1.2 Add PostgreSQL
+
+1. Click "New" → "Database" → "Add PostgreSQL"
+2. Railway automatically provisions and connects the database
+3. `DATABASE_URL` is auto-injected as environment variable
+
+### 1.3 Add Redis
+
+1. Click "New" → "Database" → "Add Redis"
+2. Railway provisions Redis instance
+3. `REDIS_URL` is auto-injected as environment variable
+
+## Step 2: Configure API Service
+
+### 2.1 Service Settings
+
+1. Click on the API service
+2. Go to "Settings"
+3. Configure:
+   - **Name:** `seer-api`
+   - **Start Command:** `uvicorn api.main:app --host 0.0.0.0 --port $PORT`
+   - **Build Command:** (leave default)
+
+### 2.2 Environment Variables
+
+Add these required variables:
+
+```bash
+OPENAI_API_KEY=your-key-here
+CLERK_SECRET_KEY=your-clerk-key
+BACKEND_CORS_ORIGINS=["https://your-frontend.railway.app"]
+```
+
+Optional integrations:
+```bash
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+GITHUB_CLIENT_ID=...
+GITHUB_CLIENT_SECRET=...
+TAVILY_API_KEY=...
+```
+
+### 2.3 Networking
+
+1. Go to "Settings" → "Networking"
+2. Click "Generate Domain"
+3. Note the domain (e.g., `seer-api-production.up.railway.app`)
+
+## Step 3: Configure Worker Service
+
+### 3.1 Create Worker Service
+
+1. Click "New" → "Empty Service"
+2. Link to same GitHub repository
+3. Name it `seer-worker`
+
+### 3.2 Worker Settings
+
+1. Go to "Settings"
+2. Configure:
+   - **Start Command:** `taskiq worker worker.broker:broker`
+   - **Build Command:** (leave default)
+
+### 3.3 Environment Variables
+
+The worker needs the same environment variables as the API service. Railway can share variables between services:
+
+1. Go to API service variables
+2. Copy all variables
+3. Paste into worker service
+4. Ensure `DATABASE_URL` and `REDIS_URL` are inherited
+
+## Step 4: Configure OAuth Redirect URIs
+
+Update your OAuth applications with Railway domains:
+
+### Google OAuth
+- Authorized redirect URIs: `https://your-api-domain.railway.app/integrations/google/callback`
+
+### GitHub OAuth
+- Authorization callback URL: `https://your-api-domain.railway.app/integrations/github/callback`
+
+### Clerk
+- Allowed redirect URLs: `https://your-api-domain.railway.app/auth/callback`
+
+## Step 5: Deploy
+
+1. Commit and push changes to GitHub
+2. Railway automatically detects changes and deploys
+3. Monitor deployment logs in Railway dashboard
+4. Verify services are healthy
+
+## Step 6: Create Railway Template (Optional)
+
+Once your deployment works:
+
+1. Click project settings → "Template"
+2. Configure template variables:
+   - Mark sensitive variables as "required"
+   - Add descriptions for each variable
+3. Publish template
+4. Get template URL for one-click deploys
+
+## Monitoring & Logs
+
+### View Logs
+
+1. Click on any service
+2. Go to "Deployments"
+3. Click on latest deployment
+4. View real-time logs
+
+### Health Checks
+
+Test your deployment:
+
+```bash
+# API health check
+curl https://your-api-domain.railway.app/health
+
+# Check database connection
+curl https://your-api-domain.railway.app/api/health/db
+```
+
+## Cost Estimation
+
+Railway pricing (as of 2026):
+- **Hobby Plan:** $5/month base + usage
+- **Pro Plan:** $20/month base + usage
+
+Typical Seer deployment:
+- PostgreSQL: ~$5-10/month
+- Redis: ~$3-5/month
+- API + Worker: ~$7-15/month
+
+**Total:** $15-30/month for production deployment
+
+## Troubleshooting
+
+### Database Connection Issues
+
+```bash
+# Check DATABASE_URL format
+echo $DATABASE_URL
+# Should be: postgresql://user:password@host:port/db
+```
+
+### Worker Not Starting
+
+```bash
+# Verify Redis connection
+redis-cli -u $REDIS_URL ping
+# Should return: PONG
+```
+
+### Build Failures
+
+- Check Python version in `railway.toml` or `.python-version`
+- Verify all dependencies in `requirements.txt` or `pyproject.toml`
+- Review build logs for specific errors
+
+## Production Best Practices
+
+1. **Scaling:**
+   - Add horizontal replicas for API service
+   - Monitor memory/CPU usage
+   - Use Railway's autoscaling features
+
+2. **Security:**
+   - Rotate API keys regularly
+   - Use Railway's secret management
+   - Enable SSL/TLS (auto-configured)
+   - Configure CORS restrictively
+
+3. **Backups:**
+   - Railway PostgreSQL has automatic backups
+   - Export critical data regularly
+   - Test restore procedures
+
+4. **Monitoring:**
+   - Set up Railway alerting
+   - Monitor error rates in logs
+   - Track API response times
+   - Use external uptime monitoring
+
+---
+
+# 6. Supabase Integration
+
+## Multi-Credential Integration Setup
+
+Supabase support adds persisted resources plus non-OAuth secrets:
+
+1. Connect your Supabase management account via OAuth (`supabase_mgmt` provider).
+2. Browse projects with the existing resource picker (`supabase_project` type) and call `POST /integrations/supabase/projects/bind` to persist the selection.
+3. For each bound project, store secrets like `service_role_key`, `anon_key`, `db_password` using `POST /integrations/resources/{resource_id}/secrets`.
+
+## Configuration
+
+Add to your `.env`:
+
+```bash
+SUPABASE_CLIENT_ID=your-client-id
+SUPABASE_CLIENT_SECRET=your-client-secret
+SUPABASE_REDIRECT_URI=http://localhost:8000/integrations/supabase/callback
+```
+
+## API Endpoints
+
+- `GET /integrations/supabase/projects` – list projects from Supabase management API (requires OAuth).
+- `POST /integrations/supabase/projects/bind` – persist a project as a resource for the signed-in user.
+- `POST /integrations/resources/{resource_id}/secrets` – attach secrets (service role key, etc.) to a bound resource.
+- `GET /integrations/supabase/resources/bindings` – list persisted projects for the signed-in user.
+- `GET /integrations/resources/{resource_id}/secrets` – view secret fingerprints + metadata linked to a resource.
+- `DELETE /integrations/resources/{resource_id}` – revoke a resource binding and deactivate attached secrets.
+
+## Workflow Usage
+
+In workflows, reference Supabase projects and secrets:
+
+```json
+{
+  "type": "tools.supabase.query",
+  "data": {
+    "resource_id": "{{supabase_project.id}}",
+    "query": "SELECT * FROM users",
+    "use_service_role": true
+  }
+}
+```
+
+---
+
+## Additional Resources
+
+- GitHub Repository: https://github.com/seer-engg/seer
+- Documentation: https://docs.getseer.dev
+- Issues & Feedback: https://github.com/seer-engg/seer/issues
+
+## Support
+
+For questions and support:
+1. Check the documentation above
+2. Search existing GitHub issues
+3. Create a new issue if needed
+4. Tag with appropriate labels (bug, feature, question)
