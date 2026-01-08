@@ -22,9 +22,9 @@ from api.workflows.services.shared import (
     _get_workflow
 )
 from shared.config import config as shared_config
+from shared.database.models import User
 from shared.database.workflow_models import (
     TriggerSubscription,
-    User,
     WorkflowDraft,
     make_workflow_public_id,
 )
