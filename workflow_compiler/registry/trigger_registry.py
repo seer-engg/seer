@@ -129,6 +129,23 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
         )
     )
 
+    registry.register(
+        TriggerDefinition(
+            key="form.hosted",
+            title="Hosted Form",
+            provider="form",
+            mode="webhook",
+            description=(
+                "Create a public form with custom fields that non-technical "
+                "users can fill out to trigger workflows."
+            ),
+            event_schema=_enveloped_event_schema(_form_hosted_payload_schema()),
+            sample_event=_form_hosted_sample_event(),
+            metadata={"integration": "form", "public_facing": True},
+            requires_connection=False,
+        )
+    )
+
 
 def _gmail_email_received_payload_schema() -> JsonSchema:
     return {
@@ -281,6 +298,7 @@ def _cron_schedule_sample_event() -> Dict[str, Any]:
         "raw": None,
     }
 
+
 def _supabase_db_changes_payload_schema() -> JsonSchema:
     return {
         "type": "object",
@@ -349,6 +367,34 @@ def _supabase_db_changes_sample_event() -> Dict[str, Any]:
         "data": payload,
         "raw": {"payload": payload},
     }
+
+
+def _form_hosted_payload_schema() -> JsonSchema:
+    return {
+        "type": "object",
+        "description": "Form submission data with custom field values",
+        "additionalProperties": True,
+    }
+
+
+def _form_hosted_sample_event() -> Dict[str, Any]:
+    payload = {
+        "name": "John Doe",
+        "email": "john@example.com",
+        "company": "Acme Corp",
+        "message": "I'm interested in learning more about your product",
+    }
+    return {
+        "id": "evt_sample_form_hosted",
+        "trigger_key": "form.hosted",
+        "provider": "form",
+        "account_id": None,
+        "occurred_at": "2026-01-08T14:30:00Z",
+        "received_at": "2026-01-08T14:30:00Z",
+        "data": payload,
+        "raw": {"payload": payload},
+    }
+
 
 trigger_registry = TriggerRegistry()
 _register_builtin_triggers(trigger_registry)
