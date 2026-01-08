@@ -75,7 +75,7 @@ class GoogleResourceProvider(ResourceProvider):
             raise HTTPException(status_code=400, detail=f"Unsupported Google resource type '{resource_type}'")
 
         if resource_type == "google_spreadsheet":
-            logger.info(f"Listing Google Spreadsheets for parent_id: {parent_id}")
+            logger.info("Listing Google Spreadsheets for parent_id: %s", parent_id)
             return await self._list_drive_files(
                 access_token,
                 config,

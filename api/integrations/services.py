@@ -34,8 +34,7 @@ def parse_scopes(scopes_str: str) -> Set[str]:
     # If scopes contain commas, split by comma; otherwise split by whitespace
     if ',' in scopes_str:
         return set(s.strip() for s in scopes_str.split(',') if s.strip())
-    else:
-        return set(scopes_str.split())
+    return set(scopes_str.split())
 
 
 def merge_scopes(existing_scopes: str, new_scopes: str) -> str:
@@ -213,7 +212,7 @@ def extract_provider_account_id(oauth_provider: str, profile: Dict[str, Any]) ->
                 f"Profile keys: {list(profile.keys())}"
             )
         return provider_account_id
-    elif oauth_provider == 'github':
+    if oauth_provider == 'github':
         provider_id = profile.get('id')
         if provider_id is None:
             raise ValueError(
@@ -221,14 +220,14 @@ def extract_provider_account_id(oauth_provider: str, profile: Dict[str, Any]) ->
                 f"Profile keys: {list(profile.keys())}"
             )
         return str(provider_id)
-    else:
-        provider_id = profile.get('id')
-        if provider_id is None:
-            raise ValueError(
-                f"{oauth_provider} profile missing required field 'id'. "
-                f"Profile keys: {list(profile.keys())}"
-            )
-        return str(provider_id)
+
+    provider_id = profile.get('id')
+    if provider_id is None:
+        raise ValueError(
+            f"{oauth_provider} profile missing required field 'id'. "
+            f"Profile keys: {list(profile.keys())}"
+        )
+    return str(provider_id)
 
 
 async def store_oauth_connection(
@@ -236,6 +235,7 @@ async def store_oauth_connection(
     provider: str,
     token: Dict[str, Any],
     profile: Dict[str, Any],
+    *,
     granted_scopes: str = "",
     integration_type: Optional[str] = None
 ):
@@ -255,8 +255,13 @@ async def store_oauth_connection(
     # Normalize provider to OAuth provider
     oauth_provider = get_oauth_provider(provider)
 
-    logger.info(f"Storing OAuth connection: user_id={user_id}, oauth_provider={oauth_provider}, "
-                f"integration_type={integration_type}, scopes={granted_scopes[:100]}...")
+    logger.info(
+        "Storing OAuth connection: user_id=%s, oauth_provider=%s, integration_type=%s, scopes=%s...",
+        user_id,
+        oauth_provider,
+        integration_type,
+        (granted_scopes or "")[:100],
+    )
 
     # Find user
     user = await User.get(user_id=user_id)
@@ -294,7 +299,11 @@ async def store_oauth_connection(
         connection.token_type = token_type
         connection.updated_at = datetime.now(timezone.utc)
         await connection.save()
-        logger.info(f"Updated existing connection for {oauth_provider}, merged scopes: {connection.scopes[:100]}...")
+        logger.info(
+            "Updated existing connection for %s, merged scopes: %s...",
+            oauth_provider,
+            (connection.scopes or "")[:100],
+        )
     else:
         connection = await OAuthConnection.create(
             user=user,
@@ -308,7 +317,7 @@ async def store_oauth_connection(
             scopes=granted_scopes,
             token_type=token_type
         )
-        logger.info(f"Created new connection for {oauth_provider}")
+        logger.info("Created new connection for %s", oauth_provider)
 
     return connection
 
@@ -317,11 +326,11 @@ async def list_connections(user: User):
     List all active OAuth connections for a user.
     """
     try:
-        logger.info(f"Listing connections for user {user.user_id}")
+        logger.info("Listing connections for user %s", user.user_id)
         connections = await OAuthConnection.filter(user=user, status="active").all()
         return connections
     except Exception as e:
-        logger.error(f"Error listing connections for user {user.user_id}: {e}")
+        logger.error("Error listing connections for user %s: %s", user.user_id, e)
         return []
 
 
@@ -345,7 +354,7 @@ async def get_connection_for_provider(user: User, provider: str) -> Optional[OAu
         )
         return connection
     except Exception as e:
-        logger.error(f"Error getting connection for provider {provider}: {e}")
+        logger.error("Error getting connection for provider %s: %s", provider, e)
         return None
 
 
@@ -356,7 +365,12 @@ async def disconnect_provider(user: User, provider: str):
         # Soft delete (revoke) all connections for this provider
         await OAuthConnection.filter(user=user, provider=oauth_provider).update(status="revoked")
     except Exception as e:
-        logger.error(f"Error disconnecting provider {provider} for user {user.user_id}: {e}")
+        logger.error(
+            "Error disconnecting provider %s for user %s: %s",
+            provider,
+            user.user_id,
+            e,
+        )
         raise
 
 
@@ -371,7 +385,12 @@ async def delete_connection_by_id(user: User, connection_id: str):
 
         await OAuthConnection.filter(id=int(db_id), user=user).update(status="revoked")
     except Exception as e:
-        logger.error(f"Error deleting connection {connection_id} for user {user.user_id}: {e}")
+        logger.error(
+            "Error deleting connection %s for user %s: %s",
+            connection_id,
+            user.user_id,
+            e,
+        )
         raise
 
 

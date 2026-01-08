@@ -104,13 +104,13 @@ class IntegrationProvider:
     # OAuth lifecycle hooks (optional)
     # -------------------------------------------------------------------------
 
-    def get_oauth_scope(self, context: OAuthAuthorizeContext) -> str:
+    def get_oauth_scope(self, _context: OAuthAuthorizeContext) -> str:
         """Return the scope string that should be sent to the provider."""
-        return " ".join(context.requested_scopes)
+        return " ".join(_context.requested_scopes)
 
     def build_authorize_kwargs(
         self,
-        context: OAuthAuthorizeContext,
+        _context: OAuthAuthorizeContext,
         *,
         state: str,
         scope: str,
@@ -135,6 +135,7 @@ class IntegrationProvider:
         state_data: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Return profile details for the connected account."""
+        _ = (client, state_data)  # mark as used for linters
         return token.get("userinfo") or {}
 
 
