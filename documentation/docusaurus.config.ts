@@ -59,15 +59,17 @@ const config: Config = {
       respectPrefersColorScheme: true,
     },
     // Algolia DocSearch configuration
-    // Apply for free access at: https://docsearch.algolia.com/apply/
-    // Once approved, uncomment and fill in your API keys:
-    // algolia: {
-    //   appId: 'YOUR_APP_ID',
-    //   apiKey: 'YOUR_SEARCH_API_KEY',
-    //   indexName: 'seer',
-    //   contextualSearch: true,
-    //   searchParameters: {},
-    // },
+    algolia: {
+      appId: '4FRO5P9OUZ',
+      apiKey: 'ff2707a0fe9916f1d9f88fc855c45263',
+      indexName: 'Docs crawler',
+      contextualSearch: true,
+      searchParameters: {},
+      insights: true, // Enable search analytics
+      // AI-powered search assistant
+      // @ts-ignore - askAi is supported but not in type definitions yet
+      askAi: 'wr254tv8zZQO',
+    },
     navbar: {
       title: 'Seer',
       logo: {
