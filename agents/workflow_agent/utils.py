@@ -6,7 +6,7 @@ logger = get_logger(__name__)
 
 
 
-def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:
+def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:  # pylint: disable=unused-argument
     """
     Get all workflow manipulation tools and dynamic discovery tools.
 
@@ -24,13 +24,8 @@ def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:
         # list_available_tools,
     ]
 
-    if workflow_state is None:
-        # Return tools as-is (they'll require workflow_state parameter)
-        return base_tools
-    else:
-        # Note: Discovery tools don't need workflow_state, so we return them as-is
-        # Workflow manipulation tools will need workflow_state passed by LLM
-        return base_tools
+    # Note: Discovery tools don't need workflow_state; workflow_state can be injected by caller when needed
+    return base_tools
 
 
 def extract_thinking_from_messages(messages: List[Any]) -> List[str]:

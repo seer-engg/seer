@@ -1,5 +1,4 @@
-import base64
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional
 
 import httpx
 from fastapi import HTTPException

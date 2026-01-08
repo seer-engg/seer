@@ -2,21 +2,21 @@
 Integration tool discovery and execution utilities.
 Uses local Chroma vector store for semantic tool search and new tool executor.
 """
-from shared.config import config
-import os
 import json
-import asyncio
-from typing import Optional, Tuple, List, Dict, Any
+import traceback
+import os
+import logging
+from typing import Any, Dict, List, Optional
+
 from langchain_core.tools import tool
 
-from shared.tool_hub import LocalToolHub
-from agents.supervisor.models import ToolParameter, ToolDefinition
-from agents.supervisor.state import SupervisorState
+from shared.database.models import User
+from shared.tool_hub.singleton import get_toolhub_instance
 from shared.tools.registry import get_tools_by_integration
 from shared.tools.executor import execute_tool as execute_tool_with_oauth
-from shared.tools.base import get_tool
-
-import logging
+from agents.supervisor.state import SupervisorState
+from agents.supervisor.tools.runtime_tool_store import _runtime_tool_store
+from agents.supervisor.tools.user_context_store import get_user_context_store
 logger = logging.getLogger(__name__)
 
 def get_user_context_from_state(state: Optional[SupervisorState] = None) -> Dict[str, Any]:
@@ -108,7 +108,6 @@ async def _search_tools_local(
     """
 
     # Use shared LocalToolHub singleton instance
-    from shared.tool_hub.singleton import get_toolhub_instance
     toolhub = get_toolhub_instance()
 
     if toolhub is None:
@@ -182,7 +181,7 @@ async def search_tools(
         }, indent=2)
 
     except Exception as e:
-        logger.exception(f"Error searching tools: {e}")
+        logger.exception("Error searching tools: %s", e)
         return json.dumps({
             "tools": [],
             "error": str(e)
@@ -197,9 +196,9 @@ def _normalize_nested_json_strings(data: Any) -> Any:
     """
     if isinstance(data, dict):
         return {k: _normalize_nested_json_strings(v) for k, v in data.items()}
-    elif isinstance(data, list):
+    if isinstance(data, list):
         return [_normalize_nested_json_strings(item) for item in data]
-    elif isinstance(data, str):
+    if isinstance(data, str):
         # Try to parse as JSON
         try:
             parsed = json.loads(data)
@@ -207,8 +206,7 @@ def _normalize_nested_json_strings(data: Any) -> Any:
             return _normalize_nested_json_strings(parsed)
         except (json.JSONDecodeError, ValueError):
             return data
-    else:
-        return data
+    return data
 
 
 @tool
@@ -232,7 +230,6 @@ async def execute_tool(tool_name: str, params: str) -> str:
     args = _normalize_nested_json_strings(args)
 
     # **CHECK FOR PLANNED EXECUTION (Enforcement):**
-    from tools.runtime_tool_store import _runtime_tool_store
 
     # TODO: Extract thread_id from runtime context if available
     planned_execution = _runtime_tool_store.get_planned_execution(clean_name, thread_id="default")
@@ -250,13 +247,12 @@ async def execute_tool(tool_name: str, params: str) -> str:
     # If planned execution exists, use validated params from think()
     # Params are already validated by Pydantic in think(), so we can trust them
     # Still validate against tool schema if available
-    tool_schema = _runtime_tool_store.get_tool_schema(clean_name)
+    # tool_schema = _runtime_tool_store.get_tool_schema(clean_name)  # Not used currently
 
     # Clear planned execution after use
     _runtime_tool_store.clear_planned_execution(clean_name, thread_id="default")
 
     # Get user_id and connection_id from context store (user-specific, not env var)
-    from tools.user_context_store import get_user_context_store
     user_context = get_user_context_store().get_user_context(thread_id="default")
     user_id = user_context["user_id"]
     connected_accounts = user_context["connected_accounts"]
@@ -287,9 +283,15 @@ async def execute_tool(tool_name: str, params: str) -> str:
         else:
             logger.warning("No connection_id for %s tool %s - tool may not require OAuth", integration_type, clean_name)
 
+        # Fetch User model instance for executor
+        try:
+            user = await User.get(user_id=user_id)
+        except Exception:
+            return f"Error executing {clean_name}: user not found for user_id={user_id}"
+
         result = await execute_tool_with_oauth(
             tool_name=clean_name,
-            user_id=user_id,
+            user=user,
             connection_id=connection_id,
             arguments=args
         )
@@ -303,6 +305,5 @@ async def execute_tool(tool_name: str, params: str) -> str:
         return result_str
 
     except Exception as e:
-        import traceback
-        logger.exception(f"Error executing tool {clean_name}: {e}")
+        logger.exception("Error executing tool %s: %s", clean_name, e)
         return f"Error executing {clean_name}: {traceback.format_exc()}"

@@ -1,4 +1,8 @@
 from typing import Optional, Dict, Any
+from langchain.agents import create_agent
+from langchain.agents.middleware import (
+        SummarizationMiddleware,
+    )
 from shared.logger import get_logger
 from shared.llm import get_llm_without_responses_api
 from agents.workflow_agent.utils import get_workflow_tools
@@ -7,12 +11,6 @@ from agents.workflow_agent.schema_context import (
     get_workflow_spec_schema_text,
 )
 logger = get_logger(__name__)
-
-from langchain.agents import create_agent
-from langchain.agents.middleware import (
-        SummarizationMiddleware,
-    )
-import json
 
 WORKFLOW_SPEC_SCHEMA = get_workflow_spec_schema_text()
 WORKFLOW_SPEC_EXAMPLE = get_workflow_spec_example_text()
@@ -89,7 +87,7 @@ def create_workflow_chat_agent(
     if checkpointer is None:
         logger.warning("No checkpointer provided to create_workflow_chat_agent - traces will not be persisted")
     else:
-        logger.debug(f"Creating workflow chat agent with checkpointer: {type(checkpointer).__name__}")
+        logger.debug("Creating workflow chat agent with checkpointer: %s", type(checkpointer).__name__)
 
     # Create agent with middleware
     agent = create_agent(
@@ -100,5 +98,5 @@ def create_workflow_chat_agent(
         checkpointer=checkpointer,
     )
 
-    logger.info(f"Created workflow chat agent with model {model}, checkpointer={'enabled' if checkpointer else 'disabled'}")
+    logger.info("Created workflow chat agent with model %s, checkpointer=%s", model, 'enabled' if checkpointer else 'disabled')
     return agent

@@ -46,7 +46,7 @@ def get_env_summary() -> dict:
     """Get a summary of environment variable status (for health checks)."""
     return {
         "required": {
-            var: bool(os.getenv(var)) for var in _REQUIRED_VARS.keys()
+            var: bool(os.getenv(var)) for var in _REQUIRED_VARS
         },
         "optional": {}
     }
