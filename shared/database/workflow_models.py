@@ -1,9 +1,6 @@
 from datetime import datetime, timezone
 from enum import Enum
-from pydantic import BaseModel, ConfigDict, Field
 from tortoise import fields, models
-
-from shared.database.models import User
 
 
 WORKFLOW_ID_PREFIX = "wf_"
@@ -111,7 +108,7 @@ class WorkflowDraft(models.Model):
         table = "workflow_drafts"
 
     def __str__(self) -> str:
-        return f"WorkflowDraft<wf={self.workflow_id} rev={self.revision}>"
+        return f"WorkflowDraft<wf={self.workflow_public_id} rev={self.revision}>"
 
     @property
     def workflow_public_id(self) -> str:
@@ -150,7 +147,7 @@ class WorkflowVersion(models.Model):
         )
 
     def __str__(self) -> str:
-        return f"WorkflowVersion<wf={self.workflow_id} status={self.status}>"
+        return f"WorkflowVersion<wf={self.workflow_public_id} status={self.status}>"
 
     @property
     def workflow_public_id(self) -> str:
@@ -256,12 +253,12 @@ class WorkflowChatSession(models.Model):
         ordering = ("-updated_at",)
 
     def __str__(self) -> str:
-        return f"WorkflowChatSession<{make_workflow_public_id(self.workflow_id)}:{self.thread_id}>"
+        return f"WorkflowChatSession<{self.workflow_public_id}:{self.thread_id}>"
 
     @property
     def workflow_public_id(self) -> str:
         """Expose wf_* identifier used by public APIs."""
-        return make_workflow_public_id(self.workflow_id)
+        return self.workflow.workflow_id
 
 
 class TriggerSubscription(models.Model):
@@ -398,4 +395,4 @@ class WorkflowProposal(models.Model):
     @property
     def workflow_public_id(self) -> str:
         """Expose wf_* identifier used by public APIs."""
-        return make_workflow_public_id(self.workflow_id)
+        return self.workflow.workflow_id
