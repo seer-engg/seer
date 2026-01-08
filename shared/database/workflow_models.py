@@ -1,9 +1,7 @@
 from datetime import datetime, timezone
 from enum import Enum
-from pydantic import BaseModel, ConfigDict, Field
-from tortoise import fields, models
 
-from shared.database.models import User
+from tortoise import fields, models
 
 
 WORKFLOW_ID_PREFIX = "wf_"
@@ -230,7 +228,6 @@ class WorkflowRun(models.Model):
         return make_run_public_id(self.id)
 
 
-
 class WorkflowChatSession(models.Model):
     """Chat session for workflow assistant."""
 
@@ -279,6 +276,11 @@ class TriggerSubscription(models.Model):
     bindings = fields.JSONField(null=True)
     provider_config = fields.JSONField(null=True)
     secret_token = fields.CharField(max_length=255, null=True)
+    # Form trigger fields
+    input_contract = fields.JSONField(null=True, description="Dict[str, InputDef] defining workflow inputs")
+    form_suffix = fields.CharField(max_length=100, null=True, description="Custom URL slug for form triggers (e.g., 'contact-form')")
+    form_fields = fields.JSONField(null=True, description="Array of InputField configs for form triggers")
+    form_config = fields.JSONField(null=True, description="Form UI configuration (title, description, styling)")
     # NOTE: Adding/changing these poll_* fields requires a manual DB migration.
     poll_interval_seconds = fields.IntField(default=60)
     next_poll_at = fields.DatetimeField(

@@ -7,20 +7,18 @@ from uuid import uuid4
 from fastapi import HTTPException, status
 from tortoise.exceptions import DoesNotExist, IntegrityError
 
+from api.workflows import services as workflow_services
 from shared.database.workflow_models import (
     TriggerEvent,
     TriggerEventStatus,
     TriggerSubscription,
     WorkflowRun,
     WorkflowRunSource,
-    WorkflowRunStatus,
 )
+from shared.logger import get_logger
+from worker.tasks.triggers import process_trigger_event as process_trigger_event_task
 from workflow_compiler.registry.trigger_registry import trigger_registry
 from workflow_compiler.schema.models import WorkflowSpec
-
-from api.workflows import services as workflow_services
-from worker.tasks.triggers import process_trigger_event as process_trigger_event_task
-from shared.logger import get_logger
 
 logger = get_logger(__name__)
 

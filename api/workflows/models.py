@@ -76,6 +76,10 @@ class TriggerSubscriptionCreateRequest(BaseModel):
     filters: Dict[str, Any] = Field(default_factory=dict)
     bindings: Dict[str, Any] = Field(default_factory=dict)
     provider_config: Dict[str, Any] = Field(default_factory=dict)
+    # Form trigger fields
+    form_suffix: Optional[str] = None
+    form_fields: Optional[List[Dict[str, Any]]] = None
+    form_config: Optional[Dict[str, Any]] = None
 
 
 class TriggerSubscriptionUpdateRequest(BaseModel):
@@ -97,6 +101,11 @@ class TriggerSubscriptionResponse(BaseModel):
     provider_config: Dict[str, Any] = Field(default_factory=dict)
     secret_token: Optional[str] = None
     webhook_url: Optional[str] = None
+    # Form trigger and input contract fields
+    input_contract: Optional[Dict[str, Any]] = None
+    form_suffix: Optional[str] = None
+    form_fields: Optional[List[Dict[str, Any]]] = None
+    form_config: Optional[Dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
 
@@ -127,6 +136,20 @@ class ModelRegistryResponse(BaseModel):
 class SchemaResponse(BaseModel):
     id: str
     json_schema: Dict[str, Any]
+
+
+class SchemaMetadataGenerateRequest(BaseModel):
+    """Request payload for schema metadata generation."""
+    json_schema: Dict[str, Any] = Field(
+        ...,
+        description="JSON Schema object with properties to analyze"
+    )
+
+
+class SchemaMetadataGenerateResponse(BaseModel):
+    """Response with generated schema metadata."""
+    title: str = Field(..., description="Generated schema title (PascalCase, 2-4 words)")
+    description: str = Field(..., description="Generated schema description (1-2 sentences)")
 
 
 class WorkflowWarning(BaseModel):
@@ -336,6 +359,19 @@ class ExpressionTypecheckResponse(BaseModel):
     type: Optional[Dict[str, Any]] = None
 
 
+class WorkflowImportRequest(BaseModel):
+    import_data: Dict[str, Any]  # Full export JSON
+    name: Optional[str] = None  # Override workflow name
+    import_triggers: bool = True  # Whether to import triggers
+
+
+class WorkflowExportResponse(BaseModel):
+    version: str
+    workflow: Dict[str, Any]
+    triggers: List[Dict[str, Any]]
+    metadata: Dict[str, Any]
+
+
 __all__ = [
     "ProblemDetails",
     "ProblemError",
@@ -355,6 +391,8 @@ __all__ = [
     "ModelDescriptor",
     "ModelRegistryResponse",
     "SchemaResponse",
+    "SchemaMetadataGenerateRequest",
+    "SchemaMetadataGenerateResponse",
     "WorkflowWarning",
     "ValidateRequest",
     "ValidateResponse",
@@ -386,4 +424,6 @@ __all__ = [
     "ExpressionTypecheckRequest",
     "ExpressionTypecheckResponse",
     "ExpressionSuggestion",
+    "WorkflowImportRequest",
+    "WorkflowExportResponse",
 ]
