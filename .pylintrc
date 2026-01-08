@@ -22,7 +22,9 @@ disable=
     too-few-public-methods,
     too-many-locals,
     too-many-branches,
-    line-too-long
+    line-too-long,
+    too-many-arguments,
+    missing-class-docstring,
 
 [MASTER]
 # Add files or directories to the blacklist
