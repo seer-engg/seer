@@ -1,4 +1,6 @@
-> **[← Back to Documentation Index](../README.md)**
+---
+sidebar_position: 1
+---
 
 # Configuration Reference
 
@@ -249,7 +251,6 @@ You can view your active configuration by checking:
 
 ## Related Documentation
 
-- [Main README](../../README.md)
-- [Railway Deployment](../deployment/RAILWAY.md)
-- [Triggers Documentation](./TRIGGERS.md)
-- [Worker Documentation](../../worker/README.md)
+- [Getting Started](/)
+- [Railway Deployment](../deployment/RAILWAY)
+- [Triggers Documentation](./TRIGGERS)

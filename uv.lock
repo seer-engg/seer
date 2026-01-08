@@ -737,15 +737,6 @@ wheels = [
 ]
 
 [[package]]
-name = "dockerfile-parse"
-version = "2.0.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/92/df/929ee0b5d2c8bd8d713c45e71b94ab57c7e11e322130724d54f469b2cd48/dockerfile-parse-2.0.1.tar.gz", hash = "sha256:3184ccdc513221983e503ac00e1aa504a2aa8f84e5de673c46b0b6eee99ec7bc", size = 24556, upload-time = "2023-07-18T13:36:07.897Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/7a/6c/79cd5bc1b880d8c1a9a5550aa8dacd57353fa3bb2457227e1fb47383eb49/dockerfile_parse-2.0.1-py2.py3-none-any.whl", hash = "sha256:bdffd126d2eb26acf1066acb54cb2e336682e1d72b974a40894fac76a4df17f6", size = 14845, upload-time = "2023-07-18T13:36:06.052Z" },
-]
-
-[[package]]
 name = "docstring-parser"
 version = "0.17.0"
 source = { registry = "https://pypi.org/simple" }
@@ -761,40 +752,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/9d/a4/e44218c2b394e31a6dd0d6b095c4e1f32d0be54c2a4b250032d717647bab/durationpy-0.10.tar.gz", hash = "sha256:1fa6893409a6e739c9c72334fc65cca1f355dbdd93405d30f726deb5bde42fba", size = 3335, upload-time = "2025-05-17T13:52:37.26Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b0/0d/9feae160378a3553fa9a339b0e9c1a048e147a4127210e286ef18b730f03/durationpy-0.10-py3-none-any.whl", hash = "sha256:3b41e1b601234296b4fb368338fdcd3e13e0b4fb5b67345948f4f2bf9868b286", size = 3922, upload-time = "2025-05-17T13:52:36.463Z" },
-]
-
-[[package]]
-name = "e2b"
-version = "2.4.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "attrs" },
-    { name = "dockerfile-parse" },
-    { name = "httpcore" },
-    { name = "httpx" },
-    { name = "packaging" },
-    { name = "protobuf" },
-    { name = "python-dateutil" },
-    { name = "rich" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/bb/4d/e84e7436721cf1a9d5c51779ffa514789c3700d8902d8f2c540c5c7de82e/e2b-2.4.0.tar.gz", hash = "sha256:9566f403175afb0e7af2ebb12416000a1f6cfad0385b21daee653c6d71171a6f", size = 107400, upload-time = "2025-10-22T19:31:16.202Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/cd/68/556d50fca978d8ab29d8f0279a5daa7a63c3b6b97f9fa44861598545855d/e2b-2.4.0-py3-none-any.whl", hash = "sha256:495e42da261395507be95cf0d21bd6bcd6b7cf29805945b9311867eca13c81b7", size = 184313, upload-time = "2025-10-22T19:31:14.708Z" },
-]
-
-[[package]]
-name = "e2b-code-interpreter"
-version = "2.2.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "attrs" },
-    { name = "e2b" },
-    { name = "httpx" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/1e/49/f97beba3637b54a5efd233a0edd859e97ca8e50fd372609309a83472925a/e2b_code_interpreter-2.2.0.tar.gz", hash = "sha256:1b22181b8dc63961785682d989fd6e4d0c020204a49f9698be7228a10b801d64", size = 10086, upload-time = "2025-10-16T12:50:07.478Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e9/96/a4ff309c23a739346b9fcf16b736101842d36979f8573f5bff10fbb7c119/e2b_code_interpreter-2.2.0-py3-none-any.whl", hash = "sha256:9e49b467b8ae6864ef5dd98910d6d4a637464f1d4db4a1f8bec9a43b61380b02", size = 12982, upload-time = "2025-10-16T12:50:06.441Z" },
 ]
 
 [[package]]
@@ -3472,8 +3429,6 @@ dependencies = [
     { name = "authlib" },
     { name = "coolname" },
     { name = "croniter" },
-    { name = "e2b" },
-    { name = "e2b-code-interpreter" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "itsdangerous" },
@@ -3522,8 +3477,6 @@ requires-dist = [
     { name = "authlib", specifier = ">=1.6.6" },
     { name = "coolname", specifier = "==2.2.0" },
     { name = "croniter", specifier = ">=2.0.0" },
-    { name = "e2b", specifier = "==2.4.0" },
-    { name = "e2b-code-interpreter", specifier = "==2.2.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "itsdangerous", specifier = ">=2.1.0" },

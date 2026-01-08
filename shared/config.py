@@ -11,7 +11,7 @@ Usage:
         ...
 """
 from typing import Optional, Dict, Any
-from pydantic import Field, computed_field, model_validator
+from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -40,10 +40,6 @@ class SeerConfig(BaseSettings):
 
     target_agent_port: int = Field(default=2024, description="Port for target agent")
     target_agent_command: str = Field(default="langgraph dev --host 0.0.0.0", description="Command to run target agent")
-
-
-    # Base template for E2B sandbox
-    base_template_alias: str = Field(default="seer-base", description="E2B template alias")
 
     # ============================================================================
     # LangGraph Checkpointer Configuration
@@ -157,9 +153,6 @@ class SeerConfig(BaseSettings):
     # Computed Properties
     # ============================================================================
 
-
-
-
     @computed_field
     @property
     def target_agent_envs(self) -> Dict[str, Any]:
@@ -192,6 +185,7 @@ class SeerConfig(BaseSettings):
             and self.posthog_api_key is not None
             and self.posthog_host is not None
         )
+
 
 # ============================================================================
 # Global Config Instance
