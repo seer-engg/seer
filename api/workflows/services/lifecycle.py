@@ -359,3 +359,155 @@ async def publish_workflow(
 async def delete_workflow(user: User, workflow_id: str) -> None:
     workflow = await _get_workflow(user, workflow_id)
     await workflow.delete()
+
+async def export_workflow(
+    user: User,
+    workflow_id: str,
+    include_triggers: bool = True,
+) -> Dict[str, Any]:
+    """
+    Export workflow and optionally triggers as portable JSON.
+    """
+    from shared.database.workflow_models import TriggerSubscription
+    from datetime import timezone
+
+    # 1. Fetch workflow and draft
+    workflow = await _get_workflow(user, workflow_id)
+    draft = workflow.draft or await WorkflowDraft.get_or_none(workflow=workflow)
+
+    if not draft:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="No draft found",
+            detail="Workflow has no draft to export",
+            status=404,
+        )
+
+    # 2. Serialize workflow spec
+    spec_dict = draft.spec  # Already JSON
+
+    # 3. Fetch trigger subscriptions
+    triggers_data = []
+    if include_triggers:
+        subscriptions = await TriggerSubscription.filter(
+            workflow=workflow
+        ).all()
+
+        for sub in subscriptions:
+            triggers_data.append({
+                "trigger_key": sub.trigger_key,
+                "enabled": sub.enabled,
+                "bindings": sub.bindings or {},
+                "filters": sub.filters or {},
+                "provider_config": sub.provider_config or {},
+                "notes": None,  # Add notes field for future use
+            })
+
+    # 4. Build export JSON
+    return {
+        "version": "1.0",
+        "workflow": {
+            "name": workflow.name,
+            "description": workflow.description,
+            "tags": workflow.tags or [],
+            "spec": spec_dict,
+        },
+        "triggers": triggers_data,
+        "metadata": {
+            "exported_at": _now().isoformat(),
+            "exported_by": user.email if hasattr(user, 'email') else None,
+            "original_workflow_id": workflow.workflow_id,
+            "seer_version": "1.0",
+        }
+    }
+
+
+async def _ensure_unique_name(user: User, base_name: str) -> str:
+    """Append (1), (2), etc. if name conflicts."""
+    name = base_name
+    counter = 1
+
+    while await Workflow.filter(user=user, name=name).exists():
+        name = f"{base_name} ({counter})"
+        counter += 1
+
+    return name
+
+
+async def import_workflow(
+    user: User,
+    payload: api_models.WorkflowImportRequest,
+) -> api_models.WorkflowResponse:
+    """
+    Import workflow from exported JSON.
+    """
+    from shared.database.workflow_models import TriggerSubscription
+    from pydantic import ValidationError
+
+    import_data = payload.import_data
+
+    # 1. Validate schema version
+    if import_data.get("version") != "1.0":
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Unsupported import version",
+            detail=f"Unsupported import version: {import_data.get('version')}",
+            status=400,
+        )
+
+    # 2. Validate workflow spec
+    try:
+        spec = WorkflowSpec.model_validate(import_data["workflow"]["spec"])
+    except ValidationError as e:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Invalid workflow spec",
+            detail=f"Invalid workflow spec: {e}",
+            status=400,
+        )
+    except KeyError as e:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Missing required field",
+            detail=f"Missing required field in import data: {e}",
+            status=400,
+        )
+
+    # 3. Create new workflow (with optional name override)
+    workflow_name = payload.name or import_data["workflow"]["name"]
+    workflow_name = await _ensure_unique_name(user, workflow_name)
+
+    workflow = await Workflow.create(
+        user=user,
+        name=workflow_name,
+        description=import_data["workflow"].get("description"),
+        tags=import_data["workflow"].get("tags", []),
+        meta={"last_compile_ok": False},
+    )
+
+    # 4. Create draft with spec
+    draft = await WorkflowDraft.create(
+        workflow=workflow,
+        spec=spec.model_dump(mode="json"),
+        revision=1,
+        updated_by=user,
+    )
+
+    # 5. Create trigger subscriptions (as drafts, disabled by default)
+    if payload.import_triggers and import_data.get("triggers"):
+        for trigger_data in import_data["triggers"]:
+            # Create subscription (disabled until user configures provider)
+            await TriggerSubscription.create(
+                user=user,
+                workflow=workflow,
+                trigger_key=trigger_data["trigger_key"],
+                enabled=False,  # User must enable after configuring
+                bindings=trigger_data.get("bindings", {}),
+                filters=trigger_data.get("filters", {}),
+                provider_config=trigger_data.get("provider_config", {}),
+                # provider_connection_id left null - user must configure
+            )
+
+    # 6. Return new workflow
+    await workflow.fetch_related("draft")
+    return await _workflow_response(workflow)
