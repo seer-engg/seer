@@ -23,7 +23,7 @@ import uuid
 import httpx
 from fastapi import HTTPException
 
-from shared.tools.base import BaseTool, register_tool
+from shared.tools.base import BaseTool
 from shared.logger import get_logger
 
 logger = get_logger("shared.tools.google_drive")
@@ -73,6 +73,47 @@ def _encode_multipart_related(metadata: Dict[str, Any], content_bytes: bytes, co
 
     body = b"".join(parts)
     return {"body": body, "content_type": f"multipart/related; boundary={boundary}"}
+
+
+async def _drive_request(
+    method: str,
+    url: str,
+    *,
+    headers: Optional[Dict[str, Any]] = None,
+    params: Optional[Dict[str, Any]] = None,
+    json_body: Optional[Dict[str, Any]] = None,
+    content: Optional[bytes] = None,
+    timeout: float = 30.0,
+    prefix: str = "Google Drive request",
+) -> httpx.Response:
+    """
+    Small helper to centralize HTTP requests to Google Drive with consistent
+    timeout/exception handling and error-to-HTTPException translation.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as http_client:
+            method_lower = method.lower()
+            if method_lower == "get":
+                resp = await http_client.get(url, headers=headers, params=params)
+            elif method_lower == "post":
+                resp = await http_client.post(url, headers=headers, params=params, json=json_body, content=content)
+            elif method_lower == "patch":
+                resp = await http_client.patch(url, headers=headers, params=params, json=json_body, content=content)
+            elif method_lower == "delete":
+                resp = await http_client.delete(url, headers=headers, params=params)
+            else:
+                resp = await http_client.request(method, url, headers=headers, params=params, json=json_body, content=content)
+
+            if resp.is_error:
+                raise _http_exception_from_response(resp, prefix)
+            return resp
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail=f"{prefix} timed out")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Unexpected %s: %s", prefix, exc)
+        raise HTTPException(status_code=500, detail=f"{prefix} error: {str(exc)}") from exc
 
 
 # -----------------------------
@@ -315,7 +356,7 @@ class GoogleDriveListFilesTool(BaseTool):
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as http_client:
-                logger.info(f"Listing Drive files q={params.get('q')!r}")
+                logger.info("Listing Drive files q=%r", params.get("q"))
                 resp = await http_client.get(url, headers=headers, params=params)
                 if resp.is_error:
                     raise _http_exception_from_response(resp, "Google Drive files.list error")
@@ -325,8 +366,8 @@ class GoogleDriveListFilesTool(BaseTool):
         except HTTPException:
             raise
         except Exception as e:
-            logger.exception(f"Unexpected error in files.list: {e}")
-            raise HTTPException(status_code=500, detail=f"Error listing Drive files: {str(e)}")
+            logger.exception("Unexpected error in files.list: %s", e)
+            raise HTTPException(status_code=500, detail=f"Error listing Drive files: {str(e)}") from e
 
 
 class GoogleDriveGetFileMetadataTool(BaseTool):
@@ -389,7 +430,7 @@ class GoogleDriveGetFileMetadataTool(BaseTool):
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as http_client:
-                logger.info(f"Getting Drive file metadata file_id={file_id}")
+                logger.info("Getting Drive file metadata file_id=%s", file_id)
                 resp = await http_client.get(url, headers=headers, params=params)
                 if resp.is_error:
                     raise _http_exception_from_response(resp, "Google Drive files.get metadata error")
@@ -399,8 +440,8 @@ class GoogleDriveGetFileMetadataTool(BaseTool):
         except HTTPException:
             raise
         except Exception as e:
-            logger.exception(f"Unexpected error in files.get metadata: {e}")
-            raise HTTPException(status_code=500, detail=f"Error getting Drive metadata: {str(e)}")
+            logger.exception("Unexpected error in files.get metadata: %s", e)
+            raise HTTPException(status_code=500, detail=f"Error getting Drive metadata: {str(e)}") from e
 
 
 class GoogleDriveDownloadFileTool(BaseTool):
@@ -489,17 +530,15 @@ class GoogleDriveDownloadFileTool(BaseTool):
                 "fields": "id,name,mimeType,size,modifiedTime,parents,driveId",
                 "supportsAllDrives": supports_all_drives,
             }
-            try:
-                async with httpx.AsyncClient(timeout=30.0) as http_client:
-                    meta_resp = await http_client.get(meta_url, headers=headers, params=meta_params)
-                    if meta_resp.is_error:
-                        raise _http_exception_from_response(meta_resp, "Google Drive metadata fetch (pre-download) error")
-                    metadata = meta_resp.json()
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.exception(f"Unexpected metadata fetch error: {e}")
-                raise HTTPException(status_code=500, detail=f"Error fetching metadata: {str(e)}")
+            meta_resp = await _drive_request(
+                "get",
+                meta_url,
+                headers=headers,
+                params=meta_params,
+                timeout=30.0,
+                prefix="Google Drive metadata fetch (pre-download)",
+            )
+            metadata = meta_resp.json()
 
         export_mime_type = arguments.get("export_mime_type")
         is_export = bool(export_mime_type)
@@ -514,42 +553,37 @@ class GoogleDriveDownloadFileTool(BaseTool):
                 )
             )
 
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as http_client:
-                if is_export:
-                    url = f"https://www.googleapis.com/drive/v3/files/{file_id}/export"
-                    params = {"mimeType": export_mime_type}
-                    logger.info(f"Exporting Drive file file_id={file_id} mimeType={export_mime_type}")
-                    resp = await http_client.get(url, headers=headers, params=params)
-                else:
-                    url = f"https://www.googleapis.com/drive/v3/files/{file_id}"
-                    params = {
-                        "alt": "media",
-                        "acknowledgeAbuse": arguments.get("acknowledge_abuse", False),
-                        "supportsAllDrives": supports_all_drives,
-                    }
-                    logger.info(f"Downloading Drive file (alt=media) file_id={file_id}")
-                    resp = await http_client.get(url, headers=headers, params=params)
+        if is_export:
+            url = f"https://www.googleapis.com/drive/v3/files/{file_id}/export"
+            params = {"mimeType": export_mime_type}
+            logger.info("Exporting Drive file file_id=%s mimeType=%s", file_id, export_mime_type)
+        else:
+            url = f"https://www.googleapis.com/drive/v3/files/{file_id}"
+            params = {
+                "alt": "media",
+                "acknowledgeAbuse": arguments.get("acknowledge_abuse", False),
+                "supportsAllDrives": supports_all_drives,
+            }
+            logger.info("Downloading Drive file (alt=media) file_id=%s", file_id)
 
-                if resp.is_error:
-                    raise _http_exception_from_response(resp, "Google Drive download/export error")
+        resp = await _drive_request(
+            "get",
+            url,
+            headers=headers,
+            params=params,
+            timeout=60.0,
+            prefix="Google Drive download/export",
+        )
 
-                content_b64 = base64.b64encode(resp.content).decode("utf-8")
-                return {
-                    "file_id": file_id,
-                    "exported": is_export,
-                    "export_mime_type": export_mime_type if is_export else None,
-                    "metadata": metadata,
-                    "content_base64": content_b64,
-                    "content_length": len(resp.content),
-                }
-        except httpx.TimeoutException:
-            raise HTTPException(status_code=504, detail="Google Drive download/export request timed out")
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception(f"Unexpected download/export error: {e}")
-            raise HTTPException(status_code=500, detail=f"Error downloading/exporting Drive file: {str(e)}")
+        content_b64 = base64.b64encode(resp.content).decode("utf-8")
+        return {
+            "file_id": file_id,
+            "exported": is_export,
+            "export_mime_type": export_mime_type if is_export else None,
+            "metadata": metadata,
+            "content_base64": content_b64,
+            "content_length": len(resp.content),
+        }
 
 
 class GoogleDriveUploadFileTool(BaseTool):
@@ -628,8 +662,8 @@ class GoogleDriveUploadFileTool(BaseTool):
 
         try:
             content_bytes = base64.b64decode(content_b64)
-        except Exception:
-            raise HTTPException(status_code=400, detail="content_base64 is not valid base64")
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="content_base64 is not valid base64") from exc
 
         headers = {"Authorization": f"Bearer {access_token}"}
 
@@ -647,37 +681,27 @@ class GoogleDriveUploadFileTool(BaseTool):
         if mime_type:
             metadata["mimeType"] = mime_type
 
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as http_client:
-                if upload_type == "media":
-                    logger.info(f"Uploading Drive file (media) name={name}")
-                    resp = await http_client.post(
-                        base_url,
-                        headers={**headers, "Content-Type": mime_type},
-                        params=params,
-                        content=content_bytes,
-                    )
-                else:
-                    logger.info(f"Uploading Drive file (multipart) name={name}")
-                    mp = _encode_multipart_related(metadata, content_bytes, mime_type)
-                    resp = await http_client.post(
-                        base_url,
-                        headers={**headers, "Content-Type": mp["content_type"]},
-                        params=params,
-                        content=mp["body"],
-                    )
+        if upload_type == "media":
+            logger.info("Uploading Drive file (media) name=%s", name)
+            headers_post = {**headers, "Content-Type": mime_type}
+            content_payload = content_bytes
+        else:
+            logger.info("Uploading Drive file (multipart) name=%s", name)
+            mp = _encode_multipart_related(metadata, content_bytes, mime_type)
+            headers_post = {**headers, "Content-Type": mp["content_type"]}
+            content_payload = mp["body"]
 
-                if resp.is_error:
-                    raise _http_exception_from_response(resp, "Google Drive upload error")
+        resp = await _drive_request(
+            "post",
+            base_url,
+            headers=headers_post,
+            params=params,
+            content=content_payload,
+            timeout=60.0,
+            prefix="Google Drive upload",
+        )
 
-                return resp.json()
-        except httpx.TimeoutException:
-            raise HTTPException(status_code=504, detail="Google Drive upload request timed out")
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception(f"Unexpected upload error: {e}")
-            raise HTTPException(status_code=500, detail=f"Error uploading Drive file: {str(e)}")
+        return resp.json()
 
 
 class GoogleDriveCreateFolderTool(BaseTool):
@@ -756,7 +780,7 @@ class GoogleDriveCreateFolderTool(BaseTool):
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as http_client:
-                logger.info(f"Creating Drive folder name={name}")
+                logger.info("Creating Drive folder name=%s", name)
                 resp = await http_client.post(url, headers=headers, params=params, json=body)
                 if resp.is_error:
                     raise _http_exception_from_response(resp, "Google Drive create folder error")
@@ -765,9 +789,9 @@ class GoogleDriveCreateFolderTool(BaseTool):
             raise HTTPException(status_code=504, detail="Google Drive create folder request timed out")
         except HTTPException:
             raise
-        except Exception as e:
-            logger.exception(f"Unexpected create folder error: {e}")
-            raise HTTPException(status_code=500, detail=f"Error creating Drive folder: {str(e)}")
+        except Exception as exc:
+            logger.exception("Unexpected create folder error: %s", exc)
+            raise HTTPException(status_code=500, detail=f"Error creating Drive folder: {str(exc)}") from exc
 
 
 class GoogleDriveUpdateFileTool(BaseTool):
@@ -869,64 +893,58 @@ class GoogleDriveUpdateFileTool(BaseTool):
         content_b64 = arguments.get("content_base64")
         do_content_update = bool(content_b64)
 
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as http_client:
-                if do_content_update:
-                    try:
-                        content_bytes = base64.b64decode(content_b64)
-                    except Exception:
-                        raise HTTPException(status_code=400, detail="content_base64 is not valid base64")
+        if do_content_update:
+            try:
+                content_bytes = base64.b64decode(content_b64)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail="content_base64 is not valid base64") from exc
 
-                    mime_type = arguments.get("mime_type", "application/octet-stream")
-                    upload_url = f"https://www.googleapis.com/upload/drive/v3/files/{file_id}"
-                    params: Dict[str, Any] = {
-                        "uploadType": "multipart",
-                        "fields": fields,
-                        "supportsAllDrives": supports_all_drives,
-                    }
-                    if add_parents_str:
-                        params["addParents"] = add_parents_str
-                    if remove_parents_str:
-                        params["removeParents"] = remove_parents_str
+            mime_type = arguments.get("mime_type", "application/octet-stream")
+            upload_url = f"https://www.googleapis.com/upload/drive/v3/files/{file_id}"
+            params: Dict[str, Any] = {
+                "uploadType": "multipart",
+                "fields": fields,
+                "supportsAllDrives": supports_all_drives,
+            }
+            if add_parents_str:
+                params["addParents"] = add_parents_str
+            if remove_parents_str:
+                params["removeParents"] = remove_parents_str
 
-                    mp = _encode_multipart_related(body if body else {}, content_bytes, mime_type)
-                    logger.info(f"Updating Drive file content file_id={file_id}")
-                    resp = await http_client.patch(
-                        upload_url,
-                        headers={**headers, "Content-Type": mp["content_type"]},
-                        params=params,
-                        content=mp["body"],
-                    )
-                else:
-                    url = f"https://www.googleapis.com/drive/v3/files/{file_id}"
-                    params = {
-                        "fields": fields,
-                        "supportsAllDrives": supports_all_drives,
-                    }
-                    if add_parents_str:
-                        params["addParents"] = add_parents_str
-                    if remove_parents_str:
-                        params["removeParents"] = remove_parents_str
+            mp = _encode_multipart_related(body if body else {}, content_bytes, mime_type)
+            logger.info("Updating Drive file content file_id=%s", file_id)
+            resp = await _drive_request(
+                "patch",
+                upload_url,
+                headers={**headers, "Content-Type": mp["content_type"]},
+                params=params,
+                content=mp["body"],
+                timeout=60.0,
+                prefix="Google Drive files.update (content)",
+            )
+        else:
+            url = f"https://www.googleapis.com/drive/v3/files/{file_id}"
+            params = {
+                "fields": fields,
+                "supportsAllDrives": supports_all_drives,
+            }
+            if add_parents_str:
+                params["addParents"] = add_parents_str
+            if remove_parents_str:
+                params["removeParents"] = remove_parents_str
 
-                    logger.info(f"Updating Drive file metadata file_id={file_id}")
-                    resp = await http_client.patch(
-                        url,
-                        headers={**headers, "Content-Type": "application/json"},
-                        params=params,
-                        json=body,
-                    )
+            logger.info("Updating Drive file metadata file_id=%s", file_id)
+            resp = await _drive_request(
+                "patch",
+                url,
+                headers={**headers, "Content-Type": "application/json"},
+                params=params,
+                json_body=body,
+                timeout=60.0,
+                prefix="Google Drive files.update (metadata)",
+            )
 
-                if resp.is_error:
-                    raise _http_exception_from_response(resp, "Google Drive files.update error")
-                return resp.json()
-
-        except httpx.TimeoutException:
-            raise HTTPException(status_code=504, detail="Google Drive files.update request timed out")
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception(f"Unexpected update error: {e}")
-            raise HTTPException(status_code=500, detail=f"Error updating Drive file: {str(e)}")
+        return resp.json()
 
 
 class GoogleDriveDeleteFileTool(BaseTool):
@@ -982,7 +1000,7 @@ class GoogleDriveDeleteFileTool(BaseTool):
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as http_client:
-                logger.info(f"Deleting Drive file file_id={file_id}")
+                logger.info("Deleting Drive file file_id=%s", file_id)
                 resp = await http_client.delete(url, headers=headers, params=params)
                 if resp.is_error:
                     raise _http_exception_from_response(resp, "Google Drive files.delete error")
@@ -992,9 +1010,9 @@ class GoogleDriveDeleteFileTool(BaseTool):
             raise HTTPException(status_code=504, detail="Google Drive files.delete request timed out")
         except HTTPException:
             raise
-        except Exception as e:
-            logger.exception(f"Unexpected delete error: {e}")
-            raise HTTPException(status_code=500, detail=f"Error deleting Drive file: {str(e)}")
+        except Exception as exc:
+            logger.exception("Unexpected delete error: %s", exc)
+            raise HTTPException(status_code=500, detail=f"Error deleting Drive file: {str(exc)}") from exc
 
 
 class GoogleDriveCreatePermissionTool(BaseTool):
@@ -1127,20 +1145,17 @@ class GoogleDriveCreatePermissionTool(BaseTool):
         if arguments.get("email_message"):
             params["emailMessage"] = arguments["email_message"]
 
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as http_client:
-                logger.info(f"Creating permission file_id={file_id} type={p_type} role={role}")
-                resp = await http_client.post(url, headers=headers, params=params, json=body)
-                if resp.is_error:
-                    raise _http_exception_from_response(resp, "Google Drive permissions.create error")
-                return resp.json()
-        except httpx.TimeoutException:
-            raise HTTPException(status_code=504, detail="Google Drive permissions.create request timed out")
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception(f"Unexpected permissions.create error: {e}")
-            raise HTTPException(status_code=500, detail=f"Error creating Drive permission: {str(e)}")
+        logger.info("Creating permission file_id=%s type=%s role=%s", file_id, p_type, role)
+        resp = await _drive_request(
+            "post",
+            url,
+            headers=headers,
+            params=params,
+            json_body=body,
+            timeout=30.0,
+            prefix="Google Drive permissions.create",
+        )
+        return resp.json()
 
 
 class GoogleDriveAboutGetTool(BaseTool):
@@ -1188,6 +1203,6 @@ class GoogleDriveAboutGetTool(BaseTool):
             raise HTTPException(status_code=504, detail="Google Drive about.get request timed out")
         except HTTPException:
             raise
-        except Exception as e:
-            logger.exception(f"Unexpected about.get error: {e}")
-            raise HTTPException(status_code=500, detail=f"Error getting Drive about info: {str(e)}")
+        except Exception as exc:
+            logger.exception("Unexpected about.get error: %s", exc)
+            raise HTTPException(status_code=500, detail=f"Error getting Drive about info: {str(exc)}") from exc

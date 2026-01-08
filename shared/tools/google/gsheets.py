@@ -3,7 +3,7 @@ Google Sheets Tool
 
 Tool for writing data to Google Sheets using Google Sheets API v4.
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import json
 import httpx
 from fastapi import HTTPException
@@ -144,7 +144,7 @@ class GoogleSheetsWriteTool(BaseTool):
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as http_client:
-                logger.info(f"Writing to Google Sheet {spreadsheet_id}, range {range_name}")
+                logger.info("Writing to Google Sheet %s, range %s", spreadsheet_id, range_name)
 
                 response = await http_client.put(url, headers=headers, params=params, json=body)
 
@@ -163,27 +163,21 @@ class GoogleSheetsWriteTool(BaseTool):
                 response.raise_for_status()
                 result = response.json()
 
-                logger.info(f"Successfully wrote {result.get('updatedCells', 0)} cells to Google Sheet")
+                logger.info("Successfully wrote %s cells to Google Sheet", result.get("updatedCells", 0))
                 return result
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"Google Sheets API error: {e.response.status_code} - {e.response.text[:500]}")
+            logger.error("Google Sheets API error: %s - %s", e.response.status_code, e.response.text[:500])
             raise HTTPException(
                 status_code=e.response.status_code,
-                detail=f"Google Sheets API error: {e.response.text[:500]}"
-            )
+                detail=f"Google Sheets API error: {e.response.text[:500]}",
+            ) from e
         except httpx.TimeoutException:
             logger.error("Google Sheets API request timed out")
-            raise HTTPException(
-                status_code=504,
-                detail="Google Sheets API request timed out"
-            )
+            raise HTTPException(status_code=504, detail="Google Sheets API request timed out")
         except Exception as e:
-            logger.exception(f"Unexpected error writing to Google Sheets: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error writing to Google Sheets: {str(e)}"
-            )
+            logger.exception("Unexpected error writing to Google Sheets: %s", e)
+            raise HTTPException(status_code=500, detail=f"Error writing to Google Sheets: {str(e)}") from e
 
 
 # Register the tool
@@ -207,13 +201,6 @@ Includes:
 - Create spreadsheet (spreadsheets.create)
 - Batch update spreadsheet (spreadsheets.batchUpdate) for formatting/structure ops
 """
-from typing import Any, Dict, List, Optional
-import httpx
-from fastapi import HTTPException
-
-from shared.tools.base import BaseTool, register_tool
-from shared.logger import get_logger
-
 logger = get_logger("shared.tools.google_sheets")
 
 
@@ -468,21 +455,21 @@ class GoogleSheetsReadTool(BaseTool):
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as http_client:
-                logger.info(f"Reading Google Sheet {spreadsheet_id}, range {range_name}")
+                logger.info("Reading Google Sheet %s, range %s", spreadsheet_id, range_name)
                 response = await http_client.get(url, headers=headers, params=params)
                 _handle_common_errors(response)
                 response.raise_for_status()
                 return response.json()
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"Google Sheets API error: {e.response.status_code} - {e.response.text[:500]}")
-            raise HTTPException(status_code=e.response.status_code, detail=f"Google Sheets API error: {e.response.text[:500]}")
+            logger.error("Google Sheets API error: %s - %s", e.response.status_code, e.response.text[:500])
+            raise HTTPException(status_code=e.response.status_code, detail=f"Google Sheets API error: {e.response.text[:500]}") from e
         except httpx.TimeoutException:
             logger.error("Google Sheets API request timed out")
             raise HTTPException(status_code=504, detail="Google Sheets API request timed out")
         except Exception as e:
-            logger.exception(f"Unexpected error reading from Google Sheets: {e}")
-            raise HTTPException(status_code=500, detail=f"Error reading from Google Sheets: {str(e)}")
+            logger.exception("Unexpected error reading from Google Sheets: %s", e)
+            raise HTTPException(status_code=500, detail=f"Error reading from Google Sheets: {str(e)}") from e
 
 
 # ----------------------------
@@ -564,21 +551,21 @@ class GoogleSheetsBatchReadTool(BaseTool):
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as http_client:
-                logger.info(f"Batch reading Google Sheet {spreadsheet_id}, ranges={len(ranges)}")
+                logger.info("Batch reading Google Sheet %s, ranges=%d", spreadsheet_id, len(ranges))
                 response = await http_client.get(url, headers=headers, params=params)
                 _handle_common_errors(response)
                 response.raise_for_status()
                 return response.json()
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"Google Sheets API error: {e.response.status_code} - {e.response.text[:500]}")
-            raise HTTPException(status_code=e.response.status_code, detail=f"Google Sheets API error: {e.response.text[:500]}")
+            logger.error("Google Sheets API error: %s - %s", e.response.status_code, e.response.text[:500])
+            raise HTTPException(status_code=e.response.status_code, detail=f"Google Sheets API error: {e.response.text[:500]}") from e
         except httpx.TimeoutException:
             logger.error("Google Sheets API request timed out")
             raise HTTPException(status_code=504, detail="Google Sheets API request timed out")
         except Exception as e:
-            logger.exception(f"Unexpected error batch reading from Google Sheets: {e}")
-            raise HTTPException(status_code=500, detail=f"Error batch reading from Google Sheets: {str(e)}")
+            logger.exception("Unexpected error batch reading from Google Sheets: %s", e)
+            raise HTTPException(status_code=500, detail=f"Error batch reading from Google Sheets: {str(e)}") from e
 
 
 # ----------------------------
@@ -685,21 +672,21 @@ class GoogleSheetsAppendTool(BaseTool):
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as http_client:
-                logger.info(f"Appending to Google Sheet {spreadsheet_id}, range {range_name}")
+                logger.info("Appending to Google Sheet %s, range %s", spreadsheet_id, range_name)
                 response = await http_client.post(url, headers=headers, params=params, json=body)
                 _handle_common_errors(response)
                 response.raise_for_status()
                 return response.json()
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"Google Sheets API error: {e.response.status_code} - {e.response.text[:500]}")
-            raise HTTPException(status_code=e.response.status_code, detail=f"Google Sheets API error: {e.response.text[:500]}")
+            logger.error("Google Sheets API error: %s - %s", e.response.status_code, e.response.text[:500])
+            raise HTTPException(status_code=e.response.status_code, detail=f"Google Sheets API error: {e.response.text[:500]}") from e
         except httpx.TimeoutException:
             logger.error("Google Sheets API request timed out")
             raise HTTPException(status_code=504, detail="Google Sheets API request timed out")
         except Exception as e:
-            logger.exception(f"Unexpected error appending to Google Sheets: {e}")
-            raise HTTPException(status_code=500, detail=f"Error appending to Google Sheets: {str(e)}")
+            logger.exception("Unexpected error appending to Google Sheets: %s", e)
+            raise HTTPException(status_code=500, detail=f"Error appending to Google Sheets: {str(e)}") from e
 
 
 # ----------------------------
@@ -754,21 +741,21 @@ class GoogleSheetsClearTool(BaseTool):
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as http_client:
-                logger.info(f"Clearing Google Sheet {spreadsheet_id}, range {range_name}")
+                logger.info("Clearing Google Sheet %s, range %s", spreadsheet_id, range_name)
                 response = await http_client.post(url, headers=headers, json={})
                 _handle_common_errors(response)
                 response.raise_for_status()
                 return response.json()
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"Google Sheets API error: {e.response.status_code} - {e.response.text[:500]}")
-            raise HTTPException(status_code=e.response.status_code, detail=f"Google Sheets API error: {e.response.text[:500]}")
+            logger.error("Google Sheets API error: %s - %s", e.response.status_code, e.response.text[:500])
+            raise HTTPException(status_code=e.response.status_code, detail=f"Google Sheets API error: {e.response.text[:500]}") from e
         except httpx.TimeoutException:
             logger.error("Google Sheets API request timed out")
             raise HTTPException(status_code=504, detail="Google Sheets API request timed out")
         except Exception as e:
-            logger.exception(f"Unexpected error clearing Google Sheets: {e}")
-            raise HTTPException(status_code=500, detail=f"Error clearing Google Sheets: {str(e)}")
+            logger.exception("Unexpected error clearing Google Sheets: %s", e)
+            raise HTTPException(status_code=500, detail=f"Error clearing Google Sheets: {str(e)}") from e
 
 
 # ----------------------------
@@ -880,21 +867,21 @@ class GoogleSheetsBatchWriteTool(BaseTool):
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as http_client:
-                logger.info(f"Batch writing Google Sheet {spreadsheet_id}, updates={len(request_data)}")
+                logger.info("Batch writing Google Sheet %s, updates=%d", spreadsheet_id, len(request_data))
                 response = await http_client.post(url, headers=headers, json=body)
                 _handle_common_errors(response)
                 response.raise_for_status()
                 return response.json()
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"Google Sheets API error: {e.response.status_code} - {e.response.text[:500]}")
-            raise HTTPException(status_code=e.response.status_code, detail=f"Google Sheets API error: {e.response.text[:500]}")
+            logger.error("Google Sheets API error: %s - %s", e.response.status_code, e.response.text[:500])
+            raise HTTPException(status_code=e.response.status_code, detail=f"Google Sheets API error: {e.response.text[:500]}") from e
         except httpx.TimeoutException:
             logger.error("Google Sheets API request timed out")
             raise HTTPException(status_code=504, detail="Google Sheets API request timed out")
         except Exception as e:
-            logger.exception(f"Unexpected error batch writing to Google Sheets: {e}")
-            raise HTTPException(status_code=500, detail=f"Error batch writing to Google Sheets: {str(e)}")
+            logger.exception("Unexpected error batch writing to Google Sheets: %s", e)
+            raise HTTPException(status_code=500, detail=f"Error batch writing to Google Sheets: {str(e)}") from e
 
 
 # ----------------------------
@@ -967,21 +954,21 @@ class GoogleSheetsGetSpreadsheetTool(BaseTool):
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as http_client:
-                logger.info(f"Fetching spreadsheet metadata {spreadsheet_id}")
+                logger.info("Fetching spreadsheet metadata %s", spreadsheet_id)
                 response = await http_client.get(url, headers=headers, params=params)
                 _handle_common_errors(response)
                 response.raise_for_status()
                 return response.json()
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"Google Sheets API error: {e.response.status_code} - {e.response.text[:500]}")
-            raise HTTPException(status_code=e.response.status_code, detail=f"Google Sheets API error: {e.response.text[:500]}")
+            logger.error("Google Sheets API error: %s - %s", e.response.status_code, e.response.text[:500])
+            raise HTTPException(status_code=e.response.status_code, detail=f"Google Sheets API error: {e.response.text[:500]}") from e
         except httpx.TimeoutException:
             logger.error("Google Sheets API request timed out")
             raise HTTPException(status_code=504, detail="Google Sheets API request timed out")
         except Exception as e:
-            logger.exception(f"Unexpected error fetching spreadsheet metadata: {e}")
-            raise HTTPException(status_code=500, detail=f"Error fetching spreadsheet metadata: {str(e)}")
+            logger.exception("Unexpected error fetching spreadsheet metadata: %s", e)
+            raise HTTPException(status_code=500, detail=f"Error fetching spreadsheet metadata: {str(e)}") from e
 
 
 # ----------------------------
@@ -1035,21 +1022,21 @@ class GoogleSheetsCreateSpreadsheetTool(BaseTool):
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as http_client:
-                logger.info(f"Creating spreadsheet with title='{properties.get('title')}'")
+                logger.info("Creating spreadsheet with title=%s", properties.get("title"))
                 response = await http_client.post(url, headers=headers, json=body)
                 _handle_common_errors(response)
                 response.raise_for_status()
                 return response.json()
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"Google Sheets API error: {e.response.status_code} - {e.response.text[:500]}")
-            raise HTTPException(status_code=e.response.status_code, detail=f"Google Sheets API error: {e.response.text[:500]}")
+            logger.error("Google Sheets API error: %s - %s", e.response.status_code, e.response.text[:500])
+            raise HTTPException(status_code=e.response.status_code, detail=f"Google Sheets API error: {e.response.text[:500]}") from e
         except httpx.TimeoutException:
             logger.error("Google Sheets API request timed out")
             raise HTTPException(status_code=504, detail="Google Sheets API request timed out")
         except Exception as e:
-            logger.exception(f"Unexpected error creating spreadsheet: {e}")
-            raise HTTPException(status_code=500, detail=f"Error creating spreadsheet: {str(e)}")
+            logger.exception("Unexpected error creating spreadsheet: %s", e)
+            raise HTTPException(status_code=500, detail=f"Error creating spreadsheet: {str(e)}") from e
 
 
 # ----------------------------
@@ -1133,18 +1120,18 @@ class GoogleSheetsBatchUpdateSpreadsheetTool(BaseTool):
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as http_client:
-                logger.info(f"Batch updating spreadsheet {spreadsheet_id}, requests={len(requests)}")
+                logger.info("Batch updating spreadsheet %s, requests=%d", spreadsheet_id, len(requests))
                 response = await http_client.post(url, headers=headers, json=body)
                 _handle_common_errors(response)
                 response.raise_for_status()
                 return response.json()
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"Google Sheets API error: {e.response.status_code} - {e.response.text[:500]}")
-            raise HTTPException(status_code=e.response.status_code, detail=f"Google Sheets API error: {e.response.text[:500]}")
+            logger.error("Google Sheets API error: %s - %s", e.response.status_code, e.response.text[:500])
+            raise HTTPException(status_code=e.response.status_code, detail=f"Google Sheets API error: {e.response.text[:500]}") from e
         except httpx.TimeoutException:
             logger.error("Google Sheets API request timed out")
             raise HTTPException(status_code=504, detail="Google Sheets API request timed out")
         except Exception as e:
-            logger.exception(f"Unexpected error batch updating spreadsheet: {e}")
-            raise HTTPException(status_code=500, detail=f"Error batch updating spreadsheet: {str(e)}")
+            logger.exception("Unexpected error batch updating spreadsheet: %s", e)
+            raise HTTPException(status_code=500, detail=f"Error batch updating spreadsheet: {str(e)}") from e

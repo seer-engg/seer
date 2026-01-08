@@ -3,7 +3,7 @@ from tortoise import BaseDBAsyncClient
 RUN_IN_TRANSACTION = True
 
 
-async def upgrade(db: BaseDBAsyncClient) -> str:
+async def upgrade(_db: BaseDBAsyncClient) -> str:
     return """
         CREATE TABLE IF NOT EXISTS "integration_resources" (
     "id" BIGSERIAL NOT NULL PRIMARY KEY,
@@ -44,7 +44,7 @@ CREATE INDEX IF NOT EXISTS "idx_integration_user_id_edae4e" ON "integration_secr
 COMMENT ON TABLE "integration_secrets" IS 'Generic vault for non-OAuth credentials tied to a connection or resource.';"""
 
 
-async def downgrade(db: BaseDBAsyncClient) -> str:
+async def downgrade(_db: BaseDBAsyncClient) -> str:
     return """
         DROP TABLE IF EXISTS "integration_secrets";
         DROP TABLE IF EXISTS "integration_resources";"""

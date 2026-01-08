@@ -6,6 +6,7 @@ import secrets
 from typing import Any, Dict, List, Optional
 
 from jsonschema import Draft7Validator
+from fastapi import HTTPException
 
 from api.workflows import models as api_models
 from api.workflows.services.shared import (
@@ -16,7 +17,6 @@ from api.workflows.services.shared import (
 from shared.database.workflow_models import (
     TriggerSubscription,
     User,
-    Workflow,
     WorkflowDraft,
     make_workflow_public_id,
 )
@@ -384,16 +384,14 @@ async def update_trigger_subscription(
 
 async def delete_trigger_subscription(user: User, subscription_id: int) -> None:
     subscription = await _get_trigger_subscription(user, subscription_id)
-    subscription = await _get_trigger_subscription(user, subscription_id)
-     # For Supabase webhook triggers, clean up the database trigger
+    # For Supabase webhook triggers, clean up the database trigger
     if subscription.trigger_key == "webhook.supabase.db_changes":
         try:
             await delete_database_webhook(subscription)
         except Exception as exc:
             # Log but don't block deletion - trigger cleanup is best-effort
             logger.warning(
-                "Failed to delete Supabase webhook (non-fatal)",
-                extra={"subscription_id": subscription_id, "error": str(exc)}
+                "Failed to delete Supabase webhook (non-fatal) %s", str(exc),
             )
     await subscription.delete()
 
