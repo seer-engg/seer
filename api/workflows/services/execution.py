@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import time
@@ -16,6 +15,7 @@ from api.workflows.services.shared import (
     COMPILE_PROBLEM,
     RUN_PROBLEM,
     _build_run_config,
+    _compile_workflow,
     _now,
     _raise_problem,
     _spec_to_dict,
@@ -25,8 +25,8 @@ from api.workflows.services.shared import (
 from api.agents.checkpointer import get_checkpointer
 from shared.analytics import analytics
 from shared.config import config as shared_config
+from shared.database.models import User
 from shared.database.workflow_models import (
-    User,
     Workflow,
     WorkflowDraft,
     WorkflowRun,
@@ -38,12 +38,9 @@ from shared.database.workflow_models import (
 )
 from worker.tasks.workflows import execute_saved_workflow as execute_saved_workflow_task
 from workflow_compiler.errors import WorkflowCompilerError
-from workflow_compiler.runtime.global_compiler import WorkflowCompilerSingleton
 from workflow_compiler.schema.models import WorkflowSpec
 
-compiler = WorkflowCompilerSingleton.instance()
 logger = logging.getLogger(__name__)
-
 
 
 async def _ensure_draft_version(workflow: Workflow, user: User) -> WorkflowVersion:
@@ -72,6 +69,7 @@ async def _ensure_draft_version(workflow: Workflow, user: User) -> WorkflowVersi
         spec_hash=spec_hash,
     )
 
+
 async def _create_run_record(
     user: User,
     *,
@@ -96,6 +94,7 @@ async def _create_run_record(
     run.thread_id = run.run_id
     return run
 
+
 def _serialize_run(run: WorkflowRun) -> api_models.RunResponse:
     workflow_public_id = (
         make_workflow_public_id(run.workflow_id) if run.workflow_id else None
@@ -113,6 +112,7 @@ def _serialize_run(run: WorkflowRun) -> api_models.RunResponse:
         last_error=run.error,
     )
 
+
 def _serialize_run_summary(run: WorkflowRun) -> api_models.WorkflowRunSummary:
     return api_models.WorkflowRunSummary(
         run_id=run.run_id,
@@ -125,8 +125,6 @@ def _serialize_run_summary(run: WorkflowRun) -> api_models.WorkflowRunSummary:
         output=run.output,
         error=run.error,
     )
-
-
 
 
 async def _execute_compiled_run(
@@ -170,11 +168,7 @@ async def _execute_compiled_run(
 
     checkpointer = await get_checkpointer()
     try:
-        compiled = await compiler.compile(
-            user,
-            run.spec,
-            checkpointer=checkpointer,
-        )
+        compiled = await _compile_workflow(user, run.spec, checkpointer=checkpointer)
     except WorkflowCompilerError as exc:
         await WorkflowRun.filter(id=run.id).update(
             status=WorkflowRunStatus.FAILED,
@@ -289,7 +283,6 @@ async def _execute_compiled_run(
     return result
 
 
-
 async def _complete_run(run: WorkflowRun, output: Dict[str, Any]) -> WorkflowRun:
     await WorkflowRun.filter(id=run.id).update(
         status=WorkflowRunStatus.SUCCEEDED,
@@ -324,6 +317,7 @@ async def run_draft_workflow(user: User, payload: api_models.RunFromSpecRequest)
     run = await _create_run_record(
         user,
         workflow=None,
+        workflow_version=None,
         spec=payload.spec,
         inputs=payload.inputs,
         config_payload=payload.config,
@@ -334,7 +328,6 @@ async def run_draft_workflow(user: User, payload: api_models.RunFromSpecRequest)
     output = await _execute_compiled_run(run, user, inputs=payload.inputs, config_payload=payload.config)
     run = await _complete_run(run, output)
     return _serialize_run(run)
-
 
 
 async def list_workflow_runs(

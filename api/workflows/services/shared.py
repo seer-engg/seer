@@ -6,18 +6,18 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Sequence
 
 from fastapi import HTTPException
+from workflow_compiler.runtime.global_compiler import WorkflowCompilerSingleton
+from workflow_compiler.schema.models import WorkflowSpec
 
 from api.workflows import models as api_models
-from shared.database.workflow_models import WorkflowRun
-from workflow_compiler.schema.models import WorkflowSpec
-from shared.database.workflow_models import  Workflow, parse_workflow_public_id, User
+from shared.database.models import User
+from shared.database.workflow_models import Workflow, WorkflowRun, parse_workflow_public_id
 
 
 PROBLEM_BASE = "https://seer.errors/workflows"
 VALIDATION_PROBLEM = f"{PROBLEM_BASE}/validation"
 COMPILE_PROBLEM = f"{PROBLEM_BASE}/compile"
 RUN_PROBLEM = f"{PROBLEM_BASE}/run"
-
 
 
 def _now() -> datetime:
@@ -51,7 +51,6 @@ def _hash_spec(spec_dict: Dict[str, Any]) -> str:
     return hashlib.sha256(serialized).hexdigest()
 
 
-
 def _build_run_config(run: WorkflowRun, config_payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Ensure LangGraph defaults (thread_id) are present so checkpoints can be recovered.
@@ -66,7 +65,6 @@ def _build_run_config(run: WorkflowRun, config_payload: Optional[Dict[str, Any]]
     configurable["thread_id"] = run.thread_id or run.run_id
     base_config["configurable"] = configurable
     return base_config
-
 
 
 async def _get_workflow(user: User, workflow_id: str) -> Workflow:
@@ -88,3 +86,22 @@ async def _get_workflow(user: User, workflow_id: str) -> Workflow:
             status=404,
         )
     return workflow
+
+
+async def _compile_workflow(
+    user: User,
+    spec: Dict[str, Any],
+    checkpointer: Optional[Any] = None,
+) -> Any:
+    """
+    Compile a workflow spec using the global compiler instance.
+
+    This is a shared helper to avoid duplicating the compile pattern across
+    history.py and execution.py.
+    """
+    compiler = WorkflowCompilerSingleton.instance()
+    return await compiler.compile(
+        user,
+        spec,
+        checkpointer=checkpointer,
+    )

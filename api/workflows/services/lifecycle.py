@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Any, Dict, Optional
+
+from tortoise.exceptions import DoesNotExist
+from workflow_compiler.schema.models import WorkflowSpec
 
 from api.workflows import models as api_models
 from api.workflows.services.shared import (
@@ -13,23 +16,16 @@ from api.workflows.services.shared import (
     _spec_to_dict,
     _get_workflow
 )
-
+from shared.database.models import User
 from shared.database.workflow_models import (
-    User,
     Workflow,
     WorkflowDraft,
     WorkflowVersion,
     WorkflowVersionStatus,
     parse_workflow_public_id,
 )
-from tortoise.exceptions import DoesNotExist
-from workflow_compiler.schema.models import WorkflowSpec
-from typing import Dict, Any
 
 # ===== Helper Functions =====
-
-
-
 
 
 def _workflow_summary(workflow: Workflow) -> api_models.WorkflowSummary:
@@ -124,6 +120,7 @@ def _parse_workflow_cursor(cursor: Optional[str]) -> Optional[int]:
             detail="Cursor parameter is invalid",
             status=400,
         )
+        return None  # Unreachable, but satisfies pylint
 
 
 async def create_workflow(user: User, payload: api_models.WorkflowCreateRequest) -> api_models.WorkflowResponse:
@@ -135,7 +132,7 @@ async def create_workflow(user: User, payload: api_models.WorkflowCreateRequest)
         tags=list(payload.tags or []),
         meta={"last_compile_ok": False},
     )
-    draft = await WorkflowDraft.create(
+    await WorkflowDraft.create(
         workflow=workflow,
         spec=spec_dict,
         revision=1,
@@ -195,10 +192,6 @@ async def list_workflow_versions(user: User, workflow_id: str) -> api_models.Wor
         latest_version_id=latest_version_id,
         published_version_id=published_version_id,
     )
-
-
-
-
 
 
 async def update_workflow(
@@ -263,7 +256,7 @@ async def patch_workflow_draft(
     #     )
 
     # For now, we allow patching the draft without checking the revision
-    draft.revision  = max(draft.revision, payload.base_revision or 0) + 1
+    draft.revision = max(draft.revision, payload.base_revision or 0) + 1
 
     spec = payload.spec
     draft.spec = _spec_to_dict(spec)
@@ -360,6 +353,7 @@ async def delete_workflow(user: User, workflow_id: str) -> None:
     workflow = await _get_workflow(user, workflow_id)
     await workflow.delete()
 
+
 async def export_workflow(
     user: User,
     workflow_id: str,
@@ -369,7 +363,6 @@ async def export_workflow(
     Export workflow and optionally triggers as portable JSON.
     """
     from shared.database.workflow_models import TriggerSubscription
-    from datetime import timezone
 
     # 1. Fetch workflow and draft
     workflow = await _get_workflow(user, workflow_id)
@@ -486,7 +479,7 @@ async def import_workflow(
     )
 
     # 4. Create draft with spec
-    draft = await WorkflowDraft.create(
+    await WorkflowDraft.create(
         workflow=workflow,
         spec=spec.model_dump(mode="json"),
         revision=1,
