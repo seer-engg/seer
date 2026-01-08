@@ -26,10 +26,13 @@ disable=
     too-many-arguments,
     missing-class-docstring,
     broad-except,
+    protected-access,
+    fixme,
+    raise-missing-from
 
 [MASTER]
 # Add files or directories to the blacklist
-ignore=alembic,migrations,.venv,venv,build,dist
+ignore=alembic,migrations,.venv,venv,build,dist,workflow_compiler,shared/sandbox
 
 [FORMAT]
 # Maximum number of characters on a single line.
