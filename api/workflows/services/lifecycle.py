@@ -253,16 +253,20 @@ async def patch_workflow_draft(
 ) -> api_models.WorkflowResponse:
     workflow = await _get_workflow(user, workflow_id)
     draft = workflow.draft or await WorkflowDraft.get(workflow=workflow)
-    if payload.base_revision is not None and payload.base_revision != draft.revision:
-        _raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Draft revision mismatch",
-            detail="Draft has changed since last fetch",
-            status=409,
-        )
+    # TODO: discuss if want to have revision check here
+    # if payload.base_revision is not None and payload.base_revision != draft.revision:
+    #     _raise_problem(
+    #         type_uri=VALIDATION_PROBLEM,
+    #         title="Draft revision mismatch",
+    #         detail="Draft has changed since last fetch",
+    #         status=409,
+    #     )
+
+    # For now, we allow patching the draft without checking the revision
+    draft.revision  = max(draft.revision, payload.base_revision or 0) + 1
+
     spec = payload.spec
     draft.spec = _spec_to_dict(spec)
-    draft.revision += 1
     draft.updated_by = user
     await draft.save()
     await Workflow.filter(id=workflow.id).update(updated_at=_now())
