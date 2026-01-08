@@ -1,6 +1,5 @@
 """API router for the Seer Agents API."""
 from fastapi import APIRouter
-from .agents.routes import router as agents_router
 from .agents.traces import router as agents_traces_router
 from .integrations.router import router as integrations_router
 from .models.router import router as models_router
@@ -11,7 +10,6 @@ from .forms.router import router as forms_router
 from .bootstrap.router import router as bootstrap_router
 
 router = APIRouter(prefix="/api")
-router.include_router(agents_router)
 router.include_router(agents_traces_router)
 router.include_router(integrations_router)
 router.include_router(models_router)

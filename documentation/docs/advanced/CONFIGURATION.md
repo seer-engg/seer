@@ -185,14 +185,6 @@ The following variables are for evaluation and testing workflows. Most users won
 | `EVAL_PASS_THRESHOLD` | Minimum score to pass (0.0-1.0) | `0.8` |
 | `EVAL_AGENT_ARCHITECTURE` | Architecture: `react` or `reflexion` | `reflexion` |
 | `EVAL_REASONING_EFFORT` | Reasoning effort: `minimal`, `medium`, `high` | `medium` |
-| `CODEX_HANDOFF_ENABLED` | Enable handoff to codex agent | `true` |
-
-### Codex Agent
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `CODEX_REASONING_EFFORT` | Reasoning effort for developer node | `high` |
-| `ALLOW_PR` | Allow PR creation even if eval fails | `true` |
 
 ### Target Agent
 
