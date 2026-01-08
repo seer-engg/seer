@@ -19,9 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import json
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, List
 
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
@@ -98,7 +97,7 @@ def register_demo_components(service: GmailDemoService) -> None:
         ) from exc
     structured_llm = llm.with_structured_output(ReplyPayload)
 
-    def llm_handler(invocation: Dict[str, Any], schema: JsonSchema) -> Dict[str, Any]:
+    def llm_handler(invocation: Dict[str, Any], _schema: JsonSchema) -> Dict[str, Any]:
         email = invocation.get("inputs", {}).get("email", {})
         rendered_prompt = (
             f"{invocation['prompt']}\n\n"
