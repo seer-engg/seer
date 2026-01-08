@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, cast
 from pydantic import BaseModel, Field
 
 class ToolFunction(BaseModel):
@@ -19,9 +19,8 @@ class Tool(BaseModel):
         # Handle cases where the dict is just the function part or the full tool part
         if "function" in data:
             return cls(**data)
-        else:
-            # Assume it's the function definition directly (common in some frameworks)
-            return cls(function=ToolFunction(**data))
+        # Assume it's the function definition directly (common in some frameworks)
+        return cls(function=ToolFunction(**data))
 
     class Config:
         arbitrary_types_allowed = True
@@ -38,4 +37,6 @@ class EnrichedTool(BaseModel):
     original_tool: Tool = Field(description="The original tool object")
 
     def get_executable(self) -> Optional[Any]:
-        return self.original_tool.executable
+        # Pylint may infer pydantic Field as FieldInfo; cast to Tool for type checking
+        tool = cast(Tool, self.original_tool)
+        return tool.executable  # pylint: disable=no-member
