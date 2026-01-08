@@ -12,7 +12,7 @@ from workflow_compiler.schema.models import JsonSchema
 
 
 @dataclass
-class TriggerDefinition:
+class TriggerDefinition:  # pylint: disable=too-many-instance-attributes
     key: str
     title: str
     provider: str
@@ -80,7 +80,7 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
     registry.register(
         TriggerDefinition(
             key="webhook.generic",
-            title="Generic Webhook",
+            title="Webhook",
             provider="generic",
             mode="webhook",
             description="Accepts arbitrary JSON payloads via signed webhook requests.",
@@ -90,7 +90,7 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
     registry.register(
         TriggerDefinition(
             key="poll.gmail.email_received",
-            title="Gmail – New Email",
+            title="Gmail",
             provider="gmail",
             mode="polling",
             description="Poll a Gmail inbox for newly received messages using OAuth credentials.",
@@ -103,7 +103,7 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
     registry.register(
         TriggerDefinition(
             key="schedule.cron",
-            title="Cron Schedule",
+            title="Scheduler",
             provider="schedule",
             mode="polling",
             description="Execute workflow on a cron schedule with timezone support.",
@@ -118,7 +118,7 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
     registry.register(
         TriggerDefinition(
             key="webhook.supabase.db_changes",
-            title="Supabase – Database Changes",
+            title="Supabase",
             provider="supabase",
             mode="webhook",
             description="Receive real-time webhooks when rows are inserted, updated, or deleted in Supabase tables.",
@@ -132,7 +132,7 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
     registry.register(
         TriggerDefinition(
             key="form.hosted",
-            title="Hosted Form",
+            title="Form",
             provider="form",
             mode="webhook",
             description=(
@@ -265,7 +265,13 @@ def _cron_schedule_config_schema() -> JsonSchema:
             "cron_expression": {
                 "type": "string",
                 "description": "5-field cron expression (minute hour day month weekday)",
-                "pattern": r"^(\*|([0-9]|1[0-9]|2[0-9]|3[0-9]|4[0-9]|5[0-9])|\*/[0-9]+)(\s+(\*|([0-9]|1[0-9]|2[0-3])|\*/[0-9]+)){1}(\s+(\*|([1-9]|[12][0-9]|3[01])|\*/[0-9]+)){1}(\s+(\*|([1-9]|1[0-2])|\*/[0-9]+)){1}(\s+(\*|[0-6]|\*/[0-9]+)){1}$",
+                "pattern": (
+                    r"^(\*|([0-9]|1[0-9]|2[0-9]|3[0-9]|4[0-9]|5[0-9])|\*/[0-9]+)"
+                    r"(\s+(\*|([0-9]|1[0-9]|2[0-3])|\*/[0-9]+)){1}"
+                    r"(\s+(\*|([1-9]|[12][0-9]|3[01])|\*/[0-9]+)){1}"
+                    r"(\s+(\*|([1-9]|1[0-2])|\*/[0-9]+)){1}"
+                    r"(\s+(\*|[0-6]|\*/[0-9]+)){1}$"
+                ),
             },
             "timezone": {
                 "type": "string",
