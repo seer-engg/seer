@@ -53,5 +53,3 @@ class ModelRegistry:
 
     def all(self) -> List[ModelDefinition]:
         return list(self._models.values())
-
-

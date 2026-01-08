@@ -355,13 +355,3 @@ async def publish_workflow(
 async def delete_workflow(user: User, workflow_id: str) -> None:
     workflow = await _get_workflow(user, workflow_id)
     await workflow.delete()
-
-
-
-
-
-
-
-
-
-

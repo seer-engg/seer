@@ -51,5 +51,3 @@ async def emit_langgraph(
     if checkpointer:
         return graph.compile(checkpointer=checkpointer)
     return graph.compile()
-
-

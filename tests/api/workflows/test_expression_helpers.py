@@ -25,4 +25,3 @@ async def test_expression_helpers(db_user, workflow_spec):
     type_resp = services.typecheck_expression(db_user, typecheck_request)
     assert type_resp.ok
     assert type_resp.type == {"type": "integer"}
-

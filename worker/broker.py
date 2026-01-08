@@ -78,5 +78,3 @@ async def _on_worker_shutdown(_: TaskiqState) -> None:
 
 
 __all__ = ["broker"]
-
-

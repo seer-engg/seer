@@ -19,5 +19,3 @@ async def process_trigger_event(subscription_id: int, event_id: int) -> None:
 
 
 __all__ = ["process_trigger_event"]
-
-

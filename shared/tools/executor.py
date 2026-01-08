@@ -25,21 +25,21 @@ async def execute_tool(
 ) -> Any:
     """
     Execute a tool with OAuth token management.
-    
+
     Args:
         tool_name: Name of the tool to execute
         user: User
         connection_id: OAuth connection ID (if tool requires OAuth)
         arguments: Tool arguments
-    
+
     Returns:
         Tool execution result
-    
+
     Raises:
         HTTPException: If tool not found, scopes invalid, or execution fails
     """
     arguments = arguments or {}
-    
+
     tool = get_tool(tool_name)
     if not tool:
         raise HTTPException(
@@ -107,4 +107,3 @@ async def _execute_with_optional_credentials(
         if "credentials" in message and "unexpected keyword argument" in message:
             return await tool.execute(resolved.access_token, arguments)
         raise
-

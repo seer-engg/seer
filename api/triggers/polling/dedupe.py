@@ -36,4 +36,3 @@ def compute_event_hash(
         default=_json_default,
     )
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
-

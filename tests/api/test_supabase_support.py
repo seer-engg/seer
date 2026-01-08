@@ -73,4 +73,3 @@ async def test_bind_supabase_project_manual_requires_service_key(monkeypatch) ->
             project_ref="demo-ref",
             service_role_key="",
         )
-

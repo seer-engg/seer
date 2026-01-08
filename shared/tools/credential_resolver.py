@@ -247,5 +247,3 @@ class CredentialResolver:
 
 
 __all__ = ["CredentialResolver", "ResolvedCredentials"]
-
-

@@ -28,22 +28,22 @@ async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, 
 
     on_stdout_count = [0]  # Use list to allow modification in closure
     on_stderr_count = [0]
-    
+
     def on_stdout(chunk: str):
         on_stdout_count[0] += 1
         logger.info(f"[STDOUT #{on_stdout_count[0]}] Length: {len(chunk)}")
         logger.info(f"  Content: {repr(chunk[:200])}")  # Show first 200 chars with escape sequences
-        
+
         # Also check stdout for error patterns (sometimes stderr goes to stdout)
         last_err.append(f"STDOUT: {chunk}")
         stderr_buffer.append(chunk)
-        
+
         # Check the accumulated buffer for success pattern (could span chunks)
         full_buffer = ''.join(stderr_buffer)
         if SUCCESS_PAT.search(full_buffer):
             ready_evt.set()
             return  # No need to check for failures if success found
-            
+
         # Check for failures in stdout too
         for i, pattern in enumerate(FAIL_PATTERNS):
             if pattern.search(full_buffer):
@@ -55,20 +55,20 @@ async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, 
         on_stderr_count[0] += 1
         logger.info(f"[STDERR #{on_stderr_count[0]}] Length: {len(chunk)}")
         logger.info(f"  Content: {repr(chunk[:200])}")  # Show first 200 chars with escape sequences
-        
+
         last_err.append(f"STDERR: {chunk}")
         stderr_buffer.append(chunk)
-        
+
         # Check the accumulated buffer for both success and failure patterns
         full_buffer = ''.join(stderr_buffer)
         logger.info(f"  Buffer size: {len(full_buffer)} chars")
-        
+
         # Check for success pattern first (sometimes goes to stderr)
         if SUCCESS_PAT.search(full_buffer):
             logger.info("✓ SUCCESS PATTERN FOUND IN STDERR!")
             ready_evt.set()
             return
-        
+
         # Check for failure patterns
         for i, pattern in enumerate(FAIL_PATTERNS):
             if pattern.search(full_buffer):
@@ -76,7 +76,7 @@ async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, 
                 logger.info(f"  Matched in: {full_buffer[-200:]}")
                 failed_evt.set()
                 return
-        
+
         logger.info(f"  No patterns matched yet (checked 1 success + {len(FAIL_PATTERNS)} failure patterns)")
 
     # 1) start server in background and stream logs
@@ -95,7 +95,7 @@ async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, 
     ready_task = asyncio.create_task(ready_evt.wait())
     failed_task = asyncio.create_task(failed_evt.wait())
     tasks = {ready_task, failed_task}
-    
+
     try:
         done, pending = await asyncio.wait(
             tasks,
@@ -130,7 +130,7 @@ async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, 
     # 3) if we saw the success line (fast path), double-check with probes
     if ready_evt.is_set():
         logger.info("Success pattern detected, verifying with probes...")
-        
+
         # First probe from inside (local connectivity within sandbox)
         inside_ok = await _probe_from_inside(sb, INTERNAL_URL)
         if not inside_ok:
@@ -149,7 +149,7 @@ async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, 
 
     # 4) final check: is process still alive?
     _ = await sb.commands.list()
-    
+
     # Debug summary
     logger.info("\n" + "="*80)
     logger.info("TIMEOUT REACHED - DEBUG SUMMARY")
@@ -164,7 +164,7 @@ async def deploy_server_and_confirm_ready(cmd: str, sb: AsyncSandbox, cwd: str, 
     logger.info(f"\nLast 500 chars of buffer:")
     logger.info(repr(''.join(stderr_buffer)[-500:]))
     logger.info("="*80 + "\n")
-    
+
     return sb, handle
 
 async def _probe_from_inside(sb: AsyncSandbox, url: str) -> bool:
@@ -184,7 +184,7 @@ async def _probe_from_outside(url: str, timeout: float = 5.0) -> bool:
 
     if 'http' not in url:
         url = f"http://{url}"
-    
+
     logger.info(f"Probing from outside: {url}")
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -203,4 +203,3 @@ async def _probe_from_outside(url: str, timeout: float = 5.0) -> bool:
     except Exception as e:
         logger.info(f"  ✗ Unexpected error: {type(e).__name__}: {e}")
         return False
-

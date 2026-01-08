@@ -69,4 +69,3 @@ class ErrorResponse(BaseModel):
     """Error response model."""
     detail: str
     error_type: Optional[str] = None
-

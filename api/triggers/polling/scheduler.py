@@ -54,4 +54,3 @@ class TriggerPollScheduler:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=self.interval_seconds)
             except asyncio.TimeoutError:
                 continue
-

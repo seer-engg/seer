@@ -355,4 +355,3 @@ _register_builtin_triggers(trigger_registry)
 
 
 __all__ = ["TriggerDefinition", "TriggerRegistry", "trigger_registry"]
-

@@ -75,4 +75,3 @@ class InterruptResponse(BaseModel):
     """Response model for human-in-the-loop interrupt."""
     decision: str = Field(..., description="Decision: 'approve', 'edit', or 'reject'")
     edited_args: Optional[Dict[str, Any]] = Field(default=None, description="Edited arguments if decision is 'edit'")
-

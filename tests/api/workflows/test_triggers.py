@@ -124,4 +124,3 @@ async def test_generic_webhook_ingestion_creates_triggered_run(db_user, workflow
     assert run.subscription_id == subscription_response.subscription_id
     assert run.inputs["user_id"] == 42
     assert run.output == {"inputs": {"user_id": 42}}
-

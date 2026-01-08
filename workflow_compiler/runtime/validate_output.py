@@ -37,5 +37,3 @@ def validate_against_schema(
     except ValidationError as exc:
         message = format_validation_error(exc, prefix=path)
         raise ExecutionError(message) from exc
-
-

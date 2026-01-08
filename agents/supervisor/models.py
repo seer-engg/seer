@@ -23,7 +23,7 @@ class WorkerResponse(BaseModel):
     message: str
     error: Optional[str] = Field(default=None, description="Error message if status is failure")
     tool_calls_made: int = Field(default=0, description="Number of tool calls executed")
-    
+
     @classmethod
     def from_message_content(cls, content: str, messages: List[BaseMessage] = None) -> "WorkerResponse":
         """Parse a worker's final message into a structured response."""
@@ -31,7 +31,7 @@ class WorkerResponse(BaseModel):
         tool_calls = 0
         if messages:
             tool_calls = sum(1 for m in messages if hasattr(m, 'tool_calls') and m.tool_calls)
-        
+
         # Check for explicit status indicators
         content_lower = content.lower()
         if "❌" in content or "error" in content_lower or "failed" in content_lower:

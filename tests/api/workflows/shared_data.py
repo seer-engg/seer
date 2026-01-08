@@ -64,4 +64,3 @@ TEST_SCHEMA_DEFINITION: Dict[str, Any] = {
 def configure_workflow_test_logging() -> None:
     logging.getLogger("api.workflows.services").setLevel(logging.DEBUG)
     logging.getLogger("workflow_compiler.runtime").setLevel(logging.DEBUG)
-

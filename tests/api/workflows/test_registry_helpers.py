@@ -18,4 +18,3 @@ async def test_registry_helpers(db_user):
 
     schema_resp = await services.resolve_schema(TEST_SCHEMA_ID)
     assert schema_resp.json_schema["type"] == "object"
-

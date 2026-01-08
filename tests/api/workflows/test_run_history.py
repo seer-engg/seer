@@ -21,4 +21,3 @@ async def test_get_run_history_returns_snapshots(db_user, workflow_spec):
         snapshot.get("config", {}).get("configurable", {}).get("thread_id") == run.run_id
         for snapshot in response.history
     ), "thread_id should match run id in at least one snapshot"
-

@@ -138,4 +138,3 @@ async def test_poll_engine_dedupes_hash_only_events(gmail_poll_subscription, mon
     ).count()
     assert event_count == 1
     assert len(enqueued_jobs) == 1
-

@@ -6,7 +6,7 @@ class Context(TypedDict):
     """
     Context for the supervisor agent.
     """
-    #integrations is a dictionary of integration names and their corresponding context eg 
+    #integrations is a dictionary of integration names and their corresponding context eg
     # {
     #     "sandbox": null,
     #     "github": {
@@ -36,4 +36,3 @@ class WorkerState(TypedDict):
     """
     messages: Annotated[List[BaseMessage], add_messages]
     tool_call_counts: Optional[Dict[str, int]]  # Track tool calls: {"tool_name": count, "_total": total}
-

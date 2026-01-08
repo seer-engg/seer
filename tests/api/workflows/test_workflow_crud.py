@@ -68,4 +68,3 @@ async def test_apply_workflow_from_spec(db_user, workflow_spec):
     applied = await services.apply_workflow_from_spec(db_user, created.workflow_id, updated_spec_dict)
     assert applied.draft_revision == 2
     assert applied.spec.meta.get("notes") == "refined summary"
-

@@ -33,5 +33,3 @@ def parse_workflow_spec(payload: Any) -> WorkflowSpec:
         return WorkflowSpec.model_validate(data)
     except Exception as exc:  # Pydantic raises ValidationError
         raise ValidationPhaseError(f"Workflow spec validation failed: {exc}") from exc
-
-

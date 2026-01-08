@@ -21,5 +21,3 @@ async def poll_triggers_once() -> None:
 
 
 __all__ = ["poll_triggers_once"]
-
-

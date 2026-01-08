@@ -22,4 +22,3 @@ __all__ = [
     "ProviderContext",
     "get_integration_provider",
 ]
-

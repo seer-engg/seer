@@ -143,5 +143,3 @@ def _ensure_schema_match(actual: Dict, expected: Dict, *, symbol: str) -> None:
     raise TypeEnvironmentError(
         f"Schema mismatch for '{symbol}': registry returned {actual} but node expects {expected}"
     )
-
-

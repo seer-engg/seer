@@ -34,7 +34,7 @@ def _parse_postgres_credentials(url: str) -> Dict[str, Any]:
     database = (parsed.path or "").lstrip("/") or "postgres"
     # Get schema from env var, default to 'public' (PostgreSQL default)
     schema = os.getenv("DB_SCHEMA", "public")
-    
+
     credentials = {
         "host": parsed.hostname or "localhost",
         "port": parsed.port or 5432,
@@ -44,12 +44,12 @@ def _parse_postgres_credentials(url: str) -> Dict[str, Any]:
         "minsize": DB_MIN_CONNECTIONS,
         "maxsize": DB_MAX_CONNECTIONS,
     }
-    
+
     # Set search_path via server_settings for non-public schemas
     # asyncpg doesn't support "schema" parameter directly
     if schema != "public":
         credentials["server_settings"] = {"search_path": schema}
-    
+
     return credentials
 
 
@@ -95,5 +95,3 @@ __all__ = [
     "DB_CREDENTIALS",
     "TORTOISE_ORM",
 ]
-
-

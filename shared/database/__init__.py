@@ -24,7 +24,7 @@ logger = get_logger("shared.database")
 
 async def init_db() -> None:
     """Initialize Tortoise ORM with the configured settings."""
-    
+
     # Initialize Tortoise for the application (Command closes connections on exit)
     await Tortoise.init(config=TORTOISE_ORM)
 
@@ -60,5 +60,3 @@ __all__ = [
     "IntegrationResource",
     "IntegrationSecret",
 ]
-
-

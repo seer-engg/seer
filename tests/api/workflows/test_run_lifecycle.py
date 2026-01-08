@@ -111,4 +111,3 @@ async def test_publish_promotes_version(db_user, workflow_spec, monkeypatch):
     assert published.published_version is not None
     assert published.published_version.version_id == run.workflow_version_id
     assert published.published_version.status == "RELEASED"
-

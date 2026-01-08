@@ -24,7 +24,7 @@ def _validate_environment():
     for var_name, description in _REQUIRED_VARS.items():
         if not os.getenv(var_name):
             missing.append(f"{var_name} ({description})")
-    
+
     if missing:
         error_msg = (
             "Missing required environment variables:\n"
@@ -50,4 +50,3 @@ def get_env_summary() -> dict:
         },
         "optional": {}
     }
-

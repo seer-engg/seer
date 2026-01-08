@@ -68,4 +68,3 @@ def typecheck_expression(user: User, payload: api_models.ExpressionTypecheckRequ
             status=400,
         )
     return api_models.ExpressionTypecheckResponse(type=schema)
-

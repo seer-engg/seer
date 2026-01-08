@@ -72,5 +72,3 @@ class CompiledWorkflow:
             for key, value in final_state.items()
             if not key.startswith(INTERNAL_STATE_PREFIX)
         }
-
-
