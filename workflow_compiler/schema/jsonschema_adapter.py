@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
-from threading import Lock
-from typing import Any, Dict, Iterable
+from typing import Any
 
 from jsonschema import ValidationError
 from jsonschema.exceptions import SchemaError
@@ -12,29 +10,13 @@ from workflow_compiler.schema.models import JsonSchema
 
 ValidatorType = Draft202012Validator
 
-_validator_cache: Dict[str, ValidatorType] = {}
-_cache_lock = Lock()
-
-
-def _cache_key(schema: JsonSchema, schema_id: str | None) -> str:
-    if schema_id:
-        return schema_id
-    return json.dumps(schema, sort_keys=True, separators=(",", ":"))
-
 
 def get_validator(schema: JsonSchema, *, schema_id: str | None = None) -> ValidatorType:
     """
-    Compile (and cache) a jsonschema validator for the provided schema.
+    Compile a jsonschema validator for the provided schema.
     """
-
-    key = _cache_key(schema, schema_id)
-    with _cache_lock:
-        validator = _validator_cache.get(key)
-        if validator is None:
-            validator_cls = validator_for(schema, default=Draft202012Validator)
-            validator = validator_cls(schema)
-            _validator_cache[key] = validator
-    return validator
+    validator_cls = validator_for(schema, default=Draft202012Validator)
+    return validator_cls(schema)
 
 
 def validate_instance(schema: JsonSchema, instance: Any, *, schema_id: str | None = None) -> None:

@@ -53,10 +53,6 @@ class SeerConfig(BaseSettings):
         default=None,
         description="PostgreSQL connection string for LangGraph checkpointer (e.g., postgresql://user:pass@host:port/db). Required for human-in-the-loop interrupts."
     )
-    AUTO_APPLY_DATABASE_MIGRATIONS: bool = Field(
-        default=False,
-        description="Auto-apply database migrations on startup if True. If False, database migrations must be run manually."
-    )
     
     # ============================================================================
     # PostgreSQL Tool Autonomy Configuration
@@ -146,6 +142,15 @@ class SeerConfig(BaseSettings):
     posthog_enabled: bool = Field(
         default=False,
         description="Enable PostHog analytics tracking"
+    )
+
+    webhook_base_url: Optional[str] = Field(
+        default=None,
+        description="Base URL for webhook callbacks (e.g., https://seer.example.com). Used by external services to send webhooks. Defaults to http://localhost:8000 if not set.",
+    )
+    REDIRECT_URI_SCHEME: str = Field(
+        default="http",
+        description="Scheme for redirect URIs (e.g., https or http)"
     )
 
     # ============================================================================

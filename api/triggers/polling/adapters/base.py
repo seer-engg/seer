@@ -18,8 +18,8 @@ class PollContext:
 
     subscription: TriggerSubscription
     user: User
-    connection: OAuthConnection
-    access_token: str
+    connection: Optional[OAuthConnection] = None
+    access_token: Optional[str] = None
 
 
 @dataclass(slots=True)

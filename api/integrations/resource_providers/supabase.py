@@ -17,6 +17,7 @@ logger = get_logger("api.integrations.resource_providers.supabase")
 
 class SupabaseResourceProvider(ResourceProvider):
     provider = SUPABASE_RESOURCE_PROVIDER
+    aliases = ["supabase", "supabase_mgmt"]
     resource_configs: Dict[str, Dict[str, Any]] = {
         "supabase_project": {
             "display_field": "name",

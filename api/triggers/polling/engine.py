@@ -19,6 +19,7 @@ from api.triggers.services import (
     _dispatch_trigger_event,
     _load_trigger_provider,
     _persist_event,
+    _trigger_requires_connection,
 )
 from shared.database.workflow_models import TriggerSubscription
 from shared.logger import get_logger
@@ -106,16 +107,6 @@ class TriggerPollEngine:
             await self._disable_subscription(subscription, reason="missing_adapter")
             return
 
-        if subscription.provider_connection_id is None:
-            logger.error(f"Missing provider connection for subscription {subscription.id}")
-            await self._mark_error(
-                subscription,
-                reason="missing_provider_connection",
-                detail={"trigger_key": subscription.trigger_key},
-                delay_seconds=max(subscription.poll_interval_seconds, 60),
-            )
-            return
-
         await subscription.fetch_related("user")
         user = subscription.user
         if user is None:
@@ -123,28 +114,46 @@ class TriggerPollEngine:
             await self._disable_subscription(subscription, reason="missing_user")
             return
 
-        try:
-            connection, access_token = await get_oauth_token(
-                user,
-                connection_id=str(subscription.provider_connection_id),
-            )
-        except HTTPException as exc:
-            should_disable = exc.status_code in {401, 403, 404}
-            if should_disable:
-                logger.error(f"OAuth error for subscription {subscription.id}: {exc.detail}")
-                await self._disable_subscription(
-                    subscription,
-                    reason="oauth_error",
-                    detail={"status_code": exc.status_code, "detail": exc.detail},
+        requires_connection = _trigger_requires_connection(subscription.trigger_key)
+
+        connection = None
+        access_token = None
+        if subscription.provider_connection_id is None:
+            if requires_connection:
+                logger.error(
+                    "Missing provider connection for subscription",
+                    extra={"subscription_id": subscription.id, "trigger_key": subscription.trigger_key},
                 )
-            else:
                 await self._mark_error(
                     subscription,
-                    reason="oauth_error",
-                    detail={"status_code": exc.status_code, "detail": exc.detail},
-                    delay_seconds=subscription.poll_interval_seconds,
+                    reason="missing_provider_connection",
+                    detail={"trigger_key": subscription.trigger_key},
+                    delay_seconds=max(subscription.poll_interval_seconds, 60),
                 )
-            return
+                return
+        else:
+            try:
+                connection, access_token = await get_oauth_token(
+                    user,
+                    connection_id=str(subscription.provider_connection_id),
+                )
+            except HTTPException as exc:
+                should_disable = exc.status_code in {401, 403, 404}
+                if should_disable:
+                    logger.error(f"OAuth error for subscription {subscription.id}: {exc.detail}")
+                    await self._disable_subscription(
+                        subscription,
+                        reason="oauth_error",
+                        detail={"status_code": exc.status_code, "detail": exc.detail},
+                    )
+                else:
+                    await self._mark_error(
+                        subscription,
+                        reason="oauth_error",
+                        detail={"status_code": exc.status_code, "detail": exc.detail},
+                        delay_seconds=subscription.poll_interval_seconds,
+                    )
+                return
 
         ctx = PollContext(
             subscription=subscription,

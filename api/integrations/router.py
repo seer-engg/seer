@@ -331,7 +331,7 @@ async def connect(
             return RedirectResponse(url=f"{final_redirect}?connected={connected_param}")
 
     redirect_uri = request.url_for('auth_callback', provider=oauth_provider)
-    if config.seer_mode == "cloud" and redirect_uri.scheme == "http":
+    if config.REDIRECT_URI_SCHEME == "https" and redirect_uri.scheme == "http":
         redirect_uri = redirect_uri.replace(scheme="https")
 
     state_data = {
