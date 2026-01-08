@@ -6,7 +6,7 @@ from typing import Optional
 from shared.logger import get_logger
 
 # Ensure adapters register themselves.
-import api.triggers.polling.adapters  # noqa: F401
+import api.triggers.polling.adapters  # noqa: F401  # pylint: disable=unused-import
 from api.triggers.polling.engine import TriggerPollEngine
 
 logger = get_logger(__name__)

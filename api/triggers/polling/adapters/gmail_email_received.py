@@ -111,7 +111,9 @@ class GmailEmailReceivedAdapter(PollAdapter):
             raise
         except Exception as exc:
             logger.exception("Unexpected Gmail polling failure")
-            raise PollAdapterError("Unexpected Gmail polling failure", detail={"error": str(exc)})
+            raise PollAdapterError(
+                "Unexpected Gmail polling failure", detail={"error": str(exc)}
+            ) from exc
 
     def _normalize_message(self, msg_data: Dict[str, Any]) -> Dict[str, Any]:
         payload = msg_data.get("payload") or {}
