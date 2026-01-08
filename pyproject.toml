@@ -60,6 +60,8 @@ dev = [
     "langgraph-cli[inmem]>=0.4.7",
     "taskiq[reload]>=0.12.1",
     "pre-commit>=4.0.1",
+    "radon>=5.0.0",
+    "pylint>=2.15.0",
 ]
 
 [project.urls]
