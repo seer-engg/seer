@@ -27,7 +27,7 @@ from workflow_compiler.schema.models import (
     WorkflowSpec,
 )
 
-compiler = WorkflowCompilerSingleton.instance()
+COMPILER = WorkflowCompilerSingleton.instance()
 
 
 NODE_TYPE_DESCRIPTORS = api_models.NodeTypeResponse(
@@ -82,7 +82,7 @@ async def list_node_types() -> api_models.NodeTypeResponse:
 async def list_tools(include_schemas: bool = False) -> api_models.ToolRegistryResponse:
     tools: List[api_models.ToolDescriptor] = []
     for tool in registry_list_tools():
-        definition = compiler.ensure_tool(tool.name)
+        definition = COMPILER.ensure_tool(tool.name)
         descriptor = api_models.ToolDescriptor(
             id=f"tools.{definition.name}@{definition.version}",
             name=definition.name,
@@ -129,7 +129,7 @@ async def list_models() -> api_models.ModelRegistryResponse:
 
 
 async def resolve_schema(schema_id: str) -> api_models.SchemaResponse:
-    schema = compiler.schema_registry.get(schema_id)
+    schema = COMPILER.schema_registry.get(schema_id)
     if schema is None:
         _raise_problem(
             type_uri=VALIDATION_PROBLEM,
@@ -178,7 +178,7 @@ async def compile_spec(user: User, payload: api_models.CompileRequest) -> api_mo
     spec_dict = _spec_to_dict(spec)
     checkpointer = await get_checkpointer()
     try:
-        compiled = await compiler.compile(user, spec_dict, checkpointer=checkpointer)
+        compiled = await COMPILER.compile(user, spec_dict, checkpointer=checkpointer)
     except WorkflowCompilerError as exc:
         _raise_problem(
             type_uri=COMPILE_PROBLEM,

@@ -81,7 +81,6 @@ __all__ = [
     "restore_workflow_version",
     "publish_workflow",
     "delete_workflow",
-    "suggest_expression",
     "typecheck_expression",
     "run_draft_workflow",
     "run_saved_workflow",

@@ -8,9 +8,13 @@ from typing import Any, Dict, Optional, Sequence
 from fastapi import HTTPException
 
 from api.workflows import models as api_models
-from shared.database.workflow_models import WorkflowRun
+from shared.database.workflow_models import (
+    WorkflowRun,
+    Workflow,
+    parse_workflow_public_id,
+    User,
+)
 from workflow_compiler.schema.models import WorkflowSpec
-from shared.database.workflow_models import  Workflow, parse_workflow_public_id, User
 
 
 PROBLEM_BASE = "https://seer.errors/workflows"
