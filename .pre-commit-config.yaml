@@ -44,10 +44,7 @@ repos:
         language: system
         types: [python]
         args:
-          - --max-line-length=200
-          - --max-module-lines=600
-          - --max-complexity=10
-          - --ignore=alembic/versions,.venv,venv,build,dist
+          - --rcfile=.pylintrc
         files: \.py$
 
   # Basic file checks
