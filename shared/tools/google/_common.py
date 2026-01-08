@@ -233,3 +233,53 @@ def _empty_object_schema(description: str = "Empty JSON object on success.") -> 
         "properties": {},
         "additionalProperties": True,
     }
+
+
+def get_google_drive_common_attributes() -> Dict[str, str]:
+    """Return common attributes for Google Drive tools."""
+    return {
+        "integration_type": "google_drive",
+        "provider": "google"
+    }
+
+
+def get_file_id_resource_picker() -> Dict[str, Any]:
+    """Return the standard resource picker configuration for file_id."""
+    return {
+        "file_id": {
+            "resource_type": "google_drive_file",
+            "display_field": "name",
+            "value_field": "id",
+            "search_enabled": True,
+            "hierarchy": True,
+        }
+    }
+
+
+def get_file_id_parameter_schema() -> Dict[str, Any]:
+    """Return the standard parameter schema for file_id operations."""
+    return {
+        "type": "object",
+        "properties": {
+            "file_id": {"type": "string"},
+        }
+    }
+
+
+def validate_permission_arguments(arguments: Dict[str, Any]) -> None:
+    """Validate permission creation arguments."""
+    file_id = arguments.get("file_id")
+    p_type = arguments.get("type")
+    role = arguments.get("role")
+
+    if not file_id:
+        raise HTTPException(status_code=400, detail="file_id is required")
+    if not p_type:
+        raise HTTPException(status_code=400, detail="type is required")
+    if not role:
+        raise HTTPException(status_code=400, detail="role is required")
+
+    if p_type in ("user", "group") and not arguments.get("email_address"):
+        raise HTTPException(status_code=400, detail="email_address is required for type=user/group")
+    if p_type == "domain" and not arguments.get("domain"):
+        raise HTTPException(status_code=400, detail="domain is required for type=domain")

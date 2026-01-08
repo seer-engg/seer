@@ -16,17 +16,27 @@ from shared.tools.google._common import (
     _drive_file_schema,
     _empty_object_schema,
     _drive_permission_schema,
+    get_google_drive_common_attributes,
+    get_file_id_resource_picker,
+    validate_permission_arguments,
 )
 
 logger = get_logger("shared.tools.google_drive.write")
 
 
 class GoogleDriveUploadFileTool(BaseTool):
+    """
+    Upload a file to Google Drive (multipart or media). Expects base64 content.
+    """
     name = "google_drive_upload_file"
     description = "Upload a file to Google Drive (multipart or media). Expects base64 content."
     required_scopes = ["https://www.googleapis.com/auth/drive.file"]
-    integration_type = "google_drive"
-    provider = "google"
+
+    def __init__(self):
+        super().__init__()
+        attrs = get_google_drive_common_attributes()
+        self.integration_type = attrs["integration_type"]
+        self.provider = attrs["provider"]
 
     def get_resource_pickers(self) -> Dict[str, Any]:
         return {
@@ -57,7 +67,7 @@ class GoogleDriveUploadFileTool(BaseTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return _drive_file_schema()
 
-    # pylint: disable=too-complex,too-many-locals,line-too-long
+
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         _require_access_token(access_token, "Google Drive upload tool")
         name = arguments.get("name")
@@ -108,11 +118,18 @@ class GoogleDriveUploadFileTool(BaseTool):
 
 
 class GoogleDriveCreateFolderTool(BaseTool):
+    """
+    Create a folder in Google Drive.
+    """
     name = "google_drive_create_folder"
     description = "Create a folder in Google Drive."
     required_scopes = ["https://www.googleapis.com/auth/drive.file"]
-    integration_type = "google_drive"
-    provider = "google"
+
+    def __init__(self):
+        super().__init__()
+        attrs = get_google_drive_common_attributes()
+        self.integration_type = attrs["integration_type"]
+        self.provider = attrs["provider"]
 
     def get_resource_pickers(self) -> Dict[str, Any]:
         return {
@@ -140,7 +157,7 @@ class GoogleDriveCreateFolderTool(BaseTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return _drive_file_schema()
 
-    # pylint: disable=too-complex,too-many-locals,line-too-long
+
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         _require_access_token(access_token, "Google Drive create folder tool")
         name = arguments.get("name")
@@ -166,21 +183,22 @@ class GoogleDriveCreateFolderTool(BaseTool):
 
 
 class GoogleDriveUpdateFileTool(BaseTool):
+    """
+    Update a Drive file (rename/move; optional content update).
+    """
     name = "google_drive_update_file"
     description = "Update a Drive file (rename/move; optional content update)."
     required_scopes = ["https://www.googleapis.com/auth/drive.file"]
-    integration_type = "google_drive"
-    provider = "google"
+
+    def __init__(self):
+        super().__init__()
+        attrs = get_google_drive_common_attributes()
+        self.integration_type = attrs["integration_type"]
+        self.provider = attrs["provider"]
 
     def get_resource_pickers(self) -> Dict[str, Any]:
-        return {
-            "file_id": {
-                "resource_type": "google_drive_file",
-                "display_field": "name",
-                "value_field": "id",
-                "search_enabled": True,
-                "hierarchy": True,
-            },
+        pickers = get_file_id_resource_picker()
+        pickers.update({
             "add_parents": {
                 "resource_type": "google_drive_folder",
                 "display_field": "name",
@@ -195,7 +213,8 @@ class GoogleDriveUpdateFileTool(BaseTool):
                 "search_enabled": True,
                 "hierarchy": True,
             },
-        }
+        })
+        return pickers
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -216,7 +235,7 @@ class GoogleDriveUpdateFileTool(BaseTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return _drive_file_schema()
 
-    # pylint: disable=too-complex,too-many-locals,line-too-long
+
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         _require_access_token(access_token, "Google Drive update tool")
         file_id = arguments.get("file_id")
@@ -277,22 +296,21 @@ class GoogleDriveUpdateFileTool(BaseTool):
 
 
 class GoogleDriveDeleteFileTool(BaseTool):
+    """
+    Permanently delete a Drive file by file_id.
+    """
     name = "google_drive_delete_file"
     description = "Permanently delete a Drive file by file_id."
     required_scopes = ["https://www.googleapis.com/auth/drive.file"]
-    integration_type = "google_drive"
-    provider = "google"
+
+    def __init__(self):
+        super().__init__()
+        attrs = get_google_drive_common_attributes()
+        self.integration_type = attrs["integration_type"]
+        self.provider = attrs["provider"]
 
     def get_resource_pickers(self) -> Dict[str, Any]:
-        return {
-            "file_id": {
-                "resource_type": "google_drive_file",
-                "display_field": "name",
-                "value_field": "id",
-                "search_enabled": True,
-                "hierarchy": True,
-            }
-        }
+        return get_file_id_resource_picker()
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {"type": "object", "properties": {"file_id": {"type": "string"}, "supports_all_drives": {"type": "boolean", "default": True}}, "required": ["file_id"]}
@@ -322,22 +340,21 @@ class GoogleDriveDeleteFileTool(BaseTool):
 
 
 class GoogleDriveCreatePermissionTool(BaseTool):
+    """
+    Create a sharing permission for a Drive file (share with user/group/domain/anyone).
+    """
     name = "google_drive_create_permission"
     description = "Create a sharing permission for a Drive file (share with user/group/domain/anyone)."
     required_scopes = ["https://www.googleapis.com/auth/drive.file"]
-    integration_type = "google_drive"
-    provider = "google"
+
+    def __init__(self):
+        super().__init__()
+        attrs = get_google_drive_common_attributes()
+        self.integration_type = attrs["integration_type"]
+        self.provider = attrs["provider"]
 
     def get_resource_pickers(self) -> Dict[str, Any]:
-        return {
-            "file_id": {
-                "resource_type": "google_drive_file",
-                "display_field": "name",
-                "value_field": "id",
-                "search_enabled": True,
-                "hierarchy": True,
-            }
-        }
+        return get_file_id_resource_picker()
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -362,26 +379,11 @@ class GoogleDriveCreatePermissionTool(BaseTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return _drive_permission_schema()
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
-        _require_access_token(access_token, "Google Drive permission create tool")
-        file_id = arguments.get("file_id")
-        p_type = arguments.get("type")
-        role = arguments.get("role")
-        if not file_id:
-            raise HTTPException(status_code=400, detail="file_id is required")
-        if not p_type:
-            raise HTTPException(status_code=400, detail="type is required")
-        if not role:
-            raise HTTPException(status_code=400, detail="role is required")
+    def _build_permission_body(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Build the request body for permission creation."""
+        p_type = arguments["type"]
+        body: Dict[str, Any] = {"type": p_type, "role": arguments["role"]}
 
-        if p_type in ("user", "group") and not arguments.get("email_address"):
-            raise HTTPException(status_code=400, detail="email_address is required for type=user/group")
-        if p_type == "domain" and not arguments.get("domain"):
-            raise HTTPException(status_code=400, detail="domain is required for type=domain")
-
-        url = f"https://www.googleapis.com/drive/v3/files/{file_id}/permissions"
-        headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
-        body: Dict[str, Any] = {"type": p_type, "role": role}
         if arguments.get("email_address"):
             body["emailAddress"] = arguments["email_address"]
         if arguments.get("domain"):
@@ -389,6 +391,10 @@ class GoogleDriveCreatePermissionTool(BaseTool):
         if p_type == "anyone":
             body["allowFileDiscovery"] = arguments.get("allow_file_discovery", False)
 
+        return body
+
+    def _build_permission_params(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Build query parameters for permission creation."""
         params: Dict[str, Any] = {
             "fields": arguments.get("fields", "id,type,role,emailAddress,domain,allowFileDiscovery,expirationTime,deleted"),
             "supportsAllDrives": arguments.get("supports_all_drives", True),
@@ -398,6 +404,22 @@ class GoogleDriveCreatePermissionTool(BaseTool):
         }
         if arguments.get("email_message"):
             params["emailMessage"] = arguments["email_message"]
+
+        return params
+
+    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+        _require_access_token(access_token, "Google Drive permission create tool")
+        validate_permission_arguments(arguments)
+
+        file_id = arguments["file_id"]
+        p_type = arguments["type"]
+        role = arguments["role"]
+
+        url = f"https://www.googleapis.com/drive/v3/files/{file_id}/permissions"
+        headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+
+        body = self._build_permission_body(arguments)
+        params = self._build_permission_params(arguments)
 
         try:
             logger.info("Creating permission file_id=%s type=%s role=%s", file_id, p_type, role)

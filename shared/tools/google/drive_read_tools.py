@@ -15,12 +15,18 @@ from shared.tools.google._common import (
     _drive_file_list_schema,
     _drive_file_schema,
     _drive_about_schema,
+    get_google_drive_common_attributes,
+    get_file_id_resource_picker,
+    get_file_id_parameter_schema,
 )
 
 logger = get_logger("shared.tools.google_drive.read")
 
 
 class GoogleDriveListFilesTool(BaseTool):
+    """
+    List/search Google Drive files with support for Drive query 'q' and pagination.
+    """
     name = "google_drive_list_files"
     description = "List/search Google Drive files. Supports Drive query 'q' and pagination."
     required_scopes = ["https://www.googleapis.com/auth/drive.metadata.readonly"]
@@ -82,33 +88,30 @@ class GoogleDriveListFilesTool(BaseTool):
 
 
 class GoogleDriveGetFileMetadataTool(BaseTool):
+    """
+    Get Google Drive file metadata by file_id.
+    """
     name = "google_drive_get_file_metadata"
     description = "Get Google Drive file metadata by file_id."
     required_scopes = ["https://www.googleapis.com/auth/drive.metadata.readonly"]
-    integration_type = "google_drive"
-    provider = "google"
+
+    def __init__(self):
+        super().__init__()
+        attrs = get_google_drive_common_attributes()
+        self.integration_type = attrs["integration_type"]
+        self.provider = attrs["provider"]
 
     def get_resource_pickers(self) -> Dict[str, Any]:
-        return {
-            "file_id": {
-                "resource_type": "google_drive_file",
-                "display_field": "name",
-                "value_field": "id",
-                "search_enabled": True,
-                "hierarchy": True,
-            }
-        }
+        return get_file_id_resource_picker()
 
     def get_parameters_schema(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "file_id": {"type": "string"},
-                "fields": {"type": "string", "default": "id,name,mimeType,parents,modifiedTime,createdTime,size,webViewLink,webContentLink,trashed,owners(displayName,emailAddress),driveId"},
-                "supports_all_drives": {"type": "boolean", "default": True},
-            },
-            "required": ["file_id"]
-        }
+        schema = get_file_id_parameter_schema()
+        schema["properties"].update({
+            "fields": {"type": "string", "default": "id,name,mimeType,parents,modifiedTime,createdTime,size,webViewLink,webContentLink,trashed,owners(displayName,emailAddress),driveId"},
+            "supports_all_drives": {"type": "boolean", "default": True},
+        })
+        schema["required"] = ["file_id"]
+        return schema
 
     def get_output_schema(self) -> Dict[str, Any]:
         return _drive_file_schema()
@@ -135,35 +138,32 @@ class GoogleDriveGetFileMetadataTool(BaseTool):
 
 
 class GoogleDriveDownloadFileTool(BaseTool):
+    """
+    Download a Drive file (returns base64). For Google Docs/Sheets/Slides, provide export_mime_type.
+    """
     name = "google_drive_download_file"
     description = "Download a Drive file (returns base64). For Google Docs/Sheets/Slides, provide export_mime_type."
     required_scopes = ["https://www.googleapis.com/auth/drive.readonly"]
-    integration_type = "google_drive"
-    provider = "google"
+
+    def __init__(self):
+        super().__init__()
+        attrs = get_google_drive_common_attributes()
+        self.integration_type = attrs["integration_type"]
+        self.provider = attrs["provider"]
 
     def get_resource_pickers(self) -> Dict[str, Any]:
-        return {
-            "file_id": {
-                "resource_type": "google_drive_file",
-                "display_field": "name",
-                "value_field": "id",
-                "search_enabled": True,
-                "hierarchy": True,
-            }
-        }
+        return get_file_id_resource_picker()
 
     def get_parameters_schema(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "file_id": {"type": "string"},
-                "export_mime_type": {"type": "string"},
-                "acknowledge_abuse": {"type": "boolean", "default": False},
-                "supports_all_drives": {"type": "boolean", "default": True},
-                "include_metadata": {"type": "boolean", "default": True}
-            },
-            "required": ["file_id"]
-        }
+        schema = get_file_id_parameter_schema()
+        schema["properties"].update({
+            "export_mime_type": {"type": "string"},
+            "acknowledge_abuse": {"type": "boolean", "default": False},
+            "supports_all_drives": {"type": "boolean", "default": True},
+            "include_metadata": {"type": "boolean", "default": True}
+        })
+        schema["required"] = ["file_id"]
+        return schema
 
     def get_output_schema(self) -> Dict[str, Any]:
         return {
@@ -234,6 +234,9 @@ class GoogleDriveDownloadFileTool(BaseTool):
 
 
 class GoogleDriveAboutGetTool(BaseTool):
+    """
+    Get information about the user, the user's Drive, and system capabilities (about.get).
+    """
     name = "google_drive_about_get"
     description = "Get information about the user, the user's Drive, and system capabilities (about.get)."
     required_scopes = ["https://www.googleapis.com/auth/drive.metadata.readonly"]
