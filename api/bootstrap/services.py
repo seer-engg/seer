@@ -101,12 +101,196 @@ async def _fetch_workflows(user: User) -> Dict[str, Any]:
         return {"items": [], "next_cursor": None}
 
 
+async def _fetch_connections_raw(user: User) -> list:
+    """Fetch raw connections from database. Used internally to avoid duplicate queries."""
+    try:
+        from api.integrations.services import list_connections
+        return await list_connections(user)
+    except Exception as e:
+        logger.error(f"Error fetching raw connections: {e}", exc_info=True)
+        return []
+
+
+def _build_provider_connections_map(connections: list) -> dict:
+    """Build a map of provider -> connection info."""
+    provider_connections = {}
+    for conn in connections:
+        has_access_token = bool(conn.access_token_enc)
+        has_refresh_token = bool(conn.refresh_token_enc)
+        is_token_expired = False
+        if conn.expires_at:
+            is_token_expired = conn.expires_at < datetime.now(timezone.utc)
+
+        access_token_valid = (has_access_token and not is_token_expired) or has_refresh_token
+
+        provider_connections[conn.provider] = {
+            "scopes": conn.scopes or "",
+            "connection_id": f"{conn.provider}:{conn.id}",
+            "provider_account_id": conn.provider_account_id,
+            "has_refresh_token": has_refresh_token,
+            "access_token_valid": access_token_valid,
+        }
+    return provider_connections
+
+
+def _build_tool_status_result(tool, conn_info, required_scopes, has_required_scopes_fn, parse_scopes_fn):
+    """Build status result for a tool with connection info."""
+    requires_oauth = bool(required_scopes)
+    requires_secrets = bool(getattr(tool, "required_secrets", []))
+    supports_tokenless_auth = not requires_oauth
+
+    auth_mode = "none"
+    if requires_oauth and requires_secrets:
+        auth_mode = "oauth_and_secrets"
+    elif requires_oauth:
+        auth_mode = "oauth"
+    elif requires_secrets:
+        auth_mode = "secrets"
+
+    base_result = {
+        "tool_name": tool.name,
+        "integration_type": tool.integration_type,
+        "requires_oauth_connection": requires_oauth,
+        "requires_secrets": requires_secrets,
+        "supports_tokenless_auth": supports_tokenless_auth,
+        "auth_mode": auth_mode,
+    }
+
+    if not conn_info:
+        return {
+            **base_result,
+            "connected": False,
+            "has_required_scopes": False,
+            "access_token_valid": False,
+            "missing_scopes": required_scopes,
+            "connection_id": None,
+            "provider_account_id": None,
+            "has_refresh_token": False,
+        }
+
+    has_scopes = has_required_scopes_fn(conn_info["scopes"], required_scopes)
+    access_token_valid = conn_info.get("access_token_valid", False)
+    has_refresh_token = conn_info.get("has_refresh_token", False)
+    fully_connected = has_scopes and access_token_valid
+
+    granted_set = parse_scopes_fn(conn_info["scopes"]) if conn_info["scopes"] else set()
+    missing = [s for s in required_scopes if s not in granted_set]
+
+    return {
+        **base_result,
+        "connected": fully_connected,
+        "has_required_scopes": has_scopes,
+        "access_token_valid": access_token_valid,
+        "has_refresh_token": has_refresh_token,
+        "missing_scopes": missing,
+        "connection_id": conn_info["connection_id"],
+        "provider_account_id": conn_info["provider_account_id"],
+    }
+
+
+async def _build_tools_status_from_connections(connections: list) -> list:
+    """Build tools status using pre-fetched connections to avoid duplicate DB query."""
+    try:
+        from shared.tools.base import list_tools as get_all_tools
+        from api.integrations.services import has_required_scopes, get_oauth_provider, parse_scopes
+
+        provider_connections = _build_provider_connections_map(connections)
+        all_tools = get_all_tools()
+
+        results = []
+        for tool in all_tools:
+            tool_provider = tool.provider or tool.integration_type
+            required_scopes = list(tool.required_scopes or [])
+            requires_oauth = bool(required_scopes)
+
+            if not tool_provider:
+                # Non-OAuth tool
+                results.append({
+                    "tool_name": tool.name,
+                    "integration_type": tool.integration_type,
+                    "requires_oauth_connection": False,
+                    "requires_secrets": bool(getattr(tool, "required_secrets", [])),
+                    "supports_tokenless_auth": True,
+                    "auth_mode": "secrets" if getattr(tool, "required_secrets", []) else "none",
+                    "provider": None,
+                    "connected": True,
+                    "has_required_scopes": True,
+                    "access_token_valid": True,
+                    "missing_scopes": [],
+                    "connection_id": None,
+                    "provider_account_id": None,
+                    "has_refresh_token": False,
+                })
+                continue
+
+            oauth_provider = get_oauth_provider(tool_provider)
+            conn_info = provider_connections.get(oauth_provider) if oauth_provider else None
+
+            if not requires_oauth:
+                # Tokens are optional
+                results.append({
+                    "tool_name": tool.name,
+                    "integration_type": tool.integration_type,
+                    "requires_oauth_connection": False,
+                    "requires_secrets": bool(getattr(tool, "required_secrets", [])),
+                    "supports_tokenless_auth": True,
+                    "auth_mode": "secrets" if getattr(tool, "required_secrets", []) else "none",
+                    "provider": oauth_provider,
+                    "connected": True,
+                    "has_required_scopes": True,
+                    "access_token_valid": True,
+                    "missing_scopes": [],
+                    "connection_id": conn_info["connection_id"] if conn_info else None,
+                    "provider_account_id": conn_info["provider_account_id"] if conn_info else None,
+                    "has_refresh_token": conn_info["has_refresh_token"] if conn_info else False,
+                })
+                continue
+
+            result = _build_tool_status_result(tool, conn_info, required_scopes, has_required_scopes, parse_scopes)
+            results.append({**result, "provider": oauth_provider})
+
+        return results
+    except Exception as e:
+        logger.error(f"Error building tools status: {e}", exc_info=True)
+        return []
+
+
+async def _format_connections(connections: list, user: User) -> list:
+    """Format raw connections into the expected API format."""
+    try:
+        res = []
+        for conn in connections:
+            composite_id = f"{conn.provider}:{conn.id}"
+            res.append({
+                "id": composite_id,
+                "status": "ACTIVE" if conn.status == 'active' else "INACTIVE",
+                "user_id": user.user_id,
+                "toolkit": {
+                    "slug": conn.provider
+                },
+                "connection": {
+                    "user_id": user.user_id,
+                    "provider_account_id": conn.provider_account_id
+                },
+                "scopes": conn.scopes or "",
+                "provider": conn.provider
+            })
+        return res
+    except Exception as e:
+        logger.error(f"Error formatting connections: {e}", exc_info=True)
+        return []
+
+
 async def fetch_bootstrap_data(user: User) -> Dict[str, Any]:
     """
-    Fetch all bootstrap data in parallel.
+    Fetch all bootstrap data in parallel with optimized database queries.
 
     Uses asyncio.gather to run all data fetches concurrently.
     Response time equals the slowest query, not the sum of all queries.
+
+    Optimizations:
+    - Fetches connections once and reuses for both tools_status and connections endpoints
+    - Eliminates duplicate database queries
 
     Args:
         user: The authenticated user
@@ -114,16 +298,11 @@ async def fetch_bootstrap_data(user: User) -> Dict[str, Any]:
     Returns:
         Dict containing all bootstrap data with empty arrays/dicts for failed sections
     """
-    logger.info(f"Fetching bootstrap data for user {user.user_id}")
-
-    start_time = datetime.now(timezone.utc)
-
-    # Run all fetches in parallel
+    # Run all fetches in parallel (connections_raw is fetched once and shared)
     results = await asyncio.gather(
         _fetch_tools(),
         _fetch_models(),
-        _fetch_tools_status(user),
-        _fetch_connections(user),
+        _fetch_connections_raw(user),  # Fetch once for both tools_status and connections
         _fetch_node_types(),
         _fetch_workflows(user),
         return_exceptions=True  # Don't fail entire request if one section fails
@@ -132,18 +311,27 @@ async def fetch_bootstrap_data(user: User) -> Dict[str, Any]:
     # Unpack results with error handling
     tools = results[0] if not isinstance(results[0], Exception) else []
     models = results[1] if not isinstance(results[1], Exception) else []
-    tools_status = results[2] if not isinstance(results[2], Exception) else []
-    connections = results[3] if not isinstance(results[3], Exception) else []
-    node_types = results[4] if not isinstance(results[4], Exception) else {}
-    workflows = results[5] if not isinstance(results[5], Exception) else {"items": [], "next_cursor": None}
+    raw_connections = results[2] if not isinstance(results[2], Exception) else []
+    node_types = results[3] if not isinstance(results[3], Exception) else {}
+    workflows = results[4] if not isinstance(results[4], Exception) else {"items": [], "next_cursor": None}
 
-    elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
-    logger.info(
-        f"Bootstrap data fetched in {elapsed:.2f}s: "
-        f"tools={len(tools)}, models={len(models)}, "
-        f"tools_status={len(tools_status)}, connections={len(connections)}, "
-        f"workflows={len(workflows.get('items', []))}"
+    # Build tools_status and format connections using the single connections query result
+    tools_status_task = _build_tools_status_from_connections(raw_connections)
+    connections_task = _format_connections(raw_connections, user)
+
+    tools_status, connections = await asyncio.gather(
+        tools_status_task,
+        connections_task,
+        return_exceptions=True
     )
+
+    # Handle errors
+    if isinstance(tools_status, Exception):
+        logger.error(f"Error in tools_status: {tools_status}")
+        tools_status = []
+    if isinstance(connections, Exception):
+        logger.error(f"Error in connections: {connections}")
+        connections = []
 
     return {
         "tools": tools,
