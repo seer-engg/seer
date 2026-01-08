@@ -98,7 +98,7 @@ def _coerce_spec_payload(raw_spec: Any) -> Optional[Dict[str, Any]]:
         try:
             parsed = json.loads(raw_spec)
         except json.JSONDecodeError as exc:
-            logger.warning(f"Failed to parse workflow_spec string: {exc}")
+            logger.warning("Failed to parse workflow_spec string: %s", exc)
             return None
         if isinstance(parsed, dict):
             return parsed
@@ -117,7 +117,7 @@ def _error_response(error_type: str, message: str, hint: Optional[str] = None) -
 async def submit_workflow_spec(
     workflow_spec: Any,
     summary: Optional[str] = None,
-) -> str:
+) -> str:  # pylint: disable=too-many-return-statements
     """
     Validate and record a complete workflow specification produced by the agent.
 
@@ -130,6 +130,7 @@ async def submit_workflow_spec(
                        Can be provided as a dict or a JSON string.
         summary: Optional natural language rationale for the proposal.
     """
+    # pylint: disable=too-many-return-statements
 
     thread_id = _current_thread_id.get()
     if not thread_id:

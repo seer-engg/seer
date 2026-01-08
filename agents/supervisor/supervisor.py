@@ -1,5 +1,6 @@
 import json
 import logging
+# pylint: disable=too-many-statements
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langchain_core.messages import SystemMessage, ToolMessage, AIMessage, HumanMessage, BaseMessage
@@ -40,7 +41,7 @@ def write_todos(todos: list[str]) -> str:
     return f"✅ Todos updated: {len(todos)} items"
 
 
-def create_supervisor():
+def create_supervisor():  # pylint: disable=too-many-statements
     """
     Creates the Unified Supervisor Agent.
 
@@ -126,8 +127,9 @@ def create_supervisor():
     )
 
     # 5. Define the Node
-    async def supervisor_node(state: SupervisorState):
+    async def supervisor_node(state: SupervisorState):  # pylint: disable=too-many-nested-blocks,too-many-statements
         logger.info("🤖 Supervisor Node Active")
+        # pylint: disable=too-many-nested-blocks, too-many-statements
 
         # Store user context from state for tools to access
         user_context_store = get_user_context_store()
@@ -151,9 +153,9 @@ def create_supervisor():
                     id_ = msg.get("id")
                     name = msg.get("name")
 
-                    if msg_type == "human" or msg_type == "user":
+                    if msg_type in ("human", "user"):
                         normalized_messages.append(HumanMessage(content=content, id=id_, name=name))
-                    elif msg_type == "ai" or msg_type == "assistant":
+                    elif msg_type in ("ai", "assistant"):
                         normalized_messages.append(AIMessage(content=content, tool_calls=tool_calls, id=id_, name=name))
                     elif msg_type == "system":
                         normalized_messages.append(SystemMessage(content=content, id=id_, name=name))
@@ -164,7 +166,7 @@ def create_supervisor():
                             normalized_messages.append(ToolMessage(content=content, tool_call_id=tool_call_id, id=id_, name=name))
                         else:
                             # Fallback for missing tool_call_id
-                            logger.warning(f"Tool message missing tool_call_id, treating as human message")
+                            logger.warning("Tool message missing tool_call_id, treating as human message")
                             normalized_messages.append(HumanMessage(content=f"[Tool Output] {content}", id=id_, name=name))
                     else:
                         normalized_messages.append(HumanMessage(content=content, id=id_, name=name))
@@ -176,9 +178,9 @@ def create_supervisor():
                     name = getattr(msg, "name", None)
                     tool_calls = getattr(msg, "tool_calls", [])
 
-                    if msg_type == "human" or msg_type == "user":
+                    if msg_type in ("human", "user"):
                         normalized_messages.append(HumanMessage(content=content, id=id_, name=name))
-                    elif msg_type == "ai" or msg_type == "assistant":
+                    elif msg_type in ("ai", "assistant"):
                         normalized_messages.append(AIMessage(content=content, tool_calls=tool_calls, id=id_, name=name))
                     elif msg_type == "system":
                         normalized_messages.append(SystemMessage(content=content, id=id_, name=name))
@@ -190,12 +192,12 @@ def create_supervisor():
                             normalized_messages.append(HumanMessage(content=f"[Tool Output] {content}", id=id_, name=name))
                     else:
                         # Fallback: treat as human message
-                        logger.warning(f"BaseMessage with unknown type '{msg_type}', treating as human")
+                        logger.warning("BaseMessage with unknown type '%s', treating as human", msg_type)
                         normalized_messages.append(HumanMessage(content=content, id=id_, name=name))
                 else:
-                    logger.warning(f"Unexpected message type: {type(msg)}, skipping")
+                    logger.warning("Unexpected message type: %s, skipping", type(msg))
             except Exception as e:
-                logger.error(f"Error normalizing message: {e}, skipping", exc_info=True)
+                logger.error("Error normalizing message: %s, skipping", e, exc_info=True)
 
         messages = normalized_messages
 
@@ -203,9 +205,9 @@ def create_supervisor():
         if messages:
             last_msg = messages[-1]
             if hasattr(last_msg, 'content'):
-                logger.debug(f"📥 Processing message: type={type(last_msg).__name__}, content='{last_msg.content[:200]}...'")
+                logger.debug("📥 Processing message: type=%s, content='%s...'", type(last_msg).__name__, last_msg.content[:200])
             else:
-                logger.debug(f"📥 Processing message: type={type(last_msg).__name__}, content=<no content>")
+                logger.debug("📥 Processing message: type=%s, content=<no content>", type(last_msg).__name__)
         else:
             logger.warning("⚠️ Supervisor received NO messages!")
 
@@ -229,7 +231,7 @@ def create_supervisor():
             messages = [SystemMessage(content=formatted_system_prompt)] + messages[1:]
 
         # Invoke the agent
-        logger.info(f"Invoking Supervisor (Todos: {len(todos)} items)")
+        logger.info("Invoking Supervisor (Todos: %d items)", len(todos))
 
         # Extract callbacks from state if available
         callbacks = state.get("callbacks", [])
@@ -241,20 +243,20 @@ def create_supervisor():
         invoke_kwargs = {}
         if callbacks:
             invoke_kwargs["config"] = {"callbacks": callbacks}
-            logger.debug(f"📊 Passing {len(callbacks)} callback(s) to agent")
+            logger.debug("📊 Passing %d callback(s) to agent", len(callbacks))
 
         result = await agent_runnable.ainvoke(agent_input, **invoke_kwargs)
 
         # DEBUG: Log agent response
         agent_messages = result.get("messages", [])
-        logger.debug(f"📤 Agent returned {len(agent_messages)} message(s)")
+        logger.debug("📤 Agent returned %d message(s)", len(agent_messages))
 
         # Log tool calls if any
         for msg in agent_messages:
             if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
                 for tc in msg.tool_calls:
                     tool_name = tc.get('name') if isinstance(tc, dict) else getattr(tc, 'name', 'unknown')
-                    logger.info(f"🛠️  Agent called tool: {tool_name}")
+                    logger.info("🛠️  Agent called tool: %s", tool_name)
 
         # Extract todos updates from write_todos tool calls
         state_updates = {}
@@ -279,9 +281,9 @@ def create_supervisor():
                                         # CRITICAL: Ensure todos_list is a list
                                         if isinstance(todos_list, list):
                                             state_updates["todos"] = todos_list
-                                            logger.info(f"✅ Todos update found in write_todos call: {len(todos_list)} items")
+                                            logger.info("✅ Todos update found in write_todos call: %d items", len(todos_list))
                                         else:
-                                            logger.warning(f"⚠️  write_todos returned non-list: {type(todos_list)}")
+                                            logger.warning("⚠️  write_todos returned non-list: %s", type(todos_list))
                                         break
                             if "todos" in state_updates:
                                 break
@@ -290,7 +292,7 @@ def create_supervisor():
 
         # DEBUG: Log current todos state
         current_todos = state.get("todos", [])
-        logger.debug(f"📋 Current todos in state: {len(current_todos)} items - {current_todos}")
+        logger.debug("📋 Current todos in state: %d items - %s", len(current_todos), current_todos)
 
         # Auto-remove completed todos based on spawn_worker responses
         # Process ALL worker completions (success or failure) to prevent infinite loops
@@ -317,15 +319,15 @@ def create_supervisor():
                                     break
 
                     if reasoning:
-                        logger.info(f"📋 Worker reasoning: {reasoning}")
+                        logger.info("📋 Worker reasoning: %s", reasoning)
 
                     if worker_response.status == WorkerStatus.SUCCESS:
-                        logger.debug(f"✅ Worker completed successfully")
+                        logger.debug("✅ Worker completed successfully")
                     else:
-                        logger.warning(f"⚠️ Worker failed or returned non-success status: {worker_response.status}")
+                        logger.warning("⚠️ Worker failed or returned non-success status: %s", worker_response.status)
 
                 except (json.JSONDecodeError, Exception) as e:
-                    logger.debug(f"Could not parse worker response: {e}")
+                    logger.debug("Could not parse worker response: %s", e)
 
         # Remove todos based on number of processed workers (success OR failure)
         # This ensures we don't get stuck in a loop retrying the same todo forever
@@ -335,11 +337,11 @@ def create_supervisor():
                 updated_todos = current_todos[processed_todos_count:]
                 if updated_todos != current_todos:
                     state_updates["todos"] = updated_todos
-                    logger.info(f"✅ Auto-removed {processed_todos_count} processed todo(s). Remaining: {len(updated_todos)}")
+                    logger.info("✅ Auto-removed %d processed todo(s). Remaining: %d", processed_todos_count, len(updated_todos))
             else:
                 # More workers than todos - clear all todos
                 state_updates["todos"] = []
-                logger.info(f"✅ All {len(current_todos)} todos processed by {processed_todos_count} workers")
+                logger.info("✅ All %d todos processed by %d workers", len(current_todos), processed_todos_count)
 
         if state_updates:
             result.update(state_updates)
@@ -360,7 +362,7 @@ def create_supervisor():
             logger.info("✅ All todos complete. Ending.")
             return END
 
-        logger.info(f"🔄 Looping: {len(todos)} todos remaining.")
+        logger.info("🔄 Looping: %d todos remaining.", len(todos))
         return "supervisor"
 
     workflow.add_conditional_edges("supervisor", should_continue, {

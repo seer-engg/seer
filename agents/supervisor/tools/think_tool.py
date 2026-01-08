@@ -1,32 +1,34 @@
+import logging
+import re
+import traceback
+from functools import lru_cache
+from typing import Any, Dict, List, Optional, Type
+
+from pydantic import BaseModel, Field, create_model, model_validator
+
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
+
 from agents.supervisor.tools.runtime_tool_store import _runtime_tool_store
 from agents.supervisor.tools.integration_tools import get_available_integrations
 from agents.supervisor.models import ToolDefinition
-from pydantic import BaseModel, Field, create_model
-import re
-import logging
-from typing import Dict, Optional, Any, Type, List
+
 
 logger = logging.getLogger(__name__)
 
+
 # LLM for extracting structured execution plan (lazy-loaded)
-_extractor_llm = None
-
+@lru_cache(maxsize=1)
 def _get_extractor_llm():
-    """Lazy-load the extractor LLM."""
-    global _extractor_llm
-    if _extractor_llm is None:
-        # Use config module which ensures OPENAI_API_KEY is available
-        _extractor_llm = ChatOpenAI(
-            model="gpt-5-mini",
-            temperature=0.0,
-        )
-    return _extractor_llm
+    """Lazy-load the extractor LLM (cached)."""
+    # Use config module which ensures OPENAI_API_KEY is available
+    return ChatOpenAI(
+        model="gpt-5-mini",
+        temperature=0.0,
+    )
 
-from pydantic import Field, model_validator
-from typing import Any
+
 
 class ThinkInput(BaseModel):
     """Input model for think tool with case-insensitive field handling."""
@@ -129,8 +131,6 @@ def _create_tool_params_model(tool_schema: ToolDefinition) -> Type[BaseModel]:
     Raises:
         ValueError: If tool has no schema (should not happen - schema required)
     """
-    from typing import Optional
-
     field_definitions = {}
 
     for param in tool_schema.parameters:
@@ -179,7 +179,7 @@ def _create_execution_plan_model(tool_schema: ToolDefinition) -> Type[BaseModel]
     )
 
 
-def _extract_planned_execution(scratchpad: str) -> Optional[Dict[str, Any]]:
+def _extract_planned_execution(scratchpad: str) -> Optional[Dict[str, Any]]:  # pylint: disable=too-many-return-statements
     """
     Extract planned tool execution using dynamic Pydantic model from tool schema.
 
@@ -226,7 +226,7 @@ def _extract_planned_execution(scratchpad: str) -> Optional[Dict[str, Any]]:
     try:
         execution_plan_model = _create_execution_plan_model(tool_schema)
     except Exception as e:
-        logger.error(f"Failed to create dynamic model for {tool_name}: {e}")
+        logger.error("Failed to create dynamic model for %s: %s", tool_name, e)
         return None
 
     # **STEP 4: Build prompt with schema context**
@@ -285,6 +285,5 @@ The tool schema above defines the exact structure. Follow it precisely."""),
 
     except Exception as e:
         logger.error("Failed to extract planned execution for %s: %s", tool_name, e)
-        import traceback
         logger.debug(traceback.format_exc())
         return None

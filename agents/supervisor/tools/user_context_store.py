@@ -3,11 +3,13 @@ User context store - stores user_id and connection_ids per thread.
 Thread-scoped storage for user credentials from LangGraph context.
 """
 from typing import Dict, Optional, Any
+import logging
 from contextvars import ContextVar
 from agents.supervisor.state import SupervisorState
 
 # Context variable to track current thread_id in tool execution
 _current_thread_id: ContextVar[Optional[str]] = ContextVar('_current_thread_id', default=None)
+logger = logging.getLogger(__name__)
 
 class UserContextStore:
     """Thread-scoped store for user context (user_id, connected_accounts)."""
@@ -16,7 +18,7 @@ class UserContextStore:
         # Key: thread_id, Value: dict with user_id and connected_accounts
         self._user_contexts: Dict[str, Dict[str, Any]] = {}
 
-    def store_user_context(self, state: SupervisorState, thread_id: Optional[str] = None):
+    def store_user_context(self, state: SupervisorState, thread_id: Optional[str] = None):  # pylint: disable=too-many-statements
         """Store user context from SupervisorState for a thread.
 
         Args:
@@ -32,8 +34,6 @@ class UserContextStore:
         user_id = context.get("user_id") or context.get("user_email")
 
         # Debug logging to verify what user_id Supervisor received
-        import logging
-        logger = logging.getLogger(__name__)
         if user_id:
             logger.info("[UserContextStore] Received user_id from context: %s", user_id)
         else:

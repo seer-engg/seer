@@ -36,7 +36,7 @@ async def _search_tools_local(
         )
         return results
     except Exception as e:
-        logger.warning(f"Local tool search not available: {e}")
+        logger.warning("Local tool search not available: %s", e)
         # Fallback to registry-based search
         all_tools = get_tools_by_integration()
         # Simple keyword matching fallback
@@ -109,7 +109,7 @@ async def search_tools(
         }, indent=2)
 
     except Exception as e:
-        logger.exception(f"Error searching tools: {e}")
+        logger.exception("Error searching tools: %s", e)
         return json.dumps({
             "tools": [],
             "error": str(e),
@@ -151,7 +151,7 @@ async def list_available_tools(integration_type: Optional[str] = None) -> str:
         }, indent=2)
 
     except Exception as e:
-        logger.exception(f"Error listing tools: {e}")
+        logger.exception("Error listing tools: %s", e)
         return json.dumps({
             "tools": [],
             "error": str(e)

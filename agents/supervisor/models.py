@@ -41,19 +41,18 @@ class WorkerResponse(BaseModel):
                 error=content,
                 tool_calls_made=tool_calls
             )
-        elif "✅" in content or "success" in content_lower or "completed" in content_lower:
+        if "✅" in content or "success" in content_lower or "completed" in content_lower:
             return cls(
                 status=WorkerStatus.SUCCESS,
                 message=content,
                 tool_calls_made=tool_calls
             )
-        else:
-            # Default to partial if unclear
-            return cls(
-                status=WorkerStatus.PARTIAL,
-                message=content,
-                tool_calls_made=tool_calls
-            )
+        # Default to partial if unclear
+        return cls(
+            status=WorkerStatus.PARTIAL,
+            message=content,
+            tool_calls_made=tool_calls
+        )
 
 # ============================================================================
 # Evaluation Models

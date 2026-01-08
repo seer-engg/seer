@@ -1,7 +1,8 @@
+from typing import Optional, List
+
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
 from langchain.agents.middleware import ToolCallLimitMiddleware, ModelRetryMiddleware
-from typing import Optional, List
 
 from agents.supervisor.tools.integration_tools import search_tools, execute_tool
 from agents.supervisor.tools.think_tool import think
@@ -51,7 +52,7 @@ def create_generic_worker(
                 resource_lines.append(f"- {formatted_key}: {value}")
 
             if resource_lines:
-                resource_context = f"\n\n**AVAILABLE RESOURCE IDs (from user selection):**\n" + "\n".join(resource_lines) + "\n\n**IMPORTANT:** Use these IDs directly in tool parameters. Do NOT try to discover or list workspaces/projects - use the provided IDs."
+                resource_context = "\n\n**AVAILABLE RESOURCE IDs (from user selection):**\n" + "\n".join(resource_lines) + "\n\n**IMPORTANT:** Use these IDs directly in tool parameters. Do NOT try to discover or list workspaces/projects - use the provided IDs."
     except Exception:
         # If context is not available, continue without resource IDs
         pass

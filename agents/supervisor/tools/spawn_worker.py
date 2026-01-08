@@ -1,13 +1,13 @@
 import hashlib
-from typing import Optional, List
+import logging
+import traceback
+from typing import List, Optional
+from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 from langchain.tools import ToolRuntime
-from langchain_core.messages import HumanMessage
 from agents.supervisor.generic_worker import create_generic_worker
 from agents.supervisor.models import WorkerResponse, WorkerStatus
 from agents.supervisor.tools.user_context_store import get_user_context_store
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +40,9 @@ async def spawn_worker(
     Note: Callbacks are propagated from runtime if available (for tracing/debugging).
     """
     # Log reasoning (mandatory)
-    logger.info(f"🤔 Worker reasoning: {reasoning}")
+    logger.info("🤔 Worker reasoning: %s", reasoning)
     if integrations:
-        logger.info(f"🔗 Worker integrations: {integrations}")
+        logger.info("🔗 Worker integrations: %s", integrations)
 
     # Extract callbacks from runtime to propagate to worker
     thread_id = f"worker-{hashlib.md5(task_instruction.encode()).hexdigest()[:8]}"
@@ -60,9 +60,15 @@ async def spawn_worker(
         user_context_store._user_contexts[thread_id] = supervisor_context.copy()
         # Set thread_id in context variable so tools can access it
         user_context_store.set_current_thread_id(thread_id)
-        logger.info(f"✅ Copied Supervisor context to worker thread {thread_id}: user_id={supervisor_context.get('user_id')}, connected_accounts={supervisor_context.get('connected_accounts')}, resource_ids={supervisor_context.get('resource_ids')}")
+        logger.info(
+            "✅ Copied Supervisor context to worker thread %s: user_id=%s, connected_accounts=%s, resource_ids=%s",
+            thread_id,
+            supervisor_context.get('user_id'),
+            supervisor_context.get('connected_accounts'),
+            supervisor_context.get('resource_ids'),
+        )
     else:
-        logger.warning(f"⚠️  No Supervisor context found to copy to worker thread {thread_id}")
+        logger.warning("⚠️  No Supervisor context found to copy to worker thread %s", thread_id)
 
     # Create generic worker dynamically with specified integrations
     # Now that context is set, worker creation can access resource IDs
@@ -101,17 +107,15 @@ async def spawn_worker(
 
             # Return as JSON string for orchestrator to parse
             return worker_response.model_dump_json()
-        else:
-            # No messages - return failure response
-            worker_response = WorkerResponse(
-                status=WorkerStatus.FAILURE,
-                message="Worker completed but returned no message",
-                error="No messages in worker result"
-            )
-            return worker_response.model_dump_json()
+        # No messages - return failure response
+        worker_response = WorkerResponse(
+            status=WorkerStatus.FAILURE,
+            message="Worker completed but returned no message",
+            error="No messages in worker result"
+        )
+        return worker_response.model_dump_json()
     except Exception as e:
         # Exception - return failure response
-        import traceback
         worker_response = WorkerResponse(
             status=WorkerStatus.FAILURE,
             message=f"Error executing worker: {traceback.format_exc()}",
