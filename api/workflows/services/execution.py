@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import time
@@ -25,7 +24,7 @@ from api.workflows.services.shared import (
 from api.agents.checkpointer import get_checkpointer
 from shared.analytics import analytics
 from shared.config import config as shared_config
-from shared.database.workflow_models import (
+from shared.database import (
     User,
     Workflow,
     WorkflowDraft,
@@ -41,7 +40,7 @@ from workflow_compiler.errors import WorkflowCompilerError
 from workflow_compiler.runtime.global_compiler import WorkflowCompilerSingleton
 from workflow_compiler.schema.models import WorkflowSpec
 
-compiler = WorkflowCompilerSingleton.instance()
+COMPILER = WorkflowCompilerSingleton.instance()
 logger = logging.getLogger(__name__)
 
 
@@ -170,7 +169,7 @@ async def _execute_compiled_run(
 
     checkpointer = await get_checkpointer()
     try:
-        compiled = await compiler.compile(
+        compiled = await COMPILER.compile(
             user,
             run.spec,
             checkpointer=checkpointer,
@@ -215,7 +214,9 @@ async def _execute_compiled_run(
         )
         effective_config = _build_run_config(run, run_config)
         logger.info(
-            f"Executing workflow run '{run.run_id}' with config: {effective_config}",
+            "Executing workflow run '%s' with config: %s",
+            run.run_id,
+            effective_config,
             extra={"run_id": run.run_id, "config": effective_config}
         )
         result = await compiled.ainvoke(inputs or {}, config=effective_config)
@@ -324,6 +325,7 @@ async def run_draft_workflow(user: User, payload: api_models.RunFromSpecRequest)
     run = await _create_run_record(
         user,
         workflow=None,
+        workflow_version=None,
         spec=payload.spec,
         inputs=payload.inputs,
         config_payload=payload.config,

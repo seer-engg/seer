@@ -136,11 +136,10 @@ class CronScheduleAdapter(PollAdapter):
             # Not yet time - return empty result but hint when to wake up
             seconds_until_next = max(1, int((next_exec_utc - now_utc).total_seconds()))
             logger.info(
-                f"""Cron schedule not yet due:
-                    subscription_id: {ctx.subscription.id},
-                    next_execution: {next_exec_utc.isoformat()},
-                    seconds_until_next: {seconds_until_next},
-                """,
+                "Cron schedule not yet due: next_execution=%s seconds_until_next=%s",
+                next_exec_utc.isoformat(),
+                seconds_until_next,
+                extra={"subscription_id": ctx.subscription.id},
             )
             return PollResult(
                 events=[],
@@ -155,7 +154,8 @@ class CronScheduleAdapter(PollAdapter):
 
         # Time to fire!
         logger.info(
-            f"Cron schedule triggered: {cron_expr}",
+            "Cron schedule triggered: %s",
+            cron_expr,
             extra={
                 "subscription_id": ctx.subscription.id,
                 "scheduled_time": next_exec_utc.isoformat(),

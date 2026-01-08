@@ -1,15 +1,15 @@
+from datetime import datetime
+import json
+import uuid
+from typing import Dict, Any, AsyncGenerator
+
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from .checkpointer import get_checkpointer
-from .models import ThreadCreate, ThreadResponse, ThreadState, RunInput
+
 from shared.logger import get_logger
-from datetime import datetime
-import uuid
-from typing import Dict, Any, AsyncGenerator
-import json
-from fastapi import APIRouter, Response, status, Request
-from .graphs import get_compiled_graph, get_available_graphs
+from api.agents.models import ThreadCreate, ThreadResponse, ThreadState, RunInput
+from api.agents.graphs import get_compiled_graph, get_available_graphs
 
 
 logger = get_logger("api.agents.routes")
@@ -33,7 +33,7 @@ async def create_thread(request: ThreadCreate = None) -> ThreadResponse:
     thread_id = str(uuid.uuid4())
     metadata = request.metadata if request else None
 
-    logger.info(f"Created thread: {thread_id}")
+    logger.info("Created thread: %s", thread_id)
 
     return ThreadResponse(
         thread_id=thread_id,
@@ -59,8 +59,6 @@ async def get_thread_state(
         curl http://localhost:2024/threads/{thread_id}/state?graph_name=eval_agent
     """
     try:
-        checkpointer = await get_checkpointer()
-
         # Get the latest checkpoint for this thread
         config = {"configurable": {"thread_id": thread_id}}
 
@@ -91,8 +89,8 @@ async def get_thread_state(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting thread state: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Error getting thread state: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # =============================================================================
@@ -133,7 +131,7 @@ async def create_run_stream(
         # Prepare input - convert message dicts to LangChain messages if needed
         input_data = _prepare_input(request.input)
 
-        logger.info(f"Starting run for thread {thread_id} on graph {request.graph_name}")
+        logger.info("Starting run for thread %s on graph %s", thread_id, request.graph_name)
 
         return StreamingResponse(
             _stream_graph_events(graph, input_data, config, request.stream_mode),
@@ -146,10 +144,10 @@ async def create_run_stream(
         )
 
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        logger.error(f"Error creating run: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Error creating run: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 async def _stream_graph_events(
@@ -204,7 +202,7 @@ async def _stream_graph_events(
         yield _format_sse_event("done", {"status": "completed"})
 
     except Exception as e:
-        logger.error(f"Error during streaming: {e}")
+        logger.error("Error during streaming: %s", e)
         yield _format_sse_event("error", {"detail": str(e)})
 
 
@@ -269,7 +267,7 @@ def _serialize_state(state: Any) -> Dict[str, Any]:
     return {"value": str(state)}
 
 
-def _serialize_value(value: Any) -> Any:
+def _serialize_value(value: Any) -> Any:  # pylint: disable=too-many-return-statements
     """Serialize a single value."""
     if value is None:
         return None

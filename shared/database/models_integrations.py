@@ -78,5 +78,6 @@ class IntegrationSecret(models.Model):
         )
 
     def __str__(self) -> str:
-        scope = "resource" if self.resource_id else "connection"
+        # Use getattr to avoid static analysis (pylint) no-member on dynamic FK id field
+        scope = "resource" if getattr(self, "resource_id", None) else "connection"
         return f"{self.provider}:{self.name} ({scope})"

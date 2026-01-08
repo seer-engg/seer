@@ -14,26 +14,25 @@ from api.workflows.services.shared import (
     _raise_problem,
     _get_workflow
 )
-from shared.database.workflow_models import (
+from shared.config import config as shared_config
+from shared.database import (
     TriggerSubscription,
     User,
     WorkflowDraft,
     make_workflow_public_id,
 )
+from shared.logger import get_logger
 from workflow_compiler.registry.trigger_registry import trigger_registry
 from workflow_compiler.schema.models import (
     InputDef,
     InputType,
     WorkflowSpec,
 )
-from shared.logger import get_logger
 from api.triggers.supabase_webhook import (
     create_database_webhook,
     delete_database_webhook,
     SupabaseWebhookError,
 )
-from shared.config import config as shared_config
-from fastapi import HTTPException
 logger = get_logger(__name__)
 
 def _load_trigger_definition(trigger_key: str):
@@ -209,7 +208,7 @@ def _should_emit_webhook_url(trigger_key: str) -> bool:
 def _build_webhook_url(subscription_id: int, trigger_key: str) -> Optional[str]:
     if trigger_key == "webhook.generic":
         return f"/v1/webhooks/generic/{subscription_id}"
-    elif trigger_key == "webhook.supabase.db_changes":
+    if trigger_key == "webhook.supabase.db_changes":
         return f"/v1/webhooks/generic/{subscription_id}"
     return None
 
@@ -340,7 +339,7 @@ async def create_trigger_subscription(
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to create Supabase webhook: {str(exc)}"
-            )
+            ) from exc
     return _serialize_subscription(subscription)
 
 

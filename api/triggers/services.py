@@ -13,14 +13,13 @@ from shared.database.workflow_models import (
     TriggerSubscription,
     WorkflowRun,
     WorkflowRunSource,
-    WorkflowRunStatus,
 )
+from shared.logger import get_logger
 from workflow_compiler.registry.trigger_registry import trigger_registry
 from workflow_compiler.schema.models import WorkflowSpec
 
 from api.workflows import services as workflow_services
 from worker.tasks.triggers import process_trigger_event as process_trigger_event_task
-from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -263,18 +262,24 @@ async def process_trigger_run_job(subscription_id: int, event_id: int) -> None:
     spec = WorkflowSpec.model_validate(published_version.spec)
     bindings = dict(subscription.bindings or {})
     try:
-        resolved_inputs = workflow_services._evaluate_bindings(bindings, envelope)
+        # Intentional use of internal API from workflows services
+        resolved_inputs = workflow_services._evaluate_bindings(  # pylint: disable=protected-access
+            bindings, envelope
+        )
     except ValueError as exc:
         await TriggerEvent.filter(id=event.id).update(
             status=TriggerEventStatus.FAILED,
             error={"detail": str(exc)},
         )
         logger.error(
-            f"Trigger run job processed (invalid bindings) with error: {exc}",
+            "Trigger run job processed (invalid bindings) with error: %s",
+            exc,
         )
         return
 
-    validation_errors = workflow_services._validate_resolved_inputs(resolved_inputs, spec)
+    validation_errors = workflow_services._validate_resolved_inputs(  # pylint: disable=protected-access
+        resolved_inputs, spec
+    )
     if validation_errors:
         await TriggerEvent.filter(id=event.id).update(
             status=TriggerEventStatus.FAILED,
@@ -285,7 +290,7 @@ async def process_trigger_run_job(subscription_id: int, event_id: int) -> None:
         )
         return
 
-    run = await workflow_services._create_run_record(
+    run = await workflow_services._create_run_record(  # pylint: disable=protected-access
         user,
         workflow=workflow,
         workflow_version=published_version,
@@ -300,17 +305,17 @@ async def process_trigger_run_job(subscription_id: int, event_id: int) -> None:
     )
     run.subscription = subscription
     run.trigger_event = event
-    logger.info(
-        "Trigger run job processed (run created)"
-    )
+    logger.info("Trigger run job processed (run created)")
     try:
-        output = await workflow_services._execute_compiled_run(
+        output = await workflow_services._execute_compiled_run(  # pylint: disable=protected-access
             run,
             user,
             inputs=resolved_inputs,
             config_payload={},
         )
-        await workflow_services._complete_run(run, output)
+        await workflow_services._complete_run(  # pylint: disable=protected-access
+            run, output
+        )
         await TriggerEvent.filter(id=event.id).update(status=TriggerEventStatus.PROCESSED)
     except HTTPException as exc:
         logger.error(
@@ -341,7 +346,7 @@ async def _dispatch_trigger_event(
     )
     try:
         await process_trigger_event_task.kiq(subscription_id=subscription.id, event_id=event.id)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
         logger.exception(
             "Failed to enqueue trigger event",
             extra={"event_id": event.id, "subscription_id": subscription.id},
@@ -353,7 +358,7 @@ async def _dispatch_trigger_event(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to enqueue trigger event",
-        )
+        ) from exc
     logger.info(
         "Trigger event enqueued",
         extra={"event_id": event.id, "subscription_id": subscription.id},

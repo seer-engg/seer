@@ -158,7 +158,7 @@ async def create_chat_session(
 
     await session.fetch_related("user")
 
-    logger.info(f"Created chat session {session.id} for workflow {workflow.workflow_id}")
+    logger.info("Created chat session %s for workflow %s", session.id, workflow.workflow_id)
     return session
 
 
@@ -249,6 +249,7 @@ async def save_chat_message(
     session_id: int,
     role: str,
     content: str,
+    *,
     thinking: Optional[str] = None,
     suggested_edits: Optional[dict] = None,
     metadata: Optional[dict] = None,
@@ -287,7 +288,7 @@ async def save_chat_message(
         metadata=metadata,
     )
 
-    logger.debug(f"Saved chat message {message.id} to session {session_id}")
+    logger.debug("Saved chat message %s to session %s", message.id, session_id)
     return message
 
 
@@ -316,7 +317,7 @@ def _normalize_spec(spec: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="Workflow spec is required")
     try:
         # Lazy import to avoid circular deps
-        from workflow_compiler.compiler.parse import parse_workflow_spec
+        from workflow_compiler.compiler.parse import parse_workflow_spec  # pylint: disable=import-outside-toplevel
 
         validated = parse_workflow_spec(spec)
     except Exception as exc:
@@ -345,6 +346,7 @@ async def create_workflow_proposal(
     workflow: Workflow,
     session: Optional[WorkflowChatSession],
     user: User,
+    *,
     summary: str,
     spec: Dict[str, Any],
     metadata: Optional[Dict[str, Any]] = None,

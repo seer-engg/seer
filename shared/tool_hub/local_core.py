@@ -5,7 +5,6 @@ Replaces Pinecone with local Chroma vector store for open-source deployment.
 """
 import json
 import asyncio
-import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -15,20 +14,20 @@ from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document
 
-from .models import Tool, EnrichedTool, ToolFunction
 from shared.logger import get_logger
+from .models import Tool, EnrichedTool, ToolFunction
 
 logger = get_logger("shared.tool_hub.local_core")
 
 
-class LocalToolHub:
+class LocalToolHub:  # pylint: disable=too-many-instance-attributes
     """
     Local ToolHub using Chroma for vector storage.
 
     Stores tool embeddings locally in Docker, eliminating need for Pinecone credentials.
     """
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-positional-arguments
         self,
         openai_api_key: str,
         persist_directory: str = "./data/tool_index",
@@ -73,7 +72,7 @@ class LocalToolHub:
         self._vector_store: Optional[Chroma] = None
         self._collection_name = "tools"
 
-        logger.info(f"LocalToolHub initialized with persist_directory={persist_directory}")
+        logger.info("LocalToolHub initialized with persist_directory=%s", persist_directory)
 
     def _get_vector_store(self) -> Chroma:
         """Get or create Chroma vector store instance."""
@@ -117,7 +116,7 @@ class LocalToolHub:
                     try:
                         normalized_tools.append(Tool.from_dict(t))
                     except Exception as e:
-                        logger.warning(f"Skipping invalid tool structure: {t.keys()} - {e}")
+                        logger.warning("Skipping invalid tool structure: %s - %s", list(t.keys()), e)
             elif isinstance(t, Tool):
                 normalized_tools.append(t)
             else:
@@ -125,7 +124,7 @@ class LocalToolHub:
 
         return normalized_tools
 
-    async def ingest(
+    async def ingest(  # pylint: disable=too-many-statements
         self,
         tools: List[Union[Tool, Dict[str, Any]]],
         integration_name: str,
@@ -141,7 +140,7 @@ class LocalToolHub:
         """
         integration_name = integration_name.lower()
 
-        logger.info(f"Ingesting {len(tools)} tools for {integration_name} into Chroma...")
+        logger.info("Ingesting %d tools for %s into Chroma...", len(tools), integration_name)
 
         # Normalize inputs
         normalized_tools = self._normalize_tools(tools)
@@ -152,7 +151,7 @@ class LocalToolHub:
 
         # Enrich tools
         enriched_tools = []
-        logger.info(f"Enriching tools with concurrency (max_workers={max_workers})...")
+        logger.info("Enriching tools with concurrency (max_workers=%d)...", max_workers)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_tool = {
                 executor.submit(self._enrich_tool_metadata, tool): tool
@@ -165,10 +164,13 @@ class LocalToolHub:
                     enriched = future.result()
                     enriched_tools.append(enriched)
                 except Exception as e:
-                    logger.error(f"Failed to enrich {tool.function.name}: {e}")
+                    logger.error("Failed to enrich %s: %s", tool.function.name, e)
 
         # Generate embeddings and store in Chroma
-        logger.info(f"Generating embeddings and storing {len(enriched_tools)} enriched tools in Chroma...")
+        logger.info(
+            "Generating embeddings and storing %d enriched tools in Chroma...",
+            len(enriched_tools),
+        )
 
         vector_store = self._get_vector_store()
 
@@ -203,7 +205,7 @@ class LocalToolHub:
                 documents.append((doc, vector_id))
 
             except Exception as e:
-                logger.error(f"Failed to prepare {enriched_tool.name}: {e}")
+                logger.error("Failed to prepare %s: %s", enriched_tool.name, e)
 
         # Batch add to Chroma
         if documents:
@@ -219,12 +221,17 @@ class LocalToolHub:
                     metadatas=metadatas,
                     ids=ids,
                 )
-                logger.info(f"✅ Stored {len(documents)}/{len(enriched_tools)} tools for {integration_name} in Chroma")
+                logger.info(
+                    "✅ Stored %d/%d tools for %s in Chroma",
+                    len(documents),
+                    len(enriched_tools),
+                    integration_name,
+                )
             except Exception as e:
-                logger.error(f"Failed to store tools in Chroma: {e}")
+                logger.error("Failed to store tools in Chroma: %s", e)
                 raise
 
-    async def query(
+    async def query(  # pylint: disable=too-many-nested-blocks, too-many-statements
         self,
         query: str,
         integration_name: Optional[List[str]] = None,
@@ -283,7 +290,7 @@ class LocalToolHub:
             tool_results: List[Dict[str, Any]] = []
             tool_metadata_map = {}  # Store metadata for expansion
 
-            logger.debug(f"\n--- Anchor Tools (Vector Match) ---")
+            logger.debug("\n--- Anchor Tools (Vector Match) ---")
             for doc, score in results:
                 metadata = doc.metadata
                 tool_name = metadata.get("name", "")
@@ -297,7 +304,7 @@ class LocalToolHub:
                         tool_name = doc_id
 
                 if tool_name and tool_name not in selected_tool_names:
-                    logger.debug(f"Found: {tool_name} (score: {score:.3f})")
+                    logger.debug("Found: %s (score: %.3f)", tool_name, score)
                     selected_tool_names.add(tool_name)
 
                     # Parse JSON fields from metadata
@@ -316,7 +323,7 @@ class LocalToolHub:
                         if metadata.get("parameters"):
                             parameters = json.loads(metadata["parameters"])
                     except json.JSONDecodeError as e:
-                        logger.warning(f"Failed to parse metadata for {tool_name}: {e}")
+                        logger.warning("Failed to parse metadata for %s: %s", tool_name, e)
 
                     tool_metadata_map[tool_name] = {
                         **metadata,
@@ -338,7 +345,7 @@ class LocalToolHub:
 
             # Graph Expansion (Spoke) - expand with neighbors
             expanded_results: List[Dict[str, Any]] = []
-            logger.debug(f"\n--- Expanded Tools (Graph Neighbors) ---")
+            logger.debug("\n--- Expanded Tools (Graph Neighbors) ---")
 
             for tool_dict in tool_results:
                 tool_name = tool_dict.get("name")
@@ -365,7 +372,7 @@ class LocalToolHub:
 
                             # Filter results by name and integration
                             matching_neighbor = None
-                            for neighbor_doc, neighbor_score in neighbor_results:
+                            for neighbor_doc, _ in neighbor_results:
                                 neighbor_metadata = neighbor_doc.metadata
                                 # Check if name matches and integration matches (if specified)
                                 if neighbor_metadata.get("name") == neighbor_name:
@@ -384,7 +391,7 @@ class LocalToolHub:
                                 except json.JSONDecodeError:
                                     pass
 
-                                logger.debug(f"Adding Neighbor: {neighbor_name} (related to {tool_name})")
+                                logger.debug("Adding Neighbor: %s (related to %s)", neighbor_name, tool_name)
                                 selected_tool_names.add(neighbor_name)
 
                                 # Store neighbor metadata
@@ -415,13 +422,13 @@ class LocalToolHub:
                                     "parameters": neighbor_parameters
                                 })
                         except Exception as e:
-                            logger.warning(f"Failed to load neighbor {neighbor_name}: {e}")
+                            logger.warning("Failed to load neighbor %s: %s", neighbor_name, e)
 
             final_selection = tool_results + expanded_results
             return final_selection
 
         except Exception as e:
-            logger.error(f"Chroma query failed: {e}")
+            logger.error("Chroma query failed: %s", e)
             return []
 
     def _enrich_tool_metadata(self, tool: Tool) -> EnrichedTool:
@@ -496,10 +503,17 @@ class LocalToolHub:
             if inferred_params:
                 # Update tool.function.parameters with inferred schema
                 tool.function.parameters = inferred_params
-                logger.debug(f"📝 Inferred parameters for {tool.function.name}: {list(inferred_params.keys())}")
+                logger.debug(
+                    "📝 Inferred parameters for %s: %s",
+                    tool.function.name,
+                    list(inferred_params.keys()),
+                )
         elif has_empty_schema:
             # If LLM didn't provide parameters_schema, log warning
-            logger.warning(f"⚠️ Warning: Empty schema for {tool.function.name} but LLM didn't infer parameters_schema")
+            logger.warning(
+                "⚠️ Warning: Empty schema for %s but LLM didn't infer parameters_schema",
+                tool.function.name,
+            )
 
         return EnrichedTool(
             name=tool.function.name,

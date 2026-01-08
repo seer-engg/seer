@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -15,13 +14,14 @@ from api.workflows.services.shared import (
     _raise_problem,
 )
 from api.agents.checkpointer import get_checkpointer
-from shared.database.workflow_models import (
+from shared.config import config as shared_config
+from shared.database import (
     User,
     WorkflowRun,
     WorkflowRunStatus,
-    make_workflow_public_id,
     parse_run_public_id,
 )
+from shared.logger import get_logger
 from workflow_compiler.runtime.global_compiler import WorkflowCompilerSingleton
 from workflow_compiler.schema.models import (
     ForEachNode,
@@ -31,10 +31,9 @@ from workflow_compiler.schema.models import (
     ToolNode,
     WorkflowSpec,
 )
-from shared.logger import get_logger
+
 logger = get_logger(__name__)
-compiler = WorkflowCompilerSingleton.instance()
-from shared.config import config as shared_config
+COMPILER = WorkflowCompilerSingleton.instance()
 
 def _snapshot_to_dict(snapshot: Any) -> Dict[str, Any]:
     serializable: Dict[str, Any] = {}
@@ -187,6 +186,7 @@ async def _get_run(user: User, run_id: str) -> WorkflowRun:
 
 
 async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryResponse:
+    # pylint: disable=too-many-statements, too-many-nested-blocks
     """
     Get workflow execution history with node-based traces.
 
@@ -221,13 +221,15 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
     config = _build_run_config(run, run.config)
 
     logger.info(
-        f"Retrieving checkpoint for run '{run.run_id}' with config: {config}",
+        "Retrieving checkpoint for run '%s' with config: %s",
+        run.run_id,
+        config,
         extra={
             "run_id": run.run_id,
             "config": config,
             "run_config": run.config,
             "run_status": run.status.value if isinstance(run.status, WorkflowRunStatus) else run.status,
-        }
+        },
     )
 
     # Diagnostic: Try to list checkpoints for this thread_id to see if any exist
@@ -241,18 +243,22 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
             })
         if checkpoints_list:
             logger.info(
-                f"Found {len(checkpoints_list)} checkpoint(s) for thread_id '{config.get('configurable', {}).get('thread_id')}'",
-                extra={"run_id": run.run_id, "checkpoints": checkpoints_list}
+                "Found %s checkpoint(s) for thread_id '%s'",
+                len(checkpoints_list),
+                config.get("configurable", {}).get("thread_id"),
+                extra={"run_id": run.run_id, "checkpoints": checkpoints_list},
             )
         else:
             logger.warning(
-                f"No checkpoints found in alist for thread_id '{config.get('configurable', {}).get('thread_id')}'",
-                extra={"run_id": run.run_id, "config": config}
+                "No checkpoints found in alist for thread_id '%s'",
+                config.get("configurable", {}).get("thread_id"),
+                extra={"run_id": run.run_id, "config": config},
             )
     except Exception as list_exc:
         logger.warning(
-            f"Error listing checkpoints for diagnostic: {list_exc}",
-            extra={"run_id": run.run_id, "config": config}
+            "Error listing checkpoints for diagnostic: %s",
+            list_exc,
+            extra={"run_id": run.run_id, "config": config},
         )
 
     try:
@@ -262,22 +268,29 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
             if state_tuple:
                 checkpoint_config = state_tuple.config.get("configurable", {})
                 logger.info(
-                    f"Checkpoint found for run '{run.run_id}': checkpoint_id={checkpoint_config.get('checkpoint_id')}, checkpoint_ns={checkpoint_config.get('checkpoint_ns')}",
+                    "Checkpoint found for run '%s': checkpoint_id=%s, checkpoint_ns=%s",
+                    run.run_id,
+                    checkpoint_config.get("checkpoint_id"),
+                    checkpoint_config.get("checkpoint_ns"),
                     extra={
                         "run_id": run.run_id,
                         "checkpoint_id": checkpoint_config.get("checkpoint_id"),
                         "checkpoint_ns": checkpoint_config.get("checkpoint_ns"),
                         "thread_id": checkpoint_config.get("thread_id"),
-                    }
+                    },
                 )
             else:
                 logger.warning(
-                    f"No checkpoint found for run '{run.run_id}' with config: {config}",
-                    extra={"run_id": run.run_id, "config": config, "run_config": run.config}
+                    "No checkpoint found for run '%s' with config: %s",
+                    run.run_id,
+                    config,
+                    extra={"run_id": run.run_id, "config": config, "run_config": run.config},
                 )
         except Exception as checkpoint_exc:
             logger.error(
-                f"Failed to retrieve checkpoint for run '{run.run_id}': {checkpoint_exc}",
+                "Failed to retrieve checkpoint for run '%s': %s",
+                run.run_id,
+                checkpoint_exc,
                 exc_info=True,
                 extra={"run_id": run.run_id, "user_id": user.id}
             )
@@ -293,21 +306,24 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
             config_with_ns = dict(config)
             config_with_ns.setdefault("configurable", {})["checkpoint_ns"] = ""
             logger.info(
-                f"Retrying checkpoint retrieval with explicit checkpoint_ns='' for run '{run.run_id}'",
+                "Retrying checkpoint retrieval with explicit checkpoint_ns='' for run '%s'",
+                run.run_id,
                 extra={"run_id": run.run_id, "config_with_ns": config_with_ns}
             )
             try:
                 state_tuple = await checkpointer.aget_tuple(config_with_ns)
                 if state_tuple:
                     logger.info(
-                        f"Checkpoint found with checkpoint_ns='' for run '{run.run_id}'",
+                        "Checkpoint found with checkpoint_ns='' for run '%s'",
+                        run.run_id,
                         extra={"run_id": run.run_id}
                     )
                     # Use the config with namespace for subsequent operations
                     config = config_with_ns
             except Exception as ns_exc:
                 logger.warning(
-                    f"Retry with checkpoint_ns='' also failed: {ns_exc}",
+                    "Retry with checkpoint_ns='' also failed: %s",
+                    ns_exc,
                     extra={"run_id": run.run_id, "config_with_ns": config_with_ns}
                 )
 
@@ -326,13 +342,14 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
         trace_keys_found = set()
 
         logger.info(
-            f"Compiling workflow to access full state for thread_id '{config.get('configurable', {}).get('thread_id')}'",
+            "Compiling workflow to access full state for thread_id '%s'",
+            config.get("configurable", {}).get("thread_id"),
             extra={"run_id": run.run_id}
         )
 
         try:
             # Compile the workflow to get access to the graph
-            compiled = await compiler.compile(
+            compiled = await COMPILER.compile(
                 user,
                 run.spec,
                 checkpointer=checkpointer,
@@ -345,7 +362,8 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
             if graph_state and graph_state.values:
                 state_values = graph_state.values
                 logger.info(
-                    f"Retrieved full state from graph with {len(state_values)} keys",
+                    "Retrieved full state from graph with %s keys",
+                    len(state_values),
                     extra={"run_id": run.run_id, "state_keys": list(state_values.keys())[:20]}  # Log first 20 keys
                 )
 
@@ -369,12 +387,15 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
                                     enriched_node = _enrich_node_with_spec(node_trace, node_id, workflow_spec)
                                     nodes.append(enriched_node)
                                     logger.info(
-                                        f"Found trace data for node '{node_id}' in graph state",
+                                        "Found trace data for node '%s' in graph state",
+                                        node_id,
                                         extra={"run_id": run.run_id, "node_id": node_id}
                                     )
                                 except Exception as enrich_exc:
                                     logger.warning(
-                                        f"Failed to enrich node '{node_id}' with spec metadata: {enrich_exc}",
+                                        "Failed to enrich node '%s' with spec metadata: %s",
+                                        node_id,
+                                        enrich_exc,
                                         exc_info=True,
                                         extra={"run_id": run.run_id, "node_id": node_id}
                                     )
@@ -382,13 +403,15 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
                                     nodes.append(node_trace)
             else:
                 logger.warning(
-                    f"No state values found from graph.aget_state() for run '{run.run_id}'",
+                    "No state values found from graph.aget_state() for run '%s'",
+                    run.run_id,
                     extra={"run_id": run.run_id}
                 )
 
         except Exception as graph_exc:
             logger.warning(
-                f"Error accessing graph state, falling back to checkpoint channel_values: {graph_exc}",
+                "Error accessing graph state, falling back to checkpoint channel_values: %s",
+                graph_exc,
                 exc_info=True,
                 extra={"run_id": run.run_id}
             )
@@ -417,7 +440,9 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
                                         nodes.append(enriched_node)
                                     except Exception as enrich_exc:
                                         logger.warning(
-                                            f"Failed to enrich node '{node_id}' with spec metadata: {enrich_exc}",
+                                            "Failed to enrich node '%s' with spec metadata: %s",
+                                            node_id,
+                                            enrich_exc,
                                             exc_info=True,
                                             extra={"run_id": run.run_id, "node_id": node_id}
                                         )
@@ -425,14 +450,17 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
                                         nodes.append(node_trace)
             except Exception as list_exc:
                 logger.error(
-                    f"Error in fallback checkpoint iteration: {list_exc}",
+                    "Error in fallback checkpoint iteration: %s",
+                    list_exc,
                     exc_info=True,
                     extra={"run_id": run.run_id}
                 )
 
         # Log summary of trace data found
         logger.info(
-            f"Found {len(nodes)} node trace(s) for run '{run.run_id}'",
+            "Found %s node trace(s) for run '%s'",
+            len(nodes),
+            run.run_id,
             extra={"run_id": run.run_id, "node_count": len(nodes), "node_ids": [n.get("node_id") for n in nodes]}
         )
 
@@ -446,7 +474,9 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
                 workflow_id = run.workflow.workflow_id
             except AttributeError as e:
                 logger.warning(
-                    f"Error accessing workflow_id for run '{run.run_id}': {e}",
+                    "Error accessing workflow_id for run '%s': %s",
+                    run.run_id,
+                    e,
                     extra={"run_id": run.run_id}
                 )
 
@@ -460,7 +490,9 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
                 created_at_str = run.created_at.isoformat()
         except (AttributeError, ValueError) as e:
             logger.warning(
-                f"Error serializing created_at for run '{run.run_id}': {e}",
+                "Error serializing created_at for run '%s': %s",
+                run.run_id,
+                e,
                 extra={"run_id": run.run_id}
             )
 
@@ -469,7 +501,9 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
                 started_at_str = run.started_at.isoformat()
         except (AttributeError, ValueError) as e:
             logger.warning(
-                f"Error serializing started_at for run '{run.run_id}': {e}",
+                "Error serializing started_at for run '%s': %s",
+                run.run_id,
+                e,
                 extra={"run_id": run.run_id}
             )
 
@@ -478,7 +512,9 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
                 finished_at_str = run.finished_at.isoformat()
         except (AttributeError, ValueError) as e:
             logger.warning(
-                f"Error serializing finished_at for run '{run.run_id}': {e}",
+                "Error serializing finished_at for run '%s': %s",
+                run.run_id,
+                e,
                 extra={"run_id": run.run_id}
             )
 
@@ -500,7 +536,9 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
         raise
     except Exception as exc:  # pragma: no cover - bubble up as HTTP problem
         logger.error(
-            f"Unexpected error loading run history for run '{run.run_id}': {exc}",
+            "Unexpected error loading run history for run '%s': %s",
+            run.run_id,
+            exc,
             exc_info=True,
             extra={"run_id": run.run_id, "user_id": user.id}
         )
@@ -516,5 +554,5 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
 
 async def get_run_status(user: User, run_id: str) -> api_models.RunResponse:
     run = await _get_run(user, run_id)
-    from api.workflows.services.execution import _serialize_run
+    from api.workflows.services.execution import _serialize_run  # pylint: disable=import-outside-toplevel
     return _serialize_run(run)

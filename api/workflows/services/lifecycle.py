@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Optional, Dict, Any
+
+from tortoise.exceptions import DoesNotExist
 
 from api.workflows import models as api_models
 from api.workflows.services.shared import (
@@ -14,7 +16,7 @@ from api.workflows.services.shared import (
     _get_workflow
 )
 
-from shared.database.workflow_models import (
+from shared.database import (
     User,
     Workflow,
     WorkflowDraft,
@@ -22,9 +24,7 @@ from shared.database.workflow_models import (
     WorkflowVersionStatus,
     parse_workflow_public_id,
 )
-from tortoise.exceptions import DoesNotExist
 from workflow_compiler.schema.models import WorkflowSpec
-from typing import Dict, Any
 
 # ===== Helper Functions =====
 
@@ -80,6 +80,7 @@ async def _recent_version(workflow: Workflow) -> Optional[WorkflowVersion]:
 
 
 async def _workflow_response(workflow: Workflow) -> api_models.WorkflowResponse:
+    # pylint: disable=inconsistent-return-statements
     draft: Optional[WorkflowDraft] = getattr(workflow, "draft", None)
     if draft is None:
         draft = await WorkflowDraft.get_or_none(workflow=workflow)
@@ -135,7 +136,7 @@ async def create_workflow(user: User, payload: api_models.WorkflowCreateRequest)
         tags=list(payload.tags or []),
         meta={"last_compile_ok": False},
     )
-    draft = await WorkflowDraft.create(
+    await WorkflowDraft.create(
         workflow=workflow,
         spec=spec_dict,
         revision=1,

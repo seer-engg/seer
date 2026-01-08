@@ -31,6 +31,7 @@ class SupabaseProvider(IntegrationProvider):
         *,
         project_ref: Optional[str] = None,
         connection_id: Optional[str] = None,
+        **kwargs,
     ):
         if resource_type != SUPABASE_RESOURCE_TYPE_PROJECT:
             raise HTTPException(status_code=400, detail=f"Unsupported Supabase resource type '{resource_type}'")
@@ -91,10 +92,10 @@ class SupabaseProvider(IntegrationProvider):
             raise HTTPException(
                 status_code=exc.response.status_code,
                 detail=f"Supabase API error: {exc.response.text[:200]}",
-            )
+            ) from exc
         except Exception as exc:
             logger.exception("Unexpected Supabase API error", extra={"url": url})
-            raise HTTPException(status_code=500, detail=f"Supabase API error: {str(exc)}")
+            raise HTTPException(status_code=500, detail=f"Supabase API error: {str(exc)}") from exc
 
     def _api_base(self) -> str:
         base = config.supabase_management_api_base or "https://api.supabase.com"

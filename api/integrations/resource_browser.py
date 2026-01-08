@@ -38,6 +38,7 @@ class ResourceBrowser:
     async def list_resources(
         self,
         resource_type: str,
+        *,
         query: Optional[str] = None,
         parent_id: Optional[str] = None,
         page_token: Optional[str] = None,
@@ -50,7 +51,7 @@ class ResourceBrowser:
             raise ValueError(f"Unknown resource type: {resource_type}")
 
         provider_impl = self._get_provider()
-        logger.info(f"Listing resources for provider: {provider_impl.provider}")
+        logger.info("Listing resources for provider: %s", provider_impl.provider)
         if not provider_impl.supports_resource_type(resource_type):
             raise HTTPException(
                 status_code=400,

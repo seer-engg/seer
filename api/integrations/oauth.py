@@ -1,5 +1,5 @@
-from authlib.integrations.starlette_client import OAuth
 import os
+from authlib.integrations.starlette_client import OAuth
 from shared.config import config
 
 oauth = OAuth()

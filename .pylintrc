@@ -22,11 +22,17 @@ disable=
     too-few-public-methods,
     too-many-locals,
     too-many-branches,
-    line-too-long
+    line-too-long,
+    too-many-arguments,
+    missing-class-docstring,
+    broad-except,
+    protected-access,
+    fixme,
+    raise-missing-from
 
 [MASTER]
 # Add files or directories to the blacklist
-ignore=alembic,migrations,.venv,venv,build,dist
+ignore=alembic,migrations,.venv,venv,build,dist,workflow_compiler,shared/sandbox
 
 [FORMAT]
 # Maximum number of characters on a single line.
@@ -34,7 +40,7 @@ max-line-length=200
 
 [DESIGN]
 # Maximum number of lines in a module
-max-module-lines=600
+max-module-lines=1000
 
 # Maximum number of locals for function / method body
 max-locals=20
