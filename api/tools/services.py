@@ -5,7 +5,6 @@ from typing import Any, Dict, Optional
 from fastapi import HTTPException
 
 from shared.tools.registry import get_tools_by_integration
-from shared.tools.base import get_tool
 from shared.tools.executor import execute_tool as _execute_tool
 from shared.logger import get_logger
 from shared.database.models import User
@@ -25,14 +24,18 @@ async def list_tools(integration_type: Optional[str] = None) -> Dict[str, Any]:
     """
     try:
         tools = get_tools_by_integration(integration_type)
-        logger.info(f"Listing tools: integration_type={integration_type}, count={len(tools)}")
+        logger.info(
+            "Listing tools: integration_type=%s, count=%d",
+            integration_type,
+            len(tools),
+        )
         return {"tools": tools}
     except Exception as e:
-        logger.exception(f"Error listing tools: {e}")
+        logger.exception("Error listing tools: %s", e)
         raise HTTPException(
             status_code=500,
             detail=f"Error listing tools: {str(e)}"
-        )
+        ) from e
 
 
 async def execute_tool_service(
@@ -55,8 +58,11 @@ async def execute_tool_service(
     """
     try:
         logger.info(
-            f"Executing tool: tool_name={tool_name}, user_id={user.user_id}, "
-            f"connection_id={connection_id}, has_arguments={arguments is not None}"
+            "Executing tool: tool_name=%s, user_id=%s, connection_id=%s, has_arguments=%s",
+            tool_name,
+            user.user_id,
+            connection_id,
+            arguments is not None,
         )
 
         result = await _execute_tool(
@@ -73,8 +79,8 @@ async def execute_tool_service(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"Error executing tool {tool_name}: {e}")
+        logger.exception("Error executing tool %s: %s", tool_name, e)
         raise HTTPException(
             status_code=500,
             detail=f"Error executing tool: {str(e)}"
-        )
+        ) from e
