@@ -5,7 +5,7 @@ RUN_IN_TRANSACTION = True
 
 async def upgrade(db: BaseDBAsyncClient) -> str:
     return """
-    ALTER TABLE workflow_runs 
+    ALTER TABLE workflow_runs
 DROP CONSTRAINT IF EXISTS workflow_runs_workflow_id_fkey;
         """
 

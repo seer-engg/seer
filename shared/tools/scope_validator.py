@@ -13,14 +13,14 @@ logger = get_logger("shared.tools.scope_validator")
 def validate_scope(connection: OAuthConnection, required_scope: str) -> bool:
     """
     Validate that an OAuth connection has the required scope.
-    
+
     Args:
         connection: OAuthConnection instance
         required_scope: Required OAuth scope (e.g., "https://www.googleapis.com/auth/gmail.readonly")
-    
+
     Returns:
         True if connection has the required scope, False otherwise
-    
+
     Note:
         Handles scope matching logic:
         - Exact match: required scope must be in granted scopes
@@ -31,11 +31,11 @@ def validate_scope(connection: OAuthConnection, required_scope: str) -> bool:
     if not connection.scopes:
         logger.warning(f"Connection {connection.id} has no scopes stored")
         return False
-    
+
     granted_scopes = connection.scopes.strip()
     if not granted_scopes:
         return False
-    
+
     # Split scopes - handle both comma-separated (GitHub) and space-separated (Google) formats
     # First check if scopes are comma-separated (no spaces between them)
     if ',' in granted_scopes and ' ' not in granted_scopes:
@@ -43,11 +43,11 @@ def validate_scope(connection: OAuthConnection, required_scope: str) -> bool:
     else:
         # Space-separated (Google style) or mixed - split by whitespace
         granted_scope_list = granted_scopes.split()
-    
+
     # Check for exact match first
     if required_scope in granted_scope_list:
         return True
-    
+
     # For Google APIs, check if we have a broader scope
     # e.g., if required is "gmail.readonly" and we have "gmail", that's not sufficient
     # But if required is "gmail" and we have "gmail.readonly", that's sufficient
@@ -62,7 +62,7 @@ def validate_scope(connection: OAuthConnection, required_scope: str) -> bool:
             # This is conservative - we don't allow "gmail" to satisfy "gmail.readonly"
             if required_scope.startswith(granted + "."):
                 return True
-    
+
     logger.warning(
         f"Connection {connection.id} missing required scope '{required_scope}'. "
         f"Granted scopes: {granted_scopes}"
@@ -73,11 +73,11 @@ def validate_scope(connection: OAuthConnection, required_scope: str) -> bool:
 def validate_scopes(connection: OAuthConnection, required_scopes: List[str]) -> tuple[bool, Optional[str]]:
     """
     Validate that an OAuth connection has all required scopes.
-    
+
     Args:
         connection: OAuthConnection instance
         required_scopes: List of required OAuth scopes
-    
+
     Returns:
         Tuple of (is_valid, missing_scope)
         - is_valid: True if all scopes are present
@@ -87,4 +87,3 @@ def validate_scopes(connection: OAuthConnection, required_scopes: List[str]) -> 
         if not validate_scope(connection, scope):
             return False, scope
     return True, None
-

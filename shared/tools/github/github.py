@@ -22,7 +22,7 @@ GITHUB_TOOL_SCOPES: Dict[str, list[str]] = {
 
 class GitHubTool(BaseTool):
     """GitHub tool that calls GitHub API directly."""
-    
+
     def __init__(self, tool_name: str, description: str, parameters_schema: Optional[Dict[str, Any]] = None, integration_type: Optional[str] = "github"):
         self.tool_name = tool_name
         self.name = f"github_{tool_name.replace(':', '_')}"
@@ -38,19 +38,19 @@ class GitHubTool(BaseTool):
             "properties": {},
             "required": []
         }
-    
+
     def get_parameters_schema(self) -> Dict[str, Any]:
         """Get JSON schema for tool parameters."""
         return self._parameters_schema
-    
+
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         """
         Execute GitHub tool by calling GitHub API directly.
-        
+
         Args:
             access_token: OAuth access token (required for GitHub API)
             arguments: Tool arguments
-        
+
         Returns:
             Tool execution result
         """
@@ -59,7 +59,7 @@ class GitHubTool(BaseTool):
                 status_code=401,
                 detail=f"GitHub tool '{self.tool_name}' requires OAuth access token"
             )
-        
+
         try:
             result = await self._execute_via_github_api(access_token, arguments)
             return result
@@ -71,7 +71,7 @@ class GitHubTool(BaseTool):
                 status_code=500,
                 detail=f"GitHub tool execution failed: {str(e)}"
             )
-    
+
     async def _execute_via_github_api(self, access_token: str, arguments: Dict[str, Any]) -> Any:
         """
         Execute tool by calling GitHub API directly.
@@ -80,20 +80,20 @@ class GitHubTool(BaseTool):
             owner = arguments.get("owner")
             repo = arguments.get("repo")
             state = arguments.get("state", "open")
-            
+
             if not owner or not repo:
                 raise HTTPException(
                     status_code=400,
                     detail="owner and repo are required"
                 )
-            
+
             url = f"https://api.github.com/repos/{owner}/{repo}/pulls"
             headers = {
                 "Authorization": f"Bearer {access_token}",
                 "Accept": "application/vnd.github.v3+json"
             }
             params = {"state": state}
-            
+
             async with httpx.AsyncClient() as http_client:
                 response = await http_client.get(url, headers=headers, params=params)
                 if response.status_code == 401:
@@ -103,25 +103,25 @@ class GitHubTool(BaseTool):
                     )
                 response.raise_for_status()
                 return response.json()
-        
+
         elif self.tool_name == "pull_request_read:get":
             owner = arguments.get("owner")
             repo = arguments.get("repo")
             pull_number = arguments.get("pullNumber") or arguments.get("pull_number")
             method = arguments.get("method", "get")
-            
+
             if not owner or not repo or not pull_number:
                 raise HTTPException(
                     status_code=400,
                     detail="owner, repo, and pullNumber are required"
                 )
-            
+
             url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}"
             headers = {
                 "Authorization": f"Bearer {access_token}",
                 "Accept": "application/vnd.github.v3+json"
             }
-            
+
             async with httpx.AsyncClient() as http_client:
                 response = await http_client.get(url, headers=headers)
                 if response.status_code == 401:
@@ -131,7 +131,7 @@ class GitHubTool(BaseTool):
                     )
                 response.raise_for_status()
                 return response.json()
-        
+
         else:
             raise HTTPException(
                 status_code=501,
@@ -172,7 +172,7 @@ def register_github_tools():
             integration_type="pull_request"
         ),
     ]
-    
+
     for tool in common_tools:
         try:
             register_tool(tool)

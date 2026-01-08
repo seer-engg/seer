@@ -17,7 +17,7 @@ def get_toolhub_instance() -> Optional[LocalToolHub]:
             if not config.openai_api_key:
                 logger.debug("OpenAI API key not configured, tool search will use fallback")
                 return None
-            
+
             _TOOLHUB_INSTANCE = LocalToolHub(
                 openai_api_key=config.openai_api_key,
                 persist_directory=config.tool_index_path,
@@ -29,11 +29,10 @@ def get_toolhub_instance() -> Optional[LocalToolHub]:
         except Exception as e:
             logger.warning(f"LocalToolHub initialization failed: {e}")
             return None
-    
+
     return _TOOLHUB_INSTANCE
 
 def set_toolhub_instance(instance: LocalToolHub) -> None:
     """Set the shared instance (for testing or pre-initialization)."""
     global _TOOLHUB_INSTANCE
     _TOOLHUB_INSTANCE = instance
-

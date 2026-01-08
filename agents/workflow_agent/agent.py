@@ -24,20 +24,20 @@ def create_workflow_chat_agent(
 ) -> Any:
     """
     Create a LangGraph agent for workflow chat assistance using create_agent.
-    
+
     Uses LangChain v1.0+ create_agent with middleware for summarization
     and human-in-the-loop capabilities.
-    
+
     Args:
         model: Model name to use (e.g., 'gpt-5.2', 'gpt-5-mini')
         checkpointer: Optional LangGraph checkpointer for persistence
-        
+
     Returns:
         LangGraph agent compiled with tools and middleware
     """
-    
+
     llm = get_llm_without_responses_api(model=model, temperature=0, api_key=None)
-    
+
     # System prompt for the workflow assistant
     schema_section = f"\n\nWorkflowSpec schema excerpt (trimmed):\n{WORKFLOW_SPEC_SCHEMA}"
     example_section = f"\n\nValid WorkflowSpec example:\n{WORKFLOW_SPEC_EXAMPLE}"
@@ -69,14 +69,14 @@ def create_workflow_chat_agent(
 
     # Get workflow tools (with optional workflow_state injection)
     tools = get_workflow_tools(workflow_state=workflow_state)
-    
+
     # Create summarization model (use same model with lower max tokens)
     summarization_model = get_llm_without_responses_api(
         model=model,
         temperature=0,
         api_key=None,
     )
-    
+
     # Build middleware list
     middleware = [
         SummarizationMiddleware(
@@ -84,13 +84,13 @@ def create_workflow_chat_agent(
             max_tokens_before_summary=256000,  # 256k token limit
         ),
     ]
-    
+
     # Verify checkpointer is provided (required for persistence)
     if checkpointer is None:
         logger.warning("No checkpointer provided to create_workflow_chat_agent - traces will not be persisted")
     else:
         logger.debug(f"Creating workflow chat agent with checkpointer: {type(checkpointer).__name__}")
-    
+
     # Create agent with middleware
     agent = create_agent(
         model=llm,
@@ -99,7 +99,6 @@ def create_workflow_chat_agent(
         middleware=middleware,
         checkpointer=checkpointer,
     )
-    
+
     logger.info(f"Created workflow chat agent with model {model}, checkpointer={'enabled' if checkpointer else 'disabled'}")
     return agent
-

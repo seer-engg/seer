@@ -151,7 +151,7 @@ class NodeRuntime:
     ) -> Dict[str, Any]:
         # STEP 1: Capture inputs (AFTER evaluation, BEFORE execution)
         inputs = self._capture_node_inputs(node, state, config, locals_ctx)
-        
+
         # STEP 2: Execute tool (existing logic)
         tool_def = self.services.tool_registry.get(node.tool)
         runtime_context = context or self._current_context
@@ -166,10 +166,10 @@ class NodeRuntime:
                 sorted((config.get("configurable") or {}).keys()),
             )
         result = tool_def.handler(inputs, dict(config), runtime_context)
-        
+
         # STEP 3: Prepare output (existing logic)
         output = self._prepare_output(node.out, result)
-        
+
         # STEP 4: Store trace data
         # Use single underscore prefix to avoid LangGraph filtering double-underscore keys
         trace_key = f"_trace_{node.id}"
@@ -181,14 +181,14 @@ class NodeRuntime:
             'output_key': node.out,
             'timestamp': datetime.now(timezone.utc).isoformat(),
         }
-        
+
         # Diagnostic logging: Verify trace key is in output
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 f"Tool node '{node.id}' output keys: {list(output.keys())}, trace_key present: {trace_key in output}",
                 extra={"node_id": node.id, "output_keys": list(output.keys()), "trace_key": trace_key}
             )
-        
+
         return output
 
     async def _run_tool_async(
@@ -202,7 +202,7 @@ class NodeRuntime:
     ) -> Dict[str, Any]:
         # STEP 1: Capture inputs (AFTER evaluation, BEFORE execution)
         inputs = self._capture_node_inputs(node, state, config, locals_ctx)
-        
+
         # STEP 2: Execute tool (existing logic)
         tool_def = self.services.tool_registry.get(node.tool)
         runtime_context = context or self._current_context
@@ -211,10 +211,10 @@ class NodeRuntime:
             result = await asyncio.to_thread(tool_def.handler, inputs, dict(config), runtime_context)
         else:
             result = await handler(inputs, dict(config), runtime_context)
-        
+
         # STEP 3: Prepare output (existing logic)
         output = self._prepare_output(node.out, result)
-        
+
         # STEP 4: Store trace data
         # Use single underscore prefix to avoid LangGraph filtering double-underscore keys
         trace_key = f"_trace_{node.id}"
@@ -226,14 +226,14 @@ class NodeRuntime:
             'output_key': node.out,
             'timestamp': datetime.now(timezone.utc).isoformat(),
         }
-        
+
         # Diagnostic logging: Verify trace key is in output
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 f"Tool node '{node.id}' (async) output keys: {list(output.keys())}, trace_key present: {trace_key in output}",
                 extra={"node_id": node.id, "output_keys": list(output.keys()), "trace_key": trace_key}
             )
-        
+
         return output
 
     def _run_llm(
@@ -246,7 +246,7 @@ class NodeRuntime:
     ) -> Dict[str, Any]:
         # STEP 1: Capture inputs
         inputs = self._capture_node_inputs(node, state, config, locals_ctx)
-        
+
         # STEP 2: Execute LLM (existing logic)
         ctx = self._build_eval_context(state, config, locals_ctx)
         prompt = render_template(ctx, node.prompt)
@@ -282,10 +282,10 @@ class NodeRuntime:
                 raise ExecutionError(f"LLM node '{node.id}' expected JSON response")
         else:
             raise ExecutionError(f"Unsupported output mode '{node.output.mode}' for node '{node.id}'")
-        
+
         # STEP 3: Prepare output
         output = self._prepare_output(node.out, result)
-        
+
         # STEP 4: Store trace data
         # Use single underscore prefix to avoid LangGraph filtering double-underscore keys
         trace_key = f"_trace_{node.id}"
@@ -297,14 +297,14 @@ class NodeRuntime:
             'output_key': node.out,
             'timestamp': datetime.now(timezone.utc).isoformat(),
         }
-        
+
         # Diagnostic logging: Verify trace key is in output
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 f"LLM node '{node.id}' output keys: {list(output.keys())}, trace_key present: {trace_key in output}",
                 extra={"node_id": node.id, "output_keys": list(output.keys()), "trace_key": trace_key}
             )
-        
+
         return output
 
     def _run_if(
@@ -506,7 +506,7 @@ class NodeRuntime:
         Inputs are evaluated from state at runtime - cannot be predicted at compile time.
         """
         ctx = self._build_eval_context(state, config, locals_ctx)
-        
+
         if isinstance(node, ToolNode):
             # Evaluate node.in_ expressions against current state
             # This gives us the ACTUAL values passed to the tool
@@ -518,7 +518,7 @@ class NodeRuntime:
                     # If evaluation fails, store error info
                     inputs[key] = {"__error__": str(e), "__expression__": expr}
             return inputs
-        
+
         elif isinstance(node, LLMNode):
             # For LLM, capture:
             # 1. Prompt template (from spec)
@@ -534,16 +534,16 @@ class NodeRuntime:
                     except Exception as e:
                         evaluated_refs[key] = {"__error__": str(e), "__expression__": expr}
                 inputs['input_refs'] = evaluated_refs
-            
+
             # Also capture model config
             inputs['model'] = node.model
             if node.temperature is not None:
                 inputs['temperature'] = node.temperature
             if node.max_tokens is not None:
                 inputs['max_tokens'] = node.max_tokens
-            
+
             return inputs
-        
+
         elif isinstance(node, TaskNode):
             # Evaluate node.in_ expressions
             inputs = {}
@@ -553,7 +553,7 @@ class NodeRuntime:
                 except Exception as e:
                     inputs[key] = {"__error__": str(e), "__expression__": expr}
             return inputs
-        
+
         return {}
 
     def _capture_node_output(
@@ -574,7 +574,7 @@ class NodeRuntime:
             if output_dict:
                 return next(iter(output_dict.values()))
             return None
-        
+
         elif isinstance(node, LLMNode):
             # Similar - extract from output_dict
             if node.out and node.out in output_dict:
@@ -582,8 +582,6 @@ class NodeRuntime:
             if output_dict:
                 return next(iter(output_dict.values()))
             return None
-        
+
         # For other node types, return the output dict
         return output_dict
-
-

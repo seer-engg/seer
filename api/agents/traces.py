@@ -81,7 +81,7 @@ def _convert_message_to_agent_message(msg: Any, msg_id: int, checkpoint_ts: Opti
         content = str(msg)
         additional_kwargs = {}
         metadata = {}
-    
+
     # Determine role
     if msg_type in ("human", "user"):
         role = "user"
@@ -89,26 +89,26 @@ def _convert_message_to_agent_message(msg: Any, msg_id: int, checkpoint_ts: Opti
         role = "assistant"
     else:
         role = "user"  # Default fallback
-    
+
     # Extract thinking/reasoning
     thinking = None
     if isinstance(additional_kwargs, dict):
         thinking = additional_kwargs.get("thinking") or additional_kwargs.get("reasoning")
     if not thinking and isinstance(metadata, dict):
         thinking = metadata.get("thinking") or metadata.get("reasoning")
-    
+
     # Extract suggested_edits
     suggested_edits = None
     if isinstance(additional_kwargs, dict):
         suggested_edits = additional_kwargs.get("suggested_edits") or additional_kwargs.get("suggested_edits")
     if not suggested_edits and isinstance(metadata, dict):
         suggested_edits = metadata.get("suggested_edits")
-    
+
     # Extract created_at
     created_at = checkpoint_ts or datetime.utcnow().isoformat()
     if isinstance(metadata, dict) and "created_at" in metadata:
         created_at = metadata["created_at"]
-    
+
     return AgentMessage(
         id=msg_id,
         role=role,
@@ -158,26 +158,26 @@ def _extract_metadata_from_checkpoint(
 ) -> Dict[str, Any]:
     """Extract metadata (workflow_id, title) from checkpoint."""
     metadata = {}
-    
+
     # Check checkpoint metadata
     checkpoint_metadata = checkpoint.get("metadata", {})
     if isinstance(checkpoint_metadata, dict):
         metadata["workflow_id"] = checkpoint_metadata.get("workflow_id")
         metadata["title"] = checkpoint_metadata.get("title")
-    
+
     # Check channel_values for metadata
     if "metadata" in channel_values and isinstance(channel_values["metadata"], dict):
         if not metadata.get("workflow_id"):
             metadata["workflow_id"] = channel_values["metadata"].get("workflow_id")
         if not metadata.get("title"):
             metadata["title"] = channel_values["metadata"].get("title")
-    
+
     # Fallback: extract from thread_id if not found in metadata
     if not metadata.get("workflow_id") and thread_id:
         extracted_id = _extract_workflow_id_from_thread_id(thread_id)
         if extracted_id:
             metadata["workflow_id"] = extracted_id
-    
+
     # Try to extract title from first message if not found
     if not metadata.get("title"):
         messages = channel_values.get("messages", [])
@@ -189,11 +189,11 @@ def _extract_metadata_from_checkpoint(
                 content = str(first_msg.content)
             else:
                 content = str(first_msg)
-            
+
             # Use first 100 chars as title
             if content:
                 metadata["title"] = content[:100].strip()
-    
+
     return metadata
 
 
@@ -209,37 +209,37 @@ async def list_agent_traces(
 ) -> AgentTraceListResponse:
     """
     List all agent traces (excluding workflow executions).
-    
+
     Returns paginated list of agent conversation traces.
     """
     checkpointer = await get_checkpointer()
     if not checkpointer:
         logger.warning("Checkpointer not available, returning empty trace list")
         return AgentTraceListResponse(traces=[], total=0)
-    
+
     try:
         # Collect all checkpoints and group by thread_id
         thread_data: Dict[str, Dict[str, Any]] = {}
-        
+
         async for checkpoint_tuple in checkpointer.alist({}):
             thread_id = checkpoint_tuple.config.get("configurable", {}).get("thread_id")
             if not thread_id:
                 continue
-            
+
             # Skip workflow executions (run_* pattern)
             if thread_id.startswith("run_"):
                 continue
-            
+
             checkpoint = checkpoint_tuple.checkpoint
             channel_values = checkpoint.get("channel_values", {})
             ts_str = checkpoint.get("ts", "")
-            
+
             # Parse timestamp
             try:
                 timestamp = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
             except Exception:
                 timestamp = datetime.utcnow()
-            
+
             # Initialize thread data if not exists
             if thread_id not in thread_data:
                 thread_data[thread_id] = {
@@ -248,7 +248,7 @@ async def list_agent_traces(
                     "earliest_ts": timestamp,
                     "latest_ts": timestamp,
                 }
-            
+
             # Track earliest and latest timestamps
             thread_data[thread_id]["checkpoints"].append({
                 "checkpoint": checkpoint,
@@ -258,26 +258,26 @@ async def list_agent_traces(
                 thread_data[thread_id]["earliest_ts"] = timestamp
             if timestamp > thread_data[thread_id]["latest_ts"]:
                 thread_data[thread_id]["latest_ts"] = timestamp
-        
+
         # Convert to trace summaries
         traces = []
         for thread_id, data in thread_data.items():
             # Get latest checkpoint
             latest_checkpoint = max(data["checkpoints"], key=lambda c: c["timestamp"])["checkpoint"]
             channel_values = latest_checkpoint.get("channel_values", {})
-            
+
             # Extract messages
             messages = channel_values.get("messages", [])
             message_count = len(messages) if isinstance(messages, list) else 0
-            
+
             # Extract metadata
             metadata = _extract_metadata_from_checkpoint(latest_checkpoint, channel_values, thread_id)
             workflow_id = metadata.get("workflow_id")
             title = metadata.get("title")
-            
+
             # Lookup workflow name
             workflow_name = await _get_workflow_name(workflow_id)
-            
+
             trace = AgentTraceSummary(
                 thread_id=thread_id,
                 workflow_id=workflow_id,
@@ -288,16 +288,16 @@ async def list_agent_traces(
                 title=title,
             )
             traces.append(trace)
-        
+
         # Sort by updated_at (newest first)
         traces.sort(key=lambda t: t.updated_at, reverse=True)
-        
+
         # Apply pagination
         total = len(traces)
         paginated_traces = traces[offset:offset + limit]
-        
+
         return AgentTraceListResponse(traces=paginated_traces, total=total)
-        
+
     except Exception as e:
         logger.error(f"Error listing agent traces: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list traces: {str(e)}")
@@ -310,31 +310,31 @@ async def get_agent_trace(
 ) -> AgentTraceDetail:
     """
     Get detailed agent trace with messages.
-    
+
     Returns full trace detail including all messages.
     """
     checkpointer = await get_checkpointer()
     if not checkpointer:
         raise HTTPException(status_code=503, detail="Checkpointer not available")
-    
+
     try:
         # Get latest checkpoint for thread
         config = {"configurable": {"thread_id": thread_id}}
         state_tuple = await checkpointer.aget_tuple(config)
-        
+
         if not state_tuple:
             raise HTTPException(status_code=404, detail=f"Trace not found for thread_id: {thread_id}")
-        
+
         checkpoint = state_tuple.checkpoint
         channel_values = checkpoint.get("channel_values", {})
         ts_str = checkpoint.get("ts", "")
-        
+
         # Parse timestamp
         try:
             timestamp = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
         except Exception:
             timestamp = datetime.utcnow()
-        
+
         # Get all checkpoints for this thread to find earliest timestamp
         earliest_ts = timestamp
         async for checkpoint_tuple in checkpointer.alist(config):
@@ -345,22 +345,22 @@ async def get_agent_trace(
                     earliest_ts = cp_ts
             except Exception:
                 pass
-        
+
         # Extract messages
         messages_raw = channel_values.get("messages", [])
         messages = []
         for idx, msg in enumerate(messages_raw if isinstance(messages_raw, list) else []):
             agent_msg = _convert_message_to_agent_message(msg, idx, ts_str)
             messages.append(agent_msg)
-        
+
         # Extract metadata
         metadata = _extract_metadata_from_checkpoint(checkpoint, channel_values, thread_id)
         workflow_id = metadata.get("workflow_id")
         title = metadata.get("title")
-        
+
         # Lookup workflow name
         workflow_name = await _get_workflow_name(workflow_id)
-        
+
         return AgentTraceDetail(
             thread_id=thread_id,
             workflow_id=workflow_id,
@@ -370,10 +370,9 @@ async def get_agent_trace(
             title=title,
             messages=messages,
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error getting agent trace: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get trace: {str(e)}")
-

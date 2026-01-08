@@ -387,5 +387,3 @@ __all__ = [
     "ExpressionTypecheckResponse",
     "ExpressionSuggestion",
 ]
-
-

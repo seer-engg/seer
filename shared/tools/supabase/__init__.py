@@ -7,9 +7,9 @@ from fastapi import HTTPException
 
 from shared.logger import get_logger
 from shared.tools.base import register_tool
-from shared.tools.supabase.database import ( 
-    SupabaseTableQueryTool, 
-    SupabaseTableInsertTool, 
+from shared.tools.supabase.database import (
+    SupabaseTableQueryTool,
+    SupabaseTableInsertTool,
     SupabaseTableUpsertTool,
     SupabaseTableUpdateTool,
     SupabaseTableDeleteTool,

@@ -175,4 +175,3 @@ class SupabaseProvider(IntegrationProvider):
             "id": user_id,
             "integration_type": state_data.get("integration_type"),
         }
-

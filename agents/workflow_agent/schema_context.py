@@ -112,4 +112,3 @@ def get_workflow_spec_example_text() -> str:
     """
 
     return json.dumps(_WORKFLOW_SPEC_EXAMPLE, indent=2)
-

@@ -70,5 +70,3 @@ def ensure_json_schema(schema: JsonSchema, *, schema_id: str | None = None) -> J
             f"Schema {schema_id or ''} has invalid 'type' field: {type_value!r}"
         )
     return schema
-
-

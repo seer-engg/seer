@@ -344,7 +344,7 @@ class TriggerEvent(models.Model):
 
 class WorkflowChatMessage(models.Model):
     """Individual message in a chat session."""
-    
+
     id = fields.IntField(primary_key=True)
     session = fields.ForeignKeyField('models.WorkflowChatSession', related_name='messages')
     proposal = fields.OneToOneField('models.WorkflowProposal', related_name='message', null=True)
@@ -354,11 +354,11 @@ class WorkflowChatMessage(models.Model):
     suggested_edits = fields.JSONField(null=True)  # Suggested workflow edits
     metadata = fields.JSONField(null=True)  # Additional metadata (model used, etc.)
     created_at = fields.DatetimeField(auto_now_add=True)
-    
+
     class Meta:
         table = "workflow_chat_messages"
         ordering = ("created_at",)
-    
+
     def __str__(self) -> str:
         return f"WorkflowChatMessage<{self.role}:{self.content[:50]}>"
 
@@ -399,4 +399,3 @@ class WorkflowProposal(models.Model):
     def workflow_public_id(self) -> str:
         """Expose wf_* identifier used by public APIs."""
         return make_workflow_public_id(self.workflow_id)
-

@@ -22,7 +22,7 @@ class Tool(BaseModel):
         else:
             # Assume it's the function definition directly (common in some frameworks)
             return cls(function=ToolFunction(**data))
-    
+
     class Config:
         arbitrary_types_allowed = True
 
@@ -36,6 +36,6 @@ class EnrichedTool(BaseModel):
     required_params: List[str] = Field(description="Parameter names required to use this tool")
     embedding_text: str = Field(description="Text used for vector embedding")
     original_tool: Tool = Field(description="The original tool object")
-    
+
     def get_executable(self) -> Optional[Any]:
         return self.original_tool.executable

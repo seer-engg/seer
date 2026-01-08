@@ -149,27 +149,27 @@ async def chat_with_workflow_endpoint(
 ) -> ChatResponse:
     """
     Chat with AI assistant about workflow.
-    
+
     The assistant can analyze the workflow and suggest edits.
     Supports session persistence and human-in-the-loop interrupts.
     """
     logger.info(f"Chat request received: workflow_id={workflow_id}, message_length={len(chat_request.message)}")
     user = _require_user(request)
-    
+
     # Verify workflow exists and user has access
     workflow = await get_workflow(user, workflow_id)
-    
+
     # Get model from request or use default
     model = chat_request.model or config.default_llm_model
-    
+
     # Get checkpointer for persistence
     checkpointer = await get_checkpointer()
-    
+
     # Create or get chat session
     thread_id = chat_request.thread_id
     session_id = chat_request.session_id
     session = None
-    
+
     if thread_id:
         # Try to find existing session by thread_id
         session = await get_chat_session_by_thread_id(thread_id, workflow)
@@ -188,7 +188,7 @@ async def chat_with_workflow_endpoint(
             thread_id=thread_id,
         )
         session_id = session.id
-    
+
     if session is None:
         thread_id = thread_id or f"workflow-{workflow_id}-{uuid.uuid4().hex}"
         session = await create_chat_session(
@@ -197,10 +197,10 @@ async def chat_with_workflow_endpoint(
             thread_id=thread_id,
         )
         session_id = session.id
-    
+
     # Get current workflow state (deep copy so tool mutations don't touch DB graph)
     workflow_state = deepcopy(workflow_state_snapshot(workflow))
-    
+
     # Merge with provided workflow state (in case frontend has unsaved changes)
     if chat_request.workflow_state:
         # Ensure nodes and edges keys exist
@@ -212,32 +212,32 @@ async def chat_with_workflow_endpoint(
         for key, value in chat_request.workflow_state.items():
             if key not in ["nodes", "edges"]:
                 workflow_state[key] = value
-    
+
     # Ensure workflow_state always has nodes and edges keys (even if empty)
     if "nodes" not in workflow_state:
         workflow_state["nodes"] = []
     if "edges" not in workflow_state:
         workflow_state["edges"] = []
-    
+
 
     # Store workflow_state in context for tools to access
 
     if thread_id:
         set_workflow_state_for_thread(thread_id, workflow_state)
         set_user_for_thread(thread_id, user)
-    
+
     # Create agent with checkpointer and workflow_state
     agent = create_workflow_chat_agent(
         model=model,
         checkpointer=checkpointer,
         workflow_state=workflow_state,
     )
-    
+
     # Prepare messages - only pass the new user message
     # When using a checkpointer, LangGraph automatically loads the full state from the checkpointer
     # We should NOT manually load messages as it conflicts with the checkpointer's state management
     user_msg = HumanMessage(content=chat_request.message)
-    
+
     # Save user message to database for display purposes
     await save_chat_message(
         session_id=session_id,
@@ -257,7 +257,7 @@ async def chat_with_workflow_endpoint(
             "deployment_mode": config.seer_mode,
         },
     )
-    
+
     # Helper function to invoke agent with timeout
     async def invoke_agent_with_timeout(agent, messages, config, timeout=300.0):
         """Invoke agent with timeout to prevent indefinite hangs."""
@@ -282,7 +282,7 @@ async def chat_with_workflow_endpoint(
             # Reset context variable
             if token is not None:
                 _current_thread_id.reset(token)
-    
+
     try:
         # Invoke agent with thread configuration
         # The checkpointer will automatically load the full conversation history
@@ -291,7 +291,7 @@ async def chat_with_workflow_endpoint(
                 "thread_id": thread_id,
             },
         }
-        
+
         # Check for incomplete tool calls in state before invoking
         has_incomplete_tool_calls = False
         if checkpointer and thread_id:
@@ -305,7 +305,7 @@ async def chat_with_workflow_endpoint(
                 else:
                     current_state = await agent.aget_state(config_dict)
                     messages = current_state.values.get("messages", [])
-                    
+
                     # Check for incomplete tool calls
                     for i, msg in enumerate(messages):
                         # Check if this is an AIMessage with tool_calls
@@ -321,15 +321,15 @@ async def chat_with_workflow_endpoint(
                                     tool_call_id = getattr(tc, "id", None)
                                 if tool_call_id:
                                     tool_call_ids.add(tool_call_id)
-                            
+
                             if not tool_call_ids:
                                 continue
-                                
+
                             # Check if following messages contain ToolMessages with matching tool_call_ids
                             # ToolMessage structure: ToolMessage(content="...", tool_call_id="call_123")
                             following_msgs = messages[i+1:i+1+len(tool_call_ids)*2]  # Allow some buffer
                             tool_response_ids = set()
-                            
+
                             for m in following_msgs:
                                 if isinstance(m, ToolMessage):
                                     # ToolMessage has tool_call_id attribute
@@ -341,7 +341,7 @@ async def chat_with_workflow_endpoint(
                                     tool_call_id = m.get("tool_call_id")
                                     if tool_call_id:
                                         tool_response_ids.add(tool_call_id)
-                            
+
                             # If any tool_call_ids don't have corresponding ToolMessages, it's incomplete
                             if tool_call_ids - tool_response_ids:
                                 has_incomplete_tool_calls = True
@@ -358,7 +358,7 @@ async def chat_with_workflow_endpoint(
                     "connection is closed" in str(e).lower() or
                     "ssl syscall error" in str(e).lower()
                 )
-                
+
                 if is_connection_error:
                     logger.warning(f"Connection error during state check: {e}, attempting reconnection...")
                     try:
@@ -368,7 +368,7 @@ async def chat_with_workflow_endpoint(
                             try:
                                 current_state = await agent.aget_state(config_dict)
                                 messages = current_state.values.get("messages", [])
-                                
+
                                 # Check for incomplete tool calls (same logic as above)
                                 for i, msg in enumerate(messages):
                                     if isinstance(msg, AIMessage) and hasattr(msg, "tool_calls") and msg.tool_calls:
@@ -380,13 +380,13 @@ async def chat_with_workflow_endpoint(
                                                 tool_call_id = getattr(tc, "id", None)
                                             if tool_call_id:
                                                 tool_call_ids.add(tool_call_id)
-                                        
+
                                         if not tool_call_ids:
                                             continue
-                                        
+
                                         following_msgs = messages[i+1:i+1+len(tool_call_ids)*2]
                                         tool_response_ids = set()
-                                        
+
                                         for m in following_msgs:
                                             if isinstance(m, ToolMessage):
                                                 tool_call_id = getattr(m, "tool_call_id", None)
@@ -396,7 +396,7 @@ async def chat_with_workflow_endpoint(
                                                 tool_call_id = m.get("tool_call_id")
                                                 if tool_call_id:
                                                     tool_response_ids.add(tool_call_id)
-                                        
+
                                         if tool_call_ids - tool_response_ids:
                                             has_incomplete_tool_calls = True
                                             logger.warning(
@@ -415,11 +415,11 @@ async def chat_with_workflow_endpoint(
                 else:
                     logger.warning(f"Error checking state for incomplete tool calls: {e}. Proceeding with normal invocation.")
                     has_incomplete_tool_calls = False
-        
+
         # Handle incomplete tool calls if detected
         if has_incomplete_tool_calls:
             logger.warning(f"Incomplete tool calls detected in thread {thread_id}, attempting recovery...")
-            
+
             # Option A: Get previous checkpoint without incomplete calls
             if checkpointer:
                 try:
@@ -463,14 +463,14 @@ async def chat_with_workflow_endpoint(
                                 # Handle both dict and message object formats
                                 msg_type = None
                                 tool_calls = None
-                                
+
                                 if isinstance(chk_msg, AIMessage):
                                     msg_type = "ai"
                                     tool_calls = getattr(chk_msg, "tool_calls", None)
                                 elif isinstance(chk_msg, dict):
                                     msg_type = chk_msg.get("type") or chk_msg.get("role", "")
                                     tool_calls = chk_msg.get("tool_calls")
-                                
+
                                 # Check if this is an AIMessage with tool_calls
                                 if msg_type in ("ai", "assistant") and tool_calls:
                                     chk_tool_call_ids = set()
@@ -481,11 +481,11 @@ async def chat_with_workflow_endpoint(
                                             tool_call_id = getattr(tc, "id", None)
                                         if tool_call_id:
                                             chk_tool_call_ids.add(tool_call_id)
-                                    
+
                                     if chk_tool_call_ids:
                                         chk_following = checkpoint_messages[j+1:j+1+len(chk_tool_call_ids)*2]
                                         chk_response_ids = set()
-                                        
+
                                         for m in chk_following:
                                             if isinstance(m, ToolMessage):
                                                 tool_call_id = getattr(m, "tool_call_id", None)
@@ -497,14 +497,14 @@ async def chat_with_workflow_endpoint(
                                                     tool_call_id = m.get("tool_call_id")
                                                     if tool_call_id:
                                                         chk_response_ids.add(tool_call_id)
-                                        
+
                                         if chk_tool_call_ids - chk_response_ids:
                                             has_incomplete = True
                                             break
                             if not has_incomplete:
                                 safe_checkpoint = checkpoint_tuple
                                 break
-                    
+
                     if safe_checkpoint:
                         prev_config = {
                             "configurable": {
@@ -540,7 +540,7 @@ async def chat_with_workflow_endpoint(
                         "connection is closed" in str(e).lower() or
                         "ssl syscall error" in str(e).lower()
                     )
-                    
+
                     if is_connection_error:
                         logger.warning(f"Connection error during checkpoint recovery: {e}, attempting reconnection...")
                         try:
@@ -601,11 +601,11 @@ async def chat_with_workflow_endpoint(
                 config_dict,
             )
             logger.debug(f"Agent invocation completed for thread {thread_id}, checkpoint should be saved automatically by LangGraph")
-        
+
         # Check for interrupts (from ask_clarifying_question or other interrupt calls)
         interrupt_required = False
         interrupt_data = None
-        
+
         # Check if result indicates an interrupt
         if isinstance(result, dict):
             # Check for interrupt in result
@@ -630,7 +630,7 @@ async def chat_with_workflow_endpoint(
             elif "interrupt" in result:
                 interrupt_required = True
                 interrupt_data = result["interrupt"] if isinstance(result["interrupt"], dict) else {"value": result["interrupt"]}
-        
+
         # Check current state for interrupts
         try:
             current_state = await agent.aget_state(config_dict)
@@ -651,7 +651,7 @@ async def chat_with_workflow_endpoint(
                     interrupt_data = {"value": current_state.interrupt}
         except Exception as e:
             logger.debug(f"Could not check state for interrupts: {e}")
-        
+
         # Extract response
         agent_messages = result.get("messages", []) if isinstance(result, dict) else []
         if not agent_messages:
@@ -663,9 +663,9 @@ async def chat_with_workflow_endpoint(
                 response_text = last_msg.content
             else:
                 response_text = str(last_msg)
-        
+
         logger.info(f"Agent completed for thread {thread_id}, response_length={len(response_text)}, interrupt_required={interrupt_required}")
-        
+
         # Verify checkpoint was saved after agent invocation
         if checkpointer and thread_id:
             try:
@@ -679,10 +679,10 @@ async def chat_with_workflow_endpoint(
                     logger.warning(f"No checkpoint found for thread {thread_id} after agent invocation")
             except Exception as e:
                 logger.error(f"Error verifying checkpoint for thread {thread_id}: {e}", exc_info=True)
-        
+
         # Extract thinking steps
         thinking_steps = extract_thinking_from_messages(agent_messages)
-        
+
         proposal_payload = get_proposed_spec_for_thread(thread_id)
         proposal, proposal_public, proposal_error = await _maybe_create_proposal_from_spec(
             workflow=workflow,
@@ -752,7 +752,7 @@ async def create_chat_session_endpoint(
     print(f"Creating chat session for workflow {workflow_id}")
     user = _require_user(request)
     workflow = await get_workflow(user, workflow_id)
-    
+
     thread_id = f"workflow-{workflow_id}-{uuid.uuid4().hex}"
     session = await create_chat_session(
         workflow=workflow,
@@ -760,7 +760,7 @@ async def create_chat_session_endpoint(
         thread_id=thread_id,
         title=session_data.title,
     )
-    
+
     return ChatSession(
         id=session.id,
         workflow_id=workflow.workflow_id,
@@ -784,7 +784,7 @@ async def list_chat_sessions_endpoint(
     user = _require_user(request)
     workflow = await get_workflow(user, workflow_id)
     sessions = await list_chat_sessions(workflow, user, limit=limit, offset=offset)
-    
+
     return [
         ChatSession(
             id=session.id,
@@ -809,9 +809,9 @@ async def get_chat_session_endpoint(
     user = _require_user(request)
     workflow = await get_workflow(user, workflow_id)
     session = await get_chat_session(session_id, workflow)
-    
+
     messages = await load_chat_history(session_id)
-    
+
     return ChatSessionWithMessages(
         id=session.id,
         workflow_id=workflow.workflow_id,
@@ -845,18 +845,18 @@ async def resume_chat_endpoint(
 ) -> ChatResponse:
     """
     Resume a chat session after an interrupt (e.g., clarification question).
-    
+
     This endpoint handles resuming agent execution after a LangGraph interrupt.
     The resume_data should contain a Command object with resume information.
     """
     from langgraph.types import Command
-    
+
     logger.info(f"Resume request received: workflow_id={workflow_id}")
     user = _require_user(request)
-    
+
     # Verify workflow exists
     workflow = await get_workflow(user, workflow_id)
-    
+
     # Extract thread_id and command from resume_data
     thread_id = resume_data.get("thread_id")
     if not thread_id:
@@ -864,17 +864,17 @@ async def resume_chat_endpoint(
             status_code=400,
             detail="thread_id is required in resume_data"
         )
-    
+
     command_data = resume_data.get("command", {})
     if not command_data:
         raise HTTPException(
             status_code=400,
             detail="command is required in resume_data"
         )
-    
+
     # Get checkpointer
     checkpointer = await get_checkpointer()
-    
+
     # Get session by thread_id
     session = await get_chat_session_by_thread_id(thread_id, workflow)
     if not session:
@@ -882,29 +882,29 @@ async def resume_chat_endpoint(
             status_code=404,
             detail=f"Chat session not found for thread_id: {thread_id}"
         )
-    
+
     session_id = session.id
-    
+
     # Get current workflow state (deep copy to avoid mutating DB graph)
     workflow_state = deepcopy(workflow_state_snapshot(workflow))
-    
+
     # Create agent
     agent = create_workflow_chat_agent(
         model=config.default_llm_model,
         checkpointer=checkpointer,
         workflow_state=workflow_state,
     )
-    
+
     # Create Command object for resuming
     resume_command = Command(**command_data)
-    
+
     # Resume agent execution
     config_dict = {
         "configurable": {
             "thread_id": thread_id,
         },
     }
-    
+
     # Set thread_id in context variable for tools to access
     token = None
     if thread_id:
@@ -912,7 +912,7 @@ async def resume_chat_endpoint(
     try:
         # Resume the agent with the command
         result = await agent.ainvoke(resume_command, config=config_dict)
-        
+
         # Extract response
         agent_messages = result.get("messages", [])
         if not agent_messages:
@@ -924,10 +924,10 @@ async def resume_chat_endpoint(
                 response_text = last_msg.content
             else:
                 response_text = str(last_msg)
-        
+
         # Extract thinking steps
         thinking_steps = extract_thinking_from_messages(agent_messages)
-        
+
         proposal_payload = get_proposed_spec_for_thread(thread_id)
         proposal, proposal_public, proposal_error = await _maybe_create_proposal_from_spec(
             workflow=workflow,
@@ -936,7 +936,7 @@ async def resume_chat_endpoint(
             model_name=config.default_llm_model,
             proposal_payload=proposal_payload,
         )
-        
+
         # Save assistant message to database
         await save_chat_message(
             session_id=session_id,
@@ -946,7 +946,7 @@ async def resume_chat_endpoint(
             suggested_edits=proposal_payload,
             proposal=proposal,
         )
-        
+
         return ChatResponse(
             response=response_text,
             proposal=proposal_public,
@@ -1047,4 +1047,3 @@ async def reject_proposal_endpoint(
 
 
 __all__ = ["router"]
-

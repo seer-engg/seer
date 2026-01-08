@@ -16,5 +16,3 @@ class CompilerContext:
     schema_registry: SchemaRegistry
     tool_registry: ToolRegistry
     model_registry: ModelRegistry
-
-

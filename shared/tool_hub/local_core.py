@@ -24,10 +24,10 @@ logger = get_logger("shared.tool_hub.local_core")
 class LocalToolHub:
     """
     Local ToolHub using Chroma for vector storage.
-    
+
     Stores tool embeddings locally in Docker, eliminating need for Pinecone credentials.
     """
-    
+
     def __init__(
         self,
         openai_api_key: str,
@@ -48,31 +48,31 @@ class LocalToolHub:
         """
         if not openai_api_key:
             raise ValueError("openai_api_key is required")
-        
+
         self.async_client = AsyncOpenAI(api_key=openai_api_key)
         self.llm_model = llm_model
         self.embedding_model = embedding_model
         self.embedding_dimensions = embedding_dimensions
-        
+
         # Ensure persist directory exists
         self.persist_directory = Path(persist_directory)
         self.persist_directory.mkdir(parents=True, exist_ok=True)
-        
+
         # Initialize embeddings
         embedding_kwargs = {}
         if embedding_dimensions:
             embedding_kwargs["dimensions"] = embedding_dimensions
-        
+
         self.embeddings = OpenAIEmbeddings(
             model=embedding_model,
             openai_api_key=openai_api_key,
             **embedding_kwargs
         )
-        
+
         # Initialize Chroma - will be loaded when needed
         self._vector_store: Optional[Chroma] = None
         self._collection_name = "tools"
-        
+
         logger.info(f"LocalToolHub initialized with persist_directory={persist_directory}")
 
     def _get_vector_store(self) -> Chroma:
@@ -88,10 +88,10 @@ class LocalToolHub:
     def _normalize_tools(self, tools: List[Union[Tool, Dict[str, Any]]]) -> List[Tool]:
         """
         Normalize tool inputs to Tool objects.
-        
+
         Args:
             tools: List of Tool objects or dictionaries matching OpenAI tool schema.
-            
+
         Returns:
             List of normalized Tool objects.
         """
@@ -105,7 +105,7 @@ class LocalToolHub:
             elif isinstance(t, Tool):
                 if "deprecated" in (t.function.description or "").lower():
                     continue
-            
+
             # Normalize to Tool object
             if isinstance(t, dict):
                 if "function" in t:
@@ -122,7 +122,7 @@ class LocalToolHub:
                 normalized_tools.append(t)
             else:
                 raise ValueError(f"Unsupported tool type: {type(t)}")
-        
+
         return normalized_tools
 
     async def ingest(
@@ -133,23 +133,23 @@ class LocalToolHub:
     ):
         """
         Ingests tools, enriches them with metadata, and stores them in Chroma vector store.
-        
+
         Args:
             tools: List of Tool objects or dictionaries matching OpenAI tool schema.
             integration_name: Integration name (e.g., "github", "asana") for namespace isolation.
             max_workers: Number of concurrent threads for enrichment (default: 10).
         """
         integration_name = integration_name.lower()
-        
+
         logger.info(f"Ingesting {len(tools)} tools for {integration_name} into Chroma...")
-        
+
         # Normalize inputs
         normalized_tools = self._normalize_tools(tools)
-        
+
         if not normalized_tools:
             logger.warning("No valid tools to ingest after normalization.")
             return
-        
+
         # Enrich tools
         enriched_tools = []
         logger.info(f"Enriching tools with concurrency (max_workers={max_workers})...")
@@ -158,7 +158,7 @@ class LocalToolHub:
                 executor.submit(self._enrich_tool_metadata, tool): tool
                 for tool in normalized_tools
             }
-            
+
             for future in tqdm(as_completed(future_to_tool), total=len(normalized_tools), desc="Enriching Tools"):
                 tool = future_to_tool[future]
                 try:
@@ -166,20 +166,20 @@ class LocalToolHub:
                     enriched_tools.append(enriched)
                 except Exception as e:
                     logger.error(f"Failed to enrich {tool.function.name}: {e}")
-        
+
         # Generate embeddings and store in Chroma
         logger.info(f"Generating embeddings and storing {len(enriched_tools)} enriched tools in Chroma...")
-        
+
         vector_store = self._get_vector_store()
-        
+
         # Prepare documents for Chroma
         documents = []
-        
+
         for enriched_tool in tqdm(enriched_tools, desc="Storing Tools"):
             try:
                 # Use embedding_text as the document content
                 doc_content = enriched_tool.embedding_text.replace("\n", " ")
-                
+
                 # Prepare metadata (Chroma supports nested dicts, but we'll use strings for lists to be safe)
                 metadata = {
                     "integration": integration_name,
@@ -191,20 +191,20 @@ class LocalToolHub:
                     "embedding_text": enriched_tool.embedding_text,
                     "name": enriched_tool.name,  # Store name in metadata for easy retrieval
                 }
-                
+
                 # Use tool name as ID (with integration prefix for uniqueness)
                 vector_id = f"{integration_name}_{enriched_tool.name}"
-                
+
                 # Create Document object
                 doc = Document(
                     page_content=doc_content,
                     metadata=metadata,
                 )
                 documents.append((doc, vector_id))
-                
+
             except Exception as e:
                 logger.error(f"Failed to prepare {enriched_tool.name}: {e}")
-        
+
         # Batch add to Chroma
         if documents:
             try:
@@ -213,7 +213,7 @@ class LocalToolHub:
                 texts = [doc.page_content for doc, _ in documents]
                 metadatas = [doc.metadata for doc, _ in documents]
                 ids = [doc_id for _, doc_id in documents]
-                
+
                 vector_store.add_texts(
                     texts=texts,
                     metadatas=metadatas,
@@ -233,36 +233,36 @@ class LocalToolHub:
         """
         Query tools from Chroma using semantic search.
         Implements Hub & Spoke method: semantic search + dependency/neighbor expansion.
-        
+
         Args:
             query: Search query string.
             integration_name: Optional list of integration names (e.g., ["github", "asana"]) for filtering.
             top_k: Number of top results to return from semantic search.
-        
+
         Returns:
             List of tool dictionaries compatible with OpenAI tool schema.
         """
         vector_store = self._get_vector_store()
-        
+
         # Normalize integration_name to list of lowercase strings
         if integration_name is None:
             integration_names = []
         else:
             integration_names = [ns.lower() if isinstance(ns, str) else str(ns).lower() for ns in integration_name]
-        
+
         try:
             # Query Chroma
             # Get more results if querying multiple integrations for better coverage
             # Note: LangChain Chroma's similarity_search_with_score doesn't support 'where' parameter
             # We'll query more results and filter in Python
             query_top_k = top_k * 5 if integration_names else top_k  # Get more results to filter from
-            
+
             # Query without filter (LangChain Chroma doesn't support where parameter)
             results = vector_store.similarity_search_with_score(
                 query=query.replace("\n", " "),
                 k=query_top_k,
             )
-            
+
             # Filter results by integration if specified
             if integration_names:
                 filtered_results = []
@@ -274,20 +274,20 @@ class LocalToolHub:
                 results = filtered_results[:top_k]  # Limit to top_k after filtering
             else:
                 results = results[:top_k]  # Limit to top_k if no filter
-            
+
             if not results:
                 return []
-            
+
             # Extract tool names from search results
             selected_tool_names = set()
             tool_results: List[Dict[str, Any]] = []
             tool_metadata_map = {}  # Store metadata for expansion
-            
+
             logger.debug(f"\n--- Anchor Tools (Vector Match) ---")
             for doc, score in results:
                 metadata = doc.metadata
                 tool_name = metadata.get("name", "")
-                
+
                 if not tool_name:
                     # Fallback: extract from ID
                     doc_id = doc.metadata.get("id", "")
@@ -295,17 +295,17 @@ class LocalToolHub:
                         tool_name = doc_id.split("_", 1)[1]
                     else:
                         tool_name = doc_id
-                
+
                 if tool_name and tool_name not in selected_tool_names:
                     logger.debug(f"Found: {tool_name} (score: {score:.3f})")
                     selected_tool_names.add(tool_name)
-                    
+
                     # Parse JSON fields from metadata
                     use_cases = []
                     likely_neighbors = []
                     required_params = []
                     parameters = {}
-                    
+
                     try:
                         if metadata.get("use_cases"):
                             use_cases = json.loads(metadata["use_cases"])
@@ -317,7 +317,7 @@ class LocalToolHub:
                             parameters = json.loads(metadata["parameters"])
                     except json.JSONDecodeError as e:
                         logger.warning(f"Failed to parse metadata for {tool_name}: {e}")
-                    
+
                     tool_metadata_map[tool_name] = {
                         **metadata,
                         "use_cases": use_cases,
@@ -325,29 +325,29 @@ class LocalToolHub:
                         "required_params": required_params,
                         "parameters": parameters,
                     }
-                    
+
                     tool_dict = {
                         "name": tool_name,
                         "description": metadata.get("description", ""),
                         "parameters": parameters
                     }
                     tool_results.append(tool_dict)
-            
+
             # Limit to top_k after deduplication
             tool_results = tool_results[:top_k]
-            
+
             # Graph Expansion (Spoke) - expand with neighbors
             expanded_results: List[Dict[str, Any]] = []
             logger.debug(f"\n--- Expanded Tools (Graph Neighbors) ---")
-            
+
             for tool_dict in tool_results:
                 tool_name = tool_dict.get("name")
                 if not tool_name:
                     continue
-                
+
                 metadata = tool_metadata_map.get(tool_name, {})
                 likely_neighbors = metadata.get("likely_neighbors", [])
-                
+
                 # Check neighbors - fetch from Chroma
                 for neighbor_name in likely_neighbors:
                     if neighbor_name not in selected_tool_names:
@@ -355,14 +355,14 @@ class LocalToolHub:
                             # Try to fetch neighbor by name
                             # Search for neighbor in same integration namespace
                             neighbor_integration = metadata.get("integration")
-                            
+
                             # Query without filter (LangChain Chroma doesn't support where parameter)
                             # Get multiple results and filter by name and integration
                             neighbor_results = vector_store.similarity_search_with_score(
                                 query=neighbor_name,  # Use name as query
                                 k=10,  # Get more results to filter from
                             )
-                            
+
                             # Filter results by name and integration
                             matching_neighbor = None
                             for neighbor_doc, neighbor_score in neighbor_results:
@@ -372,10 +372,10 @@ class LocalToolHub:
                                     if not neighbor_integration or neighbor_metadata.get("integration") == neighbor_integration:
                                         matching_neighbor = (neighbor_doc, neighbor_metadata)
                                         break
-                            
+
                             if matching_neighbor:
                                 neighbor_doc, neighbor_metadata = matching_neighbor
-                                
+
                                 # Parse parameters
                                 neighbor_parameters = {}
                                 try:
@@ -383,10 +383,10 @@ class LocalToolHub:
                                         neighbor_parameters = json.loads(neighbor_metadata["parameters"])
                                 except json.JSONDecodeError:
                                     pass
-                                
+
                                 logger.debug(f"Adding Neighbor: {neighbor_name} (related to {tool_name})")
                                 selected_tool_names.add(neighbor_name)
-                                
+
                                 # Store neighbor metadata
                                 neighbor_use_cases = []
                                 neighbor_likely_neighbors = []
@@ -400,7 +400,7 @@ class LocalToolHub:
                                         neighbor_required_params = json.loads(neighbor_metadata["required_params"])
                                 except json.JSONDecodeError:
                                     pass
-                                
+
                                 tool_metadata_map[neighbor_name] = {
                                     **neighbor_metadata,
                                     "use_cases": neighbor_use_cases,
@@ -408,7 +408,7 @@ class LocalToolHub:
                                     "required_params": neighbor_required_params,
                                     "parameters": neighbor_parameters,
                                 }
-                                
+
                                 expanded_results.append({
                                     "name": neighbor_name,
                                     "description": neighbor_metadata.get("description", ""),
@@ -416,10 +416,10 @@ class LocalToolHub:
                                 })
                         except Exception as e:
                             logger.warning(f"Failed to load neighbor {neighbor_name}: {e}")
-            
+
             final_selection = tool_results + expanded_results
             return final_selection
-            
+
         except Exception as e:
             logger.error(f"Chroma query failed: {e}")
             return []
@@ -427,16 +427,16 @@ class LocalToolHub:
     def _enrich_tool_metadata(self, tool: Tool) -> EnrichedTool:
         """
         Uses LLM to generate rich metadata for tool retrieval.
-        
+
         Args:
             tool: Tool object to enrich.
-            
+
         Returns:
             EnrichedTool with metadata.
         """
         # Check if parameters schema is empty - if so, ask LLM to infer it
         has_empty_schema = not tool.function.parameters or tool.function.parameters == {}
-        
+
         if has_empty_schema:
             prompt = f"""
             Analyze this tool definition:
@@ -450,7 +450,7 @@ class LocalToolHub:
             3. "required_params": List of parameter names required to use this tool (e.g. "emails", "invitation_id"). Extract from description.
             4. "parameters_schema": Infer the parameter schema from the description. Return a JSON object with parameter names as keys and their schema as values. Follow JSON Schema format: {{"param_name": {{"type": "string|array|object|integer|boolean", "description": "...", "items": {{...}} if array, "properties": {{...}} if object}}}}
             5. "embedding_text": A consolidated paragraph combining name, description, and use cases for vector embedding.
-            
+
             Return ONLY valid JSON matching this structure.
             """
         else:
@@ -465,7 +465,7 @@ class LocalToolHub:
             2. "likely_neighbors": List of actual tool names likely used immediately BEFORE or AFTER this tool in a workflow (must be actual tool names, e.g. "GITHUB_LIST_REPOSITORY_INVITATIONS").
             3. "required_params": List of parameter names required to use this tool (e.g. "invitation_id", "user_id").
             4. "embedding_text": A consolidated paragraph combining name, description, and use cases for vector embedding.
-            
+
             Return ONLY valid JSON matching this structure.
             """
 
@@ -476,7 +476,7 @@ class LocalToolHub:
         except RuntimeError:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-        
+
         response = loop.run_until_complete(
             self.async_client.chat.completions.create(
                 model=self.llm_model,
@@ -487,9 +487,9 @@ class LocalToolHub:
                 response_format={"type": "json_object"}
             )
         )
-        
+
         content = json.loads(response.choices[0].message.content)
-        
+
         # If schema was empty and LLM inferred parameters, use them
         if has_empty_schema and content.get('parameters_schema'):
             inferred_params = content.get('parameters_schema', {})
@@ -500,7 +500,7 @@ class LocalToolHub:
         elif has_empty_schema:
             # If LLM didn't provide parameters_schema, log warning
             logger.warning(f"⚠️ Warning: Empty schema for {tool.function.name} but LLM didn't infer parameters_schema")
-        
+
         return EnrichedTool(
             name=tool.function.name,
             description=tool.function.description or "",
@@ -515,7 +515,7 @@ class LocalToolHub:
     def index_exists(self) -> bool:
         """
         Check if tool index already exists.
-        
+
         Returns:
             True if index exists, False otherwise.
         """
@@ -532,7 +532,7 @@ class LocalToolHub:
     def get_index_stats(self) -> Dict[str, Any]:
         """
         Get statistics about the tool index.
-        
+
         Returns:
             Dictionary with index statistics.
         """
@@ -553,4 +553,3 @@ class LocalToolHub:
             "tool_count": 0,
             "persist_directory": str(self.persist_directory),
         }
-

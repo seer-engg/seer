@@ -27,4 +27,3 @@ def get_resource_provider_for_type(resource_type: str) -> Optional[ResourceProvi
 
 def get_all_resource_configs() -> Dict[str, Dict[str, object]]:
     return _registry.resource_configs()
-

@@ -446,4 +446,3 @@ async def test_trigger_subscription(
         return api_models.TriggerSubscriptionTestResponse(inputs={}, errors=[str(exc)])
     errors = _validate_resolved_inputs(resolved, spec)
     return api_models.TriggerSubscriptionTestResponse(inputs=resolved, errors=errors)
-

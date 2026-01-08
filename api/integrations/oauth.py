@@ -44,4 +44,3 @@ if config.supabase_client_id and config.supabase_client_secret:
         api_base_url=f"{_supabase_base()}/",
         client_kwargs={'scope': 'read:projects'},
     )
-

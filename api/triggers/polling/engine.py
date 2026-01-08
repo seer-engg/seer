@@ -336,4 +336,3 @@ class TriggerPollEngine:
                 "poll_lock_expires_at",
             ]
         )
-

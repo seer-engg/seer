@@ -22,4 +22,3 @@ async def cd_and_run_in_sandbox(sandbox_id: str, repo_dir: str, command: str) ->
     sbx: AsyncSandbox = await get_sandbox(sandbox_id)
     res = await sbx.commands.run(command, cwd=repo_dir, login_shell=True)
     return res.exit_code, res.stdout, res.stderr
-

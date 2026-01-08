@@ -16,10 +16,10 @@ logger = get_logger("api.tools.services")
 async def list_tools(integration_type: Optional[str] = None) -> Dict[str, Any]:
     """
     List available tools.
-    
+
     Args:
         integration_type: Optional filter by integration type (e.g., 'gmail', 'github')
-    
+
     Returns:
         Dict with 'tools' list containing tool metadata (parameters + output schema)
     """
@@ -43,13 +43,13 @@ async def execute_tool_service(
 ) -> Dict[str, Any]:
     """
     Execute a tool.
-    
+
     Args:
         tool_name: Name of the tool to execute
         user: User
         connection_id: OAuthConnection ID (required for OAuth tools)
         arguments: Tool arguments
-    
+
     Returns:
         Dict with 'data' (result) and 'success' (bool)
     """
@@ -58,14 +58,14 @@ async def execute_tool_service(
             f"Executing tool: tool_name={tool_name}, user_id={user.user_id}, "
             f"connection_id={connection_id}, has_arguments={arguments is not None}"
         )
-        
+
         result = await _execute_tool(
             tool_name=tool_name,
             user=user,
             connection_id=connection_id,
             arguments=arguments or {}
         )
-        
+
         return {
             "data": result,
             "success": True
@@ -78,4 +78,3 @@ async def execute_tool_service(
             status_code=500,
             detail=f"Error executing tool: {str(e)}"
         )
-

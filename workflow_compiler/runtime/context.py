@@ -13,5 +13,3 @@ class WorkflowRuntimeContext:
     """
 
     user: User
-
-

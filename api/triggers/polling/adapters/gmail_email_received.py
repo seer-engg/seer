@@ -160,4 +160,3 @@ class GmailEmailReceivedAdapter(PollAdapter):
 
 
 register_adapter(GmailEmailReceivedAdapter())
-

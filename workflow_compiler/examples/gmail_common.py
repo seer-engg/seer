@@ -139,5 +139,3 @@ class GmailDemoService:
                 },
             },
         }
-
-

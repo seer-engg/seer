@@ -359,4 +359,3 @@ async def _dispatch_trigger_event(
         extra={"event_id": event.id, "subscription_id": subscription.id},
     )
     await TriggerEvent.filter(id=event.id).update(status=TriggerEventStatus.ROUTED)
-

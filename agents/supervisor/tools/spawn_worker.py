@@ -20,7 +20,7 @@ async def spawn_worker(
 ) -> str:
     """
     Execute a task using a dynamically spawned worker.
-    
+
     Args:
         task_instruction: CONCISE instruction for the worker.
                          Example: "Fetch most recent merged PR from seer-engg/buggy-coder and extract details"
@@ -32,29 +32,29 @@ async def spawn_worker(
                       If not specified, worker searches all integrations (slower but comprehensive).
                       Specify integrations to restrict tool search for faster, more focused results.
         runtime: ToolRuntime (automatically provided by LangGraph)
-    
+
     Returns:
         JSON string of WorkerResponse (status, message, error)
         Todos are automatically updated based on worker response (success → remove todo, failure → keep todo)
-    
+
     Note: Callbacks are propagated from runtime if available (for tracing/debugging).
     """
     # Log reasoning (mandatory)
     logger.info(f"🤔 Worker reasoning: {reasoning}")
     if integrations:
         logger.info(f"🔗 Worker integrations: {integrations}")
-    
+
     # Extract callbacks from runtime to propagate to worker
     thread_id = f"worker-{hashlib.md5(task_instruction.encode()).hexdigest()[:8]}"
     config = {"configurable": {"thread_id": thread_id}}
-    
+
     # CRITICAL: Copy Supervisor's user context to worker's thread_id BEFORE creating worker
     # Workers need access to user_id, connected_accounts, and resource_ids (workspace GID, etc.)
     user_context_store = get_user_context_store()
-    
+
     # Get Supervisor's context (stored under "default" thread_id)
     supervisor_context = user_context_store.get_user_context(thread_id="default")
-    
+
     # Copy Supervisor's context to worker's thread_id so worker tools can access it
     if supervisor_context.get("user_id") or supervisor_context.get("connected_accounts"):
         user_context_store._user_contexts[thread_id] = supervisor_context.copy()
@@ -63,11 +63,11 @@ async def spawn_worker(
         logger.info(f"✅ Copied Supervisor context to worker thread {thread_id}: user_id={supervisor_context.get('user_id')}, connected_accounts={supervisor_context.get('connected_accounts')}, resource_ids={supervisor_context.get('resource_ids')}")
     else:
         logger.warning(f"⚠️  No Supervisor context found to copy to worker thread {thread_id}")
-    
+
     # Create generic worker dynamically with specified integrations
     # Now that context is set, worker creation can access resource IDs
     worker = create_generic_worker("Task Executor", task_instruction, integrations=integrations)
-    
+
     # Propagate callbacks from orchestrator to worker (if available)
     callbacks = []
     if runtime:
@@ -77,28 +77,28 @@ async def spawn_worker(
                 callbacks = runtime.run_manager.get_child()
             elif hasattr(runtime.run_manager, 'handlers'):
                 callbacks = runtime.run_manager.handlers
-    
+
     if callbacks:
         config["callbacks"] = callbacks
-    
+
     # CRITICAL: Set thread_id in context variable BEFORE invoking worker
     # This allows worker's tools to access the correct user context
     user_context_store.set_current_thread_id(thread_id)
-    
+
     # Execute worker with callbacks
     try:
         result = await worker.ainvoke(
             {"messages": [HumanMessage(content=task_instruction)]},
             config=config
         )
-        
+
         messages = result.get("messages", [])
         if messages:
             final_content = messages[-1].content
-            
+
             # Parse worker response into structured format
             worker_response = WorkerResponse.from_message_content(final_content, messages)
-            
+
             # Return as JSON string for orchestrator to parse
             return worker_response.model_dump_json()
         else:
@@ -118,4 +118,3 @@ async def spawn_worker(
             error=str(e)
         )
         return worker_response.model_dump_json()
-

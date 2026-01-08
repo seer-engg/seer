@@ -166,4 +166,3 @@ def _input_error(input_name: str | None, detail: str) -> WorkflowCompilerError:
     if input_name:
         return WorkflowCompilerError(f"Input '{input_name}' {detail}")
     return WorkflowCompilerError(detail)
-

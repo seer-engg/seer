@@ -60,5 +60,3 @@ class ToolRegistry:
 
     def all(self) -> List[ToolDefinition]:
         return list(self._tools.values())
-
-

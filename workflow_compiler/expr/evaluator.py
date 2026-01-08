@@ -232,5 +232,3 @@ def evaluate_condition(ctx: EvaluationContext, expression: str) -> bool:
     safe_locals.update(bindings)
     result = eval(compiled, {"__builtins__": {}}, safe_locals)
     return bool(result)
-
-

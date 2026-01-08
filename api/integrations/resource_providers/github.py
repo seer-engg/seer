@@ -149,4 +149,3 @@ class GitHubResourceProvider(ResourceProvider):
             )
 
         return {"items": items, "supports_hierarchy": False, "supports_search": False}
-

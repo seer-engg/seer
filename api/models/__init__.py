@@ -1,2 +1,1 @@
 """Model information API endpoints."""
-

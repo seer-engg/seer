@@ -55,7 +55,7 @@ def _hash_spec(spec_dict: Dict[str, Any]) -> str:
 def _build_run_config(run: WorkflowRun, config_payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Ensure LangGraph defaults (thread_id) are present so checkpoints can be recovered.
-    
+
     IMPORTANT: Always uses run.run_id as thread_id to ensure checkpoint retrieval works.
     If config_payload contains a different thread_id, it will be overridden.
     """

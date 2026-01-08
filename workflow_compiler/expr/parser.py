@@ -156,5 +156,3 @@ def collect_unique_references(values: Iterable[JSONValue]) -> List[ReferenceExpr
             seen.add(ref.raw)
             ordered.append(ref)
     return ordered
-
-

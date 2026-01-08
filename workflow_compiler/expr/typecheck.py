@@ -186,5 +186,3 @@ def ensure_references_valid(references: Iterable[ReferenceExpr], scope: Scope) -
 
 def _schemas_equivalent(first: JsonSchema, second: JsonSchema) -> bool:
     return json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True)
-
-

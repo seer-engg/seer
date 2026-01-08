@@ -15,7 +15,7 @@ alwaysApply: true
 
 - We use a PostgreSQL database via the tortoise-orm[asyncpg] interface.
 - Do not create SQL migration files in the /migrations directory for database model schema changes i will do migrations myself.
-- all database model should reside in /shared/database 
+- all database model should reside in /shared/database
 
 ## Worlflows
 
@@ -24,4 +24,3 @@ alwaysApply: true
 - /api/workflow contains CRUD and runtime apis for workflows.
 - /api/agent/workflow contains chat apis for workflow agent.
 - /agent/workflow_agent conatains a langgraph based agent that can build workflow via natural language query.
-

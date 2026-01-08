@@ -505,9 +505,3 @@ class SupabaseRpcCallTool(BaseTool):
         except Exception as exc:
             logger.exception("Supabase rpc error", extra={"function": fn})
             raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
-
-
-
-
-
-

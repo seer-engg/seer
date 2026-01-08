@@ -231,11 +231,11 @@ class TokenDecodeWithoutValidationMiddleware(BaseHTTPMiddleware):
             return True
 
         path = request.scope.get("path") or request.url.path
-        
+
         # Skip health check endpoints (should be publicly accessible)
         if path == "/health":
             return True
-        
+
         # Skip OAuth callbacks (they come from OAuth provider, no JWT)
         if "/integrations/" in path and path.endswith("/callback"):
             return True

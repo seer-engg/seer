@@ -93,4 +93,3 @@ adapter_registry = PollAdapterRegistry()
 def register_adapter(adapter: PollAdapter) -> PollAdapter:
     adapter_registry.register(adapter)
     return adapter
-

@@ -22,4 +22,3 @@ class ExecutionPlan:
 
 def build_execution_plan(spec: WorkflowSpec) -> ExecutionPlan:
     return ExecutionPlan(nodes=list(spec.nodes))
-

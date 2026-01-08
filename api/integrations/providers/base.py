@@ -161,4 +161,3 @@ class ProviderRegistry:
             seen.add(provider.provider)
             providers.append(provider)
         return providers
-

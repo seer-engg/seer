@@ -17,7 +17,7 @@ from shared.database.models import UserPublic
 
 class WorkflowBase(BaseModel):
     """Shared attributes for create/update."""
-    
+
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
     graph_data: Dict[str, Any] = Field(..., description="ReactFlow nodes/edges JSON")
@@ -32,7 +32,7 @@ class WorkflowCreate(WorkflowBase):
 
 class WorkflowUpdate(BaseModel):
     """Payload for updating a workflow."""
-    
+
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
     graph_data: Optional[Dict[str, Any]] = None
@@ -41,9 +41,9 @@ class WorkflowUpdate(BaseModel):
 
 class WorkflowPublic(WorkflowBase):
     """Response model returned to API clients."""
-    
+
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     created_at: datetime
     updated_at: datetime
@@ -51,22 +51,22 @@ class WorkflowPublic(WorkflowBase):
 
 class WorkflowListResponse(BaseModel):
     """Wrapper response for list endpoints."""
-    
+
     workflows: list[WorkflowPublic]
 
 
 class WorkflowExecutionCreate(BaseModel):
     """Payload for creating a workflow execution."""
-    
+
     input_data: Optional[Dict[str, Any]] = None
     stream: bool = Field(default=False, description="Stream execution events")
 
 
 class WorkflowExecutionPublic(BaseModel):
     """Response model for workflow execution."""
-    
+
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     workflow_id: int
     status: str
@@ -80,9 +80,9 @@ class WorkflowExecutionPublic(BaseModel):
 
 class WorkflowProposalPublic(BaseModel):
     """Response model for workflow proposals."""
-    
+
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
-    
+
     id: int
     workflow_id: str = Field(alias="workflow_public_id")
     session_id: Optional[int] = None
@@ -110,4 +110,3 @@ __all__ = [
     "WorkflowExecutionPublic",
     "WorkflowProposalPublic",
 ]
-

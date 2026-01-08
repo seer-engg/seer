@@ -30,7 +30,7 @@ async def list_tools_endpoint(
 ) -> Dict[str, Any]:
     """
     List available tools.
-    
+
     Returns tools with metadata including name, description, required_scopes,
     parameters schema, and output schema.
     """
@@ -45,11 +45,11 @@ async def execute_tool_endpoint(
 ) -> Dict[str, Any]:
     """
     Execute a tool.
-    
+
     Args:
         tool_name: Name of the tool to execute
         payload: Execution request with  connection_id (optional), and arguments
-    
+
     Returns:
         Tool execution result with data and success flag
     """
@@ -71,4 +71,3 @@ async def execute_tool_endpoint(
 
 
 __all__ = ["router"]
-

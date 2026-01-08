@@ -9,4 +9,3 @@ class ModelInfo(BaseModel):
     provider: Literal["openai", "anthropic"]
     name: str  # Display name (e.g., "GPT-5.2", "Claude Opus 4.5")
     available: bool  # Whether API key is configured
-

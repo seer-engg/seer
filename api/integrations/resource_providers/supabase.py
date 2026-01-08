@@ -103,4 +103,3 @@ class SupabaseResourceProvider(ResourceProvider):
             "supports_search": True,
             "total_count": total,
         }
-

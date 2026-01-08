@@ -182,4 +182,3 @@ async def test_for_each_body_tools_use_async_handler() -> None:
         {"echo": "beta-processed"},
     ]
     assert async_calls == ["alpha", "beta"]
-

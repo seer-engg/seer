@@ -168,14 +168,14 @@ async def get_chat_session(
 ) -> WorkflowChatSession:
     """
     Get a chat session with its messages.
-    
+
     Args:
         session_id: Session ID
         workflow_id: Workflow ID (for authorization)
-        
+
     Returns:
         Chat session with messages
-        
+
     Raises:
         HTTPException: If session not found or unauthorized
     """
@@ -183,13 +183,13 @@ async def get_chat_session(
         id=session_id,
         workflow=workflow,
     ).prefetch_related('user').first()
-    
+
     if not session:
         raise HTTPException(
             status_code=404,
             detail=f"Chat session {session_id} not found"
         )
-    
+
     return session
 
 
@@ -199,12 +199,12 @@ async def get_chat_session_by_thread_id(
 ) -> Optional[WorkflowChatSession]:
     """
     Get a chat session by thread ID.
-    
+
     Args:
         thread_id: LangGraph thread ID
         workflow_id: Workflow ID (for authorization)
         user_id: User ID for authorization (None in self-hosted mode)
-        
+
     Returns:
         Chat session if found, None otherwise
     """
@@ -212,10 +212,10 @@ async def get_chat_session_by_thread_id(
         thread_id=thread_id,
         workflow=workflow,
     ).prefetch_related('user').first()
-    
+
     if not session:
         return None
-    
+
     return session
 
 
@@ -227,13 +227,13 @@ async def list_chat_sessions(
 ) -> List[WorkflowChatSession]:
     """
     List chat sessions for a workflow.
-    
+
     Args:
         workflow_id: Workflow ID
         user: User
         limit: Maximum number of sessions to return
         offset: Number of sessions to skip
-        
+
     Returns:
         List of chat sessions
     """
@@ -241,7 +241,7 @@ async def list_chat_sessions(
         workflow=workflow,
         user=user,
     ).prefetch_related('user').order_by('-created_at').offset(offset).limit(limit).all()
-    
+
     return sessions
 
 
@@ -256,7 +256,7 @@ async def save_chat_message(
 ) -> WorkflowChatMessage:
     """
     Save a chat message to the database.
-    
+
     Args:
         session_id: Session ID
         role: Message role ('user' or 'assistant')
@@ -265,18 +265,18 @@ async def save_chat_message(
         suggested_edits: Optional suggested workflow edits
         metadata: Optional metadata (model used, etc.)
         proposal: Optional proposal linked to this message
-        
+
     Returns:
         Created message
     """
     session = await WorkflowChatSession.get_or_none(id=session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Chat session not found")
-    
+
     # Update session updated_at timestamp
     session.updated_at = datetime.utcnow()
     await session.save()
-    
+
     message = await WorkflowChatMessage.create(
         session=session,
         proposal=proposal,
@@ -286,7 +286,7 @@ async def save_chat_message(
         suggested_edits=suggested_edits,
         metadata=metadata,
     )
-    
+
     logger.debug(f"Saved chat message {message.id} to session {session_id}")
     return message
 
@@ -296,17 +296,17 @@ async def load_chat_history(
 ) -> List[WorkflowChatMessage]:
     """
     Load chat history for a session.
-    
+
     Args:
         session_id: Session ID
-        
+
     Returns:
         List of messages ordered by creation time
     """
     messages = await WorkflowChatMessage.filter(
         session_id=session_id
     ).prefetch_related('proposal__created_by', 'proposal__workflow', 'proposal__session').order_by('created_at').all()
-    
+
     return messages
 
 
@@ -356,7 +356,7 @@ async def create_workflow_proposal(
     safe_summary = (summary or "").strip() or "Workflow changes"
     if len(safe_summary) > 512:
         safe_summary = f"{safe_summary[:509]}..."
-    
+
     proposal = await WorkflowProposal.create(
         workflow=workflow,
         session=session,
@@ -391,7 +391,7 @@ async def accept_workflow_proposal(
     proposal = await get_workflow_proposal(workflow, proposal_id)
     if proposal.status != WorkflowProposal.STATUS_PENDING:
         raise HTTPException(status_code=400, detail="Proposal is not pending")
-    
+
     workflow = await proposal.workflow
     normalized_spec = _normalize_spec(proposal.spec or {})
     # draft = await _ensure_workflow_draft(workflow)
@@ -404,12 +404,12 @@ async def accept_workflow_proposal(
     await draft.save()
     workflow.updated_at = datetime.utcnow()
     await workflow.save()
-    
+
     proposal.status = WorkflowProposal.STATUS_ACCEPTED
     proposal.applied_graph = normalized_spec
     proposal.decided_at = datetime.utcnow()
     await proposal.save()
-    
+
     return proposal, workflow
 
 
@@ -421,10 +421,8 @@ async def reject_workflow_proposal(
     proposal = await get_workflow_proposal(workflow, proposal_id)
     if proposal.status != WorkflowProposal.STATUS_PENDING:
         raise HTTPException(status_code=400, detail="Proposal is not pending")
-    
+
     proposal.status = WorkflowProposal.STATUS_REJECTED
     proposal.decided_at = datetime.utcnow()
     await proposal.save()
     return proposal
-
-
