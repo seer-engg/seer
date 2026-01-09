@@ -14,12 +14,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install dependencies
         run: |
           pip install pre-commit
-          pip install flake8 radon pylint
+          pip install pylint
 
       - name: Run pre-commit hooks
         run: pre-commit run --all-files
+        env:
+          SKIP: no-commit-to-branch  # Allow commits in CI

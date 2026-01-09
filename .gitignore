@@ -4,6 +4,9 @@ __pycache__/
 *$py.class
 *.so
 .Python
+
+# Block .pylintrc (use pyproject.toml instead)
+.pylintrc
 build/
 develop-eggs/
 dist/
