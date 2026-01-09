@@ -16,11 +16,10 @@ Usage:
 """
 import asyncio
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 from langchain.tools import tool
 from langchain_core.tools import BaseTool
 from langgraph.errors import GraphInterrupt
-from pydantic import BaseModel, Field
 from shared.logger import get_logger
 
 logger = get_logger("shared.tools.postgres")
@@ -385,9 +384,8 @@ def _is_write_approved(response: Any) -> bool:
     return response_str in ("yes", "y", "approve", "approved", "ok", "proceed", "true", "1")
 
 
-def _create_tools_for_client(client: PostgresClient) -> List[BaseTool]:
-    """Create LangChain tools bound to a specific PostgresClient instance."""
-
+def _create_query_tool(client: PostgresClient):
+    """Create postgres_query tool."""
     @tool
     async def postgres_query(
         query: str,
@@ -411,7 +409,6 @@ def _create_tools_for_client(client: PostgresClient) -> List[BaseTool]:
             postgres_query("SELECT id, name FROM products LIMIT 10")
         """
         try:
-            # Validate query is read-only
             query_upper = query.strip().upper()
             if not query_upper.startswith("SELECT") and not query_upper.startswith("WITH"):
                 return "Error: This tool only supports SELECT queries. Use postgres_execute for modifications."
@@ -422,14 +419,17 @@ def _create_tools_for_client(client: PostgresClient) -> List[BaseTool]:
             if not results:
                 return "Query returned no results."
 
-            # Format results
             import json
             return json.dumps(results, indent=2, default=str)
 
         except Exception as e:
             logger.error(f"PostgreSQL query error: {e}")
             return f"Query error: {str(e)}"
+    return postgres_query
 
+
+def _create_execute_tool(client: PostgresClient):
+    """Create postgres_execute tool."""
     @tool
     async def postgres_execute(
         statement: str,
@@ -456,7 +456,6 @@ def _create_tools_for_client(client: PostgresClient) -> List[BaseTool]:
             postgres_execute("DELETE FROM sessions WHERE expires_at < NOW()")
         """
         try:
-            # Check if write operations require approval
             from shared.config import config
             if config.postgres_write_requires_approval:
                 logger.info(f"Write approval required for statement: {statement[:100]}...")
@@ -473,12 +472,15 @@ def _create_tools_for_client(client: PostgresClient) -> List[BaseTool]:
             return f"Statement executed successfully: {result}"
 
         except GraphInterrupt:
-            # Re-raise GraphInterrupt for LangGraph human-in-the-loop handling
             raise
         except Exception as e:
             logger.error(f"PostgreSQL execute error: {e}")
             return f"Execution error: {str(e)}"
+    return postgres_execute
 
+
+def _create_schema_tool(client: PostgresClient):
+    """Create postgres_get_schema tool."""
     @tool
     async def postgres_get_schema(
         schema_name: str = "public",
@@ -514,7 +516,11 @@ def _create_tools_for_client(client: PostgresClient) -> List[BaseTool]:
         except Exception as e:
             logger.error(f"PostgreSQL schema error: {e}")
             return f"Schema retrieval error: {str(e)}"
+    return postgres_get_schema
 
+
+def _create_batch_tool(client: PostgresClient):
+    """Create postgres_execute_batch tool."""
     @tool
     async def postgres_execute_batch(
         statement: str,
@@ -547,10 +553,8 @@ def _create_tools_for_client(client: PostgresClient) -> List[BaseTool]:
             )
         """
         try:
-            # Check if write operations require approval
             from shared.config import config
             if config.postgres_write_requires_approval:
-                # For batch operations, show a summary
                 batch_size = len(parameters_list)
                 sample_params = parameters_list[:3] if batch_size > 3 else parameters_list
                 summary_note = f" (showing first 3 of {batch_size})" if batch_size > 3 else ""
@@ -572,13 +576,21 @@ def _create_tools_for_client(client: PostgresClient) -> List[BaseTool]:
             return f"Batch executed successfully: {len(args_list)} operations completed."
 
         except GraphInterrupt:
-            # Re-raise GraphInterrupt for LangGraph human-in-the-loop handling
             raise
         except Exception as e:
             logger.error(f"PostgreSQL batch execute error: {e}")
             return f"Batch execution error: {str(e)}"
+    return postgres_execute_batch
 
-    return [postgres_query, postgres_execute, postgres_get_schema, postgres_execute_batch]
+
+def _create_tools_for_client(client: PostgresClient) -> List[BaseTool]:
+    """Create LangChain tools bound to a specific PostgresClient instance."""
+    return [
+        _create_query_tool(client),
+        _create_execute_tool(client),
+        _create_schema_tool(client),
+        _create_batch_tool(client),
+    ]
 
 
 # ============================================================================

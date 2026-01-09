@@ -7,6 +7,28 @@ from workflow_compiler.errors import WorkflowCompilerError
 from workflow_compiler.schema.models import InputDef, InputType, WorkflowSpec
 
 
+def _handle_default_value(name: str, definition: InputDef, errors: list[str]) -> Any:
+    """Handle default value for missing input."""
+    if definition.default is not None:
+        try:
+            return _coerce_value(definition.default, definition, input_name=name)
+        except WorkflowCompilerError as exc:
+            errors.append(str(exc))
+            return None
+    if definition.required:
+        errors.append(f"Input '{name}' is required but was not provided")
+    return None
+
+
+def _handle_provided_value(name: str, value: Any, definition: InputDef, errors: list[str]) -> Any:
+    """Handle provided input value."""
+    try:
+        return _coerce_value(value, definition, input_name=name)
+    except WorkflowCompilerError as exc:
+        errors.append(str(exc))
+        return None
+
+
 def coerce_inputs(
     spec: WorkflowSpec, provided_inputs: Mapping[str, Any] | None
 ) -> Dict[str, Any]:
@@ -25,35 +47,103 @@ def coerce_inputs(
 
     for name, definition in spec_inputs.items():
         has_value = name in incoming
-        source_value = incoming.get(name, None)
 
         if not has_value:
-            if definition.default is not None:
-                try:
-                    coerced[name] = _coerce_value(
-                        definition.default, definition, input_name=name
-                    )
-                except WorkflowCompilerError as exc:
-                    errors.append(str(exc))
-                continue
-            if definition.required:
-                errors.append(f"Input '{name}' is required but was not provided")
-            continue
-
-        try:
-            coerced[name] = _coerce_value(source_value, definition, input_name=name)
-        except WorkflowCompilerError as exc:
-            errors.append(str(exc))
+            result = _handle_default_value(name, definition, errors)
+            if result is not None:
+                coerced[name] = result
+        else:
+            result = _handle_provided_value(name, incoming[name], definition, errors)
+            if result is not None:
+                coerced[name] = result
 
     if errors:
         raise WorkflowCompilerError("; ".join(errors))
 
-    # Preserve additional inputs (even if spec doesn't declare them) to avoid breaking callers.
     for extra_name, extra_value in incoming.items():
         if extra_name not in coerced:
             coerced[extra_name] = extra_value
 
     return coerced
+
+
+def _coerce_string(value: Any, input_name: str | None) -> str:
+    """Coerce value to string."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    raise _input_error(input_name, "must be a string-compatible value")
+
+
+def _coerce_integer(value: Any, input_name: str | None) -> int:
+    """Coerce value to integer."""
+    if _is_int(value):
+        return int(value)
+    if isinstance(value, str):
+        value_str = value.strip()
+        if value_str == "":
+            raise _input_error(input_name, "must be a valid integer")
+        try:
+            return int(value_str, 10)
+        except ValueError:
+            raise _input_error(input_name, f"'{value}' is not a valid integer")
+    raise _input_error(input_name, "must be an integer")
+
+
+def _coerce_number(value: Any, input_name: str | None) -> float:
+    """Coerce value to float."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if isinstance(value, str):
+        value_str = value.strip()
+        if value_str == "":
+            raise _input_error(input_name, "must be a valid number")
+        try:
+            return float(value_str)
+        except ValueError:
+            raise _input_error(input_name, f"'{value}' is not a valid number")
+    raise _input_error(input_name, "must be a number")
+
+
+def _coerce_boolean(value: Any, input_name: str | None) -> bool:
+    """Coerce value to boolean."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "on"}:
+            return True
+        if lowered in {"false", "0", "no", "off"}:
+            return False
+        raise _input_error(input_name, f"'{value}' is not a valid boolean literal")
+    if _is_int(value):
+        if value in (0, 1):
+            return bool(value)
+        raise _input_error(input_name, "integer boolean inputs must be 0 or 1")
+    raise _input_error(input_name, "must be a boolean")
+
+
+def _coerce_object(value: Any, input_name: str | None) -> dict:
+    """Coerce value to dict."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        return _parse_json_literal(value, dict, input_name)
+    raise _input_error(input_name, "must be an object/dict")
+
+
+def _coerce_array(value: Any, input_name: str | None) -> list:
+    """Coerce value to list."""
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    if isinstance(value, str):
+        return _parse_json_literal(value, list, input_name)
+    raise _input_error(input_name, "must be an array/list")
 
 
 def _coerce_value(
@@ -67,78 +157,19 @@ def _coerce_value(
             raise _input_error(input_name, "cannot be null")
         return None
 
-    expected_type = definition.type
+    type_handlers = {
+        InputType.string: _coerce_string,
+        InputType.integer: _coerce_integer,
+        InputType.number: _coerce_number,
+        InputType.boolean: _coerce_boolean,
+        InputType.object: _coerce_object,
+        InputType.array: _coerce_array,
+    }
 
-    if expected_type == InputType.string:
-        if isinstance(value, str):
-            return value
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return str(value)
-        if isinstance(value, bool):
-            return "true" if value else "false"
-        raise _input_error(input_name, "must be a string-compatible value")
+    handler = type_handlers.get(definition.type)
+    if handler:
+        return handler(value, input_name)
 
-    if expected_type == InputType.integer:
-        if _is_int(value):
-            return int(value)
-        if isinstance(value, str):
-            value_str = value.strip()
-            if value_str == "":
-                raise _input_error(input_name, "must be a valid integer")
-            try:
-                parsed = int(value_str, 10)
-            except ValueError:
-                raise _input_error(input_name, f"'{value}' is not a valid integer")
-            return parsed
-        raise _input_error(input_name, "must be an integer")
-
-    if expected_type == InputType.number:
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return float(value)
-        if isinstance(value, str):
-            value_str = value.strip()
-            if value_str == "":
-                raise _input_error(input_name, "must be a valid number")
-            try:
-                parsed = float(value_str)
-            except ValueError:
-                raise _input_error(input_name, f"'{value}' is not a valid number")
-            return parsed
-        raise _input_error(input_name, "must be a number")
-
-    if expected_type == InputType.boolean:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            lowered = value.strip().lower()
-            if lowered in {"true", "1", "yes", "on"}:
-                return True
-            if lowered in {"false", "0", "no", "off"}:
-                return False
-            raise _input_error(input_name, f"'{value}' is not a valid boolean literal")
-        if _is_int(value):
-            if value in (0, 1):
-                return bool(value)
-            raise _input_error(input_name, "integer boolean inputs must be 0 or 1")
-        raise _input_error(input_name, "must be a boolean")
-
-    if expected_type == InputType.object:
-        if isinstance(value, dict):
-            return value
-        if isinstance(value, str):
-            return _parse_json_literal(value, dict, input_name)
-        raise _input_error(input_name, "must be an object/dict")
-
-    if expected_type == InputType.array:
-        if isinstance(value, list):
-            return value
-        if isinstance(value, tuple):
-            return list(value)
-        if isinstance(value, str):
-            return _parse_json_literal(value, list, input_name)
-        raise _input_error(input_name, "must be an array/list")
-
-    # Unknown type enum – fall back to original value
     return value
 
 

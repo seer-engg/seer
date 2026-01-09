@@ -5,7 +5,6 @@ Replaces Pinecone with local Chroma vector store for open-source deployment.
 """
 import json
 import asyncio
-import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -85,6 +84,27 @@ class LocalToolHub:
             )
         return self._vector_store
 
+    def _is_deprecated(self, t: Union[Tool, Dict[str, Any]]) -> bool:
+        """Check if tool is deprecated."""
+        if isinstance(t, dict):
+            description = t.get("description", "") or t.get("function", {}).get("description", "")
+            return "deprecated" in description.lower()
+        if isinstance(t, Tool):
+            return "deprecated" in (t.function.description or "").lower()
+        return False
+
+    def _normalize_dict_to_tool(self, t: dict) -> Optional[Tool]:
+        """Normalize dict to Tool object."""
+        if "function" in t:
+            return Tool.from_dict(t)
+        if "parameters" in t:
+            return Tool(function=ToolFunction(**t))
+        try:
+            return Tool.from_dict(t)
+        except Exception as e:
+            logger.warning(f"Skipping invalid tool structure: {t.keys()} - {e}")
+            return None
+
     def _normalize_tools(self, tools: List[Union[Tool, Dict[str, Any]]]) -> List[Tool]:
         """
         Normalize tool inputs to Tool objects.
@@ -97,27 +117,13 @@ class LocalToolHub:
         """
         normalized_tools = []
         for t in tools:
-            # Filter out deprecated tools
-            if isinstance(t, dict):
-                description = t.get("description", "") or t.get("function", {}).get("description", "")
-                if "deprecated" in description.lower():
-                    continue
-            elif isinstance(t, Tool):
-                if "deprecated" in (t.function.description or "").lower():
-                    continue
+            if self._is_deprecated(t):
+                continue
 
-            # Normalize to Tool object
             if isinstance(t, dict):
-                if "function" in t:
-                    normalized_tools.append(Tool.from_dict(t))
-                elif "parameters" in t:
-                    # Direct function/action definition
-                    normalized_tools.append(Tool(function=ToolFunction(**t)))
-                else:
-                    try:
-                        normalized_tools.append(Tool.from_dict(t))
-                    except Exception as e:
-                        logger.warning(f"Skipping invalid tool structure: {t.keys()} - {e}")
+                tool = self._normalize_dict_to_tool(t)
+                if tool:
+                    normalized_tools.append(tool)
             elif isinstance(t, Tool):
                 normalized_tools.append(t)
             else:
@@ -224,6 +230,127 @@ class LocalToolHub:
                 logger.error(f"Failed to store tools in Chroma: {e}")
                 raise
 
+    def _filter_by_integration(
+        self,
+        results: List[tuple],
+        integration_names: List[str],
+        top_k: int
+    ) -> List[tuple]:
+        """Filter results by integration names."""
+        if not integration_names:
+            return results[:top_k]
+
+        filtered_results = []
+        for doc, score in results:
+            doc_integration = doc.metadata.get("integration", "").lower()
+            if doc_integration in integration_names:
+                filtered_results.append((doc, score))
+        return filtered_results[:top_k]
+
+    def _parse_metadata_json(self, metadata: Dict[str, Any], tool_name: str) -> Dict[str, Any]:
+        """Parse JSON fields from metadata."""
+        parsed = {
+            "use_cases": [],
+            "likely_neighbors": [],
+            "required_params": [],
+            "parameters": {}
+        }
+
+        try:
+            if metadata.get("use_cases"):
+                parsed["use_cases"] = json.loads(metadata["use_cases"])
+            if metadata.get("likely_neighbors"):
+                parsed["likely_neighbors"] = json.loads(metadata["likely_neighbors"])
+            if metadata.get("required_params"):
+                parsed["required_params"] = json.loads(metadata["required_params"])
+            if metadata.get("parameters"):
+                parsed["parameters"] = json.loads(metadata["parameters"])
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse metadata for {tool_name}: {e}")
+
+        return parsed
+
+    def _extract_tool_name(self, metadata: Dict[str, Any]) -> str:
+        """Extract tool name from metadata with fallback."""
+        tool_name = metadata.get("name", "")
+        if not tool_name:
+            doc_id = metadata.get("id", "")
+            if "_" in doc_id:
+                tool_name = doc_id.split("_", 1)[1]
+            else:
+                tool_name = doc_id
+        return tool_name
+
+    def _find_matching_neighbor(
+        self,
+        vector_store: Chroma,
+        neighbor_name: str,
+        integration: Optional[str]
+    ) -> Optional[tuple]:
+        """Find a matching neighbor by name and integration."""
+        neighbor_results = vector_store.similarity_search_with_score(
+            query=neighbor_name,
+            k=10,
+        )
+
+        for neighbor_doc, _ in neighbor_results:
+            neighbor_metadata = neighbor_doc.metadata
+            if neighbor_metadata.get("name") == neighbor_name:
+                if not integration or neighbor_metadata.get("integration") == integration:
+                    return (neighbor_doc, neighbor_metadata)
+        return None
+
+    def _expand_neighbors(
+        self,
+        vector_store: Chroma,
+        tool_results: List[Dict[str, Any]],
+        tool_metadata_map: Dict[str, Any],
+        selected_tool_names: set
+    ) -> List[Dict[str, Any]]:
+        """Expand results with graph neighbors."""
+        expanded_results = []
+        logger.debug("\n--- Expanded Tools (Graph Neighbors) ---")
+
+        for tool_dict in tool_results:
+            tool_name = tool_dict.get("name")
+            if not tool_name:
+                continue
+
+            metadata = tool_metadata_map.get(tool_name, {})
+            likely_neighbors = metadata.get("likely_neighbors", [])
+
+            for neighbor_name in likely_neighbors:
+                if neighbor_name in selected_tool_names:
+                    continue
+
+                try:
+                    neighbor_integration = metadata.get("integration")
+                    matching_neighbor = self._find_matching_neighbor(
+                        vector_store, neighbor_name, neighbor_integration
+                    )
+
+                    if matching_neighbor:
+                        neighbor_doc, neighbor_metadata = matching_neighbor
+                        parsed = self._parse_metadata_json(neighbor_metadata, neighbor_name)
+
+                        logger.debug(f"Adding Neighbor: {neighbor_name} (related to {tool_name})")
+                        selected_tool_names.add(neighbor_name)
+
+                        tool_metadata_map[neighbor_name] = {
+                            **neighbor_metadata,
+                            **parsed
+                        }
+
+                        expanded_results.append({
+                            "name": neighbor_name,
+                            "description": neighbor_metadata.get("description", ""),
+                            "parameters": parsed["parameters"]
+                        })
+                except Exception as e:
+                    logger.warning(f"Failed to load neighbor {neighbor_name}: {e}")
+
+        return expanded_results
+
     async def query(
         self,
         query: str,
@@ -244,181 +371,50 @@ class LocalToolHub:
         """
         vector_store = self._get_vector_store()
 
-        # Normalize integration_name to list of lowercase strings
-        if integration_name is None:
-            integration_names = []
-        else:
+        integration_names = []
+        if integration_name:
             integration_names = [ns.lower() if isinstance(ns, str) else str(ns).lower() for ns in integration_name]
 
         try:
-            # Query Chroma
-            # Get more results if querying multiple integrations for better coverage
-            # Note: LangChain Chroma's similarity_search_with_score doesn't support 'where' parameter
-            # We'll query more results and filter in Python
-            query_top_k = top_k * 5 if integration_names else top_k  # Get more results to filter from
-
-            # Query without filter (LangChain Chroma doesn't support where parameter)
+            query_top_k = top_k * 5 if integration_names else top_k
             results = vector_store.similarity_search_with_score(
                 query=query.replace("\n", " "),
                 k=query_top_k,
             )
 
-            # Filter results by integration if specified
-            if integration_names:
-                filtered_results = []
-                for doc, score in results:
-                    metadata = doc.metadata
-                    doc_integration = metadata.get("integration", "").lower()
-                    if doc_integration in integration_names:
-                        filtered_results.append((doc, score))
-                results = filtered_results[:top_k]  # Limit to top_k after filtering
-            else:
-                results = results[:top_k]  # Limit to top_k if no filter
-
+            results = self._filter_by_integration(results, integration_names, top_k)
             if not results:
                 return []
 
-            # Extract tool names from search results
             selected_tool_names = set()
             tool_results: List[Dict[str, Any]] = []
-            tool_metadata_map = {}  # Store metadata for expansion
+            tool_metadata_map = {}
 
-            logger.debug(f"\n--- Anchor Tools (Vector Match) ---")
+            logger.debug("\n--- Anchor Tools (Vector Match) ---")
             for doc, score in results:
                 metadata = doc.metadata
-                tool_name = metadata.get("name", "")
-
-                if not tool_name:
-                    # Fallback: extract from ID
-                    doc_id = doc.metadata.get("id", "")
-                    if "_" in doc_id:
-                        tool_name = doc_id.split("_", 1)[1]
-                    else:
-                        tool_name = doc_id
+                tool_name = self._extract_tool_name(metadata)
 
                 if tool_name and tool_name not in selected_tool_names:
                     logger.debug(f"Found: {tool_name} (score: {score:.3f})")
                     selected_tool_names.add(tool_name)
 
-                    # Parse JSON fields from metadata
-                    use_cases = []
-                    likely_neighbors = []
-                    required_params = []
-                    parameters = {}
+                    parsed = self._parse_metadata_json(metadata, tool_name)
+                    tool_metadata_map[tool_name] = {**metadata, **parsed}
 
-                    try:
-                        if metadata.get("use_cases"):
-                            use_cases = json.loads(metadata["use_cases"])
-                        if metadata.get("likely_neighbors"):
-                            likely_neighbors = json.loads(metadata["likely_neighbors"])
-                        if metadata.get("required_params"):
-                            required_params = json.loads(metadata["required_params"])
-                        if metadata.get("parameters"):
-                            parameters = json.loads(metadata["parameters"])
-                    except json.JSONDecodeError as e:
-                        logger.warning(f"Failed to parse metadata for {tool_name}: {e}")
-
-                    tool_metadata_map[tool_name] = {
-                        **metadata,
-                        "use_cases": use_cases,
-                        "likely_neighbors": likely_neighbors,
-                        "required_params": required_params,
-                        "parameters": parameters,
-                    }
-
-                    tool_dict = {
+                    tool_results.append({
                         "name": tool_name,
                         "description": metadata.get("description", ""),
-                        "parameters": parameters
-                    }
-                    tool_results.append(tool_dict)
+                        "parameters": parsed["parameters"]
+                    })
 
-            # Limit to top_k after deduplication
             tool_results = tool_results[:top_k]
 
-            # Graph Expansion (Spoke) - expand with neighbors
-            expanded_results: List[Dict[str, Any]] = []
-            logger.debug(f"\n--- Expanded Tools (Graph Neighbors) ---")
+            expanded_results = self._expand_neighbors(
+                vector_store, tool_results, tool_metadata_map, selected_tool_names
+            )
 
-            for tool_dict in tool_results:
-                tool_name = tool_dict.get("name")
-                if not tool_name:
-                    continue
-
-                metadata = tool_metadata_map.get(tool_name, {})
-                likely_neighbors = metadata.get("likely_neighbors", [])
-
-                # Check neighbors - fetch from Chroma
-                for neighbor_name in likely_neighbors:
-                    if neighbor_name not in selected_tool_names:
-                        try:
-                            # Try to fetch neighbor by name
-                            # Search for neighbor in same integration namespace
-                            neighbor_integration = metadata.get("integration")
-
-                            # Query without filter (LangChain Chroma doesn't support where parameter)
-                            # Get multiple results and filter by name and integration
-                            neighbor_results = vector_store.similarity_search_with_score(
-                                query=neighbor_name,  # Use name as query
-                                k=10,  # Get more results to filter from
-                            )
-
-                            # Filter results by name and integration
-                            matching_neighbor = None
-                            for neighbor_doc, neighbor_score in neighbor_results:
-                                neighbor_metadata = neighbor_doc.metadata
-                                # Check if name matches and integration matches (if specified)
-                                if neighbor_metadata.get("name") == neighbor_name:
-                                    if not neighbor_integration or neighbor_metadata.get("integration") == neighbor_integration:
-                                        matching_neighbor = (neighbor_doc, neighbor_metadata)
-                                        break
-
-                            if matching_neighbor:
-                                neighbor_doc, neighbor_metadata = matching_neighbor
-
-                                # Parse parameters
-                                neighbor_parameters = {}
-                                try:
-                                    if neighbor_metadata.get("parameters"):
-                                        neighbor_parameters = json.loads(neighbor_metadata["parameters"])
-                                except json.JSONDecodeError:
-                                    pass
-
-                                logger.debug(f"Adding Neighbor: {neighbor_name} (related to {tool_name})")
-                                selected_tool_names.add(neighbor_name)
-
-                                # Store neighbor metadata
-                                neighbor_use_cases = []
-                                neighbor_likely_neighbors = []
-                                neighbor_required_params = []
-                                try:
-                                    if neighbor_metadata.get("use_cases"):
-                                        neighbor_use_cases = json.loads(neighbor_metadata["use_cases"])
-                                    if neighbor_metadata.get("likely_neighbors"):
-                                        neighbor_likely_neighbors = json.loads(neighbor_metadata["likely_neighbors"])
-                                    if neighbor_metadata.get("required_params"):
-                                        neighbor_required_params = json.loads(neighbor_metadata["required_params"])
-                                except json.JSONDecodeError:
-                                    pass
-
-                                tool_metadata_map[neighbor_name] = {
-                                    **neighbor_metadata,
-                                    "use_cases": neighbor_use_cases,
-                                    "likely_neighbors": neighbor_likely_neighbors,
-                                    "required_params": neighbor_required_params,
-                                    "parameters": neighbor_parameters,
-                                }
-
-                                expanded_results.append({
-                                    "name": neighbor_name,
-                                    "description": neighbor_metadata.get("description", ""),
-                                    "parameters": neighbor_parameters
-                                })
-                        except Exception as e:
-                            logger.warning(f"Failed to load neighbor {neighbor_name}: {e}")
-
-            final_selection = tool_results + expanded_results
-            return final_selection
+            return tool_results + expanded_results
 
         except Exception as e:
             logger.error(f"Chroma query failed: {e}")
@@ -448,7 +444,9 @@ class LocalToolHub:
             1. "use_cases": List of 3-5 specific user intent questions this tool solves (e.g. "How do I delete a file?").
             2. "likely_neighbors": List of actual tool names likely used immediately BEFORE or AFTER this tool in a workflow (must be actual tool names, e.g. "GITHUB_LIST_REPOSITORY_INVITATIONS").
             3. "required_params": List of parameter names required to use this tool (e.g. "emails", "invitation_id"). Extract from description.
-            4. "parameters_schema": Infer the parameter schema from the description. Return a JSON object with parameter names as keys and their schema as values. Follow JSON Schema format: {{"param_name": {{"type": "string|array|object|integer|boolean", "description": "...", "items": {{...}} if array, "properties": {{...}} if object}}}}
+            4. "parameters_schema": Infer the parameter schema from the description. Return a JSON object with parameter names as keys
+               and their schema as values. Follow JSON Schema format:
+               {{"param_name": {{"type": "string|array|object|integer|boolean", "description": "...", "items": {{...}} if array, "properties": {{...}} if object}}}}
             5. "embedding_text": A consolidated paragraph combining name, description, and use cases for vector embedding.
 
             Return ONLY valid JSON matching this structure.

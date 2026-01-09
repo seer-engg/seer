@@ -3,7 +3,7 @@ Google Sheets Tool
 
 Tool for writing data to Google Sheets using Google Sheets API v4.
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 import json
 import httpx
 from fastapi import HTTPException
@@ -24,7 +24,7 @@ class GoogleSheetsWriteTool(BaseTool):
         # TODO: it is hack for now to allow writing to Google Sheets, we need to find a better way to do this.
         "https://www.googleapis.com/auth/drive.file",
         "https://www.googleapis.com/auth/drive.metadata.readonly"
-        ]
+    ]
     integration_type = "google_sheets"
     provider = "google"
 
@@ -77,6 +77,42 @@ class GoogleSheetsWriteTool(BaseTool):
         """Get JSON schema for Google Sheets write tool output."""
         return _update_values_response_output_schema()
 
+    def _parse_values(self, values: Any) -> list:
+        """Parse and validate values parameter."""
+        if not values:
+            raise HTTPException(status_code=400, detail="values is required")
+
+        if isinstance(values, str):
+            try:
+                values = json.loads(values)
+            except json.JSONDecodeError as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid JSON format for 'values' parameter: {str(e)}. Expected a 2D array like [[\"a\", \"b\"], [\"c\", \"d\"]]"
+                )
+
+        if not isinstance(values, list):
+            raise HTTPException(
+                status_code=400,
+                detail="'values' must be a 2D array (list of lists)"
+            )
+
+        return values
+
+    def _handle_response_status(self, response):
+        """Handle API response status codes."""
+        if response.status_code == 401:
+            raise HTTPException(
+                status_code=401,
+                detail="Google Sheets API authentication failed. Token may be expired or invalid."
+            )
+        if response.status_code == 403:
+            raise HTTPException(
+                status_code=403,
+                detail="Permission denied. Ensure the spreadsheet is accessible and the OAuth token has write permissions."
+            )
+        response.raise_for_status()
+
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
         """
         Execute Google Sheets write tool.
@@ -95,72 +131,27 @@ class GoogleSheetsWriteTool(BaseTool):
             )
 
         spreadsheet_id = arguments.get("spreadsheet_id")
+        if not spreadsheet_id:
+            raise HTTPException(status_code=400, detail="spreadsheet_id is required")
+
         range_name = arguments.get("range", "Sheet1!A1")
-        values = arguments.get("values")
+        values = self._parse_values(arguments.get("values"))
         value_input_option = arguments.get("value_input_option", "USER_ENTERED")
 
-        if not spreadsheet_id:
-            raise HTTPException(
-                status_code=400,
-                detail="spreadsheet_id is required"
-            )
-
-        if not values:
-            raise HTTPException(
-                status_code=400,
-                detail="values is required"
-            )
-
-        # Parse values if it's a string (e.g., from workflow config)
-        if isinstance(values, str):
-            try:
-                values = json.loads(values)
-            except json.JSONDecodeError as e:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid JSON format for 'values' parameter: {str(e)}. Expected a 2D array like [[\"a\", \"b\"], [\"c\", \"d\"]]"
-                )
-
-        # Validate that values is a 2D array
-        if not isinstance(values, list):
-            raise HTTPException(
-                status_code=400,
-                detail="'values' must be a 2D array (list of lists)"
-            )
-
-        # Use Google Sheets API v4
-        # Note: valueInputOption MUST be a query parameter, not in the request body
         url = f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{range_name}"
-        params = {
-            "valueInputOption": value_input_option
-        }
+        params = {"valueInputOption": value_input_option}
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
         }
-        body = {
-            "values": values
-        }
+        body = {"values": values}
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as http_client:
                 logger.info("Writing to Google Sheet %s, range %s", spreadsheet_id, range_name)
-
                 response = await http_client.put(url, headers=headers, params=params, json=body)
 
-                if response.status_code == 401:
-                    raise HTTPException(
-                        status_code=401,
-                        detail="Google Sheets API authentication failed. Token may be expired or invalid."
-                    )
-
-                if response.status_code == 403:
-                    raise HTTPException(
-                        status_code=403,
-                        detail="Permission denied. Ensure the spreadsheet is accessible and the OAuth token has write permissions."
-                    )
-
-                response.raise_for_status()
+                self._handle_response_status(response)
                 result = response.json()
 
                 logger.info("Successfully wrote %s cells to Google Sheet", result.get("updatedCells", 0))
@@ -183,7 +174,6 @@ class GoogleSheetsWriteTool(BaseTool):
 # Register the tool
 _google_sheets_tool = GoogleSheetsWriteTool()
 register_tool(_google_sheets_tool)
-
 
 
 """

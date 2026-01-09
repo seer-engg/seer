@@ -1,10 +1,5 @@
 from __future__ import annotations
 """
-Gmail read tool using direct HTTP API calls.
-
-Uses Gmail REST API with OAuth tokens - no google-auth library.
-"""
-"""
 Gmail tools using direct HTTP API calls (no google-auth).
 
 Implements: send, get, modify labels, trash/delete, threads, drafts, labels, attachments.
@@ -12,31 +7,24 @@ Implements: send, get, modify labels, trash/delete, threads, drafts, labels, att
 Official refs:
 - Sending / raw MIME base64url: https://developers.google.com/workspace/gmail/api/guides/sending
 - REST reference endpoints under: https://developers.google.com/workspace/gmail/api/reference/rest/v1/
+
+Uses Gmail REST API with OAuth tokens - no google-auth library.
 """
-
-
-from typing import Any, Dict, List, Optional, Tuple, Union
 import base64
 import copy
 import email.utils
 from email.message import EmailMessage
 import json
 import re
+from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import HTTPException
 
 from shared.tools.base import BaseTool
 from shared.logger import get_logger
-from typing import Any, Dict, List, Optional
-import httpx
-from fastapi import HTTPException
-
-from shared.tools.base import BaseTool, register_tool
-from shared.logger import get_logger
 
 logger = get_logger("shared.tools.gmail")
-
 
 
 class GmailReadTool(BaseTool):
@@ -107,6 +95,122 @@ class GmailReadTool(BaseTool):
             "required": []
         }
 
+    def _extract_from_dict(self, value: dict) -> Optional[int]:
+        """Extract numeric value from dict."""
+        for key in ["value", "count", "output", "result", "number", "max_results"]:
+            if key in value:
+                nested = value[key]
+                if isinstance(nested, (int, float)):
+                    return min(int(nested), 100)
+                if isinstance(nested, str):
+                    try:
+                        return min(int(nested), 100)
+                    except ValueError:
+                        continue
+        return None
+
+    def _validate_max_results(self, value: Any) -> int:
+        """Validate and coerce max_results parameter."""
+        if isinstance(value, int):
+            return min(value, 100)
+        if isinstance(value, float) and value.is_integer():
+            return min(int(value), 100)
+        if isinstance(value, str):
+            try:
+                return min(int(value), 100)
+            except ValueError:
+                logger.warning(f"Invalid max_results '{value}', using default 10")
+                return 10
+        if isinstance(value, dict):
+            result = self._extract_from_dict(value)
+            if result is not None:
+                return result
+            logger.warning(f"Could not extract value from dict '{value}', using default 10")
+            return 10
+        logger.warning(f"Unexpected type {type(value).__name__}, using default 10")
+        return 10
+
+    def _extract_body(self, payload: Dict[str, Any]) -> str:
+        """Extract email body from Gmail payload."""
+        body_text = ""
+        if payload.get("body", {}).get("data"):
+            body_data = payload["body"]["data"]
+            body_text = base64.urlsafe_b64decode(body_data).decode("utf-8", errors="ignore")
+        elif payload.get("parts"):
+            for part in payload["parts"]:
+                if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
+                    body_data = part["body"]["data"]
+                    body_text = base64.urlsafe_b64decode(body_data).decode("utf-8", errors="ignore")
+                    break
+        return body_text
+
+    def _build_message_params(self, include_body: bool) -> Dict[str, Any]:
+        """Build parameters for fetching message details."""
+        if include_body:
+            return {"format": "full"}
+        return {
+            "format": "metadata",
+            "metadataHeaders": "From,To,Subject,Date"
+        }
+
+    def _build_email_object(self, msg_data: Dict[str, Any], include_body: bool) -> Dict[str, Any]:
+        """Build email object from Gmail message data."""
+        payload = msg_data.get("payload", {})
+        headers_list = payload.get("headers", [])
+        headers_dict = {h["name"]: h["value"] for h in headers_list}
+
+        email_obj = {
+            "id": msg_data.get("id"),
+            "threadId": msg_data.get("threadId"),
+            "snippet": msg_data.get("snippet", ""),
+            "subject": headers_dict.get("Subject", ""),
+            "from": headers_dict.get("From", ""),
+            "to": headers_dict.get("To", ""),
+            "date": headers_dict.get("Date", ""),
+            "labelIds": msg_data.get("labelIds", [])
+        }
+
+        if include_body:
+            email_obj["body"] = self._extract_body(payload)
+
+        return email_obj
+
+    async def _fetch_message_list(self, client, headers: dict, params: dict) -> List[dict]:
+        """Fetch list of messages from Gmail API."""
+        list_response = await client.get(
+            "https://www.googleapis.com/gmail/v1/users/me/messages",
+            headers=headers,
+            params=params
+        )
+
+        if list_response.status_code == 401:
+            raise HTTPException(
+                status_code=401,
+                detail="Gmail API authentication failed. Token may be expired or invalid."
+            )
+
+        list_response.raise_for_status()
+        list_data = list_response.json()
+        return list_data.get("messages", [])
+
+    async def _fetch_message_details(
+        self, client, headers: dict, msg_id: str, include_body: bool
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch individual message details."""
+        msg_params = self._build_message_params(include_body)
+        msg_response = await client.get(
+            f"https://www.googleapis.com/gmail/v1/users/me/messages/{msg_id}",
+            headers=headers,
+            params=msg_params
+        )
+
+        if msg_response.status_code == 404:
+            logger.warning(f"Message {msg_id} not found, skipping")
+            return None
+
+        msg_response.raise_for_status()
+        return msg_response.json()
+
     async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Execute Gmail read tool.
@@ -124,39 +228,7 @@ class GmailReadTool(BaseTool):
                 detail="Gmail tool requires OAuth access token"
             )
 
-        # Validate and convert max_results with defensive type checking
-        max_results_raw = arguments.get("max_results", 10)
-        if isinstance(max_results_raw, int):
-            max_results = min(max_results_raw, 100)
-        elif isinstance(max_results_raw, float) and max_results_raw.is_integer():
-            max_results = min(int(max_results_raw), 100)
-        elif isinstance(max_results_raw, str):
-            try:
-                max_results = min(int(max_results_raw), 100)
-            except ValueError:
-                logger.warning(f"Invalid max_results value '{max_results_raw}', using default 10")
-                max_results = 10
-        elif isinstance(max_results_raw, dict):
-            # Try to extract numeric value from dict
-            for key in ["value", "count", "output", "result", "number", "max_results"]:
-                if key in max_results_raw:
-                    nested_value = max_results_raw[key]
-                    if isinstance(nested_value, (int, float)):
-                        max_results = min(int(nested_value), 100)
-                        break
-                    elif isinstance(nested_value, str):
-                        try:
-                            max_results = min(int(nested_value), 100)
-                            break
-                        except ValueError:
-                            continue
-            else:
-                logger.warning(f"Could not extract numeric value from max_results dict '{max_results_raw}', using default 10")
-                max_results = 10
-        else:
-            logger.warning(f"Unexpected type for max_results: {type(max_results_raw).__name__}, using default 10")
-            max_results = 10
-
+        max_results = self._validate_max_results(arguments.get("max_results", 10))
         label_ids = arguments.get("label_ids", ["INBOX"])
         query = arguments.get("q")
         include_body = arguments.get("include_body", False)
@@ -166,109 +238,29 @@ class GmailReadTool(BaseTool):
             "Accept": "application/json"
         }
 
-        # Build query parameters for listing messages
-        params: Dict[str, Any] = {
-            "maxResults": max_results
-        }
-
+        params: Dict[str, Any] = {"maxResults": max_results}
         if label_ids:
             params["labelIds"] = ",".join(label_ids)
-
         if query:
             params["q"] = query
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                # Step 1: List messages
                 logger.info(f"Fetching Gmail messages: max_results={max_results}, label_ids={label_ids}, q={query}")
 
-                list_response = await client.get(
-                    "https://www.googleapis.com/gmail/v1/users/me/messages",
-                    headers=headers,
-                    params=params
-                )
-
-                if list_response.status_code == 401:
-                    raise HTTPException(
-                        status_code=401,
-                        detail="Gmail API authentication failed. Token may be expired or invalid."
-                    )
-
-                list_response.raise_for_status()
-                list_data = list_response.json()
-
-                messages = list_data.get("messages", [])
+                messages = await self._fetch_message_list(client, headers, params)
                 if not messages:
                     logger.info("No messages found matching criteria")
                     return []
 
                 logger.info(f"Found {len(messages)} messages, fetching details...")
 
-                # Step 2: Fetch full message details
                 results = []
                 for msg in messages[:max_results]:
-                    msg_id = msg["id"]
-
-                    # Build params for message detail
-                    msg_params: Dict[str, Any] = {}
-                    if include_body:
-                        msg_params["format"] = "full"
-                    else:
-                        msg_params["format"] = "metadata"
-                        msg_params["metadataHeaders"] = "From,To,Subject,Date"
-
-                    msg_response = await client.get(
-                        f"https://www.googleapis.com/gmail/v1/users/me/messages/{msg_id}",
-                        headers=headers,
-                        params=msg_params
-                    )
-
-                    if msg_response.status_code == 404:
-                        logger.warning(f"Message {msg_id} not found, skipping")
-                        continue
-
-                    msg_response.raise_for_status()
-                    msg_data = msg_response.json()
-
-                    # Extract relevant fields
-                    payload = msg_data.get("payload", {})
-                    headers_list = payload.get("headers", [])
-
-                    # Convert headers list to dict for easier access
-                    headers_dict = {h["name"]: h["value"] for h in headers_list}
-
-                    # Build email object
-                    email_obj = {
-                        "id": msg_data.get("id"),
-                        "threadId": msg_data.get("threadId"),
-                        "snippet": msg_data.get("snippet", ""),
-                        "subject": headers_dict.get("Subject", ""),
-                        "from": headers_dict.get("From", ""),
-                        "to": headers_dict.get("To", ""),
-                        "date": headers_dict.get("Date", ""),
-                        "labelIds": msg_data.get("labelIds", [])
-                    }
-
-                    # Include body if requested
-                    if include_body:
-                        # Extract body from payload
-                        body_text = ""
-                        if payload.get("body", {}).get("data"):
-                            import base64
-                            body_data = payload["body"]["data"]
-                            body_text = base64.urlsafe_b64decode(body_data).decode("utf-8", errors="ignore")
-                        elif payload.get("parts"):
-                            # Multipart message
-                            for part in payload["parts"]:
-                                if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
-                                    import base64
-                                    body_data = part["body"]["data"]
-                                    body_text = base64.urlsafe_b64decode(body_data).decode("utf-8", errors="ignore")
-                                    break
-
-                        email_obj["body"] = body_text
-
-                    results.append(email_obj)
+                    msg_data = await self._fetch_message_details(client, headers, msg["id"], include_body)
+                    if msg_data:
+                        email_obj = self._build_email_object(msg_data, include_body)
+                        results.append(email_obj)
 
                 logger.info(f"Successfully fetched {len(results)} email details")
                 return results
@@ -291,8 +283,6 @@ class GmailReadTool(BaseTool):
                 status_code=500,
                 detail=f"Error reading Gmail: {str(e)}"
             )
-
-
 
 
 logger = get_logger("shared.tools.gmail")
@@ -391,38 +381,44 @@ def _header_dict_from_payload(payload: Dict[str, Any]) -> Dict[str, str]:
     return out
 
 
+def _decode_body_data(data: Optional[str]) -> str:
+    """Decode base64url body data."""
+    if not data:
+        return ""
+    try:
+        return _b64url_decode(data).decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+
+def _extract_part_data(part: Dict[str, Any]) -> str:
+    """Extract data from a single message part."""
+    pdata = (part.get("body", {}) or {}).get("data")
+    return _decode_body_data(pdata)
+
+
 def _extract_text_body(payload: Dict[str, Any]) -> str:
     """
     Best-effort plain-text extraction for 'full' format messages.
     """
-    # Single-part
     body = payload.get("body", {}) or {}
     data = body.get("data")
     if data:
-        try:
-            return _b64url_decode(data).decode("utf-8", errors="ignore")
-        except Exception:
-            return ""
+        return _decode_body_data(data)
 
-    # Multi-part
     parts = payload.get("parts", []) or []
-    # Prefer text/plain
+
     for part in parts:
         if part.get("mimeType") == "text/plain":
-            pdata = (part.get("body", {}) or {}).get("data")
-            if pdata:
-                try:
-                    return _b64url_decode(pdata).decode("utf-8", errors="ignore")
-                except Exception:
-                    return ""
-    # Fallback: first decodable part
+            result = _extract_part_data(part)
+            if result:
+                return result
+
     for part in parts:
-        pdata = (part.get("body", {}) or {}).get("data")
-        if pdata:
-            try:
-                return _b64url_decode(pdata).decode("utf-8", errors="ignore")
-            except Exception:
-                continue
+        result = _extract_part_data(part)
+        if result:
+            return result
+
     return ""
 
 
@@ -464,6 +460,60 @@ async def _gmail_request(
         return resp
 
 
+def _set_optional_header(msg: EmailMessage, name: str, value: Optional[str]):
+    """Set optional email header if value is provided."""
+    sanitized = _sanitize_header_value(value)
+    if sanitized:
+        msg[name] = sanitized
+
+
+def _set_optional_addresses(msg: EmailMessage, name: str, addresses: Optional[List[str]]):
+    """Set optional address list header if addresses are provided."""
+    sanitized = _sanitize_address_list(addresses)
+    if sanitized:
+        msg[name] = ", ".join(sanitized)
+
+
+def _decode_attachment_data(data_b64: str, filename: str) -> Optional[bytes]:
+    """Decode attachment data from base64."""
+    try:
+        return base64.b64decode(str(data_b64), validate=False)
+    except Exception:
+        try:
+            return _b64url_decode(str(data_b64))
+        except Exception:
+            logger.warning(f"Attachment '{filename}' has invalid base64; skipping")
+            return None
+
+
+def _parse_mime_type(mime_type: str) -> tuple[str, str]:
+    """Parse MIME type into maintype and subtype."""
+    if "/" in mime_type:
+        return mime_type.split("/", 1)
+    return "application", "octet-stream"
+
+
+def _add_attachments(msg: EmailMessage, attachments: Optional[List[Dict[str, Any]]]):
+    """Add attachments to email message."""
+    if not attachments:
+        return
+
+    for att in attachments:
+        filename = str(att.get("filename") or "attachment")
+        mime_type = str(att.get("mime_type") or "application/octet-stream")
+        data_b64 = att.get("data_base64")
+
+        if not data_b64:
+            continue
+
+        file_bytes = _decode_attachment_data(data_b64, filename)
+        if not file_bytes:
+            continue
+
+        maintype, subtype = _parse_mime_type(mime_type)
+        msg.add_attachment(file_bytes, maintype=maintype, subtype=subtype, filename=filename)
+
+
 def _build_mime_email(
     *,
     to: List[str],
@@ -489,63 +539,22 @@ def _build_mime_email(
 
     msg["To"] = ", ".join(sanitized_to)
     msg["Subject"] = _sanitize_header_value(subject) or ""
-
-    sanitized_cc = _sanitize_address_list(cc)
-    if sanitized_cc:
-        msg["Cc"] = ", ".join(sanitized_cc)
-    sanitized_bcc = _sanitize_address_list(bcc)
-    if sanitized_bcc:
-        # Bcc header is allowed; Gmail typically strips it for recipients, but safe to set.
-        msg["Bcc"] = ", ".join(sanitized_bcc)
-    sanitized_from = _sanitize_header_value(from_email)
-    if sanitized_from:
-        msg["From"] = sanitized_from
-    sanitized_reply_to = _sanitize_header_value(reply_to)
-    if sanitized_reply_to:
-        msg["Reply-To"] = sanitized_reply_to
-
     msg["Date"] = email.utils.formatdate(localtime=True)
 
-    sanitized_in_reply_to = _sanitize_header_value(in_reply_to)
-    if sanitized_in_reply_to:
-        msg["In-Reply-To"] = sanitized_in_reply_to
-    sanitized_references = _sanitize_header_value(references)
-    if sanitized_references:
-        msg["References"] = sanitized_references
+    _set_optional_addresses(msg, "Cc", cc)
+    _set_optional_addresses(msg, "Bcc", bcc)
+    _set_optional_header(msg, "From", from_email)
+    _set_optional_header(msg, "Reply-To", reply_to)
+    _set_optional_header(msg, "In-Reply-To", in_reply_to)
+    _set_optional_header(msg, "References", references)
 
     msg.set_content(body_text or "")
-
     if body_html:
         msg.add_alternative(body_html, subtype="html")
 
-    # Attachments: expect base64 string in attachments[i]["data_base64"]
-    # Optional: mime_type like "application/pdf"
-    if attachments:
-        for att in attachments:
-            filename = str(att.get("filename") or "attachment")
-            mime_type = str(att.get("mime_type") or "application/octet-stream")
-            data_b64 = att.get("data_base64")
-            if not data_b64:
-                continue
-            try:
-                file_bytes = base64.b64decode(str(data_b64), validate=False)
-            except Exception:
-                # Try base64url as fallback
-                try:
-                    file_bytes = _b64url_decode(str(data_b64))
-                except Exception:
-                    logger.warning(f"Attachment '{filename}' has invalid base64; skipping")
-                    continue
-
-            if "/" in mime_type:
-                maintype, subtype = mime_type.split("/", 1)
-            else:
-                maintype, subtype = "application", "octet-stream"
-
-            msg.add_attachment(file_bytes, maintype=maintype, subtype=subtype, filename=filename)
+    _add_attachments(msg, attachments)
 
     return msg
-
 
 
 class GmailSendEmailTool(BaseTool):
@@ -928,7 +937,6 @@ class GmailGetThreadTool(BaseTool):
     integration_type = "gmail"
     provider = "google"
 
-
     def get_output_schema(self) -> Dict[str, Any]:
         # threads.get returns a Thread resource. :contentReference[oaicite:20]{index=20}
         return GMAIL_THREAD_SCHEMA
@@ -1030,7 +1038,11 @@ class GmailCreateDraftTool(BaseTool):
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPStatusError as e:
-            logger.error(f"input: to {to}, subject {subject}, body_text {body_text}, body_html {body_html}, cc {cc}, bcc {bcc}, from_email {from_email}, reply_to {reply_to}, in_reply_to {in_reply_to}, references {references}, attachments {attachments}")
+            logger.error(
+                f"input: to {to}, subject {subject}, body_text {body_text}, body_html {body_html}, "
+                f"cc {cc}, bcc {bcc}, from_email {from_email}, reply_to {reply_to}, "
+                f"in_reply_to {in_reply_to}, references {references}, attachments {attachments}"
+            )
             logger.error(f"Gmail create draft error: {e.response.status_code} - {e.response.text[:500]}")
             raise HTTPException(status_code=e.response.status_code, detail=f"Gmail API error: {e.response.text[:500]}")
         except httpx.TimeoutException:
@@ -1046,7 +1058,6 @@ class GmailListDraftsTool(BaseTool):
     required_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
     integration_type = "gmail"
     provider = "google"
-
 
     def get_output_schema(self) -> Dict[str, Any]:
         # drafts.list returns envelope with drafts + nextPageToken + resultSizeEstimate. :contentReference[oaicite:22]{index=22}

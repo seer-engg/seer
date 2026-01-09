@@ -11,7 +11,7 @@ import logging
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Iterable, List, Mapping, MutableMapping, Sequence
+from typing import Any, Dict, List, Mapping, Sequence
 
 from langgraph._internal._runnable import RunnableCallable
 from workflow_compiler.errors import ExecutionError
@@ -494,6 +494,34 @@ class NodeRuntime:
     # ------------------------------------------------------------------
     # Trace capture methods
     # ------------------------------------------------------------------
+    def _evaluate_input_expressions(
+        self, ctx: EvaluationContext, in_dict: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Evaluate input expressions, capturing errors."""
+        inputs = {}
+        for key, expr in in_dict.items():
+            try:
+                inputs[key] = evaluate_value(ctx, expr)
+            except Exception as e:
+                inputs[key] = {"__error__": str(e), "__expression__": expr}
+        return inputs
+
+    def _capture_llm_node_inputs(
+        self, node: LLMNode, ctx: EvaluationContext
+    ) -> Dict[str, Any]:
+        """Capture LLM node specific inputs."""
+        inputs = {'prompt_template': node.prompt, 'model': node.model}
+
+        if node.in_:
+            inputs['input_refs'] = self._evaluate_input_expressions(ctx, node.in_)
+
+        if node.temperature is not None:
+            inputs['temperature'] = node.temperature
+        if node.max_tokens is not None:
+            inputs['max_tokens'] = node.max_tokens
+
+        return inputs
+
     def _capture_node_inputs(
         self,
         node: Node,
@@ -507,52 +535,11 @@ class NodeRuntime:
         """
         ctx = self._build_eval_context(state, config, locals_ctx)
 
-        if isinstance(node, ToolNode):
-            # Evaluate node.in_ expressions against current state
-            # This gives us the ACTUAL values passed to the tool
-            inputs = {}
-            for key, expr in node.in_.items():
-                try:
-                    inputs[key] = evaluate_value(ctx, expr)
-                except Exception as e:
-                    # If evaluation fails, store error info
-                    inputs[key] = {"__error__": str(e), "__expression__": expr}
-            return inputs
+        if isinstance(node, LLMNode):
+            return self._capture_llm_node_inputs(node, ctx)
 
-        elif isinstance(node, LLMNode):
-            # For LLM, capture:
-            # 1. Prompt template (from spec)
-            # 2. Evaluated input_refs (actual values from state)
-            inputs = {
-                'prompt_template': node.prompt,  # Template string
-            }
-            if node.in_:
-                evaluated_refs = {}
-                for key, expr in node.in_.items():
-                    try:
-                        evaluated_refs[key] = evaluate_value(ctx, expr)
-                    except Exception as e:
-                        evaluated_refs[key] = {"__error__": str(e), "__expression__": expr}
-                inputs['input_refs'] = evaluated_refs
-
-            # Also capture model config
-            inputs['model'] = node.model
-            if node.temperature is not None:
-                inputs['temperature'] = node.temperature
-            if node.max_tokens is not None:
-                inputs['max_tokens'] = node.max_tokens
-
-            return inputs
-
-        elif isinstance(node, TaskNode):
-            # Evaluate node.in_ expressions
-            inputs = {}
-            for key, expr in node.in_.items():
-                try:
-                    inputs[key] = evaluate_value(ctx, expr)
-                except Exception as e:
-                    inputs[key] = {"__error__": str(e), "__expression__": expr}
-            return inputs
+        if isinstance(node, (ToolNode, TaskNode)):
+            return self._evaluate_input_expressions(ctx, node.in_)
 
         return {}
 

@@ -115,20 +115,20 @@ def resolve_schema_path(
     return dereference_schema(current, root=root_schema)
 
 
-def _resolve_single_segment(
-    schema: JsonSchema, segment: PathSegment, root: JsonSchema
-) -> JsonSchema:
-    schema = dereference_schema(schema, root=root)
-    schema_type = schema.get("type")
+def _normalize_schema_type(schema_type):
+    """Normalize schema type from list to single type."""
     if isinstance(schema_type, list):
         if "object" in schema_type:
-            schema_type = "object"
-        elif "array" in schema_type:
-            schema_type = "array"
-        elif len(schema_type) == 1:
-            schema_type = schema_type[0]
+            return "object"
+        if "array" in schema_type:
+            return "array"
+        if len(schema_type) == 1:
+            return schema_type[0]
+    return schema_type
 
-    # anyOf / oneOf: succeed if any branch is valid
+
+def _try_anyof_oneof(schema: JsonSchema, segment: PathSegment, root: JsonSchema) -> JsonSchema | None:
+    """Try to resolve segment against anyOf/oneOf branches."""
     for keyword in ("anyOf", "oneOf"):
         if keyword in schema:
             errors = []
@@ -138,35 +138,62 @@ def _resolve_single_segment(
                 except TypeCheckError as exc:
                     errors.append(str(exc))
             raise TypeCheckError("; ".join(errors))
+    return None
+
+
+def _resolve_property(schema: JsonSchema, key: str, schema_type) -> JsonSchema:
+    """Resolve property access on object schema."""
+    if schema_type not in (None, "object"):
+        raise TypeCheckError(f"Cannot access property '{key}' on {schema_type or 'value'}")
+    properties = schema.get("properties", {})
+    if key in properties:
+        return properties[key]
+    additional = schema.get("additionalProperties")
+    if isinstance(additional, dict):
+        return additional
+    raise TypeCheckError(f"Property '{key}' not declared in schema")
+
+
+def _resolve_numeric_index(schema: JsonSchema, schema_type) -> JsonSchema:
+    """Resolve numeric array index."""
+    if schema_type != "array":
+        raise TypeCheckError("Numeric index is only valid on array schemas")
+    items = schema.get("items")
+    if not isinstance(items, dict):
+        raise TypeCheckError("Array schema is missing 'items'")
+    return items
+
+
+def _resolve_string_index(schema: JsonSchema, index: str, schema_type) -> JsonSchema:
+    """Resolve string index on object schema."""
+    if schema_type not in (None, "object"):
+        raise TypeCheckError("String index only valid on object schemas")
+    properties = schema.get("properties", {})
+    if index in properties:
+        return properties[index]
+    additional = schema.get("additionalProperties")
+    if isinstance(additional, dict):
+        return additional
+    raise TypeCheckError(f"Key '{index}' not present in schema")
+
+
+def _resolve_single_segment(
+    schema: JsonSchema, segment: PathSegment, root: JsonSchema
+) -> JsonSchema:
+    schema = dereference_schema(schema, root=root)
+    schema_type = _normalize_schema_type(schema.get("type"))
+
+    anyof_result = _try_anyof_oneof(schema, segment, root)
+    if anyof_result is not None:
+        return anyof_result
 
     if isinstance(segment, PropertySegment):
-        if schema_type not in (None, "object"):
-            raise TypeCheckError(f"Cannot access property '{segment.key}' on {schema_type or 'value'}")
-        properties = schema.get("properties", {})
-        if segment.key in properties:
-            return properties[segment.key]
-        additional = schema.get("additionalProperties")
-        if isinstance(additional, dict):
-            return additional
-        raise TypeCheckError(f"Property '{segment.key}' not declared in schema")
+        return _resolve_property(schema, segment.key, schema_type)
 
     if isinstance(segment, IndexSegment):
         if isinstance(segment.index, int):
-            if schema_type != "array":
-                raise TypeCheckError("Numeric index is only valid on array schemas")
-            items = schema.get("items")
-            if not isinstance(items, dict):
-                raise TypeCheckError("Array schema is missing 'items'")
-            return items
-        if schema_type not in (None, "object"):
-            raise TypeCheckError("String index only valid on object schemas")
-        properties = schema.get("properties", {})
-        if segment.index in properties:
-            return properties[segment.index]
-        additional = schema.get("additionalProperties")
-        if isinstance(additional, dict):
-            return additional
-        raise TypeCheckError(f"Key '{segment.index}' not present in schema")
+            return _resolve_numeric_index(schema, schema_type)
+        return _resolve_string_index(schema, segment.index, schema_type)
 
     raise TypeCheckError(f"Unsupported segment type {type(segment)!r}")
 
