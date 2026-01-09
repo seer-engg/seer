@@ -69,7 +69,7 @@ def _trigger_requires_connection(trigger_key: str) -> bool:
     if definition is None:
         # Fail closed for unknown triggers; poll engine will disable them.
         return True
-    return definition.requires_connection
+    return definition.meta.requires_connection
 
 
 def _build_event_envelope(

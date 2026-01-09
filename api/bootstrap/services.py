@@ -7,6 +7,9 @@ Consolidates multiple API calls into a single endpoint with parallel processing.
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict
+from unittest.mock import MagicMock
+
+from fastapi import Request
 
 from api.models.router import list_models
 
@@ -19,16 +22,27 @@ from shared.logger import get_logger
 logger = get_logger("api.bootstrap.services")
 
 
+def _create_mock_request(user: User) -> Request:
+    """Create mock request for bootstrap context (no HTTP request available)."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.state.db_user = user
+    return mock_request
+
+
 async def _fetch_tools() -> Dict[str, Any]:
     """Fetch tools list. Returns empty list on error."""
+    from starlette.exceptions import HTTPException
+
     try:
         result = await list_tools()
         return result.get("tools", [])
-    # pylint: disable=broad-exception-caught
-    # Bootstrap boundary: fault-tolerant, returns empty on any error
-    except Exception as e:
-        logger.error("Error fetching tools: %s", e, exc_info=True)
+    except (HTTPException, asyncio.TimeoutError, ValueError) as e:
+        logger.error("Error fetching tools: %s", e)
         return []
+    except Exception as e:
+        # Unexpected error - this should not happen
+        logger.exception("Unexpected error fetching tools: %s", e)
+        raise
 
 
 async def _fetch_models() -> list:
@@ -37,55 +51,51 @@ async def _fetch_models() -> list:
         models = await list_models()
         # Convert Pydantic models to dicts
         return [model.model_dump() for model in models]
-    # pylint: disable=broad-exception-caught
-    # Bootstrap boundary: fault-tolerant, returns empty on any error
-    except Exception as e:
-        logger.error("Error fetching models: %s", e, exc_info=True)
+    except (ValueError, TypeError, asyncio.TimeoutError) as e:
+        logger.error("Error fetching models: %s", e)
         return []
+    except Exception as e:
+        # Unexpected error - this should not happen
+        logger.exception("Unexpected error fetching models: %s", e)
+        raise
 
 
 async def _fetch_tools_status(user: User) -> list:
     """Fetch tools connection status. Returns empty list on error."""
+    from api.integrations.router import get_tools_connection_status
+    from starlette.exceptions import HTTPException
+
+    mock_request = _create_mock_request(user)
+
     try:
-        from unittest.mock import MagicMock
-
-        from fastapi import Request
-
-        from api.integrations.router import get_tools_connection_status
-
-        # Create a mock request with the user
-        mock_request = MagicMock(spec=Request)
-        mock_request.state.db_user = user
-
         result = await get_tools_connection_status(mock_request)
         return result.get("tools", [])
-    # pylint: disable=broad-exception-caught
-    # Bootstrap boundary: fault-tolerant, returns empty on any error
-    except Exception as e:
-        logger.error("Error fetching tools status: %s", e, exc_info=True)
+    except (HTTPException, asyncio.TimeoutError, RuntimeError) as e:
+        logger.error("Error fetching tools status: %s", e)
         return []
+    except Exception as e:
+        # Unexpected error - this should not happen
+        logger.exception("Unexpected error fetching tools status: %s", e)
+        raise
 
 
 async def _fetch_connections(user: User) -> list:
     """Fetch user connections. Returns empty list on error."""
+    from api.integrations.router import list_integrations
+    from starlette.exceptions import HTTPException
+
+    mock_request = _create_mock_request(user)
+
     try:
-        from unittest.mock import MagicMock
-
-        from fastapi import Request
-
-        from api.integrations.router import list_integrations
-
-        # Create a mock request with the user
-        mock_request = MagicMock(spec=Request)
-        mock_request.state.db_user = user
-
         result = await list_integrations(mock_request)
         return result.get("items", [])
-    # pylint: disable=broad-exception-caught
-    # Bootstrap boundary: fault-tolerant, returns empty on any error
-    except Exception as e:
-        logger.error("Error fetching connections: %s", e, exc_info=True)
+    except (HTTPException, asyncio.TimeoutError, ValueError) as e:
+        logger.error("Error fetching connections: %s", e)
         return []
+    except Exception as e:
+        # Unexpected error - this should not happen
+        logger.exception("Unexpected error fetching connections: %s", e)
+        raise
 
 
 async def _fetch_node_types() -> Dict[str, Any]:
@@ -96,26 +106,32 @@ async def _fetch_node_types() -> Dict[str, Any]:
         if hasattr(result, 'model_dump'):
             return result.model_dump()
         return result if isinstance(result, dict) else {}
-    # pylint: disable=broad-exception-caught
-    # Bootstrap boundary: fault-tolerant, returns empty on any error
-    except Exception as e:
-        logger.error("Error fetching node types: %s", e, exc_info=True)
+    except (AttributeError, TypeError, ValueError) as e:
+        logger.error("Error fetching node types: %s", e)
         return {}
+    except Exception as e:
+        # Unexpected error - this should not happen
+        logger.exception("Unexpected error fetching node types: %s", e)
+        raise
 
 
 async def _fetch_workflows(user: User) -> Dict[str, Any]:
     """Fetch user workflows. Returns empty result on error."""
+    from starlette.exceptions import HTTPException
+
     try:
         result = await list_workflows(user, limit=50)
         # Convert Pydantic model to dict
         if hasattr(result, 'model_dump'):
             return result.model_dump()
         return result if isinstance(result, dict) else {"items": [], "next_cursor": None}
-    # pylint: disable=broad-exception-caught
-    # Bootstrap boundary: fault-tolerant, returns empty on any error
-    except Exception as e:
-        logger.error("Error fetching workflows: %s", e, exc_info=True)
+    except (HTTPException, asyncio.TimeoutError, ValueError) as e:
+        logger.error("Error fetching workflows: %s", e)
         return {"items": [], "next_cursor": None}
+    except Exception as e:
+        # Unexpected error - this should not happen
+        logger.exception("Unexpected error fetching workflows: %s", e)
+        raise
 
 
 async def _fetch_connections_raw(user: User) -> list:
@@ -123,11 +139,13 @@ async def _fetch_connections_raw(user: User) -> list:
     try:
         from api.integrations.services import list_connections
         return await list_connections(user)
-    # pylint: disable=broad-exception-caught
-    # Bootstrap boundary: fault-tolerant, returns empty on any error
-    except Exception as e:
-        logger.error("Error fetching raw connections: %s", e, exc_info=True)
+    except (asyncio.TimeoutError, ValueError) as e:
+        logger.error("Error fetching raw connections: %s", e)
         return []
+    except Exception as e:
+        # Unexpected error - this should not happen
+        logger.exception("Unexpected error fetching raw connections: %s", e)
+        raise
 
 
 def _build_provider_connections_map(connections: list) -> dict:
@@ -277,11 +295,13 @@ async def _build_tools_status_from_connections(connections: list) -> list:
             results.append({**result, "provider": oauth_provider})
 
         return results
-    # pylint: disable=broad-exception-caught
-    # Bootstrap boundary: fault-tolerant, returns empty on any error
-    except Exception as e:
-        logger.error("Error building tools status: %s", e, exc_info=True)
+    except (AttributeError, KeyError, ValueError) as e:
+        logger.error("Error building tools status: %s", e)
         return []
+    except Exception as e:
+        # Unexpected error - this should not happen
+        logger.exception("Unexpected error building tools status: %s", e)
+        raise
 
 
 async def _format_connections(connections: list, user: User) -> list:
@@ -305,11 +325,13 @@ async def _format_connections(connections: list, user: User) -> list:
                 "provider": conn.provider
             })
         return res
-    # pylint: disable=broad-exception-caught
-    # Bootstrap boundary: fault-tolerant, returns empty on any error
-    except Exception as e:
-        logger.error("Error formatting connections: %s", e, exc_info=True)
+    except (AttributeError, TypeError) as e:
+        logger.error("Error formatting connections: %s", e)
         return []
+    except Exception as e:
+        # Unexpected error - this should not happen
+        logger.exception("Unexpected error formatting connections: %s", e)
+        raise
 
 
 async def fetch_bootstrap_data(user: User) -> Dict[str, Any]:
