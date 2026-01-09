@@ -349,12 +349,13 @@ class ChatOrchestrator:
         self,
         messages: Any,
         config_dict: Dict[str, Any],
-        thread_id_context=None,  # pylint: disable=unused-argument
+        # pylint: disable=unused-argument # Reason: Legacy parameter for compatibility
+        thread_id_context=None,
         timeout: float = 300.0,
     ) -> Dict[str, Any]:
         """Invoke agent with timeout."""
         from agents.workflow_agent import (
-            _current_thread_id,  # pylint: disable=import-outside-toplevel
+            _current_thread_id,  # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with agents module
         )
 
         thread_id = config_dict.get("configurable", {}).get("thread_id")
@@ -380,7 +381,7 @@ class ChatOrchestrator:
     async def _check_for_incomplete_tool_calls(self, config_dict: Dict[str, Any]) -> bool:
         """Check if current state has incomplete tool calls."""
         from api.agents.checkpointer import (
-            get_checkpointer_with_retry,  # pylint: disable=import-outside-toplevel
+            get_checkpointer_with_retry,  # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with checkpointer module
         )
 
         thread_id = config_dict.get("configurable", {}).get("thread_id")
@@ -427,7 +428,7 @@ class ChatOrchestrator:
     ) -> Dict[str, Any]:
         """Recover from incomplete tool call state."""
         from api.agents.checkpointer import (
-            get_checkpointer_with_retry,  # pylint: disable=import-outside-toplevel
+            get_checkpointer_with_retry,  # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with checkpointer module
         )
 
         logger.warning("Incomplete tool calls detected in thread %s, attempting recovery...", thread_id)
@@ -456,7 +457,7 @@ class ChatOrchestrator:
     ) -> Dict[str, Any]:
         """Delete thread and restart with fresh state."""
         from api.agents.checkpointer import (
-            get_checkpointer,  # pylint: disable=import-outside-toplevel
+            get_checkpointer,  # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with checkpointer module
         )
 
         logger.warning("Checkpointer unavailable for checkpoint recovery, deleting thread and starting fresh")
@@ -531,7 +532,7 @@ class ChatOrchestrator:
     ) -> Dict[str, Any]:
         """Fallback: delete thread and restart."""
         from api.agents.checkpointer import (
-            get_checkpointer,  # pylint: disable=import-outside-toplevel
+            get_checkpointer,  # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with checkpointer module
         )
 
         logger.error("Error recovering from incomplete state: %s", error, exc_info=True)

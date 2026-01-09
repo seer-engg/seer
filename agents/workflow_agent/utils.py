@@ -5,14 +5,18 @@ from agents.workflow_agent.tools import analyze_workflow, submit_workflow_spec, 
 logger = get_logger(__name__)
 
 
-def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:  # pylint: disable=unused-argument
+# pylint: disable=unused-argument # Reason: Reserved for future state injection feature
+def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:
     """
     Get all workflow manipulation tools and dynamic discovery tools.
 
     Args:
-        workflow_state: Optional workflow state to inject into tools.
-                        If provided, tools will use this state instead of requiring it as a parameter.
+        workflow_state: Reserved for future use. Planned: inject workflow state into tool context
+                        so tools can access state without requiring it as a parameter.
     """
+    # TODO: Implement workflow_state injection when tool context system is ready
+    # Currently, tools use _current_thread_id context instead of explicit state parameter
+
     # Base tools that are always available
     base_tools = [
         # Workflow manipulation tools
@@ -23,7 +27,6 @@ def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:
         # list_available_tools,
     ]
 
-    # Note: Discovery tools don't need workflow_state; workflow_state can be injected by caller when needed
     return base_tools
 
 

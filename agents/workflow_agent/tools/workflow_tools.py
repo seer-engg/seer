@@ -17,7 +17,11 @@ from agents.workflow_agent.context import (
 )
 from shared.logger import get_logger
 from workflow_compiler.compiler.parse import parse_workflow_spec
-from workflow_compiler.errors import ValidationPhaseError, TypeEnvironmentError, WorkflowCompilerError
+from workflow_compiler.errors import (
+    ValidationPhaseError,
+    TypeEnvironmentError,
+    WorkflowCompilerError,
+)
 from workflow_compiler.runtime.global_compiler import WorkflowCompilerSingleton
 
 logger = get_logger(__name__)
@@ -113,59 +117,58 @@ def _error_response(error_type: str, message: str, hint: Optional[str] = None) -
     return json.dumps(response)
 
 
-@tool
-async def submit_workflow_spec(
-    workflow_spec: Any,
-    summary: Optional[str] = None,
-) -> str:  # pylint: disable=too-many-return-statements
-    """
-    Validate and record a complete workflow specification produced by the agent.
-
-    This tool performs full compilation validation including type checking, reference
-    validation, and dependency checks. If validation fails, the error is returned so
-    you can fix the spec and retry.
-
-    Args:
-        workflow_spec: Full workflow JSON object conforming to workflow_compiler schema.
-                       Can be provided as a dict or a JSON string.
-        summary: Optional natural language rationale for the proposal.
-    """
-    # pylint: disable=too-many-return-statements
-
+def _validate_thread_context() -> Optional[str]:
+    """Validate thread context exists. Returns error message if invalid, None if valid."""
     thread_id = _current_thread_id.get()
     if not thread_id:
         return _error_response(
             "internal", "submit_workflow_spec requires an active thread_id context"
         )
+    return None
 
+
+def _validate_spec_format(workflow_spec: Any) -> tuple[Optional[Dict], Optional[str]]:
+    """Validate spec format. Returns (spec_dict, error_message)."""
     spec_dict = _coerce_spec_payload(workflow_spec)
     if spec_dict is None:
-        return _error_response(
+        return None, _error_response(
             "parsing", "workflow_spec must be an object that follows the compiler schema"
         )
+    return spec_dict, None
 
-    # Phase 1: Pydantic validation
+
+def _validate_pydantic(spec_dict: Dict) -> tuple[Optional[Any], Optional[str]]:
+    """Run Pydantic validation. Returns (validated_spec, error_message)."""
     try:
         validated_spec = parse_workflow_spec(spec_dict)
+        return validated_spec, None
     except ValidationPhaseError as exc:
         logger.warning("Workflow spec validation failed", exc_info=exc)
-        return _error_response("parsing", f"Workflow spec validation failed: {exc}")
+        return None, _error_response("parsing", f"Workflow spec validation failed: {exc}")
 
-    # Phase 2: Full compilation validation
+
+async def _validate_compilation(spec_dict: Dict) -> Optional[str]:
+    """
+    Run full compilation validation. Returns error message if invalid, None if valid.
+
+    Validates type environment, references, and compilation.
+    """
+    thread_id = _current_thread_id.get()
+    user = get_user_for_thread(thread_id)
+    if not user:
+        return _error_response("internal", "User context not available for compilation validation")
+
     try:
-        user = get_user_for_thread(thread_id)
-        if not user:
-            return _error_response("internal", "User context not available for compilation validation")
-
         compiler = WorkflowCompilerSingleton.instance()
         await compiler.compile(user, spec_dict, checkpointer=None)
-
+        return None
     except TypeEnvironmentError as exc:
         logger.warning("Workflow type environment validation failed", exc_info=exc)
         return _error_response(
             "type_environment",
             f"Type validation failed: {exc}",
-            "Check that output schemas match input expectations. Common issue: field name mismatches like 'threadId' vs 'thread_id'."
+            "Check that output schemas match input expectations. "
+            "Common issue: field name mismatches like 'threadId' vs 'thread_id'.",
         )
     except ValidationPhaseError as exc:
         logger.warning("Workflow reference validation failed", exc_info=exc)
@@ -178,6 +181,41 @@ async def submit_workflow_spec(
         logger.warning("Workflow compilation failed", exc_info=exc)
         return _error_response("compilation", f"Compilation failed: {exc}")
 
+
+@tool
+async def submit_workflow_spec(
+    workflow_spec: Any,
+    summary: Optional[str] = None,
+) -> str:
+    """
+    Validate and record a complete workflow specification produced by the agent.
+
+    This tool performs full compilation validation including type checking, reference
+    validation, and dependency checks. If validation fails, the error is returned so
+    you can fix the spec and retry.
+
+    Args:
+        workflow_spec: Full workflow JSON object conforming to workflow_compiler schema.
+                       Can be provided as a dict or a JSON string.
+        summary: Optional natural language rationale for the proposal.
+    """
+    # Validation chain - each returns early if error
+    if error := _validate_thread_context():
+        return error
+
+    spec_dict, error = _validate_spec_format(workflow_spec)
+    if error:
+        return error
+
+    validated_spec, error = _validate_pydantic(spec_dict)
+    if error:
+        return error
+
+    if error := await _validate_compilation(spec_dict):
+        return error
+
+    # All validations passed - record the spec
+    thread_id = _current_thread_id.get()
     spec_payload = validated_spec.model_dump(mode="json")
     proposal_context = {"spec": spec_payload}
     if summary:

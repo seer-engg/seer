@@ -240,12 +240,11 @@ async def get_tools_connection_status(request: Request):
 
     This is the primary endpoint for frontend to check which tools are connected.
     """
-    # Import inside function to avoid circular dependencies
     from shared.tools.base import (
-        list_tools as get_all_tools,  # pylint: disable=import-outside-toplevel
+        list_tools as get_all_tools,  # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with tools.base module
     )
 
-    from .tool_status_service import (  # pylint: disable=import-outside-toplevel
+    from .tool_status_service import (  # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with tool_status_service
         build_provider_connections_map,
         build_tool_status_for_missing_connection,
         build_tool_status_for_non_oauth_tool,
@@ -637,7 +636,9 @@ async def list_provider_resource_types(request: Request, provider: str):
 
 
 @router.get("/resources/{provider}/{resource_type}")
-async def browse_resources(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+# pylint: disable=too-many-arguments,too-many-positional-arguments
+# Reason: FastAPI endpoint signature matches REST API contract required by ResourcePicker UI
+async def browse_resources(
     request: Request,
     provider: str,
     resource_type: str,

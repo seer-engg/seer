@@ -112,3 +112,12 @@ disable = [
     "fixme",
     "import-error",  # Pre-commit runs in isolated env without project dependencies
 ]
+
+# NOTE: In-code pylint disables MUST include justification comments
+# Required format: # pylint: disable=rule-name # Reason: architectural explanation
+# See docs/linting-guidelines.md for acceptable use cases and examples
+# Examples:
+#   - import-outside-toplevel: Avoiding circular imports or lazy loading
+#   - broad-exception-caught: Adapter boundaries converting exceptions to strings
+#   - invalid-name: Framework-required naming (visit_*, _private for patterns)
+# Pull requests with unjustified disables will be rejected in code review

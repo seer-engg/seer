@@ -103,7 +103,7 @@ if config.is_cloud_mode:
     if not config.is_clerk_configured:
         raise ValueError("Cloud mode requires Clerk configuration. Set CLERK_JWKS_URL and CLERK_ISSUER environment variables.")
     logger.info("🔐 Cloud mode: Using Clerk authentication")
-    from api.middleware.auth import ClerkAuthMiddleware  # pylint: disable=ungrouped-imports
+    from api.middleware.auth import ClerkAuthMiddleware  # pylint: disable=ungrouped-imports # Reason: Conditional import after cloud mode check
 
     app.add_middleware(
         ClerkAuthMiddleware,

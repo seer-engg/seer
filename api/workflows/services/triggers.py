@@ -54,7 +54,7 @@ def _load_trigger_definition(trigger_key: str):
 def _validate_filters_payload(filters: Dict[str, Any], definition) -> None:
     if not filters:
         return
-    schema = definition.filter_schema
+    schema = definition.schemas.filter
     if not schema:
         return
     validator = Draft7Validator(schema)
@@ -403,7 +403,7 @@ async def create_trigger_subscription(
     provider_config = dict(payload.provider_config or {})
     _validate_filters_payload(filters, definition)
     _validate_bindings_against_workflow(
-        bindings, spec, definition.event_schema
+        bindings, spec, definition.schemas.event
     )
     secret = None
     if _should_emit_webhook_url(payload.trigger_key):
@@ -451,7 +451,7 @@ def _apply_subscription_updates(
         subscription.filters = new_filters
     if payload.bindings is not None:
         new_bindings = dict(payload.bindings or {})
-        _validate_bindings_against_workflow(new_bindings, spec, definition.event_schema)
+        _validate_bindings_against_workflow(new_bindings, spec, definition.schemas.event)
         subscription.bindings = new_bindings
     if payload.provider_connection_id is not None:
         subscription.provider_connection_id = payload.provider_connection_id
@@ -527,7 +527,7 @@ async def test_trigger_subscription(
     draft = subscription.workflow.draft or await WorkflowDraft.get(workflow=subscription.workflow)
     spec = WorkflowSpec.model_validate(draft.spec)
     definition = _load_trigger_definition(subscription.trigger_key)
-    event_payload = payload.event or definition.sample_event
+    event_payload = payload.event or definition.meta.sample_event
     if event_payload is None:
         _raise_problem(
             type_uri=VALIDATION_PROBLEM,
@@ -535,7 +535,7 @@ async def test_trigger_subscription(
             detail="Provide an event payload or configure a trigger sample.",
             status=400,
         )
-    _validate_event_payload(event_payload, definition.event_schema)
+    _validate_event_payload(event_payload, definition.schemas.event)
     try:
         resolved = _evaluate_bindings(dict(subscription.bindings or {}), event_payload)
     except ValueError as exc:

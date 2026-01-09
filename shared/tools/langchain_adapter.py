@@ -75,7 +75,7 @@ def base_tool_to_langchain_tool(base_tool: BaseTool, user: User) -> StructuredTo
     # Create input model from tool's parameter schema
     try:
         input_model = _create_input_model(base_tool)
-    except Exception:  # pylint: disable=broad-exception-caught # Adapter boundary: fail gracefully with fallback
+    except Exception:  # pylint: disable=broad-exception-caught # Reason: Adapter boundary; fail gracefully with fallback
         logger.warning("Failed to create input model for %s, using dict", base_tool.name)
         input_model = Dict[str, Any]
 
@@ -103,10 +103,12 @@ def base_tool_to_langchain_tool(base_tool: BaseTool, user: User) -> StructuredTo
 
             # Convert result to string for LangChain
             if isinstance(result, (dict, list)):
-                import json  # pylint: disable=import-outside-toplevel # Conditional import for JSON serialization
+                import json  # pylint: disable=import-outside-toplevel # Reason: Conditional import for JSON serialization
                 return json.dumps(result, indent=2)
             return str(result)
-        except Exception as e:  # pylint: disable=broad-exception-caught # LangChain adapter: must catch all to return error string
+        # pylint: disable=broad-exception-caught
+        # Reason: LangChain adapter boundary; convert all errors to user-friendly strings
+        except Exception as e:
             logger.exception("Tool execution failed: %s", e)
             return f"Error: {str(e)}"
 
@@ -132,7 +134,7 @@ def get_langchain_tools_from_registry(
     Returns:
         List of LangChain StructuredTool instances
     """
-    # pylint: disable=import-outside-toplevel # Avoid circular import with registry
+    # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with registry
     from shared.tools.registry import get_tools_by_integration
 
     tools_meta = get_tools_by_integration(integration_type)
@@ -140,7 +142,7 @@ def get_langchain_tools_from_registry(
 
     for tool_meta in tools_meta:
         tool_name = tool_meta["name"]
-        # pylint: disable=import-outside-toplevel # Avoid circular import with base
+        # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with base
         from shared.tools.base import get_tool
         base_tool = get_tool(tool_name)
 
