@@ -104,6 +104,7 @@ async def list_triggers() -> api_models.TriggerCatalogResponse:
             description=definition.description,
             event_schema=definition.event_schema,
             filter_schema=definition.filter_schema,
+            config_schema=definition.config_schema,
         )
         for definition in trigger_registry.all()
     ]

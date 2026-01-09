@@ -62,6 +62,7 @@ class TriggerDescriptor(BaseModel):
     description: Optional[str] = None
     event_schema: Dict[str, Any]
     filter_schema: Optional[Dict[str, Any]] = None
+    config_schema: Optional[Dict[str, Any]] = None
 
 
 class TriggerCatalogResponse(BaseModel):
