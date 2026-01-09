@@ -66,8 +66,6 @@ const config: Config = {
       contextualSearch: true,
       searchParameters: {},
       insights: true, // Enable search analytics
-      // AI-powered search assistant
-      // @ts-ignore - askAi is supported but not in type definitions yet
       askAi: 'wr254tv8zZQO',
     },
     navbar: {
