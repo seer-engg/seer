@@ -28,7 +28,8 @@ disable=
     broad-except,
     protected-access,
     fixme,
-    raise-missing-from
+    raise-missing-from,
+    import-error
 
 [MASTER]
 # Add files or directories to the blacklist
