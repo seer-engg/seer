@@ -1,8 +1,10 @@
 """Shared LocalToolHub singleton instance."""
 from typing import Optional
-from .local_core import LocalToolHub
+
 from shared.config import config
 from shared.logger import get_logger
+
+from .local_core import LocalToolHub
 
 logger = get_logger("shared.tool_hub.singleton")
 
@@ -28,7 +30,7 @@ def get_toolhub_instance() -> Optional[LocalToolHub]:
             )
             logger.info("✅ Shared LocalToolHub singleton initialized")
         except Exception as e:
-            logger.warning(f"LocalToolHub initialization failed: {e}")
+            logger.warning("LocalToolHub initialization failed: %s", e)
             return None
 
     return _TOOLHUB_INSTANCE

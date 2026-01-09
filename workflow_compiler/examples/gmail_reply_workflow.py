@@ -18,25 +18,23 @@ shared/database/models_oauth.py) and want to hit the Gmail API for real, set:
 from __future__ import annotations
 
 import asyncio
-import logging
 import json
+import logging
 from typing import Any, Dict, List
 
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from shared.database.models import User
-from workflow_compiler.runtime import WorkflowCompilerSingleton
-from workflow_compiler.registry.model_registry import ModelDefinition, ModelRegistry
-from workflow_compiler.registry.tool_registry import ToolDefinition, ToolRegistry
-from workflow_compiler.schema.models import JsonSchema
-
+from shared.tools.google.gmail import GmailCreateDraftTool, GmailReadTool
 from workflow_compiler.examples.gmail_common import (
     GmailDemoService,
     fetch_oauth_credentials,
 )
-from shared.tools.google.gmail import GmailCreateDraftTool, GmailReadTool
-
+from workflow_compiler.registry.model_registry import ModelDefinition, ModelRegistry
+from workflow_compiler.registry.tool_registry import ToolDefinition, ToolRegistry
+from workflow_compiler.runtime import WorkflowCompilerSingleton
+from workflow_compiler.schema.models import JsonSchema
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

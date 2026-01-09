@@ -4,11 +4,12 @@ Analytics middleware for automatic PostHog event flushing.
 Based on PostHog best practices for FastAPI:
 https://www.eliehamouche.com/blog/posthog-with-fastapi
 """
+import time
 from typing import Callable
+
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
-import time
 
 from shared.analytics import analytics
 from shared.config import config

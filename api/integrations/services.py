@@ -15,6 +15,7 @@ from shared.database.models_integrations import IntegrationResource, Integration
 from shared.database.models_oauth import OAuthConnection
 from shared.logger import get_logger
 from shared.tools.oauth_manager import get_oauth_token
+
 logger = get_logger("api.integrations.services")
 
 

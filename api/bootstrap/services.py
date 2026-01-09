@@ -4,16 +4,16 @@ Bootstrap service for parallel data fetching.
 Consolidates multiple API calls into a single endpoint with parallel processing.
 """
 import asyncio
-from typing import Dict, Any
 from datetime import datetime, timezone
+from typing import Any, Dict
 
-from shared.logger import get_logger
-from shared.database.models import User
+from api.models.router import list_models
 
 # Import existing service functions
 from api.tools.services import list_tools
-from api.models.router import list_models
 from api.workflows.services import list_node_types, list_workflows
+from shared.database.models import User
+from shared.logger import get_logger
 
 logger = get_logger("api.bootstrap.services")
 
@@ -24,7 +24,7 @@ async def _fetch_tools() -> Dict[str, Any]:
         result = await list_tools()
         return result.get("tools", [])
     except Exception as e:
-        logger.error(f"Error fetching tools: {e}", exc_info=True)
+        logger.error("Error fetching tools: %s", e, exc_info=True)
         return []
 
 
@@ -35,16 +35,18 @@ async def _fetch_models() -> list:
         # Convert Pydantic models to dicts
         return [model.model_dump() for model in models]
     except Exception as e:
-        logger.error(f"Error fetching models: {e}", exc_info=True)
+        logger.error("Error fetching models: %s", e, exc_info=True)
         return []
 
 
 async def _fetch_tools_status(user: User) -> list:
     """Fetch tools connection status. Returns empty list on error."""
     try:
-        from api.integrations.router import get_tools_connection_status
-        from fastapi import Request
         from unittest.mock import MagicMock
+
+        from fastapi import Request
+
+        from api.integrations.router import get_tools_connection_status
 
         # Create a mock request with the user
         mock_request = MagicMock(spec=Request)
@@ -53,16 +55,18 @@ async def _fetch_tools_status(user: User) -> list:
         result = await get_tools_connection_status(mock_request)
         return result.get("tools", [])
     except Exception as e:
-        logger.error(f"Error fetching tools status: {e}", exc_info=True)
+        logger.error("Error fetching tools status: %s", e, exc_info=True)
         return []
 
 
 async def _fetch_connections(user: User) -> list:
     """Fetch user connections. Returns empty list on error."""
     try:
-        from api.integrations.router import list_integrations
-        from fastapi import Request
         from unittest.mock import MagicMock
+
+        from fastapi import Request
+
+        from api.integrations.router import list_integrations
 
         # Create a mock request with the user
         mock_request = MagicMock(spec=Request)
@@ -71,7 +75,7 @@ async def _fetch_connections(user: User) -> list:
         result = await list_integrations(mock_request)
         return result.get("items", [])
     except Exception as e:
-        logger.error(f"Error fetching connections: {e}", exc_info=True)
+        logger.error("Error fetching connections: %s", e, exc_info=True)
         return []
 
 
@@ -84,7 +88,7 @@ async def _fetch_node_types() -> Dict[str, Any]:
             return result.model_dump()
         return result if isinstance(result, dict) else {}
     except Exception as e:
-        logger.error(f"Error fetching node types: {e}", exc_info=True)
+        logger.error("Error fetching node types: %s", e, exc_info=True)
         return {}
 
 
@@ -97,7 +101,7 @@ async def _fetch_workflows(user: User) -> Dict[str, Any]:
             return result.model_dump()
         return result if isinstance(result, dict) else {"items": [], "next_cursor": None}
     except Exception as e:
-        logger.error(f"Error fetching workflows: {e}", exc_info=True)
+        logger.error("Error fetching workflows: %s", e, exc_info=True)
         return {"items": [], "next_cursor": None}
 
 
@@ -107,7 +111,7 @@ async def _fetch_connections_raw(user: User) -> list:
         from api.integrations.services import list_connections
         return await list_connections(user)
     except Exception as e:
-        logger.error(f"Error fetching raw connections: {e}", exc_info=True)
+        logger.error("Error fetching raw connections: %s", e, exc_info=True)
         return []
 
 
@@ -191,8 +195,12 @@ def _build_tool_status_result(tool, conn_info, required_scopes, has_required_sco
 async def _build_tools_status_from_connections(connections: list) -> list:
     """Build tools status using pre-fetched connections to avoid duplicate DB query."""
     try:
+        from api.integrations.services import (
+            get_oauth_provider,
+            has_required_scopes,
+            parse_scopes,
+        )
         from shared.tools.base import list_tools as get_all_tools
-        from api.integrations.services import has_required_scopes, get_oauth_provider, parse_scopes
 
         provider_connections = _build_provider_connections_map(connections)
         all_tools = get_all_tools()
@@ -251,7 +259,7 @@ async def _build_tools_status_from_connections(connections: list) -> list:
 
         return results
     except Exception as e:
-        logger.error(f"Error building tools status: {e}", exc_info=True)
+        logger.error("Error building tools status: %s", e, exc_info=True)
         return []
 
 
@@ -277,7 +285,7 @@ async def _format_connections(connections: list, user: User) -> list:
             })
         return res
     except Exception as e:
-        logger.error(f"Error formatting connections: {e}", exc_info=True)
+        logger.error("Error formatting connections: %s", e, exc_info=True)
         return []
 
 
@@ -327,10 +335,10 @@ async def fetch_bootstrap_data(user: User) -> Dict[str, Any]:
 
     # Handle errors
     if isinstance(tools_status, Exception):
-        logger.error(f"Error in tools_status: {tools_status}")
+        logger.error("Error in tools_status: %s", tools_status)
         tools_status = []
     if isinstance(connections, Exception):
-        logger.error(f"Error in connections: {connections}")
+        logger.error("Error in connections: %s", connections)
         connections = []
 
     return {

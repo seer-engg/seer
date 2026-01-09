@@ -7,15 +7,21 @@ between top-level and nested blocks.
 
 from __future__ import annotations
 
-import logging
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Sequence
 
 from langgraph._internal._runnable import RunnableCallable
+
 from workflow_compiler.errors import ExecutionError
-from workflow_compiler.expr.evaluator import EvaluationContext, evaluate_condition, evaluate_value, render_template
+from workflow_compiler.expr.evaluator import (
+    EvaluationContext,
+    evaluate_condition,
+    evaluate_value,
+    render_template,
+)
 from workflow_compiler.expr.typecheck import TypeEnvironment
 from workflow_compiler.registry.model_registry import ModelRegistry
 from workflow_compiler.registry.tool_registry import ToolRegistry

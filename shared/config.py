@@ -10,7 +10,8 @@ Usage:
     if score >= config.eval_pass_threshold:
         ...
 """
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
+
 from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 

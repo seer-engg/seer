@@ -1,12 +1,15 @@
 """
 Agent Traces API - List and detail endpoints for agent conversation traces.
 """
-from typing import Optional, Dict, Any, List
 from datetime import datetime
-from fastapi import APIRouter, Request, HTTPException, Query
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from shared.logger import get_logger
+
 from shared.database.workflow_models import Workflow, parse_workflow_public_id
+from shared.logger import get_logger
+
 from .checkpointer import get_checkpointer
 
 logger = get_logger("api.agents.traces")

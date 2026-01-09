@@ -18,16 +18,16 @@ import os
 from typing import Any, Dict
 
 from langchain_openai import ChatOpenAI
+from tortoise import Tortoise
 
+from shared.database.config import TORTOISE_ORM
 from shared.database.models import User
-from workflow_compiler.runtime import WorkflowCompilerSingleton
+from shared.tools.google.gmail import GmailReadTool
 from workflow_compiler.examples.gmail_common import GmailDemoService
 from workflow_compiler.registry.model_registry import ModelDefinition, ModelRegistry
 from workflow_compiler.registry.tool_registry import ToolDefinition, ToolRegistry
+from workflow_compiler.runtime import WorkflowCompilerSingleton
 from workflow_compiler.schema.models import JsonSchema
-from shared.tools.google.gmail import GmailReadTool
-from shared.database.config import TORTOISE_ORM
-from tortoise import Tortoise
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

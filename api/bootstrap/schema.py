@@ -4,7 +4,8 @@ Bootstrap endpoint schemas.
 This module defines the response types for the /api/bootstrap endpoint,
 which consolidates multiple API calls into a single request.
 """
-from typing import List, Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List
 
+from api.agents.checkpointer import get_checkpointer
 from api.workflows import models as api_models
 from api.workflows.services.shared import (
     COMPILE_PROBLEM,
@@ -11,13 +12,12 @@ from api.workflows.services.shared import (
     _raise_problem,
     _spec_to_dict,
 )
-from api.agents.checkpointer import get_checkpointer
 from shared.config import config as shared_config
 from shared.database.models import User
 from shared.tools.base import list_tools as registry_list_tools
 from workflow_compiler.errors import WorkflowCompilerError
-from workflow_compiler.runtime.global_compiler import WorkflowCompilerSingleton
 from workflow_compiler.registry.trigger_registry import trigger_registry
+from workflow_compiler.runtime.global_compiler import WorkflowCompilerSingleton
 from workflow_compiler.schema.models import (
     ForEachNode,
     IfNode,
@@ -153,9 +153,11 @@ async def generate_schema_metadata(
     Returns:
         Generated title and description
     """
-    from shared.llm import get_llm
-    from langchain_core.messages import SystemMessage, HumanMessage
     import json
+
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    from shared.llm import get_llm
 
     # Extract field information
     schema = payload.json_schema

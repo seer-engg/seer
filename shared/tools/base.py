@@ -29,7 +29,8 @@ The frontend will detect `x-resource-picker` and render a ResourcePicker compone
 that calls /api/integrations/{provider}/resources/{resource_type} to list resources.
 """
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Set, TypedDict, NotRequired
+from typing import Any, Dict, List, NotRequired, Optional, Set, TypedDict
+
 from shared.logger import get_logger
 
 logger = get_logger("shared.tools.base")
@@ -228,7 +229,7 @@ def register_tool(tool: BaseTool) -> None:
         if _TOOL_REGISTRY[tool.name] is tool:
             return  # Already registered, skip silently
         # Different instance - this shouldn't happen, but log if it does
-        logger.debug(f"Tool '{tool.name}' already registered with different instance. Skipping.")
+        logger.debug("Tool '%s' already registered with different instance. Skipping.", tool.name)
         return
     _TOOL_REGISTRY[tool.name] = tool
 

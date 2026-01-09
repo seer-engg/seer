@@ -1,12 +1,16 @@
+import base64
 from typing import Any, Dict, Optional
 
-import base64
 import httpx
 from fastapi import HTTPException
 
 from shared.logger import get_logger
 from shared.tools.base import BaseTool, ResourcePickerConfig
-from shared.tools.supabase.common import _require_project_and_key, _resolve_storage_url, _service_headers
+from shared.tools.supabase.common import (
+    _require_project_and_key,
+    _resolve_storage_url,
+    _service_headers,
+)
 
 logger = get_logger("shared.tools.supabase.storage")
 

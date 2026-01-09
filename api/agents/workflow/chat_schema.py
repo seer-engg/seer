@@ -1,11 +1,13 @@
 """
 Pydantic schemas for workflow chat assistant.
 """
-from typing import Optional, Dict, Any, List
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
 
 from shared.database.models import UserPublic
+
 from .models import WorkflowProposalPublic
 
 

@@ -8,7 +8,6 @@ from shared.database.models import User
 from shared.database.models_oauth import OAuthConnection
 from shared.database.workflow_models import TriggerSubscription
 
-
 JsonDict = Dict[str, Any]
 
 

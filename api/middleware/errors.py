@@ -12,7 +12,6 @@ from fastapi import HTTPException
 
 from api.workflows import models as api_models
 
-
 # Error type URIs
 PROBLEM_BASE = "https://seer.errors"
 VALIDATION_PROBLEM = f"{PROBLEM_BASE}/validation"

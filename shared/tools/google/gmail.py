@@ -1,4 +1,19 @@
 from __future__ import annotations
+
+import base64
+import copy
+import email.utils
+import json
+import re
+from email.message import EmailMessage
+from typing import Any, Dict, List, Optional
+
+import httpx
+from fastapi import HTTPException
+
+from shared.logger import get_logger
+from shared.tools.base import BaseTool
+
 """
 Gmail tools using direct HTTP API calls (no google-auth).
 
@@ -10,19 +25,6 @@ Official refs:
 
 Uses Gmail REST API with OAuth tokens - no google-auth library.
 """
-import base64
-import copy
-import email.utils
-from email.message import EmailMessage
-import json
-import re
-from typing import Any, Dict, List, Optional
-
-import httpx
-from fastapi import HTTPException
-
-from shared.tools.base import BaseTool
-from shared.logger import get_logger
 
 logger = get_logger("shared.tools.gmail")
 
@@ -119,15 +121,15 @@ class GmailReadTool(BaseTool):
             try:
                 return min(int(value), 100)
             except ValueError:
-                logger.warning(f"Invalid max_results '{value}', using default 10")
+                logger.warning("Invalid max_results '%s', using default 10", value)
                 return 10
         if isinstance(value, dict):
             result = self._extract_from_dict(value)
             if result is not None:
                 return result
-            logger.warning(f"Could not extract value from dict '{value}', using default 10")
+            logger.warning("Could not extract value from dict '%s', using default 10", value)
             return 10
-        logger.warning(f"Unexpected type {type(value).__name__}, using default 10")
+        logger.warning("Unexpected type %s, using default 10", type(value).__name__)
         return 10
 
     def _extract_body(self, payload: Dict[str, Any]) -> str:
@@ -205,7 +207,7 @@ class GmailReadTool(BaseTool):
         )
 
         if msg_response.status_code == 404:
-            logger.warning(f"Message {msg_id} not found, skipping")
+            logger.warning("Message %s not found, skipping", msg_id)
             return None
 
         msg_response.raise_for_status()
@@ -246,14 +248,14 @@ class GmailReadTool(BaseTool):
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                logger.info(f"Fetching Gmail messages: max_results={max_results}, label_ids={label_ids}, q={query}")
+                logger.info("Fetching Gmail messages: max_results=%s, label_ids=%s, q=%s", max_results, label_ids, query)
 
                 messages = await self._fetch_message_list(client, headers, params)
                 if not messages:
                     logger.info("No messages found matching criteria")
                     return []
 
-                logger.info(f"Found {len(messages)} messages, fetching details...")
+                logger.info("Found %s messages, fetching details...", len(messages))
 
                 results = []
                 for msg in messages[:max_results]:
@@ -262,11 +264,11 @@ class GmailReadTool(BaseTool):
                         email_obj = self._build_email_object(msg_data, include_body)
                         results.append(email_obj)
 
-                logger.info(f"Successfully fetched {len(results)} email details")
+                logger.info("Successfully fetched %s email details", len(results))
                 return results
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"Gmail API error: {e.response.status_code} - {e.response.text[:500]}")
+            logger.error("Gmail API error: %s - %s", e.response.status_code, e.response.text[:500])
             raise HTTPException(
                 status_code=e.response.status_code,
                 detail=f"Gmail API error: {e.response.text[:500]}"
@@ -278,7 +280,7 @@ class GmailReadTool(BaseTool):
                 detail="Gmail API request timed out"
             )
         except Exception as e:
-            logger.exception(f"Unexpected error reading Gmail: {e}")
+            logger.exception("Unexpected error reading Gmail: %s", e)
             raise HTTPException(
                 status_code=500,
                 detail=f"Error reading Gmail: {str(e)}"
@@ -482,7 +484,7 @@ def _decode_attachment_data(data_b64: str, filename: str) -> Optional[bytes]:
         try:
             return _b64url_decode(str(data_b64))
         except Exception:
-            logger.warning(f"Attachment '{filename}' has invalid base64; skipping")
+            logger.warning("Attachment '%s' has invalid base64; skipping", filename)
             return None
 
 
@@ -643,12 +645,12 @@ class GmailSendEmailTool(BaseTool):
             body["threadId"] = str(thread_id)
 
         try:
-            logger.info(f"Sending Gmail email to={to} subject='{subject[:80]}'")
+            logger.info("Sending Gmail email to=%s subject='%s'", to, subject[:80])
             resp = await _gmail_request(token, "POST", f"{GMAIL_API_BASE}/messages/send", json_body=body)
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPStatusError as e:
-            logger.error(f"Gmail send error: {e.response.status_code} - {e.response.text[:500]}")
+            logger.error("Gmail send error: %s - %s", e.response.status_code, e.response.text[:500])
             raise HTTPException(status_code=e.response.status_code, detail=f"Gmail API error: {e.response.text[:500]}")
         except httpx.TimeoutException:
             raise HTTPException(status_code=504, detail="Gmail API request timed out")
@@ -730,7 +732,7 @@ class GmailGetMessageTool(BaseTool):
 
             return data
         except httpx.HTTPStatusError as e:
-            logger.error(f"Gmail get message error: {e.response.status_code} - {e.response.text[:500]}")
+            logger.error("Gmail get message error: %s - %s", e.response.status_code, e.response.text[:500])
             raise HTTPException(status_code=e.response.status_code, detail=f"Gmail API error: {e.response.text[:500]}")
         except httpx.TimeoutException:
             raise HTTPException(status_code=504, detail="Gmail API request timed out")
@@ -781,7 +783,7 @@ class GmailModifyMessageLabelsTool(BaseTool):
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPStatusError as e:
-            logger.error(f"Gmail modify labels error: {e.response.status_code} - {e.response.text[:500]}")
+            logger.error("Gmail modify labels error: %s - %s", e.response.status_code, e.response.text[:500])
             raise HTTPException(status_code=e.response.status_code, detail=f"Gmail API error: {e.response.text[:500]}")
         except httpx.TimeoutException:
             raise HTTPException(status_code=504, detail="Gmail API request timed out")
@@ -1039,11 +1041,14 @@ class GmailCreateDraftTool(BaseTool):
             return resp.json()
         except httpx.HTTPStatusError as e:
             logger.error(
-                f"input: to {to}, subject {subject}, body_text {body_text}, body_html {body_html}, "
-                f"cc {cc}, bcc {bcc}, from_email {from_email}, reply_to {reply_to}, "
-                f"in_reply_to {in_reply_to}, references {references}, attachments {attachments}"
+                "input: to %s, subject %s, body_text %s, body_html %s, "
+                "cc %s, bcc %s, from_email %s, reply_to %s, "
+                "in_reply_to %s, references %s, attachments %s",
+                to, subject, body_text, body_html,
+                cc, bcc, from_email, reply_to,
+                in_reply_to, references, attachments
             )
-            logger.error(f"Gmail create draft error: {e.response.status_code} - {e.response.text[:500]}")
+            logger.error("Gmail create draft error: %s - %s", e.response.status_code, e.response.text[:500])
             raise HTTPException(status_code=e.response.status_code, detail=f"Gmail API error: {e.response.text[:500]}")
         except httpx.TimeoutException:
             raise HTTPException(status_code=504, detail="Gmail API request timed out")

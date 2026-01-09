@@ -7,12 +7,12 @@ from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
 
+from shared.analytics import analytics
+from shared.config import config
 from shared.database.models import User
 from shared.logger import get_logger
 from shared.tools.base import get_tool
 from shared.tools.credential_resolver import CredentialResolver, ResolvedCredentials
-from shared.analytics import analytics
-from shared.config import config
 
 logger = get_logger("shared.tools.executor")
 
@@ -62,9 +62,9 @@ async def execute_tool(
     error_type = None
 
     try:
-        logger.info(f"Executing tool '{tool_name}' for user {user.user_id}")
+        logger.info("Executing tool '%s' for user {user.user_id}", tool_name)
         result = await _execute_with_optional_credentials(tool, resolved, arguments or {})
-        logger.info(f"Tool '{tool_name}' executed successfully")
+        logger.info("Tool '%s' executed successfully", tool_name)
         return result
     except HTTPException:
         success = False
@@ -73,7 +73,7 @@ async def execute_tool(
     except Exception as e:
         success = False
         error_type = type(e).__name__
-        logger.exception(f"Tool execution failed: {e}")
+        logger.exception("Tool execution failed: %s", e)
         raise HTTPException(
             status_code=500,
             detail=f"Tool execution failed: {str(e)}"

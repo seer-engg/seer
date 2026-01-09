@@ -1,9 +1,11 @@
 """Shared LLM utilities"""
-from typing import Optional, Literal
-from langchain_openai import ChatOpenAI
+from typing import Literal, Optional
+
+from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
-from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
+
 from shared.config import config
 
 load_dotenv()
@@ -13,11 +15,10 @@ def _detect_provider(model: str) -> Literal["openai", "anthropic"]:
     """Detect provider from model name."""
     if model.startswith(("gpt-", "o3-")):
         return "openai"
-    elif model.startswith("claude-"):
+    if model.startswith("claude-"):
         return "anthropic"
-    else:
-        # Default to OpenAI for backward compatibility
-        return "openai"
+    # Default to OpenAI for backward compatibility
+    return "openai"
 
 
 def get_llm(
@@ -65,7 +66,7 @@ def get_llm(
 
         return ChatOpenAI(**kwargs)
 
-    elif provider == "anthropic":
+    if provider == "anthropic":
         if api_key is None:
             api_key = config.anthropic_api_key
         if api_key is None or api_key == "":
@@ -77,8 +78,7 @@ def get_llm(
             temperature=temperature,
         )
 
-    else:
-        raise ValueError(f"Unsupported provider for model: {model}")
+    raise ValueError(f"Unsupported provider for model: {model}")
 
 
 async def get_agent_final_respone(result: dict) -> str:

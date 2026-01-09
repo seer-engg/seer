@@ -10,10 +10,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from shared.database.models import UserPublic
 
-
 # ============================================================================
 # Pydantic Models for API
 # ============================================================================
+
 
 class WorkflowBase(BaseModel):
     """Shared attributes for create/update."""

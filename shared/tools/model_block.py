@@ -3,14 +3,15 @@ Model block tool for running LLM inference.
 
 Uses LangChain/LangGraph to run model inference with optional structured output.
 """
-from typing import Any, Dict, Optional
 import json
-from fastapi import HTTPException
+from typing import Any, Dict, Optional
 
-from shared.tools.base import BaseTool, register_tool
+from fastapi import HTTPException
+from langchain_core.messages import HumanMessage
+
 from shared.llm import get_llm
 from shared.logger import get_logger
-from langchain_core.messages import HumanMessage
+from shared.tools.base import BaseTool, register_tool
 
 logger = get_logger("shared.tools.model_block")
 
@@ -124,7 +125,7 @@ class ModelBlockTool(BaseTool):
                         "structured_output": structured_output
                     }
                 except Exception as e:
-                    logger.warning(f"Structured output failed, falling back to text: {e}")
+                    logger.warning("Structured output failed, falling back to text: %s", e)
                     # Fall back to regular text generation
                     result = llm.invoke(messages)
                     output_text = result.content if hasattr(result, "content") else str(result)
@@ -134,7 +135,7 @@ class ModelBlockTool(BaseTool):
                     }
             else:
                 # Regular text generation
-                logger.info(f"Running model inference: model={model_name or 'default'}, temperature={temperature}")
+                logger.info("Running model inference: model=%s, temperature={temperature}", model_name or 'default')
                 result = llm.invoke(messages)
                 output_text = result.content if hasattr(result, "content") else str(result)
 
@@ -145,13 +146,13 @@ class ModelBlockTool(BaseTool):
 
         except ValueError as e:
             # Likely missing API key
-            logger.error(f"Model execution error: {e}")
+            logger.error("Model execution error: %s", e)
             raise HTTPException(
                 status_code=500,
                 detail=f"Model execution failed: {str(e)}"
             )
         except Exception as e:
-            logger.exception(f"Unexpected error in model block: {e}")
+            logger.exception("Unexpected error in model block: %s", e)
             raise HTTPException(
                 status_code=500,
                 detail=f"Model execution error: {str(e)}"

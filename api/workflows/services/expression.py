@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-
-from api.workflows import models as api_models
-from api.workflows.services.shared import VALIDATION_PROBLEM, _raise_problem, _spec_to_dict
 from api.agents.checkpointer import get_checkpointer
+from api.workflows import models as api_models
+from api.workflows.services.shared import (
+    VALIDATION_PROBLEM,
+    _raise_problem,
+    _spec_to_dict,
+)
 from shared.database.models import User
 from workflow_compiler.errors import ValidationPhaseError
 from workflow_compiler.expr import parser as expr_parser

@@ -10,19 +10,19 @@ from typing import Any, Dict, Optional
 
 from starlette.exceptions import HTTPException
 
+from api.agents.checkpointer import get_checkpointer
 from api.workflows import models as api_models
 from api.workflows.services.shared import (
     COMPILE_PROBLEM,
     RUN_PROBLEM,
     _build_run_config,
     _compile_workflow,
+    _get_workflow,
+    _hash_spec,
     _now,
     _raise_problem,
     _spec_to_dict,
-    _hash_spec,
-    _get_workflow
 )
-from api.agents.checkpointer import get_checkpointer
 from shared.analytics import analytics
 from shared.config import config as shared_config
 from shared.database.models import User
@@ -209,7 +209,8 @@ async def _execute_compiled_run(
         )
         effective_config = _build_run_config(run, run_config)
         logger.info(
-            f"Executing workflow run '{run.run_id}' with config: {effective_config}",
+            "Executing workflow run '%s' with config: %s",
+            run.run_id, effective_config,
             extra={"run_id": run.run_id, "config": effective_config}
         )
         result = await compiled.ainvoke(inputs or {}, config=effective_config)

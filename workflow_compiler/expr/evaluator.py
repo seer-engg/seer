@@ -10,7 +10,13 @@ from dataclasses import dataclass, replace
 from typing import Any, Dict, Iterable, Mapping
 
 from workflow_compiler.expr import parser
-from workflow_compiler.expr.parser import IndexSegment, PropertySegment, ReferenceExpr, TemplateLiteral, TemplateReference
+from workflow_compiler.expr.parser import (
+    IndexSegment,
+    PropertySegment,
+    ReferenceExpr,
+    TemplateLiteral,
+    TemplateReference,
+)
 from workflow_compiler.schema.models import JSONValue
 
 

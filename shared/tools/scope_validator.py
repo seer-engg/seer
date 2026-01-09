@@ -4,6 +4,7 @@ Scope validation utilities for OAuth connections.
 Validates that an OAuth connection has the required scopes for tool execution.
 """
 from typing import List, Optional
+
 from shared.database.models_oauth import OAuthConnection
 from shared.logger import get_logger
 
@@ -29,7 +30,7 @@ def validate_scope(connection: OAuthConnection, required_scope: str) -> bool:
         - For Google APIs, full URL scopes are required for exact match
     """
     if not connection.scopes:
-        logger.warning(f"Connection {connection.id} has no scopes stored")
+        logger.warning("Connection %s has no scopes stored", connection.id)
         return False
 
     granted_scopes = connection.scopes.strip()
@@ -64,8 +65,8 @@ def validate_scope(connection: OAuthConnection, required_scope: str) -> bool:
                 return True
 
     logger.warning(
-        f"Connection {connection.id} missing required scope '{required_scope}'. "
-        f"Granted scopes: {granted_scopes}"
+        "Connection %s missing required scope '%s'. Granted scopes: %s",
+        connection.id, required_scope, granted_scopes
     )
     return False
 

@@ -1,13 +1,14 @@
 """API router for the Seer Agents API."""
 from fastapi import APIRouter
+
 from .agents.traces import router as agents_traces_router
+from .agents.workflow.router import router as workflow_agent_router
+from .bootstrap.router import router as bootstrap_router
+from .forms.router import router as forms_router
 from .integrations.router import router as integrations_router
 from .models.router import router as models_router
-from .workflows.router import router as workflows_router
 from .webhooks.router import router as webhooks_router
-from .agents.workflow.router import router as workflow_agent_router
-from .forms.router import router as forms_router
-from .bootstrap.router import router as bootstrap_router
+from .workflows.router import router as workflows_router
 
 router = APIRouter(prefix="/api")
 router.include_router(agents_traces_router)

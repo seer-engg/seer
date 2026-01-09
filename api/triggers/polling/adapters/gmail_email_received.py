@@ -10,8 +10,8 @@ from api.triggers.polling.adapters.base import (
     PollAdapter,
     PollAdapterError,
     PollContext,
-    PollResult,
     PolledEvent,
+    PollResult,
     register_adapter,
 )
 from shared.logger import get_logger

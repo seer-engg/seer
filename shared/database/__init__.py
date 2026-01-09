@@ -6,18 +6,18 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from tortoise import Tortoise
 
-from shared.logger import get_logger
 from shared.database.config import TORTOISE_ORM
+from shared.database.models_integrations import IntegrationResource, IntegrationSecret
 from shared.database.workflow_models import (
     Workflow,
-    WorkflowDraft,
-    WorkflowVersion,
-    WorkflowRun,
-    WorkflowChatSession,
     WorkflowChatMessage,
+    WorkflowChatSession,
+    WorkflowDraft,
     WorkflowProposal,
+    WorkflowRun,
+    WorkflowVersion,
 )
-from shared.database.models_integrations import IntegrationResource, IntegrationSecret
+from shared.logger import get_logger
 
 logger = get_logger("shared.database")
 

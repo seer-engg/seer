@@ -8,7 +8,12 @@ from __future__ import annotations
 
 from typing import Dict, MutableMapping
 
-from workflow_compiler.schema.models import InlineSchema, JsonSchema, SchemaRef, SchemaSpec
+from workflow_compiler.schema.models import (
+    InlineSchema,
+    JsonSchema,
+    SchemaRef,
+    SchemaSpec,
+)
 
 
 class SchemaNotFoundError(KeyError):

@@ -8,20 +8,21 @@ Provides REST API endpoints for:
 Usage:
     uvicorn api.main:app --host 0.0.0.0 --port 2024 --reload
 """
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
-import os
-from shared.logger import get_logger
-from shared.config import config
-from shared.analytics import analytics
+
+from api.agents.checkpointer import checkpointer_lifespan
 from api.router import router
 from api.tools.router import router as tools_router
-from api.agents.checkpointer import checkpointer_lifespan
+from shared.analytics import analytics
+from shared.config import config
 from shared.database import db_lifespan
+from shared.logger import get_logger
 
 # Import tools to register them
 # Note: model_block removed - use LLM block in workflows instead
@@ -29,12 +30,40 @@ from shared.database import db_lifespan
 logger = get_logger("api.main")
 
 
+async def initialize_tool_index(app: FastAPI) -> None:
+    """Initialize tool index in background if enabled."""
+    if not config.tool_index_auto_generate:
+        return
+
+    try:
+        import asyncio
+
+        from shared.tool_hub.index_manager import ensure_tool_index_exists
+
+        async def init_tool_index():
+            try:
+                toolhub = await ensure_tool_index_exists(
+                    auto_generate=config.tool_index_auto_generate
+                )
+                if toolhub:
+                    from shared.tool_hub.singleton import set_toolhub_instance
+                    set_toolhub_instance(toolhub)
+                    logger.info("✅ Tool index initialized")
+                else:
+                    logger.warning("⚠️ Tool index initialization skipped or failed")
+            except Exception as e:
+                logger.error("Error initializing tool index: %s", e, exc_info=True)
+
+        task = asyncio.create_task(init_tool_index())
+        app.state.tool_index_init_task = task
+    except Exception as e:
+        logger.warning("Could not initialize tool index: %s. Tool search may not work.", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
     logger.info("🚀 Starting Seer API server...")
-
-    # Initialize PostHog analytics
     analytics.initialize()
 
     async with db_lifespan(app):
@@ -43,40 +72,11 @@ async def lifespan(app: FastAPI):
             if checkpointer is not None:
                 app.state.checkpointer = checkpointer
             logger.info("✅ Checkpointer initialized")
-            if config.trigger_poller_enabled:
-                logger.info("Trigger poller enabled – handled by Taskiq worker")
-            else:
-                logger.info("⏸ Trigger poller disabled via configuration")
 
-            # Initialize tool index (non-blocking)
-            if config.tool_index_auto_generate:
-                try:
-                    from shared.tool_hub.index_manager import ensure_tool_index_exists
-                    import asyncio
+            trigger_status = "enabled – handled by Taskiq worker" if config.trigger_poller_enabled else "disabled via configuration"
+            logger.info("Trigger poller %s", trigger_status)
 
-                    # Run index initialization in background to not block startup
-                    async def init_tool_index():
-                        try:
-                            toolhub = await ensure_tool_index_exists(
-                                auto_generate=config.tool_index_auto_generate
-                            )
-                            if toolhub:
-                                # Pre-populate the shared singleton with the initialized instance
-                                from shared.tool_hub.singleton import set_toolhub_instance
-                                set_toolhub_instance(toolhub)
-                                logger.info("✅ Tool index initialized")
-                            else:
-                                logger.warning("⚠️ Tool index initialization skipped or failed")
-                        except Exception as e:
-                            logger.error(f"Error initializing tool index: {e}", exc_info=True)
-
-                    # Start index initialization as background task (don't await to not block startup)
-                    # The task will run in the background
-                    task = asyncio.create_task(init_tool_index())
-                    # Store task reference to prevent garbage collection
-                    app.state.tool_index_init_task = task
-                except Exception as e:
-                    logger.warning(f"Could not initialize tool index: {e}. Tool search may not work.")
+            await initialize_tool_index(app)
 
             try:
                 yield
@@ -84,9 +84,7 @@ async def lifespan(app: FastAPI):
                 if hasattr(app.state, "checkpointer"):
                     delattr(app.state, "checkpointer")
 
-    # Shutdown PostHog on app shutdown
     analytics.shutdown()
-
     logger.info("👋 Seer API server shutting down...")
 
 
@@ -105,7 +103,7 @@ if config.is_cloud_mode:
     if not config.is_clerk_configured:
         raise ValueError("Cloud mode requires Clerk configuration. Set CLERK_JWKS_URL and CLERK_ISSUER environment variables.")
     logger.info("🔐 Cloud mode: Using Clerk authentication")
-    from api.middleware.auth import ClerkAuthMiddleware
+    from api.middleware.auth import ClerkAuthMiddleware  # pylint: disable=ungrouped-imports
 
     app.add_middleware(
         ClerkAuthMiddleware,
@@ -149,7 +147,7 @@ if config.is_posthog_configured:
 async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler that ensures CORS headers are included."""
     error_logger = get_logger("api.main.errors")
-    error_logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    error_logger.error("Unhandled exception: %s", exc, exc_info=True)
 
     # Create error response with CORS headers
     response = JSONResponse(

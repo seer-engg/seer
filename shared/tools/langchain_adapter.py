@@ -2,11 +2,13 @@
 Adapter to convert BaseTool instances to LangChain tools.
 """
 from typing import Any, Dict, Optional
+
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, create_model
+
+from shared.logger import get_logger
 from shared.tools.base import BaseTool
 from shared.tools.executor import execute_tool
-from shared.logger import get_logger
 
 logger = get_logger("shared.tools.langchain_adapter")
 
@@ -72,8 +74,8 @@ def base_tool_to_langchain_tool(base_tool: BaseTool, user_id: str) -> Structured
     # Create input model from tool's parameter schema
     try:
         input_model = _create_input_model(base_tool)
-    except Exception as e:
-        logger.warning(f"Failed to create input model for {base_tool.name}, using dict: {e}")
+    except Exception:
+        logger.warning("Failed to create input model for %s, using dict", base_tool.name)
         input_model = Dict[str, Any]
 
     async def tool_func(**kwargs) -> str:
@@ -104,7 +106,7 @@ def base_tool_to_langchain_tool(base_tool: BaseTool, user_id: str) -> Structured
                 return json.dumps(result, indent=2)
             return str(result)
         except Exception as e:
-            logger.exception(f"Tool execution failed: {e}")
+            logger.exception("Tool execution failed: %s", e)
             return f"Error: {str(e)}"
 
     # Create LangChain tool
@@ -141,6 +143,6 @@ def get_langchain_tools_from_registry(user_id: str, integration_type: Optional[s
             langchain_tool = base_tool_to_langchain_tool(base_tool, user_id)
             langchain_tools.append(langchain_tool)
         else:
-            logger.warning(f"Tool {tool_name} not found in registry")
+            logger.warning("Tool %s not found in registry", tool_name)
 
     return langchain_tools

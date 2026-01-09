@@ -5,8 +5,8 @@ recursive discovery of references inside arbitrary JSON values.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from typing import Iterable, Iterator, List, Sequence
 
 from workflow_compiler.schema.models import JSONValue

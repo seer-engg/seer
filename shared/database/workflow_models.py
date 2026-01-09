@@ -3,7 +3,6 @@ from enum import Enum
 
 from tortoise import fields, models
 
-
 WORKFLOW_ID_PREFIX = "wf_"
 RUN_ID_PREFIX = "run_"
 

@@ -6,15 +6,14 @@ import json
 from typing import Any, Dict, Optional
 
 from tortoise.exceptions import DoesNotExist
-from workflow_compiler.schema.models import WorkflowSpec
 
 from api.workflows import models as api_models
 from api.workflows.services.shared import (
     VALIDATION_PROBLEM,
+    _get_workflow,
     _now,
     _raise_problem,
     _spec_to_dict,
-    _get_workflow
 )
 from shared.database.models import User
 from shared.database.workflow_models import (
@@ -24,6 +23,7 @@ from shared.database.workflow_models import (
     WorkflowVersionStatus,
     parse_workflow_public_id,
 )
+from workflow_compiler.schema.models import WorkflowSpec
 
 # ===== Helper Functions =====
 
@@ -434,8 +434,9 @@ async def import_workflow(
     """
     Import workflow from exported JSON.
     """
-    from shared.database.workflow_models import TriggerSubscription
     from pydantic import ValidationError
+
+    from shared.database.workflow_models import TriggerSubscription
 
     import_data = payload.import_data
 

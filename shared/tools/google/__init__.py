@@ -1,39 +1,38 @@
+from shared.tools.base import register_tool
+from shared.tools.google.gdrive import (
+    GoogleDriveAboutGetTool,
+    GoogleDriveCreateFolderTool,
+    GoogleDriveCreatePermissionTool,
+    GoogleDriveDeleteFileTool,
+    GoogleDriveDownloadFileTool,
+    GoogleDriveGetFileMetadataTool,
+    GoogleDriveListFilesTool,
+    GoogleDriveUpdateFileTool,
+    GoogleDriveUploadFileTool,
+)
 from shared.tools.google.gmail import (
-    GmailReadTool,
-    GmailSendEmailTool,
-    GmailGetMessageTool,
-    GmailModifyMessageLabelsTool,
-    GmailTrashMessageTool,
-    GmailDeleteMessageTool,
-    GmailListThreadsTool,
-    GmailGetThreadTool,
     GmailCreateDraftTool,
-    GmailListDraftsTool,
-    GmailGetDraftTool,
-    GmailSendDraftTool,
-    GmailDeleteDraftTool,
-    GmailListLabelsTool,
     GmailCreateLabelTool,
+    GmailDeleteDraftTool,
     GmailDeleteLabelTool,
+    GmailDeleteMessageTool,
     GmailGetAttachmentTool,
+    GmailGetDraftTool,
+    GmailGetMessageTool,
+    GmailGetThreadTool,
+    GmailListDraftsTool,
+    GmailListLabelsTool,
+    GmailListThreadsTool,
+    GmailModifyMessageLabelsTool,
+    GmailReadTool,
+    GmailSendDraftTool,
+    GmailSendEmailTool,
+    GmailTrashMessageTool,
 )
 from shared.tools.google.gsheets import (
     GoogleSheetsAppendTool,
     GoogleSheetsWriteTool,
 )
-from shared.tools.google.gdrive import (
-    GoogleDriveListFilesTool,
-    GoogleDriveGetFileMetadataTool,
-    GoogleDriveDownloadFileTool,
-    GoogleDriveUploadFileTool,
-    GoogleDriveCreateFolderTool,
-    GoogleDriveUpdateFileTool,
-    GoogleDriveDeleteFileTool,
-    GoogleDriveCreatePermissionTool,
-    GoogleDriveAboutGetTool,
-)
-
-from shared.tools.base import register_tool
 
 
 def register_google_tools():

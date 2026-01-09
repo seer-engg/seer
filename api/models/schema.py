@@ -1,5 +1,6 @@
 """Pydantic schemas for model information."""
 from typing import Literal
+
 from pydantic import BaseModel
 
 

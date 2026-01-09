@@ -15,13 +15,13 @@ from workflow_compiler.expr.typecheck import (
 from workflow_compiler.registry.tool_registry import ToolRegistry
 from workflow_compiler.schema.models import (
     ForEachNode,
+    JSONValue,
     LLMNode,
     Node,
     TaskKind,
     TaskNode,
     ToolNode,
     WorkflowSpec,
-    JSONValue,
 )
 from workflow_compiler.schema.schema_registry import SchemaRegistry
 

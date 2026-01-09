@@ -3,10 +3,11 @@ Tool API router for listing and executing tools.
 """
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Body, Query, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 from pydantic import BaseModel
+
+from api.tools.services import execute_tool_service, list_tools
 from shared.database.models import User
-from api.tools.services import list_tools, execute_tool_service
 
 router = APIRouter(prefix="/api/tools", tags=["tools"])
 

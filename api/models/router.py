@@ -1,7 +1,10 @@
 """API router for model information endpoints."""
 from typing import List
+
 from fastapi import APIRouter
+
 from shared.config import config
+
 from .schema import ModelInfo
 
 router = APIRouter(prefix="/models", tags=["models"])

@@ -4,7 +4,7 @@ Tool index management utilities.
 Handles generation and loading of tool vector index during startup.
 """
 import threading
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
 from shared.config import config
 from shared.logger import get_logger
@@ -34,7 +34,7 @@ async def generate_tool_index(
         if not force_regenerate and toolhub.index_exists():
             logger.info("Tool index already exists, skipping generation.")
             stats = toolhub.get_index_stats()
-            logger.info(f"Index stats: {stats}")
+            logger.info("Index stats: %s", stats)
             return True
 
         logger.info("Starting tool index generation...")
@@ -55,7 +55,7 @@ async def generate_tool_index(
                 tools_by_integration[integration_type] = []
             tools_by_integration[integration_type].append(tool_meta)
 
-        logger.info(f"Found {len(all_tools_meta)} tools across {len(tools_by_integration)} integrations")
+        logger.info("Found %s tools across {len(tools_by_integration)} integrations", len(all_tools_meta))
 
         # Convert tool metadata to Tool objects
         # We need to convert the metadata dicts to Tool objects
@@ -78,15 +78,15 @@ async def generate_tool_index(
 
         # Ingest tools for each integration
         for integration_type, tools in tools_by_integration_objects.items():
-            logger.info(f"Ingesting {len(tools)} tools for integration: {integration_type}")
+            logger.info("Ingesting %s tools for integration: {integration_type}", len(tools))
             try:
                 threading.Thread(target=toolhub.ingest, args=(tools, integration_type)).start()
-            except Exception as e:
-                logger.error(f"Failed to ingest tools for {integration_type}: {e}")
+            except Exception:
+                logger.error("Failed to ingest tools for %s: {e}", integration_type)
                 continue
 
-    except Exception as e:
-        logger.exception(f"Error generating tool index: {e}")
+    except Exception:
+        logger.exception("Error generating tool index")
         return False
 
 
@@ -123,7 +123,7 @@ async def ensure_tool_index_exists(
         if toolhub.index_exists():
             logger.info("Tool index found and loaded.")
             stats = toolhub.get_index_stats()
-            logger.info(f"Index stats: {stats}")
+            logger.info("Index stats: %s", stats)
             return toolhub
 
         # Generate index if auto_generate is enabled
@@ -132,13 +132,11 @@ async def ensure_tool_index_exists(
             success = await generate_tool_index(toolhub, force_regenerate=False)
             if success:
                 return toolhub
-            else:
-                logger.error("Failed to generate tool index.")
-                return None
-        else:
-            logger.warning("Tool index not found and auto_generate is disabled.")
+            logger.error("Failed to generate tool index.")
             return None
+        logger.warning("Tool index not found and auto_generate is disabled.")
+        return None
 
     except Exception as e:
-        logger.exception(f"Error ensuring tool index exists: {e}")
+        logger.exception("Error ensuring tool index exists: %s", e)
         return None

@@ -3,10 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 
-from shared.database.models import User
 from api.workflows import models as api_models
 from api.workflows import services
-
+from shared.database.models import User
 
 router = APIRouter(prefix="/v1", tags=["workflows"])
 

@@ -9,10 +9,9 @@ JSON payload.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Union, Annotated
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator
-
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # -----------------------------
 # JSON-ish values

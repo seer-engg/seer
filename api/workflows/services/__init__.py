@@ -16,13 +16,13 @@ from .catalog import (
 
 # Import from execution module
 from .execution import (
+    _complete_run,
+    _create_run_record,
+    _execute_compiled_run,
     execute_saved_workflow_run,
     list_workflow_runs,
     run_draft_workflow,
     run_saved_workflow,
-    _execute_compiled_run,
-    _complete_run,
-    _create_run_record
 )
 
 # Import from expressions module
@@ -34,12 +34,6 @@ from .expression import (
 from .history import (
     get_run_history,
     get_run_status,
-)
-
-# Import from triggers module
-from .triggers import (
-    _evaluate_bindings,
-    _validate_resolved_inputs
 )
 
 # Import from workflows module
@@ -58,6 +52,8 @@ from .lifecycle import (
     update_workflow,
 )
 
+# Import from triggers module
+from .triggers import _evaluate_bindings, _validate_resolved_inputs
 
 __all__ = [
     "list_node_types",

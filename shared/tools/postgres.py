@@ -17,9 +17,11 @@ Usage:
 import asyncio
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
+
 from langchain.tools import tool
 from langchain_core.tools import BaseTool
 from langgraph.errors import GraphInterrupt
+
 from shared.logger import get_logger
 
 logger = get_logger("shared.tools.postgres")
@@ -423,7 +425,7 @@ def _create_query_tool(client: PostgresClient):
             return json.dumps(results, indent=2, default=str)
 
         except Exception as e:
-            logger.error(f"PostgreSQL query error: {e}")
+            logger.error("PostgreSQL query error: %s", e)
             return f"Query error: {str(e)}"
     return postgres_query
 
@@ -458,11 +460,11 @@ def _create_execute_tool(client: PostgresClient):
         try:
             from shared.config import config
             if config.postgres_write_requires_approval:
-                logger.info(f"Write approval required for statement: {statement[:100]}...")
+                logger.info("Write approval required for statement: %s...", statement[:100])
                 response = _request_write_approval(statement, parameters)
 
                 if not _is_write_approved(response):
-                    logger.info(f"Write operation rejected by user: {response}")
+                    logger.info("Write operation rejected by user: %s", response)
                     return f"Operation cancelled: User rejected the write operation. Response: {response}"
 
                 logger.info("Write operation approved by user")
@@ -474,7 +476,7 @@ def _create_execute_tool(client: PostgresClient):
         except GraphInterrupt:
             raise
         except Exception as e:
-            logger.error(f"PostgreSQL execute error: {e}")
+            logger.error("PostgreSQL execute error: %s", e)
             return f"Execution error: {str(e)}"
     return postgres_execute
 
@@ -514,7 +516,7 @@ def _create_schema_tool(client: PostgresClient):
             return json.dumps(result, indent=2, default=str)
 
         except Exception as e:
-            logger.error(f"PostgreSQL schema error: {e}")
+            logger.error("PostgreSQL schema error: %s", e)
             return f"Schema retrieval error: {str(e)}"
     return postgres_get_schema
 
@@ -559,14 +561,14 @@ def _create_batch_tool(client: PostgresClient):
                 sample_params = parameters_list[:3] if batch_size > 3 else parameters_list
                 summary_note = f" (showing first 3 of {batch_size})" if batch_size > 3 else ""
 
-                logger.info(f"Write approval required for batch statement: {statement[:100]}... ({batch_size} rows)")
+                logger.info("Write approval required for batch statement: %s... ({batch_size} rows)", statement[:100])
                 response = _request_write_approval(
                     f"{statement}\n\n-- Batch operation: {batch_size} rows{summary_note}",
                     sample_params
                 )
 
                 if not _is_write_approved(response):
-                    logger.info(f"Batch write operation rejected by user: {response}")
+                    logger.info("Batch write operation rejected by user: %s", response)
                     return f"Operation cancelled: User rejected the batch write operation. Response: {response}"
 
                 logger.info("Batch write operation approved by user")
@@ -578,7 +580,7 @@ def _create_batch_tool(client: PostgresClient):
         except GraphInterrupt:
             raise
         except Exception as e:
-            logger.error(f"PostgreSQL batch execute error: {e}")
+            logger.error("PostgreSQL batch execute error: %s", e)
             return f"Batch execution error: {str(e)}"
     return postgres_execute_batch
 
@@ -753,9 +755,9 @@ class PostgresProvider:
                     if create_sql:
                         await self._client.execute(create_sql)
                         resources["tables_created"].append(table_name)
-                        logger.info(f"Created table {table_name}")
-                except Exception as e:
-                    logger.error(f"Failed to create table {table_name}: {e}")
+                        logger.info("Created table %s", table_name)
+                except Exception:
+                    logger.error("Failed to create table %s", table_name)
 
         return resources
 
@@ -782,9 +784,9 @@ class PostgresProvider:
         for table_name in tables_created:
             try:
                 await self._client.execute(f'DROP TABLE IF EXISTS "{table_name}" CASCADE')
-                logger.info(f"Dropped table {table_name}")
-            except Exception as e:
-                logger.error(f"Failed to drop table {table_name}: {e}")
+                logger.info("Dropped table %s", table_name)
+            except Exception:
+                logger.error("Failed to drop table %s", table_name)
 
         # Close client
         if self._client:

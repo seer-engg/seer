@@ -6,20 +6,20 @@ import re
 import secrets
 from typing import Any, Dict, List, Optional
 
-from jsonschema import Draft7Validator
 from fastapi import HTTPException
+from jsonschema import Draft7Validator
 
 from api.triggers.schema_inference import infer_input_contract_from_event_schema
 from api.triggers.supabase_webhook import (
+    SupabaseWebhookError,
     create_database_webhook,
     delete_database_webhook,
-    SupabaseWebhookError,
 )
 from api.workflows import models as api_models
 from api.workflows.services.shared import (
     VALIDATION_PROBLEM,
+    _get_workflow,
     _raise_problem,
-    _get_workflow
 )
 from shared.config import config as shared_config
 from shared.database.models import User

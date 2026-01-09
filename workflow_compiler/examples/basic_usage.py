@@ -12,9 +12,9 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from shared.database.models import User
-from workflow_compiler.runtime import WorkflowCompilerSingleton
 from workflow_compiler.registry.model_registry import ModelDefinition, ModelRegistry
 from workflow_compiler.registry.tool_registry import ToolDefinition, ToolRegistry
+from workflow_compiler.runtime import WorkflowCompilerSingleton
 from workflow_compiler.schema.schema_registry import SchemaRegistry
 
 

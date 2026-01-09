@@ -4,11 +4,12 @@ GitHub Tool Wrappers
 GitHub tools that call the GitHub API directly.
 """
 from typing import Any, Dict, Optional
-from fastapi import HTTPException
-import httpx
 
-from shared.tools.base import BaseTool, register_tool
+import httpx
+from fastapi import HTTPException
+
 from shared.logger import get_logger
+from shared.tools.base import BaseTool, register_tool
 
 logger = get_logger("shared.tools.github")
 
@@ -66,7 +67,7 @@ class GitHubTool(BaseTool):
         except HTTPException:
             raise
         except Exception as e:
-            logger.exception(f"GitHub tool execution failed: {e}")
+            logger.exception("GitHub tool execution failed: %s", e)
             raise HTTPException(
                 status_code=500,
                 detail=f"GitHub tool execution failed: {str(e)}"
@@ -176,6 +177,6 @@ def register_github_tools():
     for tool in common_tools:
         try:
             register_tool(tool)
-            logger.info(f"Registered GitHub tool: {tool.name}")
-        except Exception as e:
-            logger.warning(f"Failed to register GitHub tool {tool.name}: {e}")
+            logger.info("Registered GitHub tool: %s", tool.name)
+        except Exception:
+            logger.warning("Failed to register GitHub tool %s", tool.name)

@@ -4,13 +4,24 @@ Static validation for `${...}` references against known JSON schemas.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import json
+from dataclasses import dataclass, field
 from typing import Dict, Iterable, Mapping, MutableMapping, Sequence
 
-from workflow_compiler.expr.parser import IndexSegment, PathSegment, PropertySegment, ReferenceExpr
+from workflow_compiler.expr.parser import (
+    IndexSegment,
+    PathSegment,
+    PropertySegment,
+    ReferenceExpr,
+)
 from workflow_compiler.schema.jsonschema_adapter import dereference_schema
-from workflow_compiler.schema.models import InputDef, InputType, JsonSchema, OutputContract, OutputMode
+from workflow_compiler.schema.models import (
+    InputDef,
+    InputType,
+    JsonSchema,
+    OutputContract,
+    OutputMode,
+)
 from workflow_compiler.schema.schema_registry import SchemaRegistry
 
 

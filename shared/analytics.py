@@ -7,8 +7,10 @@ Provides centralized analytics tracking for:
 - Agent runs and completions
 - User actions and system events
 """
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
+
 import posthog
+
 from shared.config import config
 from shared.logger import get_logger
 
@@ -37,9 +39,9 @@ class AnalyticsService:
             # sync_mode=True uses blocking HTTP (requests.post()) which breaks in async FastAPI contexts
             # Background consumer threads will send events asynchronously
             cls._initialized = True
-            logger.info(f"PostHog analytics initialized (host: {config.posthog_host})")
+            logger.info("PostHog analytics initialized (host: %s)", config.posthog_host)
         except Exception as e:
-            logger.error(f"Failed to initialize PostHog: {e}", exc_info=True)
+            logger.error("Failed to initialize PostHog: %s", e, exc_info=True)
 
     @classmethod
     def capture(
@@ -67,7 +69,7 @@ class AnalyticsService:
             )
         except Exception as e:
             # Never let analytics errors break the application
-            logger.error(f"PostHog capture failed: {e}", exc_info=True)
+            logger.error("PostHog capture failed: %s", e, exc_info=True)
 
     @classmethod
     def identify(
@@ -91,7 +93,7 @@ class AnalyticsService:
                 properties=properties or {},
             )
         except Exception as e:
-            logger.error(f"PostHog identify failed: {e}", exc_info=True)
+            logger.error("PostHog identify failed: %s", e, exc_info=True)
 
     @classmethod
     def flush(cls):
@@ -111,7 +113,7 @@ class AnalyticsService:
             if posthog.default_client and posthog.default_client.consumers:
                 posthog.default_client.queue.join()
         except Exception as e:
-            logger.error(f"PostHog flush failed: {e}", exc_info=True)
+            logger.error("PostHog flush failed: %s", e, exc_info=True)
 
     @classmethod
     def shutdown(cls):
@@ -127,9 +129,9 @@ class AnalyticsService:
             # Ignore "NoneType is not iterable" error in sync_mode
             # This is a known PostHog SDK bug when shutting down without consumers
             if "'NoneType' object is not iterable" not in str(e):
-                logger.error(f"PostHog shutdown failed: {e}", exc_info=True)
+                logger.error("PostHog shutdown failed: %s", e, exc_info=True)
         except Exception as e:
-            logger.error(f"PostHog shutdown failed: {e}", exc_info=True)
+            logger.error("PostHog shutdown failed: %s", e, exc_info=True)
 
 
 # Convenience exports

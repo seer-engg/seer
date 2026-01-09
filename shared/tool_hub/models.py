@@ -1,4 +1,5 @@
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -21,9 +22,8 @@ class Tool(BaseModel):
         # Handle cases where the dict is just the function part or the full tool part
         if "function" in data:
             return cls(**data)
-        else:
-            # Assume it's the function definition directly (common in some frameworks)
-            return cls(function=ToolFunction(**data))
+        # Assume it's the function definition directly (common in some frameworks)
+        return cls(function=ToolFunction(**data))
 
     class Config:
         arbitrary_types_allowed = True
