@@ -87,7 +87,9 @@ def _resolve_schema_for_path(schema: Dict[str, Any], segments: List[str]) -> Dic
     current = schema
     for segment in segments:
         schema_type = current.get("type")
-        schema_types = [schema_type] if isinstance(schema_type, str) else schema_type or []
+        schema_types = (
+            [schema_type] if isinstance(schema_type, str) else schema_type or []
+        )
         if "object" in schema_types or not schema_types:
             props = current.get("properties", {})
             if segment in props:
@@ -101,8 +103,7 @@ def _resolve_schema_for_path(schema: Dict[str, Any], segments: List[str]) -> Dic
                 current = {}
                 continue
             raise ValueError(f"Property '{segment}' is not allowed on event")
-        else:
-            raise ValueError(f"Cannot descend into non-object property '{segment}'")
+        raise ValueError(f"Cannot descend into non-object property '{segment}'")
     return current
 
 
@@ -176,10 +177,14 @@ def _validate_bindings_against_workflow(
                 )
                 continue
             if not _schema_fragment_matches_input(fragment, input_def):
+                msg = (
+                    f"Binding for '{input_name}' is incompatible with "
+                    f"expected input type '{input_def.type.value}'"
+                )
                 errors.append(
                     api_models.ProblemError(
                         code="TYPE_MISMATCH",
-                        message=f"Binding for '{input_name}' is incompatible with expected input type '{input_def.type.value}'",
+                        message=msg,
                         expression=binding,
                     )
                 )
@@ -217,8 +222,12 @@ def _build_webhook_url(subscription_id: int, trigger_key: str) -> Optional[str]:
     return None
 
 
-def _serialize_subscription(subscription: TriggerSubscription) -> api_models.TriggerSubscriptionResponse:
-    webhook_url = _build_webhook_url(subscription.id, subscription.trigger_key) if _should_emit_webhook_url(subscription.trigger_key) else None
+def _serialize_subscription(
+    subscription: TriggerSubscription,
+) -> api_models.TriggerSubscriptionResponse:
+    webhook_url = None
+    if _should_emit_webhook_url(subscription.trigger_key):
+        webhook_url = _build_webhook_url(subscription.id, subscription.trigger_key)
     return api_models.TriggerSubscriptionResponse(
         subscription_id=subscription.id,
         workflow_id=make_workflow_public_id(subscription.workflow_id),
@@ -230,10 +239,16 @@ def _serialize_subscription(subscription: TriggerSubscription) -> api_models.Tri
         provider_config=dict(subscription.provider_config or {}),
         secret_token=subscription.secret_token,
         webhook_url=webhook_url,
-        input_contract=dict(subscription.input_contract or {}) if subscription.input_contract else None,
+        input_contract=(
+            dict(subscription.input_contract or {})
+            if subscription.input_contract
+            else None
+        ),
         form_suffix=subscription.form_suffix,
         form_fields=subscription.form_fields,
-        form_config=dict(subscription.form_config or {}) if subscription.form_config else None,
+        form_config=(
+            dict(subscription.form_config or {}) if subscription.form_config else None
+        ),
         created_at=subscription.created_at,
         updated_at=subscription.updated_at,
     )
@@ -276,14 +291,88 @@ def _validate_event_payload(event_payload: Dict[str, Any], schema: Dict[str, Any
         )
 
 
-def _validate_resolved_inputs(resolved: Dict[str, Any], spec: WorkflowSpec) -> List[str]:
+def _validate_resolved_inputs(
+    resolved: Dict[str, Any], spec: WorkflowSpec
+) -> List[str]:
     errors: List[str] = []
     for name, input_def in (spec.inputs or {}).items():
-        if input_def.required and input_def.default is None and name not in resolved:
+        missing = input_def.required and input_def.default is None
+        if missing and name not in resolved:
             errors.append(f"Missing required input '{name}'")
-        elif name in resolved and not _literal_value_matches_input(resolved[name], input_def):
-            errors.append(f"Input '{name}' has incompatible type")
+        elif name in resolved:
+            if not _literal_value_matches_input(resolved[name], input_def):
+                errors.append(f"Input '{name}' has incompatible type")
     return errors
+
+
+def _build_input_contract(
+    form_fields: Optional[List[Dict[str, Any]]], definition
+) -> Optional[Dict[str, Any]]:
+    if form_fields:
+        type_mapping = {
+            "text": InputType.string,
+            "email": InputType.string,
+            "url": InputType.string,
+            "number": InputType.number,
+            "object": InputType.object,
+        }
+        contract = {
+            field["name"]: InputDef(
+                type=type_mapping.get(field.get("type", "text"), InputType.string),
+                description=field.get("displayLabel") or field.get("description"),
+                required=field.get("required", False),
+            )
+            for field in form_fields
+        }
+        return {name: def_.model_dump() for name, def_ in contract.items()}
+
+    inferred = infer_input_contract_from_event_schema(definition)
+    return {name: def_.model_dump() for name, def_ in inferred.items()} if inferred else None
+
+
+def _validate_form_suffix(suffix: Optional[str]) -> None:
+    if not suffix:
+        return
+    if not re.match(r"^[a-z0-9-]+$", suffix):
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Invalid form suffix",
+            detail="Invalid form suffix format. Use lowercase letters, numbers, and hyphens only.",
+            status=400,
+        )
+    reserved = {"workflows", "settings", "sign-in", "sign-up", "api", "admin"}
+    if suffix in reserved:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Reserved form suffix",
+            detail=f"Form suffix '{suffix}' is reserved and cannot be used.",
+            status=400,
+        )
+
+
+async def _create_supabase_webhook(
+    subscription: TriggerSubscription, secret: str
+) -> None:
+    webhook_base_url = shared_config.webhook_base_url or "http://localhost:8000"
+    base = webhook_base_url.rstrip("/")
+    full_url = f"{base}/api/v1/webhooks/generic/{subscription.id}"
+    try:
+        metadata = await create_database_webhook(
+            subscription, full_url, secret=secret
+        )
+        logger.info(
+            "Created Supabase webhook",
+            extra={"subscription_id": subscription.id, "metadata": metadata},
+        )
+    except SupabaseWebhookError as exc:
+        logger.error(
+            "Failed to create Supabase webhook, rolling back subscription",
+            extra={"subscription_id": subscription.id, "error": str(exc)},
+        )
+        await subscription.delete()
+        raise HTTPException(
+            status_code=500, detail=f"Failed to create Supabase webhook: {str(exc)}"
+        ) from exc
 
 
 async def list_trigger_subscriptions(
@@ -313,64 +402,14 @@ async def create_trigger_subscription(
     bindings = dict(payload.bindings or {})
     provider_config = dict(payload.provider_config or {})
     _validate_filters_payload(filters, definition)
-    _validate_bindings_against_workflow(bindings, spec, definition.event_schema)
-    secret = _generate_subscription_secret() if _should_emit_webhook_url(payload.trigger_key) else None
-
-    # Build input contract
-    input_contract_dict: Optional[Dict[str, Any]] = None
-    if payload.form_fields:
-        # Form trigger: build from field definitions
-        input_contract = {}
-        for field in payload.form_fields:
-            field_name = field.get("name")
-            field_type = field.get("type", "text")
-            # Map frontend field types to InputType
-            type_mapping = {
-                "text": InputType.string,
-                "email": InputType.string,
-                "url": InputType.string,
-                "number": InputType.number,
-                "object": InputType.object,
-            }
-            input_type = type_mapping.get(field_type, InputType.string)
-
-            input_contract[field_name] = InputDef(
-                type=input_type,
-                description=field.get("displayLabel") or field.get("description"),
-                required=field.get("required", False),
-            )
-        # Convert InputDef objects to dicts for JSON storage
-        input_contract_dict = {
-            name: def_.model_dump() for name, def_ in input_contract.items()
-        }
-    else:
-        # Non-form trigger: auto-infer from event schema
-        inferred_contract = infer_input_contract_from_event_schema(definition)
-        if inferred_contract:
-            input_contract_dict = {
-                name: def_.model_dump() for name, def_ in inferred_contract.items()
-            }
-
-    # Validate form suffix if provided
-    form_suffix = payload.form_suffix
-    if form_suffix:
-        # Validate format: lowercase, numbers, hyphens only
-        if not re.match(r"^[a-z0-9-]+$", form_suffix):
-            _raise_problem(
-                type_uri=VALIDATION_PROBLEM,
-                title="Invalid form suffix",
-                detail="Invalid form suffix format. Use lowercase letters, numbers, and hyphens only.",
-                status=400,
-            )
-        # Check against reserved routes
-        reserved_suffixes = {"workflows", "settings", "sign-in", "sign-up", "api", "admin"}
-        if form_suffix in reserved_suffixes:
-            _raise_problem(
-                type_uri=VALIDATION_PROBLEM,
-                title="Reserved form suffix",
-                detail=f"Form suffix '{form_suffix}' is reserved and cannot be used.",
-                status=400,
-            )
+    _validate_bindings_against_workflow(
+        bindings, spec, definition.event_schema
+    )
+    secret = None
+    if _should_emit_webhook_url(payload.trigger_key):
+        secret = _generate_subscription_secret()
+    input_contract_dict = _build_input_contract(payload.form_fields, definition)
+    _validate_form_suffix(payload.form_suffix)
 
     subscription = await TriggerSubscription.create(
         user=user,
@@ -383,34 +422,12 @@ async def create_trigger_subscription(
         provider_config=provider_config,
         secret_token=secret,
         input_contract=input_contract_dict,
-        form_suffix=form_suffix,
+        form_suffix=payload.form_suffix,
         form_fields=payload.form_fields,
         form_config=payload.form_config,
     )
-    # For Supabase webhook triggers, create the database trigger
     if payload.trigger_key == "webhook.supabase.db_changes" and secret:
-        try:
-            # Build full webhook URL with domain and secret
-            webhook_base_url = shared_config.webhook_base_url or "http://localhost:8000"
-            full_webhook_url = f"{webhook_base_url.rstrip('/')}/api/v1/webhooks/generic/{subscription.id}"
-
-            # Create the Postgres trigger in Supabase
-            webhook_metadata = await create_database_webhook(subscription, full_webhook_url, secret=secret)
-            logger.info(
-                "Created Supabase webhook",
-                extra={"subscription_id": subscription.id, "metadata": webhook_metadata}
-            )
-        except SupabaseWebhookError as exc:
-            # Rollback: delete the subscription and re-raise
-            logger.error(
-                "Failed to create Supabase webhook, rolling back subscription",
-                extra={"subscription_id": subscription.id, "error": str(exc)}
-            )
-            await subscription.delete()
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to create Supabase webhook: {str(exc)}"
-            )
+        await _create_supabase_webhook(subscription, secret)
     return _serialize_subscription(subscription)
 
 
@@ -422,16 +439,12 @@ async def get_trigger_subscription(
     return _serialize_subscription(subscription)
 
 
-async def update_trigger_subscription(
-    user: User,
-    subscription_id: int,
+def _apply_subscription_updates(
+    subscription: TriggerSubscription,
     payload: api_models.TriggerSubscriptionUpdateRequest,
-) -> api_models.TriggerSubscriptionResponse:
-    subscription = await _get_trigger_subscription(user, subscription_id)
-    definition = _load_trigger_definition(subscription.trigger_key)
-    await subscription.fetch_related("workflow")
-    draft = subscription.workflow.draft or await WorkflowDraft.get(workflow=subscription.workflow)
-    spec = WorkflowSpec.model_validate(draft.spec)
+    spec: WorkflowSpec,
+    definition,
+) -> None:
     if payload.filters is not None:
         new_filters = dict(payload.filters or {})
         _validate_filters_payload(new_filters, definition)
@@ -448,6 +461,19 @@ async def update_trigger_subscription(
         subscription.enabled = payload.enabled
     if _should_emit_webhook_url(subscription.trigger_key) and not subscription.secret_token:
         subscription.secret_token = _generate_subscription_secret()
+
+
+async def update_trigger_subscription(
+    user: User,
+    subscription_id: int,
+    payload: api_models.TriggerSubscriptionUpdateRequest,
+) -> api_models.TriggerSubscriptionResponse:
+    subscription = await _get_trigger_subscription(user, subscription_id)
+    definition = _load_trigger_definition(subscription.trigger_key)
+    await subscription.fetch_related("workflow")
+    draft = subscription.workflow.draft or await WorkflowDraft.get(workflow=subscription.workflow)
+    spec = WorkflowSpec.model_validate(draft.spec)
+    _apply_subscription_updates(subscription, payload, spec, definition)
     await subscription.save()
     return _serialize_subscription(subscription)
 

@@ -14,11 +14,29 @@ def validate_email(value: str) -> bool:
 
 def validate_url(value: str) -> bool:
     """Validate URL format."""
-    url_pattern = r"^https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)$"
+    url_pattern = (
+        r"^https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\."
+        r"[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)$"
+    )
     return bool(re.match(url_pattern, value))
 
 
-def validate_form_data(  # noqa: C901, pylint: disable=too-complex
+def _validate_field_value(value: Any, field_type: str, display_label: str) -> List[str]:
+    if field_type == "email":
+        if isinstance(value, str) and value and not validate_email(value):
+            return [f"{display_label} must be a valid email address"]
+    elif field_type == "url":
+        if isinstance(value, str) and value and not validate_url(value):
+            return [f"{display_label} must be a valid URL"]
+    elif field_type == "number":
+        try:
+            float(value)
+        except (ValueError, TypeError):
+            return [f"{display_label} must be a valid number"]
+    return []
+
+
+def validate_form_data(
     data: Dict[str, Any],
     form_fields: List[Dict[str, Any]],
 ) -> List[str]:
@@ -40,28 +58,13 @@ def validate_form_data(  # noqa: C901, pylint: disable=too-complex
         required = field.get("required", False)
         field_type = field.get("type", "text")
 
-        # Check required fields
         if required and (field_name not in data or not data[field_name]):
             errors.append(f"{display_label} is required")
             continue
 
-        # Skip validation if field is not present and not required
         if field_name not in data or data[field_name] is None:
             continue
 
-        value = data[field_name]
-
-        # Type-specific validation
-        if field_type == "email":
-            if isinstance(value, str) and value and not validate_email(value):
-                errors.append(f"{display_label} must be a valid email address")
-        elif field_type == "url":
-            if isinstance(value, str) and value and not validate_url(value):
-                errors.append(f"{display_label} must be a valid URL")
-        elif field_type == "number":
-            try:
-                float(value)
-            except (ValueError, TypeError):
-                errors.append(f"{display_label} must be a valid number")
+        errors.extend(_validate_field_value(data[field_name], field_type, display_label))
 
     return errors

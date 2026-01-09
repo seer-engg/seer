@@ -79,6 +79,119 @@ def decode_state(state: str) -> dict:
     return json.loads(base64.urlsafe_b64decode(state).decode())
 
 
+def _validate_scope_and_get_provider(scope: str, provider: str):
+    if not scope:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Missing scope parameter",
+            detail="scope parameter is required. Frontend must specify OAuth scopes.",
+            status=400
+        )
+    oauth_provider = get_oauth_provider(provider)
+    provider_impl = get_integration_provider(oauth_provider)
+    if not provider_impl:
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="Provider not configured",
+            detail=f"OAuth provider '{oauth_provider}' is not configured",
+            status=400
+        )
+    return oauth_provider, provider_impl
+
+
+def _check_existing_scopes(
+    existing_connection,
+    normalized_scope_list,
+    oauth_provider: str,
+    redirect_to: Optional[str],
+    integration_type: Optional[str],
+):
+    if existing_connection and existing_connection.scopes and existing_connection.refresh_token_enc:
+        if has_required_scopes(existing_connection.scopes, normalized_scope_list):
+            logger.info(
+                "User already has all required scopes for %s. Requested=%s Granted=%s",
+                oauth_provider,
+                normalized_scope_list,
+                existing_connection.scopes[:100],
+            )
+            final_redirect = redirect_to or f"{FRONTEND_URL}/settings/integrations"
+            connected_param = integration_type or oauth_provider
+            return RedirectResponse(url=f"{final_redirect}?connected={connected_param}")
+    return None
+
+
+def _build_oauth_state(
+    user: User,
+    redirect_to: Optional[str],
+    oauth_provider: str,
+    integration_type: Optional[str],
+    scope_string: str,
+) -> str:
+    state_data = {
+        'user_id': user.user_id,
+        'user_email': user.email,
+        'redirect_to': redirect_to or f"{FRONTEND_URL}/settings/integrations",
+        'oauth_provider': oauth_provider,
+        'integration_type': integration_type or oauth_provider,
+        'requested_scope': scope_string,
+    }
+    return encode_state(state_data)
+
+
+def _extract_and_validate_state(request: Request):
+    state = request.query_params.get('state')
+    if not state:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Missing state parameter",
+            detail="Missing state",
+            status=400
+        )
+    try:
+        state_data = decode_state(state)
+    except Exception:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Invalid state parameter",
+            detail="Invalid state",
+            status=400
+        )
+    user_id = state_data.get('user_id')
+    if not user_id:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Missing user_id",
+            detail="Missing user_id in state",
+            status=400
+        )
+    return state_data
+
+
+def _log_token_structure(token: dict) -> None:
+    token_keys = list(token.keys())
+    logger.info(
+        "Token structure - Keys: %s, has userinfo: %s, has access_token: %s, "
+        "has id_token: %s",
+        token_keys,
+        'userinfo' in token,
+        'access_token' in token,
+        'id_token' in token,
+    )
+
+
+def _log_scope_info(token: dict, granted_scopes: str, requested_scope: Optional[str]) -> None:
+    requested = requested_scope.split() if requested_scope else []
+    token_scope = token.get('scope', '')
+    granted_list = token_scope.split() if token_scope else []
+    storing = granted_scopes.split() if granted_scopes else []
+    logger.info(
+        "OAuth scopes - Requested: %s, Provider granted: %s, Storing: %s",
+        requested,
+        granted_list,
+        storing,
+    )
+
+
 # =============================================================================
 # STATIC ROUTES - Must come BEFORE dynamic routes to avoid path conflicts
 # =============================================================================
@@ -188,8 +301,8 @@ async def connect(
     request: Request,
     provider: str,
     redirect_to: str = Query(None),
-    scope: str = Query(...),  # OAuth scope from frontend (REQUIRED - frontend controls scopes)
-    integration_type: str = Query(None),  # Integration type for tracking (e.g., 'gmail', 'googlesheets')
+    scope: str = Query(...),
+    integration_type: str = Query(None),
 ):
     """
     Start OAuth flow for a provider.
@@ -204,33 +317,17 @@ async def connect(
         Frontend must always pass scope parameter. This ensures frontend controls
         which permissions are requested (read-only is core differentiation).
 
-        Connections are stored by OAuth provider (e.g., 'google'), not integration type.
-        Multiple integration types (gmail, googlesheets, googledrive) share the same Google connection.
+        Connections are stored by OAuth provider (e.g., 'google'),
+        not integration type. Multiple integration types
+        (gmail, googlesheets, googledrive) share the same Google connection.
 
-        If user already has all required scopes, OAuth is skipped and success is returned immediately.
-        For Google OAuth, incremental authorization (include_granted_scopes=true) is only used when
-        requesting NEW scopes in addition to existing ones, to avoid showing all previously granted
+        If user already has all required scopes, OAuth is skipped and success
+        is returned immediately. For Google OAuth, incremental authorization
+        (include_granted_scopes=true) is only used when requesting NEW scopes
+        in addition to existing ones, to avoid showing all previously granted
         scopes in the consent screen.
     """
-
-    if not scope:
-        raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Missing scope parameter",
-            detail="scope parameter is required. Frontend must specify OAuth scopes.",
-            status=400
-        )
-
-    oauth_provider = get_oauth_provider(provider)
-    provider_impl = get_integration_provider(oauth_provider)
-    if not provider_impl:
-        raise_problem(
-            type_uri=INTEGRATION_PROBLEM,
-            title="Provider not configured",
-            detail=f"OAuth provider '{oauth_provider}' is not configured",
-            status=400
-        )
-
+    oauth_provider, provider_impl = _validate_scope_and_get_provider(scope, provider)
     requested_scopes_list = list(parse_scopes(scope))
     user: User = request.state.db_user
     existing_connection = await get_connection_for_provider(user, oauth_provider)
@@ -247,43 +344,29 @@ async def connect(
     scope_string = provider_impl.get_oauth_scope(authorize_context)
     normalized_scope_list = list(parse_scopes(scope_string))
 
-    if existing_connection and existing_connection.scopes and existing_connection.refresh_token_enc:
-        if has_required_scopes(existing_connection.scopes, normalized_scope_list):
-            logger.info(
-                "User already has all required scopes for %s. Requested=%s Granted=%s",
-                oauth_provider,
-                normalized_scope_list,
-                existing_connection.scopes[:100],
-            )
-            final_redirect = redirect_to or f"{FRONTEND_URL}/settings/integrations"
-            connected_param = integration_type or oauth_provider
-            return RedirectResponse(url=f"{final_redirect}?connected={connected_param}")
+    early_return = _check_existing_scopes(
+        existing_connection, normalized_scope_list, oauth_provider, redirect_to, integration_type
+    )
+    if early_return:
+        return early_return
 
     redirect_uri = request.url_for('auth_callback', provider=oauth_provider)
     if config.REDIRECT_URI_SCHEME == "https" and redirect_uri.scheme == "http":
         redirect_uri = redirect_uri.replace(scheme="https")
 
-    state_data = {
-        'user_id': user.user_id,
-        'user_email': user.email,
-        'redirect_to': redirect_to or f"{FRONTEND_URL}/settings/integrations",
-        'oauth_provider': oauth_provider,
-        'integration_type': integration_type or provider,
-        'requested_scope': scope_string,
-    }
     logger.info(
         "Starting OAuth flow: provider=%s, integration_type=%s, scopes=%s",
         oauth_provider,
         integration_type,
         scope_string[:100],
     )
-    state = encode_state(state_data)
+    state = _build_oauth_state(
+        user, redirect_to, oauth_provider, integration_type, scope_string
+    )
 
     client = oauth.create_client(oauth_provider)
     authorize_kwargs = provider_impl.build_authorize_kwargs(
-        authorize_context,
-        state=state,
-        scope=scope_string,
+        authorize_context, state=state, scope=scope_string
     )
     authorize_kwargs.setdefault("state", state)
     authorize_kwargs.setdefault("scope", scope_string)
@@ -299,14 +382,12 @@ async def auth_callback(request: Request, provider: str):
     Stores connection with OAuth provider (e.g., 'google'), merging scopes
     if a connection already exists for this provider.
     """
-    # Normalize to OAuth provider
     oauth_provider = get_oauth_provider(provider)
-
     client = oauth.create_client(oauth_provider)
     try:
         token = await client.authorize_access_token(request)
     except Exception as e:
-        logger.error(f"OAuth callback error: {e}")
+        logger.error("OAuth callback error: %s", e)
         raise_problem(
             type_uri=INTEGRATION_PROBLEM,
             title="OAuth callback error",
@@ -314,52 +395,17 @@ async def auth_callback(request: Request, provider: str):
             status=400
         )
 
-    # Retrieve user_id from state
-    # Authlib validates state match, but we need to extract data from it.
-    state = request.query_params.get('state')
-    if not state:
-        raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Missing state parameter",
-            detail="Missing state",
-            status=400
-        )
+    state_data = _extract_and_validate_state(request)
+    user_id = state_data['user_id']
+    redirect_to = state_data.get('redirect_to')
+    integration_type = state_data.get('integration_type')
 
-    try:
-        state_data = decode_state(state)
-        user_id = state_data.get('user_id')
-        redirect_to = state_data.get('redirect_to')
-        requested_scope = state_data.get('requested_scope')
-        integration_type = state_data.get('integration_type')  # Track which integration triggered this
-    except Exception:
-        raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Invalid state parameter",
-            detail="Invalid state",
-            status=400
-        )
-
-    if not user_id:
-        raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Missing user_id",
-            detail="Missing user_id in state",
-            status=400
-        )
-
-    logger.info(f"OAuth callback: provider={oauth_provider}, integration_type={integration_type}")
-
-    # Log token structure for debugging (without sensitive values)
-    token_keys = list(token.keys())
-    has_userinfo = 'userinfo' in token
-    has_access_token = 'access_token' in token
-    has_id_token = 'id_token' in token
     logger.info(
-        f"Token structure - Keys: {token_keys}, "
-        f"has userinfo: {has_userinfo}, "
-        f"has access_token: {has_access_token}, "
-        f"has id_token: {has_id_token}"
+        "OAuth callback: provider=%s, integration_type=%s",
+        oauth_provider,
+        integration_type,
     )
+    _log_token_structure(token)
 
     provider_impl = get_integration_provider(oauth_provider)
     if not provider_impl:
@@ -370,21 +416,15 @@ async def auth_callback(request: Request, provider: str):
             status=400
         )
 
-    granted_scopes = provider_impl.resolve_granted_scopes(token=token, state_data=state_data)
+    granted_scopes = provider_impl.resolve_granted_scopes(
+        token=token, state_data=state_data
+    )
+    _log_scope_info(token, granted_scopes, state_data.get('requested_scope'))
 
-    requested_scopes_list = requested_scope.split() if requested_scope else []
-    granted_scopes_list = token.get('scope', '').split() if token.get('scope') else []
-    storing_scopes_list = granted_scopes.split() if granted_scopes else []
-    logger.info(
-        f"OAuth scopes - Requested: {requested_scopes_list}, "
-        f"Provider granted: {granted_scopes_list}, "
-        f"Storing: {storing_scopes_list}"
+    user_info = await provider_impl.fetch_user_profile(
+        client=client, token=token, state_data=state_data
     )
 
-    user_info = await provider_impl.fetch_user_profile(client=client, token=token, state_data=state_data)
-
-    # Store connection with OAuth provider (not integration type)
-    # Scopes will be merged if connection already exists
     await store_oauth_connection(
         user_id=user_id,
         provider=oauth_provider,
@@ -394,7 +434,6 @@ async def auth_callback(request: Request, provider: str):
         integration_type=integration_type
     )
 
-    # Return with integration_type so frontend knows which tool was connected
     connected_param = integration_type or oauth_provider
     return RedirectResponse(url=f"{redirect_to}?connected={connected_param}")
 
@@ -479,7 +518,9 @@ async def delete_connection(connection_id: str, request: Request):
 async def list_persisted_resources(
     request: Request,
     provider: str,
-    resource_type: Optional[str] = Query(None, description="Filter by resource type (e.g., project)"),
+    resource_type: Optional[str] = Query(
+        None, description="Filter by resource type (e.g., project)"
+    ),
 ):
     user: User = request.state.db_user
     resources = await list_integration_resources(
@@ -596,16 +637,22 @@ async def list_provider_resource_types(request: Request, provider: str):
 
 
 @router.get("/resources/{provider}/{resource_type}")
-async def browse_resources(
+async def browse_resources(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     request: Request,
     provider: str,
     resource_type: str,
+    *,
     q: Optional[str] = Query(None, description="Search query"),
-    parent_id: Optional[str] = Query(None, description="Parent folder ID for hierarchy navigation"),
+    parent_id: Optional[str] = Query(
+        None, description="Parent folder ID for hierarchy navigation"
+    ),
     page_token: Optional[str] = Query(None, description="Pagination token"),
-    page_size: int = Query(50, ge=1, le=100, description="Number of items per page"),
-    # Dependent parameter values (JSON encoded)
-    depends_on: Optional[str] = Query(None, description="JSON object of dependent parameter values"),
+    page_size: int = Query(
+        50, ge=1, le=100, description="Number of items per page"
+    ),
+    depends_on: Optional[str] = Query(
+        None, description="JSON object of dependent parameter values"
+    ),
 ):
     """
     Browse resources of a specific type.
@@ -631,11 +678,15 @@ async def browse_resources(
     # Get valid access token
     access_token = await get_valid_access_token(user, provider)
     if not access_token:
+        msg = (
+            f"No active {provider} connection. "
+            f"Please connect your {provider} account first."
+        )
         raise_problem(
             type_uri=INTEGRATION_PROBLEM,
             title="No active connection",
-            detail=f"No active {provider} connection. Please connect your {provider} account first.",
-            status=401
+            detail=msg,
+            status=401,
         )
 
     # Parse depends_on if provided
