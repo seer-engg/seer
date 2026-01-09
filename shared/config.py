@@ -10,9 +10,9 @@ Usage:
     if score >= config.eval_pass_threshold:
         ...
 """
-from typing import Any, Dict, Optional
+from typing import Optional
 
-from pydantic import Field, computed_field
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,13 +34,18 @@ class SeerConfig(BaseSettings):
     # API Keys & Authentication
     # ============================================================================
 
-    openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key for LLM and embeddings")
-    anthropic_api_key: Optional[str] = Field(default=None, description="Anthropic API key for Claude models")
-    tavily_api_key: Optional[str] = Field(default=None, description="Tavily API key for web search")
-    github_token: Optional[str] = Field(default=None, description="GitHub token for sandbox provisioning")
-
-    target_agent_port: int = Field(default=2024, description="Port for target agent")
-    target_agent_command: str = Field(default="langgraph dev --host 0.0.0.0", description="Command to run target agent")
+    openai_api_key: Optional[str] = Field(
+        default=None, description="OpenAI API key for LLM and embeddings"
+    )
+    anthropic_api_key: Optional[str] = Field(
+        default=None, description="Anthropic API key for Claude models"
+    )
+    tavily_api_key: Optional[str] = Field(
+        default=None, description="Tavily API key for web search"
+    )
+    github_token: Optional[str] = Field(
+        default=None, description="GitHub token for sandbox provisioning"
+    )
 
     # ============================================================================
     # LangGraph Checkpointer Configuration
@@ -48,7 +53,11 @@ class SeerConfig(BaseSettings):
 
     DATABASE_URL: Optional[str] = Field(
         default=None,
-        description="PostgreSQL connection string for LangGraph checkpointer (e.g., postgresql://user:pass@host:port/db). Required for human-in-the-loop interrupts."
+        description=(
+            "PostgreSQL connection string for LangGraph checkpointer "
+            "(e.g., postgresql://user:pass@host:port/db). "
+            "Required for human-in-the-loop interrupts."
+        )
     )
 
     # ============================================================================
@@ -57,27 +66,45 @@ class SeerConfig(BaseSettings):
 
     postgres_write_requires_approval: bool = Field(
         default=True,
-        description="If True, PostgreSQL write operations (INSERT, UPDATE, DELETE, DDL) require human approval via interrupt before execution. Read operations are always allowed."
+        description=(
+            "If True, PostgreSQL write operations (INSERT, UPDATE, DELETE, DDL) "
+            "require human approval via interrupt before execution. "
+            "Read operations are always allowed."
+        )
     )
 
     # Vector embeddings configuration
-    embedding_dims: int = Field(default=1536, description="OpenAI embedding dimensions")
-    embedding_model: str = Field(default="text-embedding-3-small", description="OpenAI embedding model")
-    embedding_batch_size: int = Field(default=128, description="OpenAI embedding batch size")
+    embedding_dims: int = Field(
+        default=1536, description="OpenAI embedding dimensions"
+    )
+    embedding_model: str = Field(
+        default="text-embedding-3-small", description="OpenAI embedding model"
+    )
+    embedding_batch_size: int = Field(
+        default=128, description="OpenAI embedding batch size"
+    )
 
     # ============================================================================
     # Deployment Mode Configuration
     # ============================================================================
 
-    seer_mode: str = Field(default="self-hosted", description="Deployment mode: 'self-hosted' or 'cloud'")
+    seer_mode: str = Field(
+        default="self-hosted", description="Deployment mode: 'self-hosted' or 'cloud'"
+    )
 
     # ============================================================================
     # Clerk Authentication Configuration
     # ============================================================================
 
-    clerk_jwks_url: Optional[str] = Field(default=None, description="Clerk JWKS URL for JWT verification")
-    clerk_issuer: Optional[str] = Field(default=None, description="Clerk JWT issuer (e.g., https://clerk.your-domain.com)")
-    clerk_audience: Optional[str] = Field(default=None, description="Clerk JWT audience (e.g., ['api.your-domain.com'])")
+    clerk_jwks_url: Optional[str] = Field(
+        default=None, description="Clerk JWKS URL for JWT verification"
+    )
+    clerk_issuer: Optional[str] = Field(
+        default=None, description="Clerk JWT issuer (e.g., https://clerk.your-domain.com)"
+    )
+    clerk_audience: Optional[str] = Field(
+        default=None, description="Clerk JWT audience (e.g., ['api.your-domain.com'])"
+    )
 
     default_llm_model: str = Field(default="gpt-5-mini", description="Default LLM model")
 
@@ -88,17 +115,29 @@ class SeerConfig(BaseSettings):
     )
 
     # Tool index configuration
-    tool_index_path: str = Field(default="./data/tool_index", description="Path to store tool vector index")
-    tool_index_auto_generate: bool = Field(default=True, description="Auto-generate tool index on startup if missing")
+    tool_index_path: str = Field(
+        default="./data/tool_index", description="Path to store tool vector index"
+    )
+    tool_index_auto_generate: bool = Field(
+        default=True, description="Auto-generate tool index on startup if missing"
+    )
 
     GOOGLE_CLIENT_ID: str = Field(default="", description="Google OAuth client ID")
     GOOGLE_CLIENT_SECRET: str = Field(default="", description="Google OAuth client secret")
 
-    GITHUB_CLIENT_ID: Optional[str] = Field(default=None, description="GitHub OAuth client ID")
-    GITHUB_CLIENT_SECRET: Optional[str] = Field(default=None, description="GitHub OAuth client secret")
+    GITHUB_CLIENT_ID: Optional[str] = Field(
+        default=None, description="GitHub OAuth client ID"
+    )
+    GITHUB_CLIENT_SECRET: Optional[str] = Field(
+        default=None, description="GitHub OAuth client secret"
+    )
 
-    supabase_client_id: Optional[str] = Field(default=None, description="Supabase management OAuth client ID")
-    supabase_client_secret: Optional[str] = Field(default=None, description="Supabase management OAuth client secret")
+    supabase_client_id: Optional[str] = Field(
+        default=None, description="Supabase management OAuth client ID"
+    )
+    supabase_client_secret: Optional[str] = Field(
+        default=None, description="Supabase management OAuth client secret"
+    )
     supabase_management_api_base: str = Field(
         default="https://api.supabase.com",
         description="Supabase management API base URL",
@@ -143,7 +182,11 @@ class SeerConfig(BaseSettings):
 
     webhook_base_url: Optional[str] = Field(
         default=None,
-        description="Base URL for webhook callbacks (e.g., https://seer.example.com). Used by external services to send webhooks. Defaults to http://localhost:8000 if not set.",
+        description=(
+            "Base URL for webhook callbacks (e.g., https://seer.example.com). "
+            "Used by external services to send webhooks. "
+            "Defaults to http://localhost:8000 if not set."
+        ),
     )
     REDIRECT_URI_SCHEME: str = Field(
         default="http",
@@ -153,15 +196,6 @@ class SeerConfig(BaseSettings):
     # ============================================================================
     # Computed Properties
     # ============================================================================
-
-    @computed_field
-    @property
-    def target_agent_envs(self) -> Dict[str, Any]:
-        """Environment variables for target agent."""
-        envs: Dict[str, Any] = {}
-        if self.openai_api_key:
-            envs["OPENAI_API_KEY"] = self.openai_api_key
-        return envs
 
     @property
     def is_cloud_mode(self) -> bool:

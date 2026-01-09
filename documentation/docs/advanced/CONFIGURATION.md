@@ -171,51 +171,6 @@ See [Triggers Documentation](./TRIGGERS.md) for worker-specific configuration.
 
 ---
 
-## Legacy & Evaluation Configuration
-
-The following variables are for evaluation and testing workflows. Most users won't need these.
-
-### Evaluation Agent
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `EVAL_N_ROUNDS` | Number of eval rounds per version | `2` |
-| `EVAL_N_TEST_CASES` | Test cases to generate per round | `1` |
-| `EVAL_N_VERSIONS` | Total versions to evaluate | `2` |
-| `EVAL_PASS_THRESHOLD` | Minimum score to pass (0.0-1.0) | `0.8` |
-| `EVAL_AGENT_ARCHITECTURE` | Architecture: `react` or `reflexion` | `reflexion` |
-| `EVAL_REASONING_EFFORT` | Reasoning effort: `minimal`, `medium`, `high` | `medium` |
-
-### Target Agent
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `TARGET_AGENT_PORT` | Port for target agent | `2024` |
-| `TARGET_AGENT_SETUP_SCRIPT` | Setup script for target agent | `pip install -e .` |
-| `TARGET_AGENT_COMMAND` | Command to run target agent | `langgraph dev --host 0.0.0.0` |
-| `TARGET_AGENT_CONTEXT_LEVEL` | Context level (0-3) | `0` |
-
-### Feature Flags
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `EVAL_AGENT_LOAD_DEFAULT_MCPS` | Load default MCP services | `true` |
-| `EVAL_PLAN_ONLY_MODE` | Skip execution, return after plan | `false` |
-| `EVAL_AGENT_HANDOFF_ENABLED` | Enable handoff to eval agent | `false` |
-
-### Other Services
-
-| Variable | Description |
-|----------|-------------|
-| `NEO4J_URI` | Neo4j graph database URI |
-| `NEO4J_USERNAME` | Neo4j username |
-| `NEO4J_PASSWORD` | Neo4j password |
-| `ASANA_WORKSPACE_ID` | Asana workspace ID |
-| `ASANA_TEAM_GID` | Asana team GID |
-| `ASANA_PROJECT_ID` | Asana project ID |
-
----
-
 ## Configuration Priority
 
 Environment variables are loaded in this order (highest to lowest priority):
