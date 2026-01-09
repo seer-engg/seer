@@ -1,0 +1,46 @@
+[SIMILARITIES]
+# Minimum lines number of a similarity.
+min-similarity-lines=15
+
+# Ignore comments when computing similarities.
+ignore-comments=yes
+
+# Ignore docstrings when computing similarities.
+ignore-docstrings=yes
+
+# Ignore imports when computing similarities.
+ignore-imports=yes
+
+# Ignore function signatures
+ignore-signatures=yes
+
+[MESSAGES CONTROL]
+# Disable specific checks
+disable=
+    missing-function-docstring,
+    missing-module-docstring,
+    too-few-public-methods,
+    too-many-locals,
+    too-many-branches,
+    line-too-long,
+    too-many-arguments,
+    missing-class-docstring,
+    broad-except,
+    protected-access,
+    fixme,
+    raise-missing-from
+
+[MASTER]
+# Add files or directories to the blacklist
+ignore=alembic,migrations,.venv,venv,build,dist,workflow_compiler,shared/sandbox
+
+[FORMAT]
+# Maximum number of characters on a single line.
+max-line-length=200
+
+[DESIGN]
+# Maximum number of lines in a module
+max-module-lines=1000
+
+# Maximum number of locals for function / method body
+max-locals=20
