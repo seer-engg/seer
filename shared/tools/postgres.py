@@ -14,6 +14,10 @@ Usage:
     # Or use standalone
     tools = get_postgres_tools(connection_string="postgresql://...")
 """
+# pylint: disable=too-many-lines # Complex DB client; splitting would harm cohesion
+# pylint: disable=import-outside-toplevel # Lazy loading and conditional imports for performance
+# pylint: disable=global-statement # Needed for singleton lazy-loading pattern
+# pylint: disable=invalid-name # _asyncpg, _default_client follow lazy-loading convention
 import asyncio
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
@@ -38,6 +42,7 @@ def _get_asyncpg():
             import asyncpg
             _asyncpg = asyncpg
         except ImportError:
+            # pylint: disable=raise-missing-from # Clear install instructions don't need traceback
             raise ImportError(
                 "asyncpg is required for PostgreSQL operations. "
                 "Install it with: pip install asyncpg"
@@ -293,7 +298,10 @@ class PostgresClient:
         """
         try:
             pk_columns = await self.query(pk_query, schema_name, table_name)
-        except Exception:
+        except (OSError, ValueError) as exc:
+            logger.warning(
+                "Failed to fetch primary key for %s.%s: %s", schema_name, table_name, exc
+            )
             pk_columns = []
 
         # Get foreign keys
@@ -324,7 +332,10 @@ class PostgresClient:
         try:
             count_result = await self.query_one(count_query, schema_name, table_name)
             row_estimate = count_result["estimate"] if count_result else 0
-        except Exception:
+        except (OSError, ValueError) as exc:
+            logger.warning(
+                "Failed to fetch row estimate for %s.%s: %s", schema_name, table_name, exc
+            )
             row_estimate = 0
 
         return {
@@ -413,7 +424,10 @@ def _create_query_tool(client: PostgresClient):
         try:
             query_upper = query.strip().upper()
             if not query_upper.startswith("SELECT") and not query_upper.startswith("WITH"):
-                return "Error: This tool only supports SELECT queries. Use postgres_execute for modifications."
+                return (
+                    "Error: This tool only supports SELECT queries. "
+                    "Use postgres_execute for modifications."
+                )
 
             params = tuple(parameters) if parameters else ()
             results = await client.query(query, *params)
@@ -423,10 +437,11 @@ def _create_query_tool(client: PostgresClient):
 
             import json
             return json.dumps(results, indent=2, default=str)
-
+        # pylint: disable=broad-exception-caught
+        # Tool boundary: catch all errors and return error message to LLM
         except Exception as e:
-            logger.error("PostgreSQL query error: %s", e)
-            return f"Query error: {str(e)}"
+            logger.exception("PostgreSQL query error")
+            return f"Query error: {e}"
     return postgres_query
 
 
@@ -438,7 +453,8 @@ def _create_execute_tool(client: PostgresClient):
         parameters: Optional[List[Any]] = None,
     ) -> str:
         """
-        Execute a write SQL statement (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP) on the PostgreSQL database.
+        Execute a write SQL statement (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP)
+        on the PostgreSQL database.
 
         Use this tool when you need to modify data or schema in the database.
 
@@ -453,7 +469,10 @@ def _create_execute_tool(client: PostgresClient):
             Status message indicating the result (e.g., "INSERT 0 1", "UPDATE 5").
 
         Example:
-            postgres_execute("INSERT INTO users (name, email) VALUES ($1, $2)", ["John", "john@example.com"])
+            postgres_execute(
+                "INSERT INTO users (name, email) VALUES ($1, $2)",
+                ["John", "john@example.com"]
+            )
             postgres_execute("UPDATE products SET price = $1 WHERE id = $2", [29.99, 123])
             postgres_execute("DELETE FROM sessions WHERE expires_at < NOW()")
         """
@@ -465,7 +484,10 @@ def _create_execute_tool(client: PostgresClient):
 
                 if not _is_write_approved(response):
                     logger.info("Write operation rejected by user: %s", response)
-                    return f"Operation cancelled: User rejected the write operation. Response: {response}"
+                    return (
+                        f"Operation cancelled: User rejected the write operation. "
+                        f"Response: {response}"
+                    )
 
                 logger.info("Write operation approved by user")
 
@@ -475,9 +497,11 @@ def _create_execute_tool(client: PostgresClient):
 
         except GraphInterrupt:
             raise
+        # pylint: disable=broad-exception-caught
+        # Tool boundary: catch all errors and return error message to LLM
         except Exception as e:
-            logger.error("PostgreSQL execute error: %s", e)
-            return f"Execution error: {str(e)}"
+            logger.exception("PostgreSQL execute error")
+            return f"Execution error: {e}"
     return postgres_execute
 
 
@@ -514,10 +538,11 @@ def _create_schema_tool(client: PostgresClient):
                 result = await client.get_schema(schema_name, include_columns=True)
 
             return json.dumps(result, indent=2, default=str)
-
+        # pylint: disable=broad-exception-caught
+        # Tool boundary: catch all errors and return error message to LLM
         except Exception as e:
-            logger.error("PostgreSQL schema error: %s", e)
-            return f"Schema retrieval error: {str(e)}"
+            logger.exception("PostgreSQL schema error")
+            return f"Schema retrieval error: {e}"
     return postgres_get_schema
 
 
@@ -561,7 +586,10 @@ def _create_batch_tool(client: PostgresClient):
                 sample_params = parameters_list[:3] if batch_size > 3 else parameters_list
                 summary_note = f" (showing first 3 of {batch_size})" if batch_size > 3 else ""
 
-                logger.info("Write approval required for batch statement: %s... ({batch_size} rows)", statement[:100])
+                logger.info(
+                    "Write approval required for batch statement: %s... ({batch_size} rows)",
+                    statement[:100]
+                )
                 response = _request_write_approval(
                     f"{statement}\n\n-- Batch operation: {batch_size} rows{summary_note}",
                     sample_params
@@ -569,7 +597,10 @@ def _create_batch_tool(client: PostgresClient):
 
                 if not _is_write_approved(response):
                     logger.info("Batch write operation rejected by user: %s", response)
-                    return f"Operation cancelled: User rejected the batch write operation. Response: {response}"
+                    return (
+                        f"Operation cancelled: User rejected the batch write operation. "
+                        f"Response: {response}"
+                    )
 
                 logger.info("Batch write operation approved by user")
 
@@ -579,9 +610,11 @@ def _create_batch_tool(client: PostgresClient):
 
         except GraphInterrupt:
             raise
+        # pylint: disable=broad-exception-caught
+        # Tool boundary: catch all errors and return error message to LLM
         except Exception as e:
-            logger.error("PostgreSQL batch execute error: %s", e)
-            return f"Batch execution error: {str(e)}"
+            logger.exception("PostgreSQL batch execute error")
+            return f"Batch execution error: {e}"
     return postgres_execute_batch
 
 
@@ -756,8 +789,8 @@ class PostgresProvider:
                         await self._client.execute(create_sql)
                         resources["tables_created"].append(table_name)
                         logger.info("Created table %s", table_name)
-                except Exception:
-                    logger.error("Failed to create table %s", table_name)
+                except (OSError, ValueError) as exc:
+                    logger.exception("Failed to create table %s: %s", table_name, exc)
 
         return resources
 
@@ -785,8 +818,8 @@ class PostgresProvider:
             try:
                 await self._client.execute(f'DROP TABLE IF EXISTS "{table_name}" CASCADE')
                 logger.info("Dropped table %s", table_name)
-            except Exception:
-                logger.error("Failed to drop table %s", table_name)
+            except (OSError, ValueError) as exc:
+                logger.exception("Failed to drop table %s: %s", table_name, exc)
 
         # Close client
         if self._client:

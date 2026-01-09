@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, create_model
 
+from shared.database.models import User
 from shared.logger import get_logger
 from shared.tools.base import BaseTool
 from shared.tools.executor import execute_tool
@@ -60,13 +61,13 @@ def _create_input_model(tool: BaseTool) -> type[BaseModel]:
     return create_model(model_name, **field_definitions)
 
 
-def base_tool_to_langchain_tool(base_tool: BaseTool, user_id: str) -> StructuredTool:
+def base_tool_to_langchain_tool(base_tool: BaseTool, user: User) -> StructuredTool:
     """
     Convert a BaseTool instance to a LangChain StructuredTool.
 
     Args:
         base_tool: BaseTool instance
-        user_id: User ID for tool execution
+        user: User for tool execution
 
     Returns:
         LangChain StructuredTool instance
@@ -74,7 +75,7 @@ def base_tool_to_langchain_tool(base_tool: BaseTool, user_id: str) -> Structured
     # Create input model from tool's parameter schema
     try:
         input_model = _create_input_model(base_tool)
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught # Adapter boundary: fail gracefully with fallback
         logger.warning("Failed to create input model for %s, using dict", base_tool.name)
         input_model = Dict[str, Any]
 
@@ -95,17 +96,17 @@ def base_tool_to_langchain_tool(base_tool: BaseTool, user_id: str) -> Structured
         try:
             result = await execute_tool(
                 tool_name=base_tool.name,
-                user_id=user_id,
+                user=user,
                 connection_id=connection_id,
                 arguments=kwargs
             )
 
             # Convert result to string for LangChain
             if isinstance(result, (dict, list)):
-                import json
+                import json  # pylint: disable=import-outside-toplevel # Conditional import for JSON serialization
                 return json.dumps(result, indent=2)
             return str(result)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught # LangChain adapter: must catch all to return error string
             logger.exception("Tool execution failed: %s", e)
             return f"Error: {str(e)}"
 
@@ -118,17 +119,20 @@ def base_tool_to_langchain_tool(base_tool: BaseTool, user_id: str) -> Structured
     )
 
 
-def get_langchain_tools_from_registry(user_id: str, integration_type: Optional[str] = None) -> list[StructuredTool]:
+def get_langchain_tools_from_registry(
+    user: User, integration_type: Optional[str] = None
+) -> list[StructuredTool]:
     """
     Get LangChain tools from the tool registry.
 
     Args:
-        user_id: User ID for tool execution
+        user: User for tool execution
         integration_type: Optional filter by integration type
 
     Returns:
         List of LangChain StructuredTool instances
     """
+    # pylint: disable=import-outside-toplevel # Avoid circular import with registry
     from shared.tools.registry import get_tools_by_integration
 
     tools_meta = get_tools_by_integration(integration_type)
@@ -136,11 +140,12 @@ def get_langchain_tools_from_registry(user_id: str, integration_type: Optional[s
 
     for tool_meta in tools_meta:
         tool_name = tool_meta["name"]
+        # pylint: disable=import-outside-toplevel # Avoid circular import with base
         from shared.tools.base import get_tool
         base_tool = get_tool(tool_name)
 
         if base_tool:
-            langchain_tool = base_tool_to_langchain_tool(base_tool, user_id)
+            langchain_tool = base_tool_to_langchain_tool(base_tool, user)
             langchain_tools.append(langchain_tool)
         else:
             logger.warning("Tool %s not found in registry", tool_name)

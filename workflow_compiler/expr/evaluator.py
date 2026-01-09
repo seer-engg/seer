@@ -146,6 +146,7 @@ SAFE_FUNCTIONS: Dict[str, Any] = {
 }
 
 
+# pylint: disable=invalid-name # visit_* methods follow AST NodeVisitor naming convention
 class _ExpressionValidator(ast.NodeVisitor):
     ALLOWED_NODES = (
         ast.Expression,
@@ -252,5 +253,7 @@ def evaluate_condition(ctx: EvaluationContext, expression: str) -> bool:
 
     safe_locals = dict(SAFE_FUNCTIONS)
     safe_locals.update(bindings)
+    # pylint: disable=eval-used
+    # Safe: AST validated, __builtins__ disabled, only whitelisted functions/vars in scope
     result = eval(compiled, {"__builtins__": {}}, safe_locals)
     return bool(result)

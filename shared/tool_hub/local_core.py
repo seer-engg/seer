@@ -103,8 +103,8 @@ class LocalToolHub:
             return Tool(function=ToolFunction(**t))
         try:
             return Tool.from_dict(t)
-        except Exception:
-            logger.warning("Skipping invalid tool structure: %s", t.keys())
+        except (ValueError, KeyError, TypeError) as exc:
+            logger.warning("Skipping invalid tool structure %s: %s", t.keys(), exc)
             return None
 
     def _normalize_tools(self, tools: List[Union[Tool, Dict[str, Any]]]) -> List[Tool]:
@@ -167,16 +167,25 @@ class LocalToolHub:
                 for tool in normalized_tools
             }
 
-            for future in tqdm(as_completed(future_to_tool), total=len(normalized_tools), desc="Enriching Tools"):
+            for future in tqdm(
+                as_completed(future_to_tool),
+                total=len(normalized_tools),
+                desc="Enriching Tools"
+            ):
                 tool = future_to_tool[future]
                 try:
                     enriched = future.result()
                     enriched_tools.append(enriched)
+                # pylint: disable=broad-exception-caught
+                # Enrichment can fail for many reasons (API errors, JSON parse, etc)
                 except Exception:
-                    logger.error("Failed to enrich %s", tool.function.name)
+                    logger.exception("Failed to enrich %s", tool.function.name)
 
         # Generate embeddings and store in Chroma
-        logger.info("Generating embeddings and storing %s enriched tools in Chroma...", len(enriched_tools))
+        logger.info(
+            "Generating embeddings and storing %s enriched tools in Chroma...",
+            len(enriched_tools)
+        )
 
         vector_store = self._get_vector_store()
 
@@ -188,11 +197,13 @@ class LocalToolHub:
                 # Use embedding_text as the document content
                 doc_content = enriched_tool.embedding_text.replace("\n", " ")
 
-                # Prepare metadata (Chroma supports nested dicts, but we'll use strings for lists to be safe)
+                # Prepare metadata (Chroma supports nested dicts,
+                # but we'll use strings for lists to be safe)
                 metadata = {
                     "integration": integration_name,
                     "description": enriched_tool.description,
-                    "use_cases": json.dumps(enriched_tool.use_cases),  # Chroma prefers strings for lists
+                    # Chroma prefers strings for lists
+                    "use_cases": json.dumps(enriched_tool.use_cases),
                     "likely_neighbors": json.dumps(enriched_tool.likely_neighbors),
                     "required_params": json.dumps(enriched_tool.required_params),
                     "parameters": json.dumps(enriched_tool.parameters),
@@ -210,8 +221,8 @@ class LocalToolHub:
                 )
                 documents.append((doc, vector_id))
 
-            except Exception:
-                logger.error("Failed to prepare %s", enriched_tool.name)
+            except (ValueError, TypeError, KeyError) as exc:
+                logger.exception("Failed to prepare %s: %s", enriched_tool.name, exc)
 
         # Batch add to Chroma
         if documents:
@@ -227,7 +238,10 @@ class LocalToolHub:
                     metadatas=metadatas,
                     ids=ids,
                 )
-                logger.info("✅ Stored %s/{len(enriched_tools)} tools for {integration_name} in Chroma", len(documents))
+                logger.info(
+                    "✅ Stored %s/{len(enriched_tools)} tools for {integration_name} in Chroma",
+                    len(documents)
+                )
             except Exception as e:
                 logger.error("Failed to store tools in Chroma: %s", e)
                 raise
@@ -332,7 +346,7 @@ class LocalToolHub:
                     )
 
                     if matching_neighbor:
-                        neighbor_doc, neighbor_metadata = matching_neighbor
+                        _, neighbor_metadata = matching_neighbor
                         parsed = self._parse_metadata_json(neighbor_metadata, neighbor_name)
 
                         logger.debug("Adding Neighbor: %s (related to {tool_name})", neighbor_name)
@@ -348,8 +362,8 @@ class LocalToolHub:
                             "description": neighbor_metadata.get("description", ""),
                             "parameters": parsed["parameters"]
                         })
-                except Exception:
-                    logger.warning("Failed to load neighbor %s", neighbor_name)
+                except (ValueError, KeyError, TypeError) as exc:
+                    logger.warning("Failed to load neighbor %s: %s", neighbor_name, exc)
 
         return expanded_results
 
@@ -365,7 +379,8 @@ class LocalToolHub:
 
         Args:
             query: Search query string.
-            integration_name: Optional list of integration names (e.g., ["github", "asana"]) for filtering.
+            integration_name: Optional list of integration names
+                (e.g., ["github", "asana"]) for filtering.
             top_k: Number of top results to return from semantic search.
 
         Returns:
@@ -375,7 +390,10 @@ class LocalToolHub:
 
         integration_names = []
         if integration_name:
-            integration_names = [ns.lower() if isinstance(ns, str) else str(ns).lower() for ns in integration_name]
+            integration_names = [
+                ns.lower() if isinstance(ns, str) else str(ns).lower()
+                for ns in integration_name
+            ]
 
         try:
             query_top_k = top_k * 5 if integration_names else top_k
@@ -393,7 +411,7 @@ class LocalToolHub:
             tool_metadata_map = {}
 
             logger.debug("\n--- Anchor Tools (Vector Match) ---")
-            for doc, score in results:
+            for doc, _ in results:
                 metadata = doc.metadata
                 tool_name = self._extract_tool_name(metadata)
 
@@ -417,9 +435,10 @@ class LocalToolHub:
             )
 
             return tool_results + expanded_results
-
+        # pylint: disable=broad-exception-caught
+        # Query boundary: catch all errors and return empty results
         except Exception as e:
-            logger.error("Chroma query failed: %s", e)
+            logger.exception("Chroma query failed: %s", e)
             return []
 
     def _enrich_tool_metadata(self, tool: Tool) -> EnrichedTool:
@@ -448,7 +467,8 @@ class LocalToolHub:
             3. "required_params": List of parameter names required to use this tool (e.g. "emails", "invitation_id"). Extract from description.
             4. "parameters_schema": Infer the parameter schema from the description. Return a JSON object with parameter names as keys
                and their schema as values. Follow JSON Schema format:
-               {{"param_name": {{"type": "string|array|object|integer|boolean", "description": "...", "items": {{...}} if array, "properties": {{...}} if object}}}}
+               {{"param_name": {{"type": "string|array|object|integer|boolean",
+               "description": "...", "items": {{...}} if array, "properties": {{...}} if object}}}}
             5. "embedding_text": A consolidated paragraph combining name, description, and use cases for vector embedding.
 
             Return ONLY valid JSON matching this structure.
@@ -481,7 +501,10 @@ class LocalToolHub:
             self.async_client.chat.completions.create(
                 model=self.llm_model,
                 messages=[
-                    {"role": "system", "content": "You are a backend architect optimizing tool retrieval."},
+                    {
+                        "role": "system",
+                        "content": "You are a backend architect optimizing tool retrieval."
+                    },
                     {"role": "user", "content": prompt}
                 ],
                 response_format={"type": "json_object"}
@@ -496,10 +519,16 @@ class LocalToolHub:
             if inferred_params:
                 # Update tool.function.parameters with inferred schema
                 tool.function.parameters = inferred_params
-                logger.debug("📝 Inferred parameters for %s: {list(inferred_params.keys())}", tool.function.name)
+                logger.debug(
+                    "📝 Inferred parameters for %s: {list(inferred_params.keys())}",
+                    tool.function.name
+                )
         elif has_empty_schema:
             # If LLM didn't provide parameters_schema, log warning
-            logger.warning("⚠️ Warning: Empty schema for %s but LLM didn't infer parameters_schema", tool.function.name)
+            logger.warning(
+                "⚠️ Warning: Empty schema for %s but LLM didn't infer parameters_schema",
+                tool.function.name
+            )
 
         return EnrichedTool(
             name=tool.function.name,
@@ -521,11 +550,13 @@ class LocalToolHub:
         """
         try:
             vector_store = self._get_vector_store()
-            # Try to get collection count - if it exists and has data, return True
+            # pylint: disable=protected-access
+            # Access internal collection to check existence
             collection = vector_store._collection
             if collection and collection.count() > 0:
                 return True
-        except Exception:
+        except (OSError, ValueError, AttributeError):
+            # Collection doesn't exist or can't be accessed
             pass
         return False
 
@@ -538,6 +569,8 @@ class LocalToolHub:
         """
         try:
             vector_store = self._get_vector_store()
+            # pylint: disable=protected-access
+            # Access internal collection for stats
             collection = vector_store._collection
             if collection:
                 count = collection.count()
@@ -546,7 +579,8 @@ class LocalToolHub:
                     "tool_count": count,
                     "persist_directory": str(self.persist_directory),
                 }
-        except Exception:
+        except (OSError, ValueError, AttributeError):
+            # Collection doesn't exist or can't be accessed
             pass
         return {
             "exists": False,

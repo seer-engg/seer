@@ -6,7 +6,30 @@ allowed-tools: Read, Grep, Glob, Bash(pytest:*)
 
 # Workflow Validation Skill
 
-This Skill helps validate workflow specifications, expressions, and block configurations in the seer backend. Use this when working on workflow-related code to ensure all validation patterns are followed correctly.
+Validates workflow specifications through a 5-stage compilation pipeline. Use when working on workflow-related code. See `workflow_compiler/README.md` for architecture overview.
+
+## Compilation Pipeline
+
+Validation happens across 5 stages:
+
+1. **Parse** (`compiler/parse.py`): JSON → Pydantic `WorkflowSpec` (structural validation)
+2. **Type Environment** (`compiler/type_env.py`): Build type environment from schemas → Raises `TypeEnvironmentError`
+3. **Validate References** (`compiler/validate_refs.py`): Check `${...}` references exist → Raises `ValidationPhaseError`
+4. **Lower** (`compiler/lower_control_flow.py`): Transform to execution plan → Raises `LoweringError`
+5. **Emit** (`compiler/emit_langgraph.py`): Generate LangGraph StateGraph
+
+**Runtime**: Expression evaluation and output validation
+
+## Error Hierarchy
+
+```
+WorkflowCompilerError (base)
+├── ValidationPhaseError (Stage 1-3: structural/reference validation)
+├── TypeEnvironmentError (Stage 2: type env construction)
+├── LoweringError (Stage 4: lowering failures)
+└── ExecutionError (runtime: tool execution, schema validation)
+    └── EvaluationError (runtime: expression evaluation)
+```
 
 ## Key Validation Components
 
@@ -99,14 +122,40 @@ Pydantic models for workflow specification.
 - `InputDef`: Input parameter definition with type and default value
 - `OutputContract`: Declares what a node writes (text or JSON with schema)
 
-**Validation example:**
-```python
-from workflow_compiler.schema.models import OutputContract, OutputMode
+### 5. **JSON Schema Validation** (`workflow_compiler/schema/jsonschema_adapter.py`)
 
-# Validate output contract
-contract = OutputContract(mode=OutputMode.json, schema=schema_spec)
-# Raises ValueError if schema is missing when mode=json
+Core JSON Schema validation utilities using `jsonschema` library (Draft 2020-12).
+
+**Key functions:**
+- `get_validator(schema)`: Returns Draft202012Validator
+- `validate_instance(instance, schema)`: Validates data against schema
+- `check_schema(schema)`: Validates schema structure
+- `dereference_schema(schema)`: Resolves `$ref` references
+- `format_validation_error(error)`: Human-friendly error messages
+
+**Example:**
+```python
+from workflow_compiler.schema.jsonschema_adapter import validate_instance
+
+validate_instance({"name": "test"}, {"type": "object", "properties": {"name": {"type": "string"}}})
 ```
+
+### 6. **Runtime Output Validation** (`workflow_compiler/runtime/validate_output.py`)
+
+Runtime JSON schema validation wrapper.
+
+**Key patterns:**
+- Uses `validate_against_schema(value, schema)` to check node outputs
+- Raises `ExecutionError` for schema mismatches
+- Called after tool/LLM nodes execute when `OutputContract` specifies JSON mode
+
+### 7. **Parsing** (`workflow_compiler/compiler/parse.py`)
+
+Stage 1 compilation: Parse JSON dict → `WorkflowSpec`.
+
+**Key function:**
+- `parse_workflow_spec(spec_dict)`: Validates structure with Pydantic
+- Raises `ValidationPhaseError` for missing required fields, invalid node types
 
 ## Common Validation Scenarios
 
@@ -139,21 +188,26 @@ Check for:
 ### When Debugging Compilation Errors
 
 Common error types:
-1. **WorkflowCompilerError**: Input validation or coercion failed
-   - Check `input_validation.py:coerce_inputs()`
-   - Verify InputDef types match provided values
+1. **ValidationPhaseError**: Structural/reference validation failed (Stages 1-3)
+   - Check `compiler/parse.py:parse_workflow_spec()` for parsing errors
+   - Check `compiler/validate_refs.py:validate_references()` for `${...}` reference errors
+   - Verify required fields, node types, and references exist
 
-2. **ValidationPhaseError**: Reference validation failed
-   - Check `validate_refs.py:validate_references()`
-   - Verify `${...}` references exist in scope
+2. **TypeEnvironmentError**: Type environment construction failed (Stage 2)
+   - Check `compiler/type_env.py`
+   - Verify node output schemas are valid and schema refs resolve
 
-3. **TypeCheckError**: Type checking failed for references
-   - Check `expr/typecheck.py`
-   - Verify node output schemas match expected types
+3. **LoweringError**: Lowering to execution plan failed (Stage 4)
+   - Check `compiler/lower_control_flow.py`
+   - Verify control flow structures (if_else, for_each) are valid
 
-4. **EvaluationError**: Runtime expression evaluation failed
+4. **ExecutionError**: Runtime execution failed
+   - Check `runtime/validate_output.py` for schema validation errors
+   - Check tool execution errors in `runtime/nodes.py`
+
+5. **EvaluationError**: Expression evaluation failed (runtime)
    - Check `expr/evaluator.py:resolve_reference()`
-   - Verify state contains expected values
+   - Verify state contains expected values for `${...}` expressions
 
 ## Testing Workflow Validation
 
@@ -174,24 +228,27 @@ pytest -v workflow_compiler/tests/
 
 1. **Fail fast with clear errors**: Validation should catch errors early with actionable messages
 2. **Type coercion is lenient**: Allow reasonable conversions (string to number, etc.)
-3. **Validation is layered**:
-   - Stage 1: Pydantic model validation (structure)
-   - Stage 2: Type environment building
-   - Stage 3: Reference validation
-   - Runtime: Expression evaluation
-4. **Preserve extra inputs**: Don't discard inputs not declared in spec (for forwards compatibility)
-5. **Use nested scopes**: For loop variables are local to loop body
+3. **Validation is layered**: 5-stage compilation pipeline catches errors progressively
+4. **Preserve extra inputs**: Don't discard inputs not declared in spec (forwards compatibility)
+5. **Use nested scopes**: Loop variables (`item_var`, `index_var`) are local to loop body
 
 ## Key Files Reference
 
-| File | Purpose | When to Check |
-|------|---------|---------------|
-| `workflow_compiler/schema/models.py` | Pydantic models for workflow spec | Adding new block types |
-| `workflow_compiler/runtime/input_validation.py` | Input coercion and validation | Debugging input errors |
-| `workflow_compiler/compiler/validate_refs.py` | Reference validation | Debugging `${...}` errors |
-| `workflow_compiler/expr/evaluator.py` | Runtime expression evaluation | Debugging runtime errors |
-| `workflow_compiler/expr/typecheck.py` | Type checking for references | Understanding type inference |
-| `workflow_compiler/tests/` | Test suite for validation | Writing new tests |
+| File | Purpose | Stage/Phase |
+|------|---------|-------------|
+| `compiler/parse.py` | Parse JSON → WorkflowSpec | Stage 1 |
+| `compiler/type_env.py` | Build type environment | Stage 2 |
+| `compiler/validate_refs.py` | Validate `${...}` references | Stage 3 |
+| `compiler/lower_control_flow.py` | Lower to execution plan | Stage 4 |
+| `compiler/emit_langgraph.py` | Emit LangGraph StateGraph | Stage 5 |
+| `schema/models.py` | Pydantic models for workflow spec | All stages |
+| `schema/jsonschema_adapter.py` | JSON Schema validation utilities | Stages 2-3, Runtime |
+| `runtime/input_validation.py` | Input coercion and validation | Runtime |
+| `runtime/validate_output.py` | Runtime output schema validation | Runtime |
+| `expr/evaluator.py` | Runtime expression evaluation | Runtime |
+| `expr/typecheck.py` | Type checking for references | Stage 2-3 |
+| `errors.py` | Error hierarchy | All |
+| `README.md` | Architecture overview | Reference |
 
 ## Quick Checklist
 

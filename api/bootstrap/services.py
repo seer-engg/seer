@@ -3,6 +3,7 @@ Bootstrap service for parallel data fetching.
 
 Consolidates multiple API calls into a single endpoint with parallel processing.
 """
+# pylint: disable=import-outside-toplevel # Intentional: avoids circular imports and improves startup time
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict
@@ -23,6 +24,8 @@ async def _fetch_tools() -> Dict[str, Any]:
     try:
         result = await list_tools()
         return result.get("tools", [])
+    # pylint: disable=broad-exception-caught
+    # Bootstrap boundary: fault-tolerant, returns empty on any error
     except Exception as e:
         logger.error("Error fetching tools: %s", e, exc_info=True)
         return []
@@ -34,6 +37,8 @@ async def _fetch_models() -> list:
         models = await list_models()
         # Convert Pydantic models to dicts
         return [model.model_dump() for model in models]
+    # pylint: disable=broad-exception-caught
+    # Bootstrap boundary: fault-tolerant, returns empty on any error
     except Exception as e:
         logger.error("Error fetching models: %s", e, exc_info=True)
         return []
@@ -54,6 +59,8 @@ async def _fetch_tools_status(user: User) -> list:
 
         result = await get_tools_connection_status(mock_request)
         return result.get("tools", [])
+    # pylint: disable=broad-exception-caught
+    # Bootstrap boundary: fault-tolerant, returns empty on any error
     except Exception as e:
         logger.error("Error fetching tools status: %s", e, exc_info=True)
         return []
@@ -74,6 +81,8 @@ async def _fetch_connections(user: User) -> list:
 
         result = await list_integrations(mock_request)
         return result.get("items", [])
+    # pylint: disable=broad-exception-caught
+    # Bootstrap boundary: fault-tolerant, returns empty on any error
     except Exception as e:
         logger.error("Error fetching connections: %s", e, exc_info=True)
         return []
@@ -87,6 +96,8 @@ async def _fetch_node_types() -> Dict[str, Any]:
         if hasattr(result, 'model_dump'):
             return result.model_dump()
         return result if isinstance(result, dict) else {}
+    # pylint: disable=broad-exception-caught
+    # Bootstrap boundary: fault-tolerant, returns empty on any error
     except Exception as e:
         logger.error("Error fetching node types: %s", e, exc_info=True)
         return {}
@@ -100,6 +111,8 @@ async def _fetch_workflows(user: User) -> Dict[str, Any]:
         if hasattr(result, 'model_dump'):
             return result.model_dump()
         return result if isinstance(result, dict) else {"items": [], "next_cursor": None}
+    # pylint: disable=broad-exception-caught
+    # Bootstrap boundary: fault-tolerant, returns empty on any error
     except Exception as e:
         logger.error("Error fetching workflows: %s", e, exc_info=True)
         return {"items": [], "next_cursor": None}
@@ -110,6 +123,8 @@ async def _fetch_connections_raw(user: User) -> list:
     try:
         from api.integrations.services import list_connections
         return await list_connections(user)
+    # pylint: disable=broad-exception-caught
+    # Bootstrap boundary: fault-tolerant, returns empty on any error
     except Exception as e:
         logger.error("Error fetching raw connections: %s", e, exc_info=True)
         return []
@@ -137,7 +152,9 @@ def _build_provider_connections_map(connections: list) -> dict:
     return provider_connections
 
 
-def _build_tool_status_result(tool, conn_info, required_scopes, has_required_scopes_fn, parse_scopes_fn):
+def _build_tool_status_result(
+    tool, conn_info, required_scopes, has_required_scopes_fn, parse_scopes_fn
+):
     """Build status result for a tool with connection info."""
     requires_oauth = bool(required_scopes)
     requires_secrets = bool(getattr(tool, "required_secrets", []))
@@ -254,10 +271,14 @@ async def _build_tools_status_from_connections(connections: list) -> list:
                 })
                 continue
 
-            result = _build_tool_status_result(tool, conn_info, required_scopes, has_required_scopes, parse_scopes)
+            result = _build_tool_status_result(
+                tool, conn_info, required_scopes, has_required_scopes, parse_scopes
+            )
             results.append({**result, "provider": oauth_provider})
 
         return results
+    # pylint: disable=broad-exception-caught
+    # Bootstrap boundary: fault-tolerant, returns empty on any error
     except Exception as e:
         logger.error("Error building tools status: %s", e, exc_info=True)
         return []
@@ -284,6 +305,8 @@ async def _format_connections(connections: list, user: User) -> list:
                 "provider": conn.provider
             })
         return res
+    # pylint: disable=broad-exception-caught
+    # Bootstrap boundary: fault-tolerant, returns empty on any error
     except Exception as e:
         logger.error("Error formatting connections: %s", e, exc_info=True)
         return []
@@ -321,7 +344,10 @@ async def fetch_bootstrap_data(user: User) -> Dict[str, Any]:
     models = results[1] if not isinstance(results[1], Exception) else []
     raw_connections = results[2] if not isinstance(results[2], Exception) else []
     node_types = results[3] if not isinstance(results[3], Exception) else {}
-    workflows = results[4] if not isinstance(results[4], Exception) else {"items": [], "next_cursor": None}
+    workflows = (
+        results[4] if not isinstance(results[4], Exception)
+        else {"items": [], "next_cursor": None}
+    )
 
     # Build tools_status and format connections using the single connections query result
     tools_status_task = _build_tools_status_from_connections(raw_connections)

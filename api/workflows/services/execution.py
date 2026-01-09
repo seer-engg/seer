@@ -36,7 +36,6 @@ from shared.database.workflow_models import (
     WorkflowVersionStatus,
     make_workflow_public_id,
 )
-from worker.tasks.workflows import execute_saved_workflow as execute_saved_workflow_task
 from workflow_compiler.errors import WorkflowCompilerError
 from workflow_compiler.schema.models import WorkflowSpec
 
@@ -239,10 +238,14 @@ async def _execute_compiled_run(
     except WorkflowCompilerError as exc:
         print(f"{traceback.format_exc()}")
         await _handle_run_failure(run, user, exc, start_time, execution_mode)
+    # pylint: disable=broad-exception-caught
+    # Catch all runtime errors during workflow execution
     except Exception as exc:
         print(f"{traceback.format_exc()}")
         await _handle_run_failure(run, user, exc, start_time, execution_mode)
 
+    # pylint: disable=protected-access
+    # Dynamic attributes for analytics tracking - not part of model schema
     run._analytics_start_time = start_time
     run._analytics_execution_mode = execution_mode
     return result
@@ -257,6 +260,8 @@ async def _complete_run(run: WorkflowRun, output: Dict[str, Any]) -> WorkflowRun
     await run.refresh_from_db()
 
     # Capture workflow completion event
+    # pylint: disable=protected-access
+    # Dynamic attributes for analytics tracking
     if hasattr(run, '_analytics_start_time'):
         duration_ms = (time.time() - run._analytics_start_time) * 1000
         execution_mode = getattr(run, '_analytics_execution_mode', 'unknown')
@@ -289,7 +294,8 @@ async def run_draft_workflow(
         inputs=payload.inputs,
         config_payload=payload.config,
     )
-    # Mark execution mode for tracking
+    # pylint: disable=protected-access
+    # Dynamic attribute for analytics tracking
     run._analytics_execution_mode = "api_sync"
 
     output = await _execute_compiled_run(
@@ -349,6 +355,10 @@ async def run_saved_workflow(
         inputs=payload.inputs,
         config_payload=payload.config,
     )
+    # pylint: disable=import-outside-toplevel
+    # Local import to avoid cyclic dependency with worker.tasks.workflows
+    from worker.tasks.workflows import execute_saved_workflow as execute_saved_workflow_task
+
     try:
         await execute_saved_workflow_task.kiq(run_id=run.id, user_id=user.id)
 
@@ -366,6 +376,8 @@ async def run_saved_workflow(
                 "deployment_mode": shared_config.seer_mode,
             },
         )
+    # pylint: disable=broad-exception-caught
+    # Catch all errors during task enqueuing (network, broker, etc)
     except Exception as exc:
         logger.exception(
             "Failed to enqueue saved workflow run",
@@ -400,7 +412,8 @@ async def execute_saved_workflow_run(*, run_id: int, user_id: int) -> None:
     inputs = dict(run.inputs or {})
     config_payload = dict(run.config or {})
 
-    # Mark execution mode for tracking
+    # pylint: disable=protected-access
+    # Dynamic attribute for analytics tracking
     run._analytics_execution_mode = "taskiq_worker"
 
     try:

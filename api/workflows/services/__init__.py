@@ -7,9 +7,11 @@ Provides backwards-compatible imports for the router.
 # Import from catalog module
 from .catalog import (
     compile_spec,
+    generate_schema_metadata,
     list_models,
     list_node_types,
     list_tools,
+    list_triggers,
     resolve_schema,
     validate_spec,
 )
@@ -53,15 +55,26 @@ from .lifecycle import (
 )
 
 # Import from triggers module
-from .triggers import _evaluate_bindings, _validate_resolved_inputs
+from .triggers import (
+    _evaluate_bindings,
+    _validate_resolved_inputs,
+    create_trigger_subscription,
+    delete_trigger_subscription,
+    get_trigger_subscription,
+    list_trigger_subscriptions,
+    test_trigger_subscription,
+    update_trigger_subscription,
+)
 
 __all__ = [
     "list_node_types",
     "list_tools",
     "list_models",
+    "list_triggers",
     "resolve_schema",
     "validate_spec",
     "compile_spec",
+    "generate_schema_metadata",
     "create_workflow",
     "list_workflows",
     "get_workflow",
@@ -81,6 +94,12 @@ __all__ = [
     "list_workflow_runs",
     "get_run_status",
     "get_run_history",
+    "list_trigger_subscriptions",
+    "create_trigger_subscription",
+    "get_trigger_subscription",
+    "update_trigger_subscription",
+    "delete_trigger_subscription",
+    "test_trigger_subscription",
     "_evaluate_bindings",
     "_execute_compiled_run",
     "_complete_run",
