@@ -3,21 +3,17 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Optional
 
-from fastapi import HTTPException
 from workflow_compiler.runtime.global_compiler import WorkflowCompilerSingleton
 from workflow_compiler.schema.models import WorkflowSpec
 
-from api.workflows import models as api_models
+from api.middleware.errors import (
+    raise_problem as _raise_problem,
+    VALIDATION_PROBLEM,
+)
 from shared.database.models import User
 from shared.database.workflow_models import Workflow, WorkflowRun, parse_workflow_public_id
-
-
-PROBLEM_BASE = "https://seer.errors/workflows"
-VALIDATION_PROBLEM = f"{PROBLEM_BASE}/validation"
-COMPILE_PROBLEM = f"{PROBLEM_BASE}/compile"
-RUN_PROBLEM = f"{PROBLEM_BASE}/run"
 
 
 def _now() -> datetime:
@@ -26,24 +22,6 @@ def _now() -> datetime:
 
 def _spec_to_dict(spec: WorkflowSpec) -> Dict[str, Any]:
     return spec.model_dump(mode="json")
-
-
-def _raise_problem(
-    *,
-    type_uri: str,
-    title: str,
-    detail: str,
-    status: int,
-    errors: Optional[Sequence[api_models.ProblemError]] = None,
-) -> None:
-    payload = {
-        "type": type_uri,
-        "title": title,
-        "status": status,
-        "detail": detail,
-        "errors": [error.model_dump() for error in errors] if errors else [],
-    }
-    raise HTTPException(status_code=status, detail=payload)
 
 
 def _hash_spec(spec_dict: Dict[str, Any]) -> str:

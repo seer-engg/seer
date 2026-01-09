@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Request, HTTPException, Query
+from fastapi import APIRouter, Request, Query
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
+from api.middleware.errors import raise_problem, VALIDATION_PROBLEM, INTEGRATION_PROBLEM
 from .oauth import oauth
 from .services import (
     store_oauth_connection,
@@ -21,18 +22,18 @@ from .services import (
     bind_supabase_project_manual,
 )
 from .resource_browser import ResourceBrowser
+from shared.logger import get_logger
+from shared.database.models import User
+from shared.config import config
+from api.integrations.providers import get_integration_provider
+from api.integrations.providers.base import OAuthAuthorizeContext, OAuthHelpers
 import json
 import base64
 import os
-import logging
 from typing import Optional
 from datetime import datetime, timezone
-from shared.logger import get_logger
-from shared.database.models import User
-from api.integrations.providers import get_integration_provider
-from api.integrations.providers.base import OAuthAuthorizeContext, OAuthHelpers
+
 logger = get_logger("api.integrations.router")
-from shared.config import config
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
@@ -66,8 +67,11 @@ class SupabaseManualBindRequest(BaseModel):
         default=None,
         description="Optional Supabase anon/public key",
     )
+
+
 def encode_state(data: dict) -> str:
     return base64.urlsafe_b64encode(json.dumps(data).encode()).decode()
+
 
 def decode_state(state: str) -> dict:
     return json.loads(base64.urlsafe_b64decode(state).decode())
@@ -295,12 +299,22 @@ async def connect(
     """
 
     if not scope:
-        raise HTTPException(status_code=400, detail="scope parameter is required. Frontend must specify OAuth scopes.")
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Missing scope parameter",
+            detail="scope parameter is required. Frontend must specify OAuth scopes.",
+            status=400
+        )
 
     oauth_provider = get_oauth_provider(provider)
     provider_impl = get_integration_provider(oauth_provider)
     if not provider_impl:
-        raise HTTPException(status_code=400, detail=f"OAuth provider '{oauth_provider}' is not configured")
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="Provider not configured",
+            detail=f"OAuth provider '{oauth_provider}' is not configured",
+            status=400
+        )
 
     requested_scopes_list = list(parse_scopes(scope))
     user: User = request.state.db_user
@@ -361,6 +375,7 @@ async def connect(
 
     return await client.authorize_redirect(request, redirect_uri, **authorize_kwargs)
 
+
 @router.get("/{provider}/callback", name="auth_callback")
 async def auth_callback(request: Request, provider: str):
     """
@@ -377,13 +392,23 @@ async def auth_callback(request: Request, provider: str):
         token = await client.authorize_access_token(request)
     except Exception as e:
         logger.error(f"OAuth callback error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="OAuth callback error",
+            detail=str(e),
+            status=400
+        )
 
     # Retrieve user_id from state
     # Authlib validates state match, but we need to extract data from it.
     state = request.query_params.get('state')
     if not state:
-        raise HTTPException(status_code=400, detail="Missing state")
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Missing state parameter",
+            detail="Missing state",
+            status=400
+        )
 
     try:
         state_data = decode_state(state)
@@ -391,11 +416,21 @@ async def auth_callback(request: Request, provider: str):
         redirect_to = state_data.get('redirect_to')
         requested_scope = state_data.get('requested_scope')
         integration_type = state_data.get('integration_type')  # Track which integration triggered this
-    except:
-        raise HTTPException(status_code=400, detail="Invalid state")
+    except Exception:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Invalid state parameter",
+            detail="Invalid state",
+            status=400
+        )
 
     if not user_id:
-        raise HTTPException(status_code=400, detail="Missing user_id in state")
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Missing user_id",
+            detail="Missing user_id in state",
+            status=400
+        )
 
     logger.info(f"OAuth callback: provider={oauth_provider}, integration_type={integration_type}")
 
@@ -413,7 +448,12 @@ async def auth_callback(request: Request, provider: str):
 
     provider_impl = get_integration_provider(oauth_provider)
     if not provider_impl:
-        raise HTTPException(status_code=400, detail=f"OAuth provider '{oauth_provider}' is not configured")
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="Provider not configured",
+            detail=f"OAuth provider '{oauth_provider}' is not configured",
+            status=400
+        )
 
     granted_scopes = provider_impl.resolve_granted_scopes(token=token, state_data=state_data)
 
@@ -442,6 +482,7 @@ async def auth_callback(request: Request, provider: str):
     # Return with integration_type so frontend knows which tool was connected
     connected_param = integration_type or oauth_provider
     return RedirectResponse(url=f"{redirect_to}?connected={connected_param}")
+
 
 @router.get("/{integration_type}/status")
 async def get_integration_status(request: Request, integration_type: str):
@@ -506,6 +547,7 @@ async def disconnect(provider: str, request: Request):
     user: User = request.state.db_user
     await disconnect_provider(user, provider)
     return {"status": "success"}
+
 
 @router.delete("/{connection_id}")
 async def delete_connection(connection_id: str, request: Request):
@@ -575,9 +617,11 @@ async def bind_supabase_project_manual_route(request: Request, payload: Supabase
         resource = await bind_supabase_project(user, payload.project_ref, payload.connection_id)
     else:
         if not payload.service_role_key:
-            raise HTTPException(
-                status_code=400,
+            raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Missing service_role_key",
                 detail="service_role_key is required when connection_id is not provided",
+                status=400
             )
         resource = await bind_supabase_project_manual(
             user,
@@ -672,9 +716,11 @@ async def browse_resources(
     # Get valid access token
     access_token = await get_valid_access_token(user, provider)
     if not access_token:
-        raise HTTPException(
-            status_code=401,
-            detail=f"No active {provider} connection. Please connect your {provider} account first."
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="No active connection",
+            detail=f"No active {provider} connection. Please connect your {provider} account first.",
+            status=401
         )
 
     # Parse depends_on if provided
@@ -683,7 +729,12 @@ async def browse_resources(
         try:
             depends_on_values = json.loads(depends_on)
         except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="Invalid depends_on JSON")
+            raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Invalid JSON",
+                detail="Invalid depends_on JSON",
+                status=400
+            )
 
     # Create browser and list resources
     browser = ResourceBrowser(access_token, provider)
@@ -700,12 +751,27 @@ async def browse_resources(
 
         if "error" in result and result["error"]:
             logger.error(f"Resource browser error: {result['error']}")
-            raise HTTPException(status_code=500, detail=result["error"])
+            raise_problem(
+                type_uri=INTEGRATION_PROBLEM,
+                title="Resource browser error",
+                detail=result["error"],
+                status=500
+            )
 
         return result
 
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Invalid request",
+            detail=str(e),
+            status=400
+        )
     except Exception as e:
         logger.exception(f"Error browsing resources: {e}")
-        raise HTTPException(status_code=500, detail=f"Error browsing resources: {str(e)}")
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="Resource browsing failed",
+            detail=f"Error browsing resources: {str(e)}",
+            status=500
+        )

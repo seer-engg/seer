@@ -1,8 +1,9 @@
 """
 Workflow API router for CRUD and execution endpoints.
 """
-from typing import Optional, Dict, List, Any, Tuple
-from fastapi import APIRouter, Request, HTTPException, Query
+from typing import Optional, Dict, Any, Tuple
+from fastapi import APIRouter, HTTPException, Request, Query
+from api.middleware.errors import raise_problem, AUTH_PROBLEM, VALIDATION_PROBLEM
 from shared.logger import get_logger
 from shared.config import config
 from shared.analytics import analytics
@@ -47,7 +48,6 @@ from agents.workflow_agent import (
 )
 from api.agents.checkpointer import get_checkpointer, get_checkpointer_with_retry, _recreate_checkpointer
 import uuid
-import json
 import asyncio
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
@@ -66,7 +66,12 @@ router = APIRouter(prefix="/workflow-agent", tags=["workflow-agent"])
 def _require_user(request: Request) -> User:
     user = getattr(request.state, "db_user", None)
     if user is None:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        raise_problem(
+            type_uri=AUTH_PROBLEM,
+            title="Unauthorized",
+            detail="Unauthorized",
+            status=401
+        )
     return user
 
 
@@ -139,7 +144,6 @@ async def _maybe_create_proposal_from_spec(
 
     return proposal, proposal_public, None
 
-# Chat endpoints
 
 @router.post("/{workflow_id}/chat", response_model=ChatResponse)
 async def chat_with_workflow_endpoint(
@@ -219,9 +223,7 @@ async def chat_with_workflow_endpoint(
     if "edges" not in workflow_state:
         workflow_state["edges"] = []
 
-
     # Store workflow_state in context for tools to access
-
     if thread_id:
         set_workflow_state_for_thread(thread_id, workflow_state)
         set_user_for_thread(thread_id, user)
@@ -274,9 +276,11 @@ async def chat_with_workflow_endpoint(
             )
         except asyncio.TimeoutError:
             logger.error(f"Agent invocation timed out after {timeout} seconds for thread {thread_id or 'unknown'}")
-            raise HTTPException(
-                status_code=504,
-                detail="Request timed out. The agent took too long to respond."
+            raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Request timeout",
+                detail="Request timed out. The agent took too long to respond.",
+                status=504
             )
         finally:
             # Reset context variable
@@ -733,9 +737,11 @@ async def chat_with_workflow_endpoint(
         )
     except Exception as e:
         logger.error(f"Error in workflow chat: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to process chat request: {str(e)}"
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Chat processing failed",
+            detail=f"Failed to process chat request: {str(e)}",
+            status=500
         )
     finally:
         clear_proposed_spec_for_thread(thread_id)
@@ -860,16 +866,20 @@ async def resume_chat_endpoint(
     # Extract thread_id and command from resume_data
     thread_id = resume_data.get("thread_id")
     if not thread_id:
-        raise HTTPException(
-            status_code=400,
-            detail="thread_id is required in resume_data"
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Missing thread_id",
+            detail="thread_id is required in resume_data",
+            status=400
         )
 
     command_data = resume_data.get("command", {})
     if not command_data:
-        raise HTTPException(
-            status_code=400,
-            detail="command is required in resume_data"
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Missing command",
+            detail="command is required in resume_data",
+            status=400
         )
 
     # Get checkpointer
@@ -878,9 +888,11 @@ async def resume_chat_endpoint(
     # Get session by thread_id
     session = await get_chat_session_by_thread_id(thread_id, workflow)
     if not session:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Chat session not found for thread_id: {thread_id}"
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Session not found",
+            detail=f"Chat session not found for thread_id: {thread_id}",
+            status=404
         )
 
     session_id = session.id
@@ -958,9 +970,11 @@ async def resume_chat_endpoint(
         )
     except Exception as e:
         logger.error(f"Error resuming chat: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to resume chat: {str(e)}"
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Chat resume failed",
+            detail=f"Failed to resume chat: {str(e)}",
+            status=500
         )
     finally:
         # Reset context variable
