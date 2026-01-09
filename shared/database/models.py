@@ -14,7 +14,7 @@ class User(models.Model):
     """Database model for authenticated users."""
 
     id = fields.IntField(primary_key=True)
-    user_id = fields.CharField(max_length=255, unique=True, db_index=True) # Clerk user ID
+    user_id = fields.CharField(max_length=255, unique=True, db_index=True)  # Clerk user ID
     email = fields.CharField(max_length=320, null=True)
     first_name = fields.CharField(max_length=255, null=True)
     last_name = fields.CharField(max_length=255, null=True)
@@ -143,10 +143,6 @@ class ProjectListResponse(BaseModel):
 
     projects: list[ProjectPublic]
     user: AuthenticatedUser
-
-
-
-
 
 
 __all__ = [

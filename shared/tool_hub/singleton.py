@@ -9,6 +9,7 @@ logger = get_logger("shared.tool_hub.singleton")
 # Global singleton instance
 _TOOLHUB_INSTANCE: Optional[LocalToolHub] = None
 
+
 def get_toolhub_instance() -> Optional[LocalToolHub]:
     """Get or create the shared LocalToolHub singleton instance."""
     global _TOOLHUB_INSTANCE
@@ -31,6 +32,7 @@ def get_toolhub_instance() -> Optional[LocalToolHub]:
             return None
 
     return _TOOLHUB_INSTANCE
+
 
 def set_toolhub_instance(instance: LocalToolHub) -> None:
     """Set the shared instance (for testing or pre-initialization)."""

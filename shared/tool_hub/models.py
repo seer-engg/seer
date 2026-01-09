@@ -1,11 +1,13 @@
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 
+
 class ToolFunction(BaseModel):
     """Represents the function part of an OpenAI tool definition."""
     name: str
     description: Optional[str] = ""
     parameters: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
 
 class Tool(BaseModel):
     """Represents a tool input (compatible with OpenAI tool schema)."""
@@ -25,6 +27,7 @@ class Tool(BaseModel):
 
     class Config:
         arbitrary_types_allowed = True
+
 
 class EnrichedTool(BaseModel):
     """Internal representation with enriched metadata."""

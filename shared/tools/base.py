@@ -124,7 +124,6 @@ class BaseTool(ABC):
         Raises:
             Exception: If tool execution fails
         """
-        pass
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         """
@@ -211,6 +210,7 @@ class BaseTool(ABC):
             "properties": {},
             "required": []
         }
+
 
 # Tool registry
 _TOOL_REGISTRY: Dict[str, BaseTool] = {}

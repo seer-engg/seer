@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import List
 
 from api.workflows import models as api_models
 from api.workflows.services.shared import VALIDATION_PROBLEM, _raise_problem, _spec_to_dict
@@ -15,6 +14,7 @@ from workflow_compiler.runtime.global_compiler import WorkflowCompilerSingleton
 from workflow_compiler.schema.models import WorkflowSpec
 
 compiler = WorkflowCompilerSingleton.instance()
+
 
 def _type_env_from_compiled(compiled) -> TypeEnvironment:
     return compiled.workflow.runtime.services.type_env

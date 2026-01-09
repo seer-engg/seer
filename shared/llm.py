@@ -1,5 +1,5 @@
 """Shared LLM utilities"""
-from typing import Optional, Literal, Union
+from typing import Optional, Literal
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
@@ -92,7 +92,7 @@ async def get_agent_final_respone(result: dict) -> str:
         str - The final response from the agent.
     """
     output = result.get("messages", [])[-1].content
-    final_output=""
+    final_output = ""
     if isinstance(output, str):
         final_output = output
     elif isinstance(output, list):

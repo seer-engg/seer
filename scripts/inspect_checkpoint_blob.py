@@ -5,15 +5,13 @@ Checks channel_values and full checkpoint structure for trace keys.
 """
 import asyncio
 import sys
-import json
 from pathlib import Path
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from api.agents.checkpointer import get_checkpointer
-from shared.config import config
+from api.agents.checkpointer import get_checkpointer  # noqa: E402
 
 
 async def inspect_checkpoint_blob(thread_id: str):
@@ -47,7 +45,7 @@ async def inspect_checkpoint_blob(thread_id: str):
             for key in trace_keys_in_channel:
                 print(f"  {key}: {type(channel_values[key]).__name__}")
         else:
-            print(f"✗ No trace keys in channel_values")
+            print("✗ No trace keys in channel_values")
 
         # Show all keys starting with underscore
         underscore_keys = [k for k in channel_values.keys() if k.startswith("_")]
@@ -55,7 +53,7 @@ async def inspect_checkpoint_blob(thread_id: str):
             print(f"Keys starting with '_': {underscore_keys}")
 
         # Inspect full checkpoint structure
-        print(f"\nFull checkpoint structure:")
+        print("\nFull checkpoint structure:")
         print(f"  - channel_values: {len(channel_values)} keys")
         print(f"  - channel_versions: {len(checkpoint.get('channel_versions', {}))} keys")
         print(f"  - versions_seen: {len(checkpoint.get('versions_seen', {}))} keys")
@@ -74,16 +72,16 @@ async def inspect_checkpoint_blob(thread_id: str):
             for pw in pending_writes[:3]:  # Show first 3
                 print(f"    {pw}")
 
-    print(f"\n=== Summary ===")
+    print("\n=== Summary ===")
     print(f"Total checkpoints inspected: {checkpoint_count}")
     if trace_keys_found:
         print(f"✓ Trace keys found: {set(trace_keys_found)}")
     else:
-        print(f"✗ No trace keys found in any checkpoint")
-        print(f"\nThis suggests trace keys are either:")
-        print(f"  1. Not being written to node outputs")
-        print(f"  2. Being filtered out by LangGraph before checkpoint save")
-        print(f"  3. Stored in __root__ blob but not exposed in channel_values")
+        print("✗ No trace keys found in any checkpoint")
+        print("\nThis suggests trace keys are either:")
+        print("  1. Not being written to node outputs")
+        print("  2. Being filtered out by LangGraph before checkpoint save")
+        print("  3. Stored in __root__ blob but not exposed in channel_values")
 
 
 async def main():

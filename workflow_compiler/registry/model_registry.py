@@ -6,7 +6,7 @@ locate the callable responsible for executing a model request.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional, List
+from typing import Any, Callable, Dict, MutableMapping, Optional, List
 
 from workflow_compiler.schema.models import JsonSchema, OutputMode
 

@@ -9,7 +9,6 @@ from shared.logger import get_logger
 logger = get_logger("shared.tools.loader")
 
 
-
 def resolve_mcp_services(requested_services: List[str]) -> List[str]:
     """
     Normalize and optionally augment requested services with defaults.

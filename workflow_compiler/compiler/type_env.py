@@ -17,7 +17,6 @@ from workflow_compiler.schema.models import (
     ForEachNode,
     LLMNode,
     Node,
-    OutputContract,
     TaskKind,
     TaskNode,
     ToolNode,

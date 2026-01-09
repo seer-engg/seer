@@ -1,6 +1,6 @@
 """PostgreSQL checkpointer management for LangGraph."""
 from contextlib import asynccontextmanager
-from typing import Optional, Any, AsyncContextManager
+from typing import Optional, AsyncContextManager
 import asyncio
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver

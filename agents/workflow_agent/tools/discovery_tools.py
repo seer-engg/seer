@@ -7,6 +7,7 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
+
 async def _search_tools_local(
     query: str,
     integration_name: Optional[List[str]] = None,

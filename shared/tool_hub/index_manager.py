@@ -3,17 +3,16 @@ Tool index management utilities.
 
 Handles generation and loading of tool vector index during startup.
 """
-import asyncio
-from pathlib import Path
+import threading
 from typing import List, Dict, Any, Optional
+
+from shared.config import config
 from shared.logger import get_logger
-from shared.tools.registry import get_tools_by_integration
 from shared.tool_hub.local_core import LocalToolHub
 from shared.tool_hub.models import Tool
-from shared.config import config
+from shared.tools.registry import get_tools_by_integration
 
 logger = get_logger("shared.tool_hub.index_manager")
-import threading
 
 
 async def generate_tool_index(

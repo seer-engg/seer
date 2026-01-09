@@ -19,7 +19,6 @@ from shared.logger import get_logger
 from shared.config import config
 from shared.analytics import analytics
 from api.router import router
-from api.integrations.router import router as integrations_router
 from api.tools.router import router as tools_router
 from api.agents.checkpointer import checkpointer_lifespan
 from shared.database import db_lifespan
@@ -144,6 +143,8 @@ if config.is_posthog_configured:
     logger.info("📊 PostHog analytics middleware enabled")
 
 # Exception handler to ensure CORS headers on errors
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler that ensures CORS headers are included."""

@@ -17,6 +17,7 @@ from shared.logger import get_logger
 from shared.tools.oauth_manager import get_oauth_token
 logger = get_logger("api.integrations.services")
 
+
 def parse_scopes(scopes_str: str) -> Set[str]:
     """
     Parse a scopes string into a set of individual scopes.
@@ -311,6 +312,7 @@ async def store_oauth_connection(
         logger.info(f"Created new connection for {oauth_provider}")
 
     return connection
+
 
 async def list_connections(user: User):
     """

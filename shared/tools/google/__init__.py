@@ -16,10 +16,6 @@ from shared.tools.google.gmail import (
     GmailCreateLabelTool,
     GmailDeleteLabelTool,
     GmailGetAttachmentTool,
-    GmailGetThreadTool,
-    GmailListThreadsTool,
-    GmailModifyMessageLabelsTool,
-    GmailSendEmailTool,
 )
 from shared.tools.google.gsheets import (
     GoogleSheetsAppendTool,
@@ -38,6 +34,7 @@ from shared.tools.google.gdrive import (
 )
 
 from shared.tools.base import register_tool
+
 
 def register_google_tools():
     register_tool(GmailReadTool())
@@ -68,6 +65,7 @@ def register_google_tools():
     register_tool(GmailDeleteLabelTool())
     register_tool(GmailGetAttachmentTool())
     register_tool(GoogleSheetsWriteTool())
+
 
 __all__ = [
     "register_google_tools",

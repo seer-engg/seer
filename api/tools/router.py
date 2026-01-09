@@ -53,7 +53,7 @@ async def execute_tool_endpoint(
     Returns:
         Tool execution result with data and success flag
     """
-    user:User = request.state.db_user
+    user: User = request.state.db_user
     try:
         result = await execute_tool_service(
             tool_name=tool_name,

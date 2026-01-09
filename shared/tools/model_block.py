@@ -11,7 +11,6 @@ from shared.tools.base import BaseTool, register_tool
 from shared.llm import get_llm
 from shared.logger import get_logger
 from langchain_core.messages import HumanMessage
-from pydantic import BaseModel, create_model
 
 logger = get_logger("shared.tools.model_block")
 
@@ -101,7 +100,7 @@ class ModelBlockTool(BaseTool):
 
             # If output_schema provided, use structured output
             if output_schema:
-                logger.info(f"Running model with structured output schema")
+                logger.info("Running model with structured output schema")
 
                 # Use structured output with JSON schema
                 # LangChain's with_structured_output supports dict schemas with method="json_schema"

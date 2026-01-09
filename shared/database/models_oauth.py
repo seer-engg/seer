@@ -1,5 +1,5 @@
 from tortoise import fields, models
-from shared.database.models import User
+
 
 class OAuthConnection(models.Model):
     """

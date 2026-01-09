@@ -108,7 +108,7 @@ class GitHubTool(BaseTool):
             owner = arguments.get("owner")
             repo = arguments.get("repo")
             pull_number = arguments.get("pullNumber") or arguments.get("pull_number")
-            method = arguments.get("method", "get")
+            arguments.get("method", "get")
 
             if not owner or not repo or not pull_number:
                 raise HTTPException(

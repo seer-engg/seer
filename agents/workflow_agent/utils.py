@@ -5,7 +5,6 @@ from agents.workflow_agent.tools import analyze_workflow, submit_workflow_spec, 
 logger = get_logger(__name__)
 
 
-
 def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:  # pylint: disable=unused-argument
     """
     Get all workflow manipulation tools and dynamic discovery tools.

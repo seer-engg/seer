@@ -15,7 +15,6 @@ logger = get_logger("shared.tools.supabase.edge_functions")
 # -----------------------------
 
 
-
 class SupabaseFunctionInvokeTool(BaseTool):
     name = "supabase_function_invoke"
     description = "Invoke a Supabase Edge Function (POST)."

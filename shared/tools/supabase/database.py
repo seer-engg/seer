@@ -143,8 +143,6 @@ class SupabaseTableQueryTool(BaseTool):
             raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
 
 
-
-
 # -----------------------------
 # Database (PostgREST) - WRITE
 # -----------------------------

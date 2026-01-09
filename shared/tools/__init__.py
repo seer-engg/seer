@@ -9,8 +9,6 @@ from shared.tools.github import register_github_tools  # noqa: F401
 from shared.tools.supabase import register_supabase_tools  # noqa: F401
 
 
-
-
 # Register tools
 register_google_tools()
 register_github_tools()

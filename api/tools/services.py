@@ -5,7 +5,6 @@ from typing import Any, Dict, Optional
 from fastapi import HTTPException
 
 from shared.tools.registry import get_tools_by_integration
-from shared.tools.base import get_tool
 from shared.tools.executor import execute_tool as _execute_tool
 from shared.logger import get_logger
 from shared.database.models import User

@@ -11,11 +11,11 @@ from jwt.exceptions import InvalidTokenError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-from shared.logger import get_logger
 from shared.analytics import analytics
+from shared.database.models import User
+from shared.logger import get_logger
 
 logger = get_logger("api.middleware.auth")
-from shared.database.models import User
 
 
 @dataclass
@@ -155,7 +155,6 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
             if claims.get(key):
                 return str(claims[key])
         raise InvalidTokenError("Token missing subject identifier")
-
 
 
 class TokenDecodeWithoutValidationMiddleware(BaseHTTPMiddleware):

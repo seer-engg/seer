@@ -1,8 +1,8 @@
 from typing import Optional, Dict, Any
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
-        SummarizationMiddleware,
-    )
+    SummarizationMiddleware,
+)
 from shared.logger import get_logger
 from shared.llm import get_llm_without_responses_api
 from agents.workflow_agent.utils import get_workflow_tools
@@ -14,6 +14,7 @@ logger = get_logger(__name__)
 
 WORKFLOW_SPEC_SCHEMA = get_workflow_spec_schema_text()
 WORKFLOW_SPEC_EXAMPLE = get_workflow_spec_example_text()
+
 
 def create_workflow_chat_agent(
     model: str = "gpt-4o-mini",
@@ -40,7 +41,8 @@ def create_workflow_chat_agent(
     schema_section = f"\n\nWorkflowSpec schema excerpt (trimmed):\n{WORKFLOW_SPEC_SCHEMA}"
     example_section = f"\n\nValid WorkflowSpec example:\n{WORKFLOW_SPEC_EXAMPLE}"
 
-    system_prompt = """You are an intelligent workflow assistant that designs complete workflows for the compiler's WorkflowSpec format. Understand user intent, discover appropriate tools, and deliver a full JSON spec that can compile without manual edits.
+    system_prompt = """You are an intelligent workflow assistant that designs complete workflows for the compiler's WorkflowSpec format.
+Understand user intent, discover appropriate tools, and deliver a full JSON spec that can compile without manual edits.
 
 **Core Principles**
 - Ask clarifying questions in natural language when requirements are ambiguous.
@@ -57,7 +59,8 @@ def create_workflow_chat_agent(
 **Tool usage**
 - `analyze_workflow` → inspect the legacy ReactFlow data for additional context before designing a new spec.
 - `search_tools` → discover concrete tool names, parameters, and schema expectations.
-- `submit_workflow_spec(workflow_spec=<JSON>, summary=<short reason>)` → REQUIRED to hand over the final proposal. Always pass the entire JSON object that conforms to WorkflowSpec. Do NOT send patch operations or ReactFlow nodes.
+- `submit_workflow_spec(workflow_spec=<JSON>, summary=<short reason>)` → REQUIRED to hand over the final proposal.
+  Always pass the entire JSON object that conforms to WorkflowSpec. Do NOT send patch operations or ReactFlow nodes.
 
 **Output contract**
 - Provide a self-contained WorkflowSpec covering inputs, node graph, contracts, and final `output`.

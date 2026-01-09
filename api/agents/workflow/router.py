@@ -331,7 +331,7 @@ async def chat_with_workflow_endpoint(
 
                             # Check if following messages contain ToolMessages with matching tool_call_ids
                             # ToolMessage structure: ToolMessage(content="...", tool_call_id="call_123")
-                            following_msgs = messages[i+1:i+1+len(tool_call_ids)*2]  # Allow some buffer
+                            following_msgs = messages[i + 1:i + 1 + len(tool_call_ids) * 2]  # Allow some buffer
                             tool_response_ids = set()
 
                             for m in following_msgs:
@@ -388,7 +388,7 @@ async def chat_with_workflow_endpoint(
                                         if not tool_call_ids:
                                             continue
 
-                                        following_msgs = messages[i+1:i+1+len(tool_call_ids)*2]
+                                        following_msgs = messages[i + 1:i + 1 + len(tool_call_ids) * 2]
                                         tool_response_ids = set()
 
                                         for m in following_msgs:
@@ -487,7 +487,7 @@ async def chat_with_workflow_endpoint(
                                             chk_tool_call_ids.add(tool_call_id)
 
                                     if chk_tool_call_ids:
-                                        chk_following = checkpoint_messages[j+1:j+1+len(chk_tool_call_ids)*2]
+                                        chk_following = checkpoint_messages[j + 1:j + 1 + len(chk_tool_call_ids) * 2]
                                         chk_response_ids = set()
 
                                         for m in chk_following:

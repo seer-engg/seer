@@ -4,7 +4,7 @@ Manages tool entries and metadata.
 """
 from dataclasses import dataclass
 from typing import Dict, List, Optional
-from shared.tools.base import list_tools, get_tool as get_tool_from_base
+from shared.tools.base import list_tools
 
 
 @dataclass

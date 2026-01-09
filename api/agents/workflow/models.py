@@ -4,7 +4,7 @@ Database models for workflow system.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -27,7 +27,6 @@ class WorkflowBase(BaseModel):
 
 class WorkflowCreate(WorkflowBase):
     """Payload for creating a workflow."""
-    pass
 
 
 class WorkflowUpdate(BaseModel):
@@ -77,7 +76,6 @@ class WorkflowExecutionPublic(BaseModel):
     completed_at: Optional[datetime] = None
 
 
-
 class WorkflowProposalPublic(BaseModel):
     """Response model for workflow proposals."""
 
@@ -96,8 +94,6 @@ class WorkflowProposalPublic(BaseModel):
     decided_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
-
-
 
 
 __all__ = [

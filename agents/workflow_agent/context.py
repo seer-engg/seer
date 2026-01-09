@@ -17,6 +17,7 @@ def set_workflow_state_for_thread(thread_id: str, workflow_state: Dict[str, Any]
     """Set workflow state for a specific thread."""
     _workflow_state_context[thread_id] = workflow_state
 
+
 def get_workflow_state_for_thread(thread_id: str) -> Optional[Dict[str, Any]]:
     """Get workflow state for a specific thread."""
     return _workflow_state_context.get(thread_id)
@@ -44,13 +45,16 @@ def clear_proposed_spec_for_thread(thread_id: Optional[str]) -> None:
         return
     _proposed_specs_context.pop(thread_id, None)
 
+
 def set_user_for_thread(thread_id: str, user: "User") -> None:
     """Store User object for a thread."""
     _thread_user_map[thread_id] = user
 
+
 def get_user_for_thread(thread_id: str) -> Optional["User"]:
     """Retrieve User object for a thread."""
     return _thread_user_map.get(thread_id)
+
 
 def clear_user_for_thread(thread_id: str) -> None:
     """Clear User object for a thread."""
