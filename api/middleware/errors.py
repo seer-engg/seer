@@ -6,11 +6,14 @@ All API endpoints should use raise_problem() for consistent error handling.
 """
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Dict, Any
 
+from typing import TYPE_CHECKING
 from fastapi import HTTPException
 
-from api.workflows import models as api_models
+# Import only for type checking to avoid runtime circular imports
+if TYPE_CHECKING:  # pragma: no cover
+    from api.workflows import models as api_models
 
 # Error type URIs
 PROBLEM_BASE = "https://seer.errors"
@@ -27,7 +30,7 @@ def raise_problem(
     title: str,
     detail: str,
     status: int,
-    errors: Optional[Sequence[api_models.ProblemError]] = None,
+    errors: Optional[Sequence["api_models.ProblemError"]] = None,
 ) -> None:
     """
     Raise an HTTP exception using RFC 7807 Problem Details format.
@@ -50,7 +53,7 @@ def raise_problem(
             status=404
         )
     """
-    payload = {
+    payload: Dict[str, Any] = {
         "type": type_uri,
         "title": title,
         "status": status,

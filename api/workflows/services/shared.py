@@ -5,9 +5,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from api.middleware.errors import (
-    VALIDATION_PROBLEM,
-)
+from api.middleware.errors import VALIDATION_PROBLEM
 from api.middleware.errors import raise_problem as _raise_problem
 from shared.database.models import User
 from shared.database.workflow_models import (

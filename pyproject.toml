@@ -88,7 +88,7 @@ load-plugins = ["pylint.extensions.mccabe"]
 
 [tool.pylint.format]
 # Maximum number of characters on a single line
-max-line-length = 100
+max-line-length = 150   # 100 is too small for some db calls
 # Maximum number of lines in a module
 max-module-lines = 600
 
