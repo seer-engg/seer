@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from tortoise import fields, models
 
 if TYPE_CHECKING:
-    from api.middleware.auth import AuthenticatedUser
+    from api.core.middleware.auth import AuthenticatedUser
 
 
 class User(models.Model):

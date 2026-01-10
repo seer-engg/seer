@@ -103,7 +103,7 @@ if config.is_cloud_mode:
     if not config.is_clerk_configured:
         raise ValueError("Cloud mode requires Clerk configuration. Set CLERK_JWKS_URL and CLERK_ISSUER environment variables.")
     logger.info("🔐 Cloud mode: Using Clerk authentication")
-    from api.middleware.auth import ClerkAuthMiddleware  # pylint: disable=ungrouped-imports # Reason: Conditional import after cloud mode check
+    from api.core.middleware.auth import ClerkAuthMiddleware  # pylint: disable=ungrouped-imports # Reason: Conditional import after cloud mode check
 
     app.add_middleware(
         ClerkAuthMiddleware,
@@ -119,7 +119,7 @@ if config.is_cloud_mode:
         ],
     )
 else:
-    from api.middleware.auth import TokenDecodeWithoutValidationMiddleware
+    from api.core.middleware.auth import TokenDecodeWithoutValidationMiddleware
     app.add_middleware(TokenDecodeWithoutValidationMiddleware)
     logger.info("🔧 Self-hosted mode: Authentication disabled")
 
@@ -136,7 +136,7 @@ app.add_middleware(SessionMiddleware, secret_key=os.getenv("SECRET_KEY", "dev_se
 
 # PostHog analytics middleware - track requests and flush events
 if config.is_posthog_configured:
-    from api.middleware.analytics import PostHogMiddleware
+    from api.core.middleware.analytics import PostHogMiddleware
     app.add_middleware(PostHogMiddleware)
     logger.info("📊 PostHog analytics middleware enabled")
 

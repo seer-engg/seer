@@ -14,8 +14,6 @@ from starlette.exceptions import HTTPException
 from api.agents.checkpointer import get_checkpointer
 from api.workflows import models as api_models
 from api.workflows.services.shared import (
-    COMPILE_PROBLEM,
-    RUN_PROBLEM,
     _build_run_config,
     _compile_workflow,
     _get_workflow,
@@ -24,6 +22,7 @@ from api.workflows.services.shared import (
     _raise_problem,
     _spec_to_dict,
 )
+from api.core.errors import COMPILE_PROBLEM, RUN_PROBLEM
 from shared.analytics import analytics
 from shared.config import config as shared_config
 from shared.database.models import User

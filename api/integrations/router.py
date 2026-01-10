@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from api.integrations.providers import get_integration_provider
 from api.integrations.providers.base import OAuthAuthorizeContext, OAuthHelpers
-from api.middleware.errors import INTEGRATION_PROBLEM, VALIDATION_PROBLEM, raise_problem
+from api.core.errors import INTEGRATION_PROBLEM, VALIDATION_PROBLEM, raise_problem
 from shared.config import config
 from shared.database.models import User
 from shared.logger import get_logger

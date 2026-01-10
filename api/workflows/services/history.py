@@ -9,12 +9,10 @@ from fastapi import HTTPException
 from api.agents.checkpointer import get_checkpointer
 from api.workflows import models as api_models
 from api.workflows.services.shared import (
-    RUN_PROBLEM,
-    VALIDATION_PROBLEM,
     _build_run_config,
     _compile_workflow,
-    _raise_problem,
 )
+from api.core.errors import RUN_PROBLEM, VALIDATION_PROBLEM, raise_problem
 from shared.config import config as shared_config
 from shared.database.models import User
 from shared.database.workflow_models import (
@@ -350,7 +348,7 @@ async def _extract_node_traces_from_checkpoints(
 async def _validate_history_prerequisites() -> None:
     """Validate that history retrieval prerequisites are met."""
     if not shared_config.DATABASE_URL:
-        _raise_problem(
+        raise_problem(
             type_uri=RUN_PROBLEM,
             title="History unavailable",
             detail="LangGraph checkpointer is not configured",
@@ -362,7 +360,7 @@ async def _get_checkpointer_or_fail() -> Any:
     """Get checkpointer instance or raise error."""
     checkpointer = await get_checkpointer()
     if checkpointer is None:
-        _raise_problem(
+        raise_problem(
             type_uri=RUN_PROBLEM,
             title="History unavailable",
             detail="LangGraph checkpointer failed to initialize",
@@ -443,7 +441,7 @@ async def _get_run(user: User, run_id: str) -> WorkflowRun:
     try:
         pk = parse_run_public_id(run_id)
     except ValueError:
-        _raise_problem(
+        raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Invalid run id",
             detail="Run id is invalid",
@@ -452,7 +450,7 @@ async def _get_run(user: User, run_id: str) -> WorkflowRun:
     # Use filter().prefetch_related().first() instead of .get() to prefetch workflow
     run = await WorkflowRun.filter(id=pk, user=user).prefetch_related('workflow').first()
     if not run:
-        _raise_problem(
+        raise_problem(
             type_uri=RUN_PROBLEM,
             title="Run not found",
             detail=f"Run '{run_id}' not found",
@@ -489,7 +487,7 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
     try:
         state_tuple = await _fetch_checkpoint_state(checkpointer, config, run)
         if not state_tuple:
-            _raise_problem(
+            raise_problem(
                 type_uri=RUN_PROBLEM,
                 title="Run history not found",
                 detail="No checkpoints found for run '%s'" % run.run_id,
@@ -518,7 +516,7 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
             exc_info=True,
             extra={"run_id": run.run_id, "user_id": user.id}
         )
-        _raise_problem(
+        raise_problem(
             type_uri=RUN_PROBLEM,
             title="Failed to load run history",
             detail=f"An error occurred while loading history for run '{run.run_id}': {str(exc)}",

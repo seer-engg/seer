@@ -7,11 +7,9 @@ from typing import Any, Dict, Iterable, List
 from api.agents.checkpointer import get_checkpointer
 from api.workflows import models as api_models
 from api.workflows.services.shared import (
-    COMPILE_PROBLEM,
-    VALIDATION_PROBLEM,
-    _raise_problem,
     _spec_to_dict,
 )
+from api.core.errors import VALIDATION_PROBLEM, COMPILE_PROBLEM, raise_problem
 from shared.config import config as shared_config
 from shared.database.models import User
 from shared.tools.base import list_tools as registry_list_tools
@@ -128,7 +126,7 @@ async def list_models() -> api_models.ModelRegistryResponse:
 async def resolve_schema(schema_id: str) -> api_models.SchemaResponse:
     schema = COMPILER.schema_registry.get(schema_id)
     if schema is None:
-        _raise_problem(
+        raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Schema not found",
             detail=f"Schema '{schema_id}' is not registered",

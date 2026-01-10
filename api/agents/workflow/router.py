@@ -19,7 +19,7 @@ from agents.workflow_agent import (
     set_workflow_state_for_thread,
 )
 from api.agents.checkpointer import _recreate_checkpointer, get_checkpointer
-from api.middleware.errors import AUTH_PROBLEM, VALIDATION_PROBLEM, raise_problem
+from api.core.errors import AUTH_PROBLEM, VALIDATION_PROBLEM, raise_problem
 from shared.analytics import analytics
 from shared.config import config
 from shared.database.models import User, UserPublic

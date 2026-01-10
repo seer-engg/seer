@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from api.middleware.errors import VALIDATION_PROBLEM, raise_problem
+from api.core.errors import VALIDATION_PROBLEM, raise_problem
 from shared.logger import get_logger
 
 from .services import (
