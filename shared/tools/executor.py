@@ -9,7 +9,7 @@ from fastapi import HTTPException
 
 from shared.analytics import analytics
 from shared.config import config
-from shared.database.models import User
+from shared.database import User
 from shared.logger import get_logger
 from shared.tools.base import get_tool
 from shared.tools.credential_resolver import CredentialResolver, ResolvedCredentials

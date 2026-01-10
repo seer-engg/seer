@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from shared.database.workflow_models import Workflow, parse_workflow_public_id
+from shared.database import Workflow, parse_workflow_public_id
 from shared.logger import get_logger
 
 from .checkpointer import get_checkpointer

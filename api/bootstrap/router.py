@@ -5,7 +5,7 @@ Provides a single endpoint that returns data from multiple sources in parallel.
 """
 from fastapi import APIRouter, Request
 
-from shared.database.models import User
+from shared.database import User
 
 from .schema import BootstrapResponse
 from .services import fetch_bootstrap_data

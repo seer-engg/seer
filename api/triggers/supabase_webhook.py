@@ -12,8 +12,7 @@ import httpx
 
 from api.integrations.constants import SUPABASE_RESOURCE_PROVIDER
 from shared.config import config
-from shared.database.models_integrations import IntegrationResource
-from shared.database.workflow_models import TriggerSubscription
+from shared.database import IntegrationResource, TriggerSubscription
 from shared.logger import get_logger
 from shared.tools.oauth_manager import get_oauth_token
 

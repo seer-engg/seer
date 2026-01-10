@@ -11,7 +11,7 @@ from api.workflows.services.shared import (
 )
 from api.core.errors import VALIDATION_PROBLEM, COMPILE_PROBLEM, raise_problem
 from shared.config import config as shared_config
-from shared.database.models import User
+from shared.database import User
 from shared.tools.base import list_tools as registry_list_tools
 from workflow_compiler.errors import WorkflowCompilerError
 from workflow_compiler.registry.trigger_registry import trigger_registry

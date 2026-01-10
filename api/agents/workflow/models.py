@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from shared.database.models import UserPublic
+from shared.database import UserPublic
 
 # ============================================================================
 # Pydantic Models for API

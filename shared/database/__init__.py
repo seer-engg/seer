@@ -7,15 +7,30 @@ from fastapi import FastAPI
 from tortoise import Tortoise
 
 from shared.database.config import TORTOISE_ORM
+from shared.database.models import (
+    User,
+    UserPublic,
+)
+from shared.database.models_oauth import OAuthConnection
 from shared.database.models_integrations import IntegrationResource, IntegrationSecret
 from shared.database.workflow_models import (
+    TriggerEvent,
+    TriggerEventStatus,
+    TriggerSubscription,
     Workflow,
     WorkflowChatMessage,
     WorkflowChatSession,
     WorkflowDraft,
     WorkflowProposal,
     WorkflowRun,
+    WorkflowRunSource,
+    WorkflowRunStatus,
     WorkflowVersion,
+    WorkflowVersionStatus,
+    make_run_public_id,
+    make_workflow_public_id,
+    parse_run_public_id,
+    parse_workflow_public_id,
 )
 from shared.logger import get_logger
 
@@ -50,6 +65,16 @@ __all__ = [
     "db_lifespan",
     "init_db",
     "close_db",
+    # Config
+    "TORTOISE_ORM",
+    # Core models
+    "User",
+    "UserPublic",
+    # OAuth & Integrations
+    "OAuthConnection",
+    "IntegrationResource",
+    "IntegrationSecret",
+    # Workflow domain
     "Workflow",
     "WorkflowDraft",
     "WorkflowVersion",
@@ -57,6 +82,14 @@ __all__ = [
     "WorkflowChatSession",
     "WorkflowChatMessage",
     "WorkflowProposal",
-    "IntegrationResource",
-    "IntegrationSecret",
+    "WorkflowVersionStatus",
+    "WorkflowRunStatus",
+    "WorkflowRunSource",
+    "TriggerSubscription",
+    "TriggerEvent",
+    "TriggerEventStatus",
+    "make_workflow_public_id",
+    "parse_workflow_public_id",
+    "make_run_public_id",
+    "parse_run_public_id",
 ]

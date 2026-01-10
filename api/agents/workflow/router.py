@@ -22,7 +22,7 @@ from api.agents.checkpointer import _recreate_checkpointer, get_checkpointer
 from api.core.errors import AUTH_PROBLEM, VALIDATION_PROBLEM, raise_problem
 from shared.analytics import analytics
 from shared.config import config
-from shared.database.models import User, UserPublic
+from shared.database import User, UserPublic
 from shared.logger import get_logger
 
 from .chat_schema import (

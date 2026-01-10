@@ -12,7 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from shared.analytics import analytics
-from shared.database.models import User
+from shared.database import User
 from shared.logger import get_logger
 
 logger = get_logger("api.middleware.auth")

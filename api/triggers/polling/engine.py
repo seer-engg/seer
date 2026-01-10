@@ -22,7 +22,7 @@ from api.triggers.services import (
     _persist_event,
     _trigger_requires_connection,
 )
-from shared.database.workflow_models import TriggerSubscription
+from shared.database import TriggerSubscription
 from shared.logger import get_logger
 from shared.tools.oauth_manager import get_oauth_token
 

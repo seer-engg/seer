@@ -8,7 +8,7 @@ from fastapi import HTTPException, status
 from tortoise.exceptions import DoesNotExist, IntegrityError
 
 from api.workflows import services as workflow_services
-from shared.database.workflow_models import (
+from shared.database import (
     TriggerEvent,
     TriggerEventStatus,
     TriggerSubscription,

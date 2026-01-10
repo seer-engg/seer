@@ -14,8 +14,8 @@ from api.workflows.services.shared import (
 )
 from api.core.errors import RUN_PROBLEM, VALIDATION_PROBLEM, raise_problem
 from shared.config import config as shared_config
-from shared.database.models import User
-from shared.database.workflow_models import (
+from shared.database import (
+    User,
     WorkflowRun,
     WorkflowRunStatus,
     parse_run_public_id,

@@ -9,8 +9,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 
-from shared.database.models import User
-from shared.database.workflow_models import (
+from shared.database import User
+from shared.database import (
     Workflow,
     WorkflowChatMessage,
     WorkflowChatSession,

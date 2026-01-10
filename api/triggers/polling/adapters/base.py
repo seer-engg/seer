@@ -4,9 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Protocol
 
-from shared.database.models import User
-from shared.database.models_oauth import OAuthConnection
-from shared.database.workflow_models import TriggerSubscription
+from shared.database import User, OAuthConnection ,TriggerSubscription
 
 JsonDict = Dict[str, Any]
 

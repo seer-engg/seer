@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from shared.database.models import UserPublic
+from shared.database import UserPublic
 
 from .models import WorkflowProposalPublic
 

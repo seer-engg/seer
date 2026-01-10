@@ -16,7 +16,7 @@ from api.models.router import list_models
 # Import existing service functions
 from api.tools.services import list_tools
 from api.workflows.services import list_node_types, list_workflows
-from shared.database.models import User
+from shared.database import User
 from shared.logger import get_logger
 
 logger = get_logger("api.bootstrap.services")

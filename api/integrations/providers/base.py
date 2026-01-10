@@ -16,12 +16,12 @@ from typing import (
 from fastapi import HTTPException
 
 if TYPE_CHECKING:
-    from shared.database.models import User
-    from shared.database.models_integrations import (
+    from shared.database import (
+        User,
         IntegrationResource,
         IntegrationSecret,
+        OAuthConnection
     )
-    from shared.database.models_oauth import OAuthConnection
 
 
 class _ResourceUpserter(Protocol):

@@ -10,9 +10,10 @@ from api.integrations.constants import (
     SUPABASE_RESOURCE_TYPE_PROJECT,
 )
 from api.integrations.providers import ProviderContext, get_integration_provider
-from shared.database.models import User
-from shared.database.models_integrations import IntegrationResource, IntegrationSecret
-from shared.database.models_oauth import OAuthConnection
+from shared.database import ( 
+    User,
+    IntegrationResource, IntegrationSecret, OAuthConnection
+)
 from shared.logger import get_logger
 from shared.tools.oauth_manager import get_oauth_token
 

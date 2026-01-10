@@ -22,8 +22,8 @@ from api.workflows.services.shared import (
     _raise_problem,
 )
 from shared.config import config as shared_config
-from shared.database.models import User
-from shared.database.workflow_models import (
+from shared.database import (
+    User,
     TriggerSubscription,
     WorkflowDraft,
     make_workflow_public_id,

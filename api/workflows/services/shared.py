@@ -7,8 +7,8 @@ from typing import Any, Dict, Optional
 
 from api.core.errors import VALIDATION_PROBLEM
 from api.core.errors import raise_problem as _raise_problem
-from shared.database.models import User
-from shared.database.workflow_models import (
+from shared.database import (
+    User,
     Workflow,
     WorkflowRun,
     parse_workflow_public_id,

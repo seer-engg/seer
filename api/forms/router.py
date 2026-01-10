@@ -9,7 +9,7 @@ from tortoise.exceptions import DoesNotExist
 
 from api.forms.validation import validate_form_data
 from api.triggers.services import handle_generic_webhook
-from shared.database.workflow_models import TriggerSubscription
+from shared.database import TriggerSubscription
 from shared.logger import get_logger
 
 logger = get_logger(__name__)

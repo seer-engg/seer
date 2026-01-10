@@ -5,9 +5,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from fastapi import HTTPException
 
-from shared.database.models import User
-from shared.database.models_integrations import IntegrationResource, IntegrationSecret
-from shared.database.models_oauth import OAuthConnection
+from shared.database import IntegrationResource, IntegrationSecret, OAuthConnection
 from shared.logger import get_logger
 from shared.tools.base import BaseTool
 from shared.tools.oauth_manager import get_oauth_token

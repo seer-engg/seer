@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, create_model
 
-from shared.database.models import User
+from shared.database import User
 from shared.logger import get_logger
 from shared.tools.base import BaseTool
 from shared.tools.executor import execute_tool

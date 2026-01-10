@@ -10,7 +10,7 @@ from typing import Any, Dict, Mapping, Sequence, Set
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 import shared.tools  # noqa: F401  # ensure default tool registration occurs
-from shared.database.models import User
+from shared.database import User
 from shared.llm import get_llm
 from shared.tools.base import get_tool
 from shared.tools.executor import execute_tool

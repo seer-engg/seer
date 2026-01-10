@@ -9,7 +9,7 @@ from api.workflows.services.shared import (
     _raise_problem,
     _spec_to_dict,
 )
-from shared.database.models import User
+from shared.database import User
 from workflow_compiler.errors import ValidationPhaseError
 from workflow_compiler.expr import parser as expr_parser
 from workflow_compiler.expr.typecheck import Scope, TypeEnvironment, typecheck_reference

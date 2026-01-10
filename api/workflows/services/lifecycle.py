@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict, Optional
-
+from pydantic import ValidationError
 from tortoise.exceptions import DoesNotExist
 
 from api.workflows import models as api_models
@@ -15,13 +15,14 @@ from api.workflows.services.shared import (
     _raise_problem,
     _spec_to_dict,
 )
-from shared.database.models import User
-from shared.database.workflow_models import (
+from shared.database import (
+    User,
     Workflow,
     WorkflowDraft,
     WorkflowVersion,
     WorkflowVersionStatus,
     parse_workflow_public_id,
+    TriggerSubscription
 )
 from workflow_compiler.schema.models import WorkflowSpec
 
@@ -362,7 +363,7 @@ async def export_workflow(
     """
     Export workflow and optionally triggers as portable JSON.
     """
-    from shared.database.workflow_models import TriggerSubscription
+    
 
     # 1. Fetch workflow and draft
     workflow = await _get_workflow(user, workflow_id)
@@ -434,10 +435,6 @@ async def import_workflow(
     """
     Import workflow from exported JSON.
     """
-    from pydantic import ValidationError
-
-    from shared.database.workflow_models import TriggerSubscription
-
     import_data = payload.import_data
 
     # 1. Validate schema version

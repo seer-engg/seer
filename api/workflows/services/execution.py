@@ -25,8 +25,8 @@ from api.workflows.services.shared import (
 from api.core.errors import COMPILE_PROBLEM, RUN_PROBLEM
 from shared.analytics import analytics
 from shared.config import config as shared_config
-from shared.database.models import User
-from shared.database.workflow_models import (
+from shared.database import (
+    User,
     Workflow,
     WorkflowDraft,
     WorkflowRun,

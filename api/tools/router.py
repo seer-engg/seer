@@ -7,7 +7,7 @@ from fastapi import APIRouter, Body, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from api.tools.services import execute_tool_service, list_tools
-from shared.database.models import User
+from shared.database import User
 
 router = APIRouter(prefix="/api/tools", tags=["tools"])
 

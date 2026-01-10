@@ -11,7 +11,7 @@ from api.integrations.providers import get_integration_provider
 from api.integrations.providers.base import OAuthAuthorizeContext, OAuthHelpers
 from api.core.errors import INTEGRATION_PROBLEM, VALIDATION_PROBLEM, raise_problem
 from shared.config import config
-from shared.database.models import User
+from shared.database import User
 from shared.logger import get_logger
 
 from .oauth import oauth

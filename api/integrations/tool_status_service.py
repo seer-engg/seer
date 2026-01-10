@@ -7,7 +7,7 @@ connection status, and token validity.
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from shared.database.models_integrations import OAuthConnection
+from shared.database import OAuthConnection
 from shared.logger import get_logger
 
 from .services import has_required_scopes, parse_scopes

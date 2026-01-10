@@ -5,7 +5,7 @@ Validates that an OAuth connection has the required scopes for tool execution.
 """
 from typing import List, Optional
 
-from shared.database.models_oauth import OAuthConnection
+from shared.database import OAuthConnection
 from shared.logger import get_logger
 
 logger = get_logger("shared.tools.scope_validator")
