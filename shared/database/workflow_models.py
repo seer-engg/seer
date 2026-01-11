@@ -136,8 +136,8 @@ class WorkflowVersion(models.Model):
         null=True,
     )
     manifest = fields.JSONField(null=True)
-    spec_hash = fields.CharField(max_length=64, null=True)
-    version_number = fields.IntField(null=True)
+    spec_hash = fields.CharField(max_length=64)
+    version_number = fields.IntField(default=0, unique=True)
 
     class Meta:
         table = "workflow_versions"
