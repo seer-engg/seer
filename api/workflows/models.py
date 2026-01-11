@@ -216,7 +216,7 @@ class WorkflowDraftPatchRequest(BaseModel):
 
 
 class WorkflowPublishRequest(BaseModel):
-    version_id: int
+    pass
 
 
 class WorkflowVersionRestoreRequest(BaseModel):

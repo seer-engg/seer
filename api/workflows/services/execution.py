@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 import traceback
@@ -16,8 +15,8 @@ from api.workflows import models as api_models
 from api.workflows.services.shared import (
     _build_run_config,
     _compile_workflow,
+    _ensure_draft_version,
     _get_workflow,
-    _hash_spec,
     _now,
     _raise_problem,
     _spec_to_dict,
@@ -28,7 +27,6 @@ from shared.config import config as shared_config
 from shared.database import (
     User,
     Workflow,
-    WorkflowDraft,
     WorkflowRun,
     WorkflowRunSource,
     WorkflowRunStatus,
@@ -49,33 +47,6 @@ class ExecutionMetrics:
     start_time: float
     execution_mode: str
     duration_ms: Optional[float] = None
-
-
-async def _ensure_draft_version(workflow: Workflow, user: User) -> WorkflowVersion:
-    draft = await WorkflowDraft.get(workflow=workflow)
-    spec_dict = json.loads(json.dumps(draft.spec or {}))
-    spec_hash = _hash_spec(spec_dict)
-    existing = (
-        await WorkflowVersion.filter(
-            workflow=workflow,
-            spec_hash=spec_hash,
-            status=WorkflowVersionStatus.DRAFT,
-            created_from_draft_revision=draft.revision,
-        )
-        .order_by("-created_at")
-        .first()
-    )
-    if existing:
-        return existing
-    return await WorkflowVersion.create(
-        workflow=workflow,
-        status=WorkflowVersionStatus.DRAFT,
-        spec=spec_dict,
-        created_from_draft_revision=draft.revision,
-        created_by=user,
-        manifest=None,
-        spec_hash=spec_hash,
-    )
 
 
 async def _create_run_record(
@@ -288,29 +259,6 @@ async def _complete_run(
     )
 
     return run
-
-
-async def run_draft_workflow(
-    user: User, payload: api_models.RunFromSpecRequest
-) -> api_models.RunResponse:
-    run = await _create_run_record(
-        user,
-        workflow=None,
-        workflow_version=None,
-        spec=payload.spec,
-        inputs=payload.inputs,
-        config_payload=payload.config,
-    )
-
-    output, metrics = await _execute_compiled_run(
-        run,
-        user,
-        inputs=payload.inputs,
-        config_payload=payload.config,
-        execution_mode="api_sync",
-    )
-    run = await _complete_run(run, output, metrics)
-    return _serialize_run(run)
 
 
 async def list_workflow_runs(

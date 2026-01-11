@@ -10,7 +10,10 @@ from api.core.errors import raise_problem as _raise_problem
 from shared.database import (
     User,
     Workflow,
+    WorkflowDraft,
     WorkflowRun,
+    WorkflowVersion,
+    WorkflowVersionStatus,
     parse_workflow_public_id,
 )
 from workflow_compiler.runtime.global_compiler import WorkflowCompilerSingleton
@@ -28,6 +31,33 @@ def _spec_to_dict(spec: WorkflowSpec) -> Dict[str, Any]:
 def _hash_spec(spec_dict: Dict[str, Any]) -> str:
     serialized = json.dumps(spec_dict, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(serialized).hexdigest()
+
+
+async def _ensure_draft_version(workflow: Workflow, user: User) -> WorkflowVersion:
+    draft = await WorkflowDraft.get(workflow=workflow)
+    spec_dict = json.loads(json.dumps(draft.spec or {}))
+    spec_hash = _hash_spec(spec_dict)
+    existing = (
+        await WorkflowVersion.filter(
+            workflow=workflow,
+            spec_hash=spec_hash,
+            status=WorkflowVersionStatus.DRAFT,
+            created_from_draft_revision=draft.revision,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if existing:
+        return existing
+    return await WorkflowVersion.create(
+        workflow=workflow,
+        status=WorkflowVersionStatus.DRAFT,
+        spec=spec_dict,
+        created_from_draft_revision=draft.revision,
+        created_by=user,
+        manifest=None,
+        spec_hash=spec_hash,
+    )
 
 
 def _build_run_config(run: WorkflowRun, config_payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

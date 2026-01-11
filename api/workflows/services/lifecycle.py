@@ -10,6 +10,8 @@ from tortoise.exceptions import DoesNotExist
 from api.workflows import models as api_models
 from api.workflows.services.shared import (
     VALIDATION_PROBLEM,
+    _ensure_draft_version,
+    _hash_spec,
     _get_workflow,
     _now,
     _raise_problem,
@@ -318,15 +320,19 @@ async def publish_workflow(
     payload: api_models.WorkflowPublishRequest,
 ) -> api_models.WorkflowResponse:
     workflow = await _get_workflow(user, workflow_id)
-    try:
-        version = await WorkflowVersion.get(id=payload.version_id, workflow=workflow)
-    except DoesNotExist:
-        _raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Version not found",
-            detail=f"Version '{payload.version_id}' does not belong to workflow '{workflow_id}'",
-            status=404,
-        )
+    draft = workflow.draft or await WorkflowDraft.get(workflow=workflow)
+    draft_spec = json.loads(json.dumps(draft.spec or {}))
+    draft_spec_hash = _hash_spec(draft_spec)
+    latest_version = await _recent_version(workflow)
+    if (
+        latest_version
+        and latest_version.spec_hash == draft_spec_hash
+        and latest_version.created_from_draft_revision == draft.revision
+        and latest_version.status == WorkflowVersionStatus.DRAFT
+    ):
+        version = latest_version
+    else:
+        version = await _ensure_draft_version(workflow, user)
 
     previous_release = getattr(workflow, "published_version", None)
     if previous_release and isinstance(previous_release, WorkflowVersion):

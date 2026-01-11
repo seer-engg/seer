@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Body, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 
 from api.workflows import models as api_models
@@ -216,7 +216,7 @@ async def patch_workflow_draft(
 async def publish_workflow(
     request: Request,
     workflow_id: str,
-    payload: api_models.WorkflowPublishRequest,
+    payload: api_models.WorkflowPublishRequest = Body(default_factory=api_models.WorkflowPublishRequest),
 ):
     user = _require_user(request)
     return await services.publish_workflow(user, workflow_id, payload)
@@ -245,12 +245,6 @@ async def compile_workflow(request: Request, payload: api_models.CompileRequest)
 async def typecheck_expression(request: Request, payload: api_models.ExpressionTypecheckRequest):
     user = _require_user(request)
     return services.typecheck_expression(user, payload)
-
-
-@router.post("/runs", response_model=api_models.RunResponse, status_code=status.HTTP_201_CREATED)
-async def run_draft(request: Request, payload: api_models.RunFromSpecRequest):
-    user = _require_user(request)
-    return await services.run_draft_workflow(user, payload)
 
 
 @router.post("/workflows/{workflow_id}/runs", response_model=api_models.RunResponse, status_code=status.HTTP_201_CREATED)
