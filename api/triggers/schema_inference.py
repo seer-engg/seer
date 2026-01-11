@@ -37,7 +37,7 @@ def infer_input_contract_from_event_schema(
     input_contract: Dict[str, InputDef] = {}
 
     # Extract data properties from event schema
-    event_schema = trigger_def.event_schema or {}
+    event_schema = trigger_def.schemas.event or {}
     properties = event_schema.get("properties", {})
     data_schema = properties.get("data", {})
     data_props = data_schema.get("properties", {})

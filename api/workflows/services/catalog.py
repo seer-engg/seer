@@ -264,7 +264,7 @@ async def compile_spec(user: User, payload: api_models.CompileRequest) -> api_mo
     try:
         compiled = await COMPILER.compile(user, spec_dict, checkpointer=checkpointer)
     except WorkflowCompilerError as exc:
-        _raise_problem(
+        raise_problem(
             type_uri=COMPILE_PROBLEM,
             title="Compilation failed",
             detail=str(exc),

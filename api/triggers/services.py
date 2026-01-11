@@ -302,13 +302,14 @@ async def process_trigger_run_job(subscription_id: int, event_id: int) -> None:
         "Trigger run job processed (run created)"
     )
     try:
-        output = await workflow_services._execute_compiled_run(
+        output, metrics = await workflow_services._execute_compiled_run(
             run,
             user,
             inputs=resolved_inputs,
             config_payload={},
+            execution_mode="trigger",
         )
-        await workflow_services._complete_run(run, output)
+        await workflow_services._complete_run(run, output, metrics)
         await TriggerEvent.filter(id=event.id).update(status=TriggerEventStatus.PROCESSED)
     except HTTPException as exc:
         logger.error(
