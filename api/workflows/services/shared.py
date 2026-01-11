@@ -49,6 +49,9 @@ async def _ensure_draft_version(workflow: Workflow, user: User) -> WorkflowVersi
     )
     if existing:
         return existing
+    latest_version = (
+        await WorkflowVersion.filter(workflow=workflow).order_by("-version_number").first()
+    )
     return await WorkflowVersion.create(
         workflow=workflow,
         status=WorkflowVersionStatus.DRAFT,
@@ -57,6 +60,7 @@ async def _ensure_draft_version(workflow: Workflow, user: User) -> WorkflowVersi
         created_by=user,
         manifest=None,
         spec_hash=spec_hash,
+        version_number=(latest_version.version_number + 1) if latest_version else 0,
     )
 
 
