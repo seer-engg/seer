@@ -1,16 +1,15 @@
 """
 Service for building tool connection status.
 
-Handles the complex logic of determining tool authentication requirements,
+Handles the logic of determining tool authentication requirements,
 connection status, and token validity.
 """
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
-from shared.database import OAuthConnection
+from shared.database import IntegrationSecret, OAuthConnection, User
 from shared.logger import get_logger
 
-from .services import has_required_scopes, parse_scopes
+from .services import has_required_scopes
 
 logger = get_logger(__name__)
 
@@ -27,23 +26,33 @@ def build_provider_connections_map(connections: List[OAuthConnection]) -> Dict[s
     """
     provider_connections = {}
     for conn in connections:
-        has_access_token = bool(conn.access_token_enc)
-        has_refresh_token = bool(conn.refresh_token_enc)
-        is_token_expired = False
-        if conn.expires_at:
-            is_token_expired = conn.expires_at < datetime.now(timezone.utc)
-
-        access_token_valid = (has_access_token and not is_token_expired) or has_refresh_token
-
         provider_connections[conn.provider] = {
             "scopes": conn.scopes or "",
             "connection_id": f"{conn.provider}:{conn.id}",
             "provider_account_id": conn.provider_account_id,
-            "has_refresh_token": has_refresh_token,
-            "access_token_valid": access_token_valid,
+            "has_refresh_token": bool(conn.refresh_token_enc),
             "connection": conn
         }
     return provider_connections
+
+
+async def build_provider_secrets_map(user: User) -> Dict[str, Set[str]]:
+    """
+    Build a map of provider -> available secret names.
+
+    Args:
+        user: Current user
+
+    Returns:
+        Dict mapping provider to a set of secret names the user has stored
+    """
+    provider_secrets: Dict[str, Set[str]] = {}
+    secrets = await IntegrationSecret.filter(user=user, status="active").values("provider", "name")
+    for secret in secrets:
+        provider = secret["provider"]
+        name = secret["name"]
+        provider_secrets.setdefault(provider, set()).add(name)
+    return provider_secrets
 
 
 def determine_tool_auth_requirements(tool: Any) -> Dict[str, Any]:
@@ -77,157 +86,77 @@ def determine_tool_auth_requirements(tool: Any) -> Dict[str, Any]:
         "requires_secrets": requires_secrets,
         "supports_tokenless_auth": supports_tokenless_auth,
         "auth_mode": auth_mode,
+        "supports_oauth": True,
+        "supports_manual_secrets": requires_secrets,
     }
 
 
-def build_base_tool_status(tool: Any, auth_requirements: Dict[str, Any]) -> Dict[str, Any]:
+def build_tool_status(
+    tool: Any,
+    auth_requirements: Dict[str, Any],
+    *,
+    provider: Optional[str],
+    provider_aliases: Optional[List[str]],
+    conn_info: Optional[Dict[str, Any]],
+    provider_secrets: Dict[str, Set[str]],
+) -> Dict[str, Any]:
     """
-    Build base tool status dict with common fields.
+    Build the minimal tool status payload for the /tools/status endpoint.
 
-    Args:
-        tool: Tool object
-        auth_requirements: Auth requirements from determine_tool_auth_requirements
-
-    Returns:
-        Base dict with tool identification and auth requirements
+    Connected means:
+    - OAuth tools: refresh token present AND required scopes granted.
+    - Manual secret tools: all required secrets stored.
+    - Both: either condition satisfied.
     """
+    required_scopes = auth_requirements["required_scopes"]
+    required_secrets = auth_requirements["required_secrets"]
+    supports_oauth = auth_requirements["supports_oauth"]
+    supports_manual_secrets = auth_requirements["supports_manual_secrets"]
+
+    provider_keys = [p for p in [provider, *(provider_aliases or [])] if p]
+
+    missing_scopes: List[str] = []
+    oauth_connected = False
+    connection_id = None
+    provider_account_id = None
+
+    if supports_oauth:
+        granted_scopes = conn_info["scopes"] if conn_info else ""
+        has_refresh_token = conn_info["has_refresh_token"] if conn_info else False
+        has_scopes = has_required_scopes(granted_scopes, required_scopes) if conn_info else False
+        if conn_info:
+            missing_scopes = [
+                scope for scope in required_scopes
+                if not has_required_scopes(granted_scopes, [scope])
+            ]
+        else:
+            missing_scopes = required_scopes
+        oauth_connected = bool(conn_info and has_refresh_token and has_scopes)
+        if conn_info:
+            connection_id = conn_info.get("connection_id")
+            provider_account_id = conn_info.get("provider_account_id")
+
+    secrets_connected = False
+    if supports_manual_secrets:
+        for key in provider_keys:
+            secret_names = provider_secrets.get(key, set())
+            if all(secret in secret_names for secret in required_secrets):
+                secrets_connected = True
+                break
+
+    if supports_oauth or supports_manual_secrets:
+        connected = oauth_connected or secrets_connected
+    else:
+        connected = True
+
     return {
         "tool_name": tool.name,
         "integration_type": tool.integration_type,
-        "requires_oauth_connection": auth_requirements["requires_oauth"],
-        "requires_secrets": auth_requirements["requires_secrets"],
-        "supports_tokenless_auth": auth_requirements["supports_tokenless_auth"],
-        "auth_mode": auth_requirements["auth_mode"],
+        "provider": provider,
+        "supports_oauth": supports_oauth,
+        "supports_manual_secrets": supports_manual_secrets,
+        "connected": connected,
+        "missing_scopes": missing_scopes if supports_oauth else [],
+        "connection_id": connection_id,
+        "provider_account_id": provider_account_id,
     }
-
-
-def build_tool_status_for_non_oauth_tool(
-    tool: Any,
-    auth_requirements: Dict[str, Any]
-) -> Dict[str, Any]:
-    """
-    Build status for tools that don't require OAuth.
-
-    Args:
-        tool: Tool object
-        auth_requirements: Auth requirements
-
-    Returns:
-        Complete status dict for non-OAuth tool
-    """
-    status = build_base_tool_status(tool, auth_requirements)
-    status.update({
-        "provider": None,
-        "connected": True,
-        "has_required_scopes": True,
-        "access_token_valid": True,
-        "missing_scopes": [],
-        "connection_id": None,
-        "provider_account_id": None,
-        "has_refresh_token": False,
-    })
-    return status
-
-
-def build_tool_status_for_optional_oauth(
-    tool: Any,
-    auth_requirements: Dict[str, Any],
-    oauth_provider: Optional[str],
-    conn_info: Optional[Dict[str, Any]]
-) -> Dict[str, Any]:
-    """
-    Build status for tools where OAuth is optional.
-
-    Args:
-        tool: Tool object
-        auth_requirements: Auth requirements
-        oauth_provider: Normalized OAuth provider name
-        conn_info: Connection info from provider map (may be None)
-
-    Returns:
-        Complete status dict for optional OAuth tool
-    """
-    status = build_base_tool_status(tool, auth_requirements)
-    status.update({
-        "provider": oauth_provider,
-        "connected": True,
-        "has_required_scopes": True,
-        "access_token_valid": True,
-        "missing_scopes": [],
-        "connection_id": conn_info["connection_id"] if conn_info else None,
-        "provider_account_id": conn_info["provider_account_id"] if conn_info else None,
-        "has_refresh_token": conn_info["has_refresh_token"] if conn_info else False,
-    })
-    return status
-
-
-def build_tool_status_for_missing_connection(
-    tool: Any,
-    auth_requirements: Dict[str, Any],
-    oauth_provider: Optional[str]
-) -> Dict[str, Any]:
-    """
-    Build status for tools requiring OAuth but without a connection.
-
-    Args:
-        tool: Tool object
-        auth_requirements: Auth requirements
-        oauth_provider: Normalized OAuth provider name
-
-    Returns:
-        Complete status dict showing disconnected state
-    """
-    status = build_base_tool_status(tool, auth_requirements)
-    status.update({
-        "provider": oauth_provider,
-        "connected": False,
-        "has_required_scopes": False,
-        "access_token_valid": False,
-        "missing_scopes": auth_requirements["required_scopes"],
-        "connection_id": None,
-        "provider_account_id": None,
-        "has_refresh_token": False,
-    })
-    return status
-
-
-def build_tool_status_for_oauth_tool(
-    tool: Any,
-    auth_requirements: Dict[str, Any],
-    oauth_provider: Optional[str],
-    conn_info: Dict[str, Any]
-) -> Dict[str, Any]:
-    """
-    Build status for tools with OAuth requirement and active connection.
-
-    Args:
-        tool: Tool object
-        auth_requirements: Auth requirements
-        oauth_provider: Normalized OAuth provider name
-        conn_info: Connection info from provider map
-
-    Returns:
-        Complete status dict with scope and token validation
-    """
-    required_scopes = auth_requirements["required_scopes"]
-
-    has_scopes = has_required_scopes(conn_info["scopes"], required_scopes)
-    access_token_valid = conn_info.get("access_token_valid", False)
-    has_refresh_token = conn_info.get("has_refresh_token", False)
-    fully_connected = has_scopes and access_token_valid
-
-    granted_set = parse_scopes(conn_info["scopes"]) if conn_info["scopes"] else set()
-    missing = [s for s in required_scopes if s not in granted_set]
-
-    status = build_base_tool_status(tool, auth_requirements)
-    status.update({
-        "provider": oauth_provider,
-        "connected": fully_connected,
-        "has_required_scopes": has_scopes,
-        "access_token_valid": access_token_valid,
-        "has_refresh_token": has_refresh_token,
-        "missing_scopes": missing,
-        "connection_id": conn_info["connection_id"],
-        "provider_account_id": conn_info["provider_account_id"],
-    })
-    return status
