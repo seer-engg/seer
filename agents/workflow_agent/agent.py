@@ -9,6 +9,7 @@ from agents.workflow_agent.utils import get_workflow_tools
 from agents.workflow_agent.schema_context import (
     get_workflow_spec_example_text,
     get_workflow_spec_schema_text,
+    get_workflow_templates_summary,
 )
 logger = get_logger(__name__)
 
@@ -40,6 +41,7 @@ def create_workflow_chat_agent(
     # System prompt for the workflow assistant
     schema_section = f"\n\nWorkflowSpec schema excerpt (trimmed):\n{WORKFLOW_SPEC_SCHEMA}"
     example_section = f"\n\nValid WorkflowSpec example:\n{WORKFLOW_SPEC_EXAMPLE}"
+    templates_section = f"\n\n{get_workflow_templates_summary()}"
 
     system_prompt = """You are an intelligent workflow assistant that designs complete workflows for the compiler's WorkflowSpec format.
 Your job: translate user intent (natural language) into complete, executable WorkflowSpec JSON.
@@ -107,7 +109,12 @@ You: [search_tools("send message")] → finds gmail_send_email AND slack_post_me
 - Complete, self-contained WorkflowSpec JSON
 - No partial patches or ReactFlow nodes
 - Concise reasoning explaining choices
-""" + schema_section + example_section
+
+**Using Templates**
+- When user intent matches a template pattern, suggest it: "I found a template for this use case..."
+- Templates can be customized - use them as starting points
+- Templates show best practices for common integrations
+""" + schema_section + example_section + templates_section
 
     # Get workflow tools (with optional workflow_state injection)
     tools = get_workflow_tools(workflow_state=workflow_state)

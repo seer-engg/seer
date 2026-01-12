@@ -1,0 +1,48 @@
+{
+  "name": "Gmail Email Received → Supabase Log",
+  "description": "Log incoming Gmail messages to Supabase table for tracking and analysis",
+  "tags": ["gmail", "supabase", "email", "logging", "audit"],
+  "customization_guide": "Update query filter to match specific emails (e.g., 'from:support@example.com', 'is:unread'). Set integration_resource_id for your Supabase connection. Customize table name and columns to match your schema.",
+  "spec": {
+    "version": "1",
+    "triggers": [
+      {
+        "key": "poll.gmail.email_received",
+        "config": {
+          "integration_resource_id": 789,
+          "query": "is:unread",
+          "max_results": 10
+        }
+      }
+    ],
+    "inputs": {},
+    "nodes": [
+      {
+        "id": "extract_email",
+        "type": "task",
+        "value": "${trigger.data.message}",
+        "out": "email"
+      },
+      {
+        "id": "log_to_supabase",
+        "type": "tool",
+        "tool": "supabase_table_insert",
+        "in": {
+          "integration_resource_id": 123,
+          "table": "email_log",
+          "values": {
+            "from": "${email.from}",
+            "subject": "${email.subject}",
+            "received_at": "${email.timestamp}",
+            "message_id": "${email.id}"
+          }
+        },
+        "out": "insert_result"
+      }
+    ],
+    "output": "${insert_result}",
+    "meta": {
+      "description": "Log Gmail messages to Supabase table"
+    }
+  }
+}

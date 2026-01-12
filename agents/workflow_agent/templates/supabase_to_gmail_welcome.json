@@ -1,0 +1,44 @@
+{
+  "name": "Supabase New Signup → Gmail Welcome Draft",
+  "description": "Automatically create Gmail welcome draft when new user signs up in Supabase table",
+  "tags": ["supabase", "gmail", "welcome", "onboarding", "email", "draft"],
+  "customization_guide": "Replace 'signups' with your table name. Update integration_resource_id with your Supabase connection ID. Customize email subject and body_text. Ensure your table has 'email' and 'name' columns, or adjust ${user.email} and ${user.name} references.",
+  "spec": {
+    "version": "1",
+    "triggers": [
+      {
+        "key": "webhook.supabase.db_changes",
+        "config": {
+          "integration_resource_id": 123,
+          "table": "signups",
+          "schema": "public",
+          "events": ["INSERT"]
+        }
+      }
+    ],
+    "inputs": {},
+    "nodes": [
+      {
+        "id": "extract_user",
+        "type": "task",
+        "value": "${trigger.data.record}",
+        "out": "user"
+      },
+      {
+        "id": "create_welcome_draft",
+        "type": "tool",
+        "tool": "gmail_create_draft",
+        "in": {
+          "to": ["${user.email}"],
+          "subject": "Welcome to our platform!",
+          "body_text": "Hi ${user.name},\n\nWelcome! We're excited to have you on board.\n\nBest regards,\nThe Team"
+        },
+        "out": "draft_result"
+      }
+    ],
+    "output": "${draft_result}",
+    "meta": {
+      "description": "Send welcome email draft when new user signs up in Supabase"
+    }
+  }
+}
