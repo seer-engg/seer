@@ -9,7 +9,7 @@ async def upgrade(db: BaseDBAsyncClient) -> str:
         ALTER TABLE "workflow_versions" ALTER COLUMN "version_number" SET DEFAULT 0;
         ALTER TABLE "workflow_versions" ALTER COLUMN "version_number" SET NOT NULL;
         DROP TABLE IF EXISTS "projects";
-        CREATE UNIQUE INDEX IF NOT EXISTS "uid_workflow_ve_version_4fc274" ON "workflow_versions" ("version_number");"""
+        """
 
 
 async def downgrade(db: BaseDBAsyncClient) -> str:
