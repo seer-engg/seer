@@ -144,6 +144,18 @@ class SeerConfig(BaseSettings):
     )
 
     # ============================================================================
+    # Feature Flags
+    # ============================================================================
+    enable_rlm_tool: bool = Field(
+        default=False,
+        description=(
+            "Enable Recursive Language Model (RLM) tool for workflow agent. "
+            "When enabled, the agent can decompose complex tasks recursively "
+            "and handle large contexts beyond typical token limits."
+        )
+    )
+
+    # ============================================================================
     # Trigger Poller
     # ============================================================================
     trigger_poller_enabled: bool = Field(

@@ -3288,6 +3288,15 @@ wheels = [
 ]
 
 [[package]]
+name = "restrictedpython"
+version = "8.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5f/1c/aec08bcb4ab14a1521579fbe21ceff2a634bb1f737f11cf7f9c8bb96e680/restrictedpython-8.1.tar.gz", hash = "sha256:4a69304aceacf6bee74bdf153c728221d4e3109b39acbfe00b3494927080d898", size = 838331, upload-time = "2025-10-19T14:11:32.531Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1a/c0/3848f4006f7e164ee20833ca984067e4b3fc99fe7f1dfa88b4927e681299/restrictedpython-8.1-py3-none-any.whl", hash = "sha256:4769449c6cdb10f2071649ba386902befff0eff2a8fd6217989fa7b16aeae926", size = 27651, upload-time = "2025-10-19T14:11:30.201Z" },
+]
+
+[[package]]
 name = "rich"
 version = "14.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3425,6 +3434,7 @@ dependencies = [
     { name = "pytz" },
     { name = "pyyaml" },
     { name = "requests" },
+    { name = "restrictedpython" },
     { name = "taskiq" },
     { name = "taskiq-redis" },
     { name = "tavily-python" },
@@ -3472,6 +3482,7 @@ requires-dist = [
     { name = "pytz", specifier = ">=2024.1" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "requests", specifier = ">=2.32.3" },
+    { name = "restrictedpython", specifier = ">=7.0" },
     { name = "taskiq", specifier = ">=0.12.1" },
     { name = "taskiq-redis", specifier = ">=1.2.1" },
     { name = "tavily-python", specifier = ">=0.7.12" },

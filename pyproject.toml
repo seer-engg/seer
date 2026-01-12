@@ -45,6 +45,7 @@ dependencies = [
     "taskiq-redis>=1.2.1",
     "posthog>=3.5.0",
     "psycopg[binary]>=3.1.0",  # Required by langgraph-checkpoint-postgres
+    "RestrictedPython>=7.0",  # Required for RLM tool sandbox
 ]
 
 [tool.hatch.build.targets.wheel]
