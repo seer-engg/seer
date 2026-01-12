@@ -1,6 +1,12 @@
 from typing import Optional, Dict, Any, List
 from shared.logger import get_logger
-from agents.workflow_agent.tools import analyze_workflow, submit_workflow_spec, search_tools
+from agents.workflow_agent.tools import (
+    analyze_workflow,
+    submit_workflow_spec,
+    search_tools,
+    search_triggers,
+    list_available_triggers,
+)
 
 logger = get_logger(__name__)
 
@@ -24,6 +30,9 @@ def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:
         submit_workflow_spec,
         # Dynamic tool discovery tools
         search_tools,
+        # Dynamic trigger discovery tools
+        search_triggers,
+        list_available_triggers,
         # list_available_tools,
     ]
 

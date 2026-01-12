@@ -16,12 +16,14 @@ from agents.workflow_agent.context import (
     get_user_for_thread,
 )
 from shared.logger import get_logger
+from shared.tools.base import get_tool
 from workflow_compiler.compiler.parse import parse_workflow_spec
 from workflow_compiler.errors import (
     ValidationPhaseError,
     TypeEnvironmentError,
     WorkflowCompilerError,
 )
+from workflow_compiler.registry.trigger_registry import trigger_registry
 from workflow_compiler.runtime.global_compiler import WorkflowCompilerSingleton
 
 logger = get_logger(__name__)
@@ -147,6 +149,44 @@ def _validate_pydantic(spec_dict: Dict) -> tuple[Optional[Any], Optional[str]]:
         return None, _error_response("parsing", f"Workflow spec validation failed: {exc}")
 
 
+def _validate_tools_and_triggers(spec_dict: Dict) -> Optional[str]:
+    """
+    Validate that all referenced tools and triggers exist.
+    Returns error message if validation fails, None if valid.
+    """
+    errors = []
+
+    # Check that all tool nodes reference registered tools
+    nodes = spec_dict.get("nodes", [])
+    for node in nodes:
+        if node.get("type") == "tool":
+            tool_name = node.get("tool")
+            if tool_name and not get_tool(tool_name):
+                errors.append(
+                    f"Tool '{tool_name}' not found. Use search_tools('{tool_name.split('_')[0]}') to find the correct tool name."
+                )
+
+    # Check that all triggers reference registered trigger keys
+    triggers = spec_dict.get("triggers", [])
+    for trigger in triggers:
+        trigger_key = trigger.get("key")
+        if trigger_key and not trigger_registry.maybe_get(trigger_key):
+            available_triggers = [t.key for t in trigger_registry.all()]
+            errors.append(
+                f"Trigger '{trigger_key}' not found. Available triggers: {', '.join(available_triggers)}. "
+                f"Use search_triggers() to find the correct trigger key."
+            )
+
+    if errors:
+        return _error_response(
+            "tool_trigger_validation",
+            "Workflow references non-existent tools or triggers",
+            "\n".join(errors)
+        )
+
+    return None
+
+
 async def _validate_compilation(spec_dict: Dict) -> Optional[str]:
     """
     Run full compilation validation. Returns error message if invalid, None if valid.
@@ -209,6 +249,10 @@ async def submit_workflow_spec(
 
     validated_spec, error = _validate_pydantic(spec_dict)
     if error:
+        return error
+
+    # Validate tools and triggers exist before compilation
+    if error := _validate_tools_and_triggers(spec_dict):
         return error
 
     if error := await _validate_compilation(spec_dict):

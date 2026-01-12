@@ -83,6 +83,45 @@ _WORKFLOW_SPEC_EXAMPLE: Dict[str, Any] = {
     },
 }
 
+_WORKFLOW_SPEC_TRIGGER_EXAMPLE: Dict[str, Any] = {
+    "version": "1",
+    "triggers": [
+        {
+            "key": "webhook.supabase.db_changes",
+            "config": {
+                "integration_resource_id": 123,
+                "table": "signups",
+                "schema": "public",
+                "events": ["INSERT"]
+            }
+        }
+    ],
+    "inputs": {},
+    "nodes": [
+        {
+            "id": "extract_user",
+            "type": "task",
+            "value": "${trigger.data.record}",
+            "out": "user"
+        },
+        {
+            "id": "create_welcome_draft",
+            "type": "tool",
+            "tool": "gmail_create_draft",
+            "in": {
+                "to": ["${user.email}"],
+                "subject": "Welcome to our platform!",
+                "body_text": "Hi ${user.name},\n\nWelcome! We're excited to have you on board."
+            },
+            "out": "draft_result"
+        }
+    ],
+    "output": "${draft_result}",
+    "meta": {
+        "description": "Send welcome email draft when new user signs up in Supabase"
+    },
+}
+
 
 @lru_cache(maxsize=1)
 def get_workflow_spec_schema() -> Dict[str, Any]:
@@ -108,7 +147,13 @@ def get_workflow_spec_schema_text(max_chars: int = 4000) -> str:
 
 def get_workflow_spec_example_text() -> str:
     """
-    Provide a compact, valid WorkflowSpec example for the agent to imitate.
+    Provide compact, valid WorkflowSpec examples for the agent to imitate.
+    Includes both input-based and trigger-based workflow examples.
     """
 
-    return json.dumps(_WORKFLOW_SPEC_EXAMPLE, indent=2)
+    examples_text = "Example 1 (Input-based workflow):\n"
+    examples_text += json.dumps(_WORKFLOW_SPEC_EXAMPLE, indent=2)
+    examples_text += "\n\nExample 2 (Trigger-based workflow):\n"
+    examples_text += json.dumps(_WORKFLOW_SPEC_TRIGGER_EXAMPLE, indent=2)
+
+    return examples_text
