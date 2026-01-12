@@ -105,6 +105,7 @@ _WORKFLOW_SPEC_TRIGGER_EXAMPLE: Dict[str, Any] = {
         {
             "id": "extract_user",
             "type": "task",
+            "kind": "set",
             "value": "${trigger.data.record}",
             "out": "user"
         },

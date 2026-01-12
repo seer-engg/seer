@@ -202,6 +202,7 @@ Detect new user signup and create Gmail welcome draft.
     {
       "id": "extract_user",
       "type": "task",
+      "kind": "set",
       "value": "${trigger.data.record}",
       "out": "user"
     },

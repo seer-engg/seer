@@ -156,6 +156,7 @@ Automatically create welcome email draft when user signs up.
     {
       "id": "extract_user",
       "type": "task",
+      "kind": "set",
       "value": "${trigger.data.record}",
       "out": "user"
     },
