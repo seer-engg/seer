@@ -1,7 +1,7 @@
 import base64
 import json
 import os
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import RedirectResponse
@@ -69,6 +69,22 @@ class SupabaseManualBindRequest(BaseModel):
         default=None,
         description="Optional Supabase anon/public key",
     )
+
+
+class ToolStatus(BaseModel):
+    tool_name: str
+    integration_type: Optional[str]
+    provider: Optional[str]
+    supports_oauth: bool
+    supports_manual_secrets: bool
+    connected: bool
+    missing_scopes: List[str] = Field(default_factory=list)
+    connection_id: Optional[str] = None
+    provider_account_id: Optional[str] = None
+
+
+class ToolsStatusResponse(BaseModel):
+    tools: List[ToolStatus]
 
 
 def encode_state(data: dict) -> str:
@@ -230,7 +246,7 @@ async def list_integrations(request: Request):
     return {"items": res}
 
 
-@router.get("/tools/status")
+@router.get("/tools/status", response_model=ToolsStatusResponse)
 async def get_tools_connection_status(request: Request):
     """
     Get connection status for all tools.
@@ -246,10 +262,8 @@ async def get_tools_connection_status(request: Request):
 
     from .tool_status_service import (  # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with tool_status_service
         build_provider_connections_map,
-        build_tool_status_for_missing_connection,
-        build_tool_status_for_non_oauth_tool,
-        build_tool_status_for_oauth_tool,
-        build_tool_status_for_optional_oauth,
+        build_provider_secrets_map,
+        build_tool_status,
         determine_tool_auth_requirements,
     )
 
@@ -258,34 +272,23 @@ async def get_tools_connection_status(request: Request):
 
     connections = await list_connections(user)
     provider_connections = build_provider_connections_map(connections)
+    provider_secrets = await build_provider_secrets_map(user)
     all_tools = get_all_tools()
 
     results = []
     for tool in all_tools:
-        tool_provider = tool.provider or tool.integration_type
         auth_requirements = determine_tool_auth_requirements(tool)
-
-        if not tool_provider:
-            results.append(build_tool_status_for_non_oauth_tool(tool, auth_requirements))
-            continue
-
-        oauth_provider = get_oauth_provider(tool_provider)
+        tool_provider = tool.provider or tool.integration_type
+        oauth_provider = get_oauth_provider(tool_provider) if tool_provider else None
         conn_info = provider_connections.get(oauth_provider) if oauth_provider else None
 
-        if not auth_requirements["requires_oauth"]:
-            results.append(build_tool_status_for_optional_oauth(
-                tool, auth_requirements, oauth_provider, conn_info
-            ))
-            continue
-
-        if not conn_info:
-            results.append(build_tool_status_for_missing_connection(
-                tool, auth_requirements, oauth_provider
-            ))
-            continue
-
-        results.append(build_tool_status_for_oauth_tool(
-            tool, auth_requirements, oauth_provider, conn_info
+        results.append(build_tool_status(
+            tool=tool,
+            auth_requirements=auth_requirements,
+            provider=oauth_provider,
+            provider_aliases=[tool_provider] if tool_provider else [],
+            conn_info=conn_info,
+            provider_secrets=provider_secrets,
         ))
 
     return {"tools": results}
