@@ -32,6 +32,13 @@ from shared.database.workflow_models import (
     parse_run_public_id,
     parse_workflow_public_id,
 )
+from shared.database.subscription_models import (
+    SubscriptionStatus,
+    SubscriptionTier,
+    StripeWebhookEvent,
+    StripeWebhookEventStatus,
+    UserSubscription,
+)
 from shared.logger import get_logger
 
 logger = get_logger("shared.database")
@@ -92,4 +99,10 @@ __all__ = [
     "parse_workflow_public_id",
     "make_run_public_id",
     "parse_run_public_id",
+    # Subscription domain
+    "UserSubscription",
+    "SubscriptionTier",
+    "SubscriptionStatus",
+    "StripeWebhookEvent",
+    "StripeWebhookEventStatus",
 ]

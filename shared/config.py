@@ -206,6 +206,51 @@ class SeerConfig(BaseSettings):
     )
 
     # ============================================================================
+    # Stripe Subscription Configuration
+    # ============================================================================
+
+    stripe_secret_key: Optional[str] = Field(
+        default=None,
+        description="Stripe secret API key (sk_test_... or sk_live_...)"
+    )
+    stripe_webhook_secret: Optional[str] = Field(
+        default=None,
+        description="Stripe webhook signing secret (whsec_...)"
+    )
+    stripe_price_pro_monthly: Optional[str] = Field(
+        default=None,
+        description="Stripe Price ID for Pro monthly subscription"
+    )
+    stripe_price_pro_annual: Optional[str] = Field(
+        default=None,
+        description="Stripe Price ID for Pro annual subscription"
+    )
+    stripe_price_proplus_monthly: Optional[str] = Field(
+        default=None,
+        description="Stripe Price ID for Pro+ monthly subscription"
+    )
+    stripe_price_proplus_annual: Optional[str] = Field(
+        default=None,
+        description="Stripe Price ID for Pro+ annual subscription"
+    )
+    stripe_price_ultra_monthly: Optional[str] = Field(
+        default=None,
+        description="Stripe Price ID for Ultra monthly subscription"
+    )
+    stripe_price_ultra_annual: Optional[str] = Field(
+        default=None,
+        description="Stripe Price ID for Ultra annual subscription"
+    )
+    clerk_secret_key: Optional[str] = Field(
+        default=None,
+        description="Clerk secret key for updating user metadata"
+    )
+    frontend_url: str = Field(
+        default="http://localhost:5173",
+        description="Frontend URL for Stripe checkout redirects"
+    )
+
+    # ============================================================================
     # Computed Properties
     # ============================================================================
 
@@ -231,6 +276,14 @@ class SeerConfig(BaseSettings):
             self.posthog_enabled
             and self.posthog_api_key is not None
             and self.posthog_host is not None
+        )
+
+    @property
+    def is_stripe_configured(self) -> bool:
+        """Check if Stripe is configured for subscription billing."""
+        return (
+            self.stripe_secret_key is not None
+            and self.stripe_webhook_secret is not None
         )
 
 

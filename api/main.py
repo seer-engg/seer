@@ -116,6 +116,7 @@ if config.is_cloud_mode:
             "/api/integrations/github/callback",
             "/api/integrations/asana/callback",
             "/api/v1/webhooks",
+            "/api/subscriptions/webhooks/stripe"
         ],
     )
 else:

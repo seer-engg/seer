@@ -46,6 +46,7 @@ dependencies = [
     "posthog>=3.5.0",
     "psycopg[binary]>=3.1.0",  # Required by langgraph-checkpoint-postgres
     "RestrictedPython>=7.0",  # Required for RLM tool sandbox
+    "stripe>=10.0.0",  # Stripe payment processing for subscriptions
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -108,6 +109,9 @@ disable = [
     "fixme",
     "import-error",  # Pre-commit runs in isolated env without project dependencies
 ]
+
+[tool.pyright]
+typeCheckingMode = "basic"
 
 # NOTE: In-code pylint disables MUST include justification comments
 # Required format: # pylint: disable=rule-name # Reason: architectural explanation

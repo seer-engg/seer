@@ -241,6 +241,15 @@ class TokenDecodeWithoutValidationMiddleware(BaseHTTPMiddleware):
 
         if path.startswith("/api/v1/webhooks"):
             return True
+        
+        if path == '/api/subscriptions/webhooks/stripe':
+            return True
+        
+        if path =='/docs':
+            return True 
+        
+        if path == '/openapi.json':
+            return True
 
         return False
 

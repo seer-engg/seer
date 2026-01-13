@@ -1,0 +1,406 @@
+"""
+Stripe service layer for subscription management.
+
+Handles Stripe customer creation, checkout sessions, portal sessions,
+and subscription state synchronization from webhooks.
+"""
+from datetime import datetime, timezone
+from typing import Any, Optional, Union
+
+import stripe
+
+from shared.config import config
+from shared.database.models import User
+from shared.database.subscription_models import (
+    SubscriptionStatus,
+    SubscriptionTier,
+    UserSubscription,
+)
+from shared.logger import get_logger
+from api.subscriptions.clerk_sync import sync_stripe_customer_to_clerk
+
+logger = get_logger("api.subscriptions.stripe_service")
+
+# Initialize Stripe with API key
+if config.stripe_secret_key:
+    stripe.api_key = config.stripe_secret_key
+
+
+def _build_price_to_tier_map() -> dict[str, SubscriptionTier]:
+    """Build mapping from Stripe price IDs to subscription tiers."""
+    mapping = {}
+    if config.stripe_price_pro_monthly:
+        mapping[config.stripe_price_pro_monthly] = SubscriptionTier.PRO
+    if config.stripe_price_pro_annual:
+        mapping[config.stripe_price_pro_annual] = SubscriptionTier.PRO
+    if config.stripe_price_proplus_monthly:
+        mapping[config.stripe_price_proplus_monthly] = SubscriptionTier.PRO_PLUS
+    if config.stripe_price_proplus_annual:
+        mapping[config.stripe_price_proplus_annual] = SubscriptionTier.PRO_PLUS
+    if config.stripe_price_ultra_monthly:
+        mapping[config.stripe_price_ultra_monthly] = SubscriptionTier.ULTRA
+    if config.stripe_price_ultra_annual:
+        mapping[config.stripe_price_ultra_annual] = SubscriptionTier.ULTRA
+    return mapping
+
+
+def _timestamp_to_datetime(timestamp: Any) -> Optional[datetime]:
+    """Convert a Stripe timestamp to aware datetime or return None."""
+    if timestamp is None:
+        return None
+    try:
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _maybe_fetch_subscription(stripe_subscription: Union[dict, str, stripe.Subscription]) -> Optional[stripe.Subscription]:
+    """
+    Ensure we have a full subscription object (with period dates and items).
+
+    Some webhook payloads (or mocked events) may omit fields like current_period_start.
+    In those cases, fetch the subscription from Stripe to avoid KeyErrors.
+    """
+    try:
+        subscription_id = stripe_subscription if isinstance(stripe_subscription, str) else stripe_subscription.get("id")
+    except AttributeError:
+        subscription_id = None
+
+    needs_fetch = isinstance(stripe_subscription, str)
+    if not needs_fetch and hasattr(stripe_subscription, "get"):
+        items = stripe_subscription.get("items", {}).get("data", [])
+        missing_periods = (
+            stripe_subscription.get("current_period_start") is None
+            or stripe_subscription.get("current_period_end") is None
+        )
+        needs_fetch = missing_periods or not items
+
+    if needs_fetch and subscription_id:
+        try:
+            return stripe.Subscription.retrieve(subscription_id, expand=["items.data.price"])
+        except stripe.error.StripeError as exc:
+            logger.error("Failed to fetch Stripe subscription %s: %s", subscription_id, exc)
+            return None
+
+    return stripe_subscription  # type: ignore[return-value]
+
+
+# Stripe status to our status mapping
+STRIPE_STATUS_MAP = {
+    "active": SubscriptionStatus.ACTIVE,
+    "canceled": SubscriptionStatus.CANCELED,
+    "past_due": SubscriptionStatus.PAST_DUE,
+    "trialing": SubscriptionStatus.TRIALING,
+    "incomplete": SubscriptionStatus.INCOMPLETE,
+    "incomplete_expired": SubscriptionStatus.CANCELED,
+    "unpaid": SubscriptionStatus.PAST_DUE,
+}
+
+
+async def get_or_create_stripe_customer(user: User) -> str:
+    """
+    Get existing Stripe customer or create a new one.
+
+    Returns the Stripe customer ID.
+    """
+    subscription = await UserSubscription.get_or_none(user=user)
+
+    if subscription and subscription.stripe_customer_id:
+        return subscription.stripe_customer_id
+
+    # Create Stripe customer
+    name = f"{user.first_name or ''} {user.last_name or ''}".strip() or None
+    customer = stripe.Customer.create(
+        email=user.email,
+        name=name,
+        metadata={
+            "user_id": user.user_id,  # Clerk user ID
+            "seer_user_id": str(user.id),
+        }
+    )
+
+    logger.info("Created Stripe customer %s for user %s", customer.id, user.user_id)
+
+    # Store customer ID
+    if not subscription:
+        subscription = await UserSubscription.create(
+            user=user,
+            stripe_customer_id=customer.id,
+        )
+    else:
+        subscription.stripe_customer_id = customer.id
+        await subscription.save()
+
+    return customer.id
+
+
+async def create_checkout_session(
+    user: User,
+    price_id: str,
+    success_url: str,
+    cancel_url: str,
+) -> str:
+    """
+    Create a Stripe Checkout session and return the checkout URL.
+
+    Args:
+        user: The authenticated user
+        price_id: Stripe Price ID for the subscription plan
+        success_url: URL to redirect to on successful payment
+        cancel_url: URL to redirect to if payment is canceled
+
+    Returns:
+        The Stripe Checkout session URL
+    """
+    customer_id = await get_or_create_stripe_customer(user)
+
+    session = stripe.checkout.Session.create(
+        customer=customer_id,
+        mode="subscription",
+        line_items=[{"price": price_id, "quantity": 1}],
+        success_url=success_url,
+        cancel_url=cancel_url,
+        allow_promotion_codes=True,
+        billing_address_collection="auto",
+        metadata={
+            "user_id": user.user_id,
+        }
+    )
+
+    logger.info(
+        "Created checkout session %s for user %s, price %s",
+        session.id, user.user_id, price_id
+    )
+
+    return session.url
+
+
+async def create_portal_session(user: User, return_url: str) -> str:
+    """
+    Create a Stripe Customer Portal session and return the portal URL.
+
+    Args:
+        user: The authenticated user
+        return_url: URL to return to after portal session
+
+    Returns:
+        The Stripe Customer Portal URL
+
+    Raises:
+        ValueError: If user has no Stripe customer ID
+    """
+    subscription = await UserSubscription.get_or_none(user=user)
+
+    if not subscription or not subscription.stripe_customer_id:
+        raise ValueError("User has no Stripe customer ID")
+
+    session = stripe.billing_portal.Session.create(
+        customer=subscription.stripe_customer_id,
+        return_url=return_url,
+    )
+
+    logger.info("Created portal session for user %s", user.user_id)
+
+    return session.url
+
+
+async def get_user_subscription(user: User) -> UserSubscription:
+    """
+    Get user's subscription or create with free tier default.
+
+    Args:
+        user: The authenticated user
+
+    Returns:
+        The user's subscription record
+    """
+    subscription, created = await UserSubscription.get_or_create(
+        user=user,
+        defaults={
+            "tier": SubscriptionTier.FREE,
+            "status": SubscriptionStatus.ACTIVE,
+        }
+    )
+    if created:
+        logger.info("Created free tier subscription for user %s", user.user_id)
+    return subscription
+
+
+async def sync_subscription_from_stripe(
+    stripe_subscription: Union[dict, str, stripe.Subscription]
+) -> Optional[UserSubscription]:
+    """
+    Sync subscription state from Stripe webhook data.
+
+    Called when receiving subscription.created/updated webhooks or when
+    we need to refresh state after invoice events.
+
+    Args:
+        stripe_subscription: The Stripe subscription object or subscription ID
+
+    Returns:
+        The updated UserSubscription or None if customer not found
+    """
+    subscription_obj = _maybe_fetch_subscription(stripe_subscription)
+    if not subscription_obj:
+        return None
+
+    customer_id = subscription_obj.get("customer")
+    subscription_id = subscription_obj.get("id")
+    status = subscription_obj.get("status")
+
+    if not customer_id or not subscription_id:
+        logger.warning("Stripe subscription payload missing id/customer: %s", subscription_obj)
+        return None
+
+    # Find user by customer ID
+    user_sub = await UserSubscription.get_or_none(stripe_customer_id=customer_id)
+    if not user_sub:
+        logger.warning(
+            "No user found for Stripe customer %s, subscription %s",
+            customer_id, subscription_id
+        )
+        return None
+
+    # Determine tier from price
+    price_to_tier = _build_price_to_tier_map()
+    items = subscription_obj.get("items", {}).get("data", [])
+    if items:
+        price_id = items[0].get("price", {}).get("id")
+        tier = price_to_tier.get(price_id, user_sub.tier)
+    else:
+        tier = user_sub.tier
+
+    # Map Stripe status to our status
+    mapped_status = STRIPE_STATUS_MAP.get(status, user_sub.status)
+
+    # Update subscription
+    user_sub.stripe_subscription_id = subscription_id
+    user_sub.tier = tier
+    user_sub.status = mapped_status
+    current_period_start_ts = subscription_obj.get("current_period_start")
+    current_period_end_ts = subscription_obj.get("current_period_end")
+    if current_period_start_ts is not None:
+        user_sub.current_period_start = _timestamp_to_datetime(current_period_start_ts)
+    if current_period_end_ts is not None:
+        user_sub.current_period_end = _timestamp_to_datetime(current_period_end_ts)
+    user_sub.cancel_at_period_end = bool(subscription_obj.get("cancel_at_period_end", False))
+
+    await user_sub.save()
+
+    logger.info(
+        "Synced subscription for customer %s: tier=%s, status=%s",
+        customer_id, tier.value, mapped_status.value
+    )
+
+    return user_sub
+
+
+async def sync_subscription_for_invoice(invoice: dict) -> Optional[UserSubscription]:
+    """
+    Sync subscription based on invoice events (payment succeeded/failed).
+    """
+    subscription_id = invoice.get("subscription")
+    if not subscription_id:
+        logger.warning("Invoice %s missing subscription ID", invoice.get("id"))
+        return None
+    return await sync_subscription_from_stripe(subscription_id)
+
+
+async def handle_subscription_deleted(stripe_subscription: dict) -> Optional[UserSubscription]:
+    """
+    Handle subscription cancellation/deletion.
+
+    Reverts user to free tier when subscription is deleted.
+
+    Args:
+        stripe_subscription: The Stripe subscription object from webhook
+
+    Returns:
+        The updated UserSubscription or None if customer not found
+    """
+    customer_id = stripe_subscription.get("customer")
+    if not customer_id:
+        logger.warning("Subscription deletion payload missing customer: %s", stripe_subscription)
+        return None
+
+    user_sub = await UserSubscription.get_or_none(stripe_customer_id=customer_id)
+    if not user_sub:
+        logger.warning(
+            "No user found for Stripe customer %s on subscription deletion",
+            customer_id
+        )
+        return None
+
+    # Revert to free tier
+    user_sub.tier = SubscriptionTier.FREE
+    user_sub.status = SubscriptionStatus.ACTIVE
+    user_sub.stripe_subscription_id = None
+    user_sub.current_period_start = None
+    user_sub.current_period_end = None
+    user_sub.cancel_at_period_end = False
+
+    await user_sub.save()
+
+    logger.info("Reverted customer %s to free tier after subscription deletion", customer_id)
+
+    return user_sub
+
+
+async def process_stripe_event(event_type: str | None, data: dict) -> None:
+    """
+    Dispatch Stripe webhook event types to handlers.
+    """
+    if not event_type:
+        logger.warning("Stripe event missing type; skipping")
+        return
+
+    logger.info("Processing Stripe webhook: %s", event_type)
+
+    if event_type == "checkout.session.completed":
+        customer_id = data.get("customer")
+        user_id = data.get("metadata", {}).get("user_id")
+        if customer_id and user_id:
+            await sync_stripe_customer_to_clerk(user_id, customer_id)
+        subscription_id = data.get("subscription")
+        if subscription_id:
+            await sync_subscription_from_stripe(subscription_id)
+
+    elif event_type in ("customer.subscription.created", "customer.subscription.updated"):
+        await sync_subscription_from_stripe(data)
+
+    elif event_type == "customer.subscription.deleted":
+        await handle_subscription_deleted(data)
+
+    elif event_type in (
+        "invoice.payment_failed",
+        "invoice.payment_succeeded",
+        "invoice.paid",
+    ):
+        await sync_subscription_for_invoice(data)
+        if event_type == "invoice.payment_failed":
+            customer_id = data.get("customer")
+            logger.warning("Invoice payment failed for customer %s", customer_id)
+    else:
+        logger.info("Not consuming Stripe event %s", event_type)
+
+
+def verify_webhook_signature(payload: bytes, signature: str) -> dict:
+    """
+    Verify Stripe webhook signature and return the event.
+
+    Args:
+        payload: Raw request body bytes
+        signature: Stripe-Signature header value
+
+    Returns:
+        The verified Stripe event object
+
+    Raises:
+        stripe.error.SignatureVerificationError: If signature is invalid
+    """
+    return stripe.Webhook.construct_event(
+        payload,
+        signature,
+        config.stripe_webhook_secret,
+    )
