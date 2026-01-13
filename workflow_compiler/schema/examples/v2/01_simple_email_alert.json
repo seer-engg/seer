@@ -1,0 +1,42 @@
+{
+  "name": "Form Submission Alert",
+  "description": "Send email notification when contact form is submitted",
+  "tags": ["form", "email", "notification"],
+  "spec": {
+    "triggers": [{
+      "key": "form.hosted",
+      "config": {
+        "form_id": "contact_form",
+        "gmail_integration_id": 101
+      }
+    }],
+    "inputs": {},
+    "nodes": [
+      {
+        "id": "format_body",
+        "type": "task",
+        "kind": "set",
+        "value": "New submission:\nName: ${trigger.data.name}\nEmail: ${trigger.data.email}",
+        "out": "email_body"
+      },
+      {
+        "id": "send_email",
+        "type": "tool",
+        "tool": "gmail_send_email",
+        "in": {
+          "integration_resource_id": "${trigger.config.gmail_integration_id}",
+          "to": ["admin@company.com"],
+          "subject": "New Contact Form",
+          "body_text": "${email_body}"
+        },
+        "out": "result"
+      }
+    ],
+    "edges": [
+      {"from": "_start", "to": "format_body"},
+      {"from": "format_body", "to": "send_email"},
+      {"from": "send_email", "to": "_end"}
+    ],
+    "output": "${result}"
+  }
+}

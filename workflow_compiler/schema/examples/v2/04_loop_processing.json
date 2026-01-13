@@ -1,0 +1,68 @@
+{
+  "name": "Bulk Welcome Emails",
+  "description": "Send welcome email to each new signup in batch",
+  "tags": ["loop", "email", "supabase"],
+  "spec": {
+    "triggers": [{
+      "key": "schedule.cron",
+      "config": {
+        "cron": "0 */4 * * *",
+        "supabase_integration_id": 103,
+        "gmail_integration_id": 104
+      }
+    }],
+    "inputs": {},
+    "nodes": [
+      {
+        "id": "fetch_new_signups",
+        "type": "tool",
+        "tool": "supabase_table_query",
+        "in": {
+          "integration_resource_id": "${trigger.config.supabase_integration_id}",
+          "table": "signups",
+          "filters": {"welcome_sent": {"eq": false}}
+        },
+        "out": "signups"
+      },
+      {
+        "id": "send_welcome_emails",
+        "type": "for_each",
+        "items": "${signups}",
+        "item_var": "signup",
+        "body": [
+          {
+            "id": "send_email",
+            "type": "tool",
+            "tool": "gmail_send_email",
+            "in": {
+              "integration_resource_id": "${trigger.config.gmail_integration_id}",
+              "to": ["${signup.email}"],
+              "subject": "Welcome to Our Platform!",
+              "body_text": "Hi ${signup.name}, welcome!"
+            },
+            "out": "email_result"
+          },
+          {
+            "id": "mark_sent",
+            "type": "tool",
+            "tool": "supabase_table_update",
+            "in": {
+              "integration_resource_id": "${trigger.config.supabase_integration_id}",
+              "table": "signups",
+              "filters": {"id": {"eq": "${signup.id}"}},
+              "values": {"welcome_sent": true}
+            },
+            "out": "update_result"
+          }
+        ],
+        "out": "results"
+      }
+    ],
+    "edges": [
+      {"from": "_start", "to": "fetch_new_signups"},
+      {"from": "fetch_new_signups", "to": "send_welcome_emails"},
+      {"from": "send_welcome_emails", "to": "_end"}
+    ],
+    "output": "${results}"
+  }
+}

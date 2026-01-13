@@ -1,0 +1,87 @@
+{
+  "name": "Document Processing Pipeline",
+  "description": "Extract insights from uploaded documents using AI",
+  "tags": ["gdrive", "ai", "processing"],
+  "spec": {
+    "triggers": [{
+      "key": "webhook.google.drive.file_created",
+      "config": {
+        "integration_resource_id": 109,
+        "supabase_integration_id": 110,
+        "gmail_integration_id": 111,
+        "folder_id": "1xyz9876folder"
+      }
+    }],
+    "inputs": {},
+    "nodes": [
+      {
+        "id": "download_file",
+        "type": "tool",
+        "tool": "gdrive_download_file",
+        "in": {
+          "integration_resource_id": "${trigger.config.integration_resource_id}",
+          "file_id": "${trigger.data.file_id}"
+        },
+        "out": "file_content"
+      },
+      {
+        "id": "extract_insights",
+        "type": "llm",
+        "model": "gpt-4o",
+        "prompt": "Extract key insights from this document:\n\n${file_content}",
+        "out": "insights",
+        "output": {
+          "mode": "json",
+          "schema": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "summary": {"type": "string"},
+                "key_points": {"type": "array"},
+                "sentiment": {"type": "string"}
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "save_to_db",
+        "type": "tool",
+        "tool": "supabase_table_insert",
+        "in": {
+          "integration_resource_id": "${trigger.config.supabase_integration_id}",
+          "table": "document_insights",
+          "values": {
+            "file_id": "${trigger.data.file_id}",
+            "file_name": "${trigger.data.name}",
+            "summary": "${insights.summary}",
+            "key_points": "${insights.key_points}",
+            "sentiment": "${insights.sentiment}",
+            "processed_at": "${trigger.data.created_time}"
+          }
+        },
+        "out": "db_result"
+      },
+      {
+        "id": "notify_complete",
+        "type": "tool",
+        "tool": "gmail_send_email",
+        "in": {
+          "integration_resource_id": "${trigger.config.gmail_integration_id}",
+          "to": ["user@company.com"],
+          "subject": "Document Processed: ${trigger.data.name}",
+          "body_text": "Summary: ${insights.summary}"
+        },
+        "out": "notification_result"
+      }
+    ],
+    "edges": [
+      {"from": "_start", "to": "download_file"},
+      {"from": "download_file", "to": "extract_insights"},
+      {"from": "extract_insights", "to": "save_to_db"},
+      {"from": "save_to_db", "to": "notify_complete"},
+      {"from": "notify_complete", "to": "_end"}
+    ],
+    "output": "${db_result}"
+  }
+}

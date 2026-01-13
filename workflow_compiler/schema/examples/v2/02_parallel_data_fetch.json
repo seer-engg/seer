@@ -1,0 +1,69 @@
+{
+  "name": "Parallel Product Recommendation",
+  "description": "Fetch user and products in parallel, generate AI recommendation",
+  "tags": ["parallel", "ai", "supabase"],
+  "spec": {
+    "triggers": [{
+      "key": "schedule.cron",
+      "config": {
+        "cron": "0 9 * * *",
+        "timezone": "America/Los_Angeles",
+        "supabase_integration_id": 100
+      }
+    }],
+    "inputs": {},
+    "nodes": [
+      {
+        "id": "fetch_user",
+        "type": "tool",
+        "tool": "supabase_table_query",
+        "in": {
+          "integration_resource_id": "${trigger.config.supabase_integration_id}",
+          "table": "users",
+          "filters": {"id": {"eq": "user_123"}}
+        },
+        "out": "user"
+      },
+      {
+        "id": "fetch_products",
+        "type": "tool",
+        "tool": "supabase_table_query",
+        "in": {
+          "integration_resource_id": "${trigger.config.supabase_integration_id}",
+          "table": "products",
+          "filters": {"active": {"eq": true}}
+        },
+        "out": "products"
+      },
+      {
+        "id": "generate_recommendation",
+        "type": "llm",
+        "model": "gpt-4o-mini",
+        "prompt": "Given this user: ${user} and products: ${products}, recommend 3 products.",
+        "out": "recommendation",
+        "output": {
+          "mode": "json",
+          "schema": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "recommendations": {
+                  "type": "array",
+                  "items": {"type": "object"}
+                }
+              }
+            }
+          }
+        }
+      }
+    ],
+    "edges": [
+      {"from": "_start", "to": "fetch_user"},
+      {"from": "_start", "to": "fetch_products"},
+      {"from": "fetch_user", "to": "generate_recommendation"},
+      {"from": "fetch_products", "to": "generate_recommendation"},
+      {"from": "generate_recommendation", "to": "_end"}
+    ],
+    "output": "${recommendation}"
+  }
+}

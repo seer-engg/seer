@@ -1,0 +1,143 @@
+{
+  "name": "Daily Sales Report Generator",
+  "description": "Fetch sales and inventory in parallel, generate report, email to stakeholders",
+  "tags": ["reporting", "parallel", "sheets"],
+  "spec": {
+    "triggers": [{
+      "key": "schedule.cron",
+      "config": {
+        "cron": "0 8 * * 1-5",
+        "timezone": "UTC",
+        "supabase_integration_id": 105,
+        "sheets_integration_id": 106,
+        "gmail_integration_id": 107
+      }
+    }],
+    "inputs": {},
+    "nodes": [
+      {
+        "id": "fetch_sales",
+        "type": "tool",
+        "tool": "supabase_table_query",
+        "in": {
+          "integration_resource_id": "${trigger.config.supabase_integration_id}",
+          "table": "sales",
+          "filters": {"created_at": {"gte": "${trigger.data.yesterday_start}"}}
+        },
+        "out": "sales"
+      },
+      {
+        "id": "fetch_inventory",
+        "type": "tool",
+        "tool": "supabase_table_query",
+        "in": {
+          "integration_resource_id": "${trigger.config.supabase_integration_id}",
+          "table": "inventory",
+          "filters": {"low_stock": {"eq": true}}
+        },
+        "out": "inventory"
+      },
+      {
+        "id": "calculate_metrics",
+        "type": "llm",
+        "model": "gpt-4o-mini",
+        "prompt": "Analyze sales: ${sales} and inventory: ${inventory}. Generate summary with total revenue, units sold, low stock alerts.",
+        "out": "metrics",
+        "output": {
+          "mode": "json",
+          "schema": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "total_revenue": {"type": "number"},
+                "units_sold": {"type": "integer"},
+                "low_stock_items": {"type": "array"}
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "check_low_stock",
+        "type": "if",
+        "condition": "${metrics.low_stock_items}",
+        "then": [
+          {
+            "id": "format_alert",
+            "type": "task",
+            "kind": "set",
+            "value": "⚠️ LOW STOCK ALERT:\n${metrics.low_stock_items}",
+            "out": "alert_text"
+          }
+        ],
+        "else": [
+          {
+            "id": "no_alert",
+            "type": "task",
+            "kind": "set",
+            "value": "✅ All inventory levels healthy",
+            "out": "alert_text"
+          }
+        ],
+        "out": "alert"
+      },
+      {
+        "id": "write_to_sheets",
+        "type": "tool",
+        "tool": "google_sheets_append",
+        "in": {
+          "integration_resource_id": "${trigger.config.sheets_integration_id}",
+          "spreadsheet_id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
+          "range": "Daily Reports!A:D",
+          "values": [[
+            "${trigger.data.scheduled_time}",
+            "${metrics.total_revenue}",
+            "${metrics.units_sold}",
+            "${alert}"
+          ]]
+        },
+        "out": "sheet_result"
+      },
+      {
+        "id": "set_recipients",
+        "type": "task",
+        "kind": "set",
+        "value": ["sales@company.com", "inventory@company.com"],
+        "out": "recipients"
+      },
+      {
+        "id": "send_reports",
+        "type": "for_each",
+        "items": "${recipients}",
+        "item_var": "recipient",
+        "body": [
+          {
+            "id": "send_report_email",
+            "type": "tool",
+            "tool": "gmail_send_email",
+            "in": {
+              "integration_resource_id": "${trigger.config.gmail_integration_id}",
+              "to": ["${recipient}"],
+              "subject": "Daily Sales Report - ${trigger.data.scheduled_time}",
+              "body_text": "Revenue: $${metrics.total_revenue}\nUnits: ${metrics.units_sold}\n\n${alert}"
+            },
+            "out": "email_result"
+          }
+        ],
+        "out": "email_results"
+      }
+    ],
+    "edges": [
+      {"from": "_start", "to": "fetch_sales"},
+      {"from": "_start", "to": "fetch_inventory"},
+      {"from": "fetch_sales", "to": "calculate_metrics"},
+      {"from": "fetch_inventory", "to": "calculate_metrics"},
+      {"from": "calculate_metrics", "to": "check_low_stock"},
+      {"from": "check_low_stock", "to": "write_to_sheets"},
+      {"from": "write_to_sheets", "to": "set_recipients"},
+      {"from": "set_recipients", "to": "send_reports"},
+      {"from": "send_reports", "to": "_end"}
+    ],
+    "output": "${email_results}"
+  }
+}

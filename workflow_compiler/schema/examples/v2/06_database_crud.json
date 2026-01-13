@@ -1,0 +1,76 @@
+{
+  "name": "User Profile Update Handler",
+  "description": "Handle user profile updates with audit logging",
+  "tags": ["crud", "database", "audit"],
+  "spec": {
+    "triggers": [{
+      "key": "webhook.supabase.db_changes",
+      "config": {
+        "integration_resource_id": 108,
+        "gmail_integration_id": 200,
+        "table": "user_profiles",
+        "events": ["UPDATE"]
+      }
+    }],
+    "inputs": {},
+    "nodes": [
+      {
+        "id": "extract_changes",
+        "type": "task",
+        "kind": "set",
+        "value": {
+          "user_id": "${trigger.data.record.id}",
+          "old_email": "${trigger.data.old_record.email}",
+          "new_email": "${trigger.data.record.email}",
+          "changed_at": "${trigger.data.commit_timestamp}"
+        },
+        "out": "changes"
+      },
+      {
+        "id": "log_audit",
+        "type": "tool",
+        "tool": "supabase_table_insert",
+        "in": {
+          "integration_resource_id": "${trigger.config.integration_resource_id}",
+          "table": "audit_log",
+          "values": {
+            "user_id": "${changes.user_id}",
+            "action": "profile_update",
+            "old_value": "${changes.old_email}",
+            "new_value": "${changes.new_email}",
+            "timestamp": "${changes.changed_at}"
+          }
+        },
+        "out": "audit_result"
+      },
+      {
+        "id": "check_email_changed",
+        "type": "if",
+        "condition": "${changes.old_email != changes.new_email}",
+        "then": [
+          {
+            "id": "send_verification",
+            "type": "tool",
+            "tool": "gmail_send_email",
+            "in": {
+              "integration_resource_id": "${trigger.config.gmail_integration_id}",
+              "to": ["${changes.new_email}"],
+              "subject": "Verify Your New Email",
+              "body_text": "Please verify your email change."
+            },
+            "out": "verification_result"
+          }
+        ],
+        "else": [],
+        "out": "email_result"
+      }
+    ],
+    "edges": [
+      {"from": "_start", "to": "extract_changes"},
+      {"from": "extract_changes", "to": "log_audit"},
+      {"from": "log_audit", "to": "check_email_changed"},
+      {"from": "check_email_changed", "to": "_end"}
+    ],
+    "output": "${audit_result}"
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "name": "Email Attachment Processor",
+  "description": "Save email attachments to Google Drive or log if none",
+  "tags": ["gmail", "gdrive", "conditional"],
+  "spec": {
+    "triggers": [{
+      "key": "poll.gmail.email_received",
+      "config": {
+        "integration_resource_id": 102,
+        "gdrive_integration_id": 201,
+        "query": "has:attachment",
+        "max_results": 5
+      }
+    }],
+    "inputs": {},
+    "nodes": [
+      {
+        "id": "check_attachments",
+        "type": "if",
+        "condition": "${trigger.data.attachments}",
+        "then": [
+          {
+            "id": "upload_to_drive",
+            "type": "tool",
+            "tool": "gdrive_upload_file",
+            "in": {
+              "integration_resource_id": "${trigger.config.gdrive_integration_id}",
+              "name": "${trigger.data.attachments[0].filename}",
+              "mime_type": "${trigger.data.attachments[0].mime_type}",
+              "folder_id": "1a2b3c4d5e"
+            },
+            "out": "drive_result"
+          }
+        ],
+        "else": [
+          {
+            "id": "log_no_attachments",
+            "type": "task",
+            "kind": "set",
+            "value": {"message": "No attachments found", "email_id": "${trigger.data.message_id}"},
+            "out": "log_result"
+          }
+        ],
+        "out": "result"
+      }
+    ],
+    "edges": [
+      {"from": "_start", "to": "check_attachments"},
+      {"from": "check_attachments", "to": "_end"}
+    ],
+    "output": "${result}"
+  }
+}

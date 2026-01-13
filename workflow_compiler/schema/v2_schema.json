@@ -1,0 +1,190 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Seer Workflow V2",
+  "type": "object",
+  "required": ["name", "spec"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "description": "Workflow display name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable workflow description"
+    },
+    "tags": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Tags for categorization"
+    },
+    "spec": {
+      "type": "object",
+      "required": ["nodes", "edges"],
+      "properties": {
+        "triggers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["key"],
+            "properties": {
+              "key": {
+                "type": "string",
+                "description": "Trigger key (e.g., 'schedule.cron')"
+              },
+              "config": {
+                "type": "object",
+                "description": "Trigger-specific configuration"
+              },
+              "filters": {
+                "type": "object",
+                "description": "Event filters"
+              }
+            }
+          }
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {"$ref": "#/definitions/TaskNode"},
+              {"$ref": "#/definitions/ToolNode"},
+              {"$ref": "#/definitions/LLMNode"},
+              {"$ref": "#/definitions/IfNode"},
+              {"$ref": "#/definitions/ForEachNode"}
+            ]
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from", "to"],
+            "properties": {
+              "from": {"type": "string"},
+              "to": {"type": "string"}
+            }
+          }
+        },
+        "output": {
+          "description": "Expression defining workflow output"
+        },
+        "ui": {
+          "type": "object",
+          "description": "UI-only metadata (positions, visual edges)",
+          "properties": {
+            "nodes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {"type": "string"},
+                  "position": {
+                    "type": "object",
+                    "properties": {
+                      "x": {"type": "number"},
+                      "y": {"type": "number"}
+                    }
+                  }
+                }
+              }
+            },
+            "edges": {"type": "array"}
+          }
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "User-facing metadata",
+      "properties": {
+        "version": {"type": "string"},
+        "created_by": {"type": "string"},
+        "created_at": {"type": "string", "format": "date-time"},
+        "updated_at": {"type": "string", "format": "date-time"}
+      }
+    }
+  },
+  "definitions": {
+    "TaskNode": {
+      "type": "object",
+      "required": ["id", "type", "kind"],
+      "properties": {
+        "id": {"type": "string"},
+        "type": {"const": "task"},
+        "kind": {"enum": ["set"]},
+        "value": {},
+        "in": {"type": "object"},
+        "out": {"type": "string"},
+        "output": {"$ref": "#/definitions/OutputContract"}
+      }
+    },
+    "ToolNode": {
+      "type": "object",
+      "required": ["id", "type", "tool"],
+      "properties": {
+        "id": {"type": "string"},
+        "type": {"const": "tool"},
+        "tool": {"type": "string", "minLength": 1},
+        "in": {"type": "object"},
+        "out": {"type": "string"},
+        "expect_output": {"$ref": "#/definitions/OutputContract"}
+      }
+    },
+    "LLMNode": {
+      "type": "object",
+      "required": ["id", "type", "model", "prompt"],
+      "properties": {
+        "id": {"type": "string"},
+        "type": {"const": "llm"},
+        "model": {"type": "string"},
+        "prompt": {"type": "string"},
+        "in": {"type": "object"},
+        "out": {"type": "string"},
+        "output": {"$ref": "#/definitions/OutputContract"},
+        "temperature": {"type": "number"},
+        "max_tokens": {"type": "integer"}
+      }
+    },
+    "IfNode": {
+      "type": "object",
+      "required": ["id", "type", "condition"],
+      "properties": {
+        "id": {"type": "string"},
+        "type": {"const": "if"},
+        "condition": {"type": "string"},
+        "then": {"type": "array"},
+        "else": {"type": "array"},
+        "out": {"type": "string"}
+      }
+    },
+    "ForEachNode": {
+      "type": "object",
+      "required": ["id", "type", "items"],
+      "properties": {
+        "id": {"type": "string"},
+        "type": {"const": "for_each"},
+        "items": {"type": "string"},
+        "body": {"type": "array"},
+        "item_var": {"type": "string", "default": "item"},
+        "index_var": {"type": "string", "default": "index"},
+        "out": {"type": "string"},
+        "output": {"$ref": "#/definitions/OutputContract"}
+      }
+    },
+    "OutputContract": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": {"enum": ["text", "json"]},
+        "schema": {
+          "oneOf": [
+            {"type": "object"},
+            {"type": "object", "required": ["id"], "properties": {"id": {"type": "string"}}}
+          ]
+        }
+      }
+    }
+  }
+}
