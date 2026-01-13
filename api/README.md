@@ -121,8 +121,6 @@ api/
 │   └── router.py
 ├── forms/                     # Form trigger management
 │   └── router.py
-├── bootstrap/                 # Initial user onboarding
-│   └── router.py
 └── webhooks/                  # Webhook receivers
     └── router.py
 ```
