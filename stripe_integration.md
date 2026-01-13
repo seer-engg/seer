@@ -139,34 +139,44 @@ class SubscriptionStatus(str, Enum):
     INCOMPLETE = "incomplete"
 
 
-class UserSubscription(models.Model):
-    """Tracks user subscription state from Stripe"""
+class BillingProfileType(str, Enum):
+    INDIVIDUAL = "individual"
+    TEAM = "team"
+
+
+class BillingProfile(models.Model):
+    """Payer entity (individual user today, team later)."""
 
     id = fields.IntField(pk=True)
-    user = fields.OneToOneField("models.User", related_name="subscription", on_delete=fields.CASCADE)
-
-    # Stripe identifiers
+    type = fields.CharEnumField(BillingProfileType, default=BillingProfileType.INDIVIDUAL)
+    owner_user = fields.ForeignKeyField("models.User", related_name="billing_profiles", on_delete=fields.CASCADE)
     stripe_customer_id = fields.CharField(max_length=255, unique=True, null=True)
-    stripe_subscription_id = fields.CharField(max_length=255, unique=True, null=True)
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
 
-    # Subscription state
+    class Meta:
+        table = "billing_profiles"
+
+
+class BillingSubscription(models.Model):
+    """Subscription record for a billing profile."""
+
+    id = fields.IntField(pk=True)
+    billing_profile = fields.OneToOneField("models.BillingProfile", related_name="subscription", on_delete=fields.CASCADE)
+
+    stripe_subscription_id = fields.CharField(max_length=255, unique=True, null=True)
     tier = fields.CharEnumField(SubscriptionTier, default=SubscriptionTier.FREE)
     status = fields.CharEnumField(SubscriptionStatus, default=SubscriptionStatus.ACTIVE)
 
-    # Billing info
     current_period_start = fields.DatetimeField(null=True)
     current_period_end = fields.DatetimeField(null=True)
     cancel_at_period_end = fields.BooleanField(default=False)
-
-    # Usage tracking (define limits later)
-    # workflow_runs_this_period = fields.IntField(default=0)
-    # period_reset_at = fields.DatetimeField(null=True)
 
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 
     class Meta:
-        table = "user_subscriptions"
+        table = "billing_subscriptions"
 ```
 
 **Migration:**

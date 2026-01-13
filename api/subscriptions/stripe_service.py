@@ -12,9 +12,11 @@ import stripe
 from shared.config import config
 from shared.database.models import User
 from shared.database.subscription_models import (
+    BillingProfile,
+    BillingProfileType,
+    BillingSubscription,
     SubscriptionStatus,
     SubscriptionTier,
-    UserSubscription,
 )
 from shared.logger import get_logger
 from api.subscriptions.clerk_sync import sync_stripe_customer_to_clerk
@@ -151,16 +153,27 @@ STRIPE_STATUS_MAP = {
 }
 
 
+async def get_or_create_billing_profile(user: User) -> BillingProfile:
+    """
+    Fetch or create the billing profile for an individual user.
+    """
+    profile, _ = await BillingProfile.get_or_create(
+        owner_user=user,
+        defaults={"type": BillingProfileType.INDIVIDUAL},
+    )
+    return profile
+
+
 async def get_or_create_stripe_customer(user: User) -> str:
     """
     Get existing Stripe customer or create a new one.
 
     Returns the Stripe customer ID.
     """
-    subscription = await UserSubscription.get_or_none(user=user)
+    billing_profile = await get_or_create_billing_profile(user)
 
-    if subscription and subscription.stripe_customer_id:
-        return subscription.stripe_customer_id
+    if billing_profile.stripe_customer_id:
+        return billing_profile.stripe_customer_id
 
     # Create Stripe customer
     name = f"{user.first_name or ''} {user.last_name or ''}".strip() or None
@@ -176,14 +189,8 @@ async def get_or_create_stripe_customer(user: User) -> str:
     logger.info("Created Stripe customer %s for user %s", customer.id, user.user_id)
 
     # Store customer ID
-    if not subscription:
-        subscription = await UserSubscription.create(
-            user=user,
-            stripe_customer_id=customer.id,
-        )
-    else:
-        subscription.stripe_customer_id = customer.id
-        await subscription.save()
+    billing_profile.stripe_customer_id = customer.id
+    await billing_profile.save(update_fields=["stripe_customer_id"])
 
     return customer.id
 
@@ -239,17 +246,11 @@ async def create_portal_session(user: User, return_url: str) -> str:
 
     Returns:
         The Stripe Customer Portal URL
-
-    Raises:
-        ValueError: If user has no Stripe customer ID
     """
-    subscription = await UserSubscription.get_or_none(user=user)
-
-    if not subscription or not subscription.stripe_customer_id:
-        raise ValueError("User has no Stripe customer ID")
+    customer_id = await get_or_create_stripe_customer(user)
 
     session = stripe.billing_portal.Session.create(
-        customer=subscription.stripe_customer_id,
+        customer=customer_id,
         return_url=return_url,
     )
 
@@ -258,9 +259,9 @@ async def create_portal_session(user: User, return_url: str) -> str:
     return session.url
 
 
-async def get_user_subscription(user: User) -> UserSubscription:
+async def get_user_subscription(user: User) -> BillingSubscription:
     """
-    Get user's subscription or create with free tier default.
+    Get user's billing subscription or create with free tier default.
 
     Args:
         user: The authenticated user
@@ -268,13 +269,15 @@ async def get_user_subscription(user: User) -> UserSubscription:
     Returns:
         The user's subscription record
     """
-    subscription, created = await UserSubscription.get_or_create(
-        user=user,
+    billing_profile = await get_or_create_billing_profile(user)
+    subscription, created = await BillingSubscription.get_or_create(
+        billing_profile=billing_profile,
         defaults={
             "tier": SubscriptionTier.FREE,
             "status": SubscriptionStatus.ACTIVE,
         }
     )
+    subscription.billing_profile = billing_profile
     if created:
         logger.info("Created free tier subscription for user %s", user.user_id)
     return subscription
@@ -285,7 +288,7 @@ async def list_customer_invoices(user: User, page: int, page_size: int) -> dict:
     List invoices for a Stripe customer with numbered pagination.
     """
     subscription = await get_user_subscription(user)
-    customer_id = subscription.stripe_customer_id or await get_or_create_stripe_customer(user)
+    customer_id = subscription.billing_profile.stripe_customer_id or await get_or_create_stripe_customer(user)
 
     items, has_more = _paginate_stripe_list(
         stripe.Invoice.list,
@@ -323,7 +326,7 @@ async def list_customer_payments(user: User, page: int, page_size: int) -> dict:
     List payments (charges) for a Stripe customer with numbered pagination.
     """
     subscription = await get_user_subscription(user)
-    customer_id = subscription.stripe_customer_id or await get_or_create_stripe_customer(user)
+    customer_id = subscription.billing_profile.stripe_customer_id or await get_or_create_stripe_customer(user)
 
     items, has_more = _paginate_stripe_list(
         stripe.Charge.list,
@@ -354,7 +357,7 @@ async def list_customer_payments(user: User, page: int, page_size: int) -> dict:
 
 async def sync_subscription_from_stripe(
     stripe_subscription: Union[dict, str, stripe.Subscription]
-) -> Optional[UserSubscription]:
+) -> Optional[BillingSubscription]:
     """
     Sync subscription state from Stripe webhook data.
 
@@ -365,7 +368,7 @@ async def sync_subscription_from_stripe(
         stripe_subscription: The Stripe subscription object or subscription ID
 
     Returns:
-        The updated UserSubscription or None if customer not found
+        The updated BillingSubscription or None if customer not found
     """
     subscription_obj = _maybe_fetch_subscription(stripe_subscription)
     if not subscription_obj:
@@ -379,50 +382,58 @@ async def sync_subscription_from_stripe(
         logger.warning("Stripe subscription payload missing id/customer: %s", subscription_obj)
         return None
 
-    # Find user by customer ID
-    user_sub = await UserSubscription.get_or_none(stripe_customer_id=customer_id)
-    if not user_sub:
+    billing_profile = await BillingProfile.get_or_none(stripe_customer_id=customer_id)
+    if not billing_profile:
         logger.warning(
-            "No user found for Stripe customer %s, subscription %s",
+            "No billing profile found for Stripe customer %s, subscription %s",
             customer_id, subscription_id
         )
         return None
+
+    subscription, _ = await BillingSubscription.get_or_create(
+        billing_profile=billing_profile,
+        defaults={
+            "tier": SubscriptionTier.FREE,
+            "status": SubscriptionStatus.ACTIVE,
+        },
+    )
+    subscription.billing_profile = billing_profile
 
     # Determine tier from price
     price_to_tier = _build_price_to_tier_map()
     items = subscription_obj.get("items", {}).get("data", [])
     if items:
         price_id = items[0].get("price", {}).get("id")
-        tier = price_to_tier.get(price_id, user_sub.tier)
+        tier = price_to_tier.get(price_id, subscription.tier)
     else:
-        tier = user_sub.tier
+        tier = subscription.tier
 
     # Map Stripe status to our status
-    mapped_status = STRIPE_STATUS_MAP.get(status, user_sub.status)
+    mapped_status = STRIPE_STATUS_MAP.get(status, subscription.status)
 
     # Update subscription
-    user_sub.stripe_subscription_id = subscription_id
-    user_sub.tier = tier
-    user_sub.status = mapped_status
+    subscription.stripe_subscription_id = subscription_id
+    subscription.tier = tier
+    subscription.status = mapped_status
     current_period_start_ts = subscription_obj.get("current_period_start")
     current_period_end_ts = subscription_obj.get("current_period_end")
     if current_period_start_ts is not None:
-        user_sub.current_period_start = _timestamp_to_datetime(current_period_start_ts)
+        subscription.current_period_start = _timestamp_to_datetime(current_period_start_ts)
     if current_period_end_ts is not None:
-        user_sub.current_period_end = _timestamp_to_datetime(current_period_end_ts)
-    user_sub.cancel_at_period_end = bool(subscription_obj.get("cancel_at_period_end", False))
+        subscription.current_period_end = _timestamp_to_datetime(current_period_end_ts)
+    subscription.cancel_at_period_end = bool(subscription_obj.get("cancel_at_period_end", False))
 
-    await user_sub.save()
+    await subscription.save()
 
     logger.info(
         "Synced subscription for customer %s: tier=%s, status=%s",
         customer_id, tier.value, mapped_status.value
     )
 
-    return user_sub
+    return subscription
 
 
-async def sync_subscription_for_invoice(invoice: dict) -> Optional[UserSubscription]:
+async def sync_subscription_for_invoice(invoice: dict) -> Optional[BillingSubscription]:
     """
     Sync subscription based on invoice events (payment succeeded/failed).
     """
@@ -433,7 +444,7 @@ async def sync_subscription_for_invoice(invoice: dict) -> Optional[UserSubscript
     return await sync_subscription_from_stripe(subscription_id)
 
 
-async def handle_subscription_deleted(stripe_subscription: dict) -> Optional[UserSubscription]:
+async def handle_subscription_deleted(stripe_subscription: dict) -> Optional[BillingSubscription]:
     """
     Handle subscription cancellation/deletion.
 
@@ -443,34 +454,42 @@ async def handle_subscription_deleted(stripe_subscription: dict) -> Optional[Use
         stripe_subscription: The Stripe subscription object from webhook
 
     Returns:
-        The updated UserSubscription or None if customer not found
+        The updated BillingSubscription or None if customer not found
     """
     customer_id = stripe_subscription.get("customer")
     if not customer_id:
         logger.warning("Subscription deletion payload missing customer: %s", stripe_subscription)
         return None
 
-    user_sub = await UserSubscription.get_or_none(stripe_customer_id=customer_id)
-    if not user_sub:
+    billing_profile = await BillingProfile.get_or_none(stripe_customer_id=customer_id)
+    if not billing_profile:
         logger.warning(
-            "No user found for Stripe customer %s on subscription deletion",
+            "No billing profile found for Stripe customer %s on subscription deletion",
             customer_id
         )
         return None
 
-    # Revert to free tier
-    user_sub.tier = SubscriptionTier.FREE
-    user_sub.status = SubscriptionStatus.ACTIVE
-    user_sub.stripe_subscription_id = None
-    user_sub.current_period_start = None
-    user_sub.current_period_end = None
-    user_sub.cancel_at_period_end = False
+    subscription, _ = await BillingSubscription.get_or_create(
+        billing_profile=billing_profile,
+        defaults={
+            "tier": SubscriptionTier.FREE,
+            "status": SubscriptionStatus.ACTIVE,
+        },
+    )
 
-    await user_sub.save()
+    # Revert to free tier
+    subscription.tier = SubscriptionTier.FREE
+    subscription.status = SubscriptionStatus.ACTIVE
+    subscription.stripe_subscription_id = None
+    subscription.current_period_start = None
+    subscription.current_period_end = None
+    subscription.cancel_at_period_end = False
+
+    await subscription.save()
 
     logger.info("Reverted customer %s to free tier after subscription deletion", customer_id)
 
-    return user_sub
+    return subscription
 
 
 async def process_stripe_event(event_type: str | None, data: dict) -> None:

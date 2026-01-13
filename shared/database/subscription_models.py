@@ -1,8 +1,4 @@
-"""
-Database models for subscription management.
-
-Tracks user subscription state synced from Stripe webhooks.
-"""
+"""Database models for subscription management."""
 from enum import Enum
 
 from tortoise import fields, models
@@ -33,30 +29,48 @@ class StripeWebhookEventStatus(str, Enum):
     FAILED = "failed"
 
 
-class UserSubscription(models.Model):
-    """
-    Tracks user subscription state from Stripe.
+class BillingProfileType(str, Enum):
+    """Types of billing profiles."""
+    INDIVIDUAL = "individual"
+    TEAM = "team"
 
-    One-to-one relationship with User. Created on first subscription
-    lookup with FREE tier as default.
-    """
+
+class BillingProfile(models.Model):
+    """Billing profile for a paying entity (individual user or team)."""
 
     id = fields.IntField(primary_key=True)
-    user = fields.OneToOneField(
+    type = fields.CharEnumField(BillingProfileType, default=BillingProfileType.INDIVIDUAL)
+    owner_user = fields.OneToOneField(
         "models.User",
+        related_name="billing_profiles",
+        on_delete=fields.CASCADE,
+    )
+    stripe_customer_id = fields.CharField(max_length=255, unique=True, null=True)
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    class Meta:
+        table = "billing_profiles"
+
+    def __str__(self) -> str:
+        return f"BillingProfile<id={self.id}, type={self.type.value}>"
+
+
+class BillingSubscription(models.Model):
+    """Subscription record tied to a billing profile."""
+
+    id = fields.IntField(primary_key=True)
+    billing_profile = fields.OneToOneField(
+        "models.BillingProfile",
         related_name="subscription",
         on_delete=fields.CASCADE,
     )
 
-    # Stripe identifiers
-    stripe_customer_id = fields.CharField(max_length=255, unique=True, null=True)
     stripe_subscription_id = fields.CharField(max_length=255, unique=True, null=True)
 
-    # Subscription state
     tier = fields.CharEnumField(SubscriptionTier, default=SubscriptionTier.FREE)
     status = fields.CharEnumField(SubscriptionStatus, default=SubscriptionStatus.ACTIVE)
 
-    # Billing period info
     current_period_start = fields.DatetimeField(null=True)
     current_period_end = fields.DatetimeField(null=True)
     cancel_at_period_end = fields.BooleanField(default=False)
@@ -65,10 +79,10 @@ class UserSubscription(models.Model):
     updated_at = fields.DatetimeField(auto_now=True)
 
     class Meta:
-        table = "user_subscriptions"
+        table = "billing_subscriptions"
 
     def __str__(self) -> str:
-        return f"UserSubscription<user={self.user_id}, tier={self.tier}>"
+        return f"BillingSubscription<profile={self.billing_profile_id}, tier={self.tier.value}>"
 
 
 class StripeWebhookEvent(models.Model):
