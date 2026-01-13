@@ -15,7 +15,6 @@ from shared.llm import get_llm
 from shared.tools.base import get_tool
 from shared.tools.executor import execute_tool
 from workflow_compiler.compiler.context import CompilerContext
-from workflow_compiler.compiler.emit_langgraph import emit_langgraph
 from workflow_compiler.compiler.lower_control_flow import build_execution_plan
 from workflow_compiler.compiler.parse import parse_workflow_spec
 from workflow_compiler.compiler.type_env import build_type_environment
@@ -438,6 +437,8 @@ class WorkflowCompilerSingleton:
                 type_env=type_env,
             )
         )
+        # pylint: disable=import-outside-toplevel # Reason: Avoid circular import (emit_langgraph -> runtime.nodes -> runtime.global_compiler)
+        from workflow_compiler.compiler.emit_langgraph import emit_langgraph
 
         graph = await emit_langgraph(plan, runtime, checkpointer=checkpointer)
         return CompiledWorkflow(
