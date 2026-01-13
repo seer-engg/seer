@@ -5,7 +5,7 @@ Handles Stripe customer creation, checkout sessions, portal sessions,
 and subscription state synchronization from webhooks.
 """
 from datetime import datetime, timezone
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, Tuple, Union
 
 import stripe
 
@@ -52,6 +52,60 @@ def _timestamp_to_datetime(timestamp: Any) -> Optional[datetime]:
         return datetime.fromtimestamp(timestamp, tz=timezone.utc)
     except (TypeError, ValueError):
         return None
+
+
+def _timestamp_to_iso(timestamp: Any) -> Optional[str]:
+    """Convert a Stripe timestamp to ISO string or return None."""
+    dt = _timestamp_to_datetime(timestamp)
+    return dt.isoformat() if dt else None
+
+
+def _paginate_stripe_list(
+    list_fn: Callable[..., Any],
+    *,
+    page: int,
+    page_size: int,
+    **kwargs: Any,
+) -> Tuple[list[dict], bool]:
+    """
+    Emulate numbered pagination over Stripe cursor-based lists.
+
+    Args:
+        list_fn: Callable that accepts limit/starting_after and returns a Stripe list response.
+        page: 1-based page number.
+        page_size: Number of records per page (capped at 100 by Stripe).
+        **kwargs: Extra parameters forwarded to the Stripe list call.
+
+    Returns:
+        (items, has_more) tuple for the requested page.
+
+    Raises:
+        ValueError: When page or page_size are invalid.
+    """
+    if page < 1:
+        raise ValueError("page must be >= 1")
+    if page_size < 1 or page_size > 100:
+        raise ValueError("page_size must be between 1 and 100")
+
+    starting_after = None
+    to_skip = (page - 1) * page_size
+
+    # Walk pages until we reach the desired offset.
+    while to_skip > 0:
+        batch_limit = min(100, to_skip)
+        response = list_fn(limit=batch_limit, starting_after=starting_after, **kwargs)
+        batch = response.get("data", [])
+        if not batch:
+            return [], False
+        to_skip -= len(batch)
+        starting_after = batch[-1].get("id")
+        if not response.get("has_more") and to_skip > 0:
+            return [], False
+
+    response = list_fn(limit=page_size, starting_after=starting_after, **kwargs)
+    items = response.get("data", [])
+    has_more = bool(response.get("has_more"))
+    return items, has_more
 
 
 def _maybe_fetch_subscription(stripe_subscription: Union[dict, str, stripe.Subscription]) -> Optional[stripe.Subscription]:
@@ -224,6 +278,78 @@ async def get_user_subscription(user: User) -> UserSubscription:
     if created:
         logger.info("Created free tier subscription for user %s", user.user_id)
     return subscription
+
+
+async def list_customer_invoices(user: User, page: int, page_size: int) -> dict:
+    """
+    List invoices for a Stripe customer with numbered pagination.
+    """
+    subscription = await get_user_subscription(user)
+    customer_id = subscription.stripe_customer_id or await get_or_create_stripe_customer(user)
+
+    items, has_more = _paginate_stripe_list(
+        stripe.Invoice.list,
+        page=page,
+        page_size=page_size,
+        customer=customer_id,
+        expand=["data.customer"],
+    )
+
+    def _serialize_invoice(invoice: dict) -> dict[str, Any]:
+        return {
+            "id": invoice.get("id"),
+            "number": invoice.get("number"),
+            "status": invoice.get("status"),
+            "currency": invoice.get("currency"),
+            "total": invoice.get("total"),
+            "amount_paid": invoice.get("amount_paid"),
+            "amount_due": invoice.get("amount_due"),
+            "created_at": _timestamp_to_iso(invoice.get("created")),
+            "period_start": _timestamp_to_iso(invoice.get("period_start")),
+            "period_end": _timestamp_to_iso(invoice.get("period_end")),
+            "hosted_invoice_url": invoice.get("hosted_invoice_url"),
+            "invoice_pdf": invoice.get("invoice_pdf"),
+            "billing_reason": invoice.get("billing_reason"),
+        }
+
+    return {
+        "items": [_serialize_invoice(item) for item in items],
+        "has_more": has_more,
+    }
+
+
+async def list_customer_payments(user: User, page: int, page_size: int) -> dict:
+    """
+    List payments (charges) for a Stripe customer with numbered pagination.
+    """
+    subscription = await get_user_subscription(user)
+    customer_id = subscription.stripe_customer_id or await get_or_create_stripe_customer(user)
+
+    items, has_more = _paginate_stripe_list(
+        stripe.Charge.list,
+        page=page,
+        page_size=page_size,
+        customer=customer_id,
+    )
+
+    def _serialize_charge(charge: dict) -> dict[str, Any]:
+        return {
+            "id": charge.get("id"),
+            "status": charge.get("status"),
+            "currency": charge.get("currency"),
+            "amount": charge.get("amount"),
+            "paid": charge.get("paid"),
+            "description": charge.get("description"),
+            "receipt_url": charge.get("receipt_url"),
+            "created_at": _timestamp_to_iso(charge.get("created")),
+            "invoice_id": charge.get("invoice"),
+            "payment_intent_id": charge.get("payment_intent"),
+        }
+
+    return {
+        "items": [_serialize_charge(item) for item in items],
+        "has_more": has_more,
+    }
 
 
 async def sync_subscription_from_stripe(

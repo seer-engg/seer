@@ -11,6 +11,7 @@ from typing import Optional
 
 import stripe
 from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import Query
 from pydantic import BaseModel
 from tortoise.exceptions import IntegrityError
 
@@ -27,6 +28,8 @@ from .stripe_service import (
     create_checkout_session,
     create_portal_session,
     get_user_subscription,
+    list_customer_invoices,
+    list_customer_payments,
     verify_webhook_signature,
 )
 from worker.tasks.stripe import process_stripe_webhook_event
@@ -87,6 +90,56 @@ class TierPricing(BaseModel):
 class PricingResponse(BaseModel):
     """Response containing all subscription pricing."""
     prices: list[TierPricing]
+
+
+class PaginationMeta(BaseModel):
+    """Pagination metadata for list endpoints."""
+    page: int
+    page_size: int
+    has_more: bool
+
+
+class InvoiceItem(BaseModel):
+    """Invoice data for billing history."""
+    id: str
+    number: Optional[str] = None
+    status: Optional[str] = None
+    currency: Optional[str] = None
+    total: Optional[int] = None
+    amount_paid: Optional[int] = None
+    amount_due: Optional[int] = None
+    created_at: Optional[str] = None
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
+    hosted_invoice_url: Optional[str] = None
+    invoice_pdf: Optional[str] = None
+    billing_reason: Optional[str] = None
+
+
+class InvoiceListResponse(BaseModel):
+    """Paginated invoices list."""
+    items: list[InvoiceItem]
+    pagination: PaginationMeta
+
+
+class PaymentItem(BaseModel):
+    """Payment data for billing history."""
+    id: str
+    status: Optional[str] = None
+    currency: Optional[str] = None
+    amount: Optional[int] = None
+    paid: Optional[bool] = None
+    description: Optional[str] = None
+    receipt_url: Optional[str] = None
+    created_at: Optional[str] = None
+    invoice_id: Optional[str] = None
+    payment_intent_id: Optional[str] = None
+
+
+class PaymentListResponse(BaseModel):
+    """Paginated payments list."""
+    items: list[PaymentItem]
+    pagination: PaginationMeta
 
 
 # --- Endpoints ---
@@ -195,6 +248,62 @@ async def create_portal(request: Request):
     except stripe.error.StripeError as e:
         logger.error("Stripe portal error for user %s: %s", user.user_id, str(e))
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/invoices", response_model=InvoiceListResponse)
+async def list_invoices(
+    request: Request,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    """
+    List invoices for the authenticated user's Stripe customer.
+    """
+    if not config.is_stripe_configured:
+        raise HTTPException(status_code=503, detail="Stripe is not configured")
+
+    user = _require_user(request)
+
+    try:
+        result = await list_customer_invoices(user, page=page, page_size=page_size)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except stripe.error.StripeError as exc:
+        logger.error("Stripe invoice listing error for user %s: %s", user.user_id, exc)
+        raise HTTPException(status_code=400, detail="Unable to fetch invoices")
+
+    return InvoiceListResponse(
+        items=result["items"],
+        pagination=PaginationMeta(page=page, page_size=page_size, has_more=result["has_more"]),
+    )
+
+
+@router.get("/payments", response_model=PaymentListResponse)
+async def list_payments(
+    request: Request,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    """
+    List payments (charges) for the authenticated user's Stripe customer.
+    """
+    if not config.is_stripe_configured:
+        raise HTTPException(status_code=503, detail="Stripe is not configured")
+
+    user = _require_user(request)
+
+    try:
+        result = await list_customer_payments(user, page=page, page_size=page_size)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except stripe.error.StripeError as exc:
+        logger.error("Stripe payment listing error for user %s: %s", user.user_id, exc)
+        raise HTTPException(status_code=400, detail="Unable to fetch payments")
+
+    return PaymentListResponse(
+        items=result["items"],
+        pagination=PaginationMeta(page=page, page_size=page_size, has_more=result["has_more"]),
+    )
 
 
 # --- Webhook Handler ---
