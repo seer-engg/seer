@@ -34,6 +34,10 @@ class ColoredFormatter(logging.Formatter):
     }
 
     def format(self, record):
+        # Add correlation ID if available
+        if hasattr(record, 'correlation_id') and record.correlation_id:
+            record.msg = f"[{record.correlation_id[:8]}] {record.msg}"
+
         # Add color to levelname
         levelname = record.levelname
         if levelname in self.COLORS:
@@ -59,12 +63,12 @@ def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
         return _loggers[name]
 
     # Create new logger
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
-    logger.propagate = False
+    log = logging.getLogger(name)
+    log.setLevel(level)
+    log.propagate = False
 
     # Clear any existing handlers
-    logger.handlers.clear()
+    log.handlers.clear()
 
     # Create console handler with colored formatter
     console_handler = logging.StreamHandler(sys.stdout)
@@ -76,11 +80,11 @@ def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
     )
     console_handler.setFormatter(formatter)
 
-    logger.addHandler(console_handler)
+    log.addHandler(console_handler)
 
     # Cache and return
-    _loggers[name] = logger
-    return logger
+    _loggers[name] = log
+    return log
 
 
 # Example usage

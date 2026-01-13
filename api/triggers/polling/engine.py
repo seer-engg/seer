@@ -54,14 +54,29 @@ class TriggerPollEngine:
             return
 
         for subscription in subscriptions:
-            logger.info(f"Processing subscription {subscription.id}")
+            logger.info("Processing subscription %s", subscription.id)
             try:
                 await self._process_subscription(subscription)
-            except Exception:
+            except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Catch all subscription errors to mark as failed
                 logger.exception(
                     "Failed to process trigger subscription",
                     extra={"subscription_id": subscription.id, "trigger_key": subscription.trigger_key},
                 )
+
+                # Track trigger poll error to PostHog
+                await subscription.fetch_related("user")
+                if subscription.user:
+                    from shared.analytics import analytics  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+                    analytics.capture_error(
+                        distinct_id=subscription.user.user_id,
+                        error=e,
+                        context={
+                            "subscription_id": str(subscription.id),
+                            "trigger_key": subscription.trigger_key,
+                        },
+                        error_location="trigger_poll",
+                    )
+
                 await self._mark_error(
                     subscription,
                     reason="Unhandled poller exception",

@@ -74,10 +74,19 @@ async def execute_tool(
         success = False
         error_type = type(e).__name__
         logger.exception("Tool execution failed: %s", e)
+
+        # Track tool error to PostHog
+        analytics.capture_tool_error(
+            distinct_id=user.user_id,
+            tool_name=tool_name,
+            error=e,
+            context={"arguments": arguments},
+        )
+
         raise HTTPException(
             status_code=500,
             detail=f"Tool execution failed: {str(e)}"
-        )
+        ) from e
     finally:
         # Always capture tool execution event
         duration_ms = (time.time() - start_time) * 1000
