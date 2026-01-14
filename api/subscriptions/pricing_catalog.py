@@ -108,27 +108,10 @@ PRICE_DEFINITIONS: tuple[PriceDefinition, ...] = (
     ),
 )
 
-CONFIG_PRICE_ID_KEYS: dict[str, str] = {
-    "pro_monthly": "stripe_price_pro_monthly",
-    "pro_annual": "stripe_price_pro_annual",
-    "pro_plus_monthly": "stripe_price_proplus_monthly",
-    "pro_plus_annual": "stripe_price_proplus_annual",
-    "ultra_monthly": "stripe_price_ultra_monthly",
-    "ultra_annual": "stripe_price_ultra_annual",
-}
-
 # Cache Stripe price IDs to avoid hitting the API on every pricing request.
 _PRICE_ID_CACHE: dict[str, str] = {}
 _PRICE_ID_CACHE_EXPIRES_AT: Optional[datetime] = None
-_PRICE_CACHE_TTL = timedelta(minutes=10)
-
-
-def _config_price_ids() -> dict[str, Optional[str]]:
-    """Read configured price IDs keyed by lookup key."""
-    return {
-        lookup_key: getattr(config, field_name)
-        for lookup_key, field_name in CONFIG_PRICE_ID_KEYS.items()
-    }
+_PRICE_CACHE_TTL = timedelta(days=30)
 
 
 def _find_product_by_tier(tier: str) -> Optional[dict]:
@@ -234,18 +217,14 @@ def _get_cached_stripe_price_ids() -> dict[str, str]:
 
 def _resolve_price_ids() -> dict[str, Optional[str]]:
     """
-    Resolve price IDs using Stripe (cached) with config as a fallback.
+    Resolve price IDs using Stripe (cached).
 
     Returns:
         Mapping from lookup key to Stripe price ID (may be None).
     """
-    stripe_prices = _get_cached_stripe_price_ids() if config.stripe_secret_key else {}
-    price_ids: dict[str, Optional[str]] = _config_price_ids()
-
-    for lookup_key, price_id in stripe_prices.items():
-        price_ids[lookup_key] = price_id
-
-    return price_ids
+    if not config.stripe_secret_key:
+        return {}
+    return _get_cached_stripe_price_ids()
 
 
 def _build_pricing(price_ids: Dict[str, Optional[str]]) -> list[TierPricing]:
@@ -354,7 +333,6 @@ def create_prices_in_stripe() -> dict[str, str]:
         raise ValueError("Stripe secret key is not configured")
 
     stripe.api_key = stripe.api_key or config.stripe_secret_key
-    configured_ids = _config_price_ids()
     price_ids: dict[str, str] = {}
     product_ids: dict[str, str] = {}
 
@@ -371,7 +349,7 @@ def create_prices_in_stripe() -> dict[str, str]:
 
         existing = _get_existing_price(
             lookup_key=definition.lookup_key,
-            price_id=configured_ids.get(definition.lookup_key),
+            price_id=None,
             product_id=product_id,
         )
 
