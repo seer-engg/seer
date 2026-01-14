@@ -219,7 +219,16 @@ async def _execute_compiled_run(
             effective_config,
             extra={"run_id": run.run_id, "config": effective_config},
         )
-        result = await compiled.ainvoke(inputs or {}, config=effective_config)
+        # Create runtime context with workflow_run_id for usage tracking
+        from workflow_compiler.runtime.context import WorkflowRuntimeContext
+
+        runtime_context = WorkflowRuntimeContext(
+            user=user,
+            workflow_run_id=run.run_id,
+        )
+        result = await compiled.ainvoke(
+            inputs or {}, config=effective_config, context=runtime_context
+        )
     except WorkflowCompilerError as exc:
         print(f"{traceback.format_exc()}")
         await _handle_run_failure(run, user, exc, metrics)
