@@ -1,69 +1,157 @@
-from typing import Optional, List
+from typing import Optional, List, Dict, Any, Set
 import json
+import re
 from langchain_core.tools import tool
 from shared.tools.registry import get_tools_by_integration
-from shared.tool_hub.singleton import get_toolhub_instance
 from shared.logger import get_logger
 from workflow_compiler.registry.trigger_registry import trigger_registry
 
 logger = get_logger(__name__)
 
 
-async def _search_tools_local(
-    query: str,
-    integration_name: Optional[List[str]] = None,
-    top_k: int = 5
-) -> List[dict]:
+def _tokenize(text: str) -> Set[str]:
     """
-    Search tools from local Chroma vector store using semantic search.
+    Tokenize text into normalized keywords.
+
+    Handles underscores, camelCase, and common word variations.
+    Example: "gmail_create_draft" → {"gmail", "create", "draft"}
+    """
+    if not text:
+        return set()
+
+    # Split on underscores, hyphens, and spaces
+    text = re.sub(r'[_\-\s]+', ' ', text.lower())
+
+    # Split camelCase: "createDraft" → "create Draft"
+    text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
+
+    # Extract words (alphanumeric sequences)
+    words = re.findall(r'\w+', text.lower())
+
+    return set(words)
+
+
+def _build_tool_catalog() -> List[Dict[str, Any]]:
+    """
+    Build comprehensive tool catalog with searchable keywords.
+
+    Returns enriched tool metadata with:
+    - keywords: extracted from name/description
+    - capabilities: action verbs (create, send, list, etc.)
+    - integration: normalized integration type
+    """
+    all_tools = get_tools_by_integration()
+    catalog = []
+
+    for tool_meta in all_tools:
+        name = tool_meta.get("name", "")
+        description = tool_meta.get("description", "")
+        integration = tool_meta.get("integration_type", "")
+
+        # Extract keywords from name and description
+        name_tokens = _tokenize(name)
+        desc_tokens = _tokenize(description)
+        integration_tokens = _tokenize(integration)
+
+        # Identify capability keywords (action verbs)
+        action_verbs = {"create", "send", "list", "get", "update", "delete", "search",
+                       "find", "read", "write", "insert", "query", "fetch", "post",
+                       "draft", "compose", "manage", "add", "remove", "modify"}
+        capabilities = name_tokens.intersection(action_verbs)
+
+        catalog.append({
+            **tool_meta,  # Keep all original metadata
+            "keywords": name_tokens | desc_tokens | integration_tokens,
+            "capabilities": capabilities,
+            "integration": integration.lower() if integration else ""
+        })
+
+    return catalog
+
+
+def _score_tool_match(tool_data: Dict[str, Any], query_tokens: Set[str], integration_filter: Optional[str] = None) -> int:
+    """
+    Score how well a tool matches the query.
+
+    Scoring:
+    - Exact keyword match in name: 100 points
+    - Keyword match in keywords: 50 points
+    - Capability match: 75 points
+    - Integration match (if specified): 25 points
+    - Description substring: 10 points per token
+
+    Returns: Total score
+    """
+    score = 0
+    tool_name_tokens = _tokenize(tool_data.get("name", ""))
+    tool_keywords = tool_data.get("keywords", set())
+    tool_capabilities = tool_data.get("capabilities", set())
+    tool_desc = tool_data.get("description", "").lower()
+
+    # Exact name token matches (highest priority)
+    name_matches = query_tokens.intersection(tool_name_tokens)
+    score += len(name_matches) * 100
+
+    # Capability matches (action verbs)
+    capability_matches = query_tokens.intersection(tool_capabilities)
+    score += len(capability_matches) * 75
+
+    # Keyword matches
+    keyword_matches = query_tokens.intersection(tool_keywords)
+    score += len(keyword_matches) * 50
+
+    # Description substring matches
+    for token in query_tokens:
+        if token in tool_desc:
+            score += 10
+
+    # Integration filter bonus
+    if integration_filter and tool_data.get("integration", "").lower() == integration_filter.lower():
+        score += 25
+
+    return score
+
+
+def _search_tools_intent(
+    query: str,
+    integration_filter: Optional[str] = None,
+    top_k: int = 5
+) -> List[Dict[str, Any]]:
+    """
+    Search tools using unified intent-based matching.
+
+    Single algorithm: tokenize query → score tools → return top matches.
+    No fallbacks, no vector search, just direct matching.
 
     Args:
-        query: Search query string
-        integration_name: Optional list of integration names to restrict search (e.g., ["github", "asana"])
+        query: Natural language query (e.g., "create draft", "send email")
+        integration_filter: Optional integration to prioritize (e.g., "gmail")
         top_k: Number of results to return
 
     Returns:
-        List of tool dictionaries
+        List of tools sorted by relevance score
     """
-    try:
+    query_tokens = _tokenize(query)
+    if not query_tokens:
+        return []
 
-        toolhub = get_toolhub_instance()
-        if toolhub is None:
-            raise ValueError("LocalToolHub not available")
+    # Build catalog (could be cached at startup for performance)
+    catalog = _build_tool_catalog()
 
-        results = await toolhub.query(
-            query=query,
-            integration_name=integration_name,
-            top_k=top_k
-        )
-        return results
-    except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Fallback on any toolhub failure
-        logger.warning("Local tool search not available: %s", e)
-        # Enhanced fallback: try integration-based search first, then keyword matching
-        matching_tools = []
+    # Score all tools
+    scored_tools = []
+    for tool_entry in catalog:
+        score = _score_tool_match(tool_entry, query_tokens, integration_filter)
+        if score > 0:  # Only include tools with some match
+            scored_tools.append({
+                **tool_entry,
+                "confidence_score": score
+            })
 
-        # If integration_name is provided, filter by integration first
-        if integration_name and len(integration_name) > 0:
-            for integration in integration_name:
-                tools_for_integration = get_tools_by_integration(integration_type=integration)
-                matching_tools.extend(tools_for_integration)
+    # Sort by score descending
+    scored_tools.sort(key=lambda t: t["confidence_score"], reverse=True)
 
-        # If no integration filter or integration search returned nothing, do keyword matching
-        if not matching_tools:
-            all_tools = get_tools_by_integration()
-            query_lower = query.lower()
-            for tool_meta in all_tools:
-                tool_name = tool_meta.get("name", "").lower()
-                tool_desc = tool_meta.get("description", "").lower()
-                integration_type = tool_meta.get("integration_type", "").lower()
-
-                # Match against name, description, or integration type
-                if (query_lower in tool_name or
-                    query_lower in tool_desc or
-                    query_lower in integration_type):
-                    matching_tools.append(tool_meta)
-
-        return matching_tools[:top_k]
+    return scored_tools[:top_k]
 
 
 @tool
@@ -73,71 +161,87 @@ async def search_tools(
     integration_filter: Optional[List[str]] = None
 ) -> str:
     """
-    Search for available tools/actions using semantic search.
+    Discover tools based on natural language intent.
 
-    Use this tool when you need to discover what tools are available for a specific capability.
-    For example, if the user wants to "search emails" or "find Gmail messages", use this tool
-    to discover the relevant Gmail tools.
+    The agent should use this to find tools WITHOUT asking the user for tool names.
+    User says "create a draft" → this finds gmail_create_draft automatically.
+
+    **IMPORTANT**: Never ask users for tool names - discover them transparently!
 
     **QUERY GUIDELINES:**
-    - Search for CAPABILITIES, not specific data values
-    - Use specific, action-oriented queries
-    - GOOD: "search emails", "find Gmail messages", "create Asana task", "list GitHub pull requests"
-    - BAD: "Gmail", "GitHub", "search emails with subject 'test'" (includes actual data)
+    - Use natural language describing what needs to be done
+    - GOOD: "create draft", "send email", "insert row", "list messages"
+    - AVOID: tool names like "gmail_create_draft"
 
     Args:
-        query: Search query describing the capability/action needed (e.g., "search emails", "create task")
-        reasoning: Optional explanation of why you need this tool and what you're trying to accomplish
-        integration_filter: Optional list of integration names to restrict search (e.g., ["gmail", "github"])
+        query: Natural language action (e.g., "create draft", "send message")
+        reasoning: Why you need this tool (helps with context)
+        integration_filter: Optional list to prioritize specific integrations (e.g., ["gmail"])
 
     Returns:
-        JSON string with list of matching tools, their descriptions, and parameters
+        JSON with top_match (highest confidence tool) and alternatives
     """
     try:
-        results = await _search_tools_local(
+        # Use single integration filter if provided
+        integration = integration_filter[0] if integration_filter and len(integration_filter) > 0 else None
+
+        results = _search_tools_intent(
             query=query,
-            integration_name=integration_filter,
-            top_k=3
+            integration_filter=integration,
+            top_k=5
         )
 
         if not results:
-            # Get list of available integrations for suggestions
+            # Get available integrations for suggestions
             all_tools = get_tools_by_integration()
-            available_integrations = sorted(set(t.get("integration_type", "") for t in all_tools if t.get("integration_type")))
+            available_integrations = sorted(set(
+                t.get("integration_type", "") for t in all_tools if t.get("integration_type")
+            ))
 
             return json.dumps({
-                "tools": [],
-                "message": f"No tools found matching query: {query}",
+                "query": query,
+                "top_match": None,
+                "alternatives": [],
+                "message": f"No tools found for: {query}",
                 "available_integrations": available_integrations,
-                "suggestions": [
-                    "Try list_available_tools() to see all tools",
-                    "Try list_available_tools(integration_type='<integration>') to filter by integration",
-                    "Use more specific search terms describing the action (e.g., 'create draft', 'search messages')"
-                ]
+                "suggestion": "Try rephrasing with action verbs (create, send, list, search, etc.)"
             })
 
-        # Format results
-        tools_list = []
-        for tool_data in results:
-            tools_list.append({
-                "name": tool_data.get("name", ""),
-                "description": tool_data.get("description", ""),
-                "parameters": tool_data.get("parameters", {}),
-                "integration": tool_data.get("service", tool_data.get("integration_type", ""))
+        # Format top match with rich details
+        top_tool = results[0]
+        top_match = {
+            "tool": top_tool.get("name"),
+            "integration": top_tool.get("integration_type", "").title(),
+            "confidence": top_tool.get("confidence_score", 0),
+            "description": top_tool.get("description", ""),
+            "parameters": top_tool.get("parameters", {})
+        }
+
+        # Format alternatives (tools 2-5)
+        alternatives = []
+        for alt_tool in results[1:5]:
+            alternatives.append({
+                "tool": alt_tool.get("name"),
+                "integration": alt_tool.get("integration_type", "").title(),
+                "confidence": alt_tool.get("confidence_score", 0),
+                "description": alt_tool.get("description", "")[:100] + "..."  # Truncate for brevity
             })
 
         return json.dumps({
-            "tools": tools_list,
             "query": query,
-            "reasoning": reasoning or "Searching for tools to fulfill user request"
+            "top_match": top_match,
+            "alternatives": alternatives,
+            "reasoning": reasoning or "Discovering tools for user request"
         }, indent=2)
 
     except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Catch all to return friendly JSON error
         logger.exception("Error searching tools: %s", e)
         return json.dumps({
-            "tools": [],
+            "query": query,
+            "top_match": None,
+            "alternatives": [],
             "error": str(e),
-            "message": "Tool search failed. Try using list_available_tools to see all available tools."
+            "message": "Tool search failed. Try using list_available_tools()."
         })
 
 

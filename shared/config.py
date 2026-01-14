@@ -146,14 +146,6 @@ class SeerConfig(BaseSettings):
     # ============================================================================
     # Feature Flags
     # ============================================================================
-    enable_rlm_tool: bool = Field(
-        default=False,
-        description=(
-            "Enable Recursive Language Model (RLM) tool for workflow agent. "
-            "When enabled, the agent can decompose complex tasks recursively "
-            "and handle large contexts beyond typical token limits."
-        )
-    )
 
     # ============================================================================
     # Trigger Poller
@@ -180,16 +172,28 @@ class SeerConfig(BaseSettings):
     # ============================================================================
 
     posthog_api_key: Optional[str] = Field(
-        default=None,
+        default="phc_9s65auHWk9fXqXBEHA1x53FIuMKGurVOSF2ZfgfCWT2",
         description="PostHog API key for analytics tracking"
     )
     posthog_host: Optional[str] = Field(
-        default=None,
-        description="PostHog host URL (e.g., https://posthog-xyz.railway.app)"
+        default="https://us.i.posthog.com",
+        description="PostHog host URL (e.g., https://app.posthog.com or self-hosted)"
     )
     posthog_enabled: bool = Field(
+        default=True,
+        description="Enable PostHog analytics and error tracking"
+    )
+    posthog_opt_out: bool = Field(
         default=False,
-        description="Enable PostHog analytics tracking"
+        description="Opt-out of all telemetry and analytics (privacy mode)"
+    )
+    posthog_error_sampling_rate: float = Field(
+        default=1.0,
+        description="Error event sampling rate (0.0 to 1.0)"
+    )
+    posthog_filter_sensitive_data: bool = Field(
+        default=True,
+        description="Filter PII and secrets from analytics events"
     )
 
     webhook_base_url: Optional[str] = Field(
@@ -274,6 +278,7 @@ class SeerConfig(BaseSettings):
         """Check if PostHog is configured and enabled."""
         return (
             self.posthog_enabled
+            and not self.posthog_opt_out
             and self.posthog_api_key is not None
             and self.posthog_host is not None
         )

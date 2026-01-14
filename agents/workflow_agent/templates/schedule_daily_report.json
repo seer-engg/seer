@@ -1,0 +1,76 @@
+{
+  "name": "Daily Scheduled Report via Email",
+  "description": "Generate and send daily report email on schedule using cron trigger",
+  "tags": ["schedule", "cron", "gmail", "report", "automation"],
+  "customization_guide": "Adjust cron_expression for your preferred schedule (default: 9am daily). Update timezone to match your location. Customize report query and email recipients. Modify LLM prompt to change report format.",
+  "spec": {
+    "version": "1",
+    "triggers": [
+      {
+        "key": "schedule.cron",
+        "config": {
+          "cron_expression": "0 9 * * *",
+          "timezone": "America/New_York"
+        }
+      }
+    ],
+    "inputs": {},
+    "nodes": [
+      {
+        "id": "fetch_data",
+        "type": "tool",
+        "tool": "supabase_table_query",
+        "in": {
+          "integration_resource_id": 123,
+          "table": "metrics",
+          "select": "*",
+          "filters": {
+            "created_at": {
+              "gte": "${trigger.data.scheduled_time - 86400}"
+            }
+          }
+        },
+        "out": "daily_metrics"
+      },
+      {
+        "id": "generate_report",
+        "type": "llm",
+        "model": "gpt-5-mini",
+        "prompt": "Generate a concise daily report summary from these metrics:\n\n${daily_metrics}\n\nInclude: total count, trends, notable changes.",
+        "in": {
+          "metrics": "${daily_metrics}"
+        },
+        "out": "report_text",
+        "output": {
+          "mode": "json",
+          "schema": {
+            "json_schema": {
+              "type": "object",
+              "properties": {
+                "summary": {"type": "string"},
+                "total_count": {"type": "number"},
+                "trends": {"type": "array", "items": {"type": "string"}}
+              },
+              "required": ["summary", "total_count"]
+            }
+          }
+        }
+      },
+      {
+        "id": "send_report_email",
+        "type": "tool",
+        "tool": "gmail_send_email",
+        "in": {
+          "to": ["team@example.com"],
+          "subject": "Daily Report - ${trigger.data.scheduled_time}",
+          "body_text": "${report_text.summary}\n\nTotal: ${report_text.total_count}\n\nTrends:\n${report_text.trends}"
+        },
+        "out": "email_result"
+      }
+    ],
+    "output": "${email_result}",
+    "meta": {
+      "description": "Send automated daily report via email on schedule"
+    }
+  }
+}

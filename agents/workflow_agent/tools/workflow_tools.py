@@ -15,6 +15,7 @@ from agents.workflow_agent.context import (
     set_proposed_spec_for_thread,
     get_user_for_thread,
 )
+from agents.workflow_agent.schema_context import get_workflow_templates
 from shared.logger import get_logger
 from shared.tools.base import get_tool
 from workflow_compiler.compiler.parse import parse_workflow_spec
@@ -275,3 +276,76 @@ async def submit_workflow_spec(
         response["summary"] = summary
 
     return json.dumps(response, indent=2)
+
+
+@tool
+async def get_workflow_template(
+    query: str,
+) -> str:
+    """
+    Retrieve a workflow template by name or tags to use as a starting point.
+
+    Use this when you identify that the user's request matches a common pattern.
+    For example, if user wants "create gmail draft when supabase signup", search
+    for templates with tags like "supabase", "gmail", "welcome".
+
+    Args:
+        query: Template name or tag to search for (e.g., "supabase gmail", "welcome", "slack notification")
+
+    Returns:
+        JSON with matching template(s) including full spec that can be customized
+    """
+    try:
+        templates = get_workflow_templates()
+        query_lower = query.lower()
+
+        matches = []
+        for template in templates:
+            name = template.get("name", "").lower()
+            tags = [t.lower() for t in template.get("tags", [])]
+            description = template.get("description", "").lower()
+
+            # Match if query appears in name, tags, or description
+            if (query_lower in name or
+                any(query_lower in tag for tag in tags) or
+                query_lower in description):
+                matches.append(template)
+
+        if not matches:
+            available_templates = [
+                {"name": t.get("name"), "tags": t.get("tags", [])}
+                for t in templates
+            ]
+            return json.dumps({
+                "query": query,
+                "matches": [],
+                "message": f"No templates found matching '{query}'",
+                "available_templates": available_templates,
+                "suggestion": "Try searching with integration names (gmail, supabase, slack) or action words (welcome, notification, report)"
+            })
+
+        # Return matches with full specs
+        results = []
+        for match in matches:
+            results.append({
+                "name": match.get("name"),
+                "description": match.get("description"),
+                "tags": match.get("tags"),
+                "customization_guide": match.get("customization_guide"),
+                "spec": match.get("spec")
+            })
+
+        return json.dumps({
+            "query": query,
+            "matches": results,
+            "count": len(results),
+            "message": f"Found {len(results)} template(s) matching '{query}'"
+        }, indent=2)
+
+    except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Catch all to return friendly JSON error
+        logger.exception("Error retrieving template: %s", e)
+        return json.dumps({
+            "query": query,
+            "matches": [],
+            "error": str(e)
+        })

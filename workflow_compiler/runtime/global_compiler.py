@@ -9,7 +9,7 @@ from typing import Any, Dict, Mapping, Sequence, Set
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-import shared.tools  # noqa: F401  # ensure default tool registration occurs
+import shared.tools  # noqa: F401  # pylint: disable=unused-import  # Reason: import triggers tool registration via decorators
 from shared.database import User
 from shared.llm import get_llm
 from shared.tools.base import get_tool
@@ -59,8 +59,7 @@ def _message_to_text(message: Any) -> str:
                 parts.append(item)
             elif isinstance(item, Mapping) and item.get("type") == "text":
                 parts.append(str(item.get("text", "")))
-            else:
-                parts.append(str(item))
+            # Skip reasoning blocks and other non-text content types
         return "".join(parts)
     return str(content)
 
@@ -281,6 +280,24 @@ class WorkflowCompilerSingleton:
     # -------------------------------------------------------------------------
     # Handler factories
     # -------------------------------------------------------------------------
+    def _resolve_connection_id(
+        self,
+        config: Dict[str, Any] | None,
+        tool_name: str,
+        provider: str | None,
+        integration_type: str | None,
+    ) -> str | None:
+        """Extract connection_id from config, checking multiple fallback keys."""
+        tool_auth_context = (config or {}).get("tool_auth_context") or {}
+        connection_id = (config or {}).get("connection_id")
+        if not connection_id:
+            connection_id = tool_auth_context.get(tool_name)
+        if not connection_id and provider:
+            connection_id = tool_auth_context.get(provider)
+        if not connection_id and integration_type:
+            connection_id = tool_auth_context.get(integration_type)
+        return connection_id
+
     def _build_tool_handler(
         self,
         tool_name: str,
@@ -289,10 +306,9 @@ class WorkflowCompilerSingleton:
         integration_type: str | None = None,
     ):
         def _resolve_user_and_connection(
-            inputs: Dict[str, Any],
             config: Dict[str, Any] | None,
             context: WorkflowRuntimeContext | None,
-        ) -> tuple[Any, Dict[str, Any], str | None]:
+        ) -> tuple[Any, str | None]:
             user = None
             if context is not None:
                 user = context.user
@@ -307,25 +323,15 @@ class WorkflowCompilerSingleton:
                 raise ExecutionError(
                     f"Tool '{tool_name}' requires workflow runtime context with 'user'"
                 )
-            config_copy = dict(config or {})
-            tool_auth_context = config_copy.get("tool_auth_context") or {}
-            connection_id = config_copy.get("connection_id")
-            if not connection_id:
-                connection_id = tool_auth_context.get(tool_name)
-            if not connection_id and provider:
-                connection_id = tool_auth_context.get(provider)
-            if not connection_id and integration_type:
-                connection_id = tool_auth_context.get(integration_type)
-            return user, config_copy, connection_id
+            connection_id = self._resolve_connection_id(config, tool_name, provider, integration_type)
+            return user, connection_id
 
         async def async_handler(
             inputs: Dict[str, Any],
             config: Dict[str, Any] | None,
             context: WorkflowRuntimeContext | None = None,
         ) -> Any:
-            user, config_copy, connection_id = _resolve_user_and_connection(
-                inputs, config, context
-            )
+            user, connection_id = _resolve_user_and_connection(config, context)
             return await execute_tool(
                 tool_name=tool_name,
                 user=user,
@@ -386,7 +392,7 @@ class WorkflowCompilerSingleton:
             prompt = self._inject_structured_inputs(
                 invocation["prompt"], invocation.get("inputs")
             )
-            logger.info(f"Schema: {schema}")
+            logger.info("Schema: %s", schema)
 
             # Ensure schema has required top-level keys for LangChain
             enriched_schema = {
@@ -431,6 +437,7 @@ class WorkflowCompilerSingleton:
                 type_env=type_env,
             )
         )
+        # pylint: disable=import-outside-toplevel # Reason: Avoid circular import (emit_langgraph -> runtime.nodes -> runtime.global_compiler)
         from workflow_compiler.compiler.emit_langgraph import emit_langgraph
 
         graph = await emit_langgraph(plan, runtime, checkpointer=checkpointer)

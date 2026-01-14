@@ -98,6 +98,10 @@ app = FastAPI(
 app.include_router(router)
 app.include_router(tools_router)
 
+# Correlation middleware - add correlation IDs to all requests
+from api.core.middleware.correlation import CorrelationMiddleware  # pylint: disable=wrong-import-position,ungrouped-imports # Reason: Import after app creation
+app.add_middleware(CorrelationMiddleware)
+
 # Authentication middleware - register BEFORE CORS to ensure user is set
 if config.is_cloud_mode:
     if not config.is_clerk_configured:
@@ -146,9 +150,34 @@ if config.is_posthog_configured:
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """Global exception handler that ensures CORS headers are included."""
+    """Global exception handler that ensures CORS headers are included and tracks errors."""
     error_logger = get_logger("api.main.errors")
-    error_logger.error("Unhandled exception: %s", exc, exc_info=True)
+
+    # Get correlation ID and user
+    correlation_id = getattr(request.state, 'correlation_id', 'unknown')
+    user = getattr(request.state, 'user', None)
+    distinct_id = user.user_id if user else f"anonymous_{request.client.host if request.client else 'unknown'}"
+
+    # Log with correlation ID
+    error_logger.error(
+        "Unhandled exception: %s",
+        exc,
+        exc_info=True,
+        extra={'correlation_id': correlation_id}
+    )
+
+    # Track error to PostHog
+    analytics.capture_error(
+        distinct_id=distinct_id,
+        error=exc,
+        context={
+            "correlation_id": correlation_id,
+            "method": request.method,
+            "path": str(request.url.path),
+            "query_params": dict(request.query_params),
+        },
+        error_location="global_exception_handler",
+    )
 
     # Create error response with CORS headers
     response = JSONResponse(

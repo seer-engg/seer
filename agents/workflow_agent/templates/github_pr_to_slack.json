@@ -1,0 +1,48 @@
+{
+  "name": "GitHub PR Opened → Slack Notification",
+  "description": "Send Slack message when new pull request is opened in GitHub repository",
+  "tags": ["github", "slack", "pull-request", "notification", "collaboration"],
+  "customization_guide": "Update integration_resource_id with your GitHub connection ID. Set repository_id to your target repo. Customize Slack channel and message format. Adjust ${pr.title}, ${pr.author}, ${pr.url} references as needed.",
+  "spec": {
+    "version": "1",
+    "triggers": [
+      {
+        "key": "webhook.github.pull_request",
+        "config": {
+          "integration_resource_id": 456,
+          "repository_id": "owner/repo",
+          "events": ["opened"]
+        }
+      }
+    ],
+    "inputs": {},
+    "nodes": [
+      {
+        "id": "extract_pr",
+        "type": "task",
+        "value": "${trigger.data.pull_request}",
+        "out": "pr"
+      },
+      {
+        "id": "format_message",
+        "type": "task",
+        "value": "🔔 New PR: *${pr.title}*\nAuthor: ${pr.author}\nURL: ${pr.url}",
+        "out": "message_text"
+      },
+      {
+        "id": "send_slack_message",
+        "type": "tool",
+        "tool": "slack_post_message",
+        "in": {
+          "channel": "#engineering",
+          "text": "${message_text}"
+        },
+        "out": "slack_result"
+      }
+    ],
+    "output": "${slack_result}",
+    "meta": {
+      "description": "Notify Slack channel when new GitHub PR is opened"
+    }
+  }
+}
