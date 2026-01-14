@@ -1,3 +1,17 @@
+# pylint: disable=too-many-lines,too-complex,too-many-positional-arguments,too-many-locals
+# Reason: Integration router consolidates OAuth, resource management, and provider-specific endpoints.
+# The Supabase schema/table endpoints have high complexity due to dynamic depends_on handling.
+# TODO: Split into separate routers (oauth.py, resources.py, supabase.py) in future refactor.
+
+# pylint: disable=relative-beyond-top-level,broad-exception-caught,raise-missing-from
+# Reason: FastAPI router uses relative imports per project structure convention.
+# Broad exception catching is intentional for graceful API error handling.
+# Some exceptions are re-raised as HTTPException without chaining for cleaner API responses.
+
+# pylint: disable=import-outside-toplevel,unused-argument
+# Reason: Lazy imports for list_tools to avoid circular dependencies.
+# FastAPI Request parameter is used by framework for dependency injection.
+
 import base64
 import json
 import os
@@ -542,6 +556,16 @@ async def list_resource_secret_bindings(request: Request, resource_id: int):
     user: User = request.state.db_user
     secrets = await list_resource_secrets(user, resource_id)
     return {"items": [serialize_integration_secret(s) for s in secrets]}
+
+
+@router.get("/resources/{resource_id}/status")
+async def get_resource_status(request: Request, resource_id: int):
+    """Check if a resource exists and its status."""
+    user: User = request.state.db_user
+    resource = await IntegrationResource.get_or_none(id=resource_id, user=user)
+    if not resource:
+        return {"exists": False, "status": None}
+    return {"exists": True, "status": resource.status}
 
 
 @router.delete("/resources/{resource_id}")

@@ -1,3 +1,12 @@
+# pylint: disable=too-many-lines,too-many-positional-arguments,too-many-arguments
+# Reason: Integration services handles OAuth, resource/secret management, and provider operations.
+# High argument counts are necessary for resource/secret creation with metadata and encryption.
+# TODO: Split into separate service modules (oauth_service.py, resource_service.py) in future refactor.
+
+# pylint: disable=no-else-return,broad-exception-caught
+# Reason: Else-after-return pattern used for clarity in OAuth provider mapping logic.
+# Broad exception catching is intentional for logging and graceful degradation.
+
 import hashlib
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
@@ -10,7 +19,7 @@ from api.integrations.constants import (
     SUPABASE_RESOURCE_TYPE_PROJECT,
 )
 from api.integrations.providers import ProviderContext, get_integration_provider
-from shared.database import ( 
+from shared.database import (
     User,
     IntegrationResource, IntegrationSecret, OAuthConnection
 )
@@ -354,18 +363,46 @@ async def get_connection_for_provider(user: User, provider: str) -> Optional[OAu
 
 
 async def disconnect_provider(user: User, provider: str):
-    """Disconnect all connections for a provider."""
+    """Disconnect all connections for a provider and cascade to related resources."""
     oauth_provider = get_oauth_provider(provider)
     try:
+        # Get all active connections for this provider before revoking
+        connections = await OAuthConnection.filter(user=user, provider=oauth_provider, status="active")
+
         # Soft delete (revoke) all connections for this provider
         await OAuthConnection.filter(user=user, provider=oauth_provider).update(status="revoked")
+
+        # For each revoked connection, cascade to resources and secrets
+        for connection in connections:
+            # Find and revoke all resources linked to this connection
+            linked_resources = await IntegrationResource.filter(
+                user=user,
+                oauth_connection=connection,
+                status="active"
+            )
+
+            for resource in linked_resources:
+                # Use existing deactivate logic (cascades to secrets)
+                await deactivate_integration_resource(user, resource.id)
+
+            # Revoke secrets directly tied to connection (not via resource)
+            await IntegrationSecret.filter(
+                user=user,
+                oauth_connection=connection,
+                resource_id__isnull=True,
+                status="active"
+            ).update(status="revoked")
+
+        logger.info(
+            f"Revoked {len(connections)} connections for provider {oauth_provider} (user {user.user_id})"
+        )
     except Exception as e:
         logger.error(f"Error disconnecting provider {provider} for user {user.user_id}: {e}")
         raise
 
 
 async def delete_connection_by_id(user: User, connection_id: str):
-    """Delete a specific connection by ID."""
+    """Delete a specific connection by ID and cascade to related resources."""
     try:
         # connection_id might be "provider:id" or just "id"
         if ":" in connection_id:
@@ -373,7 +410,38 @@ async def delete_connection_by_id(user: User, connection_id: str):
         else:
             db_id = connection_id
 
+        connection = await OAuthConnection.get_or_none(id=int(db_id), user=user)
+        if not connection:
+            raise HTTPException(status_code=404, detail="Connection not found")
+
+        # 1. Revoke the OAuth connection
         await OAuthConnection.filter(id=int(db_id), user=user).update(status="revoked")
+
+        # 2. Find and revoke all resources linked to this connection
+        linked_resources = await IntegrationResource.filter(
+            user=user,
+            oauth_connection=connection,
+            status="active"
+        )
+
+        for resource in linked_resources:
+            # Use existing deactivate logic (cascades to secrets)
+            await deactivate_integration_resource(user, resource.id)
+
+        # 3. Revoke secrets directly tied to connection (not via resource)
+        await IntegrationSecret.filter(
+            user=user,
+            oauth_connection=connection,
+            resource_id__isnull=True,  # Only secrets directly on connection
+            status="active"
+        ).update(status="revoked")
+
+        logger.info(
+            f"Revoked connection {db_id} with {len(linked_resources)} resources for user {user.user_id}"
+        )
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error deleting connection {connection_id} for user {user.user_id}: {e}")
         raise
