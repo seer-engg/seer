@@ -221,30 +221,6 @@ class SeerConfig(BaseSettings):
         default=None,
         description="Stripe webhook signing secret (whsec_...)"
     )
-    stripe_price_pro_monthly: Optional[str] = Field(
-        default=None,
-        description="Stripe Price ID for Pro monthly subscription"
-    )
-    stripe_price_pro_annual: Optional[str] = Field(
-        default=None,
-        description="Stripe Price ID for Pro annual subscription"
-    )
-    stripe_price_proplus_monthly: Optional[str] = Field(
-        default=None,
-        description="Stripe Price ID for Pro+ monthly subscription"
-    )
-    stripe_price_proplus_annual: Optional[str] = Field(
-        default=None,
-        description="Stripe Price ID for Pro+ annual subscription"
-    )
-    stripe_price_ultra_monthly: Optional[str] = Field(
-        default=None,
-        description="Stripe Price ID for Ultra monthly subscription"
-    )
-    stripe_price_ultra_annual: Optional[str] = Field(
-        default=None,
-        description="Stripe Price ID for Ultra annual subscription"
-    )
     clerk_secret_key: Optional[str] = Field(
         default=None,
         description="Clerk secret key for updating user metadata"
