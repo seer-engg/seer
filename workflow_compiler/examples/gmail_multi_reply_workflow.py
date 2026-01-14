@@ -19,7 +19,10 @@ import logging
 from typing import Any, Dict
 
 from shared.database.models import User
-from workflow_compiler.examples.gmail_common import GmailDemoService, fetch_oauth_credentials
+from workflow_compiler.examples.gmail_common import (
+    GmailDemoService,
+    fetch_oauth_credentials,
+)
 from workflow_compiler.examples.gmail_reply_workflow import (
     DRAFT_TOOL,
     MODEL_ID,
@@ -28,7 +31,6 @@ from workflow_compiler.examples.gmail_reply_workflow import (
 )
 from workflow_compiler.runtime import WorkflowCompilerSingleton
 from workflow_compiler.schema.models import JsonSchema
-
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -166,5 +168,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

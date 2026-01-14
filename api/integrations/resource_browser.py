@@ -90,4 +90,3 @@ class ResourceBrowser:
             "supports_search": config.get("supports_search", False),
             "depends_on": config.get("depends_on"),
         }
-

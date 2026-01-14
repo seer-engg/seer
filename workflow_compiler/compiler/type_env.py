@@ -15,14 +15,13 @@ from workflow_compiler.expr.typecheck import (
 from workflow_compiler.registry.tool_registry import ToolRegistry
 from workflow_compiler.schema.models import (
     ForEachNode,
+    JSONValue,
     LLMNode,
     Node,
-    OutputContract,
     TaskKind,
     TaskNode,
     ToolNode,
     WorkflowSpec,
-    JSONValue,
 )
 from workflow_compiler.schema.schema_registry import SchemaRegistry
 
@@ -143,5 +142,3 @@ def _ensure_schema_match(actual: Dict, expected: Dict, *, symbol: str) -> None:
     raise TypeEnvironmentError(
         f"Schema mismatch for '{symbol}': registry returned {actual} but node expects {expected}"
     )
-
-

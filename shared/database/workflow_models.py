@@ -1,10 +1,7 @@
 from datetime import datetime, timezone
 from enum import Enum
-from pydantic import BaseModel, ConfigDict, Field
+
 from tortoise import fields, models
-
-from shared.database.models import User
-
 
 WORKFLOW_ID_PREFIX = "wf_"
 RUN_ID_PREFIX = "run_"
@@ -139,8 +136,8 @@ class WorkflowVersion(models.Model):
         null=True,
     )
     manifest = fields.JSONField(null=True)
-    spec_hash = fields.CharField(max_length=64, null=True)
-    version_number = fields.IntField(null=True)
+    spec_hash = fields.CharField(max_length=64)
+    version_number = fields.IntField(default=0)
 
     class Meta:
         table = "workflow_versions"
@@ -230,7 +227,6 @@ class WorkflowRun(models.Model):
         return make_run_public_id(self.id)
 
 
-
 class WorkflowChatSession(models.Model):
     """Chat session for workflow assistant."""
 
@@ -268,9 +264,9 @@ class TriggerSubscription(models.Model):
     """Trigger configuration attached to a workflow."""
 
     id = fields.IntField(primary_key=True)
-    user = fields.ForeignKeyField("models.User", related_name="trigger_subscriptions")
+    user = fields.ForeignKeyField("models.User", related_name="trigger_subscriptions", on_delete=fields.CASCADE)
     workflow = fields.ForeignKeyField(
-        "models.Workflow", related_name="trigger_subscriptions"
+        "models.Workflow", related_name="trigger_subscriptions", on_delete=fields.CASCADE
     )
     trigger_key = fields.CharField(max_length=255)
     provider_connection_id = fields.IntField(null=True)
@@ -279,6 +275,11 @@ class TriggerSubscription(models.Model):
     bindings = fields.JSONField(null=True)
     provider_config = fields.JSONField(null=True)
     secret_token = fields.CharField(max_length=255, null=True)
+    # Form trigger fields
+    input_contract = fields.JSONField(null=True, description="Dict[str, InputDef] defining workflow inputs")
+    form_suffix = fields.CharField(max_length=100, null=True, description="Custom URL slug for form triggers (e.g., 'contact-form')")
+    form_fields = fields.JSONField(null=True, description="Array of InputField configs for form triggers")
+    form_config = fields.JSONField(null=True, description="Form UI configuration (title, description, styling)")
     # NOTE: Adding/changing these poll_* fields requires a manual DB migration.
     poll_interval_seconds = fields.IntField(default=60)
     next_poll_at = fields.DatetimeField(
@@ -344,7 +345,7 @@ class TriggerEvent(models.Model):
 
 class WorkflowChatMessage(models.Model):
     """Individual message in a chat session."""
-    
+
     id = fields.IntField(primary_key=True)
     session = fields.ForeignKeyField('models.WorkflowChatSession', related_name='messages')
     proposal = fields.OneToOneField('models.WorkflowProposal', related_name='message', null=True)
@@ -354,11 +355,11 @@ class WorkflowChatMessage(models.Model):
     suggested_edits = fields.JSONField(null=True)  # Suggested workflow edits
     metadata = fields.JSONField(null=True)  # Additional metadata (model used, etc.)
     created_at = fields.DatetimeField(auto_now_add=True)
-    
+
     class Meta:
         table = "workflow_chat_messages"
         ordering = ("created_at",)
-    
+
     def __str__(self) -> str:
         return f"WorkflowChatMessage<{self.role}:{self.content[:50]}>"
 
@@ -399,4 +400,3 @@ class WorkflowProposal(models.Model):
     def workflow_public_id(self) -> str:
         """Expose wf_* identifier used by public APIs."""
         return make_workflow_public_id(self.workflow_id)
-

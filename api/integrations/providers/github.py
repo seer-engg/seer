@@ -49,4 +49,3 @@ class GitHubProvider(IntegrationProvider):
                 detail=f"Failed to fetch GitHub user profile: HTTP {resp.status_code}",
             )
         return resp.json()
-

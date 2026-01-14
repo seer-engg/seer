@@ -7,8 +7,7 @@ import httpx
 from fastapi import HTTPException
 
 from shared.config import config
-from shared.database.models import User
-from shared.database.models_oauth import OAuthConnection
+from shared.database import OAuthConnection
 from shared.logger import get_logger
 
 logger = get_logger("shared.tools.oauth_manager")
@@ -127,5 +126,3 @@ async def get_oauth_token(
 
 
 __all__ = ["get_oauth_token", "refresh_oauth_token"]
-
-

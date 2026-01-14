@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from shared.database.models import User
+from shared.database import User
 
 
 @dataclass(frozen=True)
@@ -13,5 +13,3 @@ class WorkflowRuntimeContext:
     """
 
     user: User
-
-

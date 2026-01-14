@@ -1,5 +1,7 @@
-from authlib.integrations.starlette_client import OAuth
 import os
+
+from authlib.integrations.starlette_client import OAuth
+
 from shared.config import config
 
 oauth = OAuth()
@@ -44,4 +46,3 @@ if config.supabase_client_id and config.supabase_client_secret:
         api_base_url=f"{_supabase_base()}/",
         client_kwargs={'scope': 'read:projects'},
     )
-

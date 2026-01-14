@@ -10,7 +10,13 @@ from dataclasses import dataclass, replace
 from typing import Any, Dict, Iterable, Mapping
 
 from workflow_compiler.expr import parser
-from workflow_compiler.expr.parser import IndexSegment, PropertySegment, ReferenceExpr, TemplateLiteral, TemplateReference
+from workflow_compiler.expr.parser import (
+    IndexSegment,
+    PropertySegment,
+    ReferenceExpr,
+    TemplateLiteral,
+    TemplateReference,
+)
 from workflow_compiler.schema.models import JSONValue
 
 
@@ -31,56 +37,72 @@ class EvaluationContext:
         return replace(self, locals=merged)
 
 
-def resolve_reference(ctx: EvaluationContext, reference: ReferenceExpr) -> Any:
-    value: Any | None = None
-    root = reference.root
-
+def _resolve_root(ctx: EvaluationContext, root: str) -> Any:
+    """Resolve the root variable of a reference."""
     if root in ctx.locals:
-        value = ctx.locals[root]
-    elif root in ctx.state:
-        value = ctx.state[root]
-    elif root == "inputs":
-        value = ctx.inputs
-    elif ctx.config and root == "config":
-        value = ctx.config
-    elif ctx.config and root in ctx.config:
-        value = ctx.config[root]
-    else:
-        raise EvaluationError(f"Unknown reference root '{root}'")
+        return ctx.locals[root]
+    if root in ctx.state:
+        return ctx.state[root]
+    if root == "inputs":
+        return ctx.inputs
+    if ctx.config and root == "config":
+        return ctx.config
+    if ctx.config and root in ctx.config:
+        return ctx.config[root]
+    raise EvaluationError(f"Unknown reference root '{root}'")
+
+
+def _resolve_property_segment(value: Any, key: str, raw: str) -> Any:
+    """Resolve a property segment."""
+    if not isinstance(value, Mapping):
+        raise EvaluationError(
+            f"Cannot access property '{key}' on non-object value in '{raw}'"
+        )
+    if key not in value:
+        raise EvaluationError(
+            f"Property '{key}' not found while resolving '{raw}'"
+        )
+    return value[key]
+
+
+def _resolve_numeric_index(value: Any, index: int, raw: str) -> Any:
+    """Resolve a numeric array index."""
+    if not isinstance(value, (list, tuple)):
+        raise EvaluationError(
+            f"Cannot use numeric index on non-list value in '{raw}'"
+        )
+    try:
+        return value[index]
+    except IndexError as exc:
+        raise EvaluationError(
+            f"Index {index} out of range in '{raw}'"
+        ) from exc
+
+
+def _resolve_string_index(value: Any, index: str, raw: str) -> Any:
+    """Resolve a string index on an object."""
+    if not isinstance(value, Mapping):
+        raise EvaluationError(
+            f"Cannot use string index on non-object value in '{raw}'"
+        )
+    if index not in value:
+        raise EvaluationError(
+            f"Key '{index}' not found while resolving '{raw}'"
+        )
+    return value[index]
+
+
+def resolve_reference(ctx: EvaluationContext, reference: ReferenceExpr) -> Any:
+    value = _resolve_root(ctx, reference.root)
 
     for segment in reference.segments:
         if isinstance(segment, PropertySegment):
-            if not isinstance(value, Mapping):
-                raise EvaluationError(
-                    f"Cannot access property '{segment.key}' on non-object value in '{reference.raw}'"
-                )
-            if segment.key not in value:
-                raise EvaluationError(
-                    f"Property '{segment.key}' not found while resolving '{reference.raw}'"
-                )
-            value = value[segment.key]
+            value = _resolve_property_segment(value, segment.key, reference.raw)
         elif isinstance(segment, IndexSegment):
             if isinstance(segment.index, int):
-                if not isinstance(value, (list, tuple)):
-                    raise EvaluationError(
-                        f"Cannot use numeric index on non-list value in '{reference.raw}'"
-                    )
-                try:
-                    value = value[segment.index]
-                except IndexError as exc:
-                    raise EvaluationError(
-                        f"Index {segment.index} out of range in '{reference.raw}'"
-                    ) from exc
+                value = _resolve_numeric_index(value, segment.index, reference.raw)
             else:
-                if not isinstance(value, Mapping):
-                    raise EvaluationError(
-                        f"Cannot use string index on non-object value in '{reference.raw}'"
-                    )
-                if segment.index not in value:
-                    raise EvaluationError(
-                        f"Key '{segment.index}' not found while resolving '{reference.raw}'"
-                    )
-                value = value[segment.index]
+                value = _resolve_string_index(value, segment.index, reference.raw)
         else:
             raise EvaluationError(f"Unsupported segment type {type(segment)!r}")
     return value
@@ -124,6 +146,7 @@ SAFE_FUNCTIONS: Dict[str, Any] = {
 }
 
 
+# pylint: disable=invalid-name # Reason: visit_* methods follow AST NodeVisitor naming convention
 class _ExpressionValidator(ast.NodeVisitor):
     ALLOWED_NODES = (
         ast.Expression,
@@ -230,7 +253,7 @@ def evaluate_condition(ctx: EvaluationContext, expression: str) -> bool:
 
     safe_locals = dict(SAFE_FUNCTIONS)
     safe_locals.update(bindings)
+    # pylint: disable=eval-used
+    # Reason: Sandboxed expression evaluator with AST validation, disabled builtins
     result = eval(compiled, {"__builtins__": {}}, safe_locals)
     return bool(result)
-
-

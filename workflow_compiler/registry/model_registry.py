@@ -6,10 +6,9 @@ locate the callable responsible for executing a model request.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional, List
+from typing import Any, Callable, Dict, List, MutableMapping, Optional
 
 from workflow_compiler.schema.models import JsonSchema, OutputMode
-
 
 ModelInvocation = Dict[str, Any]  # prompt, inputs, config
 TextLLMCallable = Callable[[ModelInvocation], str]
@@ -53,5 +52,3 @@ class ModelRegistry:
 
     def all(self) -> List[ModelDefinition]:
         return list(self._models.values())
-
-

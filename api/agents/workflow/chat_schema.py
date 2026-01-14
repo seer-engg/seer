@@ -1,11 +1,13 @@
 """
 Pydantic schemas for workflow chat assistant.
 """
-from typing import Optional, Dict, Any, List
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
 
-from shared.database.models import UserPublic
+from shared.database import UserPublic
+
 from .models import WorkflowProposalPublic
 
 
@@ -75,4 +77,3 @@ class InterruptResponse(BaseModel):
     """Response model for human-in-the-loop interrupt."""
     decision: str = Field(..., description="Decision: 'approve', 'edit', or 'reject'")
     edited_args: Optional[Dict[str, Any]] = Field(default=None, description="Edited arguments if decision is 'edit'")
-

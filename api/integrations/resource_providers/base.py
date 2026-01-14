@@ -68,4 +68,3 @@ class ResourceProviderRegistry:
             seen_providers.add(provider.provider)
             merged.update(provider.resource_configs)
         return merged
-

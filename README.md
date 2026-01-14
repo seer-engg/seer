@@ -27,7 +27,7 @@ Deploy Seer to Railway with one click:
 
 **Setup:** Click button, enter `OPENAI_API_KEY`, wait 5-7 minutes. Estimated cost: $15-30/month.
 
-For detailed deployment instructions, see [Railway Deployment Guide](./docs/deployment/RAILWAY.md).
+For detailed deployment instructions, see the [Railway Deployment Guide](https://docs.getseer.dev/deployment/RAILWAY).
 
 ### Using the Workflow Editor
 
@@ -51,7 +51,7 @@ TAVILY_API_KEY=...
 
 Docker automatically configures `DATABASE_URL` and `REDIS_URL`.
 
-For complete configuration options, see [Configuration Reference](./docs/advanced/CONFIGURATION.md).
+For complete configuration options, see the [Configuration Reference](https://docs.getseer.dev/advanced/CONFIGURATION).
 
 ### Usage
 
@@ -93,10 +93,10 @@ docker compose down
 **Optional Integrations:**
 - **Google Workspace** - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (Gmail, Drive, Sheets)
 - **GitHub** - `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` (Repos, Issues, PRs)
-- **Supabase** - `SUPABASE_CLIENT_ID`, `SUPABASE_CLIENT_SECRET` ([Setup Guide](./docs/integrations/SUPABASE.md))
+- **Supabase** - `SUPABASE_CLIENT_ID`, `SUPABASE_CLIENT_SECRET` ([Setup Guide](https://docs.getseer.dev/integrations/SUPABASE))
 - **Web Search** - `TAVILY_API_KEY`
 
-For complete configuration options, see [Configuration Reference](./docs/advanced/CONFIGURATION.md).
+For complete configuration options, see the [Configuration Reference](https://docs.getseer.dev/advanced/CONFIGURATION).
 
 ### Key Features
 
@@ -129,10 +129,11 @@ For complete configuration options, see [Configuration Reference](./docs/advance
 
 ### Documentation
 
+📚 **[Complete Documentation](https://docs.getseer.dev)** - Full docs site with guides, API reference, and examples
+
 - [Quick Start](#quick-start) - Get running in 60 seconds
-- [Railway Deployment](./docs/deployment/RAILWAY.md) - Production deployment guide
+- [Railway Deployment](https://docs.getseer.dev/deployment/RAILWAY) - Production deployment guide
 - [Worker Setup](./worker/README.md) - Background task worker configuration
-- [Integrations](./docs/integrations/SUPABASE.md) - Google, GitHub, Supabase setup
-- [Advanced Features](./docs/advanced/) - Triggers, proposals, and more
-- [Configuration Reference](./docs/advanced/CONFIGURATION.md) - Complete configuration options
-- [Complete Documentation](./docs/) - Full documentation index
+- [Integrations](https://docs.getseer.dev/integrations/SUPABASE) - Google, GitHub, Supabase setup
+- [Advanced Features](https://docs.getseer.dev/advanced/TRIGGERS) - Triggers, proposals, and more
+- [Configuration Reference](https://docs.getseer.dev/advanced/CONFIGURATION) - Complete configuration options

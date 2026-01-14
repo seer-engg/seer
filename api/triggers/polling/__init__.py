@@ -3,4 +3,3 @@
 from .scheduler import TriggerPollScheduler
 
 __all__ = ["TriggerPollScheduler"]
-

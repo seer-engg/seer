@@ -99,4 +99,3 @@ class GoogleProvider(IntegrationProvider):
                 detail=f"Failed to fetch Google user profile: HTTP {resp.status_code}",
             )
         return resp.json()
-

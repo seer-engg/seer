@@ -25,9 +25,6 @@ async def downgrade(db: BaseDBAsyncClient) -> str:
         ALTER TABLE "workflow_proposals" ADD CONSTRAINT "fk_workflow_pr_workflo_2ee6d009" FOREIGN KEY ("workflow_id") REFERENCES "workflow_records" ("id") ON DELETE CASCADE;"""
 
 
-        
-
-
 MODELS_STATE = (
     "eJztXW1z2zYS/iscf3Jm1DR+TS5zczOyrbi62lZOttNO44wGIiGJNQWqfLHjdvLfDwBfxB"
     "eQBilKJKW9D1eHxELkgyWw++wu8M/e3NSwYb/9bJl/YtXZ+6j8s0fQHNM/krc6yh5aLJY3"

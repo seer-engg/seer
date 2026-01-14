@@ -9,9 +9,21 @@ execution time.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Dict, MutableMapping, Optional, List
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    MutableMapping,
+    Optional,
+)
 
 from workflow_compiler.schema.models import JsonSchema
+
+if TYPE_CHECKING:
+    from workflow_compiler.runtime.context import WorkflowRuntimeContext
 
 
 ToolCallable = Callable[
@@ -60,5 +72,3 @@ class ToolRegistry:
 
     def all(self) -> List[ToolDefinition]:
         return list(self._tools.values())
-
-

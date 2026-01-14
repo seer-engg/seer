@@ -9,9 +9,10 @@ import logging
 import os
 from typing import Any, Dict, List, Mapping, Optional, TypedDict
 
-from numpy._core.numeric import identity
 from tortoise import Tortoise
+
 from api.integrations.services import get_valid_access_token
+
 logger = logging.getLogger(__name__)
 
 USE_REAL_GMAIL = os.getenv("USE_REAL_GMAIL", "1").lower() in {"1", "true", "yes"}
@@ -24,13 +25,14 @@ except RuntimeError as exc:  # pragma: no cover - depends on env
     TORTOISE_ORM = None
 
 try:
+    from shared.database.models import User
     from shared.database.models_oauth import OAuthConnection
 except RuntimeError as exc:  # pragma: no cover - depends on env
     logger.warning("Unable to import OAuthConnection (%s); DB lookups will be skipped", exc)
     OAuthConnection = None  # type: ignore[assignment]
+    User = None  # type: ignore[assignment]
 
-from shared.tools.google.gmail import GmailCreateDraftTool, GmailReadTool
-from shared.database.models import User
+from shared.tools.google.gmail import GmailCreateDraftTool, GmailReadTool  # noqa: E402
 
 
 class GmailCredentials(TypedDict, total=False):
@@ -139,5 +141,3 @@ class GmailDemoService:
                 },
             },
         }
-
-

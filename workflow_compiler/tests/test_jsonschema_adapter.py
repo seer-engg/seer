@@ -56,4 +56,3 @@ def test_nested_refs_validate_successfully() -> None:
 
 def test_gmail_message_schema_is_valid_jsonschema() -> None:
     check_schema(GMAIL_MESSAGE_SCHEMA)
-

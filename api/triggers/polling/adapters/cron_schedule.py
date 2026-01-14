@@ -3,15 +3,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict
 
-from croniter import croniter
 import pytz
+from croniter import croniter
 
 from api.triggers.polling.adapters.base import (
     PollAdapter,
     PollAdapterError,
     PollContext,
-    PollResult,
     PolledEvent,
+    PollResult,
     register_adapter,
 )
 from shared.logger import get_logger

@@ -4,20 +4,18 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List
 
+from api.agents.checkpointer import get_checkpointer
 from api.workflows import models as api_models
 from api.workflows.services.shared import (
-    COMPILE_PROBLEM,
-    VALIDATION_PROBLEM,
-    _raise_problem,
     _spec_to_dict,
 )
-from api.agents.checkpointer import get_checkpointer
+from api.core.errors import VALIDATION_PROBLEM, COMPILE_PROBLEM, raise_problem
 from shared.config import config as shared_config
-from shared.database.models import User
+from shared.database import User
 from shared.tools.base import list_tools as registry_list_tools
 from workflow_compiler.errors import WorkflowCompilerError
-from workflow_compiler.runtime.global_compiler import WorkflowCompilerSingleton
 from workflow_compiler.registry.trigger_registry import trigger_registry
+from workflow_compiler.runtime.global_compiler import WorkflowCompilerSingleton
 from workflow_compiler.schema.models import (
     ForEachNode,
     IfNode,
@@ -27,7 +25,7 @@ from workflow_compiler.schema.models import (
     WorkflowSpec,
 )
 
-compiler = WorkflowCompilerSingleton.instance()
+COMPILER = WorkflowCompilerSingleton.instance()
 
 
 NODE_TYPE_DESCRIPTORS = api_models.NodeTypeResponse(
@@ -74,7 +72,6 @@ DEFAULT_MODEL_REGISTRY = [
 ]
 
 
-
 async def list_node_types() -> api_models.NodeTypeResponse:
     return NODE_TYPE_DESCRIPTORS
 
@@ -82,7 +79,7 @@ async def list_node_types() -> api_models.NodeTypeResponse:
 async def list_tools(include_schemas: bool = False) -> api_models.ToolRegistryResponse:
     tools: List[api_models.ToolDescriptor] = []
     for tool in registry_list_tools():
-        definition = compiler.ensure_tool(tool.name)
+        definition = COMPILER.ensure_tool(tool.name)
         descriptor = api_models.ToolDescriptor(
             id=f"tools.{definition.name}@{definition.version}",
             name=definition.name,
@@ -95,7 +92,6 @@ async def list_tools(include_schemas: bool = False) -> api_models.ToolRegistryRe
     return api_models.ToolRegistryResponse(tools=tools)
 
 
-
 async def list_triggers() -> api_models.TriggerCatalogResponse:
     triggers = [
         api_models.TriggerDescriptor(
@@ -104,13 +100,13 @@ async def list_triggers() -> api_models.TriggerCatalogResponse:
             provider=definition.provider,
             mode=definition.mode,
             description=definition.description,
-            event_schema=definition.event_schema,
-            filter_schema=definition.filter_schema,
+            event_schema=definition.schemas.event,
+            filter_schema=definition.schemas.filter,
+            config_schema=definition.schemas.config,
         )
         for definition in trigger_registry.all()
     ]
     return api_models.TriggerCatalogResponse(triggers=triggers)
-
 
 
 async def list_models() -> api_models.ModelRegistryResponse:
@@ -127,17 +123,105 @@ async def list_models() -> api_models.ModelRegistryResponse:
     return api_models.ModelRegistryResponse(models=models)
 
 
-
 async def resolve_schema(schema_id: str) -> api_models.SchemaResponse:
-    schema = compiler.schema_registry.get(schema_id)
+    schema = COMPILER.schema_registry.get(schema_id)
     if schema is None:
-        _raise_problem(
+        raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Schema not found",
             detail=f"Schema '{schema_id}' is not registered",
             status=404,
         )
     return api_models.SchemaResponse(id=schema_id, json_schema=schema)
+
+
+async def generate_schema_metadata(
+    payload: api_models.SchemaMetadataGenerateRequest
+) -> api_models.SchemaMetadataGenerateResponse:
+    """
+    Generate schema title and description using LLM.
+
+    Analyzes JSON Schema structure to produce:
+    - Concise PascalCase title (2-4 words)
+    - Clear description (1-2 sentences)
+
+    Args:
+        payload: Schema to analyze
+
+    Returns:
+        Generated title and description
+    """
+    import json
+
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    from shared.llm import get_llm
+
+    # Extract field information
+    schema = payload.json_schema
+    if not schema.get("properties"):
+        return api_models.SchemaMetadataGenerateResponse(
+            title="OutputSchema",
+            description="Structured output schema"
+        )
+
+    # Build field summary
+    fields_info = []
+    for field_name, field_def in schema.get("properties", {}).items():
+        fields_info.append({
+            "name": field_name,
+            "type": field_def.get("type", "any"),
+            "description": field_def.get("description", "")
+        })
+
+    # System prompt
+    system_prompt = """You are a technical writer helping create clear schema metadata.
+
+Given a JSON Schema's field definitions, generate:
+1. A concise title in PascalCase (2-4 words) that captures the schema's purpose
+2. A clear description (1-2 sentences) explaining what this schema represents
+
+Guidelines:
+- Title should be specific and descriptive (e.g., "UserProfile", "PaymentDetails", "SearchResults")
+- Description should explain the purpose and key information the schema contains
+- Keep both professional and concise
+- Don't include phrases like "This schema" or "A schema for" in the description
+
+Respond with JSON in this exact format:
+{
+  "title": "YourTitle",
+  "description": "Your description here."
+}"""
+
+    user_prompt = f"""Schema fields:
+{json.dumps(fields_info, indent=2)}
+
+Generate appropriate title and description:"""
+
+    try:
+        llm = get_llm(model="gpt-4.1-mini", temperature=0.3)
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ]
+
+        response = await llm.ainvoke(messages)
+        result = json.loads(response.content)
+
+        return api_models.SchemaMetadataGenerateResponse(
+            title=result.get("title", "OutputSchema"),
+            description=result.get("description", "Structured output schema")
+        )
+
+    except Exception as e:
+        from shared.logger import get_logger
+        logger = get_logger("api.workflows.schema_generation")
+        logger.error("Schema metadata generation failed: %s", str(e), exc_info=True)
+
+        return api_models.SchemaMetadataGenerateResponse(
+            title="OutputSchema",
+            description="Structured output schema"
+        )
 
 
 def _collect_warnings_from_nodes(nodes: Iterable[Node]) -> List[api_models.WorkflowWarning]:
@@ -159,7 +243,6 @@ def _collect_warnings_from_nodes(nodes: Iterable[Node]) -> List[api_models.Workf
     return warnings
 
 
-
 def _graph_preview(spec: WorkflowSpec) -> Dict[str, Any]:
     nodes = [{"id": node.id, "kind": node.type} for node in spec.nodes]
     edges = []
@@ -173,14 +256,15 @@ def validate_spec(payload: api_models.ValidateRequest) -> api_models.ValidateRes
     warnings = _collect_warnings_from_nodes(spec.nodes)
     return api_models.ValidateResponse(warnings=warnings)
 
+
 async def compile_spec(user: User, payload: api_models.CompileRequest) -> api_models.CompileResponse:
     spec = payload.spec
     spec_dict = _spec_to_dict(spec)
     checkpointer = await get_checkpointer()
     try:
-        compiled = await compiler.compile(user, spec_dict, checkpointer=checkpointer)
+        compiled = await COMPILER.compile(user, spec_dict, checkpointer=checkpointer)
     except WorkflowCompilerError as exc:
-        _raise_problem(
+        raise_problem(
             type_uri=COMPILE_PROBLEM,
             title="Compilation failed",
             detail=str(exc),

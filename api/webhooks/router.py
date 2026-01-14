@@ -26,4 +26,3 @@ async def generic_webhook(
 
 
 __all__ = ["router"]
-

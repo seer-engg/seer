@@ -1,23 +1,28 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
-
-import httpx
-from fastapi import HTTPException
-
 from shared.logger import get_logger
 from shared.tools.base import register_tool
-from shared.tools.supabase.database import ( 
-    SupabaseTableQueryTool, 
-    SupabaseTableInsertTool, 
-    SupabaseTableUpsertTool,
-    SupabaseTableUpdateTool,
-    SupabaseTableDeleteTool,
-    SupabaseRpcCallTool,
+from shared.tools.supabase.auth_admin import (
+    SupabaseAuthAdminCreateUserTool,
+    SupabaseAuthAdminDeleteUserTool,
+    SupabaseAuthAdminListUsersTool,
 )
-from shared.tools.supabase.edge_functions import ( SupabaseFunctionInvokeTool )
-from shared.tools.supabase.auth_admin import ( SupabaseAuthAdminListUsersTool, SupabaseAuthAdminCreateUserTool, SupabaseAuthAdminDeleteUserTool )
-from shared.tools.supabase.storage import ( SupabaseStorageListBucketsTool, SupabaseStorageCreateBucketTool, SupabaseStorageUploadObjectTool, SupabaseStorageDownloadObjectTool, SupabaseStorageCreateSignedObjectUrlTool )
+from shared.tools.supabase.database import (
+    SupabaseRpcCallTool,
+    SupabaseTableDeleteTool,
+    SupabaseTableInsertTool,
+    SupabaseTableQueryTool,
+    SupabaseTableUpdateTool,
+    SupabaseTableUpsertTool,
+)
+from shared.tools.supabase.edge_functions import SupabaseFunctionInvokeTool
+from shared.tools.supabase.storage import (
+    SupabaseStorageCreateBucketTool,
+    SupabaseStorageCreateSignedObjectUrlTool,
+    SupabaseStorageDownloadObjectTool,
+    SupabaseStorageListBucketsTool,
+    SupabaseStorageUploadObjectTool,
+)
 
 logger = get_logger("shared.tools.supabase")
 
@@ -41,8 +46,17 @@ def register_supabase_tools() -> None:
 
 
 __all__ = [
-     "SupabaseTableQueryTool", "SupabaseFunctionInvokeTool", "SupabaseAuthAdminListUsersTool", "SupabaseAuthAdminCreateUserTool", "SupabaseAuthAdminDeleteUserTool", "SupabaseStorageListBucketsTool", "SupabaseStorageCreateBucketTool", "SupabaseStorageUploadObjectTool", "SupabaseStorageDownloadObjectTool", "SupabaseStorageCreateSignedObjectUrlTool"
-     ]
+    "SupabaseTableQueryTool",
+    "SupabaseFunctionInvokeTool",
+    "SupabaseAuthAdminListUsersTool",
+    "SupabaseAuthAdminCreateUserTool",
+    "SupabaseAuthAdminDeleteUserTool",
+    "SupabaseStorageListBucketsTool",
+    "SupabaseStorageCreateBucketTool",
+    "SupabaseStorageUploadObjectTool",
+    "SupabaseStorageDownloadObjectTool",
+    "SupabaseStorageCreateSignedObjectUrlTool",
+]
 
 
 register_supabase_tools()

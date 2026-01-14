@@ -6,15 +6,13 @@ webhook events to Seer when database rows change (INSERT, UPDATE, DELETE).
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import httpx
-from fastapi import HTTPException
 
 from api.integrations.constants import SUPABASE_RESOURCE_PROVIDER
 from shared.config import config
-from shared.database.models_integrations import IntegrationResource, IntegrationSecret
-from shared.database.workflow_models import TriggerSubscription
+from shared.database import IntegrationResource, TriggerSubscription
 from shared.logger import get_logger
 from shared.tools.oauth_manager import get_oauth_token
 
@@ -23,8 +21,6 @@ logger = get_logger(__name__)
 
 class SupabaseWebhookError(Exception):
     """Raised when Supabase webhook operations fail."""
-
-    pass
 
 
 async def create_database_webhook(

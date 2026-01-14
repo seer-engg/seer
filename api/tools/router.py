@@ -3,10 +3,11 @@ Tool API router for listing and executing tools.
 """
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Body, Query, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 from pydantic import BaseModel
-from shared.database.models import User
-from api.tools.services import list_tools, execute_tool_service
+
+from api.tools.services import execute_tool_service, list_tools
+from shared.database import User
 
 router = APIRouter(prefix="/api/tools", tags=["tools"])
 
@@ -30,7 +31,7 @@ async def list_tools_endpoint(
 ) -> Dict[str, Any]:
     """
     List available tools.
-    
+
     Returns tools with metadata including name, description, required_scopes,
     parameters schema, and output schema.
     """
@@ -45,15 +46,15 @@ async def execute_tool_endpoint(
 ) -> Dict[str, Any]:
     """
     Execute a tool.
-    
+
     Args:
         tool_name: Name of the tool to execute
         payload: Execution request with  connection_id (optional), and arguments
-    
+
     Returns:
         Tool execution result with data and success flag
     """
-    user:User = request.state.db_user
+    user: User = request.state.db_user
     try:
         result = await execute_tool_service(
             tool_name=tool_name,
@@ -71,4 +72,3 @@ async def execute_tool_endpoint(
 
 
 __all__ = ["router"]
-

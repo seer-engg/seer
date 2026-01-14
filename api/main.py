@@ -8,21 +8,24 @@ Provides REST API endpoints for:
 Usage:
     uvicorn api.main:app --host 0.0.0.0 --port 2024 --reload
 """
+import asyncio
+import os
+import webbrowser
 from contextlib import asynccontextmanager
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
-import os
-from shared.logger import get_logger
-from shared.config import config
-from shared.analytics import analytics
-from api.router import router
-from api.integrations.router import router as integrations_router
-from api.tools.router import router as tools_router
+
 from api.agents.checkpointer import checkpointer_lifespan
+from api.router import router
+from api.tools.router import router as tools_router
+from shared.analytics import analytics
+from shared.config import config
 from shared.database import db_lifespan
+from shared.logger import get_logger
 
 # Import tools to register them
 # Note: model_block removed - use LLM block in workflows instead
@@ -30,12 +33,60 @@ from shared.database import db_lifespan
 logger = get_logger("api.main")
 
 
+async def initialize_tool_index(app: FastAPI) -> None:
+    """Initialize tool index in background if enabled."""
+    if not config.tool_index_auto_generate:
+        return
+
+    try:
+        from shared.tool_hub.index_manager import ensure_tool_index_exists
+
+        async def init_tool_index():
+            try:
+                toolhub = await ensure_tool_index_exists(
+                    auto_generate=config.tool_index_auto_generate
+                )
+                if toolhub:
+                    from shared.tool_hub.singleton import set_toolhub_instance
+                    set_toolhub_instance(toolhub)
+                    logger.info("✅ Tool index initialized")
+                else:
+                    logger.warning("⚠️ Tool index initialization skipped or failed")
+            except Exception as e:
+                logger.error("Error initializing tool index: %s", e, exc_info=True)
+
+        task = asyncio.create_task(init_tool_index())
+        app.state.tool_index_init_task = task
+    except Exception as e:
+        logger.warning("Could not initialize tool index: %s. Tool search may not work.", e)
+
+
+async def open_frontend_after_startup() -> None:
+    """Launch hosted frontend pointing at local backend for convenience."""
+    if config.is_cloud_mode:
+        return
+
+    frontend_url = config.FRONTEND_URL
+    backend_override = "localhost:8000"
+    target_url = f"{frontend_url}?{urlencode({'backend': backend_override})}"
+
+    # Small delay to let the server finish binding before opening the browser
+    await asyncio.sleep(1)
+
+    try:
+        opened = webbrowser.open(target_url)
+        if opened:
+            logger.info("Opened frontend at %s", target_url)
+        else:
+            logger.warning("Could not open frontend automatically; url=%s", target_url)
+    except Exception as exc:
+        logger.warning("Failed to open frontend in browser: %s (url=%s)", exc, target_url, exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
     logger.info("🚀 Starting Seer API server...")
-
-    # Initialize PostHog analytics
     analytics.initialize()
 
     async with db_lifespan(app):
@@ -44,50 +95,20 @@ async def lifespan(app: FastAPI):
             if checkpointer is not None:
                 app.state.checkpointer = checkpointer
             logger.info("✅ Checkpointer initialized")
-            if config.trigger_poller_enabled:
-                logger.info("Trigger poller enabled – handled by Taskiq worker")
-            else:
-                logger.info("⏸ Trigger poller disabled via configuration")
 
-            # Initialize tool index (non-blocking)
-            if config.tool_index_auto_generate:
-                try:
-                    from shared.tool_hub.index_manager import ensure_tool_index_exists
-                    import asyncio
-                    
-                    # Run index initialization in background to not block startup
-                    async def init_tool_index():
-                        try:
-                            toolhub = await ensure_tool_index_exists(
-                                auto_generate=config.tool_index_auto_generate
-                            )
-                            if toolhub:
-                                # Pre-populate the shared singleton with the initialized instance
-                                from shared.tool_hub.singleton import set_toolhub_instance
-                                set_toolhub_instance(toolhub)
-                                logger.info("✅ Tool index initialized")
-                            else:
-                                logger.warning("⚠️ Tool index initialization skipped or failed")
-                        except Exception as e:
-                            logger.error(f"Error initializing tool index: {e}", exc_info=True)
-                    
-                    # Start index initialization as background task (don't await to not block startup)
-                    # The task will run in the background
-                    task = asyncio.create_task(init_tool_index())
-                    # Store task reference to prevent garbage collection
-                    app.state.tool_index_init_task = task
-                except Exception as e:
-                    logger.warning(f"Could not initialize tool index: {e}. Tool search may not work.")
-            
+            trigger_status = "enabled – handled by Taskiq worker" if config.trigger_poller_enabled else "disabled via configuration"
+            logger.info("Trigger poller %s", trigger_status)
+
+            await initialize_tool_index(app)
+            asyncio.create_task(open_frontend_after_startup())
+
             try:
                 yield
             finally:
                 if hasattr(app.state, "checkpointer"):
                     delattr(app.state, "checkpointer")
 
-    # Shutdown PostHog on app shutdown
     analytics.shutdown()
-
     logger.info("👋 Seer API server shutting down...")
 
 
@@ -101,13 +122,17 @@ app = FastAPI(
 app.include_router(router)
 app.include_router(tools_router)
 
+# Correlation middleware - add correlation IDs to all requests
+from api.core.middleware.correlation import CorrelationMiddleware  # pylint: disable=wrong-import-position,ungrouped-imports # Reason: Import after app creation
+app.add_middleware(CorrelationMiddleware)
+
 # Authentication middleware - register BEFORE CORS to ensure user is set
 if config.is_cloud_mode:
     if not config.is_clerk_configured:
         raise ValueError("Cloud mode requires Clerk configuration. Set CLERK_JWKS_URL and CLERK_ISSUER environment variables.")
     logger.info("🔐 Cloud mode: Using Clerk authentication")
-    from api.middleware.auth import ClerkAuthMiddleware
-    
+    from api.core.middleware.auth import ClerkAuthMiddleware  # pylint: disable=ungrouped-imports # Reason: Conditional import after cloud mode check
+
     app.add_middleware(
         ClerkAuthMiddleware,
         jwks_url=config.clerk_jwks_url,
@@ -122,7 +147,7 @@ if config.is_cloud_mode:
         ],
     )
 else:
-    from api.middleware.auth import TokenDecodeWithoutValidationMiddleware
+    from api.core.middleware.auth import TokenDecodeWithoutValidationMiddleware
     app.add_middleware(TokenDecodeWithoutValidationMiddleware)
     logger.info("🔧 Self-hosted mode: Authentication disabled")
 
@@ -139,23 +164,50 @@ app.add_middleware(SessionMiddleware, secret_key=os.getenv("SECRET_KEY", "dev_se
 
 # PostHog analytics middleware - track requests and flush events
 if config.is_posthog_configured:
-    from api.middleware.analytics import PostHogMiddleware
+    from api.core.middleware.analytics import PostHogMiddleware
     app.add_middleware(PostHogMiddleware)
     logger.info("📊 PostHog analytics middleware enabled")
 
 # Exception handler to ensure CORS headers on errors
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """Global exception handler that ensures CORS headers are included."""
+    """Global exception handler that ensures CORS headers are included and tracks errors."""
     error_logger = get_logger("api.main.errors")
-    error_logger.error(f"Unhandled exception: {exc}", exc_info=True)
-    
+
+    # Get correlation ID and user
+    correlation_id = getattr(request.state, 'correlation_id', 'unknown')
+    user = getattr(request.state, 'user', None)
+    distinct_id = user.user_id if user else f"anonymous_{request.client.host if request.client else 'unknown'}"
+
+    # Log with correlation ID
+    error_logger.error(
+        "Unhandled exception: %s",
+        exc,
+        exc_info=True,
+        extra={'correlation_id': correlation_id}
+    )
+
+    # Track error to PostHog
+    analytics.capture_error(
+        distinct_id=distinct_id,
+        error=exc,
+        context={
+            "correlation_id": correlation_id,
+            "method": request.method,
+            "path": str(request.url.path),
+            "query_params": dict(request.query_params),
+        },
+        error_location="global_exception_handler",
+    )
+
     # Create error response with CORS headers
     response = JSONResponse(
         status_code=500,
         content={"detail": "Internal server error"},
     )
-    
+
     # Add CORS headers manually
     origin = request.headers.get("origin")
     if origin:
@@ -163,10 +215,10 @@ async def global_exception_handler(request: Request, exc: Exception):
         response.headers["Access-Control-Allow-Credentials"] = "true"
     else:
         response.headers["Access-Control-Allow-Origin"] = "*"
-    
+
     response.headers["Access-Control-Allow-Methods"] = "*"
     response.headers["Access-Control-Allow-Headers"] = "*"
-    
+
     return response
 
 
@@ -199,4 +251,3 @@ if __name__ == "__main__":
         port=8000,
         reload=True,
     )
-

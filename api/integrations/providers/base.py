@@ -1,14 +1,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Protocol, Set
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Protocol,
+    Set,
+)
 
 from fastapi import HTTPException
 
 if TYPE_CHECKING:
-    from shared.database.models import User
-    from shared.database.models_integrations import IntegrationResource, IntegrationSecret
-    from shared.database.models_oauth import OAuthConnection
+    from shared.database import (
+        User,
+        IntegrationResource,
+        IntegrationSecret,
+        OAuthConnection
+    )
 
 
 class _ResourceUpserter(Protocol):
@@ -161,4 +174,3 @@ class ProviderRegistry:
             seen.add(provider.provider)
             providers.append(provider)
         return providers
-

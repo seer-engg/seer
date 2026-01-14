@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from typing import List
-
-from api.workflows import models as api_models
-from api.workflows.services.shared import VALIDATION_PROBLEM, _raise_problem, _spec_to_dict
 from api.agents.checkpointer import get_checkpointer
-from shared.database.models import User
+from api.workflows import models as api_models
+from api.workflows.services.shared import (
+    VALIDATION_PROBLEM,
+    _raise_problem,
+    _spec_to_dict,
+)
+from shared.database import User
 from workflow_compiler.errors import ValidationPhaseError
 from workflow_compiler.expr import parser as expr_parser
 from workflow_compiler.expr.typecheck import Scope, TypeEnvironment, typecheck_reference
@@ -15,6 +17,7 @@ from workflow_compiler.runtime.global_compiler import WorkflowCompilerSingleton
 from workflow_compiler.schema.models import WorkflowSpec
 
 compiler = WorkflowCompilerSingleton.instance()
+
 
 def _type_env_from_compiled(compiled) -> TypeEnvironment:
     return compiled.workflow.runtime.services.type_env
@@ -68,4 +71,3 @@ def typecheck_expression(user: User, payload: api_models.ExpressionTypecheckRequ
             status=400,
         )
     return api_models.ExpressionTypecheckResponse(type=schema)
-

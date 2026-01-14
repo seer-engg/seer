@@ -1,3 +1,12 @@
+# pylint: disable=too-many-lines,too-many-positional-arguments,too-many-arguments
+# Reason: Integration services handles OAuth, resource/secret management, and provider operations.
+# High argument counts are necessary for resource/secret creation with metadata and encryption.
+# TODO: Split into separate service modules (oauth_service.py, resource_service.py) in future refactor.
+
+# pylint: disable=no-else-return,broad-exception-caught
+# Reason: Else-after-return pattern used for clarity in OAuth provider mapping logic.
+# Broad exception catching is intentional for logging and graceful degradation.
+
 import hashlib
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
@@ -10,27 +19,30 @@ from api.integrations.constants import (
     SUPABASE_RESOURCE_TYPE_PROJECT,
 )
 from api.integrations.providers import ProviderContext, get_integration_provider
-from shared.database.models import User
-from shared.database.models_integrations import IntegrationResource, IntegrationSecret
-from shared.database.models_oauth import OAuthConnection
+from shared.database import (
+    User,
+    IntegrationResource, IntegrationSecret, OAuthConnection
+)
 from shared.logger import get_logger
 from shared.tools.oauth_manager import get_oauth_token
+
 logger = get_logger("api.integrations.services")
+
 
 def parse_scopes(scopes_str: str) -> Set[str]:
     """
     Parse a scopes string into a set of individual scopes.
     Handles both whitespace-separated (Google) and comma-separated (GitHub) formats.
-    
+
     Args:
         scopes_str: String containing scopes (either whitespace or comma separated)
-    
+
     Returns:
         Set of individual scope strings
     """
     if not scopes_str:
         return set()
-    
+
     # If scopes contain commas, split by comma; otherwise split by whitespace
     if ',' in scopes_str:
         return set(s.strip() for s in scopes_str.split(',') if s.strip())
@@ -42,11 +54,11 @@ def merge_scopes(existing_scopes: str, new_scopes: str) -> str:
     """
     Merge existing scopes with new scopes, removing duplicates.
     Handles both whitespace-separated (Google) and comma-separated (GitHub) formats.
-    
+
     Args:
         existing_scopes: String of existing scopes (whitespace or comma separated)
         new_scopes: String of new scopes to add (whitespace or comma separated)
-    
+
     Returns:
         Space-separated string of merged scopes (normalized to whitespace-separated)
     """
@@ -59,52 +71,52 @@ def merge_scopes(existing_scopes: str, new_scopes: str) -> str:
 def _extract_base_google_scope(scope: str) -> Optional[str]:
     """
     Extract base scope from a Google API scope by removing common suffixes.
-    
+
     For Google APIs, broader scopes include narrower ones:
     - gmail includes gmail.readonly, gmail.modify, gmail.send, etc.
     - drive includes drive.readonly, drive.file, etc.
     - spreadsheets includes spreadsheets.readonly, etc.
-    
+
     Args:
         scope: Full scope string (e.g., "https://www.googleapis.com/auth/gmail.readonly")
-    
+
     Returns:
         Base scope string (e.g., "https://www.googleapis.com/auth/gmail") or None if not a Google scope
     """
     if "googleapis.com" not in scope:
         return None
-    
+
     # Common Google scope suffixes to remove
     suffixes = [".readonly", ".modify", ".send", ".compose", ".labels", ".file", ".metadata"]
-    
+
     base_scope = scope
     for suffix in suffixes:
         if scope.endswith(suffix):
             base_scope = scope[:-len(suffix)]
             break
-    
+
     return base_scope if base_scope != scope else None
 
 
 def _scope_satisfies_requirement(granted_scope: str, required_scope: str) -> bool:
     """
     Check if a granted scope satisfies a required scope, handling Google scope hierarchy.
-    
+
     Hierarchy rules:
     - Base scope (e.g., "gmail") satisfies all narrower scopes (e.g., "gmail.readonly", "gmail.modify")
     - Narrower scopes do NOT satisfy broader scopes or other narrower scopes
-    
+
     Args:
         granted_scope: Scope that user has (e.g., "https://www.googleapis.com/auth/gmail")
         required_scope: Scope that is required (e.g., "https://www.googleapis.com/auth/gmail.readonly")
-    
+
     Returns:
         True if granted scope satisfies required scope
     """
     # Exact match always satisfies
     if granted_scope == required_scope:
         return True
-    
+
     # For Google APIs, check hierarchy
     if "googleapis.com" in required_scope and "googleapis.com" in granted_scope:
         # Extract base scope from required scope
@@ -114,14 +126,14 @@ def _scope_satisfies_requirement(granted_scope: str, required_scope: str) -> boo
             # This handles: granted="gmail", required="gmail.readonly" -> True
             if granted_scope == base_required:
                 return True
-        
+
         # Check if required scope is a base scope and granted scope is narrower
         # This handles: granted="gmail.readonly", required="gmail" -> False (narrower doesn't satisfy broader)
         base_granted = _extract_base_google_scope(granted_scope)
         if base_granted and not _extract_base_google_scope(required_scope):
             # Required is base scope, granted is narrower -> doesn't satisfy
             return False
-    
+
     return False
 
 
@@ -130,14 +142,14 @@ def has_required_scopes(granted_scopes: str, required_scopes: List[str]) -> bool
     Check if granted scopes include all required scopes.
     Handles both whitespace-separated (Google) and comma-separated (GitHub) formats.
     For Google APIs, handles scope hierarchy where broader scopes satisfy narrower ones.
-    
+
     Args:
         granted_scopes: String of granted scopes (whitespace or comma separated)
         required_scopes: List of required scope strings
-    
+
     Returns:
         True if all required scopes are granted (or satisfied by broader scopes for Google APIs)
-    
+
     Examples:
         - has_required_scopes("gmail", ["gmail.readonly"]) -> True (broader satisfies narrower)
         - has_required_scopes("gmail.readonly", ["gmail"]) -> False (narrower doesn't satisfy broader)
@@ -145,15 +157,15 @@ def has_required_scopes(granted_scopes: str, required_scopes: List[str]) -> bool
     """
     if not required_scopes:
         return True
-    
+
     granted_set = parse_scopes(granted_scopes)
-    
+
     # Check each required scope
     for required_scope in required_scopes:
         # First check for exact match
         if required_scope in granted_set:
             continue
-        
+
         # For Google APIs, check if any granted scope satisfies the requirement via hierarchy
         if "googleapis.com" in required_scope:
             satisfied = False
@@ -166,7 +178,7 @@ def has_required_scopes(granted_scopes: str, required_scopes: List[str]) -> bool
         else:
             # For non-Google providers, require exact match
             return False
-    
+
     return True
 
 
@@ -174,10 +186,10 @@ def get_oauth_provider(integration_type: str) -> str:
     """
     Map integration type to OAuth provider.
     Multiple integration types can share the same OAuth provider.
-    
+
     Args:
         integration_type: Integration type (gmail, googlesheets, googledrive, etc.)
-    
+
     Returns:
         OAuth provider name (google, github, etc.)
     """
@@ -194,14 +206,14 @@ def extract_provider_account_id(oauth_provider: str, profile: Dict[str, Any]) ->
     """
     Extract provider_account_id from profile.
     Raises ValueError if required fields are missing.
-    
+
     Args:
         oauth_provider: OAuth provider name (google, github, etc.)
         profile: User profile dictionary from OAuth provider
-    
+
     Returns:
         provider_account_id string
-    
+
     Raises:
         ValueError: If required fields are missing from profile
     """
@@ -243,7 +255,7 @@ async def store_oauth_connection(
     Store OAuth connection with granted scopes.
     Connections are stored by OAuth provider (e.g., 'google') and scopes are merged
     when the same provider is connected again with different scopes.
-    
+
     Args:
         user_id: User ID
         provider: OAuth provider name (google, github, etc.) - NOT integration type
@@ -254,34 +266,34 @@ async def store_oauth_connection(
     """
     # Normalize provider to OAuth provider
     oauth_provider = get_oauth_provider(provider)
-    
+
     logger.info(f"Storing OAuth connection: user_id={user_id}, oauth_provider={oauth_provider}, "
                 f"integration_type={integration_type}, scopes={granted_scopes[:100]}...")
-    
+
     # Find user
     user = await User.get(user_id=user_id)
-    
+
     # Extract provider account id
     provider_account_id = extract_provider_account_id(oauth_provider, profile)
-        
+
     provider_metadata = profile
-        
+
     # Tokens
     access_token = token.get('access_token')
     refresh_token = token.get('refresh_token')
     expires_at_ts = token.get('expires_at')
     expires_at = datetime.fromtimestamp(expires_at_ts, tz=timezone.utc) if expires_at_ts else None
-    
+
     # Extract token_type (usually 'Bearer')
     token_type = token.get('token_type', 'Bearer')
-    
+
     # Update or Create - always use OAuth provider (not integration type)
     connection = await OAuthConnection.get_or_none(
         user=user,
         provider=oauth_provider,
         provider_account_id=provider_account_id
     )
-    
+
     if connection:
         connection.access_token_enc = access_token
         if refresh_token:
@@ -309,8 +321,9 @@ async def store_oauth_connection(
             token_type=token_type
         )
         logger.info(f"Created new connection for {oauth_provider}")
-        
+
     return connection
+
 
 async def list_connections(user: User):
     """
@@ -328,11 +341,11 @@ async def list_connections(user: User):
 async def get_connection_for_provider(user: User, provider: str) -> Optional[OAuthConnection]:
     """
     Get active OAuth connection for a specific provider.
-    
+
     Args:
         user: User model instance
         provider: OAuth provider name (google, github, etc.)
-    
+
     Returns:
         OAuthConnection if found, None otherwise
     """
@@ -350,26 +363,85 @@ async def get_connection_for_provider(user: User, provider: str) -> Optional[OAu
 
 
 async def disconnect_provider(user: User, provider: str):
-    """Disconnect all connections for a provider."""
+    """Disconnect all connections for a provider and cascade to related resources."""
     oauth_provider = get_oauth_provider(provider)
     try:
+        # Get all active connections for this provider before revoking
+        connections = await OAuthConnection.filter(user=user, provider=oauth_provider, status="active")
+
         # Soft delete (revoke) all connections for this provider
         await OAuthConnection.filter(user=user, provider=oauth_provider).update(status="revoked")
+
+        # For each revoked connection, cascade to resources and secrets
+        for connection in connections:
+            # Find and revoke all resources linked to this connection
+            linked_resources = await IntegrationResource.filter(
+                user=user,
+                oauth_connection=connection,
+                status="active"
+            )
+
+            for resource in linked_resources:
+                # Use existing deactivate logic (cascades to secrets)
+                await deactivate_integration_resource(user, resource.id)
+
+            # Revoke secrets directly tied to connection (not via resource)
+            await IntegrationSecret.filter(
+                user=user,
+                oauth_connection=connection,
+                resource_id__isnull=True,
+                status="active"
+            ).update(status="revoked")
+
+        logger.info(
+            f"Revoked {len(connections)} connections for provider {oauth_provider} (user {user.user_id})"
+        )
     except Exception as e:
         logger.error(f"Error disconnecting provider {provider} for user {user.user_id}: {e}")
         raise
 
 
 async def delete_connection_by_id(user: User, connection_id: str):
-    """Delete a specific connection by ID."""
+    """Delete a specific connection by ID and cascade to related resources."""
     try:
         # connection_id might be "provider:id" or just "id"
         if ":" in connection_id:
             _, db_id = connection_id.split(":", 1)
         else:
             db_id = connection_id
-            
+
+        connection = await OAuthConnection.get_or_none(id=int(db_id), user=user)
+        if not connection:
+            raise HTTPException(status_code=404, detail="Connection not found")
+
+        # 1. Revoke the OAuth connection
         await OAuthConnection.filter(id=int(db_id), user=user).update(status="revoked")
+
+        # 2. Find and revoke all resources linked to this connection
+        linked_resources = await IntegrationResource.filter(
+            user=user,
+            oauth_connection=connection,
+            status="active"
+        )
+
+        for resource in linked_resources:
+            # Use existing deactivate logic (cascades to secrets)
+            await deactivate_integration_resource(user, resource.id)
+
+        # 3. Revoke secrets directly tied to connection (not via resource)
+        await IntegrationSecret.filter(
+            user=user,
+            oauth_connection=connection,
+            resource_id__isnull=True,  # Only secrets directly on connection
+            status="active"
+        ).update(status="revoked")
+
+        logger.info(
+            f"Revoked connection {db_id} with {len(linked_resources)} resources for user {user.user_id}"
+        )
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error deleting connection {connection_id} for user {user.user_id}: {e}")
         raise
@@ -378,11 +450,11 @@ async def delete_connection_by_id(user: User, connection_id: str):
 async def get_valid_access_token(user: User, provider: str) -> Optional[str]:
     """
     Get a valid access token for a provider, refreshing if needed.
-    
+
     Args:
         user: User model instance
         provider: OAuth provider name (google, github, etc.)
-    
+
     Returns:
         Valid access token or None if no connection exists
     """

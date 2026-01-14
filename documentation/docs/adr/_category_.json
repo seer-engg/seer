@@ -1,0 +1,8 @@
+{
+  "label": "Architecture Decisions",
+  "position": 4,
+  "link": {
+    "type": "generated-index",
+    "description": "Architectural Decision Records documenting key technical decisions in Seer."
+  }
+}

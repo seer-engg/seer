@@ -72,4 +72,3 @@ def test_coerce_inputs_invalid_bool_literal_raises() -> None:
         coerce_inputs(spec, {"flag": "maybe"})
 
     assert "boolean" in str(excinfo.value)
-

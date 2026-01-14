@@ -1,12 +1,16 @@
-import base64
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional
 
 import httpx
 from fastapi import HTTPException
 
-from shared.tools.base import BaseTool, ResourcePickerConfig
-from shared.tools.supabase.common import _resolve_rest_url, _require_project_and_key, _service_headers, _apply_eq_filters
 from shared.logger import get_logger
+from shared.tools.base import BaseTool, ResourcePickerConfig
+from shared.tools.supabase.common import (
+    _apply_eq_filters,
+    _require_project_and_key,
+    _resolve_rest_url,
+    _service_headers,
+)
 
 logger = get_logger("shared.tools.supabase.database")
 
@@ -142,8 +146,6 @@ class SupabaseTableQueryTool(BaseTool):
         except Exception as exc:
             logger.exception("Supabase query error", extra={"table": table})
             raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
-
-
 
 
 # -----------------------------
@@ -505,9 +507,3 @@ class SupabaseRpcCallTool(BaseTool):
         except Exception as exc:
             logger.exception("Supabase rpc error", extra={"function": fn})
             raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
-
-
-
-
-
-

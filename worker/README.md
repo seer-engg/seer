@@ -56,5 +56,3 @@ Docker compose already defines a `taskiq-worker` service that runs the same comm
 - [Workflow Triggers](../docs/advanced/TRIGGERS.md) - Trigger setup and configuration
 - [Configuration Reference](../docs/advanced/CONFIGURATION.md) - Complete configuration options
 - [Main README](../README.md) - Quick start and installation
-
-

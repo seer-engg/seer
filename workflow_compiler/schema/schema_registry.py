@@ -8,7 +8,12 @@ from __future__ import annotations
 
 from typing import Dict, MutableMapping
 
-from workflow_compiler.schema.models import InlineSchema, JsonSchema, SchemaRef, SchemaSpec
+from workflow_compiler.schema.models import (
+    InlineSchema,
+    JsonSchema,
+    SchemaRef,
+    SchemaSpec,
+)
 
 
 class SchemaNotFoundError(KeyError):
@@ -70,5 +75,3 @@ def ensure_json_schema(schema: JsonSchema, *, schema_id: str | None = None) -> J
             f"Schema {schema_id or ''} has invalid 'type' field: {type_value!r}"
         )
     return schema
-
-

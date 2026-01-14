@@ -1,9 +1,15 @@
-from shared.tools.base import BaseTool, ResourcePickerConfig
-from shared.tools.supabase.common import _require_project_and_key, _resolve_auth_url, _service_headers
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
 import httpx
-from shared.logger import get_logger
 from fastapi import HTTPException
+
+from shared.logger import get_logger
+from shared.tools.base import BaseTool, ResourcePickerConfig
+from shared.tools.supabase.common import (
+    _require_project_and_key,
+    _resolve_auth_url,
+    _service_headers,
+)
 
 logger = get_logger("shared.tools.supabase.auth_admin")
 

@@ -3,21 +3,21 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Optional
 
-from fastapi import HTTPException
-
-from api.workflows import models as api_models
-from shared.database.workflow_models import WorkflowRun
+from api.core.errors import VALIDATION_PROBLEM
+from api.core.errors import raise_problem as _raise_problem
+from shared.database import (
+    User,
+    Workflow,
+    WorkflowDraft,
+    WorkflowRun,
+    WorkflowVersion,
+    WorkflowVersionStatus,
+    parse_workflow_public_id,
+)
+from workflow_compiler.runtime.global_compiler import WorkflowCompilerSingleton
 from workflow_compiler.schema.models import WorkflowSpec
-from shared.database.workflow_models import  Workflow, parse_workflow_public_id, User
-
-
-PROBLEM_BASE = "https://seer.errors/workflows"
-VALIDATION_PROBLEM = f"{PROBLEM_BASE}/validation"
-COMPILE_PROBLEM = f"{PROBLEM_BASE}/compile"
-RUN_PROBLEM = f"{PROBLEM_BASE}/run"
-
 
 
 def _now() -> datetime:
@@ -28,34 +28,46 @@ def _spec_to_dict(spec: WorkflowSpec) -> Dict[str, Any]:
     return spec.model_dump(mode="json")
 
 
-def _raise_problem(
-    *,
-    type_uri: str,
-    title: str,
-    detail: str,
-    status: int,
-    errors: Optional[Sequence[api_models.ProblemError]] = None,
-) -> None:
-    payload = {
-        "type": type_uri,
-        "title": title,
-        "status": status,
-        "detail": detail,
-        "errors": [error.model_dump() for error in errors] if errors else [],
-    }
-    raise HTTPException(status_code=status, detail=payload)
-
-
 def _hash_spec(spec_dict: Dict[str, Any]) -> str:
     serialized = json.dumps(spec_dict, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(serialized).hexdigest()
 
 
+async def _ensure_draft_version(workflow: Workflow, user: User) -> WorkflowVersion:
+    draft = await WorkflowDraft.get(workflow=workflow)
+    spec_dict = json.loads(json.dumps(draft.spec or {}))
+    spec_hash = _hash_spec(spec_dict)
+    existing = (
+        await WorkflowVersion.filter(
+            workflow=workflow,
+            spec_hash=spec_hash,
+            status=WorkflowVersionStatus.DRAFT,
+            created_from_draft_revision=draft.revision,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if existing:
+        return existing
+    latest_version = (
+        await WorkflowVersion.filter(workflow=workflow).order_by("-version_number").first()
+    )
+    return await WorkflowVersion.create(
+        workflow=workflow,
+        status=WorkflowVersionStatus.DRAFT,
+        spec=spec_dict,
+        created_from_draft_revision=draft.revision,
+        created_by=user,
+        manifest=None,
+        spec_hash=spec_hash,
+        version_number=(latest_version.version_number + 1) if latest_version else 0,
+    )
+
 
 def _build_run_config(run: WorkflowRun, config_payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Ensure LangGraph defaults (thread_id) are present so checkpoints can be recovered.
-    
+
     IMPORTANT: Always uses run.run_id as thread_id to ensure checkpoint retrieval works.
     If config_payload contains a different thread_id, it will be overridden.
     """
@@ -66,7 +78,6 @@ def _build_run_config(run: WorkflowRun, config_payload: Optional[Dict[str, Any]]
     configurable["thread_id"] = run.thread_id or run.run_id
     base_config["configurable"] = configurable
     return base_config
-
 
 
 async def _get_workflow(user: User, workflow_id: str) -> Workflow:
@@ -88,3 +99,22 @@ async def _get_workflow(user: User, workflow_id: str) -> Workflow:
             status=404,
         )
     return workflow
+
+
+async def _compile_workflow(
+    user: User,
+    spec: Dict[str, Any],
+    checkpointer: Optional[Any] = None,
+) -> Any:
+    """
+    Compile a workflow spec using the global compiler instance.
+
+    This is a shared helper to avoid duplicating the compile pattern across
+    history.py and execution.py.
+    """
+    compiler = WorkflowCompilerSingleton.instance()
+    return await compiler.compile(
+        user,
+        spec,
+        checkpointer=checkpointer,
+    )

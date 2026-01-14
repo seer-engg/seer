@@ -5,7 +5,6 @@ import json
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-
 JsonDict = Dict[str, Any]
 
 
@@ -36,4 +35,3 @@ def compute_event_hash(
         default=_json_default,
     )
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
-

@@ -104,5 +104,3 @@ def _validate_value_references(value, scope: Scope, errors: List[str], *, contex
         ensure_references_valid(refs, scope)
     except TypeCheckError as exc:
         errors.append(f"{context}: {exc}")
-
-

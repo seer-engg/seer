@@ -12,18 +12,30 @@ from workflow_compiler.schema.models import JsonSchema
 
 
 @dataclass
+class TriggerSchemas:
+    """Schema definitions for trigger validation and configuration."""
+    event: JsonSchema = field(default_factory=dict)
+    filter: Optional[JsonSchema] = None
+    config: Optional[JsonSchema] = None
+
+
+@dataclass
+class TriggerMetadata:
+    """Metadata and defaults for trigger configuration."""
+    sample_event: Optional[Dict[str, Any]] = None
+    requires_connection: bool = True
+
+
+@dataclass
 class TriggerDefinition:
+    """Complete trigger definition with identity, schemas, and metadata."""
     key: str
     title: str
     provider: str
     mode: str
     description: Optional[str] = None
-    event_schema: JsonSchema = field(default_factory=dict)
-    filter_schema: Optional[JsonSchema] = None
-    config_schema: Optional[JsonSchema] = None
-    sample_event: Optional[Dict[str, Any]] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    requires_connection: bool = True
+    schemas: TriggerSchemas = field(default_factory=TriggerSchemas)
+    meta: TriggerMetadata = field(default_factory=TriggerMetadata)
 
 
 class TriggerRegistry:
@@ -80,52 +92,75 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
     registry.register(
         TriggerDefinition(
             key="webhook.generic",
-            title="Generic Webhook",
+            title="Webhook",
             provider="generic",
             mode="webhook",
             description="Accepts arbitrary JSON payloads via signed webhook requests.",
-            event_schema=_default_event_envelope_schema(),
+            schemas=TriggerSchemas(event=_default_event_envelope_schema()),
         )
     )
     registry.register(
         TriggerDefinition(
             key="poll.gmail.email_received",
-            title="Gmail – New Email",
+            title="Gmail",
             provider="gmail",
             mode="polling",
             description="Poll a Gmail inbox for newly received messages using OAuth credentials.",
-            event_schema=_enveloped_event_schema(_gmail_email_received_payload_schema()),
-            config_schema=_gmail_email_received_config_schema(),
-            sample_event=_gmail_email_received_sample_event(),
-            metadata={"polling": True, "integration": "gmail"},
+            schemas=TriggerSchemas(
+                event=_enveloped_event_schema(_gmail_email_received_payload_schema()),
+                config=_gmail_email_received_config_schema(),
+            ),
+            meta=TriggerMetadata(sample_event=_gmail_email_received_sample_event()),
         )
     )
     registry.register(
         TriggerDefinition(
             key="schedule.cron",
-            title="Cron Schedule",
+            title="Scheduler",
             provider="schedule",
             mode="polling",
             description="Execute workflow on a cron schedule with timezone support.",
-            event_schema=_enveloped_event_schema(_cron_schedule_payload_schema()),
-            config_schema=_cron_schedule_config_schema(),
-            sample_event=_cron_schedule_sample_event(),
-            metadata={"polling": True, "integration": "schedule"},
-            requires_connection=False,
+            schemas=TriggerSchemas(
+                event=_enveloped_event_schema(_cron_schedule_payload_schema()),
+                config=_cron_schedule_config_schema(),
+            ),
+            meta=TriggerMetadata(
+                sample_event=_cron_schedule_sample_event(),
+                requires_connection=False,
+            ),
         )
     )
 
     registry.register(
         TriggerDefinition(
             key="webhook.supabase.db_changes",
-            title="Supabase – Database Changes",
+            title="Supabase",
             provider="supabase",
             mode="webhook",
             description="Receive real-time webhooks when rows are inserted, updated, or deleted in Supabase tables.",
-            event_schema=_enveloped_event_schema(_supabase_db_changes_payload_schema()),
-            config_schema=_supabase_db_changes_config_schema(),
-            sample_event=_supabase_db_changes_sample_event(),
-            metadata={"integration": "supabase", "requires_webhook_setup": True},
+            schemas=TriggerSchemas(
+                event=_enveloped_event_schema(_supabase_db_changes_payload_schema()),
+                config=_supabase_db_changes_config_schema(),
+            ),
+            meta=TriggerMetadata(sample_event=_supabase_db_changes_sample_event()),
+        )
+    )
+
+    registry.register(
+        TriggerDefinition(
+            key="form.hosted",
+            title="Form",
+            provider="form",
+            mode="webhook",
+            description=(
+                "Create a public form with custom fields that non-technical users can "
+                "fill out to trigger workflows."
+            ),
+            schemas=TriggerSchemas(event=_enveloped_event_schema(_form_hosted_payload_schema())),
+            meta=TriggerMetadata(
+                sample_event=_form_hosted_sample_event(),
+                requires_connection=False,
+            ),
         )
     )
 
@@ -193,7 +228,10 @@ def _gmail_email_received_config_schema() -> JsonSchema:
                 "minimum": 0,
                 "maximum": 900000,
                 "default": 300000,
-                "description": "Overlap window in milliseconds to re-read recent messages for dedupe safety.",
+                "description": (
+                    "Overlap window in milliseconds to re-read recent messages for "
+                    "dedupe safety."
+                ),
             },
         },
     }
@@ -207,9 +245,7 @@ def _gmail_email_received_sample_event() -> Dict[str, Any]:
         "snippet": "Reminder about tomorrow's demo",
         "subject": "Demo tomorrow?",
         "from": {"name": "Product Team", "email": "product@example.com"},
-        "to": [
-            {"name": "You", "email": "you@example.com"},
-        ],
+        "to": [{"name": "You", "email": "you@example.com"}],
         "labels": ["INBOX", "UNREAD"],
         "date_header": "Fri, 13 Dec 2025 10:00:00 -0000",
         "history_id": "123456",
@@ -248,7 +284,13 @@ def _cron_schedule_config_schema() -> JsonSchema:
             "cron_expression": {
                 "type": "string",
                 "description": "5-field cron expression (minute hour day month weekday)",
-                "pattern": r"^(\*|([0-9]|1[0-9]|2[0-9]|3[0-9]|4[0-9]|5[0-9])|\*/[0-9]+)(\s+(\*|([0-9]|1[0-9]|2[0-3])|\*/[0-9]+)){1}(\s+(\*|([1-9]|[12][0-9]|3[01])|\*/[0-9]+)){1}(\s+(\*|([1-9]|1[0-2])|\*/[0-9]+)){1}(\s+(\*|[0-6]|\*/[0-9]+)){1}$",
+                "pattern": (
+                    r"^(\*|([0-9]|1[0-9]|2[0-9]|3[0-9]|4[0-9]|5[0-9])|\*/[0-9]+)"
+                    r"(\s+(\*|([0-9]|1[0-9]|2[0-3])|\*/[0-9]+)){1}"
+                    r"(\s+(\*|([1-9]|[12][0-9]|3[01])|\*/[0-9]+)){1}"
+                    r"(\s+(\*|([1-9]|1[0-2])|\*/[0-9]+)){1}"
+                    r"(\s+(\*|[0-6]|\*/[0-9]+)){1}$"
+                ),
             },
             "timezone": {
                 "type": "string",
@@ -280,6 +322,7 @@ def _cron_schedule_sample_event() -> Dict[str, Any]:
         },
         "raw": None,
     }
+
 
 def _supabase_db_changes_payload_schema() -> JsonSchema:
     return {
@@ -350,9 +393,36 @@ def _supabase_db_changes_sample_event() -> Dict[str, Any]:
         "raw": {"payload": payload},
     }
 
+
+def _form_hosted_payload_schema() -> JsonSchema:
+    return {
+        "type": "object",
+        "description": "Form submission data with custom field values",
+        "additionalProperties": True,
+    }
+
+
+def _form_hosted_sample_event() -> Dict[str, Any]:
+    payload = {
+        "name": "John Doe",
+        "email": "john@example.com",
+        "company": "Acme Corp",
+        "message": "I'm interested in learning more about your product",
+    }
+    return {
+        "id": "evt_sample_form_hosted",
+        "trigger_key": "form.hosted",
+        "provider": "form",
+        "account_id": None,
+        "occurred_at": "2026-01-08T14:30:00Z",
+        "received_at": "2026-01-08T14:30:00Z",
+        "data": payload,
+        "raw": {"payload": payload},
+    }
+
+
 trigger_registry = TriggerRegistry()
 _register_builtin_triggers(trigger_registry)
 
 
 __all__ = ["TriggerDefinition", "TriggerRegistry", "trigger_registry"]
-

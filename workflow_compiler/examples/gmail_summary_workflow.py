@@ -15,19 +15,19 @@ import asyncio
 import json
 import logging
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from langchain_openai import ChatOpenAI
+from tortoise import Tortoise
 
+from shared.database.config import TORTOISE_ORM
 from shared.database.models import User
-from workflow_compiler.runtime import WorkflowCompilerSingleton
-from workflow_compiler.examples.gmail_common import GmailDemoService, fetch_oauth_credentials
+from shared.tools.google.gmail import GmailReadTool
+from workflow_compiler.examples.gmail_common import GmailDemoService
 from workflow_compiler.registry.model_registry import ModelDefinition, ModelRegistry
 from workflow_compiler.registry.tool_registry import ToolDefinition, ToolRegistry
+from workflow_compiler.runtime import WorkflowCompilerSingleton
 from workflow_compiler.schema.models import JsonSchema
-from shared.tools.google.gmail import GmailReadTool
-from shared.database.config import TORTOISE_ORM
-from tortoise import Tortoise
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 async def init_tortoise():
     await Tortoise.init(config=TORTOISE_ORM)
+
 
 async def close_tortoise():
     await Tortoise.close_connections()
@@ -129,11 +130,10 @@ def build_workflow_spec(email_schema: JsonSchema) -> Dict[str, Any]:
         "output": "${inbox_summary}",
     }
 
-from shared.tools.google.gmail import GmailReadTool
-read_tool = GmailReadTool()
 
+read_tool = GmailReadTool()
 read_schema = read_tool.get_output_schema()
-from shared.database.models import User
+
 
 async def main() -> None:
     user_id = 1
@@ -150,5 +150,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-

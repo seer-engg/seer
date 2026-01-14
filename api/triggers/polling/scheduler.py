@@ -3,11 +3,10 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 
-from shared.logger import get_logger
-
 # Ensure adapters register themselves.
 import api.triggers.polling.adapters  # noqa: F401
 from api.triggers.polling.engine import TriggerPollEngine
+from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -54,4 +53,3 @@ class TriggerPollScheduler:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=self.interval_seconds)
             except asyncio.TimeoutError:
                 continue
-

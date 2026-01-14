@@ -29,12 +29,13 @@ redis_url = _resolve_redis_url()
 result_backend = RedisAsyncResultBackend(redis_url=redis_url)
 broker = RedisStreamBroker(url=redis_url).with_result_backend(result_backend)
 
-_poll_scheduler = None
+_poll_scheduler = None  # pylint: disable=invalid-name
 
 
 @broker.on_event(TaskiqEvents.WORKER_STARTUP)
 async def _on_worker_startup(_: TaskiqState) -> None:
     """Initialize shared resources before processing tasks."""
+    # pylint: disable=import-outside-toplevel,global-statement
     from api.triggers.polling import TriggerPollScheduler  # lazy import
     from shared.analytics import analytics  # PostHog analytics
 
@@ -61,6 +62,7 @@ async def _on_worker_startup(_: TaskiqState) -> None:
 @broker.on_event(TaskiqEvents.WORKER_SHUTDOWN)
 async def _on_worker_shutdown(_: TaskiqState) -> None:
     """Clean up background services when worker exits."""
+    # pylint: disable=import-outside-toplevel,global-statement
     from shared.analytics import analytics  # PostHog analytics
     global _poll_scheduler
 
@@ -77,6 +79,8 @@ async def _on_worker_shutdown(_: TaskiqState) -> None:
     logger.info("Taskiq worker shutdown complete")
 
 
+# Import task modules to register with broker
+# pylint: disable=wrong-import-position,unused-import
+from worker.tasks import workflows, triggers, polling  # noqa: F401
+
 __all__ = ["broker"]
-
-

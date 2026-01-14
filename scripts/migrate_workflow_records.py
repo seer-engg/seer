@@ -25,7 +25,7 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict, Callable
+from typing import Any, Callable, Dict
 
 from tortoise import Tortoise
 from tortoise.transactions import in_transaction
@@ -35,7 +35,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from shared.database.config import TORTOISE_ORM  # noqa: E402
+from shared.database import TORTOISE_ORM  # noqa: E402
 
 logger = logging.getLogger("workflow_migration")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -251,4 +251,3 @@ async def migrate_workflows() -> None:
 
 if __name__ == "__main__":
     asyncio.run(migrate_workflows())
-

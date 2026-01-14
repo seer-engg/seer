@@ -28,8 +28,6 @@ dependencies = [
     "requests>=2.32.3",
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0.3",
-    "e2b==2.4.0",
-    "e2b-code-interpreter==2.2.0",
     "tavily-python>=0.7.12",
     "langchain-chroma>=0.1.0",
     "tenacity>=9.1.2",
@@ -47,6 +45,7 @@ dependencies = [
     "taskiq-redis>=1.2.1",
     "posthog>=3.5.0",
     "psycopg[binary]>=3.1.0",  # Required by langgraph-checkpoint-postgres
+    "RestrictedPython>=7.0",  # Required for RLM tool sandbox
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -60,6 +59,7 @@ dev = [
     "langgraph-cli[inmem]>=0.4.7",
     "taskiq[reload]>=0.12.1",
     "pre-commit>=4.0.1",
+    "pylint>=2.15.0",
 ]
 
 [project.urls]
@@ -74,11 +74,6 @@ location = "./migrations"
 src_folder = "./."
 
 
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-log_cli="true"
-log_cli_level="WARNING"
-
 [tool.pylint.main]
 # Files or directories to be skipped
 ignore = ["alembic/versions", ".venv", "venv", "build", "dist"]
@@ -89,7 +84,7 @@ load-plugins = ["pylint.extensions.mccabe"]
 
 [tool.pylint.format]
 # Maximum number of characters on a single line
-max-line-length = 100
+max-line-length = 150   # 100 is too small for some db calls
 # Maximum number of lines in a module
 max-module-lines = 600
 
@@ -106,9 +101,19 @@ max-locals = 20
 max-statements = 60
 
 [tool.pylint.messages_control]
-# Disable specific warnings that are too noisy
+# Disable specific warnings that are too noisy or false positives
 disable = [
     "missing-docstring",
     "too-few-public-methods",
     "fixme",
+    "import-error",  # Pre-commit runs in isolated env without project dependencies
 ]
+
+# NOTE: In-code pylint disables MUST include justification comments
+# Required format: # pylint: disable=rule-name # Reason: architectural explanation
+# See docs/linting-guidelines.md for acceptable use cases and examples
+# Examples:
+#   - import-outside-toplevel: Avoiding circular imports or lazy loading
+#   - broad-exception-caught: Adapter boundaries converting exceptions to strings
+#   - invalid-name: Framework-required naming (visit_*, _private for patterns)
+# Pull requests with unjustified disables will be rejected in code review

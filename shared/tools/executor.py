@@ -7,12 +7,12 @@ from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
 
-from shared.database.models import User
+from shared.analytics import analytics
+from shared.config import config
+from shared.database import User
 from shared.logger import get_logger
 from shared.tools.base import get_tool
 from shared.tools.credential_resolver import CredentialResolver, ResolvedCredentials
-from shared.analytics import analytics
-from shared.config import config
 
 logger = get_logger("shared.tools.executor")
 
@@ -25,21 +25,21 @@ async def execute_tool(
 ) -> Any:
     """
     Execute a tool with OAuth token management.
-    
+
     Args:
         tool_name: Name of the tool to execute
         user: User
         connection_id: OAuth connection ID (if tool requires OAuth)
         arguments: Tool arguments
-    
+
     Returns:
         Tool execution result
-    
+
     Raises:
         HTTPException: If tool not found, scopes invalid, or execution fails
     """
     arguments = arguments or {}
-    
+
     tool = get_tool(tool_name)
     if not tool:
         raise HTTPException(
@@ -62,9 +62,9 @@ async def execute_tool(
     error_type = None
 
     try:
-        logger.info(f"Executing tool '{tool_name}' for user {user.user_id}")
+        logger.info("Executing tool '%s' for user {user.user_id}", tool_name)
         result = await _execute_with_optional_credentials(tool, resolved, arguments or {})
-        logger.info(f"Tool '{tool_name}' executed successfully")
+        logger.info("Tool '%s' executed successfully", tool_name)
         return result
     except HTTPException:
         success = False
@@ -73,11 +73,20 @@ async def execute_tool(
     except Exception as e:
         success = False
         error_type = type(e).__name__
-        logger.exception(f"Tool execution failed: {e}")
+        logger.exception("Tool execution failed: %s", e)
+
+        # Track tool error to PostHog
+        analytics.capture_tool_error(
+            distinct_id=user.user_id,
+            tool_name=tool_name,
+            error=e,
+            context={"arguments": arguments},
+        )
+
         raise HTTPException(
             status_code=500,
             detail=f"Tool execution failed: {str(e)}"
-        )
+        ) from e
     finally:
         # Always capture tool execution event
         duration_ms = (time.time() - start_time) * 1000
@@ -107,4 +116,3 @@ async def _execute_with_optional_credentials(
         if "credentials" in message and "unexpected keyword argument" in message:
             return await tool.execute(resolved.access_token, arguments)
         raise
-

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Body, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse
 
-from shared.database.models import User
 from api.workflows import models as api_models
 from api.workflows import services
-
+from shared.database import User
 
 router = APIRouter(prefix="/v1", tags=["workflows"])
 
@@ -114,10 +114,29 @@ async def get_schema(request: Request, schema_id: str):
     return await services.resolve_schema(schema_id)
 
 
+@router.post("/schemas/generate-metadata", response_model=api_models.SchemaMetadataGenerateResponse)
+async def generate_schema_metadata(
+    request: Request,
+    payload: api_models.SchemaMetadataGenerateRequest,
+):
+    """Generate schema title and description using LLM analysis."""
+    _require_user(request)
+    return await services.generate_schema_metadata(payload)
+
+
 @router.post("/workflows", response_model=api_models.WorkflowResponse, status_code=status.HTTP_201_CREATED)
 async def create_workflow(request: Request, payload: api_models.WorkflowCreateRequest):
     user = _require_user(request)
     return await services.create_workflow(user, payload)
+
+
+@router.post("/workflows/import", response_model=api_models.WorkflowResponse, status_code=status.HTTP_201_CREATED)
+async def import_workflow(
+    request: Request,
+    payload: api_models.WorkflowImportRequest,
+):
+    user = _require_user(request)
+    return await services.import_workflow(user, payload)
 
 
 @router.get("/workflows", response_model=api_models.WorkflowListResponse)
@@ -134,6 +153,27 @@ async def list_workflows(
 async def get_workflow(request: Request, workflow_id: str):
     user = _require_user(request)
     return await services.get_workflow(user, workflow_id)
+
+
+@router.get("/workflows/{workflow_id}/export")
+async def export_workflow(
+    request: Request,
+    workflow_id: str,
+    include_triggers: bool = Query(True),
+):
+    user = _require_user(request)
+    export_data = await services.export_workflow(user, workflow_id, include_triggers)
+
+    # Return as downloadable JSON file
+    workflow = await services.get_workflow(user, workflow_id)
+    filename = f"{workflow.name.replace(' ', '_')}.seer.json"
+
+    return JSONResponse(
+        content=export_data,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+    )
 
 
 @router.get("/workflows/{workflow_id}/versions", response_model=api_models.WorkflowVersionListResponse)
@@ -176,7 +216,7 @@ async def patch_workflow_draft(
 async def publish_workflow(
     request: Request,
     workflow_id: str,
-    payload: api_models.WorkflowPublishRequest,
+    payload: api_models.WorkflowPublishRequest = Body(default_factory=api_models.WorkflowPublishRequest),
 ):
     user = _require_user(request)
     return await services.publish_workflow(user, workflow_id, payload)
@@ -201,17 +241,10 @@ async def compile_workflow(request: Request, payload: api_models.CompileRequest)
     return services.compile_spec(user, payload)
 
 
-
 @router.post("/expr/typecheck", response_model=api_models.ExpressionTypecheckResponse)
 async def typecheck_expression(request: Request, payload: api_models.ExpressionTypecheckRequest):
     user = _require_user(request)
     return services.typecheck_expression(user, payload)
-
-
-@router.post("/runs", response_model=api_models.RunResponse, status_code=status.HTTP_201_CREATED)
-async def run_draft(request: Request, payload: api_models.RunFromSpecRequest):
-    user = _require_user(request)
-    return await services.run_draft_workflow(user, payload)
 
 
 @router.post("/workflows/{workflow_id}/runs", response_model=api_models.RunResponse, status_code=status.HTTP_201_CREATED)
@@ -242,7 +275,4 @@ async def get_run_history(request: Request, run_id: str):
     return await services.get_run_history(user, run_id)
 
 
-
 __all__ = ["router"]
-
-
