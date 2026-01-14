@@ -142,7 +142,7 @@ if config.is_cloud_mode:
             "/health",
             "/api/integrations/google/callback",
             "/api/integrations/github/callback",
-            "/api/integrations/asana/callback",
+            "/api/integrations/supabase_mgmt/callback",
             "/api/v1/webhooks",
         ],
     )
