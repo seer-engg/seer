@@ -24,6 +24,9 @@ from shared.analytics import analytics
 from shared.config import config
 from shared.database import User, UserPublic
 from shared.logger import get_logger
+from shared.usage_limits import (
+    increment_chat_message_count,
+)
 
 from .chat_schema import (
     ChatMessage,
@@ -198,6 +201,8 @@ async def chat_with_workflow_endpoint(
     logger.info("Chat request received: workflow_id=%s, message_length=%d", workflow_id, len(chat_request.message))
     user = _require_user(request)
     workflow = await get_workflow(user, workflow_id)
+
+    # Chat limit check moved to UsageLimitMiddleware
     model = chat_request.model or config.default_llm_model
     checkpointer = await get_checkpointer()
 
@@ -229,6 +234,9 @@ async def chat_with_workflow_endpoint(
         role="user",
         content=chat_request.message,
     )
+
+    # Track user message (global count, not per-workflow)
+    await increment_chat_message_count(user)
 
     analytics.capture(
         distinct_id=user.user_id,
@@ -297,6 +305,9 @@ async def chat_with_workflow_endpoint(
             suggested_edits=proposal_payload,
             proposal=proposal,
         )
+
+        # Track assistant message (global count, not per-workflow)
+        await increment_chat_message_count(user)
 
         analytics.capture(
             distinct_id=user.user_id,

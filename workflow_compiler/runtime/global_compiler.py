@@ -64,6 +64,43 @@ def _message_to_text(message: Any) -> str:
     return str(content)
 
 
+def _extract_usage_metadata(response: Any, model_id: str) -> Dict[str, Any]:
+    """
+    Extract token usage metadata from LangChain response.
+
+    Args:
+        response: LangChain AIMessage response
+        model_id: Model identifier
+
+    Returns:
+        Dictionary with keys: input_tokens, output_tokens, reasoning_tokens, model
+    """
+    usage_meta = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "model": model_id,
+    }
+
+    # Try usage_metadata first (newer LangChain)
+    if hasattr(response, "usage_metadata") and response.usage_metadata:
+        usage_meta["input_tokens"] = response.usage_metadata.get("input_tokens", 0)
+        usage_meta["output_tokens"] = response.usage_metadata.get("output_tokens", 0)
+        # Reasoning tokens might be in different fields
+        usage_meta["reasoning_tokens"] = response.usage_metadata.get("reasoning_tokens", 0)
+        return usage_meta
+
+    # Fallback to response_metadata (older format)
+    if hasattr(response, "response_metadata") and response.response_metadata:
+        token_usage = response.response_metadata.get("token_usage", {})
+        usage_meta["input_tokens"] = token_usage.get("prompt_tokens", 0)
+        usage_meta["output_tokens"] = token_usage.get("completion_tokens", 0)
+        # Some models include reasoning_tokens or cached_tokens
+        usage_meta["reasoning_tokens"] = token_usage.get("reasoning_tokens", 0)
+
+    return usage_meta
+
+
 @dataclass(frozen=True)
 class UserBoundCompiledWorkflow:
     """
@@ -367,7 +404,7 @@ class WorkflowCompilerSingleton:
         )
 
     def _build_text_handler(self, model_id: str):
-        def handler(invocation: Dict[str, Any]) -> str:
+        def handler(invocation: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
             parameters = invocation.get("parameters") or {}
             llm = get_llm(
                 model=model_id,
@@ -377,12 +414,17 @@ class WorkflowCompilerSingleton:
                 invocation["prompt"], invocation.get("inputs")
             )
             response = llm.invoke(prompt)
-            return _message_to_text(response)
+
+            # Extract usage metadata
+            usage_metadata = _extract_usage_metadata(response, model_id)
+
+            text_result = _message_to_text(response)
+            return text_result, usage_metadata
 
         return handler
 
     def _build_json_handler(self, model_id: str):
-        def handler(invocation: Dict[str, Any], schema: Dict[str, Any]) -> Dict[str, Any]:
+        def handler(invocation: Dict[str, Any], schema: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
             parameters = invocation.get("parameters") or {}
             llm = get_llm(
                 model=model_id,
@@ -403,7 +445,25 @@ class WorkflowCompilerSingleton:
 
             structured_llm = llm.with_structured_output(enriched_schema, method="json_schema")
             response = structured_llm.invoke(prompt)
-            return response
+
+            # Extract usage metadata
+            # Note: structured output might return dict directly, not AIMessage
+            # Need to check if response has metadata or if it's in underlying call
+            usage_metadata = {}
+            if hasattr(structured_llm, "_last_response"):
+                usage_metadata = _extract_usage_metadata(structured_llm._last_response, model_id)
+            elif hasattr(response, "usage_metadata") or hasattr(response, "response_metadata"):
+                usage_metadata = _extract_usage_metadata(response, model_id)
+            else:
+                # No metadata available, use empty
+                usage_metadata = {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "reasoning_tokens": 0,
+                    "model": model_id,
+                }
+
+            return response, usage_metadata
 
         return handler
 

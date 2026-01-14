@@ -14,6 +14,11 @@ from starlette.types import ASGIApp
 from shared.analytics import analytics
 from shared.database import User
 from shared.logger import get_logger
+from shared.usage_limits import (
+    TrialExpiredError,
+    get_account_age_days,
+    is_trial_expired,
+)
 
 logger = get_logger("api.middleware.auth")
 
@@ -112,6 +117,17 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
                 "signup_source": db_user.signup_source if db_user.signup_source else None,
             },
         )
+
+        # Phase 2: Account Day Limit Gate
+        # Check if user's trial has expired (only applies to Cloud Free tier)
+        if await is_trial_expired(db_user):
+            days_since_signup = await get_account_age_days(db_user)
+            # Raise trial expired error
+            error = TrialExpiredError(days_since_signup=days_since_signup)
+            return JSONResponse(
+                status_code=402,  # Payment Required
+                content=error.to_dict(),
+            )
 
         request.state.user = auth_user
         request.state.db_user = db_user
@@ -240,6 +256,15 @@ class TokenDecodeWithoutValidationMiddleware(BaseHTTPMiddleware):
             return True
 
         if path.startswith("/api/v1/webhooks"):
+            return True
+        
+        if path == '/api/subscriptions/webhooks/stripe':
+            return True
+        
+        if path =='/docs':
+            return True 
+        
+        if path == '/openapi.json':
             return True
 
         return False

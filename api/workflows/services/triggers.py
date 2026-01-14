@@ -29,6 +29,11 @@ from shared.database import (
     make_workflow_public_id,
 )
 from shared.logger import get_logger
+from shared.usage_limits import (
+    PollingIntervalTooFast,
+    get_limits_for_user,
+    resolve_user_tier,
+)
 from workflow_compiler.registry.trigger_registry import trigger_registry
 from workflow_compiler.schema.models import (
     InputDef,
@@ -350,6 +355,39 @@ def _validate_form_suffix(suffix: Optional[str]) -> None:
         )
 
 
+async def _validate_and_adjust_poll_interval(
+    user: User,
+    requested_interval: Optional[int],
+) -> tuple[int, Optional[str]]:
+    """
+    Validate polling interval against user's tier limits.
+
+    Returns:
+        Tuple of (adjusted_interval, warning_message)
+        If requested interval is too fast, it will be clamped to the minimum allowed.
+    """
+    if requested_interval is None:
+        return 60, None  # Default to 1 minute
+
+    # Get user's tier limits
+    limits = await get_limits_for_user(user)
+    min_interval = limits.poll_min_interval_seconds
+
+    # Check if requested interval is within limits
+    if requested_interval < min_interval:
+        # Clamp to minimum allowed interval
+        tier = await resolve_user_tier(user)
+        error = PollingIntervalTooFast(
+            requested_interval=requested_interval,
+            min_interval=min_interval,
+            tier=tier,
+        )
+        # Return clamped value and warning message
+        return min_interval, error.message
+
+    return requested_interval, None
+
+
 async def _create_supabase_webhook(
     subscription: TriggerSubscription, secret: str
 ) -> None:
@@ -411,6 +449,19 @@ async def create_trigger_subscription(
     input_contract_dict = _build_input_contract(payload.form_fields, definition)
     _validate_form_suffix(payload.form_suffix)
 
+    # Phase 2: Polling Frequency Gate
+    # Validate and adjust poll interval based on user's tier
+    # For now, we validate the default value (60 seconds)
+    # TODO: Add poll_interval_seconds to TriggerSubscriptionCreateRequest
+    adjusted_interval, warning = await _validate_and_adjust_poll_interval(user, 60)
+    if warning:
+        logger.warning(
+            "Poll interval adjusted for user %s: %s",
+            user.id,
+            warning,
+            extra={"user_id": user.id, "adjusted_interval": adjusted_interval},
+        )
+
     subscription = await TriggerSubscription.create(
         user=user,
         workflow=workflow,
@@ -425,6 +476,7 @@ async def create_trigger_subscription(
         form_suffix=payload.form_suffix,
         form_fields=payload.form_fields,
         form_config=payload.form_config,
+        poll_interval_seconds=adjusted_interval,
     )
     if payload.trigger_key == "webhook.supabase.db_changes" and secret:
         await _create_supabase_webhook(subscription, secret)

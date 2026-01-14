@@ -81,6 +81,86 @@ class NodeRuntime:
     def bind_context(self, context: WorkflowRuntimeContext | None) -> None:
         self._current_context = context
 
+    def _track_llm_usage_async(self, usage_metadata: Dict[str, Any]) -> None:
+        """
+        Track LLM usage asynchronously (fire and forget).
+
+        Args:
+            usage_metadata: Dict with input_tokens, output_tokens, reasoning_tokens, model
+        """
+        if not self._current_context or not self._current_context.user:
+            logger.warning("Cannot track LLM usage: no user context")
+            return
+
+        from decimal import Decimal
+        from shared.usage_limits.credit_calculator import calculate_cost
+        from shared.usage_limits.tracking import track_llm_usage
+
+        async def do_track():
+            try:
+                # Calculate cost
+                cost = calculate_cost(
+                    model=usage_metadata["model"],
+                    input_tokens=usage_metadata["input_tokens"],
+                    output_tokens=usage_metadata["output_tokens"],
+                    reasoning_tokens=usage_metadata.get("reasoning_tokens", 0),
+                )
+
+                # Detect provider from model name
+                model = usage_metadata["model"]
+                if model.startswith(("gpt-", "o3-", "o1-")):
+                    provider = "openai"
+                elif model.startswith("claude-"):
+                    provider = "anthropic"
+                else:
+                    provider = "unknown"
+
+                # Track usage
+                await track_llm_usage(
+                    user=self._current_context.user,
+                    provider=provider,
+                    model=model,
+                    input_tokens=usage_metadata["input_tokens"],
+                    output_tokens=usage_metadata["output_tokens"],
+                    cost=cost,
+                    workflow_run_id=self._current_context.workflow_run_id,
+                    operation="workflow_execution",
+                    metadata={
+                        "reasoning_tokens": usage_metadata.get("reasoning_tokens", 0),
+                    },
+                )
+
+                logger.debug(
+                    "Tracked LLM usage: model=%s, tokens=%d/%d, cost=$%.6f",
+                    model,
+                    usage_metadata["input_tokens"],
+                    usage_metadata["output_tokens"],
+                    cost,
+                )
+
+            except Exception as e:
+                # Log error but don't fail workflow
+                logger.error(
+                    "Failed to track LLM usage: %s",
+                    str(e),
+                    exc_info=True,
+                    extra={
+                        "user_id": self._current_context.user.user_id,
+                        "model": usage_metadata.get("model"),
+                        "error": str(e),
+                    },
+                )
+
+        # Fire and forget (don't wait for tracking to complete)
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(do_track())
+            else:
+                loop.run_until_complete(do_track())
+        except Exception as e:
+            logger.error(f"Failed to schedule LLM usage tracking: {e}")
+
     # ------------------------------------------------------------------
     # Node handlers
     # ------------------------------------------------------------------
@@ -250,6 +330,26 @@ class NodeRuntime:
         *,
         locals_ctx: Mapping[str, Any] | None,
     ) -> Dict[str, Any]:
+        # STEP 0: Check credit limit BEFORE execution
+        if self._current_context and self._current_context.user:
+            from shared.usage_limits.credit_gate import check_credit_limit
+
+            try:
+                # Run async check in event loop
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # We're already in async context, create task and wait
+                    asyncio.ensure_future(check_credit_limit(self._current_context.user))
+                else:
+                    # Run directly
+                    loop.run_until_complete(check_credit_limit(self._current_context.user))
+            except Exception as e:
+                # Re-raise CreditLimitExceeded to stop execution
+                # Log but don't fail on check errors
+                if e.__class__.__name__ == "CreditLimitExceeded":
+                    raise
+                logger.error(f"Credit limit check failed: {e}")
+
         # STEP 1: Capture inputs
         inputs = self._capture_node_inputs(node, state, config, locals_ctx)
 
@@ -271,10 +371,12 @@ class NodeRuntime:
             "meta": node.meta,
         }
 
+        usage_metadata = {}
         if node.output.mode == OutputMode.text:
             if model_def.text_handler is None:
                 raise ExecutionError(f"Model '{node.model}' does not support text responses")
-            result = model_def.text_handler(invocation)
+            # Handler now returns tuple
+            result, usage_metadata = model_def.text_handler(invocation)
             if not isinstance(result, str):
                 raise ExecutionError(f"LLM node '{node.id}' expected text response")
         elif node.output.mode == OutputMode.json:
@@ -283,11 +385,16 @@ class NodeRuntime:
                 raise ExecutionError(f"No schema recorded for '{node.out}'")
             if model_def.json_handler is None:
                 raise ExecutionError(f"Model '{node.model}' does not support structured responses")
-            result = model_def.json_handler(invocation, schema)
+            # Handler now returns tuple
+            result, usage_metadata = model_def.json_handler(invocation, schema)
             if not isinstance(result, dict):
                 raise ExecutionError(f"LLM node '{node.id}' expected JSON response")
         else:
             raise ExecutionError(f"Unsupported output mode '{node.output.mode}' for node '{node.id}'")
+
+        # STEP 2.5: Track usage asynchronously (fire and forget)
+        if usage_metadata:
+            self._track_llm_usage_async(usage_metadata)
 
         # STEP 3: Prepare output
         output = self._prepare_output(node.out, result)
@@ -302,6 +409,18 @@ class NodeRuntime:
             'output': result,  # Raw LLM response
             'output_key': node.out,
             'timestamp': datetime.now(timezone.utc).isoformat(),
+            # Add usage metadata to trace
+            'usage': {
+                'model': usage_metadata.get('model', node.model),
+                'input_tokens': usage_metadata.get('input_tokens', 0),
+                'output_tokens': usage_metadata.get('output_tokens', 0),
+                'reasoning_tokens': usage_metadata.get('reasoning_tokens', 0),
+                'total_tokens': (
+                    usage_metadata.get('input_tokens', 0) +
+                    usage_metadata.get('output_tokens', 0) +
+                    usage_metadata.get('reasoning_tokens', 0)
+                ),
+            },
         }
 
         # Diagnostic logging: Verify trace key is in output
