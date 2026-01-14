@@ -7,7 +7,13 @@ from uuid import uuid4
 from fastapi import HTTPException, status
 from tortoise.exceptions import DoesNotExist, IntegrityError
 
-from api.workflows import services as workflow_services
+from api.workflows.services import (
+    _complete_run,
+    _create_run_record,
+    _evaluate_bindings,
+    _execute_compiled_run,
+    _validate_resolved_inputs,
+)
 from shared.database import (
     TriggerEvent,
     TriggerEventStatus,
@@ -261,18 +267,18 @@ async def process_trigger_run_job(subscription_id: int, event_id: int) -> None:
     spec = WorkflowSpec.model_validate(published_version.spec)
     bindings = dict(subscription.bindings or {})
     try:
-        resolved_inputs = workflow_services._evaluate_bindings(bindings, envelope)
+        resolved_inputs = _evaluate_bindings(bindings, envelope)
     except ValueError as exc:
         await TriggerEvent.filter(id=event.id).update(
             status=TriggerEventStatus.FAILED,
             error={"detail": str(exc)},
         )
         logger.error(
-            f"Trigger run job processed (invalid bindings) with error: {exc}",
+            "Trigger run job processed (invalid bindings) with error: %s", exc,
         )
         return
 
-    validation_errors = workflow_services._validate_resolved_inputs(resolved_inputs, spec)
+    validation_errors = _validate_resolved_inputs(resolved_inputs, spec)
     if validation_errors:
         await TriggerEvent.filter(id=event.id).update(
             status=TriggerEventStatus.FAILED,
@@ -283,7 +289,7 @@ async def process_trigger_run_job(subscription_id: int, event_id: int) -> None:
         )
         return
 
-    run = await workflow_services._create_run_record(
+    run = await _create_run_record(
         user,
         workflow=workflow,
         workflow_version=published_version,
@@ -302,14 +308,14 @@ async def process_trigger_run_job(subscription_id: int, event_id: int) -> None:
         "Trigger run job processed (run created)"
     )
     try:
-        output, metrics = await workflow_services._execute_compiled_run(
+        output, metrics = await _execute_compiled_run(
             run,
             user,
             inputs=resolved_inputs,
             config_payload={},
             execution_mode="trigger",
         )
-        await workflow_services._complete_run(run, output, metrics)
+        await _complete_run(run, output, metrics)
         await TriggerEvent.filter(id=event.id).update(status=TriggerEventStatus.PROCESSED)
     except HTTPException as exc:
         logger.error(
@@ -327,6 +333,19 @@ async def _dispatch_trigger_event(
     event: TriggerEvent,
     envelope: Dict[str, Any],
 ) -> None:
+    # Defensive check: verify workflow and user exist before dispatching
+    await subscription.fetch_related("workflow", "user")
+    if not subscription.workflow or not subscription.user:
+        logger.error(
+            "Cannot dispatch event - workflow or user missing",
+            extra={"event_id": event.id, "subscription_id": subscription.id},
+        )
+        await TriggerEvent.filter(id=event.id).update(
+            status=TriggerEventStatus.FAILED,
+            error={"detail": "Workflow or user missing for subscription"},
+        )
+        return
+
     if not _filters_match(subscription.filters, envelope):
         await TriggerEvent.filter(id=event.id).update(status=TriggerEventStatus.PROCESSED)
         logger.debug(
@@ -340,7 +359,7 @@ async def _dispatch_trigger_event(
     )
     try:
         await process_trigger_event_task.kiq(subscription_id=subscription.id, event_id=event.id)
-    except Exception:
+    except Exception as exc:
         logger.exception(
             "Failed to enqueue trigger event",
             extra={"event_id": event.id, "subscription_id": subscription.id},
@@ -352,7 +371,7 @@ async def _dispatch_trigger_event(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to enqueue trigger event",
-        )
+        ) from exc
     logger.info(
         "Trigger event enqueued",
         extra={"event_id": event.id, "subscription_id": subscription.id},
