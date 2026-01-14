@@ -6,7 +6,7 @@ and LLM credits so the frontend can display upgrade nudges and remaining quota.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal
 from typing import Optional, Union
 
@@ -25,6 +25,7 @@ from shared.usage_limits import (
     get_workflow_count,
     resolve_user_tier,
 )
+from shared.usage_limits.service import get_billing_period_for_user
 from shared.usage_limits.models import TierLimits
 
 router = APIRouter(prefix="/usage", tags=["usage"])
@@ -79,14 +80,6 @@ def _require_user(request: Request) -> User:
     if user is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     return user
-
-
-def _current_month_end(now: Optional[datetime] = None) -> datetime:
-    """Compute the start of next month in UTC to represent reset time."""
-    now = now or datetime.now(timezone.utc)
-    period_end_month = now.month + 1 if now.month < 12 else 1
-    period_end_year = now.year if now.month < 12 else now.year + 1
-    return datetime(period_end_year, period_end_month, 1, tzinfo=timezone.utc)
 
 
 def _build_usage_metric(
@@ -203,7 +196,7 @@ async def get_usage_summary(request: Request) -> UsageResponse:
     workflows_used = await get_workflow_count(user)
     llm_credits_used = await get_monthly_llm_credits_used(user)
 
-    reset_at = _current_month_end()
+    _, reset_at = await get_billing_period_for_user(user, subscription)
     usage_breakdown = _build_usage_breakdown(
         limits=limits,
         chat_messages_used=chat_messages_used,

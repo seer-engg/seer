@@ -20,25 +20,8 @@ from shared.database.usage_models import (
     ResourceType,
     UsageCounter,
 )
+from shared.usage_limits.service import get_billing_period_for_user
 
-
-def _get_current_month_period() -> tuple[datetime, datetime]:
-    """
-    Get the start and end of the current month in UTC.
-
-    Returns:
-        Tuple of (period_start, period_end)
-    """
-    now = datetime.now(timezone.utc)
-    period_start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
-
-    # Calculate next month
-    if now.month == 12:
-        next_month = datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
-    else:
-        next_month = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
-
-    return period_start, next_month
 
 
 async def increment_workflow_count(user: User) -> int:
@@ -105,7 +88,7 @@ async def increment_monthly_run_count(user: User) -> int:
     Returns:
         The new monthly run count
     """
-    period_start, period_end = _get_current_month_period()
+    period_start, period_end = await get_billing_period_for_user(user)
 
     counter, _ = await UsageCounter.get_or_create(
         user=user,
@@ -178,7 +161,7 @@ async def get_monthly_run_count(user: User) -> int:
     Returns:
         Monthly run count
     """
-    period_start, period_end = _get_current_month_period()
+    period_start, period_end = await get_billing_period_for_user(user)
 
     counter = await UsageCounter.get_or_none(
         user=user,
@@ -266,8 +249,8 @@ async def track_llm_usage(
         metadata=metadata,
     )
 
-    # Also update monthly credit counter
-    period_start, period_end = _get_current_month_period()
+    # Also update monthly credit counter aligned to billing period
+    period_start, period_end = await get_billing_period_for_user(user)
 
     counter, _ = await UsageCounter.get_or_create(
         user=user,
@@ -296,7 +279,7 @@ async def get_monthly_llm_credits_used(user: User) -> Decimal:
     Returns:
         Total credits used in USD
     """
-    period_start, period_end = _get_current_month_period()
+    period_start, period_end = await get_billing_period_for_user(user)
 
     counter = await UsageCounter.get_or_none(
         user=user,
@@ -318,13 +301,14 @@ async def get_monthly_llm_credits_detailed(user: User) -> dict:
     Returns:
         Dictionary with breakdown by model
     """
-    period_start, _ = _get_current_month_period()
+    period_start, period_end = await get_billing_period_for_user(user)
 
     # Aggregate by model for current month
     records = (
         await LLMUsageRecord.filter(
             user=user,
             created_at__gte=period_start,
+            created_at__lt=period_end,
         )
         .group_by("model")
         .annotate(
@@ -353,20 +337,12 @@ async def reset_monthly_counters(user: User, target_month: Optional[datetime] = 
         user: The user to reset counters for
         target_month: The month to reset for (defaults to current month)
     """
-    if target_month:
-        # Ensure target_month is timezone-aware
-        if target_month.tzinfo is None:
-            target_month = target_month.replace(tzinfo=timezone.utc)
-        now = target_month
-    else:
-        now = datetime.now(timezone.utc)
-
-    period_start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
-
-    if now.month == 12:
-        period_end = datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
-    else:
-        period_end = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
+    reference_now = target_month
+    if reference_now and reference_now.tzinfo is None:
+        reference_now = reference_now.replace(tzinfo=timezone.utc)
+    period_start, period_end = await get_billing_period_for_user(
+        user, reference_now=reference_now
+    )
 
     # Create new monthly counters with zero values (if they don't exist)
     for resource_type in [ResourceType.RUNS, ResourceType.LLM_CREDITS]:
