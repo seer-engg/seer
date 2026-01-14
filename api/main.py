@@ -23,6 +23,7 @@ from shared.analytics import analytics
 from shared.config import config
 from shared.database import db_lifespan
 from shared.logger import get_logger
+from shared.usage_limits.exceptions import ChatDisabledError, UsageLimitError
 
 # Import tools to register them
 # Note: model_block removed - use LLM block in workflows instead
@@ -128,6 +129,11 @@ else:
     app.add_middleware(TokenDecodeWithoutValidationMiddleware)
     logger.info("🔧 Self-hosted mode: Authentication disabled")
 
+# Usage limit middleware - enforce subscription limits centrally
+from api.core.middleware.usage_limit import UsageLimitMiddleware  # pylint: disable=ungrouped-imports # Reason: Import after auth middleware setup
+app.add_middleware(UsageLimitMiddleware)
+logger.info("🔒 Usage limit middleware enabled")
+
 # CORS middleware for development - must be AFTER auth middleware
 app.add_middleware(
     CORSMiddleware,
@@ -146,6 +152,36 @@ if config.is_posthog_configured:
     logger.info("📊 PostHog analytics middleware enabled")
 
 # Exception handler to ensure CORS headers on errors
+
+
+@app.exception_handler(UsageLimitError)
+async def usage_limit_exception_handler(request: Request, exc: UsageLimitError):
+    """
+    Handle usage limit violations by returning 402 Payment Required with upgrade prompt.
+
+    Returns structured error response with:
+    - Current usage and limit values
+    - User's tier
+    - Upgrade URL
+    - Clear error message
+    """
+    return JSONResponse(
+        status_code=402,  # Payment Required
+        content=exc.to_dict(),
+    )
+
+
+@app.exception_handler(ChatDisabledError)
+async def chat_disabled_exception_handler(request: Request, exc: ChatDisabledError):
+    """
+    Handle chat disabled errors (self-hosted mode) with 403 Forbidden.
+
+    This is not an upgradeable limitation, so we return 403 instead of 402.
+    """
+    return JSONResponse(
+        status_code=403,  # Forbidden
+        content=exc.to_dict(),
+    )
 
 
 @app.exception_handler(Exception)
