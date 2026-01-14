@@ -15,7 +15,7 @@ from shared.logger import get_logger
 logger = get_logger(__name__)
 
 # Keys that keep the schema digestible while conveying the structure.
-_SCHEMA_KEYS = ("title", "type", "properties", "required", "definitions")
+_SCHEMA_KEYS = ("title", "type", "properties", "required", "definitions", "default")
 
 _WORKFLOW_SPEC_EXAMPLE: Dict[str, Any] = {
     "version": "1",
