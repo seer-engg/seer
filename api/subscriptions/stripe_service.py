@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Tuple, Union
 
 import stripe
+from tortoise.transactions import in_transaction
 
 from shared.config import config
 from shared.database.models import User
@@ -176,24 +177,28 @@ async def get_or_create_stripe_customer(user: User) -> str:
     if billing_profile.stripe_customer_id:
         return billing_profile.stripe_customer_id
 
-    # Create Stripe customer
-    name = f"{user.first_name or ''} {user.last_name or ''}".strip() or None
-    customer = stripe.Customer.create(
-        email=user.email,
-        name=name,
-        metadata={
-            "user_id": user.user_id,  # Clerk user ID
-            "seer_user_id": str(user.id),
-        }
-    )
+    # Lock the billing profile row to avoid creating duplicate customers on concurrent requests.
+    async with in_transaction() as conn:
+        locked_profile = await BillingProfile.select_for_update().using_db(conn).get(id=billing_profile.id)
+        if locked_profile.stripe_customer_id:
+            return locked_profile.stripe_customer_id
 
-    logger.info("Created Stripe customer %s for user %s", customer.id, user.user_id)
+        name = f"{user.first_name or ''} {user.last_name or ''}".strip() or None
+        customer = stripe.Customer.create(
+            email=user.email,
+            name=name,
+            metadata={
+                "user_id": user.user_id,  # Clerk user ID
+                "seer_user_id": str(user.id),
+            }
+        )
 
-    # Store customer ID
-    billing_profile.stripe_customer_id = customer.id
-    await billing_profile.save(update_fields=["stripe_customer_id"])
+        logger.info("Created Stripe customer %s for user %s", customer.id, user.user_id)
 
-    return customer.id
+        locked_profile.stripe_customer_id = customer.id
+        await locked_profile.save(update_fields=["stripe_customer_id"], using_db=conn)
+
+        return customer.id
 
 
 async def create_checkout_session(
