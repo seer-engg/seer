@@ -1,0 +1,47 @@
+{
+  "name": "Form Submission → Gmail Alert",
+  "description": "Send email notification when form is submitted via hosted form trigger",
+  "tags": ["form", "gmail", "notification", "alert", "submission"],
+  "customization_guide": "Update form_id with your hosted form ID. Customize email recipients and subject. Adjust body_text to include relevant form fields using ${submission.field_name} syntax.",
+  "spec": {
+    "version": "1",
+    "triggers": [
+      {
+        "key": "form.hosted.submission",
+        "config": {
+          "form_id": "contact_form_123"
+        }
+      }
+    ],
+    "inputs": {},
+    "nodes": [
+      {
+        "id": "extract_submission",
+        "type": "task",
+        "value": "${trigger.data.submission}",
+        "out": "submission"
+      },
+      {
+        "id": "format_email_body",
+        "type": "task",
+        "value": "New form submission received:\n\nName: ${submission.name}\nEmail: ${submission.email}\nMessage: ${submission.message}\n\nSubmitted at: ${submission.timestamp}",
+        "out": "email_body"
+      },
+      {
+        "id": "send_alert_email",
+        "type": "tool",
+        "tool": "gmail_send_email",
+        "in": {
+          "to": ["admin@example.com"],
+          "subject": "New Form Submission from ${submission.name}",
+          "body_text": "${email_body}"
+        },
+        "out": "email_result"
+      }
+    ],
+    "output": "${email_result}",
+    "meta": {
+      "description": "Send email alert when form is submitted"
+    }
+  }
+}

@@ -2,6 +2,17 @@
 # Install: pip install pre-commit && pre-commit install
 
 repos:
+  # Import validation - Catch circular imports and missing dependencies
+  - repo: local
+    hooks:
+      - id: test-imports
+        name: test imports
+        entry: bash -c 'uv run python scripts/test_imports.py "$@"' --
+        language: system
+        types: [python]
+        files: \.py$
+        pass_filenames: true
+
   # Pylint - Comprehensive linting with configured limits
   - repo: local
     hooks:
@@ -11,6 +22,7 @@ repos:
         language: system
         types: [python]
         files: \.py$
+        exclude: ^migrations/
 
   # Basic file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks

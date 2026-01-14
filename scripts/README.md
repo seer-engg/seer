@@ -55,6 +55,27 @@ python scripts/inspect_checkpoint_blob.py run_7
 
 ---
 
+### ensure_stripe_catalog.py
+
+**Purpose**: Ensure Stripe products and prices exist for all subscription tiers
+
+**Usage**:
+```bash
+python scripts/ensure_stripe_catalog.py
+```
+
+**What it does**:
+- Creates or reactivates Stripe products for each tier (Pro, Pro+, Ultra)
+- Creates or reactivates recurring prices (monthly and annual) with lookup keys
+- Prints the lookup key to price ID mapping after completion
+
+**When to use**:
+- Setting up Stripe for a new environment
+- Rotating Stripe keys and recreating catalog objects
+- Validating Stripe catalog consistency before deployments
+
+---
+
 ## Related Documentation
 
 - [Configuration Reference](../docs/advanced/CONFIGURATION.md)

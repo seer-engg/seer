@@ -6,6 +6,7 @@ from agents.workflow_agent.tools import (
     search_tools,
     search_triggers,
     list_available_triggers,
+    get_workflow_template,
 )
 
 logger = get_logger(__name__)
@@ -33,6 +34,8 @@ def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:
         # Dynamic trigger discovery tools
         search_triggers,
         list_available_triggers,
+        # Template discovery tools
+        get_workflow_template,
         # list_available_tools,
     ]
 

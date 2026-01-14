@@ -31,6 +31,8 @@ jobs:
 
       - name: Build documentation
         run: npm run build
+        env:
+          GA_MEASUREMENT_ID: ${{ secrets.GA_MEASUREMENT_ID }}
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3

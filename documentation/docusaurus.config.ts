@@ -35,6 +35,20 @@ const config: Config = {
     locales: ['en'],
   },
 
+  plugins: [
+    [
+      '@docusaurus/plugin-google-analytics',
+      {
+        trackingID: process.env.GA_MEASUREMENT_ID,
+        anonymizeIP: true,
+      },
+    ],
+  ],
+
+  clientModules: [
+    require.resolve('./src/clientModules/analytics.ts'),
+  ],
+
   presets: [
     [
       'classic',

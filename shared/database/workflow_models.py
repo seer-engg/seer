@@ -264,9 +264,9 @@ class TriggerSubscription(models.Model):
     """Trigger configuration attached to a workflow."""
 
     id = fields.IntField(primary_key=True)
-    user = fields.ForeignKeyField("models.User", related_name="trigger_subscriptions")
+    user = fields.ForeignKeyField("models.User", related_name="trigger_subscriptions", on_delete=fields.CASCADE)
     workflow = fields.ForeignKeyField(
-        "models.Workflow", related_name="trigger_subscriptions"
+        "models.Workflow", related_name="trigger_subscriptions", on_delete=fields.CASCADE
     )
     trigger_key = fields.CharField(max_length=255)
     provider_connection_id = fields.IntField(null=True)

@@ -34,6 +34,9 @@ from shared.database import (
     WorkflowVersionStatus,
     make_workflow_public_id,
 )
+from shared.usage_limits import (
+    increment_monthly_run_count,
+)
 from workflow_compiler.errors import WorkflowCompilerError
 from workflow_compiler.schema.models import WorkflowSpec
 
@@ -216,7 +219,16 @@ async def _execute_compiled_run(
             effective_config,
             extra={"run_id": run.run_id, "config": effective_config},
         )
-        result = await compiled.ainvoke(inputs or {}, config=effective_config)
+        # Create runtime context with workflow_run_id for usage tracking
+        from workflow_compiler.runtime.context import WorkflowRuntimeContext
+
+        runtime_context = WorkflowRuntimeContext(
+            user=user,
+            workflow_run_id=run.run_id,
+        )
+        result = await compiled.ainvoke(
+            inputs or {}, config=effective_config, context=runtime_context
+        )
     except WorkflowCompilerError as exc:
         print(f"{traceback.format_exc()}")
         await _handle_run_failure(run, user, exc, metrics)
@@ -285,6 +297,7 @@ async def run_saved_workflow(
     workflow_id: str,
     payload: api_models.RunFromWorkflowRequest,
 ) -> api_models.RunResponse:
+    # Run limit check moved to UsageLimitMiddleware
     workflow = await _get_workflow(user, workflow_id)
     if payload.version is not None:
         version = await WorkflowVersion.filter(
@@ -311,6 +324,10 @@ async def run_saved_workflow(
         inputs=payload.inputs,
         config_payload=payload.config,
     )
+
+    # Track workflow run creation
+    await increment_monthly_run_count(user)
+
     # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with worker.tasks.workflows
     from worker.tasks.workflows import execute_saved_workflow as execute_saved_workflow_task
 

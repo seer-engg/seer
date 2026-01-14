@@ -77,6 +77,8 @@ TORTOISE_ORM: Dict[str, Any] = {
                 "shared.database.models_oauth",
                 "shared.database.models_integrations",
                 "shared.database.workflow_models",
+                "shared.database.subscription_models",
+                "shared.database.usage_models",
                 "aerich.models",  # Required for Aerich migrations
             ],
             "default_connection": "default",

@@ -13,9 +13,20 @@ async def process_trigger_event(subscription_id: int, event_id: int) -> None:
         "Processing trigger event via Taskiq",
         extra={"subscription_id": subscription_id, "event_id": event_id},
     )
-    from api.triggers.services import process_trigger_run_job  # local import to avoid cycles
+    from api.triggers.services import process_trigger_run_job  # pylint: disable=import-outside-toplevel # Reason: avoiding circular imports
 
-    await process_trigger_run_job(subscription_id=subscription_id, event_id=event_id)
+    try:
+        await process_trigger_run_job(subscription_id=subscription_id, event_id=event_id)
+        logger.info(
+            "Trigger event processing completed",
+            extra={"subscription_id": subscription_id, "event_id": event_id},
+        )
+    except Exception:
+        logger.exception(
+            "Trigger event processing failed with exception",
+            extra={"subscription_id": subscription_id, "event_id": event_id},
+        )
+        raise
 
 
 __all__ = ["process_trigger_event"]
