@@ -6,7 +6,7 @@ from shared.database.subscription_models import (
     StripeWebhookEventStatus,
 )
 from shared.logger import get_logger
-from api.subscriptions.stripe_service import process_stripe_event
+from api.subscriptions.stripe_webhook_controller import stripe_webhook_controller
 
 logger = get_logger(__name__)
 
@@ -38,7 +38,7 @@ async def process_stripe_webhook_event(event_db_id: int) -> None:
         payload = event.payload or {}
         event_type = payload.get("type")
         data = payload.get("data", {}).get("object", {})
-        await process_stripe_event(event_type, data)
+        await stripe_webhook_controller.process_event(event_type, data, event_id=event.event_id)
     except Exception as exc:  # pylint: disable=broad-except
         event.status = StripeWebhookEventStatus.FAILED
         event.last_error = str(exc)

@@ -24,6 +24,7 @@ from shared.database.subscription_models import (
 from shared.logger import get_logger
 
 from .clerk_sync import sync_stripe_customer_to_clerk
+from .pricing_catalog import TierPricing, get_pricing_catalog
 from .stripe_service import (
     create_checkout_session,
     create_portal_session,
@@ -71,20 +72,6 @@ class SubscriptionResponse(BaseModel):
     status: str
     current_period_end: Optional[str] = None
     cancel_at_period_end: bool = False
-
-
-class PriceInfo(BaseModel):
-    """Price information for a billing cycle."""
-    price: int
-    price_id: Optional[str] = None
-
-
-class TierPricing(BaseModel):
-    """Pricing information for a subscription tier."""
-    tier: str
-    name: str
-    monthly: PriceInfo
-    annual: PriceInfo
 
 
 class PricingResponse(BaseModel):
@@ -153,26 +140,7 @@ async def get_pricing():
     Returns pricing information for all subscription tiers with
     monthly and annual options.
     """
-    return PricingResponse(prices=[
-        TierPricing(
-            tier="pro",
-            name="Pro",
-            monthly=PriceInfo(price=20, price_id=config.stripe_price_pro_monthly),
-            annual=PriceInfo(price=200, price_id=config.stripe_price_pro_annual),
-        ),
-        TierPricing(
-            tier="pro_plus",
-            name="Pro+",
-            monthly=PriceInfo(price=60, price_id=config.stripe_price_proplus_monthly),
-            annual=PriceInfo(price=600, price_id=config.stripe_price_proplus_annual),
-        ),
-        TierPricing(
-            tier="ultra",
-            name="Ultra",
-            monthly=PriceInfo(price=100, price_id=config.stripe_price_ultra_monthly),
-            annual=PriceInfo(price=1000, price_id=config.stripe_price_ultra_annual),
-        ),
-    ])
+    return PricingResponse(prices=get_pricing_catalog())
 
 
 @router.get("/current", response_model=SubscriptionResponse)

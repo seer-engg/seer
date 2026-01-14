@@ -20,6 +20,7 @@ from shared.database.subscription_models import (
 )
 from shared.logger import get_logger
 from api.subscriptions.clerk_sync import sync_stripe_customer_to_clerk
+from api.subscriptions.pricing_catalog import get_pricing_catalog
 
 logger = get_logger("api.subscriptions.stripe_service")
 
@@ -29,20 +30,20 @@ if config.stripe_secret_key:
 
 
 def _build_price_to_tier_map() -> dict[str, SubscriptionTier]:
-    """Build mapping from Stripe price IDs to subscription tiers."""
-    mapping = {}
-    if config.stripe_price_pro_monthly:
-        mapping[config.stripe_price_pro_monthly] = SubscriptionTier.PRO
-    if config.stripe_price_pro_annual:
-        mapping[config.stripe_price_pro_annual] = SubscriptionTier.PRO
-    if config.stripe_price_proplus_monthly:
-        mapping[config.stripe_price_proplus_monthly] = SubscriptionTier.PRO_PLUS
-    if config.stripe_price_proplus_annual:
-        mapping[config.stripe_price_proplus_annual] = SubscriptionTier.PRO_PLUS
-    if config.stripe_price_ultra_monthly:
-        mapping[config.stripe_price_ultra_monthly] = SubscriptionTier.ULTRA
-    if config.stripe_price_ultra_annual:
-        mapping[config.stripe_price_ultra_annual] = SubscriptionTier.ULTRA
+    """Build mapping from Stripe price IDs to subscription tiers using cached pricing."""
+    mapping: dict[str, SubscriptionTier] = {}
+    try:
+        pricing_catalog = get_pricing_catalog()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to load pricing catalog for tier mapping: %s", exc)
+        return mapping
+
+    for tier_pricing in pricing_catalog:
+        tier = SubscriptionTier(tier_pricing.tier)
+        if tier_pricing.monthly.price_id:
+            mapping[tier_pricing.monthly.price_id] = tier
+        if tier_pricing.annual.price_id:
+            mapping[tier_pricing.annual.price_id] = tier
     return mapping
 
 
@@ -494,40 +495,11 @@ async def handle_subscription_deleted(stripe_subscription: dict) -> Optional[Bil
 
 async def process_stripe_event(event_type: str | None, data: dict) -> None:
     """
-    Dispatch Stripe webhook event types to handlers.
+    Deprecated: maintained for backward compatibility. Delegates to StripeWebhookController.
     """
-    if not event_type:
-        logger.warning("Stripe event missing type; skipping")
-        return
+    from api.subscriptions.stripe_webhook_controller import stripe_webhook_controller  # imported here to avoid cycle
 
-    logger.info("Processing Stripe webhook: %s", event_type)
-
-    if event_type == "checkout.session.completed":
-        customer_id = data.get("customer")
-        user_id = data.get("metadata", {}).get("user_id")
-        if customer_id and user_id:
-            await sync_stripe_customer_to_clerk(user_id, customer_id)
-        subscription_id = data.get("subscription")
-        if subscription_id:
-            await sync_subscription_from_stripe(subscription_id)
-
-    elif event_type in ("customer.subscription.created", "customer.subscription.updated"):
-        await sync_subscription_from_stripe(data)
-
-    elif event_type == "customer.subscription.deleted":
-        await handle_subscription_deleted(data)
-
-    elif event_type in (
-        "invoice.payment_failed",
-        "invoice.payment_succeeded",
-        "invoice.paid",
-    ):
-        await sync_subscription_for_invoice(data)
-        if event_type == "invoice.payment_failed":
-            customer_id = data.get("customer")
-            logger.warning("Invoice payment failed for customer %s", customer_id)
-    else:
-        logger.info("Not consuming Stripe event %s", event_type)
+    await stripe_webhook_controller.process_event(event_type, data)
 
 
 def verify_webhook_signature(payload: bytes, signature: str) -> dict:
