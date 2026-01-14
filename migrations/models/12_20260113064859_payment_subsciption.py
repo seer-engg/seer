@@ -20,7 +20,12 @@ async def upgrade(db: BaseDBAsyncClient) -> str:
 );
 COMMENT ON COLUMN "user_subscriptions"."tier" IS 'FREE: free\nPRO: pro\nPRO_PLUS: pro_plus\nULTRA: ultra';
 COMMENT ON COLUMN "user_subscriptions"."status" IS 'ACTIVE: active\nCANCELED: canceled\nPAST_DUE: past_due\nTRIALING: trialing\nINCOMPLETE: incomplete';
-COMMENT ON TABLE "user_subscriptions" IS 'Tracks user subscription state from Stripe.';"""
+COMMENT ON TABLE "user_subscriptions" IS 'Tracks user subscription state from Stripe.';
+
+ALTER TABLE trigger_subscriptions
+ADD CONSTRAINT IF NOT EXISTS trigger_subscriptions_workflow_id_fkey
+FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE;
+"""
 
 
 async def downgrade(db: BaseDBAsyncClient) -> str:
