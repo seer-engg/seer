@@ -143,6 +143,10 @@ class SeerConfig(BaseSettings):
         description="Supabase management API base URL",
     )
 
+    FRONTEND_URL:str = Field(
+        default="http://localhost:5173", description="Frontend application URL"
+    )
+
     # ============================================================================
     # Feature Flags
     # ============================================================================

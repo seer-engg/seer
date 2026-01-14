@@ -8,8 +8,11 @@ Provides REST API endpoints for:
 Usage:
     uvicorn api.main:app --host 0.0.0.0 --port 2024 --reload
 """
+import asyncio
 import os
+import webbrowser
 from contextlib import asynccontextmanager
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,8 +39,6 @@ async def initialize_tool_index(app: FastAPI) -> None:
         return
 
     try:
-        import asyncio
-
         from shared.tool_hub.index_manager import ensure_tool_index_exists
 
         async def init_tool_index():
@@ -60,6 +61,28 @@ async def initialize_tool_index(app: FastAPI) -> None:
         logger.warning("Could not initialize tool index: %s. Tool search may not work.", e)
 
 
+async def open_frontend_after_startup() -> None:
+    """Launch hosted frontend pointing at local backend for convenience."""
+    if config.is_cloud_mode:
+        return
+
+    frontend_url = config.FRONTEND_URL
+    backend_override = "localhost:8000"
+    target_url = f"{frontend_url}?{urlencode({'backend': backend_override})}"
+
+    # Small delay to let the server finish binding before opening the browser
+    await asyncio.sleep(1)
+
+    try:
+        opened = webbrowser.open(target_url)
+        if opened:
+            logger.info("Opened frontend at %s", target_url)
+        else:
+            logger.warning("Could not open frontend automatically; url=%s", target_url)
+    except Exception as exc:
+        logger.warning("Failed to open frontend in browser: %s (url=%s)", exc, target_url, exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
@@ -77,6 +100,7 @@ async def lifespan(app: FastAPI):
             logger.info("Trigger poller %s", trigger_status)
 
             await initialize_tool_index(app)
+            asyncio.create_task(open_frontend_after_startup())
 
             try:
                 yield

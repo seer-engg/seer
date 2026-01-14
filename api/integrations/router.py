@@ -57,8 +57,6 @@ logger = get_logger("api.integrations.router")
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
-
 
 class SupabaseBindRequest(BaseModel):
     project_ref: str = Field(..., min_length=3, description="Supabase project reference")
@@ -148,7 +146,7 @@ def _check_existing_scopes(
                 normalized_scope_list,
                 existing_connection.scopes[:100],
             )
-            final_redirect = redirect_to or f"{FRONTEND_URL}/settings/integrations"
+            final_redirect = redirect_to or f"{config.FRONTEND_URL}/settings/integrations"
             connected_param = integration_type or oauth_provider
             return RedirectResponse(url=f"{final_redirect}?connected={connected_param}")
     return None
@@ -164,7 +162,7 @@ def _build_oauth_state(
     state_data = {
         'user_id': user.user_id,
         'user_email': user.email,
-        'redirect_to': redirect_to or f"{FRONTEND_URL}/settings/integrations",
+        'redirect_to': redirect_to or f"{config.FRONTEND_URL}/settings/integrations",
         'oauth_provider': oauth_provider,
         'integration_type': integration_type or oauth_provider,
         'requested_scope': scope_string,
