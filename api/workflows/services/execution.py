@@ -36,6 +36,7 @@ from shared.database import (
 )
 from workflow_compiler.errors import WorkflowCompilerError
 from workflow_compiler.schema.models import WorkflowSpec
+import asyncio
 
 logger = logging.getLogger(__name__)
 
