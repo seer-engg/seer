@@ -5,16 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [Unreleased] - 2026-01-23
 
 ### Added
-- New features in development
+- Dedicated section for triggers in workflow spec schema
+- Auto-connect edges in workflow canvas UI
 
-### Changed
-- Changes to existing functionality
-
-### Fixed
-- Bug fixes
+### Deprecated
+- Older workflow schema format (will no longer be supported)
 
 ## [0.1.4] - 2026-01-15
 
