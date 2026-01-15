@@ -1,0 +1,34 @@
+name: Sync Changelog to Website
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'CHANGELOG.md'
+  workflow_dispatch:
+
+jobs:
+  sync-changelog:
+    name: Sync CHANGELOG.md to seer-website
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout seer repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Copy CHANGELOG.md to website repo
+        uses: cpina/github-action-push-to-another-repository@main
+        env:
+          API_TOKEN_GITHUB: ${{ secrets.SYNC_TOKEN }}
+        with:
+          source-directory: '.'
+          destination-github-username: 'seer-engg'
+          destination-repository-name: 'seer-website'
+          user-email: 'github-actions[bot]@users.noreply.github.com'
+          user-name: 'github-actions[bot]'
+          target-branch: main
+          target-directory: 'src/content/changelog'
+          commit-message: 'chore: sync CHANGELOG.md from seer repo'
