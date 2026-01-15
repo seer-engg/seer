@@ -5,7 +5,7 @@ import logging
 from decimal import Decimal
 
 from shared.database.models import User
-from shared.usage_limits.constants import CREDIT_WARNING_THRESHOLD, CREDIT_BLOCK_THRESHOLD
+from shared.usage_limits.constants import tiered_usage_limits
 from shared.usage_limits.exceptions import CreditLimitExceeded
 from shared.usage_limits.service import get_limits_for_user, resolve_user_tier
 from shared.usage_limits.tracking import get_monthly_llm_credits_used
@@ -34,8 +34,8 @@ async def check_credit_limit(user: User) -> None:
     monthly_limit = Decimal(str(limits.llm_credits_monthly))
 
     # Calculate thresholds
-    soft_limit = monthly_limit * Decimal(str(CREDIT_WARNING_THRESHOLD))  # 80%
-    hard_limit = monthly_limit * Decimal(str(CREDIT_BLOCK_THRESHOLD))  # 120%
+    soft_limit = monthly_limit * Decimal(str(tiered_usage_limits.CREDIT_WARNING_THRESHOLD))  # 80%
+    hard_limit = monthly_limit * Decimal(str(tiered_usage_limits.CREDIT_BLOCK_THRESHOLD))  # 120%
 
     # Hard block at 120%
     if credits_used >= hard_limit:

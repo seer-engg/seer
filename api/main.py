@@ -29,9 +29,9 @@ from shared.logger import get_logger
 from shared.usage_limits.exceptions import ChatDisabledError, UsageLimitError
 
 # Middleware order is important:
-# Think of middleware as layers wrapping your core application (the route handler). 
+# Think of middleware as layers wrapping your core application (the route handler).
 # The first middleware you add forms the innermost layer,
-# while the last one added forms the outermost layer. 
+# while the last one added forms the outermost layer.
 
 logger = get_logger("api.main")
 
@@ -147,14 +147,6 @@ if config.is_cloud_mode:
         jwks_url=config.clerk_jwks_url,
         issuer=config.clerk_issuer,
         audience=config.clerk_audience.split(",") if config.clerk_audience else None,
-        allow_unauthenticated_paths=[
-            "/health",
-            "/api/integrations/google/callback",
-            "/api/integrations/github/callback",
-            "/api/integrations/supabase_mgmt/callback",
-            "/api/v1/webhooks",
-            "/api/subscriptions/webhooks/stripe"
-        ],
     )
 else:
     from api.core.middleware.auth import TokenDecodeWithoutValidationMiddleware

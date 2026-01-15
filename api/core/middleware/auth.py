@@ -11,6 +11,7 @@ from jwt.exceptions import InvalidTokenError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
+from api.core.middleware.path_allowlist import is_public_path
 from shared.analytics import analytics
 from shared.database import User
 from shared.logger import get_logger
@@ -55,7 +56,7 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
         self._jwks_client = PyJWKClient(jwks_url)
         self._issuer = issuer
         self._audience = list(audience) if audience else None
-        self._allowed_paths = set(allow_unauthenticated_paths or [])
+        self._extra_allowed_paths = set(allow_unauthenticated_paths or [])
 
     async def dispatch(self, request: Request, call_next):
         request.state.user = None
@@ -154,16 +155,7 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
             return True
 
         path = request.scope.get("path") or request.url.path
-        for allowed in self._allowed_paths:
-            if allowed == "/":
-                if path == "/":
-                    return True
-                continue
-
-            normalized = allowed.rstrip("/")
-            if path == normalized or path.startswith(f"{normalized}/"):
-                return True
-        return False
+        return is_public_path(path, self._extra_allowed_paths)
 
     @staticmethod
     def _extract_user_id(claims: Dict[str, Any]) -> str:
@@ -246,28 +238,7 @@ class TokenDecodeWithoutValidationMiddleware(BaseHTTPMiddleware):
             return True
 
         path = request.scope.get("path") or request.url.path
-
-        # Skip health check endpoints (should be publicly accessible)
-        if path == "/health":
-            return True
-
-        # Skip OAuth callbacks (they come from OAuth provider, no JWT)
-        if "/integrations/" in path and path.endswith("/callback"):
-            return True
-
-        if path.startswith("/api/v1/webhooks"):
-            return True
-        
-        if path == '/api/subscriptions/webhooks/stripe':
-            return True
-        
-        if path =='/docs':
-            return True 
-        
-        if path == '/openapi.json':
-            return True
-
-        return False
+        return is_public_path(path, include_docs=True)
 
     def _extract_token(self, request: Request) -> Optional[str]:
         """Extract JWT token from Authorization header or query parameter."""
