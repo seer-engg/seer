@@ -237,7 +237,7 @@ async def list_integrations(request: Request):
     Frontend can use this to determine which tools are connected.
     """
     user: User = request.state.db_user
-    logger.info(f"Listing integrations for user {user.user_id}")
+    logger.info("Listing integrations for user %s", user.user_id)
     connections = await list_connections(user)
     res = []
     for conn in connections:
@@ -449,6 +449,7 @@ async def auth_callback(request: Request, provider: str):
                     'client_secret': client.client_secret,
                 },
                 headers={'Accept': 'application/json'},
+                timeout=30.0,
             )
             response.raise_for_status()
             token = response.json()
@@ -1187,7 +1188,7 @@ async def browse_resources(
         )
 
         if "error" in result and result["error"]:
-            logger.error(f"Resource browser error: {result['error']}")
+            logger.error("Resource browser error: %s", result["error"])
             raise_problem(
                 type_uri=INTEGRATION_PROBLEM,
                 title="Resource browser error",
@@ -1205,7 +1206,7 @@ async def browse_resources(
             status=400
         )
     except Exception as e:
-        logger.exception(f"Error browsing resources: {e}")
+        logger.exception("Error browsing resources: %s", e)
         raise_problem(
             type_uri=INTEGRATION_PROBLEM,
             title="Resource browsing failed",
