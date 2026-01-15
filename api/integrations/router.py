@@ -459,13 +459,47 @@ async def auth_callback(request: Request, provider: str):
             token['expires_at'] = int(time.time()) + token['expires_in']
 
         logger.info("OAuth token exchange successful: provider=%s", oauth_provider)
-    except Exception as e:
-        logger.error("OAuth token exchange error: %s", e)
+
+    except httpx.HTTPStatusError as exc:
+        # Specific handler for HTTP errors (400, 401, 500, etc.)
+        logger.error(
+            "OAuth token exchange failed",
+            extra={
+                "url": token_url,
+                "status_code": exc.response.status_code,
+                "body": exc.response.text[:500],
+                "provider": oauth_provider,
+            },
+        )
         raise_problem(
             type_uri=INTEGRATION_PROBLEM,
             title="OAuth token exchange error",
-            detail=str(e),
-            status=400
+            detail=f"Token endpoint returned {exc.response.status_code}: {exc.response.text[:200]}",
+            status=400,
+        )
+    except json.JSONDecodeError:
+        # Specific handler for invalid JSON responses
+        logger.error(
+            "Invalid JSON response from token endpoint",
+            extra={"url": token_url, "provider": oauth_provider},
+        )
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="OAuth token exchange error",
+            detail="Invalid response format from OAuth provider",
+            status=400,
+        )
+    except Exception as exc:
+        # Catch-all for unexpected errors (network, timeout, etc.)
+        logger.exception(
+            "Unexpected error during token exchange",
+            extra={"url": token_url, "provider": oauth_provider},
+        )
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="OAuth token exchange error",
+            detail=f"Unexpected error: {type(exc).__name__}",
+            status=500,
         )
 
     logger.info(
