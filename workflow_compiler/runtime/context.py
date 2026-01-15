@@ -13,3 +13,4 @@ class WorkflowRuntimeContext:
     """
 
     user: User
+    workflow_run_id: str | None = None

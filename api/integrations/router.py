@@ -14,7 +14,7 @@
 
 import base64
 import json
-import os
+import time
 from typing import List, Optional
 
 import httpx
@@ -401,22 +401,106 @@ async def auth_callback(request: Request, provider: str):
     if a connection already exists for this provider.
     """
     oauth_provider = get_oauth_provider(provider)
-    client = oauth.create_client(oauth_provider)
-    try:
-        token = await client.authorize_access_token(request)
-    except Exception as e:
-        logger.error("OAuth callback error: %s", e)
-        raise_problem(
-            type_uri=INTEGRATION_PROBLEM,
-            title="OAuth callback error",
-            detail=str(e),
-            status=400
-        )
 
+    # Validate custom state FIRST (before Authlib's session-based validation)
+    # This allows stateless OAuth that works across multiple workers
     state_data = _extract_and_validate_state(request)
     user_id = state_data['user_id']
     redirect_to = state_data.get('redirect_to')
     integration_type = state_data.get('integration_type')
+
+    logger.info(
+        "OAuth callback received: provider=%s, integration_type=%s, validating state",
+        oauth_provider,
+        integration_type,
+    )
+
+    # Extract authorization code from callback
+    code = request.query_params.get('code')
+    if not code:
+        error = request.query_params.get('error')
+        error_description = request.query_params.get('error_description', 'No authorization code received')
+        logger.error("OAuth callback missing code: error=%s, description=%s", error, error_description)
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="OAuth callback error",
+            detail=f"{error}: {error_description}" if error else error_description,
+            status=400
+        )
+
+    # Manually exchange authorization code for tokens
+    # This bypasses Authlib's session-based state validation which fails with multiple workers
+    client = oauth.create_client(oauth_provider)
+    redirect_uri = str(request.url_for('auth_callback', provider=oauth_provider))
+    if config.REDIRECT_URI_SCHEME == "https" and "http://" in redirect_uri:
+        redirect_uri = redirect_uri.replace("http://", "https://")
+
+    try:
+        token_url = client.server_metadata.get('token_endpoint') or client.access_token_url
+
+        async with httpx.AsyncClient() as http_client:
+            response = await http_client.post(
+                token_url,
+                data={
+                    'grant_type': 'authorization_code',
+                    'code': code,
+                    'redirect_uri': redirect_uri,
+                    'client_id': client.client_id,
+                    'client_secret': client.client_secret,
+                },
+                headers={'Accept': 'application/json'},
+            )
+            response.raise_for_status()
+            token = response.json()
+
+        # Convert expires_in (seconds) to expires_at (timestamp)
+        # This matches Authlib's token handling behavior
+        if 'expires_in' in token and 'expires_at' not in token:
+            token['expires_at'] = int(time.time()) + token['expires_in']
+
+        logger.info("OAuth token exchange successful: provider=%s", oauth_provider)
+
+    except httpx.HTTPStatusError as exc:
+        # Specific handler for HTTP errors (400, 401, 500, etc.)
+        logger.error(
+            "OAuth token exchange failed",
+            extra={
+                "url": token_url,
+                "status_code": exc.response.status_code,
+                "body": exc.response.text[:500],
+                "provider": oauth_provider,
+            },
+        )
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="OAuth token exchange error",
+            detail=f"Token endpoint returned {exc.response.status_code}: {exc.response.text[:200]}",
+            status=400,
+        )
+    except json.JSONDecodeError:
+        # Specific handler for invalid JSON responses
+        logger.error(
+            "Invalid JSON response from token endpoint",
+            extra={"url": token_url, "provider": oauth_provider},
+        )
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="OAuth token exchange error",
+            detail="Invalid response format from OAuth provider",
+            status=400,
+        )
+    except Exception as exc:
+        # Catch-all for unexpected errors (network, timeout, etc.)
+        logger.exception(
+            "Unexpected error during token exchange",
+            extra={"url": token_url, "provider": oauth_provider},
+        )
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="OAuth token exchange error",
+            detail=f"Unexpected error: {type(exc).__name__}",
+            status=500,
+        )
 
     logger.info(
         "OAuth callback: provider=%s, integration_type=%s",
