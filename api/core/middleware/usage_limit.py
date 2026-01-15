@@ -11,6 +11,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from api.core.middleware.path_allowlist import is_public_path
 from shared.database import User
 from shared.logger import get_logger
 from shared.usage_limits import (
@@ -52,15 +53,25 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
 
         Checks usage limits based on request path and method before proceeding to handler.
         """
-        user: User = request.state.db_user
+        path = request.url.path
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
+        if is_public_path(path, include_docs=True):
+            return await call_next(request)
+
+        user: Optional[User] = getattr(request.state, "db_user", None)
+        if user is None:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Authentication required"},
+            )
 
         # Get user's tier limits
         limits = await get_limits_for_user(user)
 
         # Check limits based on request path
-        path = request.url.path
         method = request.method
-        logger.info("Checking usage limits for user %s on %s %s", user.id, method, path)
 
         # 1. Workflow Creation Limit
         if method == "POST" and path == "/api/v1/workflows":

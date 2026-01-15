@@ -22,6 +22,9 @@ from shared.database.usage_models import (
 )
 from shared.database import Workflow, WorkflowRun, WorkflowRunStatus
 from shared.usage_limits.service import get_billing_period_for_user
+from shared.logger import get_logger
+
+logger = get_logger(__name__)
 
 async def increment_chat_message_count(user: User) -> int:
     """
@@ -149,6 +152,15 @@ async def track_llm_usage(
     Returns:
         The created LLMUsageRecord
     """
+    logger.info(
+        "Tracking LLM usage for user %s: provider=%s, model=%s, input_tokens=%d, output_tokens=%d, cost=%.6f",
+        user.user_id,
+        provider,
+        model,
+        input_tokens,
+        output_tokens,
+        cost,
+    )
     record = await LLMUsageRecord.create(
         user=user,
         workflow_run_id=workflow_run_id,

@@ -81,6 +81,38 @@ class NodeRuntime:
     def bind_context(self, context: WorkflowRuntimeContext | None) -> None:
         self._current_context = context
 
+    def _check_llm_credit_limit_sync(self) -> None:
+        """
+        Run the credit gate in synchronous contexts before an LLM call.
+        """
+        if not self._current_context or not self._current_context.user:
+            return
+
+        from shared.usage_limits.credit_gate import check_credit_limit
+
+        try:
+            asyncio.run(check_credit_limit(self._current_context.user))
+        except Exception as exc:  # noqa: BLE001 - propagate credit failures, log others
+            if exc.__class__.__name__ == "CreditLimitExceeded":
+                raise
+            logger.error("Credit limit check failed: %s", exc)
+
+    async def _check_llm_credit_limit_async(self) -> None:
+        """
+        Run the credit gate in async contexts before an LLM call.
+        """
+        if not self._current_context or not self._current_context.user:
+            return
+
+        from shared.usage_limits.credit_gate import check_credit_limit
+
+        try:
+            await check_credit_limit(self._current_context.user)
+        except Exception as exc:  # noqa: BLE001 - propagate credit failures, log others
+            if exc.__class__.__name__ == "CreditLimitExceeded":
+                raise
+            logger.error("Credit limit check failed: %s", exc)
+
     def _track_llm_usage_async(self, usage_metadata: Dict[str, Any]) -> None:
         """
         Track LLM usage asynchronously (fire and forget).
@@ -178,6 +210,7 @@ class NodeRuntime:
         if isinstance(node, ToolNode):
             return self._run_tool(node, state, config, locals_ctx=locals_ctx, context=context)
         if isinstance(node, LLMNode):
+            self._check_llm_credit_limit_sync()
             return self._run_llm(node, state, config, locals_ctx=locals_ctx)
         if isinstance(node, IfNode):
             return self._run_if(node, state, config, locals_ctx=locals_ctx, context=context)
@@ -199,6 +232,7 @@ class NodeRuntime:
         if isinstance(node, TaskNode):
             return self._run_task(node, state, config, locals_ctx=locals_ctx)
         if isinstance(node, LLMNode):
+            await self._check_llm_credit_limit_async()
             return self._run_llm(node, state, config, locals_ctx=locals_ctx)
         if isinstance(node, IfNode):
             return await self._run_if_async(node, state, config, locals_ctx=locals_ctx, context=context)
@@ -330,26 +364,6 @@ class NodeRuntime:
         *,
         locals_ctx: Mapping[str, Any] | None,
     ) -> Dict[str, Any]:
-        # STEP 0: Check credit limit BEFORE execution
-        if self._current_context and self._current_context.user:
-            from shared.usage_limits.credit_gate import check_credit_limit
-
-            try:
-                # Run async check in event loop
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # We're already in async context, create task and wait
-                    asyncio.ensure_future(check_credit_limit(self._current_context.user))
-                else:
-                    # Run directly
-                    loop.run_until_complete(check_credit_limit(self._current_context.user))
-            except Exception as e:
-                # Re-raise CreditLimitExceeded to stop execution
-                # Log but don't fail on check errors
-                if e.__class__.__name__ == "CreditLimitExceeded":
-                    raise
-                logger.error(f"Credit limit check failed: {e}")
-
         # STEP 1: Capture inputs
         inputs = self._capture_node_inputs(node, state, config, locals_ctx)
 
