@@ -26,10 +26,6 @@ from shared.database import (
     parse_workflow_public_id,
     TriggerSubscription
 )
-from shared.usage_limits import (
-    decrement_workflow_count,
-    increment_workflow_count,
-)
 from workflow_compiler.schema.models import WorkflowSpec
 
 # ===== Helper Functions =====
@@ -147,9 +143,6 @@ async def create_workflow(user: User, payload: api_models.WorkflowCreateRequest)
         updated_by=user,
     )
     await workflow.fetch_related("draft")
-
-    # Track workflow creation
-    await increment_workflow_count(user)
 
     return await _workflow_response(workflow)
 
@@ -368,9 +361,6 @@ async def publish_workflow(
 async def delete_workflow(user: User, workflow_id: str) -> None:
     workflow = await _get_workflow(user, workflow_id)
     await workflow.delete()
-
-    # Decrement workflow count
-    await decrement_workflow_count(user)
 
 
 async def export_workflow(

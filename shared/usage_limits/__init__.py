@@ -24,7 +24,6 @@ from shared.usage_limits.service import (
     resolve_user_tier,
 )
 from shared.usage_limits.tracking import (
-    decrement_workflow_count,
     get_chat_message_count,  # Deprecated - use get_total_chat_message_count
     get_monthly_llm_credits_detailed,
     get_monthly_llm_credits_used,
@@ -32,8 +31,6 @@ from shared.usage_limits.tracking import (
     get_total_chat_message_count,
     get_workflow_count,
     increment_chat_message_count,
-    increment_monthly_run_count,
-    increment_workflow_count,
     reset_monthly_counters,
     track_llm_usage,
 )
@@ -49,9 +46,6 @@ __all__ = [
     "is_trial_expired",
     "get_subscription_for_user",
     # Tracking functions
-    "increment_workflow_count",
-    "decrement_workflow_count",
-    "increment_monthly_run_count",
     "increment_chat_message_count",
     "get_workflow_count",
     "get_monthly_run_count",

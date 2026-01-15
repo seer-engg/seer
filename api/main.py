@@ -28,8 +28,10 @@ from shared.database import db_lifespan
 from shared.logger import get_logger
 from shared.usage_limits.exceptions import ChatDisabledError, UsageLimitError
 
-# Import tools to register them
-# Note: model_block removed - use LLM block in workflows instead
+# Middleware order is important:
+# Think of middleware as layers wrapping your core application (the route handler). 
+# The first middleware you add forms the innermost layer,
+# while the last one added forms the outermost layer. 
 
 logger = get_logger("api.main")
 
@@ -127,6 +129,12 @@ app.include_router(tools_router)
 from api.core.middleware.correlation import CorrelationMiddleware  # pylint: disable=wrong-import-position,ungrouped-imports # Reason: Import after app creation
 app.add_middleware(CorrelationMiddleware)
 
+# Usage limit middleware - enforce subscription limits centrally
+# must be AFTER auth middleware to have user info
+from api.core.middleware.usage_limit import UsageLimitMiddleware  # pylint: disable=ungrouped-imports # Reason: Import after auth middleware setup
+app.add_middleware(UsageLimitMiddleware)
+logger.info("🔒 Usage limit middleware enabled")
+
 # Authentication middleware - register BEFORE CORS to ensure user is set
 if config.is_cloud_mode:
     if not config.is_clerk_configured:
@@ -153,10 +161,6 @@ else:
     app.add_middleware(TokenDecodeWithoutValidationMiddleware)
     logger.info("🔧 Self-hosted mode: Authentication disabled")
 
-# Usage limit middleware - enforce subscription limits centrally
-from api.core.middleware.usage_limit import UsageLimitMiddleware  # pylint: disable=ungrouped-imports # Reason: Import after auth middleware setup
-app.add_middleware(UsageLimitMiddleware)
-logger.info("🔒 Usage limit middleware enabled")
 
 # CORS middleware for development - must be AFTER auth middleware
 app.add_middleware(

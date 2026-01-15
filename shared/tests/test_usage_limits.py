@@ -198,7 +198,6 @@ async def test_usage_tracking_workflow_count():
     from shared.database.models import User
     from shared.usage_limits import (
         get_workflow_count,
-        increment_workflow_count,
     )
 
     user = await User.create(
@@ -213,8 +212,6 @@ async def test_usage_tracking_workflow_count():
         assert count == 0
 
         # Test increment
-        new_count = await increment_workflow_count(user)
-        assert new_count == 1
 
         # Verify count increased
         count = await get_workflow_count(user)

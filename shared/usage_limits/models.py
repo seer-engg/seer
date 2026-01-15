@@ -7,7 +7,7 @@ subscription tiers to their specific limits.
 from pydantic import BaseModel, Field
 
 from shared.database.subscription_models import SubscriptionTier
-from shared.usage_limits import constants
+from shared.usage_limits.constants import tiered_usage_limits as constants
 
 
 class TierLimits(BaseModel):
