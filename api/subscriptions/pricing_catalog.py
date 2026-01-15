@@ -55,12 +55,7 @@ PRODUCT_DEFINITIONS: dict[str, ProductDefinition] = {
         tier="pro_plus",
         name="Seer Pro+",
         description="Pro+ tier subscription for Seer",
-    ),
-    "ultra": ProductDefinition(
-        tier="ultra",
-        name="Seer Ultra",
-        description="Ultra tier subscription for Seer",
-    ),
+    )
 }
 
 PRICE_DEFINITIONS: tuple[PriceDefinition, ...] = (
@@ -91,21 +86,7 @@ PRICE_DEFINITIONS: tuple[PriceDefinition, ...] = (
         interval="year",
         amount=600,
         lookup_key="pro_plus_annual",
-    ),
-    PriceDefinition(
-        tier="ultra",
-        name="Ultra",
-        interval="month",
-        amount=100,
-        lookup_key="ultra_monthly",
-    ),
-    PriceDefinition(
-        tier="ultra",
-        name="Ultra",
-        interval="year",
-        amount=1000,
-        lookup_key="ultra_annual",
-    ),
+    )
 )
 
 # Cache Stripe price IDs to avoid hitting the API on every pricing request.
