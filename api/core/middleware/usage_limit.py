@@ -52,11 +52,7 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
 
         Checks usage limits based on request path and method before proceeding to handler.
         """
-        user: Optional[User] = getattr(request.state, "db_user", None)
-
-        # Skip if not authenticated (handled by auth middleware)
-        if not user:
-            return await call_next(request)
+        user: User = request.state.db_user
 
         # Get user's tier limits
         limits = await get_limits_for_user(user)
@@ -64,10 +60,12 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
         # Check limits based on request path
         path = request.url.path
         method = request.method
+        logger.info("Checking usage limits for user %s on %s %s", user.id, method, path)
 
         # 1. Workflow Creation Limit
         if method == "POST" and path == "/api/v1/workflows":
             if not limits.has_unlimited_workflows:
+                logger.info("Checking workflow creation limit for user %s", user.id)
                 current = await get_workflow_count(user)
                 if current >= limits.workflows:
                     tier = await resolve_user_tier(user)

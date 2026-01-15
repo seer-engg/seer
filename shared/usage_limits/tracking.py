@@ -20,89 +20,8 @@ from shared.database.usage_models import (
     ResourceType,
     UsageCounter,
 )
+from shared.database import Workflow, WorkflowRun, WorkflowRunStatus
 from shared.usage_limits.service import get_billing_period_for_user
-
-
-
-async def increment_workflow_count(user: User) -> int:
-    """
-    Increment the total workflow count for a user.
-
-    Args:
-        user: The user to increment count for
-
-    Returns:
-        The new total workflow count
-    """
-    # All-time counter (no period window)
-    counter, _ = await UsageCounter.get_or_create(
-        user=user,
-        resource_type=ResourceType.WORKFLOWS,
-        period_start=None,
-        period_end=None,
-        defaults={"count": 0},
-    )
-
-    # Increment atomically
-    await UsageCounter.filter(id=counter.id).update(count=F("count") + 1)
-
-    # Refresh and return new count
-    await counter.refresh_from_db()
-    return counter.count
-
-
-async def decrement_workflow_count(user: User) -> int:
-    """
-    Decrement the total workflow count for a user (e.g., when deleting a workflow).
-
-    Args:
-        user: The user to decrement count for
-
-    Returns:
-        The new total workflow count
-    """
-    counter = await UsageCounter.get_or_none(
-        user=user,
-        resource_type=ResourceType.WORKFLOWS,
-        period_start=None,
-        period_end=None,
-    )
-
-    if not counter or counter.count <= 0:
-        return 0
-
-    # Decrement atomically, ensuring it doesn't go below 0
-    await UsageCounter.filter(id=counter.id, count__gt=0).update(count=F("count") - 1)
-
-    await counter.refresh_from_db()
-    return counter.count
-
-
-async def increment_monthly_run_count(user: User) -> int:
-    """
-    Increment the monthly workflow run count for a user.
-
-    Args:
-        user: The user to increment count for
-
-    Returns:
-        The new monthly run count
-    """
-    period_start, period_end = await get_billing_period_for_user(user)
-
-    counter, _ = await UsageCounter.get_or_create(
-        user=user,
-        resource_type=ResourceType.RUNS,
-        period_start=period_start,
-        period_end=period_end,
-        defaults={"count": 0},
-    )
-
-    await UsageCounter.filter(id=counter.id).update(count=F("count") + 1)
-
-    await counter.refresh_from_db()
-    return counter.count
-
 
 async def increment_chat_message_count(user: User) -> int:
     """
@@ -141,14 +60,8 @@ async def get_workflow_count(user: User) -> int:
     Returns:
         Total workflow count
     """
-    counter = await UsageCounter.get_or_none(
-        user=user,
-        resource_type=ResourceType.WORKFLOWS,
-        period_start=None,
-        period_end=None,
-    )
-
-    return counter.count if counter else 0
+    count = await Workflow.filter(user=user).count()
+    return count
 
 
 async def get_monthly_run_count(user: User) -> int:
@@ -163,14 +76,14 @@ async def get_monthly_run_count(user: User) -> int:
     """
     period_start, period_end = await get_billing_period_for_user(user)
 
-    counter = await UsageCounter.get_or_none(
+    count = await WorkflowRun.filter(
         user=user,
-        resource_type=ResourceType.RUNS,
-        period_start=period_start,
-        period_end=period_end,
-    )
+        created_at__gte=period_start,
+        created_at__lt=period_end,
+        status= WorkflowRunStatus.SUCCEEDED
+    ).count()
 
-    return counter.count if counter else 0
+    return count
 
 
 async def get_total_chat_message_count(user: User) -> int:
