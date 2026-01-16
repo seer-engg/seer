@@ -176,6 +176,7 @@ async def _execute_compiled_run(
     inputs: Dict[str, Any],
     config_payload: Dict[str, Any],
     execution_mode: str,
+    trigger_envelope: Dict[str, Any] | None = None,
 ) -> tuple[Dict[str, Any], ExecutionMetrics]:
     logger.debug(
         "Preparing workflow run '%s' (workflow_id=%s) inputs_keys=%s "
@@ -225,7 +226,7 @@ async def _execute_compiled_run(
             workflow_run_id=run.run_id,
         )
         result = await compiled.ainvoke(
-            inputs or {}, config=effective_config, context=runtime_context
+            inputs or {}, config=effective_config, context=runtime_context, trigger=trigger_envelope
         )
     except WorkflowCompilerError as exc:
         print(f"{traceback.format_exc()}")

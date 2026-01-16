@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 from workflow_compiler.errors import TypeEnvironmentError
 from workflow_compiler.expr.typecheck import (
     TypeEnvironment,
-    register_inputs,
+    register_trigger,
     schema_from_output_contract,
 )
 from workflow_compiler.registry.tool_registry import ToolRegistry
@@ -30,10 +30,35 @@ def build_type_environment(
     spec: WorkflowSpec, *, schema_registry: SchemaRegistry, tool_registry: ToolRegistry
 ) -> TypeEnvironment:
     env = TypeEnvironment()
-    register_inputs(env, spec.inputs)
+
+    # Register trigger schema if workflow has triggers declared
+    if spec.triggers:
+        trigger_schema = _resolve_trigger_schema(spec)
+        register_trigger(env, trigger_schema)
+
     for node in spec.nodes:
         _process_node(node, env, schema_registry, tool_registry)
     return env
+
+
+def _resolve_trigger_schema(spec: WorkflowSpec) -> Dict:
+    """
+    Resolve the schema for ${trigger} expressions from the workflow's trigger definitions.
+
+    Uses the event schema from the first trigger. If multiple triggers are declared,
+    they should have compatible schemas (this is not enforced here).
+    """
+    if not spec.triggers:
+        return {"type": "object", "additionalProperties": True}
+
+    first_trigger = spec.triggers[0]
+    event_schema = first_trigger.schemas.event
+
+    # If no explicit event schema, return a permissive object schema
+    if not event_schema:
+        return {"type": "object", "additionalProperties": True}
+
+    return event_schema
 
 
 def _process_node(

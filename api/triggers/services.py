@@ -10,9 +10,7 @@ from tortoise.exceptions import DoesNotExist, IntegrityError
 from api.workflows.services import (
     _complete_run,
     _create_run_record,
-    _evaluate_bindings,
     _execute_compiled_run,
-    _validate_resolved_inputs,
 )
 from shared.database import (
     TriggerEvent,
@@ -301,64 +299,15 @@ async def process_trigger_run_job(subscription_id: int, event_id: int) -> None:
         return
 
     spec = WorkflowSpec.model_validate(published_version.spec)
-    bindings = dict(subscription.bindings or {})
-    try:
-        resolved_inputs = _evaluate_bindings(bindings, envelope)
-        logger.debug(
-            "Bindings evaluated",
-            extra={
-                "subscription_id": subscription_id,
-                "event_id": event_id,
-                "bindings": bindings,
-                "resolved_inputs": resolved_inputs,
-            }
-        )
-    except ValueError as exc:
-        await TriggerEvent.filter(id=event.id).update(
-            status=TriggerEventStatus.FAILED,
-            error={"detail": str(exc)},
-        )
-        logger.error(
-            "Trigger job failed: binding evaluation error",
-            extra={
-                "subscription_id": subscription_id,
-                "event_id": event_id,
-                "workflow_id": workflow.id,
-                "trigger_key": subscription.trigger_key,
-                "bindings": bindings,
-                "event_envelope": envelope,
-                "error": str(exc),
-            }
-        )
-        return
 
-    validation_errors = _validate_resolved_inputs(resolved_inputs, spec)
-    if validation_errors:
-        await TriggerEvent.filter(id=event.id).update(
-            status=TriggerEventStatus.FAILED,
-            error={"detail": "Invalid inputs", "errors": validation_errors},
-        )
-        logger.error(
-            "Trigger job failed: invalid inputs",
-            extra={
-                "subscription_id": subscription_id,
-                "event_id": event_id,
-                "workflow_id": workflow.id,
-                "trigger_key": subscription.trigger_key,
-                "validation_errors": validation_errors,
-                "resolved_inputs": resolved_inputs,
-                "expected_inputs": {name: {"type": inp.type.value, "required": inp.required}
-                                   for name, inp in (spec.inputs or {}).items()},
-            }
-        )
-        return
-
+    # Trigger data is now accessed directly via ${trigger.data.*} expressions in the workflow.
+    # No binding evaluation or input validation is needed.
     run = await _create_run_record(
         user,
         workflow=workflow,
         workflow_version=published_version,
         spec=spec,
-        inputs=resolved_inputs,
+        inputs={},
         config_payload={},
         source=WorkflowRunSource.TRIGGER,
     )
@@ -381,9 +330,10 @@ async def process_trigger_run_job(subscription_id: int, event_id: int) -> None:
         output, metrics = await _execute_compiled_run(
             run,
             user,
-            inputs=resolved_inputs,
+            inputs={},
             config_payload={},
             execution_mode="trigger",
+            trigger_envelope=envelope,
         )
         await _complete_run(run, output, metrics)
         await TriggerEvent.filter(id=event.id).update(status=TriggerEventStatus.PROCESSED)

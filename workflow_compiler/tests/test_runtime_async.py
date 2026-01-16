@@ -77,37 +77,58 @@ async def test_if_branch_tool_runs_async_handler() -> None:
         async_handler=async_handler,
     )
 
+    # Trigger-based workflow: data is accessed via ${trigger.data.*}
     spec = {
         "version": "1",
-        "inputs": {
-            "flag": {"type": "boolean", "required": True},
-            "payload": {"type": "string", "required": True},
-        },
+        "triggers": [
+            {
+                "key": "test.trigger",
+                "title": "Test Trigger",
+                "provider": "test",
+                "mode": "webhook",
+                "schemas": {
+                    "event": {
+                        "type": "object",
+                        "properties": {
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "flag": {"type": "boolean"},
+                                    "payload": {"type": "string"},
+                                },
+                            },
+                        },
+                    },
+                },
+            }
+        ],
         "nodes": [
             {
                 "id": "conditional",
                 "type": "if",
-                "condition": "${inputs.flag}",
+                "condition": "${trigger.data.flag}",
                 "then": [
                     {
                         "id": "call_tool",
                         "type": "tool",
                         "tool": "test.echo",
-                        "in": {"message": "${inputs.payload}"},
+                        "in": {"message": "${trigger.data.payload}"},
                         "out": "tool_result",
                     }
                 ],
                 "else": [],
             }
         ],
-        "output": "${tool_result}",
     }
 
     compiled = await _compile_workflow(spec, [tool_def])
+    # Pass trigger envelope with event data
+    trigger_envelope = {"data": {"flag": True, "payload": "hello"}}
     result = await compiled.ainvoke(
-        inputs={"flag": True, "payload": "hello"},
+        inputs={},
         config=None,
         context=None,
+        trigger=trigger_envelope,
     )
 
     assert result["tool_result"]["echo"] == "hello"
@@ -146,7 +167,6 @@ async def test_for_each_body_tools_use_async_handler() -> None:
 
     spec = {
         "version": "1",
-        "inputs": {},
         "nodes": [
             {
                 "id": "items_seed",
@@ -171,7 +191,6 @@ async def test_for_each_body_tools_use_async_handler() -> None:
                 "out": "aggregated",
             },
         ],
-        "output": "${aggregated}",
     }
 
     compiled = await _compile_workflow(spec, [tool_def])

@@ -221,7 +221,7 @@ class TriggerSpec(TriggerDefinition):
 
 class WorkflowSpec(StrictModel):
     version: str = Field(default="1")
-    inputs: Dict[str, InputDef] = Field(default_factory=dict)
+    
     nodes: List[Node] = Field(default_factory=list)
     triggers: List[TriggerSpec] = Field(default_factory=list)
     meta: Dict[str, JSONValue] = Field(default_factory=dict)

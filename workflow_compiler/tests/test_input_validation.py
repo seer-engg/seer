@@ -1,19 +1,24 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Dict
+
 import pytest
 
 from workflow_compiler.errors import WorkflowCompilerError
 from workflow_compiler.runtime.input_validation import coerce_inputs
-from workflow_compiler.schema.models import InputDef, InputType, WorkflowSpec
+from workflow_compiler.schema.models import InputDef, InputType
 
 
-def _spec_with_inputs(inputs: dict[str, InputDef]) -> WorkflowSpec:
-    # Minimal workflow spec for validation tests.
-    return WorkflowSpec(
-        version="1",
-        inputs=inputs,
-        nodes=[],
-    )
+@dataclass
+class MockSpecWithInputs:
+    """Mock spec object for testing input coercion (inputs removed from WorkflowSpec)."""
+    inputs: Dict[str, InputDef]
+
+
+def _spec_with_inputs(inputs: dict[str, InputDef]) -> MockSpecWithInputs:
+    # Mock workflow spec for validation tests since inputs was removed from WorkflowSpec.
+    return MockSpecWithInputs(inputs=inputs)
 
 
 def test_coerce_inputs_casts_and_applies_defaults() -> None:

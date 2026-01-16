@@ -77,6 +77,9 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
             mode="webhook",
             description="Accepts arbitrary JSON payloads via signed webhook requests.",
             schemas=TriggerSchemas(event=_default_event_envelope_schema()),
+            meta=TriggerMetadata(
+                requires_connection=False,
+            ),
         )
     )
     registry.register(

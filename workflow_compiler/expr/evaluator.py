@@ -30,6 +30,7 @@ class EvaluationContext:
     inputs: Mapping[str, Any]
     locals: Mapping[str, Any]
     config: Mapping[str, Any] | None = None
+    trigger: Mapping[str, Any] | None = None
 
     def with_locals(self, overrides: Mapping[str, Any]) -> "EvaluationContext":
         merged = dict(self.locals)
@@ -45,6 +46,12 @@ def _resolve_root(ctx: EvaluationContext, root: str) -> Any:
         return ctx.state[root]
     if root == "inputs":
         return ctx.inputs
+    if root == "trigger":
+        if ctx.trigger is None:
+            raise EvaluationError(
+                "Trigger context not available - workflow must be invoked via a trigger"
+            )
+        return ctx.trigger
     if ctx.config and root == "config":
         return ctx.config
     if ctx.config and root in ctx.config:

@@ -115,6 +115,7 @@ class UserBoundCompiledWorkflow:
         inputs: Mapping[str, Any],
         config: Mapping[str, Any] | None = None,
         context: WorkflowRuntimeContext | None = None,
+        trigger: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any]:
         merged_config = dict(config or {})
         runtime_context = context or WorkflowRuntimeContext(user=self.user)
@@ -130,7 +131,7 @@ class UserBoundCompiledWorkflow:
                 sorted(coerced_inputs.keys()),
             )
         return self.workflow.invoke(
-            coerced_inputs, config=merged_config, context=runtime_context
+            coerced_inputs, config=merged_config, context=runtime_context, trigger=trigger
         )
 
     async def ainvoke(
@@ -138,6 +139,7 @@ class UserBoundCompiledWorkflow:
         inputs: Mapping[str, Any],
         config: Mapping[str, Any] | None = None,
         context: WorkflowRuntimeContext | None = None,
+        trigger: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any]:
         merged_config = dict(config or {})
         runtime_context = context or WorkflowRuntimeContext(user=self.user)
@@ -153,7 +155,7 @@ class UserBoundCompiledWorkflow:
                 sorted(coerced_inputs.keys()),
             )
         return await self.workflow.ainvoke(
-            coerced_inputs, config=merged_config, context=runtime_context
+            coerced_inputs, config=merged_config, context=runtime_context, trigger=trigger
         )
 
 

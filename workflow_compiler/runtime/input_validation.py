@@ -38,12 +38,15 @@ def coerce_inputs(
     - Applies defaults declared on each InputDef.
     - Attempts type coercion for common literal formats (strings for numbers, etc.).
     - Raises WorkflowCompilerError if a required input is missing or cannot be coerced.
+
+    Note: With trigger-based workflows, inputs are no longer defined in the spec.
+    This function will pass through provided inputs without validation in that case.
     """
 
     incoming: Dict[str, Any] = dict(provided_inputs or {})
     coerced: Dict[str, Any] = {}
     errors: list[str] = []
-    spec_inputs = spec.inputs or {}
+    spec_inputs = getattr(spec, "inputs", None) or {}
 
     for name, definition in spec_inputs.items():
         has_value = name in incoming

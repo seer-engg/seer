@@ -116,6 +116,21 @@ def register_inputs(env: TypeEnvironment, inputs: Mapping[str, InputDef]) -> Non
     )
 
 
+def register_trigger(env: TypeEnvironment, trigger_schema: JsonSchema) -> None:
+    """
+    Register the trigger envelope schema for type checking ${trigger.*} references.
+
+    The trigger_schema should be the full event envelope schema (from TriggerDefinition.schemas.event)
+    which includes properties like 'id', 'trigger_key', 'occurred_at', 'data', etc.
+    """
+    env.register("trigger", trigger_schema)
+
+    # Also register commonly accessed sub-paths for convenience
+    properties = trigger_schema.get("properties", {})
+    for name, schema in properties.items():
+        env.register(f"trigger.{name}", schema)
+
+
 def resolve_schema_path(
     schema: JsonSchema, segments: Sequence[PathSegment], *, root: JsonSchema | None = None
 ) -> JsonSchema:

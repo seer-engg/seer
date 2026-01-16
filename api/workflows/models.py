@@ -75,7 +75,6 @@ class TriggerSubscriptionCreateRequest(BaseModel):
     provider_connection_id: Optional[int] = None
     enabled: bool = True
     filters: Dict[str, Any] = Field(default_factory=dict)
-    bindings: Dict[str, Any] = Field(default_factory=dict)
     provider_config: Dict[str, Any] = Field(default_factory=dict)
     # Form trigger fields
     form_suffix: Optional[str] = None
@@ -87,7 +86,6 @@ class TriggerSubscriptionUpdateRequest(BaseModel):
     provider_connection_id: Optional[int] = None
     enabled: Optional[bool] = None
     filters: Optional[Dict[str, Any]] = None
-    bindings: Optional[Dict[str, Any]] = None
     provider_config: Optional[Dict[str, Any]] = None
 
 
@@ -98,12 +96,10 @@ class TriggerSubscriptionResponse(BaseModel):
     provider_connection_id: Optional[int] = None
     enabled: bool
     filters: Dict[str, Any] = Field(default_factory=dict)
-    bindings: Dict[str, Any] = Field(default_factory=dict)
     provider_config: Dict[str, Any] = Field(default_factory=dict)
     secret_token: Optional[str] = None
     webhook_url: Optional[str] = None
-    # Form trigger and input contract fields
-    input_contract: Optional[Dict[str, Any]] = None
+    # Form trigger fields
     form_suffix: Optional[str] = None
     form_fields: Optional[List[Dict[str, Any]]] = None
     form_config: Optional[Dict[str, Any]] = None

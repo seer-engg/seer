@@ -28,8 +28,10 @@ class CompiledWorkflow:
         inputs: Mapping[str, Any],
         config: Mapping[str, Any] | None = None,
         context: WorkflowRuntimeContext | None = None,
+        trigger: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any]:
         self.runtime.bind_inputs(inputs)
+        self.runtime.bind_trigger(trigger)
         self.runtime.bind_context(context)
         effective_config = dict(config or {})
         if logger.isEnabledFor(logging.DEBUG):
@@ -53,8 +55,10 @@ class CompiledWorkflow:
         inputs: Mapping[str, Any],
         config: Mapping[str, Any] | None = None,
         context: WorkflowRuntimeContext | None = None,
+        trigger: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any]:
         self.runtime.bind_inputs(inputs)
+        self.runtime.bind_trigger(trigger)
         self.runtime.bind_context(context)
         effective_config = dict(config or {})
         if logger.isEnabledFor(logging.DEBUG):

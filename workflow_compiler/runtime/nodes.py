@@ -56,6 +56,7 @@ class NodeRuntime:
         self.services = services
         self._type_schemas = services.type_env.as_dict()
         self._current_inputs: Mapping[str, Any] = {}
+        self._current_trigger: Mapping[str, Any] | None = None
         self._current_context: WorkflowRuntimeContext | None = None
 
     def build_runner(self, node: Node) -> RunnableCallable:
@@ -77,6 +78,10 @@ class NodeRuntime:
 
     def bind_inputs(self, inputs: Mapping[str, Any]) -> None:
         self._current_inputs = dict(inputs)
+
+    def bind_trigger(self, trigger: Mapping[str, Any] | None) -> None:
+        """Bind trigger event envelope for ${trigger.*} resolution."""
+        self._current_trigger = dict(trigger) if trigger else None
 
     def bind_context(self, context: WorkflowRuntimeContext | None) -> None:
         self._current_context = context
@@ -618,6 +623,7 @@ class NodeRuntime:
             inputs=self._current_inputs,
             locals=locals_mapping,
             config=config,
+            trigger=self._current_trigger,
         )
 
     def _prepare_output(self, key: str | None, value: Any) -> Dict[str, Any]:

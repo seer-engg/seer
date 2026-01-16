@@ -241,15 +241,9 @@ def _serialize_subscription(
         provider_connection_id=subscription.provider_connection_id,
         enabled=subscription.enabled,
         filters=dict(subscription.filters or {}),
-        bindings=dict(subscription.bindings or {}),
         provider_config=dict(subscription.provider_config or {}),
         secret_token=subscription.secret_token,
         webhook_url=webhook_url,
-        input_contract=(
-            dict(subscription.input_contract or {})
-            if subscription.input_contract
-            else None
-        ),
         form_suffix=subscription.form_suffix,
         form_fields=subscription.form_fields,
         form_config=(
@@ -434,20 +428,13 @@ async def create_trigger_subscription(
     payload: api_models.TriggerSubscriptionCreateRequest,
 ) -> api_models.TriggerSubscriptionResponse:
     workflow = await _get_workflow(user, payload.workflow_id)
-    draft = workflow.draft or await WorkflowDraft.get(workflow=workflow)
     definition = _load_trigger_definition(payload.trigger_key)
-    spec = WorkflowSpec.model_validate(draft.spec)
     filters = dict(payload.filters or {})
-    bindings = dict(payload.bindings or {})
     provider_config = dict(payload.provider_config or {})
     _validate_filters_payload(filters, definition)
-    _validate_bindings_against_workflow(
-        bindings, spec, definition.schemas.event
-    )
     secret = None
     if _should_emit_webhook_url(payload.trigger_key):
         secret = _generate_subscription_secret()
-    input_contract_dict = _build_input_contract(payload.form_fields, definition)
     _validate_form_suffix(payload.form_suffix)
 
     # Phase 2: Polling Frequency Gate
@@ -470,10 +457,8 @@ async def create_trigger_subscription(
         provider_connection_id=payload.provider_connection_id,
         enabled=payload.enabled,
         filters=filters,
-        bindings=bindings,
         provider_config=provider_config,
         secret_token=secret,
-        input_contract=input_contract_dict,
         form_suffix=payload.form_suffix,
         form_fields=payload.form_fields,
         form_config=payload.form_config,
@@ -495,17 +480,12 @@ async def get_trigger_subscription(
 def _apply_subscription_updates(
     subscription: TriggerSubscription,
     payload: api_models.TriggerSubscriptionUpdateRequest,
-    spec: WorkflowSpec,
     definition,
 ) -> None:
     if payload.filters is not None:
         new_filters = dict(payload.filters or {})
         _validate_filters_payload(new_filters, definition)
         subscription.filters = new_filters
-    if payload.bindings is not None:
-        new_bindings = dict(payload.bindings or {})
-        _validate_bindings_against_workflow(new_bindings, spec, definition.schemas.event)
-        subscription.bindings = new_bindings
     if payload.provider_connection_id is not None:
         subscription.provider_connection_id = payload.provider_connection_id
     if payload.provider_config is not None:
@@ -523,10 +503,7 @@ async def update_trigger_subscription(
 ) -> api_models.TriggerSubscriptionResponse:
     subscription = await _get_trigger_subscription(user, subscription_id)
     definition = _load_trigger_definition(subscription.trigger_key)
-    await subscription.fetch_related("workflow")
-    draft = subscription.workflow.draft or await WorkflowDraft.get(workflow=subscription.workflow)
-    spec = WorkflowSpec.model_validate(draft.spec)
-    _apply_subscription_updates(subscription, payload, spec, definition)
+    _apply_subscription_updates(subscription, payload, definition)
     await subscription.save()
     return _serialize_subscription(subscription)
 
@@ -575,10 +552,15 @@ async def test_trigger_subscription(
     subscription_id: int,
     payload: api_models.TriggerSubscriptionTestRequest,
 ) -> api_models.TriggerSubscriptionTestResponse:
+    """
+    Test a trigger subscription by validating event payload against trigger schema.
+
+    With the new trigger model, workflows access trigger data directly via ${trigger.data.*}
+    expressions. This endpoint now validates the event payload and returns the data
+    that would be available to the workflow.
+    """
     subscription = await _get_trigger_subscription(user, subscription_id)
     await subscription.fetch_related("workflow")
-    draft = subscription.workflow.draft or await WorkflowDraft.get(workflow=subscription.workflow)
-    spec = WorkflowSpec.model_validate(draft.spec)
     definition = _load_trigger_definition(subscription.trigger_key)
     event_payload = payload.event or definition.meta.sample_event
     if event_payload is None:
@@ -589,12 +571,8 @@ async def test_trigger_subscription(
             status=400,
         )
     _validate_event_payload(event_payload, definition.schemas.event)
-    try:
-        resolved = _evaluate_bindings(event_payload, definition.schemas.event)
-    except ValueError as exc:
-        return api_models.TriggerSubscriptionTestResponse(inputs={}, errors=[str(exc)])
-    errors = _validate_resolved_inputs(resolved, spec)
-    return api_models.TriggerSubscriptionTestResponse(inputs=resolved, errors=errors)
+    # Return the event data that would be available via ${trigger.data.*}
+    return api_models.TriggerSubscriptionTestResponse(inputs=event_payload, errors=[])
 
 from workflow_compiler.registry.trigger_registry import POLLING_TRIGGERS
 async def sync_trigger_subscriptions(

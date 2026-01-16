@@ -20,9 +20,10 @@ import sys
 # Global cache of loggers
 _loggers = {}
 
+import json
 
 class ColoredFormatter(logging.Formatter):
-    """Formatter that adds colors to console output"""
+    """Formatter that adds colors and dynamically includes 'extra' fields"""
 
     COLORS = {
         'DEBUG': '\033[36m',     # Cyan
@@ -33,19 +34,48 @@ class ColoredFormatter(logging.Formatter):
         'RESET': '\033[0m'       # Reset
     }
 
+    # Standard LogRecord attributes to ignore when looking for 'extra' fields
+    RESERVED_ATTRS = {
+        'args', 'asctime', 'created', 'exc_info', 'filename', 'funcName',
+        'levelname', 'levelno', 'lineno', 'module', 'msecs', 'msg',
+        'name', 'pathname', 'process', 'processName', 'relativeCreated',
+        'stack_info', 'thread', 'threadName', 'correlation_id'
+    }
+
     def format(self, record):
-        # Add correlation ID if available
+        # 1. Handle Correlation ID (logic from your original code)
         if hasattr(record, 'correlation_id') and record.correlation_id:
             record.msg = f"[{record.correlation_id[:8]}] {record.msg}"
 
-        # Add color to levelname
+        # 2. Capture arbitrary "extra" fields
+        # We look for anything in record.__dict__ that isn't a standard attribute
+        extras = {
+            k: v for k, v in record.__dict__.items()
+            if k not in self.RESERVED_ATTRS and not k.startswith('_')
+        }
+
+        # 3. Append extras to the message
+        if extras:
+            # Format as key=value pairs
+            extra_str = " ".join([f"{k}={v}" for k, v in extras.items()])
+            # We modify a temporary attribute to avoid polluting the record for other handlers
+            original_msg = record.msg
+            record.msg = f"{original_msg} | {extra_str}"
+
+        # 4. Add color to levelname
         levelname = record.levelname
         if levelname in self.COLORS:
-            colored_level = f"{self.COLORS[levelname]}{levelname}{self.COLORS['RESET']}"
-            record.levelname = colored_level
+            record.levelname = f"{self.COLORS[levelname]}{levelname}{self.COLORS['RESET']}"
 
-        return super().format(record)
+        # 5. Call the standard formatter
+        result = super().format(record)
 
+        # Clean up: restore original message so if this record is reused, 
+        # it doesn't keep appending extras
+        if extras:
+            record.msg = original_msg
+            
+        return result
 
 def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
     """
