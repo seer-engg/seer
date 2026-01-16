@@ -6,6 +6,7 @@ build-backend = "hatchling.build"
 name = "seer"
 version = "0.1.4"
 description = "Seer - Multi-Agent System for Evaluating AI Agents"
+license = "MIT"
 readme = "README.md"
 authors = [
   { name = "Lokesh Danu", email = "lokesh@getseer.dev" },
