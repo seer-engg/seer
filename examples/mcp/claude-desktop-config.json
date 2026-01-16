@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "seer": {
+      "command": "uvx",
+      "args": ["seer-mcp"],
+      "env": {
+        "DATABASE_URL": "postgresql://user:password@localhost:5432/seer",
+        "SEER_MCP_LOG_LEVEL": "info"
+      }
+    }
+  }
+}

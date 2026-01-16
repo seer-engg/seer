@@ -20,6 +20,9 @@ def _should_skip_file(path: Path) -> bool:
         return True
     if not path.exists():
         return True
+    # Skip MCP package files - require external SDK not in pre-commit env
+    if "mcp/" in str(path):
+        return True
     return False
 
 

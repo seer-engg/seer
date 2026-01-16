@@ -47,10 +47,14 @@ dependencies = [
     "psycopg[binary]>=3.1.0",  # Required by langgraph-checkpoint-postgres
     "RestrictedPython>=7.0",  # Required for RLM tool sandbox
     "stripe>=10.0.0",  # Stripe payment processing for subscriptions
+    "mcp>=1.25.0",  # Model Context Protocol SDK for MCP server integration
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["api", "shared", "agents", "workflow_compiler", "worker", "infra"]
+packages = ["api", "shared", "agents", "workflow_compiler", "worker", "infra", "mcp"]
+
+[project.scripts]
+seer-mcp = "mcp.server:main"
 
 [dependency-groups]
 dev = [

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "seer": {
+      "command": "python",
+      "args": ["-m", "mcp.server"],
+      "env": {
+        "DATABASE_URL": "postgresql://user:password@localhost:5432/seer",
+        "SEER_MCP_LOG_LEVEL": "info"
+      }
+    }
+  }
+}
