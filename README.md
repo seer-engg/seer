@@ -1,24 +1,21 @@
 ## Seer
 
-[![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](https://github.com/seer-engg/seer/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/seer-engg/seer/blob/main/LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/seer-engg/seer?style=social)](https://github.com/seer-engg/seer/stargazers)
 [![Documentation](https://img.shields.io/badge/docs-docs.getseer.dev-blue)](https://docs.getseer.dev)
 [![Discord](https://img.shields.io/badge/discord-join-7289DA?logo=discord&logoColor=white)](https://discord.gg/NuYsDdhJ)
 [![Twitter Follow](https://img.shields.io/twitter/follow/get_seer?style=social)](https://x.com/get_seer)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-get--seer-0077B5?logo=linkedin)](https://www.linkedin.com/company/get-seer)
 
-Seer is a **workflow builder with fine-grained control** for creating and executing automated workflows with integrated tools and services. Build complex automation workflows with visual editing, AI-assisted development, and seamless integrations (Google Workspace, GitHub, and more).
+Seer is a **open-source workflow builder with fine-grained control** for creating and executing automated workflows with integrated tools and services.
 
-### Core Architecture Principle
+## Quick Start
 
-**If workflows and agents are fundamentally different at the UI layer, they should be different at the API layer.**
-
-This principle guides our API design: workflows (deterministic, node-based execution) and agents (dynamic, message-based conversations) have distinct mental models, data structures, and user needs. Rather than forcing unification through pattern matching or transformation layers, we maintain separate APIs and components that align with their fundamental differences. This reduces complexity, improves maintainability, and ensures each system can evolve independently.
-
-### Quick Start
+### Using Github
 
 ```bash
-git clone <repo> && cd seer
+git clone https://github.com/seer-engg/seer
+cd seer
 docker compose up
 ```
 
@@ -77,32 +74,6 @@ docker compose logs -f
 docker compose down
 ```
 
-### Development Workflow
-
-**Steps:**
-1. Run: `docker compose up`
-2. Code changes hot-reload via volume mounts (uvicorn --reload)
-3. Access workflow builder at: http://localhost:5173/workflows?backend=http://localhost:8000
-4. View logs in the terminal or run: `docker compose logs -f`
-5. Stop: `docker compose down`
-
-**Services started:**
-- **Backend API** (port 8000): FastAPI server with workflow execution engine
-- **Postgres** (port 5432): Workflow and user data persistence
-- **Redis** (port 6379): Taskiq message broker
-- **Taskiq Worker**: run `uv run taskiq worker worker.broker:broker` (or use Docker) to process triggers/polling/workflow runs
-
-### Integrations & API Keys
-
-**Core Requirements:**
-- `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` - Required for workflow execution and AI assistance
-
-**Optional Integrations:**
-- **Google Workspace** - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (Gmail, Drive, Sheets)
-- **GitHub** - `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` (Repos, Issues, PRs)
-- **Supabase** - `SUPABASE_CLIENT_ID`, `SUPABASE_CLIENT_SECRET` ([Setup Guide](https://docs.getseer.dev/integrations/SUPABASE))
-- **Web Search** - `TAVILY_API_KEY`
-
 For complete configuration options, see the [Configuration Reference](https://docs.getseer.dev/advanced/CONFIGURATION).
 
 ### Key Features
@@ -123,11 +94,6 @@ For complete configuration options, see the [Configuration Reference](https://do
 - **Web Tools**: Search, content fetching, APIs
 - **Databases**: PostgreSQL with approval-based write controls
 
-**⚡ Advanced Execution Engine**
-- Streaming execution with real-time updates
-- Interrupt handling for human-in-the-loop workflows
-- Persistent state management with PostgreSQL
-
 **🔒 Enterprise-Ready**
 - Self-hosted or cloud deployment options
 - OAuth-based authentication (Clerk integration)
@@ -144,3 +110,8 @@ For complete configuration options, see the [Configuration Reference](https://do
 - [Integrations](https://docs.getseer.dev/integrations/SUPABASE) - Google, GitHub, Supabase setup
 - [Advanced Features](https://docs.getseer.dev/advanced/TRIGGERS) - Triggers, proposals, and more
 - [Configuration Reference](https://docs.getseer.dev/advanced/CONFIGURATION) - Complete configuration options
+
+### License
+
+Seer is open source under the MIT license. Enterprise features (if any exist)
+reside in the `ee/` directory and are licensed separately. See LICENSE for details.
