@@ -35,8 +35,14 @@ def _hash_spec(spec_dict: Dict[str, Any]) -> str:
 
 async def _ensure_draft_version(workflow: Workflow, user: User) -> WorkflowVersion:
     draft = await WorkflowDraft.get(workflow=workflow)
-    spec_dict = json.loads(json.dumps(draft.spec or {}))
+    spec = WorkflowSpec.model_validate(draft.spec or {})
+    spec_dict = spec.model_dump(mode="json")
     spec_hash = _hash_spec(spec_dict)
+    # Sync trigger subscriptions declared in the spec so polling/webhooks stay in sync.
+    # pylint: disable=import-outside-toplevel 
+    from api.workflows.services.triggers import sync_trigger_subscriptions
+
+    await sync_trigger_subscriptions(user, workflow, spec)
     existing = (
         await WorkflowVersion.filter(
             workflow=workflow,

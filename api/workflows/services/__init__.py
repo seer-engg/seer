@@ -57,12 +57,11 @@ from .lifecycle import (
 from .triggers import (
     _evaluate_bindings,
     _validate_resolved_inputs,
-    create_trigger_subscription,
     delete_trigger_subscription,
     get_trigger_subscription,
     list_trigger_subscriptions,
     test_trigger_subscription,
-    update_trigger_subscription,
+    sync_trigger_subscriptions,
 )
 
 __all__ = [
@@ -93,11 +92,10 @@ __all__ = [
     "get_run_status",
     "get_run_history",
     "list_trigger_subscriptions",
-    "create_trigger_subscription",
     "get_trigger_subscription",
-    "update_trigger_subscription",
     "delete_trigger_subscription",
     "test_trigger_subscription",
+    "sync_trigger_subscriptions",
     "_evaluate_bindings",
     "_execute_compiled_run",
     "_complete_run",

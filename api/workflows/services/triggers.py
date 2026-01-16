@@ -25,6 +25,7 @@ from shared.config import config as shared_config
 from shared.database import (
     User,
     TriggerSubscription,
+    Workflow,
     WorkflowDraft,
     make_workflow_public_id,
 )
@@ -589,8 +590,103 @@ async def test_trigger_subscription(
         )
     _validate_event_payload(event_payload, definition.schemas.event)
     try:
-        resolved = _evaluate_bindings(dict(subscription.bindings or {}), event_payload)
+        resolved = _evaluate_bindings(event_payload, definition.schemas.event)
     except ValueError as exc:
         return api_models.TriggerSubscriptionTestResponse(inputs={}, errors=[str(exc)])
     errors = _validate_resolved_inputs(resolved, spec)
     return api_models.TriggerSubscriptionTestResponse(inputs=resolved, errors=errors)
+
+from workflow_compiler.registry.trigger_registry import POLLING_TRIGGERS
+async def sync_trigger_subscriptions(
+    user: User,
+    workflow: Workflow,
+    spec: WorkflowSpec,
+) -> None:
+    """
+    Reconcile TriggerSubscription rows to match the workflow spec.
+
+    This runs during draft version creation to keep DB state in sync with the spec payload
+    provided by the frontend.
+    """
+
+    existing: Dict[str, TriggerSubscription] = {}
+    duplicate_subscriptions: List[TriggerSubscription] = []
+    for sub in await TriggerSubscription.filter(workflow=workflow):
+        if sub.trigger_key in existing:
+            duplicate_subscriptions.append(sub)
+        else:
+            existing[sub.trigger_key] = sub
+    # Clean up any accidental duplicates before reconciling desired state.
+    for duplicate in duplicate_subscriptions:
+        await delete_trigger_subscription(user, duplicate.id)
+    desired = {trigger.key: trigger for trigger in spec.triggers or []}
+
+    # Remove subscriptions no longer declared in the spec.
+    for trigger_key, subscription in existing.items():
+        if trigger_key not in desired:
+            await delete_trigger_subscription(user, subscription.id)
+
+    # Upsert declared triggers.
+    for trigger_spec in spec.triggers or []:
+        definition = _load_trigger_definition(trigger_spec.key)
+        if definition.meta.requires_connection and trigger_spec.provider_connection_id is None:
+            _raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Missing trigger connection",
+                detail=f"Trigger '{trigger_spec.key}' requires a provider connection.",
+                status=400,
+            )
+        filters = dict(trigger_spec.filters or {})
+        provider_config = dict(trigger_spec.schemas.config or {})
+
+        _validate_filters_payload(filters, definition)
+
+        adjusted_interval, warning = await _validate_and_adjust_poll_interval(user, 60)
+        if warning:
+            logger.warning(
+                "Poll interval adjusted for user %s: %s",
+                user.id,
+                warning,
+                extra={"user_id": user.id, "adjusted_interval": adjusted_interval},
+            )
+
+        existing_subscription = existing.get(trigger_spec.key)
+        previous_secret = getattr(existing_subscription, "secret_token", None)
+        secret = previous_secret
+        if _should_emit_webhook_url(trigger_spec.key) and not secret:
+            secret = _generate_subscription_secret()
+
+        if existing_subscription:
+            existing_subscription.provider_connection_id = trigger_spec.provider_connection_id
+            existing_subscription.enabled = trigger_spec.enabled
+            existing_subscription.filters = filters
+            existing_subscription.provider_config = provider_config
+            existing_subscription.secret_token = secret
+            existing_subscription.poll_interval_seconds = adjusted_interval
+            await existing_subscription.save()
+
+            # If we generated a new secret for Supabase, ensure webhook is created.
+            if (
+                trigger_spec.key == "webhook.supabase.db_changes"
+                and secret
+                and not previous_secret
+            ):
+                await _create_supabase_webhook(existing_subscription, secret)
+        else:
+            is_polling = False
+            if trigger_spec.key in POLLING_TRIGGERS:
+                is_polling = True
+            subscription = await TriggerSubscription.create(
+                user=user,
+                workflow=workflow,
+                trigger_key=trigger_spec.key,
+                provider_connection_id=trigger_spec.provider_connection_id,
+                enabled=trigger_spec.enabled,
+                filters=filters,
+                provider_config=provider_config,
+                secret_token=secret,
+                poll_interval_seconds=adjusted_interval,
+                is_polling=is_polling,
+            )
+            if trigger_spec.key == "webhook.supabase.db_changes" and secret:
+                await _create_supabase_webhook(subscription, secret)

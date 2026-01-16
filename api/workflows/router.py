@@ -41,19 +41,6 @@ async def list_trigger_subscriptions(
     return await services.list_trigger_subscriptions(user, workflow_id=workflow_id)
 
 
-@router.post(
-    "/trigger-subscriptions",
-    response_model=api_models.TriggerSubscriptionResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_trigger_subscription(
-    request: Request,
-    payload: api_models.TriggerSubscriptionCreateRequest,
-):
-    user = _require_user(request)
-    return await services.create_trigger_subscription(user, payload)
-
-
 @router.get(
     "/trigger-subscriptions/{subscription_id}",
     response_model=api_models.TriggerSubscriptionResponse,
@@ -61,19 +48,6 @@ async def create_trigger_subscription(
 async def get_trigger_subscription(request: Request, subscription_id: int):
     user = _require_user(request)
     return await services.get_trigger_subscription(user, subscription_id)
-
-
-@router.patch(
-    "/trigger-subscriptions/{subscription_id}",
-    response_model=api_models.TriggerSubscriptionResponse,
-)
-async def update_trigger_subscription(
-    request: Request,
-    subscription_id: int,
-    payload: api_models.TriggerSubscriptionUpdateRequest,
-):
-    user = _require_user(request)
-    return await services.update_trigger_subscription(user, subscription_id, payload)
 
 
 @router.delete("/trigger-subscriptions/{subscription_id}", status_code=status.HTTP_200_OK)

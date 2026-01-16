@@ -271,15 +271,18 @@ class TriggerSubscription(models.Model):
     trigger_key = fields.CharField(max_length=255)
     provider_connection_id = fields.IntField(null=True)
     enabled = fields.BooleanField(default=True)
+    is_polling = fields.BooleanField(default=False)
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    ## feild for webhook type triggers
     filters = fields.JSONField(null=True)
-    bindings = fields.JSONField(null=True)
     provider_config = fields.JSONField(null=True)
     secret_token = fields.CharField(max_length=255, null=True)
-    # Form trigger fields
-    input_contract = fields.JSONField(null=True, description="Dict[str, InputDef] defining workflow inputs")
-    form_suffix = fields.CharField(max_length=100, null=True, description="Custom URL slug for form triggers (e.g., 'contact-form')")
-    form_fields = fields.JSONField(null=True, description="Array of InputField configs for form triggers")
-    form_config = fields.JSONField(null=True, description="Form UI configuration (title, description, styling)")
+    event_data_schema = fields.JSONField(null=True)
+
+
+    ## feild for polling type triggers
     # NOTE: Adding/changing these poll_* fields requires a manual DB migration.
     poll_interval_seconds = fields.IntField(default=60)
     next_poll_at = fields.DatetimeField(
@@ -292,8 +295,8 @@ class TriggerSubscription(models.Model):
     poll_backoff_seconds = fields.IntField(default=0)
     poll_lock_owner = fields.CharField(max_length=255, null=True)
     poll_lock_expires_at = fields.DatetimeField(null=True)
-    created_at = fields.DatetimeField(auto_now_add=True)
-    updated_at = fields.DatetimeField(auto_now=True)
+
+
 
     class Meta:
         table = "trigger_subscriptions"

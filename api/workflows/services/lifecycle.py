@@ -11,7 +11,6 @@ from api.workflows import models as api_models
 from api.workflows.services.shared import (
     VALIDATION_PROBLEM,
     _ensure_draft_version,
-    _hash_spec,
     _get_workflow,
     _now,
     _raise_problem,
@@ -24,7 +23,6 @@ from shared.database import (
     WorkflowVersion,
     WorkflowVersionStatus,
     parse_workflow_public_id,
-    TriggerSubscription
 )
 from workflow_compiler.schema.models import WorkflowSpec
 
@@ -322,19 +320,7 @@ async def publish_workflow(
     payload: api_models.WorkflowPublishRequest,
 ) -> api_models.WorkflowResponse:
     workflow = await _get_workflow(user, workflow_id)
-    draft = workflow.draft or await WorkflowDraft.get(workflow=workflow)
-    draft_spec = json.loads(json.dumps(draft.spec or {}))
-    draft_spec_hash = _hash_spec(draft_spec)
-    latest_version = await _recent_version(workflow)
-    if (
-        latest_version
-        and latest_version.spec_hash == draft_spec_hash
-        and latest_version.created_from_draft_revision == draft.revision
-        and latest_version.status == WorkflowVersionStatus.DRAFT
-    ):
-        version = latest_version
-    else:
-        version = await _ensure_draft_version(workflow, user)
+    version = await _ensure_draft_version(workflow, user)
 
     previous_release = getattr(workflow, "published_version", None)
     if previous_release and isinstance(previous_release, WorkflowVersion):
@@ -371,7 +357,7 @@ async def export_workflow(
     """
     Export workflow and optionally triggers as portable JSON.
     """
-    
+
 
     # 1. Fetch workflow and draft
     workflow = await _get_workflow(user, workflow_id)
@@ -388,22 +374,8 @@ async def export_workflow(
     # 2. Serialize workflow spec
     spec_dict = draft.spec  # Already JSON
 
-    # 3. Fetch trigger subscriptions
-    triggers_data = []
-    if include_triggers:
-        subscriptions = await TriggerSubscription.filter(
-            workflow=workflow
-        ).all()
-
-        for sub in subscriptions:
-            triggers_data.append({
-                "trigger_key": sub.trigger_key,
-                "enabled": sub.enabled,
-                "bindings": sub.bindings or {},
-                "filters": sub.filters or {},
-                "provider_config": sub.provider_config or {},
-                "notes": None,  # Add notes field for future use
-            })
+    # 3. Fetch triggers from the spec (already embedded)
+    triggers_data = spec_dict.get("triggers", []) if include_triggers else []
 
     # 4. Build export JSON
     return {
@@ -455,8 +427,14 @@ async def import_workflow(
         )
 
     # 2. Validate workflow spec
+    spec_payload = import_data["workflow"]["spec"]
+    # Backward compatibility: merge triggers array if provided separately.
+    if payload.import_triggers and not spec_payload.get("triggers") and import_data.get("triggers"):
+        spec_payload = dict(spec_payload)
+        spec_payload["triggers"] = import_data["triggers"]
+
     try:
-        spec = WorkflowSpec.model_validate(import_data["workflow"]["spec"])
+        spec = WorkflowSpec.model_validate(spec_payload)
     except ValidationError as e:
         _raise_problem(
             type_uri=VALIDATION_PROBLEM,
@@ -492,21 +470,6 @@ async def import_workflow(
         updated_by=user,
     )
 
-    # 5. Create trigger subscriptions (as drafts, disabled by default)
-    if payload.import_triggers and import_data.get("triggers"):
-        for trigger_data in import_data["triggers"]:
-            # Create subscription (disabled until user configures provider)
-            await TriggerSubscription.create(
-                user=user,
-                workflow=workflow,
-                trigger_key=trigger_data["trigger_key"],
-                enabled=False,  # User must enable after configuring
-                bindings=trigger_data.get("bindings", {}),
-                filters=trigger_data.get("filters", {}),
-                provider_config=trigger_data.get("provider_config", {}),
-                # provider_connection_id left null - user must configure
-            )
-
-    # 6. Return new workflow
+    # 5. Return new workflow
     await workflow.fetch_related("draft")
     return await _workflow_response(workflow)

@@ -91,6 +91,7 @@ class TriggerPollEngine:
                 TriggerSubscription.filter(
                     enabled=True,
                     next_poll_at__lte=now,
+                    is_polling=True,
                 )
                 .exclude(poll_status="disabled")
                 .filter(Q(poll_lock_owner__isnull=True) | Q(poll_lock_expires_at__lte=now))

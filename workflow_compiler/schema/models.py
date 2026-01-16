@@ -181,12 +181,63 @@ Node = Annotated[
 ]
 
 
+class TriggerSchemas(StrictModel):
+    """Schema definitions for trigger validation and configuration."""
+    # event schema is the schema of the event that is received from the trigger
+    event: JsonSchema = Field(default_factory=dict)
+    filter: Optional[JsonSchema] = None
+
+    # config schema is the schema of the configuration that is used to configure the trigger
+    config: Optional[JsonSchema] = None
+
+
+class TriggerMetadata(StrictModel):
+    """Metadata and defaults for trigger configuration."""
+    sample_event: Optional[Dict[str, Any]] = None
+    requires_connection: bool = True
+
+
+class TriggerDefinition(StrictModel):
+    """Complete trigger definition with identity, schemas, and metadata."""
+    key: str
+    title: str
+    provider: str
+    mode: str
+    description: Optional[str] = None
+    schemas: TriggerSchemas = Field(default_factory=TriggerSchemas)
+    meta: TriggerMetadata = Field(default_factory=TriggerMetadata)
+
+class TriggerSpec(TriggerDefinition):
+    """
+    Declarative trigger configuration embedded in the workflow spec.
+
+    Frontend supplies this alongside nodes so triggers can be versioned with the workflow.
+    """
+
+    provider_connection_id: Optional[int] = None
+    enabled: bool = True
+    filters: Dict[str, JSONValue] = Field(default_factory=dict)
+
+
 class WorkflowSpec(StrictModel):
     version: str = Field(default="1")
     inputs: Dict[str, InputDef] = Field(default_factory=dict)
     nodes: List[Node] = Field(default_factory=list)
-    output: Optional[JSONValue] = None
+    triggers: List[TriggerSpec] = Field(default_factory=list)
     meta: Dict[str, JSONValue] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _unique_triggers(self) -> "WorkflowSpec":
+        seen = set()
+        duplicates = []
+        for trigger in self.triggers or []:
+            if trigger.key in seen:
+                duplicates.append(trigger.key)
+            seen.add(trigger.key)
+        if duplicates:
+            dup_list = ", ".join(sorted(set(duplicates)))
+            raise ValueError(f"Duplicate trigger key values are not allowed: {dup_list}")
+        return self
 
 
 IfNode.model_rebuild()

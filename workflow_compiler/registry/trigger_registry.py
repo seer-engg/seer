@@ -9,33 +9,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, MutableMapping, Optional
 
 from workflow_compiler.schema.models import JsonSchema
+from workflow_compiler.schema.models import TriggerDefinition, TriggerSchemas, TriggerMetadata
 
-
-@dataclass
-class TriggerSchemas:
-    """Schema definitions for trigger validation and configuration."""
-    event: JsonSchema = field(default_factory=dict)
-    filter: Optional[JsonSchema] = None
-    config: Optional[JsonSchema] = None
-
-
-@dataclass
-class TriggerMetadata:
-    """Metadata and defaults for trigger configuration."""
-    sample_event: Optional[Dict[str, Any]] = None
-    requires_connection: bool = True
-
-
-@dataclass
-class TriggerDefinition:
-    """Complete trigger definition with identity, schemas, and metadata."""
-    key: str
-    title: str
-    provider: str
-    mode: str
-    description: Optional[str] = None
-    schemas: TriggerSchemas = field(default_factory=TriggerSchemas)
-    meta: TriggerMetadata = field(default_factory=TriggerMetadata)
 
 
 class TriggerRegistry:
@@ -87,6 +62,11 @@ def _enveloped_event_schema(payload_schema: JsonSchema) -> JsonSchema:
     envelope["properties"]["data"] = deepcopy(payload_schema)
     return envelope
 
+
+POLLING_TRIGGERS = [
+    "poll.gmail.email_received",
+    "schedule.cron",
+]
 
 def _register_builtin_triggers(registry: TriggerRegistry) -> None:
     registry.register(
