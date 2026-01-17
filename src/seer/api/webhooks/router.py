@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Header, Request, status
 
-from seer.api.triggers import services as trigger_services
+from seer.api.webhooks import services as webhook_services
 
 router = APIRouter(prefix="/v1/webhooks", tags=["webhooks"])
 
@@ -15,7 +15,7 @@ async def generic_webhook(
     provider_event_id: str | None = Header(default=None, alias="X-Provider-Event-Id"),
 ):
     payload = await request.json()
-    event = await trigger_services.handle_generic_webhook(
+    event = await webhook_services.handle_generic_webhook(
         subscription_id,
         payload=payload,
         headers=request.headers,

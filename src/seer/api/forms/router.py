@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from tortoise.exceptions import DoesNotExist
 
 from seer.api.forms.validation import validate_form_data
-from seer.api.triggers.services import handle_generic_webhook
+from seer.api.webhooks.services import handle_generic_webhook
 from seer.database import TriggerSubscription
 from seer.logger import get_logger
 

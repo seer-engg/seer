@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+from typing import Optional, Callable
 
 # Ensure adapters register themselves.
-import api.triggers.polling.adapters  # noqa: F401
-from seer.api.triggers.polling.engine import TriggerPollEngine
+import seer.core.triggers.polling.adapters  # noqa: F401
+from seer.core.triggers.polling.engine import TriggerPollEngine
 from seer.logger import get_logger
 
 logger = get_logger(__name__)
@@ -20,9 +20,11 @@ class TriggerPollScheduler:
         interval_seconds: int = 5,
         max_batch_size: int = 10,
         lock_timeout_seconds: int = 60,
+        trigger_event_dispatcher: Callable,
     ) -> None:
         self.interval_seconds = interval_seconds
         self.engine = TriggerPollEngine(
+            trigger_event_dispatcher=trigger_event_dispatcher,
             max_batch_size=max_batch_size,
             lock_timeout_seconds=lock_timeout_seconds,
         )

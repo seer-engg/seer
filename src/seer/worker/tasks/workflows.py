@@ -2,20 +2,20 @@ from __future__ import annotations
 
 from seer.worker.broker import broker
 from seer.logger import get_logger
+from seer.services.workflows.execution import execute_saved_workflow_run
 
 logger = get_logger(__name__)
 
 
 @broker.task
-async def execute_saved_workflow(run_id: int, user_id: int) -> None:
+async def workflow_execution_task(run_id: int, user_id: int) -> None:
     """Execute a persisted workflow run asynchronously."""
     logger.info("Executing saved workflow via Taskiq", extra={"run_id": run_id, "user_id": user_id})
-    from seer.api.workflows import services as workflow_services  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
     from seer.analytics import analytics  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
     from seer.database import User  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
 
     try:
-        await workflow_services.execute_saved_workflow_run(run_id=run_id, user_id=user_id)
+        await execute_saved_workflow_run(run_id=run_id, user_id=user_id)
     except Exception as e:
         logger.exception("Worker task failed for workflow execution", extra={"run_id": run_id})
 
@@ -31,4 +31,4 @@ async def execute_saved_workflow(run_id: int, user_id: int) -> None:
         raise
 
 
-__all__ = ["execute_saved_workflow"]
+__all__ = ["workflow_execution_task"]

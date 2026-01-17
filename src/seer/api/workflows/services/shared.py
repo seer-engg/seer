@@ -16,7 +16,6 @@ from seer.database import (
     WorkflowVersionStatus,
     parse_workflow_public_id,
 )
-from seer.core.runtime.global_compiler import WorkflowCompilerSingleton
 from seer.core.schema.models import WorkflowSpec
 
 
@@ -70,21 +69,6 @@ async def _ensure_draft_version(workflow: Workflow, user: User) -> WorkflowVersi
     )
 
 
-def _build_run_config(run: WorkflowRun, config_payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """
-    Ensure LangGraph defaults (thread_id) are present so checkpoints can be recovered.
-
-    IMPORTANT: Always uses run.run_id as thread_id to ensure checkpoint retrieval works.
-    If config_payload contains a different thread_id, it will be overridden.
-    """
-    base_config = dict((config_payload or {}) or {})
-    configurable = dict((base_config.get("configurable") or {}) or {})
-    # Always use run.run_id as thread_id for checkpoint retrieval consistency
-    # Don't use setdefault - explicitly set to ensure it matches execution config
-    configurable["thread_id"] = run.thread_id or run.run_id
-    base_config["configurable"] = configurable
-    return base_config
-
 
 async def _get_workflow(user: User, workflow_id: str) -> Workflow:
     try:
@@ -106,21 +90,3 @@ async def _get_workflow(user: User, workflow_id: str) -> Workflow:
         )
     return workflow
 
-
-async def _compile_workflow(
-    user: User,
-    spec: Dict[str, Any],
-    checkpointer: Optional[Any] = None,
-) -> Any:
-    """
-    Compile a workflow spec using the global compiler instance.
-
-    This is a shared helper to avoid duplicating the compile pattern across
-    history.py and execution.py.
-    """
-    compiler = WorkflowCompilerSingleton.instance()
-    return await compiler.compile(
-        user,
-        spec,
-        checkpointer=checkpointer,
-    )

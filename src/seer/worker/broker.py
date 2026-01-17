@@ -10,6 +10,8 @@ from taskiq_redis import RedisAsyncResultBackend, RedisStreamBroker
 from seer.config import config
 from seer.database import close_db, init_db
 from seer.logger import get_logger
+from seer.core.triggers.polling import TriggerPollScheduler  # lazy import
+from seer.analytics import analytics  # PostHog analytics
 
 logger = get_logger(__name__)
 
@@ -36,8 +38,7 @@ _poll_scheduler = None  # pylint: disable=invalid-name
 async def _on_worker_startup(_: TaskiqState) -> None:
     """Initialize shared resources before processing tasks."""
     # pylint: disable=import-outside-toplevel,global-statement
-    from seer.api.triggers.polling import TriggerPollScheduler  # lazy import
-    from seer.analytics import analytics  # PostHog analytics
+    from seer.worker.trigger_dispatcher import dispatch_trigger_event  # noqa: F401
 
     global _poll_scheduler
 
@@ -53,6 +54,7 @@ async def _on_worker_startup(_: TaskiqState) -> None:
             interval_seconds=config.trigger_poller_interval_seconds,
             max_batch_size=config.trigger_poller_max_batch_size,
             lock_timeout_seconds=config.trigger_poller_lock_timeout_seconds,
+            trigger_event_dispatcher=dispatch_trigger_event,
         )
         await _poll_scheduler.start()
     else:

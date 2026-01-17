@@ -3,28 +3,25 @@ from __future__ import annotations
 import random
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
+from typing_extensions import Callable
 from uuid import uuid4
 
 from fastapi import HTTPException
 from tortoise.expressions import Q
 from tortoise.transactions import in_transaction
 
-from seer.api.triggers.polling.adapters.base import (
+from seer.core.triggers.polling.adapters.base import (
     PollAdapterError,
     PollContext,
     adapter_registry,
 )
-from seer.api.triggers.polling.dedupe import compute_event_hash
-from seer.api.triggers.services import (
-    _build_event_envelope,
-    _dispatch_trigger_event,
-    _load_trigger_provider,
-    _persist_event,
-    _trigger_requires_connection,
-)
+from seer.core.triggers.polling.dedupe import compute_event_hash
 from seer.database import TriggerSubscription
 from seer.logger import get_logger
 from seer.tools.oauth_manager import get_oauth_token
+from seer.core.registry.trigger_registry import trigger_registry
+from seer.core.triggers.events import build_event_envelope,persist_event
+
 
 logger = get_logger(__name__)
 
@@ -41,10 +38,12 @@ class TriggerPollEngine:
         *,
         lock_timeout_seconds: int = 60,
         max_batch_size: int = 10,
+        trigger_event_dispatcher: Callable,
     ) -> None:
         self.lock_timeout = timedelta(seconds=lock_timeout_seconds)
         self.max_batch_size = max_batch_size
         self.worker_id = f"poller-{uuid4().hex[:8]}"
+        self.trigger_event_dispatcher = trigger_event_dispatcher
 
     async def tick(self) -> None:
         # logger.info("Polling Engine Tick")
@@ -116,8 +115,9 @@ class TriggerPollEngine:
 
     async def _get_oauth_connection(self, subscription: TriggerSubscription, user):
         """Get OAuth connection for subscription. Returns (connection, access_token) or None if error handled."""
+        definition = trigger_registry.get(subscription.trigger_key)
         if subscription.provider_connection_id is None:
-            if _trigger_requires_connection(subscription.trigger_key):
+            if definition.meta.requires_connection:
                 logger.error(
                     "Missing provider connection for subscription",
                     extra={"subscription_id": subscription.id, "trigger_key": subscription.trigger_key},
@@ -172,7 +172,8 @@ class TriggerPollEngine:
 
         # Get OAuth connection if needed
         oauth_result = await self._get_oauth_connection(subscription, user)
-        if oauth_result is None and _trigger_requires_connection(subscription.trigger_key):
+        definition = trigger_registry.get(subscription.trigger_key)
+        if oauth_result is None and definition.meta.requires_connection:
             return
         connection, access_token = oauth_result if oauth_result else (None, None)
 
@@ -230,11 +231,11 @@ class TriggerPollEngine:
             await self._disable_subscription(subscription, reason="missing_workflow")
             return
 
-        provider = _load_trigger_provider(subscription.trigger_key)
+        provider = trigger_registry.get(subscription.trigger_key).provider
         logger.info("Loading trigger provider for subscription %s", subscription.id)
         for polled in events:
             logger.info("Building event envelope for subscription %s", subscription.id)
-            envelope = _build_event_envelope(
+            envelope = build_event_envelope(
                 trigger_key=subscription.trigger_key,
                 provider=provider,
                 provider_connection_id=subscription.provider_connection_id,
@@ -252,7 +253,7 @@ class TriggerPollEngine:
                     envelope=envelope,
                 )
 
-            event, created = await _persist_event(
+            event, created = await persist_event(
                 subscription=subscription,
                 envelope=envelope,
                 provider_event_id=provider_event_id,
@@ -261,7 +262,7 @@ class TriggerPollEngine:
             )
             if created:
                 logger.info("Dispatching trigger event for subscription %s", subscription.id)
-                await _dispatch_trigger_event(subscription, event, envelope)
+                await self.trigger_event_dispatcher(subscription, event, envelope)
 
     async def _mark_success(
         self,

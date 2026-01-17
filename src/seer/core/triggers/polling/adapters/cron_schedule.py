@@ -6,7 +6,7 @@ from typing import Any, Dict
 import pytz
 from croniter import croniter
 
-from seer.api.triggers.polling.adapters.base import (
+from seer.core.triggers.polling.adapters.base import (
     PollAdapter,
     PollAdapterError,
     PollContext,

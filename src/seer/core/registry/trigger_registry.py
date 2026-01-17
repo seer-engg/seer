@@ -5,7 +5,6 @@ In-memory registry describing workflow trigger metadata and schemas.
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, field
 from typing import Any, Dict, List, MutableMapping, Optional
 
 from seer.core.schema.models import JsonSchema

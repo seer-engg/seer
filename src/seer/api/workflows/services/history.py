@@ -8,10 +8,8 @@ from fastapi import HTTPException
 
 from seer.api.agents.checkpointer import get_checkpointer
 from seer.api.workflows import models as api_models
-from seer.api.workflows.services.shared import (
-    _build_run_config,
-    _compile_workflow,
-)
+
+from seer.services.workflows.execution import _build_run_config, _compile_workflow
 from seer.api.core.errors import RUN_PROBLEM, VALIDATION_PROBLEM, raise_problem
 from seer.config import config as shared_config
 from seer.database import (

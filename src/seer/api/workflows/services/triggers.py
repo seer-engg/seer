@@ -9,8 +9,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 from jsonschema import Draft7Validator
 
-from seer.api.triggers.schema_inference import infer_input_contract_from_event_schema
-from seer.api.triggers.supabase_webhook import (
+from seer.core.triggers.supabase_webhook import (
     SupabaseWebhookError,
     create_database_webhook,
     delete_database_webhook,
@@ -304,30 +303,6 @@ def _validate_resolved_inputs(
                 errors.append(f"Input '{name}' has incompatible type")
     return errors
 
-
-def _build_input_contract(
-    form_fields: Optional[List[Dict[str, Any]]], definition
-) -> Optional[Dict[str, Any]]:
-    if form_fields:
-        type_mapping = {
-            "text": InputType.string,
-            "email": InputType.string,
-            "url": InputType.string,
-            "number": InputType.number,
-            "object": InputType.object,
-        }
-        contract = {
-            field["name"]: InputDef(
-                type=type_mapping.get(field.get("type", "text"), InputType.string),
-                description=field.get("displayLabel") or field.get("description"),
-                required=field.get("required", False),
-            )
-            for field in form_fields
-        }
-        return {name: def_.model_dump() for name, def_ in contract.items()}
-
-    inferred = infer_input_contract_from_event_schema(definition)
-    return {name: def_.model_dump() for name, def_ in inferred.items()} if inferred else None
 
 
 def _validate_form_suffix(suffix: Optional[str]) -> None:

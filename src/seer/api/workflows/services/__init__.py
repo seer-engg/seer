@@ -18,10 +18,7 @@ from .catalog import (
 
 # Import from execution module
 from .execution import (
-    _complete_run,
     _create_run_record,
-    _execute_compiled_run,
-    execute_saved_workflow_run,
     list_workflow_runs,
     run_saved_workflow,
 )
@@ -85,7 +82,6 @@ __all__ = [
     "import_workflow",
     "typecheck_expression",
     "run_saved_workflow",
-    "execute_saved_workflow_run",
     "list_workflow_runs",
     "get_run_status",
     "get_run_history",
@@ -94,7 +90,5 @@ __all__ = [
     "delete_trigger_subscription",
     "test_trigger_subscription",
     "sync_trigger_subscriptions",
-    "_execute_compiled_run",
-    "_complete_run",
     "_create_run_record",
 ]
