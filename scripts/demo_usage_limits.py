@@ -6,9 +6,9 @@ resolve user tiers, and track resource usage.
 
 Run: uv run python scripts/demo_usage_limits.py
 """
-from shared.database.subscription_models import SubscriptionTier
-from shared.usage_limits import get_limits_for_tier
-from shared.usage_limits.models import SELF_HOSTED_LIMITS
+from seer.database.subscription_models import SubscriptionTier
+from seer.usage_limits import get_limits_for_tier
+from seer.usage_limits.models import SELF_HOSTED_LIMITS
 
 
 def print_tier_limits(tier: SubscriptionTier, limits) -> None:

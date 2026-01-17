@@ -1,7 +1,6 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: seer-postgres
     ports:
       - "5432:5432"
     environment:
@@ -19,7 +18,6 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: seer-redis
     ports:
       - "6379:6379"
     healthcheck:
@@ -28,11 +26,10 @@ services:
       timeout: 5s
       retries: 5
 
-  langgraph-server:
+  api:
     build:
       context: .
       dockerfile: Dockerfile          # <-- your existing root Dockerfile
-    container_name: langgraph-server
     ports:
       - "8000:8000"                   # change if your server uses another port
     depends_on:
@@ -57,14 +54,13 @@ services:
       sh -c "
         echo 'Waiting for database to be ready...' &&
         sleep 2 &&
-        uv run uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+        uv run uvicorn seer.api.main:app --host 0.0.0.0 --port 8000 --reload
       "
 
-  taskiq-worker:
+  worker:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: seer-taskiq-worker
     depends_on:
       postgres:
         condition: service_healthy
@@ -83,7 +79,7 @@ services:
       sh -c "
         echo 'Waiting for dependencies to be ready...' &&
         sleep 2 &&
-        uv run taskiq worker worker.broker:broker
+        uv run taskiq worker seer.worker.broker:broker
       "
 
 volumes:

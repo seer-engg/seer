@@ -11,7 +11,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from api.agents.checkpointer import get_checkpointer  # noqa: E402
+from seer.api.agents.checkpointer import get_checkpointer  # noqa: E402
 
 
 async def inspect_checkpoint_blob(thread_id: str):

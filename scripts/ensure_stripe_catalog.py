@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """Ensure Stripe products and prices exist for all subscription tiers."""
 
-from api.subscriptions.pricing_catalog import create_prices_in_stripe
-from shared.config import config
+from seer.api.subscriptions.pricing_catalog import create_prices_in_stripe
+from seer.config import config
 
 
 def main() -> int:
