@@ -247,12 +247,7 @@ class WorkflowCompilerSingleton:
                 tool_acc.add(node.tool)
             elif isinstance(node, LLMNode):
                 model_acc.add(node.model)
-
-            if isinstance(node, IfNode):
-                self._collect_dependencies(node.then, tool_acc, model_acc)
-                self._collect_dependencies(node.else_, tool_acc, model_acc)
-            elif isinstance(node, ForEachNode):
-                self._collect_dependencies(node.body, tool_acc, model_acc)
+            # No recursion needed - all nodes are at top level in spec.nodes
 
     def _ensure_tool_registered(self, tool_name: str) -> None:
         if self._tool_registry.maybe_get(tool_name):

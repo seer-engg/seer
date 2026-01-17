@@ -1,6 +1,9 @@
 """
 Stage 3 — Validate all `${...}` references against the computed type
 environment.
+
+V2: With explicit edges, nodes no longer have nested children. Validation
+is simpler as all nodes are processed at the top level.
 """
 
 from __future__ import annotations
@@ -47,7 +50,7 @@ def _uses_trigger_references(spec: WorkflowSpec) -> bool:
 
 
 def _node_uses_trigger(node: Node) -> bool:
-    """Check if a node or its children use trigger references."""
+    """Check if a node uses trigger references."""
     # Collect all values that may contain expressions
     values_to_check = []
 
@@ -69,19 +72,6 @@ def _node_uses_trigger(node: Node) -> bool:
     for ref in refs:
         if ref.root == "trigger":
             return True
-
-    # Check children for composite nodes
-    if isinstance(node, IfNode):
-        for child in node.then:
-            if _node_uses_trigger(child):
-                return True
-        for child in node.else_:
-            if _node_uses_trigger(child):
-                return True
-    elif isinstance(node, ForEachNode):
-        for child in node.body:
-            if _node_uses_trigger(child):
-                return True
 
     return False
 
@@ -108,37 +98,27 @@ def _validate_node(node: Node, scope: Scope, errors: List[str]) -> None:
 
     if isinstance(node, IfNode):
         _validate_value_references(node.condition, scope, errors, context=f"{node.id}.condition")
-        for child in node.then:
-            _validate_node(child, scope, errors)
-        for child in node.else_:
-            _validate_node(child, scope, errors)
         return
 
     if isinstance(node, ForEachNode):
         _validate_for_each(node, scope, errors)
         return
 
-    if hasattr(node, "body"):
-        for child in getattr(node, "body"):
-            _validate_node(child, scope, errors)
-
 
 def _validate_for_each(node: ForEachNode, scope: Scope, errors: List[str]) -> None:
+    """
+    Validate the items expression for a ForEachNode.
+
+    With edge-based control flow, loop variables are registered as global symbols
+    in the type environment. Body nodes access them via ${item}, ${index}.
+    """
     try:
         ref = _single_reference(node.items)
         array_schema = typecheck_reference(ref, scope)
-        items_schema = array_schema.get("items")
-        if array_schema.get("type") != "array" or not isinstance(items_schema, dict):
+        if array_schema.get("type") != "array":
             raise TypeCheckError("for_each items expression must resolve to an array schema")
     except (TypeCheckError, ValidationPhaseError) as exc:
         errors.append(f"{node.id}.items: {exc}")
-        return
-
-    loop_scope = scope.nested()
-    loop_scope.locals[node.item_var] = items_schema
-    loop_scope.locals[node.index_var] = {"type": "integer"}
-    for child in node.body:
-        _validate_node(child, loop_scope, errors)
 
 
 def _single_reference(expression: str) -> ReferenceExpr:

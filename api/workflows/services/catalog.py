@@ -235,11 +235,6 @@ def _collect_warnings_from_nodes(nodes: Iterable[Node]) -> List[api_models.Workf
                     message=f"Node '{node.id}' has no 'out'; downstream references may fail.",
                 )
             )
-        if isinstance(node, IfNode):
-            warnings.extend(_collect_warnings_from_nodes(node.then))
-            warnings.extend(_collect_warnings_from_nodes(node.else_))
-        if isinstance(node, ForEachNode):
-            warnings.extend(_collect_warnings_from_nodes(node.body))
     return warnings
 
 

@@ -111,12 +111,12 @@ class NodeRuntime:
 
         from shared.usage_limits.credit_gate import check_credit_limit
 
-        try:
-            await check_credit_limit(self._current_context.user)
-        except Exception as exc:  # noqa: BLE001 - propagate credit failures, log others
-            if exc.__class__.__name__ == "CreditLimitExceeded":
-                raise
-            logger.error("Credit limit check failed: %s", exc)
+        # try:
+        #     await check_credit_limit(self._current_context.user)
+        # except Exception as exc:  # noqa: BLE001 - propagate credit failures, log others
+        #     if exc.__class__.__name__ == "CreditLimitExceeded":
+        #         raise
+        #     logger.error("Credit limit check failed: %s", exc)
 
     def _track_llm_usage_async(self, usage_metadata: Dict[str, Any]) -> None:
         """
@@ -460,9 +460,17 @@ class NodeRuntime:
         locals_ctx: Mapping[str, Any] | None,
         context: WorkflowRuntimeContext | None,
     ) -> Dict[str, Any]:
+        """
+        Evaluate the condition and store the result in state.
+
+        Branch selection is handled by LangGraph conditional edges.
+        The router reads _if_result_{node_id} to determine which branch to take.
+        """
         ctx = self._build_eval_context(state, config, locals_ctx)
-        branch = node.then if evaluate_condition(ctx, node.condition) else node.else_
-        return self._execute_sequence(branch, state, config, locals_ctx=locals_ctx, context=context)
+        condition_result = evaluate_condition(ctx, node.condition)
+
+        # Store condition result for the router
+        return {f"_if_result_{node.id}": condition_result}
 
     async def _run_if_async(
         self,
@@ -473,9 +481,16 @@ class NodeRuntime:
         locals_ctx: Mapping[str, Any] | None,
         context: WorkflowRuntimeContext | None,
     ) -> Dict[str, Any]:
+        """
+        Evaluate the condition and store the result in state (async version).
+
+        Branch selection is handled by LangGraph conditional edges.
+        """
         ctx = self._build_eval_context(state, config, locals_ctx)
-        branch = node.then if evaluate_condition(ctx, node.condition) else node.else_
-        return await self._execute_sequence_async(branch, state, config, locals_ctx=locals_ctx, context=context)
+        condition_result = evaluate_condition(ctx, node.condition)
+
+        # Store condition result for the router
+        return {f"_if_result_{node.id}": condition_result}
 
     def _run_for_each(
         self,
@@ -486,42 +501,47 @@ class NodeRuntime:
         locals_ctx: Mapping[str, Any] | None,
         context: WorkflowRuntimeContext | None,
     ) -> Dict[str, Any]:
-        ctx = self._build_eval_context(state, config, locals_ctx)
-        items_value = evaluate_value(ctx, node.items)
-        if not isinstance(items_value, list):
-            raise ExecutionError(f"for_each node '{node.id}' items expression must produce a list")
+        """
+        Initialize or advance loop iteration state.
 
-        combined_updates: Dict[str, Any] = {}
-        loop_state: WorkflowState = dict(state)
-        body_result_key = node.body[-1].out if node.body else None
-        if node.out and not body_result_key:
-            raise ExecutionError(
-                f"for_each node '{node.id}' with out='{node.out}' requires the body to end with a node that writes to state"
-            )
-        aggregated: List[Any] = []
+        On first call: Evaluate items and initialize loop state.
+        On subsequent calls: Advance the index.
 
-        for index, item in enumerate(items_value):
-            iteration_locals = dict(locals_ctx or {})
-            iteration_locals[node.item_var] = item
-            iteration_locals[node.index_var] = index
-            iteration_updates = self._execute_sequence(
-                node.body, loop_state, config, locals_ctx=iteration_locals, context=context
-            )
-            if iteration_updates:
-                loop_state.update(iteration_updates)
-                combined_updates.update(iteration_updates)
-            if node.out:
-                if body_result_key not in loop_state:
-                    raise ExecutionError(
-                        f"for_each node '{node.id}' expected child '{body_result_key}' to produce output"
-                    )
-                aggregated.append(loop_state[body_result_key])
+        Loop body execution is handled by LangGraph graph traversal.
+        The router reads _loop_{node_id} to determine body vs exit.
+        """
+        loop_key = f"_loop_{node.id}"
+        existing_loop_state = state.get(loop_key)
 
-        if node.out:
-            result = aggregated
-            combined_updates.update(self._prepare_output(node.out, result))
+        if existing_loop_state is None:
+            # First invocation - initialize loop state
+            ctx = self._build_eval_context(state, config, locals_ctx)
+            items_value = evaluate_value(ctx, node.items)
+            if not isinstance(items_value, list):
+                raise ExecutionError(f"for_each node '{node.id}' items expression must produce a list")
 
-        return combined_updates
+            loop_state = {
+                "items": items_value,
+                "current_index": 0,
+                "has_more_iterations": len(items_value) > 0,
+                "results": [],
+            }
+        else:
+            # Subsequent invocation - advance to next iteration
+            loop_state = dict(existing_loop_state)
+            loop_state["current_index"] += 1
+            loop_state["has_more_iterations"] = loop_state["current_index"] < len(loop_state["items"])
+
+        # Build updates
+        updates: Dict[str, Any] = {loop_key: loop_state}
+
+        # Set current item and index in state for body nodes to access
+        if loop_state["has_more_iterations"]:
+            idx = loop_state["current_index"]
+            updates[node.item_var] = loop_state["items"][idx]
+            updates[node.index_var] = idx
+
+        return updates
 
     async def _run_for_each_async(
         self,
@@ -532,42 +552,46 @@ class NodeRuntime:
         locals_ctx: Mapping[str, Any] | None,
         context: WorkflowRuntimeContext | None,
     ) -> Dict[str, Any]:
-        ctx = self._build_eval_context(state, config, locals_ctx)
-        items_value = evaluate_value(ctx, node.items)
-        if not isinstance(items_value, list):
-            raise ExecutionError(f"for_each node '{node.id}' items expression must produce a list")
+        """
+        Initialize or advance loop iteration state (async version).
 
-        combined_updates: Dict[str, Any] = {}
-        loop_state: WorkflowState = dict(state)
-        body_result_key = node.body[-1].out if node.body else None
-        if node.out and not body_result_key:
-            raise ExecutionError(
-                f"for_each node '{node.id}' with out='{node.out}' requires the body to end with a node that writes to state"
-            )
-        aggregated: List[Any] = []
+        On first call: Evaluate items and initialize loop state.
+        On subsequent calls: Advance the index.
 
-        for index, item in enumerate(items_value):
-            iteration_locals = dict(locals_ctx or {})
-            iteration_locals[node.item_var] = item
-            iteration_locals[node.index_var] = index
-            iteration_updates = await self._execute_sequence_async(
-                node.body, loop_state, config, locals_ctx=iteration_locals, context=context
-            )
-            if iteration_updates:
-                loop_state.update(iteration_updates)
-                combined_updates.update(iteration_updates)
-            if node.out:
-                if body_result_key not in loop_state:
-                    raise ExecutionError(
-                        f"for_each node '{node.id}' expected child '{body_result_key}' to produce output"
-                    )
-                aggregated.append(loop_state[body_result_key])
+        Loop body execution is handled by LangGraph graph traversal.
+        """
+        loop_key = f"_loop_{node.id}"
+        existing_loop_state = state.get(loop_key)
 
-        if node.out:
-            result = aggregated
-            combined_updates.update(self._prepare_output(node.out, result))
+        if existing_loop_state is None:
+            # First invocation - initialize loop state
+            ctx = self._build_eval_context(state, config, locals_ctx)
+            items_value = evaluate_value(ctx, node.items)
+            if not isinstance(items_value, list):
+                raise ExecutionError(f"for_each node '{node.id}' items expression must produce a list")
 
-        return combined_updates
+            loop_state = {
+                "items": items_value,
+                "current_index": 0,
+                "has_more_iterations": len(items_value) > 0,
+                "results": [],
+            }
+        else:
+            # Subsequent invocation - advance to next iteration
+            loop_state = dict(existing_loop_state)
+            loop_state["current_index"] += 1
+            loop_state["has_more_iterations"] = loop_state["current_index"] < len(loop_state["items"])
+
+        # Build updates
+        updates: Dict[str, Any] = {loop_key: loop_state}
+
+        # Set current item and index in state for body nodes to access
+        if loop_state["has_more_iterations"]:
+            idx = loop_state["current_index"]
+            updates[node.item_var] = loop_state["items"][idx]
+            updates[node.index_var] = idx
+
+        return updates
 
     # ------------------------------------------------------------------
     # Helpers

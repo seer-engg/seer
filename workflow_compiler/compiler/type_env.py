@@ -1,10 +1,14 @@
 """
 Stage 2 — Build the type environment that tracks the schema for each state key.
+
+V2: With explicit edges, nodes no longer have nested children. Loop variables
+(item_var, index_var) are written to state and registered as symbols.
 """
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from collections import defaultdict
+from typing import Dict, List, Optional, Set
 
 from workflow_compiler.errors import TypeEnvironmentError
 from workflow_compiler.expr.typecheck import (
@@ -14,6 +18,7 @@ from workflow_compiler.expr.typecheck import (
 )
 from workflow_compiler.registry.tool_registry import ToolRegistry
 from workflow_compiler.schema.models import (
+    EdgeType,
     ForEachNode,
     JSONValue,
     LLMNode,
@@ -36,8 +41,13 @@ def build_type_environment(
         trigger_schema = _resolve_trigger_schema(spec)
         register_trigger(env, trigger_schema)
 
+    # Process all nodes
     for node in spec.nodes:
         _process_node(node, env, schema_registry, tool_registry)
+
+    # Register loop variable symbols for nodes inside loop bodies
+    _register_loop_variables(spec, env)
+
     return env
 
 
@@ -61,6 +71,27 @@ def _resolve_trigger_schema(spec: WorkflowSpec) -> Dict:
     return event_schema
 
 
+def _register_loop_variables(spec: WorkflowSpec, env: TypeEnvironment) -> None:
+    """
+    Register loop variable symbols (item_var, index_var) for ForEachNodes.
+
+    With edge-based control flow, loop variables are written to state and need
+    to be registered as symbols for body nodes to access via ${item}, ${index}.
+    """
+    # Build a map of ForEachNode by id
+    for_each_nodes = {n.id: n for n in spec.nodes if isinstance(n, ForEachNode)}
+
+    if not for_each_nodes:
+        return
+
+    # For each ForEachNode, register its loop variables
+    for node in for_each_nodes.values():
+        # Register item_var with a permissive schema (actual type depends on items)
+        # The schema could be inferred from the items expression, but for now we use "any"
+        env.register(node.item_var, {"type": "object", "additionalProperties": True})
+        env.register(node.index_var, {"type": "integer"})
+
+
 def _process_node(
     node: Node,
     env: TypeEnvironment,
@@ -70,7 +101,6 @@ def _process_node(
     if isinstance(node, TaskNode):
         schema = _schema_for_task(node, schema_registry)
         _register_symbol(env, node.out, schema)
-        _process_children(node, env, schema_registry, tool_registry)
         return
 
     if isinstance(node, ToolNode):
@@ -88,38 +118,17 @@ def _process_node(
         return
 
     if isinstance(node, ForEachNode):
+        # Register output schema if the loop has an out key
         if node.out:
             if node.output:
                 loop_schema = schema_from_output_contract(node.output, schema_registry)
             else:
                 loop_schema = {"type": "array"}
             _register_symbol(env, node.out, loop_schema)
-        for child in node.body:
-            _process_node(child, env, schema_registry, tool_registry)
         return
 
-    # If node is an IfNode (or any other future composite) we still need to
-    # process its children.
-    _process_children(node, env, schema_registry, tool_registry)
-
-
-def _process_children(
-    node: Node,
-    env: TypeEnvironment,
-    schema_registry: SchemaRegistry,
-    tool_registry: ToolRegistry,
-) -> None:
-    child_lists: List[List[Node]] = []
-    if hasattr(node, "then"):
-        child_lists.append(getattr(node, "then"))
-    if hasattr(node, "else_"):
-        child_lists.append(getattr(node, "else_"))
-    if hasattr(node, "body"):
-        child_lists.append(getattr(node, "body"))
-
-    for group in child_lists:
-        for child in group:
-            _process_node(child, env, schema_registry, tool_registry)
+    # IfNode doesn't produce output directly (branches do)
+    # No special handling needed
 
 
 def _schema_for_task(node: TaskNode, registry: SchemaRegistry) -> Optional[Dict]:

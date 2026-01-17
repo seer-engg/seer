@@ -54,22 +54,10 @@ def _snapshot_to_dict(snapshot: Any) -> Dict[str, Any]:
 
 
 def _find_node_in_spec(nodes: List[Node], target_id: str) -> Optional[Node]:
-    """Recursively find a node by ID in the workflow spec."""
+    """Find a node by ID in the workflow spec."""
     for node in nodes:
         if node.id == target_id:
             return node
-        # Handle nested nodes in IfNode and ForEachNode
-        if isinstance(node, IfNode):
-            found = _find_node_in_spec(node.then, target_id)
-            if found:
-                return found
-            found = _find_node_in_spec(node.else_, target_id)
-            if found:
-                return found
-        elif isinstance(node, ForEachNode):
-            found = _find_node_in_spec(node.body, target_id)
-            if found:
-                return found
     return None
 
 
@@ -127,7 +115,7 @@ def _build_node_label(node: Node) -> str:
 
 
 def _collect_graph_nodes(node: Node, nodes: List[Dict[str, Any]]) -> None:
-    """Recursively collect all nodes from the workflow spec."""
+    """Collect node information for graph visualization."""
     node_id = node.id
     node_type = node.type if hasattr(node, "type") else "unknown"
 
@@ -136,16 +124,6 @@ def _collect_graph_nodes(node: Node, nodes: List[Dict[str, Any]]) -> None:
         "type": node_type,
         "label": _build_node_label(node),
     })
-
-    # Process children for composite nodes
-    if isinstance(node, IfNode):
-        for child in node.then:
-            _collect_graph_nodes(child, nodes)
-        for child in node.else_:
-            _collect_graph_nodes(child, nodes)
-    elif isinstance(node, ForEachNode):
-        for child in node.body:
-            _collect_graph_nodes(child, nodes)
 
 
 def _extract_edges_from_reactflow(workflow_spec: WorkflowSpec) -> List[Dict[str, str]]:

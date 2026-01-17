@@ -103,6 +103,29 @@ class InputDef(StrictModel):
 
 
 # -----------------------------
+# Edges
+# -----------------------------
+class EdgeType(str, Enum):
+    """Types of edges in the workflow graph."""
+    default = "default"                      # Sequential flow
+    conditional_true = "conditional_true"    # If condition true branch
+    conditional_false = "conditional_false"  # If condition false branch
+    loop_body = "loop_body"                  # For-each loop body entry
+    loop_exit = "loop_exit"                  # For-each loop exit
+    trigger = "trigger"                      # Trigger to node entry point
+
+
+class Edge(StrictModel):
+    """
+    Explicit edge connecting two nodes in the workflow graph.
+    """
+    id: str = Field(min_length=1)
+    source: str = Field(min_length=1)  # Source node ID
+    target: str = Field(min_length=1)  # Target node ID
+    type: EdgeType = EdgeType.default
+
+
+# -----------------------------
 # Nodes
 # -----------------------------
 class NodeBase(StrictModel):
@@ -157,16 +180,25 @@ class LLMNode(NodeBase):
 
 
 class IfNode(NodeBase):
+    """
+    Conditional node that routes to different branches based on condition.
+
+    Branch targets are defined by edges with type=conditional_true/conditional_false.
+    """
     type: Literal["if"] = "if"
     condition: str = Field(min_length=1)
-    then: List["Node"] = Field(default_factory=list)
-    else_: List["Node"] = Field(default_factory=list, alias="else")
 
 
 class ForEachNode(NodeBase):
+    """
+    Loop node that iterates over a list.
+
+    Loop body is defined by edges with type=loop_body.
+    Loop exit is defined by edges with type=loop_exit.
+    The ForEachNode writes item_var and index_var to state for body nodes.
+    """
     type: Literal["for_each"] = "for_each"
     items: str = Field(min_length=1)  # expression resolving to list
-    body: List["Node"] = Field(default_factory=list)
     item_var: str = "item"
     index_var: str = "index"
 
@@ -220,25 +252,74 @@ class TriggerSpec(TriggerDefinition):
 
 
 class WorkflowSpec(StrictModel):
-    version: str = Field(default="1")
-    
+    version: str = Field(default="2")
+
     nodes: List[Node] = Field(default_factory=list)
+    edges: List[Edge] = Field(default_factory=list)
     triggers: List[TriggerSpec] = Field(default_factory=list)
     meta: Dict[str, JSONValue] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _unique_triggers(self) -> "WorkflowSpec":
-        seen = set()
-        duplicates = []
+    def _validate_workflow(self) -> "WorkflowSpec":
+        # Validate unique trigger keys
+        seen_triggers = set()
+        duplicate_triggers = []
         for trigger in self.triggers or []:
-            if trigger.key in seen:
-                duplicates.append(trigger.key)
-            seen.add(trigger.key)
-        if duplicates:
-            dup_list = ", ".join(sorted(set(duplicates)))
+            if trigger.key in seen_triggers:
+                duplicate_triggers.append(trigger.key)
+            seen_triggers.add(trigger.key)
+        if duplicate_triggers:
+            dup_list = ", ".join(sorted(set(duplicate_triggers)))
             raise ValueError(f"Duplicate trigger key values are not allowed: {dup_list}")
+
+        # Collect valid identifiers
+        node_ids = {n.id for n in self.nodes}
+        trigger_keys = {t.key for t in self.triggers}
+
+        # Validate edge source/target references
+        for edge in self.edges:
+            if edge.type == EdgeType.trigger:
+                # Trigger edges: source must be a trigger key, target must be a node
+                if edge.source not in trigger_keys:
+                    raise ValueError(f"Trigger edge '{edge.id}' source '{edge.source}' not found in triggers")
+                if edge.target not in node_ids:
+                    raise ValueError(f"Trigger edge '{edge.id}' target '{edge.target}' not found in nodes")
+            else:
+                # Regular edges: source and target must be nodes
+                if edge.source not in node_ids:
+                    raise ValueError(f"Edge '{edge.id}' source '{edge.source}' not found in nodes")
+                if edge.target not in node_ids:
+                    raise ValueError(f"Edge '{edge.id}' target '{edge.target}' not found in nodes")
+
+        # Require at least one trigger
+        if not self.triggers:
+            raise ValueError("WorkflowSpec requires at least one trigger")
+
+        # Require at least one trigger edge
+        trigger_edges = [e for e in self.edges if e.type == EdgeType.trigger]
+        if not trigger_edges:
+            raise ValueError("WorkflowSpec requires at least one trigger edge")
+
+        # Validate unique node IDs
+        seen_nodes = set()
+        duplicate_nodes = []
+        for node in self.nodes:
+            if node.id in seen_nodes:
+                duplicate_nodes.append(node.id)
+            seen_nodes.add(node.id)
+        if duplicate_nodes:
+            dup_list = ", ".join(sorted(set(duplicate_nodes)))
+            raise ValueError(f"Duplicate node id values are not allowed: {dup_list}")
+
+        # Validate unique edge IDs
+        seen_edges = set()
+        duplicate_edges = []
+        for edge in self.edges:
+            if edge.id in seen_edges:
+                duplicate_edges.append(edge.id)
+            seen_edges.add(edge.id)
+        if duplicate_edges:
+            dup_list = ", ".join(sorted(set(duplicate_edges)))
+            raise ValueError(f"Duplicate edge id values are not allowed: {dup_list}")
+
         return self
-
-
-IfNode.model_rebuild()
-ForEachNode.model_rebuild()

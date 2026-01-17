@@ -77,9 +77,9 @@ async def test_if_branch_tool_runs_async_handler() -> None:
         async_handler=async_handler,
     )
 
-    # Trigger-based workflow: data is accessed via ${trigger.data.*}
+    # V2 workflow with explicit edges for if/else branching
     spec = {
-        "version": "1",
+        "version": "2",
         "triggers": [
             {
                 "key": "test.trigger",
@@ -107,23 +107,24 @@ async def test_if_branch_tool_runs_async_handler() -> None:
                 "id": "conditional",
                 "type": "if",
                 "condition": "${trigger.data.flag}",
-                "then": [
-                    {
-                        "id": "call_tool",
-                        "type": "tool",
-                        "tool": "test.echo",
-                        "in": {"message": "${trigger.data.payload}"},
-                        "out": "tool_result",
-                    }
-                ],
-                "else": [],
-            }
+            },
+            {
+                "id": "call_tool",
+                "type": "tool",
+                "tool": "test.echo",
+                "in": {"message": "${trigger.data.payload}"},
+                "out": "tool_result",
+            },
+        ],
+        "edges": [
+            {"id": "e0", "source": "test.trigger", "target": "conditional", "type": "trigger"},
+            {"id": "e1", "source": "conditional", "target": "call_tool", "type": "conditional_true"},
         ],
     }
 
     compiled = await _compile_workflow(spec, [tool_def])
-    # Pass trigger envelope with event data
-    trigger_envelope = {"data": {"flag": True, "payload": "hello"}}
+    # Pass trigger envelope with event data and trigger_key for routing
+    trigger_envelope = {"trigger_key": "test.trigger", "data": {"flag": True, "payload": "hello"}}
     result = await compiled.ainvoke(
         inputs={},
         config=None,
@@ -165,8 +166,20 @@ async def test_for_each_body_tools_use_async_handler() -> None:
         async_handler=async_handler,
     )
 
+    # V2 workflow with explicit edges for loop control flow
+    # Note: With edge-based loops, aggregation works differently - we verify each
+    # iteration runs and the final result is available
     spec = {
-        "version": "1",
+        "version": "2",
+        "triggers": [
+            {
+                "key": "loop.trigger",
+                "title": "Loop Trigger",
+                "provider": "test",
+                "mode": "webhook",
+                "schemas": {"event": {"type": "object"}},
+            }
+        ],
         "nodes": [
             {
                 "id": "items_seed",
@@ -179,25 +192,267 @@ async def test_for_each_body_tools_use_async_handler() -> None:
                 "id": "loop",
                 "type": "for_each",
                 "items": "${items_state}",
-                "body": [
-                    {
-                        "id": "loop_tool",
-                        "type": "tool",
-                        "tool": "test.loop_echo",
-                        "in": {"message": "${item}"},
-                        "out": "loop_result",
-                    }
-                ],
-                "out": "aggregated",
             },
+            {
+                "id": "loop_tool",
+                "type": "tool",
+                "tool": "test.loop_echo",
+                "in": {"message": "${item}"},
+                "out": "loop_result",
+            },
+            {
+                "id": "done",
+                "type": "task",
+                "kind": "set",
+                "value": "finished",
+                "out": "status",
+            },
+        ],
+        "edges": [
+            {"id": "e0", "source": "loop.trigger", "target": "items_seed", "type": "trigger"},
+            {"id": "e1", "source": "items_seed", "target": "loop", "type": "default"},
+            {"id": "e2", "source": "loop", "target": "loop_tool", "type": "loop_body"},
+            {"id": "e3", "source": "loop_tool", "target": "loop", "type": "default"},
+            {"id": "e4", "source": "loop", "target": "done", "type": "loop_exit"},
         ],
     }
 
     compiled = await _compile_workflow(spec, [tool_def])
-    result = await compiled.ainvoke(inputs={}, config=None, context=None)
+    trigger_envelope = {"trigger_key": "loop.trigger"}
+    result = await compiled.ainvoke(inputs={}, config=None, context=None, trigger=trigger_envelope)
 
-    assert result["aggregated"] == [
-        {"echo": "alpha-processed"},
-        {"echo": "beta-processed"},
-    ]
+    # Verify both loop iterations ran with async handler
     assert async_calls == ["alpha", "beta"]
+    # Verify the loop completed and reached the done node
+    assert result["status"] == "finished"
+    # Verify the last iteration's result is in state
+    assert result["loop_result"]["echo"] == "beta-processed"
+
+
+@pytest.mark.asyncio
+async def test_trigger_routes_to_correct_node() -> None:
+    """Single trigger edge routes to the correct target node."""
+    spec = {
+        "version": "2",
+        "triggers": [
+            {
+                "key": "webhook.received",
+                "title": "Webhook",
+                "provider": "webhook",
+                "mode": "webhook",
+                "schemas": {"event": {"type": "object"}},
+            }
+        ],
+        "nodes": [
+            {
+                "id": "handler",
+                "type": "task",
+                "kind": "set",
+                "value": "webhook_handled",
+                "out": "result",
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "webhook.received", "target": "handler", "type": "trigger"},
+        ],
+    }
+
+    compiled = await _compile_workflow(spec, [])
+    trigger_envelope = {"trigger_key": "webhook.received"}
+    result = await compiled.ainvoke(inputs={}, config=None, context=None, trigger=trigger_envelope)
+
+    assert result["result"] == "webhook_handled"
+
+
+@pytest.mark.asyncio
+async def test_multiple_triggers_route_to_different_nodes() -> None:
+    """Multiple triggers route to their respective target nodes based on trigger_key."""
+    spec = {
+        "version": "2",
+        "triggers": [
+            {
+                "key": "github.push",
+                "title": "Push",
+                "provider": "github",
+                "mode": "webhook",
+                "schemas": {"event": {"type": "object"}},
+            },
+            {
+                "key": "github.pr",
+                "title": "PR",
+                "provider": "github",
+                "mode": "webhook",
+                "schemas": {"event": {"type": "object"}},
+            },
+        ],
+        "nodes": [
+            {
+                "id": "handle_push",
+                "type": "task",
+                "kind": "set",
+                "value": "push_handled",
+                "out": "result",
+            },
+            {
+                "id": "handle_pr",
+                "type": "task",
+                "kind": "set",
+                "value": "pr_handled",
+                "out": "result",
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "github.push", "target": "handle_push", "type": "trigger"},
+            {"id": "e2", "source": "github.pr", "target": "handle_pr", "type": "trigger"},
+        ],
+    }
+
+    compiled = await _compile_workflow(spec, [])
+
+    # Test push trigger routes to handle_push
+    result = await compiled.ainvoke(
+        inputs={}, config=None, context=None,
+        trigger={"trigger_key": "github.push"}
+    )
+    assert result["result"] == "push_handled"
+
+    # Test PR trigger routes to handle_pr
+    result = await compiled.ainvoke(
+        inputs={}, config=None, context=None,
+        trigger={"trigger_key": "github.pr"}
+    )
+    assert result["result"] == "pr_handled"
+
+
+@pytest.mark.asyncio
+async def test_multiple_triggers_route_to_same_node() -> None:
+    """Multiple triggers can route to the same target node."""
+    spec = {
+        "version": "2",
+        "triggers": [
+            {
+                "key": "trigger_a",
+                "title": "A",
+                "provider": "test",
+                "mode": "webhook",
+                "schemas": {"event": {"type": "object"}},
+            },
+            {
+                "key": "trigger_b",
+                "title": "B",
+                "provider": "test",
+                "mode": "webhook",
+                "schemas": {"event": {"type": "object"}},
+            },
+        ],
+        "nodes": [
+            {
+                "id": "shared_handler",
+                "type": "task",
+                "kind": "set",
+                "value": "shared_executed",
+                "out": "result",
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "trigger_a", "target": "shared_handler", "type": "trigger"},
+            {"id": "e2", "source": "trigger_b", "target": "shared_handler", "type": "trigger"},
+        ],
+    }
+
+    compiled = await _compile_workflow(spec, [])
+
+    # Both triggers should route to the same node
+    for trigger_key in ["trigger_a", "trigger_b"]:
+        result = await compiled.ainvoke(
+            inputs={}, config=None, context=None,
+            trigger={"trigger_key": trigger_key}
+        )
+        assert result["result"] == "shared_executed"
+
+
+@pytest.mark.asyncio
+async def test_unknown_trigger_key_fallback() -> None:
+    """Unknown trigger key falls back to first trigger's target."""
+    spec = {
+        "version": "2",
+        "triggers": [
+            {
+                "key": "known_trigger",
+                "title": "Known",
+                "provider": "test",
+                "mode": "webhook",
+                "schemas": {"event": {"type": "object"}},
+            },
+        ],
+        "nodes": [
+            {
+                "id": "handler",
+                "type": "task",
+                "kind": "set",
+                "value": "handled",
+                "out": "result",
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "known_trigger", "target": "handler", "type": "trigger"},
+        ],
+    }
+
+    compiled = await _compile_workflow(spec, [])
+
+    # Unknown trigger key should fall back to the first target
+    result = await compiled.ainvoke(
+        inputs={}, config=None, context=None,
+        trigger={"trigger_key": "unknown_trigger"}
+    )
+    assert result["result"] == "handled"
+
+
+@pytest.mark.asyncio
+async def test_trigger_data_accessible_after_routing() -> None:
+    """Trigger data is accessible via ${trigger.*} expressions after routing."""
+    spec = {
+        "version": "2",
+        "triggers": [
+            {
+                "key": "data.trigger",
+                "title": "Data",
+                "provider": "test",
+                "mode": "webhook",
+                "schemas": {
+                    "event": {
+                        "type": "object",
+                        "properties": {
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "message": {"type": "string"},
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        ],
+        "nodes": [
+            {
+                "id": "echo",
+                "type": "task",
+                "kind": "set",
+                "value": "${trigger.data.message}",
+                "out": "result",
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "data.trigger", "target": "echo", "type": "trigger"},
+        ],
+    }
+
+    compiled = await _compile_workflow(spec, [])
+    result = await compiled.ainvoke(
+        inputs={}, config=None, context=None,
+        trigger={"trigger_key": "data.trigger", "data": {"message": "hello world"}}
+    )
+
+    assert result["result"] == "hello world"

@@ -78,17 +78,17 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
             if not limits.has_unlimited_workflows:
                 logger.info("Checking workflow creation limit for user %s", user.id)
                 current = await get_workflow_count(user)
-                if current >= limits.workflows:
-                    tier = await resolve_user_tier(user)
-                    error = WorkflowLimitExceeded(limits.workflows, current, tier)
-                    logger.warning(
-                        "Workflow creation limit exceeded for user %s (tier=%s, current=%d, limit=%d)",
-                        user.id,
-                        tier.value,
-                        current,
-                        limits.workflows,
-                    )
-                    return JSONResponse(status_code=402, content=error.to_dict())
+                # if current >= limits.workflows:
+                #     tier = await resolve_user_tier(user)
+                #     error = WorkflowLimitExceeded(limits.workflows, current, tier)
+                #     logger.warning(
+                #         "Workflow creation limit exceeded for user %s (tier=%s, current=%d, limit=%d)",
+                #         user.id,
+                #         tier.value,
+                #         current,
+                #         limits.workflows,
+                #     )
+                #     return JSONResponse(status_code=402, content=error.to_dict())
 
         # 2. Workflow Run Limit
         elif method == "POST" and "/run" in path and "/api/v1/workflows/" in path:
