@@ -11,9 +11,10 @@ from api.workflows.services.lifecycle import (
     create_workflow,
     list_workflows,
     get_workflow,
-    update_workflow_draft,
+    patch_workflow_draft,
     delete_workflow,
 )
+from seer_mcp.config import get_config, MCPMode
 from shared.database import User
 
 
@@ -34,6 +35,8 @@ async def seer_create_workflow(
     Returns:
         List of text content with workflow creation result
     """
+    config = get_config()
+
     if spec is None:
         spec = {
             "nodes": [],
@@ -44,24 +47,40 @@ async def seer_create_workflow(
             },
         }
 
-    payload = api_models.WorkflowCreateRequest(
-        name=name,
-        description=description,
-        spec=spec,
-    )
+    if config.mode == MCPMode.LOCAL:
+        # LOCAL mode: Direct service call
+        payload = api_models.WorkflowCreateRequest(
+            name=name,
+            description=description,
+            spec=spec,
+        )
+        result = await create_workflow(user, payload)
+        result_dict = {
+            "workflow_id": result.workflow_id,
+            "name": result.name,
+            "description": result.description,
+            "draft_revision": result.draft_revision,
+            "created_at": str(result.created_at),
+        }
+    else:
+        # CLOUD mode: API client call
+        from seer_mcp.server import get_api_client  # pylint: disable=import-outside-toplevel,cyclic-import # Reason: Avoid circular import
 
-    result = await create_workflow(user, payload)
+        client = get_api_client()
+        if not client:
+            raise ValueError("API client not initialized")
+        result_dict = await client.create_workflow(name, description, spec)
 
     return [
         TextContent(
             type="text",
             text=f"""Created workflow successfully!
 
-Workflow ID: {result.workflow_id}
-Name: {result.name}
-Description: {result.description or "No description"}
-Draft Revision: {result.draft_revision}
-Created At: {result.created_at}
+Workflow ID: {result_dict['workflow_id']}
+Name: {result_dict['name']}
+Description: {result_dict.get('description') or "No description"}
+Draft Revision: {result_dict['draft_revision']}
+Created At: {result_dict['created_at']}
 
 You can now add nodes and edges to the workflow spec or run it in test mode.""",
         )
@@ -83,32 +102,48 @@ async def seer_list_workflows(
     Returns:
         List of text content with workflows
     """
+    config = get_config()
+
     if limit < 1 or limit > 100:
         limit = min(max(limit, 1), 100)
 
-    result = await list_workflows(user, limit=limit, cursor=cursor)
+    if config.mode == MCPMode.LOCAL:
+        # LOCAL mode: Direct service call
+        result = await list_workflows(user, limit=limit, cursor=cursor)
+        workflows = result.workflows
+        next_cursor = result.next_cursor
+    else:
+        # CLOUD mode: API client call
+        from seer_mcp.server import get_api_client  # pylint: disable=import-outside-toplevel,cyclic-import # Reason: Avoid circular import
 
-    if not result.workflows:
+        client = get_api_client()
+        if not client:
+            raise ValueError("API client not initialized")
+        result_dict = await client.list_workflows(limit=limit, cursor=cursor)
+        workflows = result_dict.get("items", [])
+        next_cursor = result_dict.get("next_cursor")
+
+    if not workflows:
         return [TextContent(type="text", text="No workflows found.")]
 
     workflows_text = "\n\n".join(
         [
-            f"""Workflow ID: {w.workflow_id}
-Name: {w.name}
-Description: {w.description or "No description"}
-Draft Revision: {w.draft_revision}
-Created: {w.created_at}
-Updated: {w.updated_at}"""
-            for w in result.workflows
+            f"""Workflow ID: {w.get('workflow_id') if isinstance(w, dict) else w.workflow_id}
+Name: {w.get('name') if isinstance(w, dict) else w.name}
+Description: {(w.get('description') if isinstance(w, dict) else w.description) or "No description"}
+Draft Revision: {w.get('draft_revision') if isinstance(w, dict) else w.draft_revision}
+Created: {w.get('created_at') if isinstance(w, dict) else w.created_at}
+Updated: {w.get('updated_at') if isinstance(w, dict) else w.updated_at}"""
+            for w in workflows
         ]
     )
 
-    pagination_info = f"\n\nNext cursor: {result.next_cursor}" if result.next_cursor else ""
+    pagination_info = f"\n\nNext cursor: {next_cursor}" if next_cursor else ""
 
     return [
         TextContent(
             type="text",
-            text=f"""Found {len(result.workflows)} workflow(s):
+            text=f"""Found {len(workflows)} workflow(s):
 
 {workflows_text}{pagination_info}""",
         )
@@ -128,27 +163,51 @@ async def seer_get_workflow(
     Returns:
         List of text content with workflow details
     """
-    result = await get_workflow(user, workflow_id)
+    config = get_config()
 
-    spec_json = json.dumps(result.spec.model_dump(), indent=2)
+    if config.mode == MCPMode.LOCAL:
+        # LOCAL mode: Direct service call
+        result = await get_workflow(user, workflow_id)
+        spec_dict = result.spec.model_dump()
+        result_dict = {
+            "workflow_id": result.workflow_id,
+            "name": result.name,
+            "description": result.description,
+            "draft_revision": result.draft_revision,
+            "created_at": str(result.created_at),
+            "updated_at": str(result.updated_at),
+            "spec": spec_dict,
+            "published_version": result.published_version.model_dump() if result.published_version else None,
+            "latest_version": result.latest_version.model_dump() if result.latest_version else None,
+        }
+    else:
+        # CLOUD mode: API client call
+        from seer_mcp.server import get_api_client  # pylint: disable=import-outside-toplevel,cyclic-import # Reason: Avoid circular import
+
+        client = get_api_client()
+        if not client:
+            raise ValueError("API client not initialized")
+        result_dict = await client.get_workflow(workflow_id)
+
+    spec_json = json.dumps(result_dict["spec"], indent=2)
 
     version_info = ""
-    if result.published_version:
-        version_info += f"\nPublished Version: v{result.published_version.version_number}"
-    if result.latest_version:
-        version_info += f"\nLatest Version: v{result.latest_version.version_number}"
+    if result_dict.get("published_version"):
+        version_info += f"\nPublished Version: v{result_dict['published_version'].get('version_number')}"
+    if result_dict.get("latest_version"):
+        version_info += f"\nLatest Version: v{result_dict['latest_version'].get('version_number')}"
 
     return [
         TextContent(
             type="text",
             text=f"""Workflow Details:
 
-ID: {result.workflow_id}
-Name: {result.name}
-Description: {result.description or "No description"}
-Draft Revision: {result.draft_revision}
-Created: {result.created_at}
-Updated: {result.updated_at}{version_info}
+ID: {result_dict['workflow_id']}
+Name: {result_dict['name']}
+Description: {result_dict.get('description') or "No description"}
+Draft Revision: {result_dict['draft_revision']}
+Created: {result_dict['created_at']}
+Updated: {result_dict['updated_at']}{version_info}
 
 Workflow Spec:
 {spec_json}""",
@@ -175,16 +234,9 @@ async def seer_update_workflow(
     Returns:
         List of text content with update result
     """
-    payload_dict: Dict[str, Any] = {}
+    config = get_config()
 
-    if spec is not None:
-        payload_dict["spec"] = spec
-    if name is not None:
-        payload_dict["name"] = name
-    if description is not None:
-        payload_dict["description"] = description
-
-    if not payload_dict:
+    if spec is None and name is None and description is None:
         return [
             TextContent(
                 type="text",
@@ -192,18 +244,42 @@ async def seer_update_workflow(
             )
         ]
 
-    payload = api_models.WorkflowUpdateRequest(**payload_dict)
-    result = await update_workflow_draft(user, workflow_id, payload)
+    if config.mode == MCPMode.LOCAL:
+        # LOCAL mode: Direct service call
+        payload_dict: Dict[str, Any] = {}
+        if spec is not None:
+            payload_dict["spec"] = spec
+        if name is not None:
+            payload_dict["name"] = name
+        if description is not None:
+            payload_dict["description"] = description
+
+        payload = api_models.WorkflowUpdateRequest(**payload_dict)
+        result = await patch_workflow_draft(user, workflow_id, payload)
+        result_dict = {
+            "name": result.name,
+            "description": result.description,
+            "draft_revision": result.draft_revision,
+            "updated_at": str(result.updated_at),
+        }
+    else:
+        # CLOUD mode: API client call
+        from seer_mcp.server import get_api_client  # pylint: disable=import-outside-toplevel,cyclic-import # Reason: Avoid circular import
+
+        client = get_api_client()
+        if not client:
+            raise ValueError("API client not initialized")
+        result_dict = await client.update_workflow(workflow_id, name, description, spec)
 
     return [
         TextContent(
             type="text",
             text=f"""Updated workflow {workflow_id} successfully!
 
-Name: {result.name}
-Description: {result.description or "No description"}
-Draft Revision: {result.draft_revision}
-Updated At: {result.updated_at}""",
+Name: {result_dict['name']}
+Description: {result_dict.get('description') or "No description"}
+Draft Revision: {result_dict['draft_revision']}
+Updated At: {result_dict['updated_at']}""",
         )
     ]
 
@@ -221,7 +297,19 @@ async def seer_delete_workflow(
     Returns:
         List of text content with deletion result
     """
-    await delete_workflow(user, workflow_id)
+    config = get_config()
+
+    if config.mode == MCPMode.LOCAL:
+        # LOCAL mode: Direct service call
+        await delete_workflow(user, workflow_id)
+    else:
+        # CLOUD mode: API client call
+        from seer_mcp.server import get_api_client  # pylint: disable=import-outside-toplevel,cyclic-import # Reason: Avoid circular import
+
+        client = get_api_client()
+        if not client:
+            raise ValueError("API client not initialized")
+        await client.delete_workflow(workflow_id)
 
     return [
         TextContent(

@@ -8,6 +8,8 @@ from tortoise import Tortoise
 
 from shared.database.config import TORTOISE_ORM
 from shared.database.models import (
+    OAuthAuthorizationCode,
+    OAuthRefreshToken,
     User,
     UserPublic,
 )
@@ -80,6 +82,8 @@ __all__ = [
     "User",
     "UserPublic",
     # OAuth & Integrations
+    "OAuthAuthorizationCode",
+    "OAuthRefreshToken",
     "OAuthConnection",
     "IntegrationResource",
     "IntegrationSecret",

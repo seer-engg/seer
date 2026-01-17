@@ -8,10 +8,13 @@ from mcp.types import TextContent, Tool  # pylint: disable=no-name-in-module # R
 from api.workflows import models as api_models
 from api.workflows.services.execution import (
     run_saved_workflow,
+    list_workflow_runs,
+)
+from api.workflows.services.history import (
     get_run_status,
     get_run_history,
 )
-from api.workflows.services.history import list_workflow_runs
+from seer_mcp.config import get_config, MCPMode
 from shared.database import User
 
 
@@ -32,22 +35,39 @@ async def seer_run_workflow(
     Returns:
         List of text content with execution result
     """
-    payload = api_models.RunFromWorkflowRequest(
-        inputs=inputs or {},
-        test_mode=test_mode,
-    )
+    config = get_config()
 
-    result = await run_saved_workflow(user, workflow_id, payload)
+    if config.mode == MCPMode.LOCAL:
+        # LOCAL mode: Direct service call
+        payload = api_models.RunFromWorkflowRequest(
+            inputs=inputs or {},
+            test_mode=test_mode,
+        )
+        result = await run_saved_workflow(user, workflow_id, payload)
+        result_dict = {
+            "run_id": result.run_id,
+            "workflow_id": result.workflow_id,
+            "status": result.status,
+            "created_at": str(result.created_at),
+        }
+    else:
+        # CLOUD mode: API client call
+        from seer_mcp.server import get_api_client  # pylint: disable=import-outside-toplevel,cyclic-import # Reason: Avoid circular import
+
+        client = get_api_client()
+        if not client:
+            raise ValueError("API client not initialized")
+        result_dict = await client.run_workflow(workflow_id, inputs, test_mode)
 
     return [
         TextContent(
             type="text",
             text=f"""Started workflow execution!
 
-Run ID: {result.run_id}
-Workflow ID: {result.workflow_id}
-Status: {result.status}
-Created At: {result.created_at}
+Run ID: {result_dict['run_id']}
+Workflow ID: {result_dict['workflow_id']}
+Status: {result_dict['status']}
+Created At: {result_dict['created_at']}
 
 Use seer_get_execution to check the status and retrieve results.""",
         )
@@ -67,21 +87,42 @@ async def seer_get_execution(
     Returns:
         List of text content with execution details
     """
-    result = await get_run_status(user, run_id)
+    config = get_config()
 
-    status_info = f"""Run ID: {result.run_id}
-Status: {result.status}
-Workflow ID: {result.workflow_id}
-Created At: {result.created_at}"""
+    if config.mode == MCPMode.LOCAL:
+        # LOCAL mode: Direct service call
+        result = await get_run_status(user, run_id)
+        result_dict = {
+            "run_id": result.run_id,
+            "status": result.status,
+            "workflow_id": result.workflow_id,
+            "created_at": str(result.created_at),
+            "started_at": str(result.started_at) if result.started_at else None,
+            "finished_at": str(result.finished_at) if result.finished_at else None,
+            "last_error": result.last_error,
+        }
+    else:
+        # CLOUD mode: API client call
+        from seer_mcp.server import get_api_client  # pylint: disable=import-outside-toplevel,cyclic-import # Reason: Avoid circular import
 
-    if result.started_at:
-        status_info += f"\nStarted At: {result.started_at}"
-    if result.finished_at:
-        status_info += f"\nFinished At: {result.finished_at}"
+        client = get_api_client()
+        if not client:
+            raise ValueError("API client not initialized")
+        result_dict = await client.get_execution(run_id)
+
+    status_info = f"""Run ID: {result_dict['run_id']}
+Status: {result_dict['status']}
+Workflow ID: {result_dict['workflow_id']}
+Created At: {result_dict['created_at']}"""
+
+    if result_dict.get("started_at"):
+        status_info += f"\nStarted At: {result_dict['started_at']}"
+    if result_dict.get("finished_at"):
+        status_info += f"\nFinished At: {result_dict['finished_at']}"
 
     error_info = ""
-    if result.last_error:
-        error_info = f"\n\nError:\n{result.last_error}"
+    if result_dict.get("last_error"):
+        error_info = f"\n\nError:\n{result_dict['last_error']}"
 
     return [
         TextContent(
@@ -108,19 +149,36 @@ async def seer_get_execution_history(
     Returns:
         List of text content with execution history
     """
-    result = await get_run_history(user, run_id)
+    config = get_config()
 
-    # Format the history for readable output
-    summary = result.summary
-    history_json = json.dumps(summary.model_dump() if hasattr(summary, 'model_dump') else summary, indent=2)
+    if config.mode == MCPMode.LOCAL:
+        # LOCAL mode: Direct service call
+        result = await get_run_history(user, run_id)
+        summary = result.summary
+        history_data = summary.model_dump() if hasattr(summary, 'model_dump') else summary
+        result_dict = {
+            "status": result.status,
+            "workflow_id": result.workflow_id,
+            "summary": history_data,
+        }
+    else:
+        # CLOUD mode: API client call
+        from seer_mcp.server import get_api_client  # pylint: disable=import-outside-toplevel,cyclic-import # Reason: Avoid circular import
+
+        client = get_api_client()
+        if not client:
+            raise ValueError("API client not initialized")
+        result_dict = await client.get_execution_history(run_id)
+
+    history_json = json.dumps(result_dict.get("summary", {}), indent=2)
 
     return [
         TextContent(
             type="text",
             text=f"""Execution History for Run {run_id}:
 
-Status: {result.status}
-Workflow ID: {result.workflow_id}
+Status: {result_dict['status']}
+Workflow ID: {result_dict['workflow_id']}
 
 Detailed History:
 {history_json}""",
@@ -143,30 +201,44 @@ async def seer_list_executions(
     Returns:
         List of text content with executions
     """
+    config = get_config()
+
     if limit < 1 or limit > 100:
         limit = min(max(limit, 1), 100)
 
-    result = await list_workflow_runs(user, workflow_id, limit=limit)
+    if config.mode == MCPMode.LOCAL:
+        # LOCAL mode: Direct service call
+        result = await list_workflow_runs(user, workflow_id, limit=limit)
+        runs = result.runs
+    else:
+        # CLOUD mode: API client call
+        from seer_mcp.server import get_api_client  # pylint: disable=import-outside-toplevel,cyclic-import # Reason: Avoid circular import
 
-    if not result.runs:
+        client = get_api_client()
+        if not client:
+            raise ValueError("API client not initialized")
+        result_dict = await client.list_executions(workflow_id, limit=limit)
+        runs = result_dict.get("items", [])
+
+    if not runs:
         return [TextContent(type="text", text=f"No executions found for workflow {workflow_id}.")]
 
     runs_text = "\n\n".join(
         [
-            f"""Run ID: {r.run_id}
-Status: {r.status}
-Created: {r.created_at}
-Started: {r.started_at or "Not started"}
-Finished: {r.finished_at or "Not finished"}
-Error: {r.error or "None"}"""
-            for r in result.runs
+            f"""Run ID: {r.get('run_id') if isinstance(r, dict) else r.run_id}
+Status: {r.get('status') if isinstance(r, dict) else r.status}
+Created: {r.get('created_at') if isinstance(r, dict) else r.created_at}
+Started: {(r.get('started_at') if isinstance(r, dict) else r.started_at) or "Not started"}
+Finished: {(r.get('finished_at') if isinstance(r, dict) else r.finished_at) or "Not finished"}
+Error: {(r.get('error') if isinstance(r, dict) else r.error) or "None"}"""
+            for r in runs
         ]
     )
 
     return [
         TextContent(
             type="text",
-            text=f"""Found {len(result.runs)} execution(s) for workflow {workflow_id}:
+            text=f"""Found {len(runs)} execution(s) for workflow {workflow_id}:
 
 {runs_text}""",
         )

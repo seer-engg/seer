@@ -2,9 +2,9 @@
 
 import asyncio
 import sys
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 
-from mcp.server import Server  # pylint: disable=import-self,no-name-in-module # Reason: external MCP SDK, not our local package
+from mcp.server import Server  # pylint: disable=no-name-in-module # Reason: external MCP SDK
 from mcp.server.stdio import stdio_server  # pylint: disable=no-name-in-module # Reason: external MCP SDK
 from mcp.types import TextContent  # pylint: disable=no-name-in-module # Reason: external MCP SDK
 
@@ -35,6 +35,18 @@ logger = get_logger("mcp.server")
 
 # Create MCP server
 app = Server("seer")
+
+# Global API client for cloud mode (initialized in main())
+_api_client: Optional[Any] = None  # pylint: disable=invalid-name  # Reason: mutable module-level variable, not a constant
+
+
+def get_api_client() -> Optional[Any]:
+    """Get the global API client instance (for cloud mode).
+
+    Returns:
+        SeerAPIClient instance or None if in local mode
+    """
+    return _api_client
 
 
 async def get_current_user() -> User:
@@ -114,6 +126,8 @@ async def call_tool(name: str, arguments: Dict[str, Any]):
 
 async def main():
     """Main entry point for MCP server."""
+    global _api_client  # pylint: disable=global-statement # Reason: Need to set global API client for tool handlers
+
     config = get_config()
 
     logger.info("Starting Seer MCP server in %s mode", config.mode.value)
@@ -127,18 +141,40 @@ async def main():
         except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Startup error handling
             logger.error("Failed to initialize database: %s", str(e))
             sys.exit(1)
+        _api_client = None
     else:
-        # Cloud mode - use API client
+        # Cloud mode - initialize API client
         logger.info("Using cloud API mode: %s", config.api_url)
-        # TODO: Implement cloud API client
+        try:
+            from seer_mcp.client import SeerAPIClient  # pylint: disable=import-outside-toplevel # Reason: Only needed in cloud mode
+
+            _api_client = SeerAPIClient(config.api_url, config.oauth_client_id)
+
+            # Check for valid tokens
+            if not await _api_client.has_valid_token():
+                logger.info("No valid tokens found - starting OAuth flow")
+                logger.info("Opening browser for authorization...")
+                await _api_client.authenticate()
+                logger.info("OAuth flow complete! Tokens saved.")
+            else:
+                logger.info("Valid tokens found - skipping OAuth flow")
+
+        except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Startup error handling
+            logger.error("Failed to initialize cloud API client: %s", str(e))
+            sys.exit(1)
 
     # Run the MCP server
-    async with stdio_server() as (read_stream, write_stream):
-        await app.run(
-            read_stream,
-            write_stream,
-            app.create_initialization_options()
-        )
+    try:
+        async with stdio_server() as (read_stream, write_stream):
+            await app.run(
+                read_stream,
+                write_stream,
+                app.create_initialization_options()
+            )
+    finally:
+        # Cleanup API client
+        if _api_client:
+            await _api_client.close()
 
 
 if __name__ == "__main__":

@@ -21,6 +21,16 @@ class MCPConfig(BaseSettings):
     log_level: str = Field(default="info", description="Logging level")
     database_url: Optional[str] = Field(default=None, description="Database URL for local mode")
 
+    # OAuth configuration for cloud mode
+    oauth_client_id: str = Field(
+        default="seer-mcp-client",
+        description="OAuth client identifier"
+    )
+    token_storage_path: str = Field(
+        default="~/.seer-mcp/tokens.json",
+        description="Path to store OAuth tokens"
+    )
+
     class Config:
         env_prefix = "SEER_MCP_"
         case_sensitive = False

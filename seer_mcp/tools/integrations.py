@@ -6,6 +6,7 @@ from typing import List
 from mcp.types import TextContent, Tool  # pylint: disable=no-name-in-module # Reason: external MCP SDK
 
 from api.integrations.services import list_connections
+from seer_mcp.config import get_config as get_mcp_config, MCPMode
 from shared.config import config
 from shared.database import User
 
@@ -21,7 +22,19 @@ async def seer_list_integrations(
     Returns:
         List of text content with integration status
     """
-    connections = await list_connections(user)
+    mcp_config = get_mcp_config()
+
+    if mcp_config.mode == MCPMode.LOCAL:
+        # LOCAL mode: Direct service call
+        connections = await list_connections(user)
+    else:
+        # CLOUD mode: API client call
+        from seer_mcp.server import get_api_client  # pylint: disable=import-outside-toplevel,cyclic-import # Reason: Avoid circular import
+
+        client = get_api_client()
+        if not client:
+            raise ValueError("API client not initialized")
+        connections = await client.list_integrations()
 
     if not connections:
         return [
@@ -35,12 +48,21 @@ Use seer_configure_integration_auth to connect integrations like GitHub, Slack, 
 
     integration_info = []
     for conn in connections:
-        status = "✅ Connected" if conn.status == "active" else "❌ Disconnected"
-        scopes = conn.scopes[:100] if conn.scopes else "No scopes"
+        # Handle both ORM objects and dicts
+        if isinstance(conn, dict):
+            status = "✅ Connected" if conn.get("status") == "active" else "❌ Disconnected"
+            scopes = (conn.get("scopes") or "No scopes")[:100]
+            provider = conn.get("provider")
+            account_id = conn.get("provider_account_id") or "Unknown"
+        else:
+            status = "✅ Connected" if conn.status == "active" else "❌ Disconnected"
+            scopes = (conn.scopes or "No scopes")[:100]
+            provider = conn.provider
+            account_id = conn.provider_account_id or "Unknown"
 
-        integration_info.append(f"""Provider: {conn.provider}
+        integration_info.append(f"""Provider: {provider}
 Status: {status}
-Account: {conn.provider_account_id or "Unknown"}
+Account: {account_id}
 Scopes: {scopes}""")
 
     integrations_text = "\n\n".join(integration_info)
@@ -72,6 +94,8 @@ async def seer_configure_integration_auth(
     Returns:
         List of text content with OAuth URL
     """
+    mcp_config = get_mcp_config()
+
     # Map integration names to OAuth providers
     provider_map = {
         "github": "github",
@@ -94,23 +118,30 @@ Available integrations: {available_integrations}""",
             )
         ]
 
-    # Default scopes for common providers
-    scope_map = {
-        "github": "repo,read:user,user:email",
-        "slack": "channels:read,chat:write,users:read",
-        "google": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/drive.readonly",
-        "linear": "read,write",
-        "notion": "read,update,insert",
-        "supabase": "all",
-    }
+    if mcp_config.mode == MCPMode.LOCAL:
+        # LOCAL mode: Construct URL from config
+        # Default scopes for common providers
+        scope_map = {
+            "github": "repo,read:user,user:email",
+            "slack": "channels:read,chat:write,users:read",
+            "google": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/drive.readonly",
+            "linear": "read,write",
+            "notion": "read,update,insert",
+            "supabase": "all",
+        }
 
-    scope = scope_map.get(provider, "")
+        scope = scope_map.get(provider, "")
+        frontend_url = config.FRONTEND_URL or "http://localhost:3000"
+        redirect_to = f"{frontend_url}/settings/integrations"
+        auth_url = f"{config.API_URL}/integrations/{provider}/authorize?scope={scope}&redirect_to={redirect_to}"
+    else:
+        # CLOUD mode: API client call
+        from seer_mcp.server import get_api_client  # pylint: disable=import-outside-toplevel,cyclic-import # Reason: Avoid circular import
 
-    # Construct OAuth authorization URL
-    frontend_url = config.FRONTEND_URL or "http://localhost:3000"
-    redirect_to = f"{frontend_url}/settings/integrations"
-
-    auth_url = f"{config.API_URL}/integrations/{provider}/authorize?scope={scope}&redirect_to={redirect_to}"
+        client = get_api_client()
+        if not client:
+            raise ValueError("API client not initialized")
+        auth_url = await client.get_oauth_url(provider)
 
     # Try to open browser automatically
     try:

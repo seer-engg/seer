@@ -36,13 +36,13 @@ from shared.usage_limits.exceptions import ChatDisabledError, UsageLimitError
 logger = get_logger("api.main")
 
 
-async def initialize_tool_index(app: FastAPI) -> None:
+async def initialize_tool_index(app: FastAPI) -> None:  # pylint: disable=redefined-outer-name  # Reason: Function parameter shadows module-level app
     """Initialize tool index in background if enabled."""
     if not config.tool_index_auto_generate:
         return
 
     try:
-        from shared.tool_hub.index_manager import ensure_tool_index_exists
+        from shared.tool_hub.index_manager import ensure_tool_index_exists  # pylint: disable=import-outside-toplevel  # Reason: Conditional import for tool index feature
 
         async def init_tool_index():
             try:
@@ -50,17 +50,17 @@ async def initialize_tool_index(app: FastAPI) -> None:
                     auto_generate=config.tool_index_auto_generate
                 )
                 if toolhub:
-                    from shared.tool_hub.singleton import set_toolhub_instance
+                    from shared.tool_hub.singleton import set_toolhub_instance  # pylint: disable=import-outside-toplevel  # Reason: Conditional import for tool index feature
                     set_toolhub_instance(toolhub)
                     logger.info("✅ Tool index initialized")
                 else:
                     logger.warning("⚠️ Tool index initialization skipped or failed")
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Gracefully handle any tool index initialization error
                 logger.error("Error initializing tool index: %s", e, exc_info=True)
 
         task = asyncio.create_task(init_tool_index())
         app.state.tool_index_init_task = task
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Gracefully handle any tool index setup error
         logger.warning("Could not initialize tool index: %s. Tool search may not work.", e)
 
 
@@ -82,12 +82,12 @@ async def open_frontend_after_startup() -> None:
             logger.info("Opened frontend at %s", target_url)
         else:
             logger.warning("Could not open frontend automatically; url=%s", target_url)
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught  # Reason: Gracefully handle any browser opening error
         logger.warning("Failed to open frontend in browser: %s (url=%s)", exc, target_url, exc_info=True)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI):  # pylint: disable=redefined-outer-name  # Reason: Lifespan function parameter shadows module-level app
     """Application lifespan handler for startup/shutdown."""
     logger.info("🚀 Starting Seer API server...")
     analytics.initialize()
@@ -125,13 +125,17 @@ app = FastAPI(
 app.include_router(router)
 app.include_router(tools_router)
 
+# OAuth 2.1 endpoints for MCP clients
+from api.oauth.router import router as oauth_router  # pylint: disable=wrong-import-position,ungrouped-imports  # Reason: Import after app creation
+app.include_router(oauth_router, prefix="/api/oauth/mcp", tags=["oauth"])
+
 # Correlation middleware - add correlation IDs to all requests
 from api.core.middleware.correlation import CorrelationMiddleware  # pylint: disable=wrong-import-position,ungrouped-imports # Reason: Import after app creation
 app.add_middleware(CorrelationMiddleware)
 
 # Usage limit middleware - enforce subscription limits centrally
 # must be AFTER auth middleware to have user info
-from api.core.middleware.usage_limit import UsageLimitMiddleware  # pylint: disable=ungrouped-imports # Reason: Import after auth middleware setup
+from api.core.middleware.usage_limit import UsageLimitMiddleware  # pylint: disable=wrong-import-position,ungrouped-imports  # Reason: Import after app creation
 app.add_middleware(UsageLimitMiddleware)
 logger.info("🔒 Usage limit middleware enabled")
 
@@ -146,7 +150,7 @@ if config.is_cloud_mode:
         ClerkAuthMiddleware,
         jwks_url=config.clerk_jwks_url,
         issuer=config.clerk_issuer,
-        audience=config.clerk_audience.split(",") if config.clerk_audience else None,
+        audience=config.clerk_audience.split(",") if config.clerk_audience else None,  # pylint: disable=no-member  # Reason: clerk_audience is a string at runtime
     )
 else:
     from api.core.middleware.auth import TokenDecodeWithoutValidationMiddleware
@@ -175,7 +179,7 @@ if config.is_posthog_configured:
 
 
 @app.exception_handler(UsageLimitError)
-async def usage_limit_exception_handler(request: Request, exc: UsageLimitError):
+async def usage_limit_exception_handler(request: Request, exc: UsageLimitError):  # pylint: disable=unused-argument  # Reason: FastAPI requires request parameter
     """
     Handle usage limit violations by returning 402 Payment Required with upgrade prompt.
 
@@ -192,7 +196,7 @@ async def usage_limit_exception_handler(request: Request, exc: UsageLimitError):
 
 
 @app.exception_handler(ChatDisabledError)
-async def chat_disabled_exception_handler(request: Request, exc: ChatDisabledError):
+async def chat_disabled_exception_handler(request: Request, exc: ChatDisabledError):  # pylint: disable=unused-argument  # Reason: FastAPI requires request parameter
     """
     Handle chat disabled errors (self-hosted mode) with 403 Forbidden.
 

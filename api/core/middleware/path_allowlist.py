@@ -20,6 +20,7 @@ DEFAULT_DOCS_PATHS = {
 # Prefixes that represent collections of public endpoints.
 DEFAULT_PUBLIC_PREFIXES = (
     "/api/v1/webhooks",
+    "/api/oauth/mcp",  # OAuth 2.1 endpoints for MCP clients
 )
 
 
