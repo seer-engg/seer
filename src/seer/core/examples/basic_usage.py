@@ -114,17 +114,36 @@ def build_workflow_spec() -> Dict[str, Any]:
     """
 
     return {
-        "version": "1",
-        "inputs": {
-            "repo": {"type": "string", "required": True},
-            "query": {"type": "string", "required": True},
-        },
+        "version": "2",
+        "triggers": [
+            {
+                "key": "manual.trigger",
+                "schemas": {
+                    "event": {
+                        "type": "object",
+                        "properties": {
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "repo": {"type": "string"},
+                                    "query": {"type": "string"},
+                                },
+                                "required": ["repo", "query"],
+                            }
+                        },
+                    }
+                },
+            }
+        ],
+        "edges": [
+            {"id": "e0", "source": "manual.trigger", "target": "search_issue", "type": "trigger"}
+        ],
         "nodes": [
             {
                 "id": "search_issue",
                 "type": "tool",
                 "tool": "github.search_issues",
-                "in": {"repo": "${inputs.repo}", "q": "${inputs.query}"},
+                "in": {"repo": "${trigger.data.repo}", "q": "${trigger.data.query}"},
                 "out": "issue_search",
                 "expect_output": {
                     "mode": "json",
@@ -174,9 +193,12 @@ def main() -> None:
     spec = build_workflow_spec()
     compiled = compiler.compile(demo_user, spec)
     result = compiled.invoke(
-        inputs={
-            "repo": "seer-engg/seer",
-            "query": "regression",
+        trigger={
+            "trigger_key": "manual.trigger",
+            "data": {
+                "repo": "seer-engg/seer",
+                "query": "regression",
+            },
         }
     )
     print("Workflow result:")

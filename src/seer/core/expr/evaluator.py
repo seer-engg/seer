@@ -27,7 +27,6 @@ class EvaluationError(RuntimeError):
 @dataclass(frozen=True)
 class EvaluationContext:
     state: Mapping[str, Any]
-    inputs: Mapping[str, Any]
     locals: Mapping[str, Any]
     config: Mapping[str, Any] | None = None
     trigger: Mapping[str, Any] | None = None
@@ -44,8 +43,6 @@ def _resolve_root(ctx: EvaluationContext, root: str) -> Any:
         return ctx.locals[root]
     if root in ctx.state:
         return ctx.state[root]
-    if root == "inputs":
-        return ctx.inputs
     if root == "trigger":
         if ctx.trigger is None:
             raise EvaluationError(

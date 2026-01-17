@@ -84,25 +84,6 @@ class OutputContract(StrictModel):
 
 
 # -----------------------------
-# Inputs
-# -----------------------------
-class InputType(str, Enum):
-    string = "string"
-    integer = "integer"
-    number = "number"
-    boolean = "boolean"
-    object = "object"
-    array = "array"
-
-
-class InputDef(StrictModel):
-    type: InputType
-    description: Optional[str] = None
-    default: Optional[JSONValue] = None
-    required: bool = True
-
-
-# -----------------------------
 # Edges
 # -----------------------------
 class EdgeType(str, Enum):

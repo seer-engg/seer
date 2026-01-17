@@ -128,7 +128,7 @@ def build_workflow_spec(reply_schema: JsonSchema, read_schema: JsonSchema, draft
                 "type": "tool",
                 "tool": READ_TOOL,
                 "in": {
-                    "user_id": "${inputs.user_id}",
+                    "user_id": "${trigger.data.user_id}",
                     "max_results": 1,
                     "label_ids": ["INBOX"],
                     "include_body": True,
@@ -161,7 +161,7 @@ def build_workflow_spec(reply_schema: JsonSchema, read_schema: JsonSchema, draft
                 "type": "tool",
                 "tool": DRAFT_TOOL,
                 "in": {
-                    "user_id": "${inputs.user_id}",
+                    "user_id": "${trigger.data.user_id}",
                     "to": "${reply_payload.to}",
                     "subject": "${reply_payload.subject}",
                     "body_text": "${reply_payload.body_text}",
@@ -201,7 +201,7 @@ def main() -> None:
     compiler = WorkflowCompilerSingleton.instance()
     demo_user = User(id=0, user_id="demo-gmail-reply")
     compiled = compiler.compile(demo_user, workflow_spec)
-    result = compiled.invoke(inputs={"user_id": user_id})
+    result = compiled.invoke(trigger={"trigger_key": "manual.trigger", "data": {"user_id": user_id}})
 
     print("Workflow execution complete. Draft payload:")
     for key, value in result.items():

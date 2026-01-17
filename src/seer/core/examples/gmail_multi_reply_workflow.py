@@ -60,7 +60,7 @@ def build_workflow_spec(
                 "type": "tool",
                 "tool": READ_TOOL,
                 "in": {
-                    "user_id": "${inputs.user_id}",
+                    "user_id": "${trigger.data.user_id}",
                     "max_results": 3,
                     "label_ids": ["INBOX"],
                     "include_body": True,
@@ -101,7 +101,7 @@ def build_workflow_spec(
                         "type": "tool",
                         "tool": DRAFT_TOOL,
                         "in": {
-                            "user_id": "${inputs.user_id}",
+                            "user_id": "${trigger.data.user_id}",
                             "to": "${loop_reply_payload.to}",
                             "subject": "${loop_reply_payload.subject}",
                             "body_text": "${loop_reply_payload.body_text}",
@@ -157,7 +157,7 @@ def main() -> None:
 
     workflow_spec = build_workflow_spec(reply_schema, read_schema, draft_schema)
     compiled = compiler.compile(demo_user, workflow_spec)
-    result = compiled.invoke(inputs={"user_id": user_id})
+    result = compiled.invoke(trigger={"trigger_key": "manual.trigger", "data": {"user_id": user_id}})
 
     drafts = result.get("drafts", [])
     print(f"Created {len(drafts)} draft(s).")

@@ -24,7 +24,6 @@ from seer.core.registry.model_registry import ModelDefinition, ModelRegistry
 from seer.core.registry.tool_registry import ToolDefinition, ToolRegistry
 from seer.core.runtime.context import WorkflowRuntimeContext
 from seer.core.runtime.execution import CompiledWorkflow
-from seer.core.runtime.input_validation import coerce_inputs
 from seer.core.runtime.nodes import NodeRuntime, RuntimeServices
 from seer.core.schema.jsonschema_adapter import SchemaError, check_schema
 from seer.core.schema.models import (
@@ -53,7 +52,6 @@ class UserBoundCompiledWorkflow:
 
     def invoke(
         self,
-        inputs: Mapping[str, Any],
         config: Mapping[str, Any] | None = None,
         context: WorkflowRuntimeContext | None = None,
         trigger: Mapping[str, Any] | None = None,
@@ -62,22 +60,19 @@ class UserBoundCompiledWorkflow:
         runtime_context = context or WorkflowRuntimeContext(user=self.user)
         user_before = merged_config.get("user")
         merged_config.pop("user", None)
-        coerced_inputs = coerce_inputs(self.workflow.spec, inputs or {})
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
-                "UserBoundCompiledWorkflow.invoke user_in_config_before=%s context_user=%s config_keys=%s inputs_keys=%s",
+                "UserBoundCompiledWorkflow.invoke user_in_config_before=%s context_user=%s config_keys=%s",
                 bool(user_before),
                 getattr(runtime_context.user, "id", None),
                 sorted(merged_config.keys()),
-                sorted(coerced_inputs.keys()),
             )
         return self.workflow.invoke(
-            coerced_inputs, config=merged_config, context=runtime_context, trigger=trigger
+            config=merged_config, context=runtime_context, trigger=trigger
         )
 
     async def ainvoke(
         self,
-        inputs: Mapping[str, Any],
         config: Mapping[str, Any] | None = None,
         context: WorkflowRuntimeContext | None = None,
         trigger: Mapping[str, Any] | None = None,
@@ -86,17 +81,15 @@ class UserBoundCompiledWorkflow:
         runtime_context = context or WorkflowRuntimeContext(user=self.user)
         user_before = merged_config.get("user")
         merged_config.pop("user", None)
-        coerced_inputs = coerce_inputs(self.workflow.spec, inputs or {})
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
-                "UserBoundCompiledWorkflow.ainvoke user_in_config_before=%s context_user=%s config_keys=%s inputs_keys=%s",
+                "UserBoundCompiledWorkflow.ainvoke user_in_config_before=%s context_user=%s config_keys=%s",
                 bool(user_before),
                 getattr(runtime_context.user, "id", None),
                 sorted(merged_config.keys()),
-                sorted(coerced_inputs.keys()),
             )
         return await self.workflow.ainvoke(
-            coerced_inputs, config=merged_config, context=runtime_context, trigger=trigger
+            config=merged_config, context=runtime_context, trigger=trigger
         )
 
 

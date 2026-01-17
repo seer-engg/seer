@@ -122,7 +122,7 @@ async def _execute_run(
             workflow_run_id=run.run_id,
         )
         result = await compiled.ainvoke(
-            inputs or {}, config=effective_config, context=runtime_context, trigger=trigger_envelope
+            config=effective_config, context=runtime_context, trigger=trigger_envelope
         )
     except Exception as exc:
         print(f"{traceback.format_exc()}")

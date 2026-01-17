@@ -103,7 +103,7 @@ def build_workflow_spec(email_schema: JsonSchema) -> Dict[str, Any]:
                 "type": "tool",
                 "tool": TOOL_NAME,
                 "in": {
-                    "user_id": "${inputs.user_id}",
+                    "user_id": "${trigger.data.user_id}",
                     "max_results": 3,
                     "label_ids": ["INBOX"],
                     "include_body": True,
@@ -143,7 +143,7 @@ async def main() -> None:
     compiler = WorkflowCompilerSingleton.instance()
     demo_user = await User.get(id=1)
     compiled = compiler.compile(demo_user, spec)
-    summary = await compiled.ainvoke(inputs={"user_id": user_id})
+    summary = await compiled.ainvoke(trigger={"trigger_key": "manual.trigger", "data": {"user_id": user_id}})
     print("Inbox summary:\n", summary.get("inbox_summary"))
     await close_tortoise()
 

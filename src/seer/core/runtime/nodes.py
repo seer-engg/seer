@@ -55,7 +55,6 @@ class NodeRuntime:
     def __init__(self, services: RuntimeServices) -> None:
         self.services = services
         self._type_schemas = services.type_env.as_dict()
-        self._current_inputs: Mapping[str, Any] = {}
         self._current_trigger: Mapping[str, Any] | None = None
         self._current_context: WorkflowRuntimeContext | None = None
 
@@ -75,9 +74,6 @@ class NodeRuntime:
             return await self._run_node_async(node, state, config or {}, locals_ctx=None, context=context)
 
         return RunnableCallable(func=runner, afunc=runner_async, name=f"node:{node.id}")
-
-    def bind_inputs(self, inputs: Mapping[str, Any]) -> None:
-        self._current_inputs = dict(inputs)
 
     def bind_trigger(self, trigger: Mapping[str, Any] | None) -> None:
         """Bind trigger event envelope for ${trigger.*} resolution."""
@@ -644,7 +640,6 @@ class NodeRuntime:
         locals_mapping = locals_ctx or {}
         return EvaluationContext(
             state=visible_state,
-            inputs=self._current_inputs,
             locals=locals_mapping,
             config=config,
             trigger=self._current_trigger,

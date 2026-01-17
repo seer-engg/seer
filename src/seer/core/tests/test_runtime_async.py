@@ -126,7 +126,6 @@ async def test_if_branch_tool_runs_async_handler() -> None:
     # Pass trigger envelope with event data and trigger_key for routing
     trigger_envelope = {"trigger_key": "test.trigger", "data": {"flag": True, "payload": "hello"}}
     result = await compiled.ainvoke(
-        inputs={},
         config=None,
         context=None,
         trigger=trigger_envelope,
@@ -219,7 +218,7 @@ async def test_for_each_body_tools_use_async_handler() -> None:
 
     compiled = await _compile_workflow(spec, [tool_def])
     trigger_envelope = {"trigger_key": "loop.trigger"}
-    result = await compiled.ainvoke(inputs={}, config=None, context=None, trigger=trigger_envelope)
+    result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Verify both loop iterations ran with async handler
     assert async_calls == ["alpha", "beta"]
@@ -259,7 +258,7 @@ async def test_trigger_routes_to_correct_node() -> None:
 
     compiled = await _compile_workflow(spec, [])
     trigger_envelope = {"trigger_key": "webhook.received"}
-    result = await compiled.ainvoke(inputs={}, config=None, context=None, trigger=trigger_envelope)
+    result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     assert result["result"] == "webhook_handled"
 
@@ -311,14 +310,14 @@ async def test_multiple_triggers_route_to_different_nodes() -> None:
 
     # Test push trigger routes to handle_push
     result = await compiled.ainvoke(
-        inputs={}, config=None, context=None,
+        config=None, context=None,
         trigger={"trigger_key": "github.push"}
     )
     assert result["result"] == "push_handled"
 
     # Test PR trigger routes to handle_pr
     result = await compiled.ainvoke(
-        inputs={}, config=None, context=None,
+        config=None, context=None,
         trigger={"trigger_key": "github.pr"}
     )
     assert result["result"] == "pr_handled"
@@ -365,7 +364,7 @@ async def test_multiple_triggers_route_to_same_node() -> None:
     # Both triggers should route to the same node
     for trigger_key in ["trigger_a", "trigger_b"]:
         result = await compiled.ainvoke(
-            inputs={}, config=None, context=None,
+            config=None, context=None,
             trigger={"trigger_key": trigger_key}
         )
         assert result["result"] == "shared_executed"
@@ -403,7 +402,7 @@ async def test_unknown_trigger_key_fallback() -> None:
 
     # Unknown trigger key should fall back to the first target
     result = await compiled.ainvoke(
-        inputs={}, config=None, context=None,
+        config=None, context=None,
         trigger={"trigger_key": "unknown_trigger"}
     )
     assert result["result"] == "handled"
@@ -451,7 +450,7 @@ async def test_trigger_data_accessible_after_routing() -> None:
 
     compiled = await _compile_workflow(spec, [])
     result = await compiled.ainvoke(
-        inputs={}, config=None, context=None,
+        config=None, context=None,
         trigger={"trigger_key": "data.trigger", "data": {"message": "hello world"}}
     )
 

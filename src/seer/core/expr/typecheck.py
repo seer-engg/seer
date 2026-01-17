@@ -16,8 +16,6 @@ from seer.core.expr.parser import (
 )
 from seer.core.schema.jsonschema_adapter import dereference_schema
 from seer.core.schema.models import (
-    InputDef,
-    InputType,
     JsonSchema,
     OutputContract,
     OutputMode,
@@ -27,21 +25,6 @@ from seer.core.schema.schema_registry import SchemaRegistry
 
 class TypeCheckError(ValueError):
     pass
-
-
-def _type_from_input(definition: InputDef) -> JsonSchema:
-    mapping = {
-        InputType.string: {"type": "string"},
-        InputType.integer: {"type": "integer"},
-        InputType.number: {"type": "number"},
-        InputType.boolean: {"type": "boolean"},
-        InputType.object: {"type": "object"},
-        InputType.array: {"type": "array"},
-    }
-    base = dict(mapping[definition.type])
-    if definition.default is not None:
-        base["default"] = definition.default
-    return base
 
 
 def schema_from_output_contract(contract: OutputContract, registry: SchemaRegistry) -> JsonSchema:
@@ -94,26 +77,6 @@ class Scope:
 
     def nested(self) -> "Scope":
         return Scope(env=self.env, locals=dict(self.locals))
-
-
-def register_inputs(env: TypeEnvironment, inputs: Mapping[str, InputDef]) -> None:
-    properties: Dict[str, JsonSchema] = {}
-    required = []
-    for name, definition in inputs.items():
-        schema = _type_from_input(definition)
-        env.register(f"inputs.{name}", schema)
-        properties[name] = schema
-        if definition.required:
-            required.append(name)
-    env.register(
-        "inputs",
-        {
-            "type": "object",
-            "properties": properties,
-            "required": required,
-            "additionalProperties": True,
-        },
-    )
 
 
 def register_trigger(env: TypeEnvironment, trigger_schema: JsonSchema) -> None:
