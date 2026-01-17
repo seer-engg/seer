@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 
-from seer.usage_limits.credit_calculator import calculate_cost
+from seer.observability.credit_calculator import calculate_cost
 
 
 def test_gpt4o_cost():

@@ -26,7 +26,7 @@ from seer.analytics import analytics
 from seer.config import config
 from seer.database import db_lifespan
 from seer.logger import get_logger
-from seer.usage_limits.exceptions import ChatDisabledError, UsageLimitError
+from seer.observability.exceptions import ChatDisabledError, UsageLimitError
 
 # Middleware order is important:
 # Think of middleware as layers wrapping your core application (the route handler).

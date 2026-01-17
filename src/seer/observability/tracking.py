@@ -21,7 +21,7 @@ from seer.database.usage_models import (
     UsageCounter,
 )
 from seer.database import Workflow, WorkflowRun, WorkflowRunStatus
-from seer.usage_limits.service import get_billing_period_for_user
+from seer.observability.service import get_billing_period_for_user
 from seer.logger import get_logger
 
 logger = get_logger(__name__)

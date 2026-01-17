@@ -93,7 +93,7 @@ class NodeRuntime:
         if not self._current_context or not self._current_context.user:
             return
 
-        from seer.usage_limits.credit_gate import check_credit_limit
+        from seer.observability.credit_gate import check_credit_limit
 
         try:
             asyncio.run(check_credit_limit(self._current_context.user))
@@ -109,7 +109,7 @@ class NodeRuntime:
         if not self._current_context or not self._current_context.user:
             return
 
-        from seer.usage_limits.credit_gate import check_credit_limit
+        from seer.observability.credit_gate import check_credit_limit
 
         # try:
         #     await check_credit_limit(self._current_context.user)
@@ -130,8 +130,8 @@ class NodeRuntime:
             return
 
         from decimal import Decimal
-        from seer.usage_limits.credit_calculator import calculate_cost
-        from seer.usage_limits.tracking import track_llm_usage
+        from seer.observability.credit_calculator import calculate_cost
+        from seer.observability.tracking import track_llm_usage
 
         async def do_track():
             try:

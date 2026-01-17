@@ -7,7 +7,7 @@ subscription tiers to their specific limits.
 from pydantic import BaseModel, Field
 
 from seer.database.subscription_models import SubscriptionTier
-from seer.usage_limits.constants import tiered_usage_limits as constants
+from seer.observability.constants import tiered_usage_limits as constants
 
 
 class TierLimits(BaseModel):

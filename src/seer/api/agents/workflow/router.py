@@ -24,7 +24,7 @@ from seer.analytics import analytics
 from seer.config import config
 from seer.database import User, UserPublic
 from seer.logger import get_logger
-from seer.usage_limits import (
+from seer.observability import (
     increment_chat_message_count,
 )
 

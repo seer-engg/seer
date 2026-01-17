@@ -19,7 +19,7 @@ from seer.database.subscription_models import (
     SubscriptionStatus,
     SubscriptionTier,
 )
-from seer.usage_limits.models import (
+from seer.observability.models import (
     SELF_HOSTED_LIMITS,
     TIER_LIMITS_REGISTRY,
     TierLimits,

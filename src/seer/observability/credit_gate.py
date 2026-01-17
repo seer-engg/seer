@@ -5,10 +5,10 @@ import logging
 from decimal import Decimal
 
 from seer.database.models import User
-from seer.usage_limits.constants import tiered_usage_limits
-from seer.usage_limits.exceptions import CreditLimitExceeded
-from seer.usage_limits.service import get_limits_for_user, resolve_user_tier
-from seer.usage_limits.tracking import get_monthly_llm_credits_used
+from seer.observability.constants import tiered_usage_limits
+from seer.observability.exceptions import CreditLimitExceeded
+from seer.observability.service import get_limits_for_user, resolve_user_tier
+from seer.observability.tracking import get_monthly_llm_credits_used
 
 logger = logging.getLogger(__name__)
 

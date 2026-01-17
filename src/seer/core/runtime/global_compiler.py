@@ -28,77 +28,18 @@ from seer.core.runtime.input_validation import coerce_inputs
 from seer.core.runtime.nodes import NodeRuntime, RuntimeServices
 from seer.core.schema.jsonschema_adapter import SchemaError, check_schema
 from seer.core.schema.models import (
-    ForEachNode,
-    IfNode,
     LLMNode,
     Node,
     ToolNode,
     WorkflowSpec,
 )
 from seer.core.schema.schema_registry import SchemaRegistry, ensure_json_schema
+from seer.observability.llm import extract_usage_metadata
+from seer.utilities.llm_messages import message_to_text
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["WorkflowCompilerSingleton", "UserBoundCompiledWorkflow"]
-
-
-def _message_to_text(message: Any) -> str:
-    """
-    LangChain responses can return strings, AIMessage objects, or richer payloads.
-    This helper normalizes them into a plain string for downstream processing.
-    """
-
-    if message is None:
-        return ""
-
-    content = getattr(message, "content", message)
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, Mapping) and item.get("type") == "text":
-                parts.append(str(item.get("text", "")))
-            # Skip reasoning blocks and other non-text content types
-        return "".join(parts)
-    return str(content)
-
-
-def _extract_usage_metadata(response: Any, model_id: str) -> Dict[str, Any]:
-    """
-    Extract token usage metadata from LangChain response.
-
-    Args:
-        response: LangChain AIMessage response
-        model_id: Model identifier
-
-    Returns:
-        Dictionary with keys: input_tokens, output_tokens, reasoning_tokens, model
-    """
-    usage_meta = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "reasoning_tokens": 0,
-        "model": model_id,
-    }
-
-    # Try usage_metadata first (newer LangChain)
-    if hasattr(response, "usage_metadata") and response.usage_metadata:
-        usage_meta["input_tokens"] = response.usage_metadata.get("input_tokens", 0)
-        usage_meta["output_tokens"] = response.usage_metadata.get("output_tokens", 0)
-        # Reasoning tokens might be in different fields
-        usage_meta["reasoning_tokens"] = response.usage_metadata.get("reasoning_tokens", 0)
-        return usage_meta
-
-    # Fallback to response_metadata (older format)
-    if hasattr(response, "response_metadata") and response.response_metadata:
-        token_usage = response.response_metadata.get("token_usage", {})
-        usage_meta["input_tokens"] = token_usage.get("prompt_tokens", 0)
-        usage_meta["output_tokens"] = token_usage.get("completion_tokens", 0)
-        # Some models include reasoning_tokens or cached_tokens
-        usage_meta["reasoning_tokens"] = token_usage.get("reasoning_tokens", 0)
-
-    return usage_meta
 
 
 @dataclass(frozen=True)
@@ -413,9 +354,9 @@ class WorkflowCompilerSingleton:
             response = llm.invoke(prompt)
 
             # Extract usage metadata
-            usage_metadata = _extract_usage_metadata(response, model_id)
+            usage_metadata = extract_usage_metadata(response, model_id)
 
-            text_result = _message_to_text(response)
+            text_result = message_to_text(response)
             return text_result, usage_metadata
 
         return handler
@@ -448,9 +389,9 @@ class WorkflowCompilerSingleton:
             # Need to check if response has metadata or if it's in underlying call
             usage_metadata = {}
             if hasattr(structured_llm, "_last_response"):
-                usage_metadata = _extract_usage_metadata(structured_llm._last_response, model_id)
+                usage_metadata = extract_usage_metadata(structured_llm._last_response, model_id)
             elif hasattr(response, "usage_metadata") or hasattr(response, "response_metadata"):
-                usage_metadata = _extract_usage_metadata(response, model_id)
+                usage_metadata = extract_usage_metadata(response, model_id)
             else:
                 # No metadata available, use empty
                 usage_metadata = {

@@ -4,7 +4,7 @@ Usage limits and enforcement system for Seer.
 This module provides centralized configuration and tracking for subscription-based
 usage limits across different tiers (Self-Hosted, Cloud Free, Cloud Pro/Pro+/Ultra).
 """
-from seer.usage_limits.exceptions import (
+from seer.observability.exceptions import (
     ChatDisabledError,
     CreditLimitExceeded,
     MessageLimitExceeded,
@@ -14,8 +14,8 @@ from seer.usage_limits.exceptions import (
     UsageLimitError,
     WorkflowLimitExceeded,
 )
-from seer.usage_limits.models import TierLimits
-from seer.usage_limits.service import (
+from seer.observability.models import TierLimits
+from seer.observability.service import (
     get_account_age_days,
     get_limits_for_tier,
     get_limits_for_user,
@@ -23,7 +23,7 @@ from seer.usage_limits.service import (
     is_trial_expired,
     resolve_user_tier,
 )
-from seer.usage_limits.tracking import (
+from seer.observability.tracking import (
     get_chat_message_count,  # Deprecated - use get_total_chat_message_count
     get_monthly_llm_credits_detailed,
     get_monthly_llm_credits_used,

@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from seer.config import config
 from seer.database import User
 from seer.database.subscription_models import SubscriptionStatus, SubscriptionTier
-from seer.usage_limits import (
+from seer.observability import (
     get_limits_for_user,
     get_monthly_llm_credits_used,
     get_monthly_run_count,
@@ -25,8 +25,8 @@ from seer.usage_limits import (
     get_workflow_count,
     resolve_user_tier,
 )
-from seer.usage_limits.service import get_billing_period_for_user
-from seer.usage_limits.models import TierLimits
+from seer.observability.service import get_billing_period_for_user
+from seer.observability.models import TierLimits
 
 router = APIRouter(prefix="/usage", tags=["usage"])
 

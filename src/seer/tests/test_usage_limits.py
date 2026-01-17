@@ -11,8 +11,8 @@ from unittest.mock import patch
 import pytest
 
 from seer.database.subscription_models import SubscriptionTier
-from seer.usage_limits import get_limits_for_tier
-from seer.usage_limits.models import SELF_HOSTED_LIMITS, TierLimits
+from seer.observability import get_limits_for_tier
+from seer.observability.models import SELF_HOSTED_LIMITS, TierLimits
 
 
 # ============================================================================
@@ -143,7 +143,7 @@ def test_tier_limits_are_logical():
 
 def test_constants_match_tier_limits():
     """Test that tier limits use constants correctly."""
-    from seer.usage_limits import constants
+    from seer.observability import constants
 
     free = get_limits_for_tier(SubscriptionTier.FREE)
     assert free.workflows == constants.WORKFLOWS_FREE
@@ -170,7 +170,7 @@ async def test_subscription_resolver_no_subscription():
     """
     from datetime import datetime, timezone
     from seer.database.models import User
-    from seer.usage_limits import resolve_user_tier
+    from seer.observability import resolve_user_tier
 
     # Create test user
     user = await User.create(
@@ -196,7 +196,7 @@ async def test_usage_tracking_workflow_count():
     """
     from datetime import datetime, timezone
     from seer.database.models import User
-    from seer.usage_limits import (
+    from seer.observability import (
         get_workflow_count,
     )
 

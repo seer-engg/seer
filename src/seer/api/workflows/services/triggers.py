@@ -29,7 +29,7 @@ from seer.database import (
     make_workflow_public_id,
 )
 from seer.logger import get_logger
-from seer.usage_limits import (
+from seer.observability import (
     PollingIntervalTooFast,
     get_limits_for_user,
     resolve_user_tier,

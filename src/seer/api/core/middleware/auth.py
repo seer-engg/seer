@@ -15,7 +15,7 @@ from seer.api.core.middleware.path_allowlist import is_public_path
 from seer.analytics import analytics
 from seer.database import User
 from seer.logger import get_logger
-from seer.usage_limits import (
+from seer.observability import (
     TrialExpiredError,
     get_account_age_days,
     is_trial_expired,

@@ -14,7 +14,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from seer.api.core.middleware.path_allowlist import is_public_path
 from seer.database import User
 from seer.logger import get_logger
-from seer.usage_limits import (
+from seer.observability import (
     ChatDisabledError,
     MessageLimitExceeded,
     RunLimitExceeded,
