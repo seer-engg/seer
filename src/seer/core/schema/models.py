@@ -272,15 +272,6 @@ class WorkflowSpec(StrictModel):
                 if edge.target not in node_ids:
                     raise ValueError(f"Edge '{edge.id}' target '{edge.target}' not found in nodes")
 
-        # Require at least one trigger
-        if not self.triggers:
-            raise ValueError("WorkflowSpec requires at least one trigger")
-
-        # Require at least one trigger edge
-        trigger_edges = [e for e in self.edges if e.type == EdgeType.trigger]
-        if not trigger_edges:
-            raise ValueError("WorkflowSpec requires at least one trigger edge")
-
         # Validate unique node IDs
         seen_nodes = set()
         duplicate_nodes = []
