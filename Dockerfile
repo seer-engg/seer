@@ -38,4 +38,4 @@ EXPOSE 8000
 # Default command runs FastAPI server
 # Can be overridden in docker-compose.yml or railway.toml
 # Uses PORT env var if set (for Railway), defaults to 8000 for local dev
-CMD ["sh", "-c", "uv run uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 4"]
+CMD ["sh", "-c", "uv run uvicorn seer.api.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 4"]

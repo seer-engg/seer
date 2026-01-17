@@ -50,7 +50,7 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["api", "shared", "agents", "workflow_compiler", "worker", "infra"]
+packages = ["src/seer"]
 
 [dependency-groups]
 dev = [
@@ -70,9 +70,9 @@ Repository = "https://github.com/seer-engg/seer"
 Issues = "https://github.com/seer-engg/seer/issues"
 
 [tool.aerich]
-tortoise_orm = "shared.database.config.TORTOISE_ORM"
+tortoise_orm = "seer.database.config.TORTOISE_ORM"
 location = "./migrations"
-src_folder = "./."
+src_folder = "./src" # Changed from "./." to "./src"
 
 
 [tool.pylint.main]
