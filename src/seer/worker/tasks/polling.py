@@ -3,7 +3,6 @@ from __future__ import annotations
 from seer.worker.broker import broker
 from seer.config import config
 from seer.logger import get_logger
-from seer.worker.trigger_dispatcher import dispatch_trigger_event
 
 logger = get_logger(__name__)
 
@@ -12,6 +11,7 @@ logger = get_logger(__name__)
 async def poll_triggers_once() -> None:
     """Run a single TriggerPollEngine tick. Useful for ad-hoc debugging."""
     from seer.core.triggers.polling.engine import TriggerPollEngine  # local import
+    from seer.worker.trigger_dispatcher import dispatch_trigger_event
 
     engine = TriggerPollEngine(
         max_batch_size=config.trigger_poller_max_batch_size,
