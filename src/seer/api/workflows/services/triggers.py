@@ -416,12 +416,17 @@ async def sync_trigger_subscriptions(
     user: User,
     workflow: Workflow,
     spec: WorkflowSpec,
+    skip_validation: bool = False,
 ) -> None:
     """
     Reconcile TriggerSubscription rows to match the workflow spec.
 
     This runs during draft version creation to keep DB state in sync with the spec payload
     provided by the frontend.
+
+    Args:
+        skip_validation: If True, skip connection validation and webhook creation.
+                        Used when running with sample events.
     """
 
     existing: Dict[str, TriggerSubscription] = {}
@@ -444,13 +449,14 @@ async def sync_trigger_subscriptions(
     # Upsert declared triggers.
     for trigger_spec in spec.triggers or []:
         definition = _load_trigger_definition(trigger_spec.key)
-        if definition.meta.requires_connection and trigger_spec.provider_connection_id is None:
-            _raise_problem(
-                type_uri=VALIDATION_PROBLEM,
-                title="Missing trigger connection",
-                detail=f"Trigger '{trigger_spec.key}' requires a provider connection.",
-                status=400,
-            )
+        if not skip_validation:
+            if definition.meta.requires_connection and trigger_spec.provider_connection_id is None:
+                _raise_problem(
+                    type_uri=VALIDATION_PROBLEM,
+                    title="Missing trigger connection",
+                    detail=f"Trigger '{trigger_spec.key}' requires a provider connection.",
+                    status=400,
+                )
         filters = dict(trigger_spec.filters or {})
         provider_config = dict(trigger_spec.provider_config or {})
 
@@ -484,7 +490,8 @@ async def sync_trigger_subscriptions(
 
             # If we generated a new secret for Supabase, ensure webhook is created.
             if (
-                trigger_spec.key == "webhook.supabase.db_changes"
+                not skip_validation
+                and trigger_spec.key == "webhook.supabase.db_changes"
                 and secret
                 and not previous_secret
             ):
@@ -507,5 +514,5 @@ async def sync_trigger_subscriptions(
                 poll_interval_seconds=adjusted_interval,
                 is_polling=is_polling,
             )
-            if trigger_spec.key == "webhook.supabase.db_changes" and secret:
+            if not skip_validation and trigger_spec.key == "webhook.supabase.db_changes" and secret:
                 await _create_supabase_webhook(subscription, secret)

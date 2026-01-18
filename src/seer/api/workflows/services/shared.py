@@ -32,16 +32,20 @@ def _hash_spec(spec_dict: Dict[str, Any]) -> str:
     return hashlib.sha256(serialized).hexdigest()
 
 
-async def _ensure_draft_version(workflow: Workflow, user: User) -> WorkflowVersion:
+async def _ensure_draft_version(
+    workflow: Workflow,
+    user: User,
+    skip_validation: bool = False
+) -> WorkflowVersion:
     draft = await WorkflowDraft.get(workflow=workflow)
     spec = WorkflowSpec.model_validate(draft.spec or {})
     spec_dict = spec.model_dump(mode="json")
     spec_hash = _hash_spec(spec_dict)
     # Sync trigger subscriptions declared in the spec so polling/webhooks stay in sync.
-    # pylint: disable=import-outside-toplevel 
+    # pylint: disable=import-outside-toplevel
     from seer.api.workflows.services.triggers import sync_trigger_subscriptions
 
-    await sync_trigger_subscriptions(user, workflow, spec)
+    await sync_trigger_subscriptions(user, workflow, spec, skip_validation=skip_validation)
     existing = (
         await WorkflowVersion.filter(
             workflow=workflow,

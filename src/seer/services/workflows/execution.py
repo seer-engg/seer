@@ -140,7 +140,12 @@ async def _execute_run(
 
 
 
-async def execute_saved_workflow_run(*, run_id: int, user_id: int) -> None:
+async def execute_saved_workflow_run(
+    *,
+    run_id: int,
+    user_id: int,
+    trigger_envelope: Optional[Dict[str, Any]] = None
+) -> None:
     """
     Execute a saved workflow run asynchronously (invoked by Taskiq worker).
     """
@@ -161,6 +166,7 @@ async def execute_saved_workflow_run(*, run_id: int, user_id: int) -> None:
             inputs=inputs,
             config_payload=config_payload,
             execution_mode="taskiq_worker",
+            trigger_envelope=trigger_envelope,
         )
         await WorkflowRun.filter(id=run.id).update(
             status=WorkflowRunStatus.SUCCEEDED,

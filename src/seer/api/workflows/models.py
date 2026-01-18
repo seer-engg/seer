@@ -292,6 +292,16 @@ class RunResponse(BaseModel):
     last_error: Optional[str] = None
 
 
+class RunWithTrigger(RunResponse):
+    """Run response with trigger information."""
+    trigger_title: str
+
+
+class MultiRunResponse(BaseModel):
+    """Response when multiple runs are created (one per trigger)."""
+    runs: List[RunWithTrigger]
+
+
 class RunResultResponse(BaseModel):
     run_id: str
     status: str
@@ -412,6 +422,8 @@ __all__ = [
     "RunFromSpecRequest",
     "RunFromWorkflowRequest",
     "RunResponse",
+    "RunWithTrigger",
+    "MultiRunResponse",
     "RunResultResponse",
     "RunHistoryResponse",
     "WorkflowRunSummary",
