@@ -7,7 +7,7 @@ import httpx
 from fastapi import HTTPException
 
 from seer.config import config
-from seer.database import OAuthConnection
+from seer.database import OAuthConnection, User
 from seer.logger import get_logger
 
 logger = get_logger("shared.tools.oauth_manager")

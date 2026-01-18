@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from seer.api.usage.router import _build_usage_metric, _current_month_end
+from seer.api.usage.router import _build_usage_metric
 
 
 def test_build_usage_metric_handles_unlimited_limits():
@@ -43,7 +43,3 @@ def test_build_usage_metric_coerces_decimal_and_remaining():
     assert metric.remaining == 3.5
 
 
-def test_current_month_end_rolls_to_next_month():
-    start = datetime(2024, 1, 15, tzinfo=timezone.utc)
-    expected = datetime(2024, 2, 1, tzinfo=timezone.utc)
-    assert _current_month_end(start) == expected

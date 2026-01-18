@@ -78,5 +78,5 @@ class IntegrationSecret(models.Model):
         )
 
     def __str__(self) -> str:
-        scope = "resource" if self.resource_id else "connection"
+        scope = "resource" if self.id else "connection"
         return f"{self.provider}:{self.name} ({scope})"

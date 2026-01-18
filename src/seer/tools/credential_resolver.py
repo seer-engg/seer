@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from fastapi import HTTPException
 
-from seer.database import IntegrationResource, IntegrationSecret, OAuthConnection
+from seer.database import IntegrationResource, IntegrationSecret, OAuthConnection, User
 from seer.logger import get_logger
 from seer.tools.base import BaseTool
 from seer.tools.oauth_manager import get_oauth_token
