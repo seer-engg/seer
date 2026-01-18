@@ -14,7 +14,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class TieredUsageLimits(BaseSettings):    
+class TieredUsageLimits(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -38,7 +38,7 @@ class TieredUsageLimits(BaseSettings):
     RUNS_MONTHLY_FREE: int = Field(default=100)
     RUNS_MONTHLY_PRO: int = Field(default=1_000_000)
     RUNS_MONTHLY_PRO_PLUS: int = Field(default=5_000_000)
-    RUNS_MONTHLY_ULTRA: int = Field(default=20_000_000) 
+    RUNS_MONTHLY_ULTRA: int = Field(default=20_000_000)
     # ============================================================================
     # Chat AI Message Limits (Total per User, across all workflows)
     # ============================================================================

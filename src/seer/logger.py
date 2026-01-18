@@ -70,11 +70,11 @@ class ColoredFormatter(logging.Formatter):
         # 5. Call the standard formatter
         result = super().format(record)
 
-        # Clean up: restore original message so if this record is reused, 
+        # Clean up: restore original message so if this record is reused,
         # it doesn't keep appending extras
         if extras:
             record.msg = original_msg
-            
+
         return result
 
 def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:

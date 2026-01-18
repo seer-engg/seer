@@ -177,6 +177,6 @@ def register_github_tools():
     for tool in common_tools:
         try:
             register_tool(tool)
-            logger.info("Registered GitHub tool: %s", tool.name)
+            logger.debug("Registered GitHub tool: %s", tool.name)
         except Exception:
             logger.warning("Failed to register GitHub tool %s", tool.name)

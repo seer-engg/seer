@@ -43,7 +43,7 @@ class WorkflowAnalytics:
     async def _complete_run(
             run: WorkflowRun, output: Dict[str, Any], metrics: ExecutionMetrics
         ) -> WorkflowRun:
-            
+
 
             # Capture workflow completion event
             duration_ms = (time.time() - metrics.start_time) * 1000
@@ -72,7 +72,7 @@ class WorkflowAnalytics:
             metrics: ExecutionMetrics,
             error_type: str,
         ) -> None:
-            
+
             duration_ms = (time.time() - metrics.start_time) * 1000
 
             analytics.capture(

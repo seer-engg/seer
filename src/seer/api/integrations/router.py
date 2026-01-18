@@ -485,4 +485,3 @@ async def list_persisted_resources(
         resource_type=resource_type,
     )
     return {"items": [serialize_integration_resource(r) for r in resources]}
-

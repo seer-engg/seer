@@ -90,4 +90,3 @@ async def persist_event(
             )
             return existing, False
         raise
-

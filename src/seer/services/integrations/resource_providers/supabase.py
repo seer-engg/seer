@@ -4,12 +4,12 @@ from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
 
-from seer.api.integrations.constants import (
+from seer.services.integrations.constants import (
     SUPABASE_RESOURCE_PROVIDER,
     SUPABASE_RESOURCE_TYPE_PROJECT,
 )
-from seer.api.integrations.providers import get_integration_provider
-from seer.api.integrations.resource_providers.base import ResourceProvider
+from seer.services.integrations.providers import get_integration_provider
+from seer.services.integrations.resource_providers.base import ResourceProvider
 from seer.logger import get_logger
 
 logger = get_logger("api.integrations.resource_providers.supabase")

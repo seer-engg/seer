@@ -194,4 +194,3 @@ async def process_trigger_event(subscription_id: int, event_id: int) -> None:
             status=TriggerEventStatus.FAILED,
             error={"detail": getattr(exc, "detail", str(exc))},
         )
-

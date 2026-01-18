@@ -5,8 +5,8 @@ from seer.database import User, IntegrationResource, IntegrationSecret
 from seer.services.integrations.constants import SUPABASE_RESOURCE_PROVIDER
 from seer.services.integrations.resource_browser import ResourceBrowser
 from seer.config import config
-from .services import bind_supabase_project, bind_supabase_project_manual, deactivate_integration_resource, list_resource_secrets, serialize_integration_resource, serialize_integration_secret
-from .models import SupabaseBindRequest, SupabaseManualBindRequest
+from seer.api.integrations.services import bind_supabase_project, bind_supabase_project_manual, deactivate_integration_resource, list_resource_secrets, serialize_integration_resource, serialize_integration_secret
+from seer.api.integrations.models import SupabaseBindRequest, SupabaseManualBindRequest
 from seer.api.core.errors import INTEGRATION_PROBLEM, VALIDATION_PROBLEM, raise_problem
 from seer.tools.supabase.common import _resolve_rest_url, _service_headers
 import httpx

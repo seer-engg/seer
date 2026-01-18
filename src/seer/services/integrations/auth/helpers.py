@@ -302,4 +302,3 @@ async def store_oauth_connection(
         logger.info(f"Created new connection for {oauth_provider}")
 
     return connection
-
