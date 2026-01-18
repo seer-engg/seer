@@ -124,20 +124,6 @@ def _collect_graph_nodes(node: Node, nodes: List[Dict[str, Any]]) -> None:
     })
 
 
-def _extract_edges_from_reactflow(workflow_spec: WorkflowSpec) -> List[Dict[str, str]]:
-    """Extract edges from reactflow_graph metadata."""
-    edges = []
-    rf_graph = workflow_spec.meta.get("reactflow_graph") if workflow_spec.meta else None
-    if rf_graph and isinstance(rf_graph, dict) and "edges" in rf_graph:
-        for edge in rf_graph["edges"]:
-            if isinstance(edge, dict) and "source" in edge and "target" in edge:
-                edges.append({
-                    "source": edge["source"],
-                    "target": edge["target"],
-                })
-    return edges
-
-
 def _build_execution_graph(workflow_spec: Optional[WorkflowSpec]) -> Dict[str, Any]:
     """Build execution graph structure from workflow spec."""
     if not workflow_spec:
@@ -147,7 +133,13 @@ def _build_execution_graph(workflow_spec: Optional[WorkflowSpec]) -> Dict[str, A
     for node in workflow_spec.nodes:
         _collect_graph_nodes(node, nodes)
 
-    edges = _extract_edges_from_reactflow(workflow_spec)
+    edges = [
+        {
+            "source": edge.source,
+            "target": edge.target,
+        }
+        for edge in workflow_spec.edges
+    ]
 
     return {"nodes": nodes, "edges": edges}
 

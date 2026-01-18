@@ -104,6 +104,7 @@ class Edge(StrictModel):
     source: str = Field(min_length=1)  # Source node ID
     target: str = Field(min_length=1)  # Target node ID
     type: EdgeType = EdgeType.default
+    meta: Dict[str, JSONValue] = Field(default_factory=dict)
 
 
 # -----------------------------
@@ -234,6 +235,7 @@ class TriggerSpec(TriggerDefinition):
     enabled: bool = True
     filters: Dict[str, JSONValue] = Field(default_factory=dict)
     provider_config: Dict[str, JSONValue] = Field(default_factory=dict)
+    ui_meta: Dict[str, JSONValue] = Field(default_factory=dict)
 
 
 class WorkflowSpec(StrictModel):
