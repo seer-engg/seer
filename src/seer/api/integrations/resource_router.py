@@ -19,7 +19,7 @@ logger = get_logger(__name__)
 
 
 
-router = APIRouter(prefix="/integrations/resources", tags=["integrations.resources"])
+router = APIRouter(tags=["integrations.resources"])
 
 @router.get("/resources/{resource_id}/secrets")
 async def list_resource_secret_bindings(request: Request, resource_id: int):

@@ -44,6 +44,7 @@ from seer.services.integrations.auth.helpers import parse_scopes, has_required_s
 from seer.services.integrations.tool_status_service import get_tools_connection_status_for_user
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
+from seer.api.integrations.resource_router import router as resource_router
 
 
 
@@ -485,3 +486,6 @@ async def list_persisted_resources(
         resource_type=resource_type,
     )
     return {"items": [serialize_integration_resource(r) for r in resources]}
+
+
+router.include_router(resource_router)
