@@ -30,8 +30,8 @@ def validate_references(spec: WorkflowSpec, type_env: TypeEnvironment) -> None:
     # Check if workflow uses trigger references without triggers declared
     if _uses_trigger_references(spec) and not spec.triggers:
         errors.append(
-            "Workflow uses ${trigger.*} expressions but has no triggers declared. "
-            "Add a trigger to WorkflowSpec.triggers or remove trigger references."
+            "Workflow uses trigger references but has no triggers declared. "
+            "Add triggers to WorkflowSpec.triggers or remove trigger references."
         )
 
     for node in spec.nodes:
@@ -42,15 +42,20 @@ def validate_references(spec: WorkflowSpec, type_env: TypeEnvironment) -> None:
 
 
 def _uses_trigger_references(spec: WorkflowSpec) -> bool:
-    """Check if any node in the workflow references ${trigger.*}."""
+    """Check if any node references trigger titles."""
+    if not spec.triggers:
+        return False
+
+    trigger_titles = {t.title for t in spec.triggers}
+
     for node in spec.nodes:
-        if _node_uses_trigger(node):
+        if _node_uses_trigger_titles(node, trigger_titles):
             return True
     return False
 
 
-def _node_uses_trigger(node: Node) -> bool:
-    """Check if a node uses trigger references."""
+def _node_uses_trigger_titles(node: Node, trigger_titles: set[str]) -> bool:
+    """Check if a node references any trigger titles."""
     # Collect all values that may contain expressions
     values_to_check = []
 
@@ -67,10 +72,10 @@ def _node_uses_trigger(node: Node) -> bool:
     if hasattr(node, "items"):
         values_to_check.append(node.items)
 
-    # Check if any collected values reference trigger
+    # Check if any collected values reference trigger titles
     refs = parser.collect_unique_references(values_to_check)
     for ref in refs:
-        if ref.root == "trigger":
+        if ref.root in trigger_titles:
             return True
 
     return False

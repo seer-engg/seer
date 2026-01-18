@@ -43,16 +43,24 @@ def _resolve_root(ctx: EvaluationContext, root: str) -> Any:
         return ctx.locals[root]
     if root in ctx.state:
         return ctx.state[root]
-    if root == "trigger":
-        if ctx.trigger is None:
-            raise EvaluationError(
-                "Trigger context not available - workflow must be invoked via a trigger"
-            )
-        return ctx.trigger
+
+    # Check if root matches the current trigger's title
+    if ctx.trigger is not None:
+        trigger_title = ctx.trigger.get("title")
+        if root == trigger_title:
+            return ctx.trigger
+
+        # Provide helpful error if referencing wrong trigger
+        raise EvaluationError(
+            f"Reference root '{root}' does not match the active trigger '{trigger_title}'. "
+            f"Use ${{{trigger_title}.*}} to reference the current trigger's data."
+        )
+
     if ctx.config and root == "config":
         return ctx.config
     if ctx.config and root in ctx.config:
         return ctx.config[root]
+
     raise EvaluationError(f"Unknown reference root '{root}'")
 
 

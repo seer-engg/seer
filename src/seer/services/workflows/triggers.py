@@ -1,5 +1,6 @@
 from fastapi import HTTPException
 from seer.database import TriggerSubscription, TriggerEvent, TriggerEventStatus
+from seer.database.workflow_models import WorkflowRunStatus
 from seer.logger import get_logger
 from typing import Optional, Dict, Any
 logger = get_logger(__name__)
@@ -8,11 +9,10 @@ from seer.core.schema.models import WorkflowSpec
 from seer.analytics.workflows import WorkflowAnalytics
 from seer.database import WorkflowRun, WorkflowRunSource
 
-from seer.services.workflows.execution import _execute_run
+from seer.services.workflows.execution import _execute_run, _now
 
 
 from seer.api.workflows.services import _create_run_record
-
 
 
 def _lookup_filter_value(payload: Dict[str, Any], path: str) -> Any:
@@ -162,6 +162,12 @@ async def process_trigger_event(subscription_id: int, event_id: int) -> None:
             execution_mode="trigger",
             trigger_envelope=envelope,
         )
+        await WorkflowRun.filter(id=run.id).update(
+            status=WorkflowRunStatus.SUCCEEDED,
+            finished_at=_now(),
+            output=output,
+        )
+        await run.refresh_from_db()
         await WorkflowAnalytics._complete_run(run, output, metrics)
         await TriggerEvent.filter(id=event.id).update(status=TriggerEventStatus.PROCESSED)
         logger.info(

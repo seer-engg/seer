@@ -236,7 +236,9 @@ class TriggerPollEngine:
         for polled in events:
             logger.info("Building event envelope for subscription %s", subscription.id)
             envelope = build_event_envelope(
+                trigger_id=subscription.trigger_id,
                 trigger_key=subscription.trigger_key,
+                title=subscription.title,
                 provider=provider,
                 provider_connection_id=subscription.provider_connection_id,
                 payload=polled.payload,

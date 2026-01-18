@@ -268,7 +268,12 @@ class TriggerSubscription(models.Model):
     workflow = fields.ForeignKeyField(
         "models.Workflow", related_name="trigger_subscriptions", on_delete=fields.CASCADE
     )
+    # Unique instance identifier (allows multiple triggers of same type per workflow)
+    trigger_id = fields.CharField(max_length=255)
+    # Trigger type identifier (e.g., "gmail_new_email", "webhook.github")
     trigger_key = fields.CharField(max_length=255)
+    # Human-readable title for reference resolution (e.g., "Gmail_Inbox", "Webhook")
+    title = fields.CharField(max_length=255, default="")
     provider_connection_id = fields.IntField(null=True)
     enabled = fields.BooleanField(default=True)
     is_polling = fields.BooleanField(default=False)
@@ -302,11 +307,13 @@ class TriggerSubscription(models.Model):
         table = "trigger_subscriptions"
         indexes = (
             ("user_id", "workflow_id"),
-            ("trigger_key", "provider_connection_id", "enabled"),
+            ("workflow_id", "trigger_id"),  # For trigger instance lookups
+            ("trigger_key", "enabled"),     # For querying by trigger type
         )
+        unique_together = (("workflow_id", "trigger_id"),)  # Ensure unique trigger IDs per workflow
 
     def __str__(self) -> str:
-        return f"TriggerSubscription<{self.id}:{self.trigger_key}>"
+        return f"TriggerSubscription<{self.id}:{self.trigger_id}:{self.trigger_key}>"
 
 
 class TriggerEvent(models.Model):

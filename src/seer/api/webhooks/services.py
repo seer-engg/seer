@@ -81,7 +81,9 @@ async def handle_generic_webhook(
         "body": payload,
     }
     envelope = build_event_envelope(
+        trigger_id=subscription.trigger_id,
         trigger_key=subscription.trigger_key,
+        title=subscription.title,
         provider=provider,
         provider_connection_id=subscription.provider_connection_id,
         payload=payload,

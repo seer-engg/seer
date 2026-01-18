@@ -14,7 +14,9 @@ def _utcnow() -> datetime:
 
 def build_event_envelope(
     *,
+    trigger_id: str,
     trigger_key: str,
+    title: str,
     provider: str,
     provider_connection_id: Optional[int],
     payload: Dict[str, Any],
@@ -24,7 +26,9 @@ def build_event_envelope(
     occurred = occurred_at or _utcnow()
     return {
         "id": f"evt_{uuid4().hex}",
-        "trigger_key": trigger_key,
+        "trigger_id": trigger_id,  # Unique instance identifier
+        "trigger_key": trigger_key,  # Trigger type identifier
+        "title": title,  # Human-readable title for reference resolution
         "provider": provider,
         "account_id": provider_connection_id,
         "occurred_at": occurred.isoformat(),

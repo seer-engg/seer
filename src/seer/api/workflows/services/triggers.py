@@ -427,18 +427,18 @@ async def sync_trigger_subscriptions(
     existing: Dict[str, TriggerSubscription] = {}
     duplicate_subscriptions: List[TriggerSubscription] = []
     for sub in await TriggerSubscription.filter(workflow=workflow):
-        if sub.trigger_key in existing:
+        if sub.trigger_id in existing:
             duplicate_subscriptions.append(sub)
         else:
-            existing[sub.trigger_key] = sub
+            existing[sub.trigger_id] = sub
     # Clean up any accidental duplicates before reconciling desired state.
     for duplicate in duplicate_subscriptions:
         await delete_trigger_subscription(user, duplicate.id)
-    desired = {trigger.key: trigger for trigger in spec.triggers or []}
+    desired = {trigger.id: trigger for trigger in spec.triggers or []}
 
     # Remove subscriptions no longer declared in the spec.
-    for trigger_key, subscription in existing.items():
-        if trigger_key not in desired:
+    for trigger_id, subscription in existing.items():
+        if trigger_id not in desired:
             await delete_trigger_subscription(user, subscription.id)
 
     # Upsert declared triggers.
@@ -465,13 +465,15 @@ async def sync_trigger_subscriptions(
                 extra={"user_id": user.id, "adjusted_interval": adjusted_interval},
             )
 
-        existing_subscription = existing.get(trigger_spec.key)
+        existing_subscription = existing.get(trigger_spec.id)
         previous_secret = getattr(existing_subscription, "secret_token", None)
         secret = previous_secret
         if _should_emit_webhook_url(trigger_spec.key) and not secret:
             secret = _generate_subscription_secret()
 
         if existing_subscription:
+            existing_subscription.trigger_key = trigger_spec.key  # Update type reference
+            existing_subscription.title = trigger_spec.title  # Update title for reference resolution
             existing_subscription.provider_connection_id = trigger_spec.provider_connection_id
             existing_subscription.enabled = trigger_spec.enabled
             existing_subscription.filters = filters
@@ -494,7 +496,9 @@ async def sync_trigger_subscriptions(
             subscription = await TriggerSubscription.create(
                 user=user,
                 workflow=workflow,
+                trigger_id=trigger_spec.id,
                 trigger_key=trigger_spec.key,
+                title=trigger_spec.title,
                 provider_connection_id=trigger_spec.provider_connection_id,
                 enabled=trigger_spec.enabled,
                 filters=filters,

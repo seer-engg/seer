@@ -82,8 +82,9 @@ async def test_if_branch_tool_runs_async_handler() -> None:
         "version": "2",
         "triggers": [
             {
+                "id": "test_trigger",
                 "key": "test.trigger",
-                "title": "Test Trigger",
+                "title": "TestTrigger",
                 "provider": "test",
                 "mode": "webhook",
                 "schemas": {
@@ -106,25 +107,25 @@ async def test_if_branch_tool_runs_async_handler() -> None:
             {
                 "id": "conditional",
                 "type": "if",
-                "condition": "${trigger.data.flag}",
+                "condition": "${TestTrigger.data.flag}",
             },
             {
                 "id": "call_tool",
                 "type": "tool",
                 "tool": "test.echo",
-                "in": {"message": "${trigger.data.payload}"},
+                "in": {"message": "${TestTrigger.data.payload}"},
                 "out": "tool_result",
             },
         ],
         "edges": [
-            {"id": "e0", "source": "test.trigger", "target": "conditional", "type": "trigger"},
+            {"id": "e0", "source": "test_trigger", "target": "conditional", "type": "trigger"},
             {"id": "e1", "source": "conditional", "target": "call_tool", "type": "conditional_true"},
         ],
     }
 
     compiled = await _compile_workflow(spec, [tool_def])
     # Pass trigger envelope with event data and trigger_key for routing
-    trigger_envelope = {"trigger_key": "test.trigger", "data": {"flag": True, "payload": "hello"}}
+    trigger_envelope = {"trigger_key": "test.trigger", "title": "TestTrigger", "data": {"flag": True, "payload": "hello"}}
     result = await compiled.ainvoke(
         config=None,
         context=None,
@@ -172,8 +173,9 @@ async def test_for_each_body_tools_use_async_handler() -> None:
         "version": "2",
         "triggers": [
             {
+                "id": "loop_trigger",
                 "key": "loop.trigger",
-                "title": "Loop Trigger",
+                "title": "LoopTrigger",
                 "provider": "test",
                 "mode": "webhook",
                 "schemas": {"event": {"type": "object"}},
@@ -208,7 +210,7 @@ async def test_for_each_body_tools_use_async_handler() -> None:
             },
         ],
         "edges": [
-            {"id": "e0", "source": "loop.trigger", "target": "items_seed", "type": "trigger"},
+            {"id": "e0", "source": "loop_trigger", "target": "items_seed", "type": "trigger"},
             {"id": "e1", "source": "items_seed", "target": "loop", "type": "default"},
             {"id": "e2", "source": "loop", "target": "loop_tool", "type": "loop_body"},
             {"id": "e3", "source": "loop_tool", "target": "loop", "type": "default"},
@@ -217,7 +219,7 @@ async def test_for_each_body_tools_use_async_handler() -> None:
     }
 
     compiled = await _compile_workflow(spec, [tool_def])
-    trigger_envelope = {"trigger_key": "loop.trigger"}
+    trigger_envelope = {"trigger_key": "loop.trigger", "title": "LoopTrigger"}
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Verify both loop iterations ran with async handler
@@ -235,6 +237,7 @@ async def test_trigger_routes_to_correct_node() -> None:
         "version": "2",
         "triggers": [
             {
+                "id": "webhook_received",
                 "key": "webhook.received",
                 "title": "Webhook",
                 "provider": "webhook",
@@ -252,12 +255,12 @@ async def test_trigger_routes_to_correct_node() -> None:
             },
         ],
         "edges": [
-            {"id": "e1", "source": "webhook.received", "target": "handler", "type": "trigger"},
+            {"id": "e1", "source": "webhook_received", "target": "handler", "type": "trigger"},
         ],
     }
 
     compiled = await _compile_workflow(spec, [])
-    trigger_envelope = {"trigger_key": "webhook.received"}
+    trigger_envelope = {"trigger_key": "webhook.received", "title": "Webhook"}
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     assert result["result"] == "webhook_handled"
@@ -270,6 +273,7 @@ async def test_multiple_triggers_route_to_different_nodes() -> None:
         "version": "2",
         "triggers": [
             {
+                "id": "github_push",
                 "key": "github.push",
                 "title": "Push",
                 "provider": "github",
@@ -277,6 +281,7 @@ async def test_multiple_triggers_route_to_different_nodes() -> None:
                 "schemas": {"event": {"type": "object"}},
             },
             {
+                "id": "github_pr",
                 "key": "github.pr",
                 "title": "PR",
                 "provider": "github",
@@ -301,8 +306,8 @@ async def test_multiple_triggers_route_to_different_nodes() -> None:
             },
         ],
         "edges": [
-            {"id": "e1", "source": "github.push", "target": "handle_push", "type": "trigger"},
-            {"id": "e2", "source": "github.pr", "target": "handle_pr", "type": "trigger"},
+            {"id": "e1", "source": "github_push", "target": "handle_push", "type": "trigger"},
+            {"id": "e2", "source": "github_pr", "target": "handle_pr", "type": "trigger"},
         ],
     }
 
@@ -311,14 +316,14 @@ async def test_multiple_triggers_route_to_different_nodes() -> None:
     # Test push trigger routes to handle_push
     result = await compiled.ainvoke(
         config=None, context=None,
-        trigger={"trigger_key": "github.push"}
+        trigger={"trigger_id": "github_push", "trigger_key": "github.push", "title": "Push"}
     )
     assert result["result"] == "push_handled"
 
     # Test PR trigger routes to handle_pr
     result = await compiled.ainvoke(
         config=None, context=None,
-        trigger={"trigger_key": "github.pr"}
+        trigger={"trigger_id": "github_pr", "trigger_key": "github.pr", "title": "PR"}
     )
     assert result["result"] == "pr_handled"
 
@@ -330,6 +335,7 @@ async def test_multiple_triggers_route_to_same_node() -> None:
         "version": "2",
         "triggers": [
             {
+                "id": "trigger_a",
                 "key": "trigger_a",
                 "title": "A",
                 "provider": "test",
@@ -337,6 +343,7 @@ async def test_multiple_triggers_route_to_same_node() -> None:
                 "schemas": {"event": {"type": "object"}},
             },
             {
+                "id": "trigger_b",
                 "key": "trigger_b",
                 "title": "B",
                 "provider": "test",
@@ -362,10 +369,10 @@ async def test_multiple_triggers_route_to_same_node() -> None:
     compiled = await _compile_workflow(spec, [])
 
     # Both triggers should route to the same node
-    for trigger_key in ["trigger_a", "trigger_b"]:
+    for trigger_key, title in [("trigger_a", "A"), ("trigger_b", "B")]:
         result = await compiled.ainvoke(
             config=None, context=None,
-            trigger={"trigger_key": trigger_key}
+            trigger={"trigger_key": trigger_key, "title": title}
         )
         assert result["result"] == "shared_executed"
 
@@ -377,6 +384,7 @@ async def test_unknown_trigger_key_fallback() -> None:
         "version": "2",
         "triggers": [
             {
+                "id": "known_trigger",
                 "key": "known_trigger",
                 "title": "Known",
                 "provider": "test",
@@ -403,7 +411,7 @@ async def test_unknown_trigger_key_fallback() -> None:
     # Unknown trigger key should fall back to the first target
     result = await compiled.ainvoke(
         config=None, context=None,
-        trigger={"trigger_key": "unknown_trigger"}
+        trigger={"trigger_key": "unknown_trigger", "title": "Known"}
     )
     assert result["result"] == "handled"
 
@@ -415,6 +423,7 @@ async def test_trigger_data_accessible_after_routing() -> None:
         "version": "2",
         "triggers": [
             {
+                "id": "data_trigger",
                 "key": "data.trigger",
                 "title": "Data",
                 "provider": "test",
@@ -439,19 +448,19 @@ async def test_trigger_data_accessible_after_routing() -> None:
                 "id": "echo",
                 "type": "task",
                 "kind": "set",
-                "value": "${trigger.data.message}",
+                "value": "${Data.data.message}",
                 "out": "result",
             },
         ],
         "edges": [
-            {"id": "e1", "source": "data.trigger", "target": "echo", "type": "trigger"},
+            {"id": "e1", "source": "data_trigger", "target": "echo", "type": "trigger"},
         ],
     }
 
     compiled = await _compile_workflow(spec, [])
     result = await compiled.ainvoke(
         config=None, context=None,
-        trigger={"trigger_key": "data.trigger", "data": {"message": "hello world"}}
+        trigger={"trigger_key": "data.trigger", "title": "Data", "data": {"message": "hello world"}}
     )
 
     assert result["result"] == "hello world"

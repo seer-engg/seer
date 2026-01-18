@@ -227,6 +227,9 @@ class TriggerSpec(TriggerDefinition):
     Frontend supplies this alongside nodes so triggers can be versioned with the workflow.
     """
 
+    # Unique instance identifier (allows multiple triggers of same type)
+    id: str = Field(min_length=1)
+
     provider_connection_id: Optional[int] = None
     enabled: bool = True
     filters: Dict[str, JSONValue] = Field(default_factory=dict)
@@ -243,26 +246,26 @@ class WorkflowSpec(StrictModel):
 
     @model_validator(mode="after")
     def _validate_workflow(self) -> "WorkflowSpec":
-        # Validate unique trigger keys
-        seen_triggers = set()
-        duplicate_triggers = []
+        # Validate unique trigger IDs (allow duplicate keys for same type)
+        seen_trigger_ids = set()
+        duplicate_trigger_ids = []
         for trigger in self.triggers or []:
-            if trigger.key in seen_triggers:
-                duplicate_triggers.append(trigger.key)
-            seen_triggers.add(trigger.key)
-        if duplicate_triggers:
-            dup_list = ", ".join(sorted(set(duplicate_triggers)))
-            raise ValueError(f"Duplicate trigger key values are not allowed: {dup_list}")
+            if trigger.id in seen_trigger_ids:
+                duplicate_trigger_ids.append(trigger.id)
+            seen_trigger_ids.add(trigger.id)
+        if duplicate_trigger_ids:
+            dup_list = ", ".join(sorted(set(duplicate_trigger_ids)))
+            raise ValueError(f"Duplicate trigger id values are not allowed: {dup_list}")
 
         # Collect valid identifiers
         node_ids = {n.id for n in self.nodes}
-        trigger_keys = {t.key for t in self.triggers}
+        trigger_ids = {t.id for t in self.triggers}
 
         # Validate edge source/target references
         for edge in self.edges:
             if edge.type == EdgeType.trigger:
-                # Trigger edges: source must be a trigger key, target must be a node
-                if edge.source not in trigger_keys:
+                # Trigger edges: source must be a trigger id, target must be a node
+                if edge.source not in trigger_ids:
                     raise ValueError(f"Trigger edge '{edge.id}' source '{edge.source}' not found in triggers")
                 if edge.target not in node_ids:
                     raise ValueError(f"Trigger edge '{edge.id}' target '{edge.target}' not found in nodes")

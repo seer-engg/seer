@@ -66,13 +66,13 @@ def _build_trigger_router(trigger_targets: Dict[str, str]):
     """
     Build a routing function for trigger-based entry point routing.
 
-    The __trigger_bootstrap node stores the trigger_key in state["_trigger_key"].
+    The __trigger_bootstrap node stores the trigger_id in state["_trigger_id"].
     This router reads that value and returns the appropriate target node.
     """
     def route_by_trigger(state: dict) -> str:
-        trigger_key = state.get("_trigger_key")
-        if trigger_key and trigger_key in trigger_targets:
-            return trigger_targets[trigger_key]
+        trigger_id = state.get("_trigger_id")
+        if trigger_id and trigger_id in trigger_targets:
+            return trigger_targets[trigger_id]
         # Fallback: use first trigger's target if available
         if trigger_targets:
             return next(iter(trigger_targets.values()))
@@ -201,10 +201,10 @@ async def emit_langgraph(
         # Note: Using a closure that captures runtime to access trigger context
         def make_trigger_bootstrap(rt: NodeRuntime):
             def trigger_bootstrap(state: dict) -> dict:
-                """Extract trigger_key from runtime trigger envelope into state."""
+                """Extract trigger_id from runtime trigger envelope into state."""
                 trigger = rt._current_trigger
                 if trigger:
-                    return {"_trigger_key": trigger.get("trigger_key")}
+                    return {"_trigger_id": trigger.get("trigger_id")}
                 return {}
             return trigger_bootstrap
 

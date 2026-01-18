@@ -7,13 +7,13 @@ V2: With explicit edges, nodes no longer have nested children. Loop variables
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from typing import Dict, List, Optional, Set
 
 from seer.core.errors import TypeEnvironmentError
 from seer.core.expr.typecheck import (
     TypeEnvironment,
-    register_trigger,
     schema_from_output_contract,
 )
 from seer.core.registry.tool_registry import ToolRegistry
@@ -26,9 +26,12 @@ from seer.core.schema.models import (
     TaskKind,
     TaskNode,
     ToolNode,
+    TriggerSpec,
     WorkflowSpec,
 )
 from seer.core.schema.schema_registry import SchemaRegistry
+
+VALID_IDENTIFIER = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
 
 
 def build_type_environment(
@@ -36,10 +39,9 @@ def build_type_environment(
 ) -> TypeEnvironment:
     env = TypeEnvironment()
 
-    # Register trigger schema if workflow has triggers declared
+    # Register each trigger by its title
     if spec.triggers:
-        trigger_schema = _resolve_trigger_schema(spec)
-        register_trigger(env, trigger_schema)
+        _register_triggers(spec.triggers, env)
 
     # Process all nodes
     for node in spec.nodes:
@@ -51,24 +53,46 @@ def build_type_environment(
     return env
 
 
-def _resolve_trigger_schema(spec: WorkflowSpec) -> Dict:
+def _register_triggers(triggers: List[TriggerSpec], env: TypeEnvironment) -> None:
     """
-    Resolve the schema for ${trigger} expressions from the workflow's trigger definitions.
+    Register each trigger by its title as a symbol in the type environment.
 
-    Uses the event schema from the first trigger. If multiple triggers are declared,
-    they should have compatible schemas (this is not enforced here).
+    Validates that all trigger titles are unique and are valid identifiers,
+    then registers each trigger's event schema under its title for reference resolution.
     """
-    if not spec.triggers:
-        return {"type": "object", "additionalProperties": True}
+    seen_titles = set()
 
-    first_trigger = spec.triggers[0]
-    event_schema = first_trigger.schemas.event
+    for trigger in triggers:
+        # Validate title is a valid identifier
+        if not VALID_IDENTIFIER.match(trigger.title):
+            raise TypeEnvironmentError(
+                f"Invalid trigger title '{trigger.title}'. Titles must be valid identifiers "
+                f"(start with letter/underscore, contain only alphanumeric/underscore). "
+                f"Trigger ID: '{trigger.id}', Key: '{trigger.key}'. "
+                f"Examples: 'GmailInbox', 'Gmail_Inbox', 'webhook_1'"
+            )
 
-    # If no explicit event schema, return a permissive object schema
-    if not event_schema:
-        return {"type": "object", "additionalProperties": True}
+        # Validate title uniqueness
+        if trigger.title in seen_titles:
+            raise TypeEnvironmentError(
+                f"Duplicate trigger title '{trigger.title}'. Each trigger must have a unique title. "
+                f"Trigger ID: '{trigger.id}', Key: '{trigger.key}'"
+            )
+        seen_titles.add(trigger.title)
 
-    return event_schema
+        # Get event schema
+        event_schema = trigger.schemas.event if trigger.schemas.event else {
+            "type": "object",
+            "additionalProperties": True
+        }
+
+        # Register title as symbol
+        env.register(trigger.title, event_schema)
+
+        # Also register sub-properties for convenience
+        properties = event_schema.get("properties", {})
+        for name, schema in properties.items():
+            env.register(f"{trigger.title}.{name}", schema)
 
 
 def _register_loop_variables(spec: WorkflowSpec, env: TypeEnvironment) -> None:

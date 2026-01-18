@@ -25,14 +25,14 @@ class ExecutionPlan:
         entry_node_id: ID of the first node to execute (no incoming edges), None if trigger routing is used
         outgoing_edges: Map from node_id to list of edges leaving that node
         incoming_edges: Map from node_id to list of edges entering that node
-        trigger_targets: Map from trigger_key to target node_id for routing
+        trigger_targets: Map from trigger_id to target node_id for routing
     """
     nodes: List[Node]
     edges: List[Edge]
     entry_node_id: Optional[str]
     outgoing_edges: Dict[str, List[Edge]] = field(default_factory=dict)
     incoming_edges: Dict[str, List[Edge]] = field(default_factory=dict)
-    trigger_targets: Dict[str, str] = field(default_factory=dict)
+    trigger_targets: Dict[str, str] = field(default_factory=dict)  # trigger_id -> node_id
 
 
 def build_execution_plan(spec: WorkflowSpec) -> ExecutionPlan:
@@ -48,7 +48,7 @@ def build_execution_plan(spec: WorkflowSpec) -> ExecutionPlan:
 
     for edge in spec.edges:
         if edge.type == EdgeType.trigger:
-            # Trigger edge: source is trigger key, target is node
+            # Trigger edge: source is trigger ID, target is node
             trigger_targets[edge.source] = edge.target
             incoming[edge.target].append(edge)
         else:

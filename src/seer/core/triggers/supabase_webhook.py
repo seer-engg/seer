@@ -10,7 +10,7 @@ from typing import Any, Dict, List
 
 import httpx
 
-from seer.api.integrations.constants import SUPABASE_RESOURCE_PROVIDER
+from seer.services.integrations.constants import SUPABASE_RESOURCE_PROVIDER
 from seer.config import config
 from seer.database import IntegrationResource, TriggerSubscription
 from seer.logger import get_logger
