@@ -69,7 +69,7 @@ class UsageCounter(models.Model):
 
     def __str__(self) -> str:
         period_str = f"{self.period_start}" if self.period_start else "all-time"
-        return f"UsageCounter<user={self.user_id}, type={self.resource_type.value}, period={period_str}, count={self.count}>"
+        return f"UsageCounter<user={self.user}, type={self.resource_type.value}, period={period_str}, count={self.count}>"
 
 
 class LLMUsageRecord(models.Model):
@@ -122,4 +122,4 @@ class LLMUsageRecord(models.Model):
         ]
 
     def __str__(self) -> str:
-        return f"LLMUsageRecord<user={self.user_id}, model={self.model}, tokens={self.total_tokens}, cost=${self.cost}>"
+        return f"LLMUsageRecord<user={self.user}, model={self.model}, tokens={self.total_tokens}, cost=${self.cost}>"

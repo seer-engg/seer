@@ -3,7 +3,7 @@ from __future__ import annotations
 import random
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
-from typing_extensions import Callable
+from typing import Callable
 from uuid import uuid4
 
 from fastapi import HTTPException

@@ -108,7 +108,7 @@ class WorkflowDraft(models.Model):
         table = "workflow_drafts"
 
     def __str__(self) -> str:
-        return f"WorkflowDraft<wf={self.workflow_id} rev={self.revision}>"
+        return f"WorkflowDraft<wf={self.id} rev={self.revision}>"
 
     @property
     def workflow_public_id(self) -> str:
@@ -147,7 +147,7 @@ class WorkflowVersion(models.Model):
         )
 
     def __str__(self) -> str:
-        return f"WorkflowVersion<wf={self.workflow_id} status={self.status}>"
+        return f"WorkflowVersion<wf={self.id} status={self.status}>"
 
     @property
     def workflow_public_id(self) -> str:
@@ -252,12 +252,12 @@ class WorkflowChatSession(models.Model):
         ordering = ("-updated_at",)
 
     def __str__(self) -> str:
-        return f"WorkflowChatSession<{make_workflow_public_id(self.workflow_id)}:{self.thread_id}>"
+        return f"WorkflowChatSession<{make_workflow_public_id(self.id)}:{self.thread_id}>"
 
     @property
     def workflow_public_id(self) -> str:
         """Expose wf_* identifier used by public APIs."""
-        return make_workflow_public_id(self.workflow_id)
+        return make_workflow_public_id(self.workflow.id)
 
 
 class TriggerSubscription(models.Model):
@@ -409,4 +409,4 @@ class WorkflowProposal(models.Model):
     @property
     def workflow_public_id(self) -> str:
         """Expose wf_* identifier used by public APIs."""
-        return make_workflow_public_id(self.workflow_id)
+        return make_workflow_public_id(self.workflow.id)

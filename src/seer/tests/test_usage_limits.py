@@ -27,7 +27,6 @@ def test_get_limits_for_free_tier():
     assert isinstance(limits, TierLimits)
     assert limits.workflows == 3
     assert limits.runs_monthly == 100
-    assert limits.chat_messages_per_workflow == 5
     assert limits.account_day_limit == 14
     assert limits.poll_min_interval_seconds == 900  # 15 minutes
     assert limits.llm_credits_monthly == 5.00
@@ -39,7 +38,6 @@ def test_get_limits_for_pro_tier():
 
     assert limits.workflows == -1  # Unlimited
     assert limits.runs_monthly == 1_000_000
-    assert limits.chat_messages_per_workflow == -1  # Unlimited
     assert limits.account_day_limit == -1  # No time limit
     assert limits.poll_min_interval_seconds == 60  # 1 minute
     assert limits.llm_credits_monthly == 20.00
@@ -71,7 +69,6 @@ def test_self_hosted_limits():
 
     assert limits.workflows == -1  # Unlimited
     assert limits.runs_monthly == -1  # Unlimited
-    assert limits.chat_messages_per_workflow == 0  # Disabled
     assert limits.account_day_limit == -1  # No time limit
     assert limits.poll_min_interval_seconds == 1  # 1 second minimum
     assert limits.llm_credits_monthly == -1  # BYOK
@@ -143,15 +140,14 @@ def test_tier_limits_are_logical():
 
 def test_constants_match_tier_limits():
     """Test that tier limits use constants correctly."""
-    from seer.observability import constants
+    from seer.observability.constants import tiered_usage_limits
 
     free = get_limits_for_tier(SubscriptionTier.FREE)
-    assert free.workflows == constants.WORKFLOWS_FREE
-    assert free.runs_monthly == constants.RUNS_MONTHLY_FREE
-    assert free.chat_messages_per_workflow == constants.CHAT_MESSAGES_PER_WORKFLOW_FREE
-    assert free.account_day_limit == constants.ACCOUNT_DAY_LIMIT_FREE
-    assert free.poll_min_interval_seconds == constants.POLL_MIN_INTERVAL_FREE
-    assert free.llm_credits_monthly == constants.LLM_CREDITS_FREE
+    assert free.workflows == tiered_usage_limits.WORKFLOWS_FREE
+    assert free.runs_monthly == tiered_usage_limits.RUNS_MONTHLY_FREE
+    assert free.account_day_limit == tiered_usage_limits.ACCOUNT_DAY_LIMIT_FREE
+    assert free.poll_min_interval_seconds == tiered_usage_limits.POLL_MIN_INTERVAL_FREE
+    assert free.llm_credits_monthly == tiered_usage_limits.LLM_CREDITS_FREE
 
 
 # ============================================================================

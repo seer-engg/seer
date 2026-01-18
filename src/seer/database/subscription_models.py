@@ -82,7 +82,7 @@ class BillingSubscription(models.Model):
         table = "billing_subscriptions"
 
     def __str__(self) -> str:
-        return f"BillingSubscription<profile={self.billing_profile_id}, tier={self.tier.value}>"
+        return f"BillingSubscription<profile={self.id}, tier={self.tier.value}>"
 
 
 class StripeWebhookEvent(models.Model):
