@@ -9,7 +9,8 @@ from typing import Any, Dict, List, Optional, Set
 from seer.database import IntegrationSecret, OAuthConnection, User
 from seer.logger import get_logger
 
-from .services import has_required_scopes
+from seer.services.integrations.auth.helpers import has_required_scopes, list_connections
+from seer.services.integrations.auth.oauth import get_oauth_provider
 
 logger = get_logger(__name__)
 
@@ -160,3 +161,37 @@ def build_tool_status(
         "connection_id": connection_id,
         "provider_account_id": provider_account_id,
     }
+
+
+
+async def get_tools_connection_status_for_user(user: User) -> List[Dict[str, Any]]:
+    """
+    Get the connection status for all tools for a user.
+    """
+    from seer.tools.base import (
+        list_tools as get_all_tools,  # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with tools.base module
+    )
+
+    logger.info("Getting tools connection status for user %s", user.user_id)
+
+    connections = await list_connections(user)
+    provider_connections = build_provider_connections_map(connections)
+    provider_secrets = await build_provider_secrets_map(user)
+    all_tools = get_all_tools()
+
+    results = []
+    for tool in all_tools:
+        auth_requirements = determine_tool_auth_requirements(tool)
+        tool_provider = tool.provider or tool.integration_type
+        oauth_provider = get_oauth_provider(tool_provider) if tool_provider else None
+        conn_info = provider_connections.get(oauth_provider) if oauth_provider else None
+
+        results.append(build_tool_status(
+            tool=tool,
+            auth_requirements=auth_requirements,
+            provider=oauth_provider,
+            provider_aliases=[tool_provider] if tool_provider else [],
+            conn_info=conn_info,
+            provider_secrets=provider_secrets,
+        ))
+    return results

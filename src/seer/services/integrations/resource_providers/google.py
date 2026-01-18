@@ -5,10 +5,10 @@ from typing import Any, Dict, Optional
 import httpx
 from fastapi import HTTPException
 
-from seer.api.integrations.resource_providers.base import ResourceProvider
+from seer.services.integrations.resource_providers.base import ResourceProvider
 from seer.logger import get_logger
 
-logger = get_logger("api.integrations.resource_providers.google")
+logger = get_logger(__name__)
 
 
 class GoogleResourceProvider(ResourceProvider):

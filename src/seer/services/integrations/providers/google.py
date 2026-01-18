@@ -5,10 +5,10 @@ from typing import Any, Dict, List
 import httpx
 from fastapi import HTTPException
 
-from seer.api.integrations.providers.base import IntegrationProvider, OAuthAuthorizeContext
+from seer.services.integrations.providers.base import IntegrationProvider, OAuthAuthorizeContext
 from seer.logger import get_logger
 
-logger = get_logger("api.integrations.providers.google")
+logger = get_logger(__name__)
 
 
 class GoogleProvider(IntegrationProvider):

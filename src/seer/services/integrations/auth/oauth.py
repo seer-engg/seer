@@ -3,6 +3,7 @@ import os
 from authlib.integrations.starlette_client import OAuth
 
 from seer.config import config
+from seer.services.integrations.constants import SUPABASE_OAUTH_PROVIDER
 
 oauth = OAuth()
 
@@ -46,3 +47,24 @@ if config.supabase_client_id and config.supabase_client_secret:
         api_base_url=f"{_supabase_base()}/",
         client_kwargs={'scope': 'read:projects'},
     )
+
+
+
+def get_oauth_provider(integration_type: str) -> str:
+    """
+    Map integration type to OAuth provider.
+    Multiple integration types can share the same OAuth provider.
+
+    Args:
+        integration_type: Integration type (gmail, googlesheets, googledrive, etc.)
+
+    Returns:
+        OAuth provider name (google, github, etc.)
+    """
+    google_integrations = ['gmail', 'googlesheets', 'googledrive', 'google']
+    if integration_type in google_integrations:
+        return 'google'
+    if integration_type in ['supabase', 'supabase_mgmt']:
+        return SUPABASE_OAUTH_PROVIDER
+    # For other providers, the integration type is the same as the provider
+    return integration_type

@@ -7,13 +7,13 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 
-from seer.api.integrations.resource_providers import (
+from seer.services.integrations.resource_providers import (
     get_all_resource_configs,
     get_resource_provider,
 )
 from seer.logger import get_logger
 
-logger = get_logger("api.integrations.resource_browser")
+logger = get_logger(__name__)
 
 
 class ResourceBrowser:

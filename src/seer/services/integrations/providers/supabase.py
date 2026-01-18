@@ -5,17 +5,17 @@ from typing import Any, Dict, List, Optional
 import httpx
 from fastapi import HTTPException
 
-from seer.api.integrations.constants import (
+from seer.services.integrations.constants import (
     SUPABASE_OAUTH_PROVIDER,
     SUPABASE_RESOURCE_PROVIDER,
     SUPABASE_RESOURCE_TYPE_PROJECT,
 )
-from seer.api.integrations.providers.base import IntegrationProvider, ProviderContext
+from seer.services.integrations.providers.base import IntegrationProvider, ProviderContext
 from seer.config import config
 from seer.logger import get_logger
 from seer.tools.oauth_manager import get_oauth_token
 
-logger = get_logger("api.integrations.providers.supabase")
+logger = get_logger(__name__)
 
 
 class SupabaseProvider(IntegrationProvider):

@@ -452,7 +452,7 @@ async def sync_trigger_subscriptions(
                 status=400,
             )
         filters = dict(trigger_spec.filters or {})
-        provider_config = dict(trigger_spec.schemas.config or {})
+        provider_config = dict(trigger_spec.provider_config or {})
 
         _validate_filters_payload(filters, definition)
 

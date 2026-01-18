@@ -230,6 +230,7 @@ class TriggerSpec(TriggerDefinition):
     provider_connection_id: Optional[int] = None
     enabled: bool = True
     filters: Dict[str, JSONValue] = Field(default_factory=dict)
+    provider_config: Dict[str, JSONValue] = Field(default_factory=dict)
 
 
 class WorkflowSpec(StrictModel):
