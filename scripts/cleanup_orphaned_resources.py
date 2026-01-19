@@ -31,8 +31,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 # pylint: disable=wrong-import-position
 # Reason: sys.path must be modified before importing project modules
-from shared.database import TORTOISE_ORM
-from shared.database.models_integrations import IntegrationResource, IntegrationSecret
+from seer.database import TORTOISE_ORM
+from seer.database.models_integrations import IntegrationResource, IntegrationSecret
 # pylint: enable=wrong-import-position
 
 logger = logging.getLogger("cleanup_orphaned_resources")

@@ -53,8 +53,8 @@ Validates and coerces runtime inputs against the workflow spec.
 
 **Example validation:**
 ```python
-from workflow_compiler.runtime.input_validation import coerce_inputs
-from workflow_compiler.schema.models import WorkflowSpec
+from seer.core.runtime.input_validation import coerce_inputs
+from seer.core.schema.models import WorkflowSpec
 
 # Validate inputs against spec
 coerced = coerce_inputs(spec, provided_inputs)
@@ -78,8 +78,8 @@ Validates all `${...}` references against the computed type environment.
 
 **Example validation:**
 ```python
-from workflow_compiler.compiler.validate_refs import validate_references
-from workflow_compiler.expr.typecheck import TypeEnvironment
+from seer.core.compiler.validate_refs import validate_references
+from seer.core.expr.typecheck import TypeEnvironment
 
 # Validate all references in workflow
 type_env = TypeEnvironment()
@@ -97,7 +97,7 @@ Runtime evaluation of `${...}` expressions.
 
 **Context structure:**
 ```python
-from workflow_compiler.expr.evaluator import EvaluationContext, resolve_reference
+from seer.core.expr.evaluator import EvaluationContext, resolve_reference
 
 ctx = EvaluationContext(
     state={"node1": {"output": "value"}},
@@ -135,7 +135,7 @@ Core JSON Schema validation utilities using `jsonschema` library (Draft 2020-12)
 
 **Example:**
 ```python
-from workflow_compiler.schema.jsonschema_adapter import validate_instance
+from seer.core.schema.jsonschema_adapter import validate_instance
 
 validate_instance({"name": "test"}, {"type": "object", "properties": {"name": {"type": "string"}}})
 ```

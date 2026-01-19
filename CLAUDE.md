@@ -1,25 +1,28 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `api/`: FastAPI HTTP layer (routers, services, middleware, API models).
-- `worker/`: Taskiq background worker and polling tasks.
-- `shared/`: shared config, analytics, database models, and utilities.
-- `agents/`: agent-specific logic and orchestration.
-- `workflow_compiler/`: workflow validation/compilation plus runtime helpers; tests live here.
-- `migrations/`: Aerich database migrations.
+- `src/seer/api/`: FastAPI HTTP layer (routers, middleware, API models).
+- `src/seer/services/`: business logic used by API/worker (workflows, integrations, triggers).
+- `src/seer/core/`: workflow compiler, runtime, schema models, and global compiler singleton.
+- `src/seer/tools/`: tool registry, executor, credential resolution, and provider tool implementations.
+- `src/seer/tool_hub/`: tool index/search helpers for discovery.
+- `src/seer/agents/`: agent-specific orchestration (LangGraph-based workflow agent).
+- `src/seer/worker/`: Taskiq background worker and polling tasks.
+- `src/seer/database/`: Tortoise ORM models/configuration; migrations live in `/migrations`.
+- `src/seer/analytics/`, `src/seer/observability/`, `src/seer/utilities/`: shared instrumentation and helpers.
 - `documentation/`: docs site assets (Node-based).
 - `scripts/`: maintenance and debugging scripts.
 
 ## Core Systems (Compiler, Tools, Triggers)
-- Workflow compiler: `workflow_compiler/` turns workflow specs into LangGraph graphs and runs node executors; API calls into it.
-- Tool registry: `shared/tools/` provides `BaseTool`, registry helpers, and execution with credential resolution.
-- Trigger polling: `api/triggers/` defines triggers, subscriptions, poll adapters, and dedupe; worker executes polls and dispatches runs.
+- Workflow compiler: `src/seer/core/` validates workflow specs, builds LangGraph graphs, and hosts runtime node executors; API/services/worker call into it via the global compiler singleton.
+- Tool registry: `src/seer/tools/` provides `BaseTool`, registry helpers, executor, and credential resolution; discovery is powered by `src/seer/tool_hub/`.
+- Trigger polling: trigger catalog + subscription management lives under `src/seer/api/workflows/services` and `src/seer/services/workflows/triggers.py`; Taskiq worker (`src/seer/worker/`) polls and dispatches runs.
 
 ## Build, Test, and Development Commands
 - `docker compose up`: start Postgres, Redis, API, worker, and frontend via Docker.
-- `uvicorn api.main:app --reload --port 8000`: run the API locally without Docker.
-- `uv run taskiq worker worker.broker:broker`: run the background worker locally.
-- `uv run pytest` (or `pytest workflow_compiler/tests`): run the Python test suite.
+- `uv run uvicorn seer.api.main:app --reload --port 8000`: run the API locally without Docker.
+- `uv run taskiq worker seer.worker.broker:broker`: run the Taskiq background worker locally.
+- `uv run pytest` (or `pytest src/seer/core/tests`): run the Python test suite.
 
 ## Coding Style & Naming Conventions
 - Python 3.12, 4-space indentation, `snake_case` for functions/modules, `PascalCase` for classes.
@@ -28,13 +31,13 @@
 
 ## Testing Guidelines
 - `pytest` + `pytest-asyncio` (asyncio mode is `auto`).
-- Tests are named `test_*.py`; prefer `workflow_compiler/tests/` or module-level test folders.
+- Tests are named `test_*.py`; prefer `src/seer/core/tests/` or module-level test folders.
 - Add regression tests for bug fixes and workflow schema/validation changes.
 
 ## Adding Tools, Triggers, and Workflow Nodes
-- New tool: add a `BaseTool` in `shared/tools/<provider>/`, register via `register_tool(...)`, and ensure the module is imported by the loader. Provide a JSON schema in `get_parameters_schema()`.
-- New trigger: implement a poll adapter in `api/triggers/polling/adapters/`, register it in the adapter registry, add a trigger definition in `api/triggers/services.py`, and set a polling interval in `api/triggers/polling/scheduler.py`.
-- New workflow node type: add executor logic in `workflow_compiler/runtime/nodes.py` and validate/transform rules in `workflow_compiler/compiler.py` or schema models as needed.
+- New tool: add a `BaseTool` in `src/seer/tools/<provider>/`, register via `register_tool(...)`, and ensure the module is imported by the loader. Provide a JSON schema in `get_parameters_schema()`.
+- New trigger: add trigger definitions/subscriptions in `src/seer/api/workflows/services/triggers.py` (API surface) and polling logic in `src/seer/services/workflows/triggers.py`/`src/seer/worker/tasks/triggers.py`. Register adapters and polling intervals where appropriate.
+- New workflow node type: add executor logic in `src/seer/core/runtime/nodes.py` and validate/transform rules in `src/seer/core/compiler.py` or schema models as needed.
 
 ## Commit & Pull Request Guidelines
 - Commit messages follow Conventional Commits (e.g., `fix:`, `feat:`, `chore:`) based on recent history.

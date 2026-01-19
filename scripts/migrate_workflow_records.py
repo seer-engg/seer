@@ -35,7 +35,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from shared.database import TORTOISE_ORM  # noqa: E402
+from seer.database import TORTOISE_ORM  # noqa: E402
 
 logger = logging.getLogger("workflow_migration")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
