@@ -9,37 +9,40 @@
 
 Seer is a **open-source workflow builder with fine-grained control** for creating and executing automated workflows with integrated tools and services.
 
-## Quick Start
+## Quick Start (Docker)
 
-### Using Github
-
+1) Clone and start the stack (Postgres, Redis, API, worker):
 ```bash
 git clone https://github.com/seer-engg/seer
 cd seer
 docker compose up
 ```
 
-That's it! Starts Docker services (Postgres, Redis, backend, worker), streams logs, and waits for readiness.
+2) Access the app:
+- Frontend: http://localhost:5173/workflows?backend=http://localhost:8000
+- Backend API: http://localhost:8000
 
-### Deploy to Railway
+## Local Development (without full Docker)
 
-Deploy Seer to Railway with one click:
+- Prereqs: Python 3.12+, [uv](https://github.com/astral-sh/uv) installed (`pip install uv`), Postgres + Redis running (use `docker compose up postgres redis`).
+- Install deps: `uv sync`
+- Run API: `uv run uvicorn seer.api.main:app --reload --port 8000`
+- Run worker: `uv run taskiq worker seer.worker.broker:broker`
+- Run tests: `uv run pytest`
 
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/[TEMPLATE-ID])
+## Project Layout (backend)
 
-**What gets deployed:** FastAPI backend, background worker, PostgreSQL, and Redis
+- `src/seer/api/` – FastAPI routers, middleware, API models (workflows, tools, integrations, triggers, agents).
+- `src/seer/services/` – business logic used by API/worker (workflow execution, triggers, integrations).
+- `src/seer/core/` – workflow compiler/runtime, schema models, global compiler singleton.
+- `src/seer/tools/` – tool registry, executor, credential resolver, provider implementations; `src/seer/tool_hub/` for tool index/search.
+- `src/seer/worker/` – Taskiq worker, background tasks, trigger polling.
+- `src/seer/agents/` – agent orchestration (LangGraph-based workflow agent).
+- `src/seer/database/` – Tortoise ORM models/config; migrations live in `/migrations`.
+- `src/seer/analytics/`, `src/seer/observability/`, `src/seer/utilities/` – shared instrumentation and helpers.
+- `documentation/` – docs site assets; `scripts/` – maintenance helpers; `tests/` – automated tests.
 
-**Setup:** Click button, enter `OPENAI_API_KEY`, wait 5-7 minutes. Estimated cost: $15-30/month.
-
-For detailed deployment instructions, see the [Railway Deployment Guide](https://docs.getseer.dev/deployment/RAILWAY).
-
-### Using the Workflow Editor
-
-After running `docker compose up`, the workflow editor is available at:
-- **Frontend**: http://localhost:5173/workflows?backend=http://localhost:8000
-- **Backend API**: http://localhost:8000
-
-### Configuration
+## Configuration
 
 Create a `.env` file:
 
@@ -55,26 +58,13 @@ TAVILY_API_KEY=...
 
 Docker automatically configures `DATABASE_URL` and `REDIS_URL`.
 
-For complete configuration options, see the [Configuration Reference](https://docs.getseer.dev/advanced/CONFIGURATION).
-
-### Usage
-
-**Start development environment:**
-```bash
-docker compose up
-```
-
-**View logs:**
-```bash
-docker compose logs -f
-```
-
-**Stop services:**
-```bash
-docker compose down
-```
-
-For complete configuration options, see the [Configuration Reference](https://docs.getseer.dev/advanced/CONFIGURATION).
+Helpful commands:
+- Start everything: `docker compose up`
+- Follow logs: `docker compose logs -f`
+- Stop services: `docker compose down`
+- Run API locally: `uv run uvicorn seer.api.main:app --reload --port 8000`
+- Run worker locally: `uv run taskiq worker seer.worker.broker:broker`
+- Tests: `uv run pytest`
 
 ### Key Features
 
@@ -104,9 +94,9 @@ For complete configuration options, see the [Configuration Reference](https://do
 
 📚 **[Complete Documentation](https://docs.getseer.dev)** - Full docs site with guides, API reference, and examples
 
-- [Quick Start](#quick-start) - Get running in 60 seconds
-- [Railway Deployment](https://docs.getseer.dev/deployment/RAILWAY) - Production deployment guide
-- [Worker Setup](./worker/README.md) - Background task worker configuration
+- [Quick Start](#quick-start-docker) - Get running in 60 seconds
+- [Architecture](https://docs.getseer.dev) - Backend overview and concepts
+- [Worker Setup](src/seer/worker/README.md) - Background task worker configuration
 - [Integrations](https://docs.getseer.dev/integrations/SUPABASE) - Google, GitHub, Supabase setup
 - [Advanced Features](https://docs.getseer.dev/advanced/TRIGGERS) - Triggers, proposals, and more
 - [Configuration Reference](https://docs.getseer.dev/advanced/CONFIGURATION) - Complete configuration options
