@@ -107,12 +107,12 @@ class NodeRuntime:
 
         from seer.observability.credit_gate import check_credit_limit
 
-        # try:
-        #     await check_credit_limit(self._current_context.user)
-        # except Exception as exc:  # noqa: BLE001 - propagate credit failures, log others
-        #     if exc.__class__.__name__ == "CreditLimitExceeded":
-        #         raise
-        #     logger.error("Credit limit check failed: %s", exc)
+        try:
+            await check_credit_limit(self._current_context.user)
+        except Exception as exc:  # noqa: BLE001 - propagate credit failures, log others
+            if exc.__class__.__name__ == "CreditLimitExceeded":
+                raise
+            logger.error("Credit limit check failed: %s", exc)
 
     def _track_llm_usage_async(self, usage_metadata: Dict[str, Any]) -> None:
         """
