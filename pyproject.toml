@@ -48,6 +48,8 @@ dependencies = [
     "psycopg[binary]>=3.1.0",  # Required by langgraph-checkpoint-postgres
     "RestrictedPython>=7.0",  # Required for RLM tool sandbox
     "stripe>=10.0.0",  # Stripe payment processing for subscriptions
+    "mcp>=1.25.0",  # Model Context Protocol SDK for MCP server integration
+    "cryptography>=42.0.0",  # Required for MCP OAuth token encryption
 ]
 
 [tool.hatch.version]

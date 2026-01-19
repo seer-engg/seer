@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "seer": {
+      "command": "uvx",
+      "args": ["seer-mcp", "--cloud"],
+      "env": {
+        "SEER_API_URL": "https://api.getseer.dev",
+        "SEER_MCP_LOG_LEVEL": "info"
+      }
+    }
+  }
+}

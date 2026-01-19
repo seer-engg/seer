@@ -10,6 +10,7 @@ from .subscriptions.router import router as subscriptions_router
 from .usage.router import router as usage_router
 from .webhooks.router import router as webhooks_router
 from .workflows.router import router as workflows_router
+from .oauth.router import router as oauth_router
 
 router = APIRouter(prefix="/api")
 router.include_router(agents_traces_router)
@@ -21,3 +22,4 @@ router.include_router(workflow_agent_router)
 router.include_router(webhooks_router)
 router.include_router(forms_router)
 router.include_router(usage_router)
+router.include_router(oauth_router)

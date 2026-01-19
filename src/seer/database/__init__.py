@@ -10,6 +10,8 @@ from seer.database.config import TORTOISE_ORM
 from seer.database.models import (
     User,
     UserPublic,
+    OAuthAuthorizationCode,
+    OAuthRefreshToken
 )
 from seer.database.models_oauth import OAuthConnection
 from seer.database.models_integrations import IntegrationResource, IntegrationSecret
@@ -109,4 +111,7 @@ __all__ = [
     "SubscriptionStatus",
     "StripeWebhookEvent",
     "StripeWebhookEventStatus",
+    # OAuth Authorization Codes
+    "OAuthAuthorizationCode",
+    "OAuthRefreshToken",
 ]

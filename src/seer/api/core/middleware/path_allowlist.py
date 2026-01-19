@@ -10,6 +10,7 @@ DEFAULT_PUBLIC_PATHS = {
     "/api/integrations/google/callback",
     "/api/integrations/github/callback",
     "/api/integrations/supabase_mgmt/callback",
+    "/api/oauth/mcp", # OAuth 2.1 endpoints for MCP clients
 }
 
 DEFAULT_DOCS_PATHS = {

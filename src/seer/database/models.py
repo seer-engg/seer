@@ -81,3 +81,44 @@ class UserPublic(BaseModel):
     signup_source: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+class OAuthAuthorizationCode(models.Model):
+    """OAuth 2.1 authorization codes for MCP clients."""
+
+    id = fields.IntField(primary_key=True)
+    code = fields.CharField(max_length=128, unique=True, db_index=True)
+    user = fields.ForeignKeyField("models.User", related_name="authorization_codes", on_delete=fields.CASCADE)
+    client_id = fields.CharField(max_length=255)
+    redirect_uri = fields.CharField(max_length=2048)
+    code_challenge = fields.CharField(max_length=128)
+    code_challenge_method = fields.CharField(max_length=10)  # S256 or plain
+    scope = fields.CharField(max_length=500, null=True)
+    expires_at = fields.DatetimeField()
+    used = fields.BooleanField(default=False)
+    created_at = fields.DatetimeField(auto_now_add=True)
+
+    class Meta:
+        table = "oauth_authorization_codes"
+
+    def __str__(self) -> str:
+        return f"AuthCode<{self.code[:8]}...>"
+
+
+class OAuthRefreshToken(models.Model):
+    """OAuth 2.1 refresh tokens for MCP clients."""
+
+    id = fields.IntField(primary_key=True)
+    token = fields.CharField(max_length=255, unique=True, db_index=True)
+    user = fields.ForeignKeyField("models.User", related_name="refresh_tokens", on_delete=fields.CASCADE)
+    client_id = fields.CharField(max_length=255)
+    scope = fields.CharField(max_length=500, null=True)
+    expires_at = fields.DatetimeField()
+    revoked = fields.BooleanField(default=False)
+    created_at = fields.DatetimeField(auto_now_add=True)
+    last_used_at = fields.DatetimeField(null=True)
+
+    class Meta:
+        table = "oauth_refresh_tokens"
+
+    def __str__(self) -> str:
+        return f"RefreshToken<{self.token[:8]}...>"
