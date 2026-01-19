@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional
 from fastapi import HTTPException
 
 from seer.analytics.workflows import WorkflowAnalytics
-from seer.api.workflows.services import _create_run_record
+
 from seer.core.schema.models import WorkflowSpec
 from seer.database import (
     TriggerEvent,
@@ -133,6 +133,8 @@ async def process_trigger_event(subscription_id: int, event_id: int) -> None:
 
     # Trigger data is now accessed directly via ${trigger.data.*} expressions in the workflow.
     # No binding evaluation or input validation is needed.
+    #pylint: disable=import-outside-toplevel
+    from seer.api.workflows.services.execution import _create_run_record
     run = await _create_run_record(
         user,
         workflow=workflow,
