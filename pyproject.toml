@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "seermcp"
-version = "0.1.4"
+name = "seer"
+dynamic = ["version"]
 description = "Seer - Multi-Agent System for Evaluating AI Agents"
 license = "MIT"
 readme = "README.md"
@@ -50,8 +50,17 @@ dependencies = [
     "stripe>=10.0.0",  # Stripe payment processing for subscriptions
 ]
 
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+local_scheme = "no-local-version" # Optional: removes the "+g<hash>" suffix for clean releases
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/seer"]
+
+[project.scripts]
+seer-mcp = "seer.mcp.server:main"
 
 [dependency-groups]
 dev = [

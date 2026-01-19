@@ -10,6 +10,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     libpq-dev \
     postgresql-client \
+    git \
     curl && \
     rm -rf /var/lib/apt/lists/*
 
@@ -24,6 +25,11 @@ ENV PATH="/root/.local/bin:$PATH"
 # 2. Initial dependency installation (uv sync runs during build)
 # The volume mount in docker-compose.yml allows instant code updates without rebuilds.
 COPY . /app
+
+
+# Set environment variable to specify project version for setuptools_scm
+# override in CI/CD for actual release builds
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_SEER=0.1.4
 
 # Install project and dependencies from pyproject.toml
 # This installs all dependencies listed in [project] dependencies section

@@ -102,12 +102,29 @@ def _build_webhook_url(subscription_id: int, trigger_key: str) -> Optional[str]:
     return None
 
 
+def _build_form_url(subscription: TriggerSubscription) -> Optional[str]:
+    """Build public form URL from frontend base URL and suffix."""
+    if not subscription.form_suffix:
+        return None
+
+    frontend_base_url = shared_config.frontend_url or "http://localhost:5173"
+    base = frontend_base_url.rstrip("/")
+    return f"{base}/forms/{subscription.form_suffix}"
+
+
 def _serialize_subscription(
     subscription: TriggerSubscription,
 ) -> api_models.TriggerSubscriptionResponse:
     webhook_url = None
+    form_url = None
+
     if _should_emit_webhook_url(subscription.trigger_key):
         webhook_url = _build_webhook_url(subscription.id, subscription.trigger_key)
+
+    # Build form URL for form triggers
+    if subscription.trigger_key == "form.hosted":
+        form_url = _build_form_url(subscription)
+
     return api_models.TriggerSubscriptionResponse(
         subscription_id=subscription.id,
         workflow_id=make_workflow_public_id(subscription.workflow_id),
@@ -118,6 +135,7 @@ def _serialize_subscription(
         provider_config=dict(subscription.provider_config or {}),
         secret_token=subscription.secret_token,
         webhook_url=webhook_url,
+        form_url=form_url,
         form_suffix=subscription.form_suffix,
         form_fields=subscription.form_fields,
         form_config=(
@@ -411,6 +429,141 @@ async def test_trigger_subscription(
     # Return the event data that would be available via ${trigger.data.*}
     return api_models.TriggerSubscriptionTestResponse(inputs=event_payload, errors=[])
 
+
+# ======================================================================
+# Form trigger helpers
+# ======================================================================
+
+
+def _extract_form_config_from_spec(trigger_spec) -> tuple[Optional[str], Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
+    """
+    Extract form configuration from TriggerSpec.ui_meta.
+
+    Returns:
+        (form_suffix, form_fields, form_config)
+    """
+    if trigger_spec.key != "form.hosted":
+        return None, None, None
+
+    ui_meta = trigger_spec.ui_meta or {}
+    form_config_raw = ui_meta.get("form_config", {})
+
+    # Extract suffix (required)
+    form_suffix = form_config_raw.get("suffix")
+
+    # Build form_config dict (metadata only)
+    form_config_json = {
+        "title": form_config_raw.get("title", "Form"),
+        "description": form_config_raw.get("description", ""),
+        "submitButtonText": form_config_raw.get("submitButtonText", "Submit"),
+        "successMessage": form_config_raw.get("successMessage", "Thank you for your submission!"),
+        "styling": form_config_raw.get("styling", {}),
+    }
+
+    # Convert JSON schema to form_fields array
+    form_fields = _json_schema_to_form_fields(trigger_spec.schemas)
+
+    return form_suffix, form_fields, form_config_json
+
+
+def _json_schema_to_form_fields(schemas) -> List[Dict[str, Any]]:
+    """
+    Convert schemas.event.properties.data (JSON schema) to form_fields array.
+    """
+    if not schemas or not schemas.event:
+        return []
+
+    event_schema = schemas.event
+    properties = event_schema.get("properties", {})
+    data_schema = properties.get("data", {})
+    data_properties = data_schema.get("properties", {})
+    required_fields = set(data_schema.get("required", []))
+
+    form_fields = []
+    for field_name, field_schema in data_properties.items():
+        field_type = field_schema.get("type", "string")
+
+        # Map JSON schema format to form field type
+        mapped_type = "text"
+        if field_type == "string":
+            format_val = field_schema.get("format")
+            if format_val == "email":
+                mapped_type = "email"
+            elif format_val == "uri":
+                mapped_type = "url"
+        elif field_type in ("number", "integer"):
+            mapped_type = "number"
+        elif field_type == "object":
+            mapped_type = "object"
+
+        form_fields.append({
+            "name": field_name,
+            "displayLabel": field_schema.get("title", field_name),
+            "description": field_schema.get("description", ""),
+            "type": mapped_type,
+            "required": field_name in required_fields,
+            "placeholder": field_schema.get("examples", [None])[0] if field_schema.get("examples") else None,
+        })
+
+    return form_fields
+
+
+def _validate_form_suffix(suffix: str) -> None:
+    """Validate form suffix format."""
+    if not suffix:
+        return
+
+    # Check format: lowercase alphanumeric and hyphens only
+    if not re.match(r'^[a-z0-9-]+$', suffix):
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Invalid form suffix",
+            detail="Form suffix must contain only lowercase letters, numbers, and hyphens.",
+            status=400,
+        )
+
+    # Check for reserved words
+    reserved = ['workflows', 'settings', 'sign-in', 'sign-up', 'api', 'admin', 'forms']
+    if suffix in reserved:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Invalid form suffix",
+            detail=f"Form suffix '{suffix}' is reserved and cannot be used.",
+            status=400,
+        )
+
+
+async def _validate_form_suffix_uniqueness(
+    user: User,
+    form_suffix: Optional[str],
+    existing_subscription: Optional[TriggerSubscription] = None,
+) -> None:
+    """
+    Ensure form_suffix is unique across all user's forms.
+    """
+    if not form_suffix:
+        return
+
+    query = TriggerSubscription.filter(
+        user=user,
+        form_suffix=form_suffix,
+        trigger_key="form.hosted",
+    )
+
+    # Exclude current subscription if updating
+    if existing_subscription:
+        query = query.exclude(id=existing_subscription.id)
+
+    existing = await query.first()
+    if existing:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Duplicate form suffix",
+            detail=f"Form suffix '{form_suffix}' is already in use. Choose a unique suffix.",
+            status=400,
+        )
+
+
 from seer.core.registry.trigger_registry import POLLING_TRIGGERS
 async def sync_trigger_subscriptions(
     user: User,
@@ -462,6 +615,14 @@ async def sync_trigger_subscriptions(
 
         _validate_filters_payload(filters, definition)
 
+        # Extract form configuration from ui_meta (for form triggers)
+        form_suffix, form_fields, form_config = _extract_form_config_from_spec(trigger_spec)
+
+        # Validate form suffix if present
+        if form_suffix and not skip_validation:
+            _validate_form_suffix(form_suffix)
+            await _validate_form_suffix_uniqueness(user, form_suffix, existing.get(trigger_spec.id))
+
         adjusted_interval, warning = await _validate_and_adjust_poll_interval(user, 60)
         if warning:
             logger.warning(
@@ -486,6 +647,10 @@ async def sync_trigger_subscriptions(
             existing_subscription.provider_config = provider_config
             existing_subscription.secret_token = secret
             existing_subscription.poll_interval_seconds = adjusted_interval
+            # Sync form data for form triggers
+            existing_subscription.form_suffix = form_suffix
+            existing_subscription.form_fields = form_fields
+            existing_subscription.form_config = form_config
             await existing_subscription.save()
 
             # If we generated a new secret for Supabase, ensure webhook is created.
@@ -513,6 +678,10 @@ async def sync_trigger_subscriptions(
                 secret_token=secret,
                 poll_interval_seconds=adjusted_interval,
                 is_polling=is_polling,
+                # Set form data for form triggers
+                form_suffix=form_suffix,
+                form_fields=form_fields,
+                form_config=form_config,
             )
             if not skip_validation and trigger_spec.key == "webhook.supabase.db_changes" and secret:
                 await _create_supabase_webhook(subscription, secret)
