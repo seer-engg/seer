@@ -22,8 +22,8 @@ from seer.database.subscription_models import (
     StripeWebhookEventStatus,
 )
 from seer.logger import get_logger
+from seer.worker.tasks.stripe import process_stripe_webhook_event
 
-from .clerk_sync import sync_stripe_customer_to_clerk
 from .pricing_catalog import TierPricing, get_pricing_catalog
 from .stripe_service import (
     create_checkout_session,
@@ -33,7 +33,6 @@ from .stripe_service import (
     list_customer_payments,
     verify_webhook_signature,
 )
-from seer.worker.tasks.stripe import process_stripe_webhook_event
 
 logger = get_logger("api.subscriptions.router")
 
@@ -189,9 +188,9 @@ async def create_checkout(request: Request, body: CheckoutRequest):
             cancel_url=cancel_url,
         )
         return CheckoutResponse(checkout_url=checkout_url)
-    except stripe.error.StripeError as e:
-        logger.error("Stripe checkout error for user %s: %s", user.user_id, str(e))
-        raise HTTPException(status_code=400, detail=str(e))
+    except stripe.error.StripeError as exc:
+        logger.error("Stripe checkout error for user %s: %s", user.user_id, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/portal", response_model=PortalResponse)
@@ -211,11 +210,11 @@ async def create_portal(request: Request):
     try:
         portal_url = await create_portal_session(user, return_url)
         return PortalResponse(portal_url=portal_url)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except stripe.error.StripeError as e:
-        logger.error("Stripe portal error for user %s: %s", user.user_id, str(e))
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except stripe.error.StripeError as exc:
+        logger.error("Stripe portal error for user %s: %s", user.user_id, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/invoices", response_model=InvoiceListResponse)
@@ -235,10 +234,10 @@ async def list_invoices(
     try:
         result = await list_customer_invoices(user, page=page, page_size=page_size)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except stripe.error.StripeError as exc:
         logger.error("Stripe invoice listing error for user %s: %s", user.user_id, exc)
-        raise HTTPException(status_code=400, detail="Unable to fetch invoices")
+        raise HTTPException(status_code=400, detail="Unable to fetch invoices") from exc
 
     return InvoiceListResponse(
         items=result["items"],
@@ -263,10 +262,10 @@ async def list_payments(
     try:
         result = await list_customer_payments(user, page=page, page_size=page_size)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except stripe.error.StripeError as exc:
         logger.error("Stripe payment listing error for user %s: %s", user.user_id, exc)
-        raise HTTPException(status_code=400, detail="Unable to fetch payments")
+        raise HTTPException(status_code=400, detail="Unable to fetch payments") from exc
 
     return PaymentListResponse(
         items=result["items"],
@@ -281,7 +280,7 @@ async def list_payments(
 async def stripe_webhook(
     request: Request,
     stripe_signature: str = Header(alias="Stripe-Signature"),
-):
+):  # pylint: disable=too-complex  # webhook processes multiple Stripe branches in one endpoint
     """
     Handle Stripe webhook events.
 
@@ -301,9 +300,9 @@ async def stripe_webhook(
 
     try:
         event = verify_webhook_signature(payload, stripe_signature)
-    except stripe.error.SignatureVerificationError:
+    except stripe.error.SignatureVerificationError as exc:
         logger.warning("Invalid Stripe webhook signature")
-        raise HTTPException(status_code=400, detail="Invalid signature")
+        raise HTTPException(status_code=400, detail="Invalid signature") from exc
 
     event_dict = event.to_dict_recursive() if hasattr(event, "to_dict_recursive") else event
     event_id = event_dict.get("id")
@@ -329,7 +328,7 @@ async def stripe_webhook(
             return {"status": "ok"}
     except Exception as exc:  # pylint: disable=broad-except
         logger.error("Failed to persist Stripe webhook %s: %s", event_id, exc)
-        raise HTTPException(status_code=500, detail="Failed to persist webhook")
+        raise HTTPException(status_code=500, detail="Failed to persist webhook") from exc
 
     if not record:
         logger.error("Could not load Stripe webhook record for %s", event_id)
@@ -339,6 +338,6 @@ async def stripe_webhook(
         await process_stripe_webhook_event.kiq(event_db_id=record.id)
     except Exception as exc:  # pylint: disable=broad-except
         logger.error("Failed to enqueue Stripe webhook %s: %s", event_id, exc)
-        raise HTTPException(status_code=500, detail="Failed to enqueue webhook")
+        raise HTTPException(status_code=500, detail="Failed to enqueue webhook") from exc
 
     return {"status": "queued"}

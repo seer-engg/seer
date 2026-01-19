@@ -41,5 +41,3 @@ def test_build_usage_metric_coerces_decimal_and_remaining():
 
     assert metric.used == 1.5
     assert metric.remaining == 3.5
-
-

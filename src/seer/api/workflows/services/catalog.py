@@ -17,8 +17,6 @@ from seer.core.errors import WorkflowCompilerError
 from seer.core.registry.trigger_registry import trigger_registry
 from seer.core.runtime.global_compiler import WorkflowCompilerSingleton
 from seer.core.schema.models import (
-    ForEachNode,
-    IfNode,
     LLMNode,
     Node,
     ToolNode,

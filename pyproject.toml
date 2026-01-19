@@ -104,8 +104,13 @@ max-statements = 60
 
 [tool.pylint.messages_control]
 # Only run error/fatal checks
-disable = ["C", "R", "W"]
-enable = ["E", "F"]
+# Disable specific warnings that are too noisy or false positives
+disable = [
+    "missing-docstring",
+    "too-few-public-methods",
+    "fixme",
+    "import-error",  # Pre-commit runs in isolated env without project dependencies
+]
 
 [tool.pyright]
 typeCheckingMode = "basic"
