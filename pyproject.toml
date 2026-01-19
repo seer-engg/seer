@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "seer"
+name = "seermcp"
 version = "0.1.4"
 description = "Seer - Multi-Agent System for Evaluating AI Agents"
 license = "MIT"
