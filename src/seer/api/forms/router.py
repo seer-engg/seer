@@ -14,7 +14,7 @@ from seer.logger import get_logger
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api/forms", tags=["forms"])
+router = APIRouter(prefix="/forms", tags=["forms"])
 
 
 @router.get("/resolve/{suffix}")
@@ -31,41 +31,28 @@ async def resolve_form(suffix: str) -> Dict[str, Any]:
     Raises:
         HTTPException: If form not found or not enabled
     """
-    try:
-        subscription = await TriggerSubscription.filter(
-            form_suffix=suffix,
-            enabled=True,
-        ).first()
+    subscription = await TriggerSubscription.filter(
+        form_suffix=suffix,
+        enabled=True,
+    ).first()
 
-        if not subscription:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Form not found",
-            )
-
-        form_config = subscription.form_config or {}
-
-        return {
-            "form_id": subscription.id,
-            "title": form_config.get("title", "Form"),
-            "description": form_config.get("description"),
-            "fields": subscription.form_fields or [],
-            "submit_button_text": form_config.get("submitButtonText", "Submit"),
-            "success_message": form_config.get("successMessage", "Thank you for your submission!"),
-            "styling": form_config.get("styling", {}),
-        }
-
-    except DoesNotExist as exc:
+    if not subscription:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Form not found",
-        ) from exc
-    except Exception as exc:
-        logger.error("Error resolving form: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to load form",
-        ) from exc
+        )
+
+    form_config = subscription.form_config or {}
+
+    return {
+        "form_id": subscription.id,
+        "title": form_config.get("title", "Form"),
+        "description": form_config.get("description"),
+        "fields": subscription.form_fields or [],
+        "submit_button_text": form_config.get("submitButtonText", "Submit"),
+        "success_message": form_config.get("successMessage", "Thank you for your submission!"),
+        "styling": form_config.get("styling", {}),
+    }
 
 
 @router.post("/submit/{suffix}")

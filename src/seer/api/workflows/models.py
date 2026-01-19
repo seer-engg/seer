@@ -99,6 +99,7 @@ class TriggerSubscriptionResponse(BaseModel):
     provider_config: Dict[str, Any] = Field(default_factory=dict)
     secret_token: Optional[str] = None
     webhook_url: Optional[str] = None
+    form_url: Optional[str] = None
     # Form trigger fields
     form_suffix: Optional[str] = None
     form_fields: Optional[List[Dict[str, Any]]] = None

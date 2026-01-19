@@ -286,6 +286,11 @@ class TriggerSubscription(models.Model):
     secret_token = fields.CharField(max_length=255, null=True)
     event_data_schema = fields.JSONField(null=True)
 
+    ## fields for form type triggers
+    form_suffix = fields.CharField(max_length=255, null=True)
+    form_fields = fields.JSONField(null=True)
+    form_config = fields.JSONField(null=True)
+
 
     ## feild for polling type triggers
     # NOTE: Adding/changing these poll_* fields requires a manual DB migration.

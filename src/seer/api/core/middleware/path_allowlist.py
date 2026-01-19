@@ -9,7 +9,7 @@ DEFAULT_PUBLIC_PATHS = {
     "/api/subscriptions/webhooks/stripe",
     "/api/integrations/google/callback",
     "/api/integrations/github/callback",
-    "/api/integrations/supabase_mgmt/callback",
+    "/api/integrations/supabase_mgmt/callback"
 }
 
 DEFAULT_DOCS_PATHS = {
@@ -20,6 +20,7 @@ DEFAULT_DOCS_PATHS = {
 # Prefixes that represent collections of public endpoints.
 DEFAULT_PUBLIC_PREFIXES = (
     "/api/v1/webhooks",
+    "/api/forms"
 )
 
 
