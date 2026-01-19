@@ -67,6 +67,10 @@ dev = [
     "ipykernel>=7.1.0",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
+    "pytest-cov>=6.0.0",
+    "pytest-xdist>=3.6.1",
+    "pytest-mock>=3.14.0",
+    "faker>=30.0.0",
     "langgraph-cli[inmem]>=0.4.7",
     "taskiq[reload]>=0.12.1",
     "pre-commit>=4.0.1",
@@ -123,6 +127,42 @@ disable = [
 
 [tool.pyright]
 typeCheckingMode = "basic"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+markers = [
+    "unit: Fast unit tests with mocked dependencies",
+    "integration: Tests requiring database/Redis",
+    "e2e: End-to-end API tests",
+    "slow: Tests taking >1s to run",
+    "requires_external: Tests requiring external services",
+]
+
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--showlocals",
+    "--tb=short",
+    "--cov=src/seer",
+    "--cov-report=term-missing",
+    "--cov-report=html:htmlcov",
+    "--cov-report=xml",
+]
+
+[tool.coverage.run]
+source = ["src/seer"]
+omit = ["*/tests/*", "*/migrations/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+    "raise NotImplementedError",
+]
 
 # NOTE: In-code pylint disables MUST include justification comments
 # Required format: # pylint: disable=rule-name # Reason: architectural explanation
