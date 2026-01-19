@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
 import json
 from typing import Any, Dict, Optional
 from pydantic import ValidationError
@@ -87,7 +88,25 @@ async def _workflow_response(workflow: Workflow) -> api_models.WorkflowResponse:
             detail="Workflow draft state not initialized",
             status=500,
         )
-    spec = WorkflowSpec.model_validate(draft.spec)
+    raw_spec = draft.spec or {}
+    spec_version_raw = raw_spec.get("version")
+    try:
+        spec_version = Decimal(str(spec_version_raw))
+    except (InvalidOperation, TypeError):
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Unsupported workflow spec version",
+            detail=f"Workflow spec version '{spec_version_raw}' is invalid; minimum supported version is 2.",
+            status=400,
+        )
+    if spec_version < Decimal(2):
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Unsupported workflow spec version",
+            detail=f"Workflow spec version '{spec_version_raw}' is not supported; minimum supported version is 2.",
+            status=400,
+        )
+    spec = WorkflowSpec.model_validate(raw_spec)
     published_version_obj: Optional[WorkflowVersion] = getattr(workflow, "published_version", None)
     if published_version_obj and not isinstance(published_version_obj, WorkflowVersion):
         published_version_obj = None
