@@ -30,6 +30,8 @@ COPY . /app
 # Set environment variable to specify project version for setuptools_scm
 # override in CI/CD for actual release builds
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_SEER=0.1.4
+# Generic fallback for build contexts without .git metadata
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=0.1.4
 
 # Install project and dependencies from pyproject.toml
 # This installs all dependencies listed in [project] dependencies section
