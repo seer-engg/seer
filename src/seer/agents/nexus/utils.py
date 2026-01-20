@@ -1,6 +1,6 @@
 from typing import Optional, Dict, Any, List
 from seer.logger import get_logger
-from seer.agents.workflow_agent.tools import (
+from seer.agents.nexus.tools import (
     analyze_workflow,
     submit_workflow_spec,
     search_tools,
