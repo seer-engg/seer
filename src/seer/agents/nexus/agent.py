@@ -17,13 +17,13 @@ WORKFLOW_SPEC_SCHEMA = get_workflow_spec_schema_text()
 WORKFLOW_SPEC_EXAMPLE = get_workflow_spec_example_text()
 
 
-def create_workflow_chat_agent(
+def create_nexus_chat_agent(
     model: str = "gpt-4o-mini",
     checkpointer: Optional[Any] = None,
     workflow_state: Optional[Dict[str, Any]] = None,
 ) -> Any:
     """
-    Create a LangGraph agent for workflow chat assistance using create_agent.
+    Create a LangGraph agent for Nexus chat assistance using create_agent.
 
     Uses LangChain v1.0+ create_agent with middleware for summarization
     and human-in-the-loop capabilities.

@@ -14,7 +14,7 @@ from seer.agents.nexus import (
     _current_thread_id,
     clear_proposed_spec_for_thread,
     clear_user_for_thread,
-    create_workflow_chat_agent,
+    create_nexus_chat_agent,
     extract_thinking_from_messages,
     get_proposed_spec_for_thread,
     set_user_for_thread,
@@ -222,7 +222,7 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
     set_user_for_thread(thread_id, user)
 
     # Create agent
-    agent = create_workflow_chat_agent(
+    agent = create_nexus_chat_agent(
         model=model,
         checkpointer=checkpointer,
         workflow_state=workflow_state,
@@ -501,7 +501,7 @@ async def resume_chat_endpoint(  # pylint: disable=too-many-locals # Reason: Com
     workflow_state = deepcopy(workflow_state_snapshot(workflow))
 
     # Create agent
-    agent = create_workflow_chat_agent(
+    agent = create_nexus_chat_agent(
         model=config.default_llm_model,
         checkpointer=checkpointer,
         workflow_state=workflow_state,
