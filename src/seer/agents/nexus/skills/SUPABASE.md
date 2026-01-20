@@ -371,6 +371,270 @@ Update row based on certain conditions.
 }
 ```
 
+### Pattern 6: Knowledge Base Search for Support Chatbot
+Search KB articles by tags and use in AI-generated responses.
+
+```json
+{
+  "nodes": [
+    {
+      "id": "extract_keywords",
+      "type": "llm",
+      "model": "gpt-5-mini",
+      "prompt": "Extract 2-4 search keywords from: ${customer_message}",
+      "out": "keywords"
+    },
+    {
+      "id": "search_kb",
+      "type": "tool",
+      "tool": "supabase_table_query",
+      "in": {
+        "integration_resource_id": 123,
+        "table": "knowledge_base",
+        "select": "id,title,content,category,tags",
+        "filters": {
+          "tags": "${keywords.list}"
+        },
+        "limit": 3
+      },
+      "out": "kb_articles"
+    },
+    {
+      "id": "check_kb_found",
+      "type": "if",
+      "condition": "${kb_articles.length > 0}"
+    },
+    {
+      "id": "generate_kb_response",
+      "type": "llm",
+      "model": "gpt-5",
+      "prompt": "Generate response using KB articles: ${kb_articles}",
+      "out": "response"
+    }
+  ]
+}
+```
+
+**Schema for knowledge_base table:**
+```sql
+CREATE TABLE knowledge_base (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  category TEXT,
+  tags TEXT[],
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+**Key features:**
+- Tag-based search for relevant KB articles
+- Conditional branching based on search results
+- AI-enhanced responses with KB context
+
+### Pattern 7: Multi-Table Support Ticket System
+Create support tickets and log all interactions across multiple tables.
+
+```json
+{
+  "nodes": [
+    {
+      "id": "create_ticket",
+      "type": "tool",
+      "tool": "supabase_table_insert",
+      "in": {
+        "integration_resource_id": 123,
+        "table": "support_tickets",
+        "record": {
+          "email_id": "${email.id}",
+          "customer_email": "${email.from}",
+          "subject": "${email.subject}",
+          "category": "${classification.category}",
+          "urgency": "${classification.urgency}",
+          "status": "open",
+          "body": "${email.body}"
+        }
+      },
+      "out": "ticket"
+    },
+    {
+      "id": "log_interaction",
+      "type": "tool",
+      "tool": "supabase_table_insert",
+      "in": {
+        "integration_resource_id": 123,
+        "table": "support_interactions",
+        "record": {
+          "ticket_id": "${ticket.id}",
+          "email_id": "${email.id}",
+          "interaction_type": "ticket_created",
+          "response_body": "${auto_response.text}"
+        }
+      }
+    }
+  ]
+}
+```
+
+**Schema for support system:**
+```sql
+CREATE TABLE support_tickets (
+  id BIGSERIAL PRIMARY KEY,
+  email_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  customer_email TEXT NOT NULL,
+  customer_name TEXT,
+  subject TEXT,
+  category TEXT,
+  sentiment TEXT,
+  urgency TEXT,
+  status TEXT,
+  priority TEXT,
+  body TEXT,
+  classification_reasoning TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE support_interactions (
+  id BIGSERIAL PRIMARY KEY,
+  ticket_id BIGINT REFERENCES support_tickets(id),
+  email_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  customer_email TEXT NOT NULL,
+  category TEXT,
+  interaction_type TEXT,
+  response_body TEXT,
+  sent_at TIMESTAMPTZ DEFAULT NOW(),
+  metadata JSONB
+);
+```
+
+**Key features:**
+- Multi-table orchestration (tickets + interactions)
+- Relational data tracking via ticket_id
+- Complete audit trail of support conversations
+- JSON metadata for flexible extensions
+
+### Pattern 8: Lead Scoring and Multi-System Sync
+Score lead quality with AI and sync to multiple destinations.
+
+```json
+{
+  "nodes": [
+    {
+      "id": "score_lead",
+      "type": "llm",
+      "model": "gpt-5-mini",
+      "prompt": "Score lead 1-10: Name: ${lead.name}, Company: ${lead.company}, Message: ${lead.message}",
+      "out": "quality"
+    },
+    {
+      "id": "store_lead",
+      "type": "tool",
+      "tool": "supabase_table_insert",
+      "in": {
+        "integration_resource_id": 123,
+        "table": "leads",
+        "record": {
+          "name": "${lead.name}",
+          "email": "${lead.email}",
+          "company": "${lead.company}",
+          "message": "${lead.message}",
+          "quality_score": "${quality.score}",
+          "quality": "${quality.classification}",
+          "status": "new"
+        }
+      },
+      "out": "db_result"
+    },
+    {
+      "id": "check_high_quality",
+      "type": "if",
+      "condition": "${quality.classification == 'high'}"
+    }
+  ]
+}
+```
+
+**Schema for leads table:**
+```sql
+CREATE TABLE leads (
+  id BIGSERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  company TEXT NOT NULL,
+  message TEXT NOT NULL,
+  quality_score INTEGER,
+  quality TEXT CHECK (quality IN ('high', 'medium', 'low')),
+  score_reasoning TEXT,
+  submitted_at TIMESTAMPTZ,
+  processed_at TIMESTAMPTZ,
+  status TEXT DEFAULT 'new',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+**Key features:**
+- AI-powered lead quality scoring
+- Conditional routing based on quality
+- Database as source of truth
+- Multi-destination data sync (Supabase + Gmail + Sheets)
+
+### Pattern 9: Conversation Logging for AI Learning
+Log all chatbot conversations with metadata for improvement.
+
+```json
+{
+  "nodes": [
+    {
+      "id": "log_conversation",
+      "type": "tool",
+      "tool": "supabase_table_insert",
+      "in": {
+        "integration_resource_id": 123,
+        "table": "conversation_logs",
+        "record": {
+          "thread_id": "${thread.id}",
+          "customer_email": "${customer.email}",
+          "customer_issue": "${context.issue}",
+          "response_text": "${response.body}",
+          "kb_used": "${kb_articles.length > 0}",
+          "kb_articles": "${kb_articles.map(a => a.title)}",
+          "confidence": "${response.confidence}",
+          "sentiment": "${context.sentiment}"
+        }
+      }
+    }
+  ]
+}
+```
+
+**Schema for conversation logs:**
+```sql
+CREATE TABLE conversation_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  thread_id TEXT NOT NULL,
+  customer_email TEXT NOT NULL,
+  customer_issue TEXT,
+  response_text TEXT,
+  kb_used BOOLEAN DEFAULT false,
+  kb_articles TEXT[],
+  confidence TEXT,
+  escalation_suggested BOOLEAN,
+  sentiment TEXT,
+  timestamp TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(thread_id, timestamp)
+);
+```
+
+**Key features:**
+- Complete conversation history logging
+- KB usage tracking for effectiveness analysis
+- Confidence scores for quality monitoring
+- Sentiment tracking for customer experience insights
+- Unique constraint prevents duplicate logs
+
 ---
 
 ## Best Practices

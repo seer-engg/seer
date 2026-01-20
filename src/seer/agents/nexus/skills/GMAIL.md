@@ -280,6 +280,170 @@ Send alert when form is submitted.
 }
 ```
 
+### Pattern 5: Thread-Aware Email Chatbot with Knowledge Base
+Monitor support emails, fetch conversation threads, search KB, and reply with context.
+
+```json
+{
+  "triggers": [{
+    "key": "poll.gmail.email_received",
+    "config": {
+      "q": "in:inbox label:support is:unread"
+    }
+  }],
+  "nodes": [
+    {
+      "id": "get_thread",
+      "type": "tool",
+      "tool": "gmail_get_thread",
+      "in": {
+        "thread_id": "${trigger.data.thread_id}"
+      },
+      "out": "thread"
+    },
+    {
+      "id": "analyze_thread",
+      "type": "llm",
+      "model": "gpt-5-mini",
+      "prompt": "Extract the customer's main issue from this thread: ${thread.messages}",
+      "out": "context"
+    },
+    {
+      "id": "generate_response",
+      "type": "llm",
+      "model": "gpt-5",
+      "prompt": "Generate helpful response for: ${context.issue}",
+      "out": "response"
+    },
+    {
+      "id": "send_reply",
+      "type": "tool",
+      "tool": "gmail_send_email",
+      "in": {
+        "to": ["${trigger.data.from.email}"],
+        "subject": "Re: ${trigger.data.subject}",
+        "body_text": "${response.body}",
+        "thread_id": "${trigger.data.thread_id}",
+        "in_reply_to": "${trigger.data.id}"
+      }
+    }
+  ]
+}
+```
+
+**Key features:**
+- `gmail_get_thread` fetches full conversation history
+- LLM analyzes multi-message context
+- Reply maintains threading via `thread_id` and `in_reply_to`
+- Proper email conversation continuity
+
+### Pattern 6: Label-Based Support Email Triage
+Classify support emails with AI and organize with labels.
+
+```json
+{
+  "triggers": [{
+    "key": "poll.gmail.email_received",
+    "config": {
+      "q": "to:support@company.com is:unread"
+    }
+  }],
+  "nodes": [
+    {
+      "id": "classify_email",
+      "type": "llm",
+      "model": "gpt-5-mini",
+      "prompt": "Classify urgency and category: ${trigger.data.body}",
+      "output": {
+        "mode": "json",
+        "schema": {
+          "json_schema": {
+            "type": "object",
+            "properties": {
+              "urgency": {"type": "string", "enum": ["urgent", "normal"]},
+              "category": {"type": "string"}
+            }
+          }
+        }
+      },
+      "out": "classification"
+    },
+    {
+      "id": "apply_labels",
+      "type": "tool",
+      "tool": "gmail_modify_message_labels",
+      "in": {
+        "message_id": "${trigger.data.id}",
+        "add_label_ids": [
+          "${classification.urgency == 'urgent' ? 'URGENT' : 'NORMAL'}",
+          "${classification.category}"
+        ],
+        "remove_label_ids": ["UNREAD"]
+      }
+    }
+  ]
+}
+```
+
+**Key features:**
+- AI classification of support emails
+- Dynamic label assignment based on urgency and category
+- Automatic inbox organization for support team
+- Removes UNREAD label after processing
+
+### Pattern 7: Auto-Response with Conditional Routing
+Send immediate auto-responses for FAQs, create drafts for complex issues.
+
+```json
+{
+  "nodes": [
+    {
+      "id": "classify",
+      "type": "llm",
+      "model": "gpt-5-mini",
+      "prompt": "Can this be auto-responded? ${email.body}",
+      "out": "can_auto_respond"
+    },
+    {
+      "id": "check_auto_respond",
+      "type": "if",
+      "condition": "${can_auto_respond.value == true}"
+    },
+    {
+      "id": "send_auto_response",
+      "type": "tool",
+      "tool": "gmail_send_email",
+      "in": {
+        "to": ["${email.from}"],
+        "subject": "Re: ${email.subject}",
+        "body_text": "${can_auto_respond.response}"
+      }
+    },
+    {
+      "id": "create_review_draft",
+      "type": "tool",
+      "tool": "gmail_create_draft",
+      "in": {
+        "to": ["${email.from}"],
+        "subject": "Re: ${email.subject}",
+        "body_text": "Draft for human review..."
+      }
+    }
+  ],
+  "edges": [
+    {"source": "classify", "target": "check_auto_respond", "type": "default"},
+    {"source": "check_auto_respond", "target": "send_auto_response", "type": "conditional_true"},
+    {"source": "check_auto_respond", "target": "create_review_draft", "type": "conditional_false"}
+  ]
+}
+```
+
+**Key features:**
+- Conditional branching based on AI classification
+- Auto-send for simple FAQs
+- Draft creation for complex questions requiring human review
+- Reduces support team workload
+
 ---
 
 ## Best Practices
