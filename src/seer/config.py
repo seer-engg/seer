@@ -151,6 +151,11 @@ class SeerConfig(BaseSettings):
     # Feature Flags
     # ============================================================================
 
+    supervisor_mode_enabled: bool = Field(
+        default=False,
+        description="Enable supervisor-style multi-agent architecture (vs single nexus agent)"
+    )
+
     # ============================================================================
     # Trigger Poller
     # ============================================================================

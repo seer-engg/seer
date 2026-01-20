@@ -11,6 +11,8 @@ from seer.agents.nexus.schema_context import (
     get_workflow_spec_schema_text,
     get_workflow_templates_summary,
 )
+from seer.config import config
+
 logger = get_logger(__name__)
 
 WORKFLOW_SPEC_SCHEMA = get_workflow_spec_schema_text()
@@ -23,19 +25,28 @@ def create_nexus_chat_agent(
     workflow_state: Optional[Dict[str, Any]] = None,
 ) -> Any:
     """
-    Create a LangGraph agent for Nexus chat assistance using create_agent.
+    Create a LangGraph agent for Nexus chat assistance.
 
-    Uses LangChain v1.0+ create_agent with middleware for summarization
-    and human-in-the-loop capabilities.
+    Supports two modes:
+    - Single-agent mode (default): Traditional create_agent with all tools
+    - Supervisor mode (config.supervisor_mode_enabled): Multi-agent architecture
 
     Args:
         model: Model name to use (e.g., 'gpt-5.2', 'gpt-5-mini')
         checkpointer: Optional LangGraph checkpointer for persistence
+        workflow_state: Optional existing workflow state for editing
 
     Returns:
         LangGraph agent compiled with tools and middleware
     """
+    # Check if supervisor mode is enabled
+    if config.supervisor_mode_enabled:
+        logger.info("Using supervisor multi-agent architecture")
+        from seer.agents.nexus.supervisor.graph import create_supervisor_graph  # pylint: disable=import-outside-toplevel  # Conditional import for optional feature
+        return create_supervisor_graph(model, checkpointer, workflow_state)
 
+    # Default: single-agent mode
+    logger.info("Using single-agent mode")
     llm = get_llm_without_responses_api(model=model, temperature=0, api_key=None)
 
     # System prompt for the workflow assistant
