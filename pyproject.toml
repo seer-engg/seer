@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "seer"
 dynamic = ["version"]
-description = "Seer - Multi-Agent System for Evaluating AI Agents"
+description = "Seer - Self-hostable workflow automation with oversight and cost governance"
 license = "MIT"
 readme = "README.md"
 authors = [
@@ -74,6 +74,7 @@ dev = [
     "taskiq[reload]>=0.12.1",
     "pre-commit>=4.0.1",
     "pylint>=2.15.0",
+    "pyinstrument>=5.1.2",
 ]
 
 [project.urls]

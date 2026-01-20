@@ -7,7 +7,7 @@
 [![Twitter Follow](https://img.shields.io/twitter/follow/get_seer?style=social)](https://x.com/get_seer)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-get--seer-0077B5?logo=linkedin)](https://www.linkedin.com/company/get-seer)
 
-Seer is a **open-source workflow builder with fine-grained control** for creating and executing automated workflows with integrated tools and services.
+Seer is a **open-source workflow builder with built-in oversight and cost controls** for creating and executing automated workflows with integrated tools and services.
 
 ## Quick Start (Docker)
 
@@ -70,25 +70,37 @@ Helpful commands:
 
 **🛠️ Visual Workflow Builder**
 - Drag-and-drop interface for creating automation workflows
-- Node-based editor with custom blocks and integrations
+- Visual editor with custom blocks and integrations
 - Real-time workflow validation and execution
 
-**🤖 AI-Assisted Development**
+**💰 Cost Governance**
+- Built-in spend caps and token limits per workflow
+- Budget controls to prevent runaway AI expenses
+- Transparent cost tracking and reporting
+- Per-workflow and account-level spending limits
+
+**👁️ Execution Transparency**
+- Complete run history for every workflow execution
+- Detailed tracing with timing and outputs
+- Human oversight checkpoints for critical decisions
+- Audit trails and execution logs
+
+**🤖 AI-Assisted Automation**
 - Chat interface for workflow design and debugging
 - AI suggestions for workflow improvements
 - Intelligent error handling and recovery
 
 **🔗 Rich Integrations**
-- **Google Workspace**: Gmail, Drive, Sheets with OAuth
+- **Google Workspace**: Gmail, Drive, Sheets with minimal permissions
 - **GitHub**: Repository management, issues, PRs
 - **Web Tools**: Search, content fetching, APIs
 - **Databases**: PostgreSQL with approval-based write controls
 
-**🔒 Enterprise-Ready**
+**🔒 Self-Hostable**
 - Self-hosted or cloud deployment options
+- Minimal permissions approach (read-only first)
 - OAuth-based authentication (Clerk integration)
 - Role-based access control
-- Audit trails and execution history
 
 ### Documentation
 

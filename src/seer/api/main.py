@@ -171,6 +171,16 @@ if config.is_posthog_configured:
     app.add_middleware(PostHogMiddleware)
     logger.info("📊 PostHog analytics middleware enabled")
 
+# PyInstrument profiling middleware - writes HTML reports for inspection
+if config.request_profiling_enabled:
+    from seer.api.core.middleware.profiling import PyInstrumentMiddleware  # pylint: disable=ungrouped-imports # Reason: Conditional import after config check
+    app.add_middleware(
+        PyInstrumentMiddleware,
+        enabled=config.request_profiling_enabled,
+        output_dir=config.request_profiling_output_dir,
+    )
+    logger.info("🧪 PyInstrument profiling enabled; saving reports to %s", config.request_profiling_output_dir)
+
 # Exception handler to ensure CORS headers on errors
 
 

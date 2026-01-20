@@ -184,7 +184,7 @@ class SeerConfig(BaseSettings):
         description="PostHog host URL (e.g., https://app.posthog.com or self-hosted)"
     )
     posthog_enabled: bool = Field(
-        default=True,
+        default=False,
         description="Enable PostHog analytics and error tracking"
     )
     posthog_opt_out: bool = Field(
@@ -198,6 +198,18 @@ class SeerConfig(BaseSettings):
     posthog_filter_sensitive_data: bool = Field(
         default=True,
         description="Filter PII and secrets from analytics events"
+    )
+
+    # ============================================================================
+    # Request Profiling
+    # ============================================================================
+    request_profiling_enabled: bool = Field(
+        default=False,
+        description="Enable pyinstrument profiling for each API request (development only)."
+    )
+    request_profiling_output_dir: str = Field(
+        default="./data/profiles/noposthog",
+        description="Directory path to write pyinstrument HTML reports."
     )
 
     webhook_base_url: Optional[str] = Field(
