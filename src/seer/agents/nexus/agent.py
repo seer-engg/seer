@@ -133,9 +133,9 @@ Before submit_workflow_spec():
 
     # Verify checkpointer is provided (required for persistence)
     if checkpointer is None:
-        logger.warning("No checkpointer provided to create_workflow_chat_agent - traces will not be persisted")
+        logger.warning("No checkpointer provided to create_nexus_chat_agent - traces will not be persisted")
     else:
-        logger.debug("Creating workflow chat agent with checkpointer: %s", type(checkpointer).__name__)
+        logger.debug("Creating Nexus chat agent with checkpointer: %s", type(checkpointer).__name__)
 
     # Create agent with middleware
     agent = create_agent(
