@@ -9,13 +9,13 @@ from typing import Any, Dict, Optional
 
 from langchain_core.tools import tool
 
-from seer.agents.workflow_agent.context import (
+from seer.agents.nexus.context import (
     _current_thread_id,
     get_workflow_state_for_thread,
     set_proposed_spec_for_thread,
     get_user_for_thread,
 )
-from seer.agents.workflow_agent.schema_context import get_workflow_templates
+from seer.agents.nexus.schema_context import get_workflow_templates
 from seer.logger import get_logger
 from seer.tools.base import get_tool
 from seer.core.compiler.parse import parse_workflow_spec
