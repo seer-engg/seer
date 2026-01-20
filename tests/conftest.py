@@ -214,21 +214,17 @@ def sample_workflow_spec() -> dict:
             {
                 "id": "t1",
                 "key": "test.trigger",
-                "label": "Test Trigger",
-                "config": {},
+                "title": "TestTrigger",
+                "provider": "test",
+                "mode": "polling",
             }
         ],
         "nodes": [
             {
                 "id": "n1",
                 "type": "task",
-                "label": "Test Task",
-                "config": {
-                    "tool_call": {
-                        "tool_id": "test.tool",
-                        "parameters": {},
-                    }
-                },
+                "kind": "set",
+                "value": {"result": "test"},
             }
         ],
         "edges": [
@@ -236,6 +232,7 @@ def sample_workflow_spec() -> dict:
                 "id": "e1",
                 "source": "t1",
                 "target": "n1",
+                "type": "trigger",
             }
         ],
     }
@@ -257,51 +254,35 @@ def complex_workflow_spec() -> dict:
             {
                 "id": "trigger_1",
                 "key": "test.complex_trigger",
-                "label": "Complex Trigger",
-                "config": {},
+                "title": "ComplexTrigger",
+                "provider": "test",
+                "mode": "polling",
             }
         ],
         "nodes": [
             {
                 "id": "task_1",
                 "type": "task",
-                "label": "First Task",
-                "config": {
-                    "tool_call": {
-                        "tool_id": "test.tool_1",
-                        "parameters": {"param": "value"},
-                    }
-                },
+                "kind": "set",
+                "value": {"result": {"success": True}},
+                "out": "task_1"
             },
             {
                 "id": "condition_1",
-                "type": "condition",
-                "label": "Check Result",
-                "config": {
-                    "condition": "${task_1.result.success}",
-                },
+                "type": "if",
+                "condition": "${task_1.success}",
             },
             {
                 "id": "task_2",
                 "type": "task",
-                "label": "Success Task",
-                "config": {
-                    "tool_call": {
-                        "tool_id": "test.tool_2",
-                        "parameters": {},
-                    }
-                },
+                "kind": "set",
+                "value": {"status": "success"},
             },
             {
                 "id": "task_3",
                 "type": "task",
-                "label": "Failure Task",
-                "config": {
-                    "tool_call": {
-                        "tool_id": "test.tool_3",
-                        "parameters": {},
-                    }
-                },
+                "kind": "set",
+                "value": {"status": "failure"},
             },
         ],
         "edges": [
@@ -309,6 +290,7 @@ def complex_workflow_spec() -> dict:
                 "id": "e1",
                 "source": "trigger_1",
                 "target": "task_1",
+                "type": "trigger",
             },
             {
                 "id": "e2",
@@ -319,13 +301,13 @@ def complex_workflow_spec() -> dict:
                 "id": "e3",
                 "source": "condition_1",
                 "target": "task_2",
-                "label": "true",
+                "type": "conditional_true",
             },
             {
                 "id": "e4",
                 "source": "condition_1",
                 "target": "task_3",
-                "label": "false",
+                "type": "conditional_false",
             },
         ],
     }

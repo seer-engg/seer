@@ -588,9 +588,9 @@ def test_evaluate_condition_disallowed_node():
     """Test that disallowed AST nodes raise EvaluationError."""
     ctx = EvaluationContext(state={"x": 5}, locals={})
 
-    # Import statement is not allowed
+    # Dict literal is not in ALLOWED_NODES
     with pytest.raises(EvaluationError, match="Disallowed expression node"):
-        evaluate_condition(ctx, "${x}; import os")
+        evaluate_condition(ctx, "{'key': 'value'}")
 
 
 def test_evaluate_condition_unsafe_function():
@@ -623,22 +623,22 @@ def test_evaluate_condition_disallowed_operator():
 # =============================================================================
 
 
-@pytest.mark.parametrize("func_name,input_val,expected", [
-    ("len", [1, 2, 3], 3),
-    ("min", [1, 2, 3], 1),
-    ("max", [1, 2, 3], 3),
-    ("sum", [1, 2, 3], 6),
-    ("str", 42, "42"),
-    ("int", "42", 42),
-    ("float", "3.14", 3.14),
+@pytest.mark.parametrize("func_name,input_val,expected,expr_suffix", [
+    ("len", [1, 2, 3], 3, "== 3"),
+    ("min", [1, 2, 3], 1, "== 1"),
+    ("max", [1, 2, 3], 3, "== 3"),
+    ("sum", [1, 2, 3], 6, "== 6"),
+    ("str", 42, "42", "== '42'"),
+    ("int", "42", 42, "== 42"),
+    ("float", "3.14", 3.14, "== 3.14"),
 ])
-def test_evaluate_condition_safe_functions(func_name, input_val, expected):
+def test_evaluate_condition_safe_functions(func_name, input_val, expected, expr_suffix):
     """Test various safe functions in conditions."""
     ctx = EvaluationContext(
         state={"value": input_val},
         locals={}
     )
-    result = evaluate_condition(ctx, f"{func_name}(${{value}}) == {expected}")
+    result = evaluate_condition(ctx, f"{func_name}(${{value}}) {expr_suffix}")
     assert result is True
 
 

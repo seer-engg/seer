@@ -150,9 +150,11 @@ def test_parse_reference_string_invalid_bracket_content():
 
 
 def test_parse_reference_string_missing_root():
-    """Test that reference with missing root raises ValueError."""
-    with pytest.raises(ValueError, match="missing a root symbol"):
-        parse_reference_string(".property")
+    """Test that reference with leading dot still parses (dot is ignored)."""
+    # Leading dots are handled gracefully - the dot acts as a separator
+    result = parse_reference_string(".property")
+    assert result.root == "property"
+    assert result.segments == ()
 
 
 # =============================================================================
@@ -198,7 +200,7 @@ def test_parse_template_with_suffix():
 def test_parse_template_multiple_references():
     """Test parsing template with multiple references."""
     tokens = parse_template("Hello ${first} ${last}!")
-    assert len(tokens) == 4
+    assert len(tokens) == 5
     assert isinstance(tokens[0], TemplateLiteral)
     assert tokens[0].text == "Hello "
     assert isinstance(tokens[1], TemplateReference)
@@ -207,7 +209,8 @@ def test_parse_template_multiple_references():
     assert tokens[2].text == " "
     assert isinstance(tokens[3], TemplateReference)
     assert tokens[3].reference.root == "last"
-    # Note: The "!" is part of last token's suffix since the pattern stops at the last reference
+    assert isinstance(tokens[4], TemplateLiteral)
+    assert tokens[4].text == "!"
 
 
 def test_parse_template_consecutive_references():

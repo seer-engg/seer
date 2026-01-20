@@ -18,7 +18,8 @@ from seer.core.registry.tool_registry import ToolRegistry
 from seer.core.schema.models import (
     ForEachNode,
     LLMNode,
-    OutputContractDict,
+    OutputContract,
+    OutputMode,
     TaskKind,
     TaskNode,
     ToolNode,
@@ -74,9 +75,9 @@ def test_register_triggers_basic():
         TriggerSpec(
             id="t1",
             key="test.trigger",
-            label="Test",
             title="TestTrigger",
-            config={},
+            provider="test",
+            mode="polling",
             schemas=TriggerSchemas(
                 event={"type": "object", "properties": {"message": {"type": "string"}}}
             )
@@ -86,9 +87,10 @@ def test_register_triggers_basic():
     _register_triggers(triggers, env)
 
     # Trigger title should be registered
-    assert "TestTrigger" in env.symbols
+    symbols = env.as_dict()
+    assert "TestTrigger" in symbols
     # Sub-properties should be registered
-    assert "TestTrigger.message" in env.symbols
+    assert "TestTrigger.message" in symbols
 
 
 def test_register_triggers_with_default_schema():
@@ -98,18 +100,19 @@ def test_register_triggers_with_default_schema():
         TriggerSpec(
             id="t1",
             key="test.trigger",
-            label="Test",
             title="SimpleTrigger",
-            config={},
-            schemas=TriggerSchemas(event=None)  # No event schema
+            provider="test",
+            mode="polling",
+            schemas=TriggerSchemas()  # Use default (empty dict) for event schema
         )
     ]
 
     _register_triggers(triggers, env)
 
     # Should use default schema with additionalProperties: True
-    assert "SimpleTrigger" in env.symbols
-    schema = env.symbols["SimpleTrigger"]
+    symbols = env.as_dict()
+    assert "SimpleTrigger" in symbols
+    schema = symbols["SimpleTrigger"]
     assert schema["type"] == "object"
     assert schema.get("additionalProperties") is True
 
@@ -121,17 +124,17 @@ def test_register_triggers_duplicate_title_error():
         TriggerSpec(
             id="t1",
             key="trigger1.key",
-            label="Test1",
             title="DuplicateTitle",
-            config={},
+            provider="test",
+            mode="polling",
             schemas=TriggerSchemas(event={})
         ),
         TriggerSpec(
             id="t2",
             key="trigger2.key",
-            label="Test2",
             title="DuplicateTitle",  # Duplicate!
-            config={},
+            provider="test",
+            mode="polling",
             schemas=TriggerSchemas(event={})
         )
     ]
@@ -147,9 +150,9 @@ def test_register_triggers_invalid_title_error():
         TriggerSpec(
             id="t1",
             key="test.trigger",
-            label="Test",
             title="invalid-title",  # Invalid: contains hyphen
-            config={},
+            provider="test",
+            mode="polling",
             schemas=TriggerSchemas(event={})
         )
     ]
@@ -171,9 +174,9 @@ def test_register_triggers_various_invalid_titles(invalid_title):
         TriggerSpec(
             id="t1",
             key="test.trigger",
-            label="Test",
             title=invalid_title,
-            config={},
+            provider="test",
+            mode="polling",
             schemas=TriggerSchemas(event={})
         )
     ]
@@ -302,7 +305,7 @@ def test_build_type_environment_minimal():
     env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
 
     assert isinstance(env, TypeEnvironment)
-    assert len(env.symbols) == 0
+    assert len(env.as_dict()) == 0
 
 
 def test_build_type_environment_with_trigger():
@@ -313,9 +316,9 @@ def test_build_type_environment_with_trigger():
             TriggerSpec(
                 id="t1",
                 key="test.trigger",
-                label="Test",
                 title="MyTrigger",
-                config={},
+                provider="test",
+                mode="polling",
                 schemas=TriggerSchemas(
                     event={"type": "object", "properties": {"data": {"type": "string"}}}
                 )
@@ -329,8 +332,9 @@ def test_build_type_environment_with_trigger():
 
     env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
 
-    assert "MyTrigger" in env.symbols
-    assert "MyTrigger.data" in env.symbols
+    symbols = env.as_dict()
+    assert "MyTrigger" in symbols
+    assert "MyTrigger.data" in symbols
 
 
 def test_build_type_environment_with_task_node():
@@ -341,7 +345,7 @@ def test_build_type_environment_with_task_node():
         nodes=[
             TaskNode(
                 id="task1",
-                label="Set Value",
+                type="task",
                 kind=TaskKind.set,
                 value="hello world",
                 out="result"
@@ -354,8 +358,9 @@ def test_build_type_environment_with_task_node():
 
     env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
 
-    assert "result" in env.symbols
-    assert env.symbols["result"]["type"] == "string"
+    symbols = env.as_dict()
+    assert "result" in symbols
+    assert symbols["result"]["type"] == "string"
 
 
 def test_build_type_environment_with_foreach_node():
@@ -366,7 +371,7 @@ def test_build_type_environment_with_foreach_node():
         nodes=[
             ForEachNode(
                 id="loop1",
-                label="Loop Items",
+                type="for_each",
                 items="${items}",
                 item_var="item",
                 index_var="index",
@@ -381,12 +386,13 @@ def test_build_type_environment_with_foreach_node():
     env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
 
     # Loop variables should be registered
-    assert "item" in env.symbols
-    assert "index" in env.symbols
-    assert env.symbols["index"]["type"] == "integer"
+    symbols = env.as_dict()
+    assert "item" in symbols
+    assert "index" in symbols
+    assert symbols["index"]["type"] == "integer"
 
     # Output should be registered
-    assert "results" in env.symbols
+    assert "results" in symbols
 
 
 def test_build_type_environment_with_llm_node():
@@ -397,9 +403,10 @@ def test_build_type_environment_with_llm_node():
         nodes=[
             LLMNode(
                 id="llm1",
-                label="Generate Text",
+                type="llm",
+                model="gpt-4",
                 prompt="Generate a response",
-                output=OutputContractDict(schema={"type": "object"}),
+                output=OutputContract(mode=OutputMode.json, schema={"schema": {"type": "object"}}),
                 out="llm_result"
             )
         ],
@@ -410,7 +417,8 @@ def test_build_type_environment_with_llm_node():
 
     env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
 
-    assert "llm_result" in env.symbols
+    symbols = env.as_dict()
+    assert "llm_result" in symbols
 
 
 def test_build_type_environment_with_multiple_nodes():
@@ -421,21 +429,21 @@ def test_build_type_environment_with_multiple_nodes():
         nodes=[
             TaskNode(
                 id="task1",
-                label="Task 1",
+                type="task",
                 kind=TaskKind.set,
                 value=42,
                 out="number"
             ),
             TaskNode(
                 id="task2",
-                label="Task 2",
+                type="task",
                 kind=TaskKind.set,
                 value="text",
                 out="text"
             ),
             TaskNode(
                 id="task3",
-                label="Task 3",
+                type="task",
                 kind=TaskKind.set,
                 value=True,
                 out="flag"
@@ -448,12 +456,13 @@ def test_build_type_environment_with_multiple_nodes():
 
     env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
 
-    assert "number" in env.symbols
-    assert "text" in env.symbols
-    assert "flag" in env.symbols
-    assert env.symbols["number"]["type"] == "integer"
-    assert env.symbols["text"]["type"] == "string"
-    assert env.symbols["flag"]["type"] == "boolean"
+    symbols = env.as_dict()
+    assert "number" in symbols
+    assert "text" in symbols
+    assert "flag" in symbols
+    assert symbols["number"]["type"] == "integer"
+    assert symbols["text"]["type"] == "string"
+    assert symbols["flag"]["type"] == "boolean"
 
 
 # =============================================================================
@@ -469,7 +478,7 @@ def test_build_type_environment_node_without_output():
         nodes=[
             TaskNode(
                 id="task1",
-                label="No Output Task",
+                type="task",
                 kind=TaskKind.set,
                 value="hello"
                 # No 'out' field
@@ -483,7 +492,7 @@ def test_build_type_environment_node_without_output():
     env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
 
     # No symbol should be registered since there's no output
-    assert len(env.symbols) == 0
+    assert len(env.as_dict()) == 0
 
 
 def test_build_type_environment_foreach_without_output():
@@ -494,7 +503,7 @@ def test_build_type_environment_foreach_without_output():
         nodes=[
             ForEachNode(
                 id="loop1",
-                label="Loop",
+                type="for_each",
                 items="${items}",
                 item_var="item",
                 index_var="idx"
@@ -509,5 +518,6 @@ def test_build_type_environment_foreach_without_output():
     env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
 
     # Loop variables should still be registered
-    assert "item" in env.symbols
-    assert "idx" in env.symbols
+    symbols = env.as_dict()
+    assert "item" in symbols
+    assert "idx" in symbols
