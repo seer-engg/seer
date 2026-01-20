@@ -43,10 +43,11 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
     Enforcement Points:
     1. Workflow creation: POST /api/v1/workflows
     2. Workflow runs: POST /api/v1/workflows/{id}/run
-    3. Chat messages: POST /api/workflow-agent/{id}/chat
+    3. Chat messages: POST /api/nexus/{id}/chat
     4. Polling intervals: POST /api/v1/trigger-subscriptions (soft enforcement)
     """
 
+    # pylint: disable=too-complex,too-many-return-statements # Reason: Middleware with multiple enforcement points
     async def dispatch(self, request: Request, call_next):
         """
         Main middleware dispatch method.
@@ -107,7 +108,7 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
                     return JSONResponse(status_code=402, content=error.to_dict())
 
         # 3. Chat Message Limit (PER USER, not per workflow)
-        elif method == "POST" and "/chat" in path and "/workflow-agent/" in path:
+        elif method == "POST" and "/chat" in path and "/api/nexus/" in path:
             # Check if chat is enabled
             if limits.is_chat_disabled:
                 error = ChatDisabledError()
@@ -150,7 +151,7 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
         try:
             body = await request.body()
             # Must reset body for downstream handlers
-            request._body = body
+            request._body = body  # pylint: disable=protected-access # Reason: Required pattern to reset request body in middleware
 
             data = json.loads(body.decode("utf-8"))
             requested_interval = data.get("poll_interval_seconds")
@@ -173,6 +174,6 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
                         },
                     )
                     # Note: We log but don't block. Service layer will clamp the value.
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Body parsing is non-critical, log and proceed with request
             # If body parsing fails, let it through (validation will catch it downstream)
             logger.debug("Failed to parse request body for polling interval check: %s", e)

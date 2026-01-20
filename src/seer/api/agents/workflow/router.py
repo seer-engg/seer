@@ -65,7 +65,7 @@ from .services import (
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/workflow-agent", tags=["workflow-agent"])
+router = APIRouter(prefix="/nexus", tags=["nexus"])
 
 
 def _require_user(request: Request) -> User:
