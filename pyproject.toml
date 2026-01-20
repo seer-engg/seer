@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "seer"
 dynamic = ["version"]
-description = "Seer - Multi-Agent System for Evaluating AI Agents"
+description = "Seer - Self-hostable workflow automation with oversight and cost governance"
 license = "MIT"
 readme = "README.md"
 authors = [
