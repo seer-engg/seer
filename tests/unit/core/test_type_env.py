@@ -521,3 +521,312 @@ def test_build_type_environment_foreach_without_output():
     symbols = env.as_dict()
     assert "item" in symbols
     assert "idx" in symbols
+
+
+# =============================================================================
+# Special Character Tests for Trigger Titles
+# =============================================================================
+
+
+def test_register_triggers_title_with_spaces_fails():
+    """Test that trigger titles with spaces are rejected during registration."""
+    env = TypeEnvironment()
+    triggers = [
+        TriggerSpec(
+            id="t1",
+            key="test.trigger",
+            title="My Trigger",  # Invalid: contains space
+            provider="test",
+            mode="polling",
+            schemas=TriggerSchemas(event={})
+        )
+    ]
+
+    with pytest.raises(TypeEnvironmentError, match="Invalid trigger title 'My Trigger'"):
+        _register_triggers(triggers, env)
+
+
+def test_register_triggers_title_with_multiple_spaces_fails():
+    """Test that trigger titles with multiple spaces are rejected."""
+    env = TypeEnvironment()
+    triggers = [
+        TriggerSpec(
+            id="t1",
+            key="test.trigger",
+            title="My  Complex  Trigger  Name",  # Invalid: multiple spaces
+            provider="test",
+            mode="polling",
+            schemas=TriggerSchemas(event={})
+        )
+    ]
+
+    with pytest.raises(TypeEnvironmentError, match="Invalid trigger title"):
+        _register_triggers(triggers, env)
+
+
+def test_register_triggers_title_with_hyphen_fails():
+    """Test that trigger titles with hyphens are rejected."""
+    env = TypeEnvironment()
+    triggers = [
+        TriggerSpec(
+            id="t1",
+            key="test.trigger",
+            title="my-trigger",  # Invalid: contains hyphen
+            provider="test",
+            mode="polling",
+            schemas=TriggerSchemas(event={})
+        )
+    ]
+
+    with pytest.raises(TypeEnvironmentError, match="Invalid trigger title 'my-trigger'"):
+        _register_triggers(triggers, env)
+
+
+def test_register_triggers_title_with_dot_fails():
+    """Test that trigger titles with dots are rejected."""
+    env = TypeEnvironment()
+    triggers = [
+        TriggerSpec(
+            id="t1",
+            key="test.trigger",
+            title="trigger.name",  # Invalid: contains dot
+            provider="test",
+            mode="polling",
+            schemas=TriggerSchemas(event={})
+        )
+    ]
+
+    with pytest.raises(TypeEnvironmentError, match="Invalid trigger title 'trigger.name'"):
+        _register_triggers(triggers, env)
+
+
+def test_register_triggers_title_with_at_sign_fails():
+    """Test that trigger titles with @ sign are rejected."""
+    env = TypeEnvironment()
+    triggers = [
+        TriggerSpec(
+            id="t1",
+            key="test.trigger",
+            title="trigger@email",  # Invalid: contains @
+            provider="test",
+            mode="polling",
+            schemas=TriggerSchemas(event={})
+        )
+    ]
+
+    with pytest.raises(TypeEnvironmentError, match="Invalid trigger title 'trigger@email'"):
+        _register_triggers(triggers, env)
+
+
+def test_register_triggers_title_starts_with_number_fails():
+    """Test that trigger titles starting with a number are rejected."""
+    env = TypeEnvironment()
+    triggers = [
+        TriggerSpec(
+            id="t1",
+            key="test.trigger",
+            title="1trigger",  # Invalid: starts with number
+            provider="test",
+            mode="polling",
+            schemas=TriggerSchemas(event={})
+        )
+    ]
+
+    with pytest.raises(TypeEnvironmentError, match="Invalid trigger title '1trigger'"):
+        _register_triggers(triggers, env)
+
+
+def test_register_triggers_title_with_unicode_fails():
+    """Test that trigger titles with Unicode characters are rejected."""
+    env = TypeEnvironment()
+    triggers = [
+        TriggerSpec(
+            id="t1",
+            key="test.trigger",
+            title="触发器",  # Invalid: Unicode characters
+            provider="test",
+            mode="polling",
+            schemas=TriggerSchemas(event={})
+        )
+    ]
+
+    with pytest.raises(TypeEnvironmentError, match="Invalid trigger title '触发器'"):
+        _register_triggers(triggers, env)
+
+
+@pytest.mark.parametrize("special_char_title", [
+    "trigger!name",
+    "trigger#tag",
+    "trigger$var",
+    "trigger%percent",
+    "trigger&and",
+    "trigger*star",
+    "trigger(paren",
+    "trigger)paren",
+    "trigger+plus",
+    "trigger=equals",
+    "trigger[bracket",
+    "trigger]bracket",
+    "trigger{brace",
+    "trigger}brace",
+    "trigger|pipe",
+    "trigger\\backslash",
+    "trigger:colon",
+    "trigger;semicolon",
+    "trigger'quote",
+    'trigger"doublequote',
+    "trigger<less",
+    "trigger>greater",
+    "trigger?question",
+    "trigger/slash",
+    "trigger~tilde",
+    "trigger`backtick",
+])
+def test_register_triggers_title_with_various_special_chars_fails(special_char_title):
+    """Test that trigger titles with various special characters are rejected."""
+    env = TypeEnvironment()
+    triggers = [
+        TriggerSpec(
+            id="t1",
+            key="test.trigger",
+            title=special_char_title,
+            provider="test",
+            mode="polling",
+            schemas=TriggerSchemas(event={})
+        )
+    ]
+
+    # Just match on "Invalid trigger title" without the specific title to avoid regex escaping issues
+    with pytest.raises(TypeEnvironmentError, match="Invalid trigger title"):
+        _register_triggers(triggers, env)
+
+
+# =============================================================================
+# Special Character Tests for Node 'out' Keys in Type Environment
+# =============================================================================
+
+
+def test_build_type_environment_out_key_with_spaces():
+    """Test that 'out' keys with spaces are accepted during type environment building."""
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            TaskNode(
+                id="task1",
+                type="task",
+                kind=TaskKind.set,
+                value="hello world",
+                out="my result"  # Valid: out keys can have spaces
+            )
+        ],
+        edges=[]
+    )
+    schema_registry = SchemaRegistry()
+    tool_registry = ToolRegistry()
+
+    env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
+
+    symbols = env.as_dict()
+    assert "my result" in symbols
+    assert symbols["my result"]["type"] == "string"
+
+
+def test_build_type_environment_out_key_with_hyphens():
+    """Test that 'out' keys with hyphens are accepted."""
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            TaskNode(
+                id="task1",
+                type="task",
+                kind=TaskKind.set,
+                value=42,
+                out="task-result"  # Valid: out keys can have hyphens
+            )
+        ],
+        edges=[]
+    )
+    schema_registry = SchemaRegistry()
+    tool_registry = ToolRegistry()
+
+    env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
+
+    symbols = env.as_dict()
+    assert "task-result" in symbols
+    assert symbols["task-result"]["type"] == "integer"
+
+
+def test_build_type_environment_out_key_with_special_chars():
+    """Test that 'out' keys with various special characters are accepted."""
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            TaskNode(
+                id="task1",
+                type="task",
+                kind=TaskKind.set,
+                value="test",
+                out="data@2024"  # Valid: out keys can have @ character
+            ),
+            TaskNode(
+                id="task2",
+                type="task",
+                kind=TaskKind.set,
+                value=100,
+                out="result#value"  # Valid: out keys can have # character
+            ),
+            TaskNode(
+                id="task3",
+                type="task",
+                kind=TaskKind.set,
+                value=True,
+                out="flag$state"  # Valid: out keys can have $ character
+            )
+        ],
+        edges=[]
+    )
+    schema_registry = SchemaRegistry()
+    tool_registry = ToolRegistry()
+
+    env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
+
+    symbols = env.as_dict()
+    assert "data@2024" in symbols
+    assert "result#value" in symbols
+    assert "flag$state" in symbols
+
+
+def test_build_type_environment_out_key_with_unicode():
+    """Test that 'out' keys with Unicode characters are accepted."""
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            TaskNode(
+                id="task1",
+                type="task",
+                kind=TaskKind.set,
+                value="success",
+                out="résultat"  # Valid: Unicode in out key
+            ),
+            TaskNode(
+                id="task2",
+                type="task",
+                kind=TaskKind.set,
+                value={"data": "value"},
+                out="数据"  # Valid: Chinese characters
+            )
+        ],
+        edges=[]
+    )
+    schema_registry = SchemaRegistry()
+    tool_registry = ToolRegistry()
+
+    env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
+
+    symbols = env.as_dict()
+    assert "résultat" in symbols
+    assert "数据" in symbols

@@ -641,3 +641,394 @@ def test_validate_references_nested_object_access():
 
     # Should not raise any errors
     validate_references(spec, type_env)
+
+
+# =============================================================================
+# Whitespace and Special Character Tests for 'out' Keys
+# =============================================================================
+
+
+def test_validate_references_out_key_with_spaces():
+    """Test that 'out' keys with spaces work correctly."""
+    type_env = TypeEnvironment()
+    type_env.register("my task", {"type": "string"})
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            TaskNode(
+                id="task1",
+                kind=TaskKind.set,
+                value="hello",
+                out="my task"
+            ),
+            TaskNode(
+                id="task2",
+                kind=TaskKind.set,
+                value="${my task}",
+                out="result"
+            )
+        ],
+        edges=[]
+    )
+
+    # Should not raise any errors - 'out' keys can have spaces
+    validate_references(spec, type_env)
+
+
+def test_validate_references_out_key_with_hyphens():
+    """Test that 'out' keys with hyphens work correctly."""
+    type_env = TypeEnvironment()
+    type_env.register("task-result", {"type": "number"})
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            TaskNode(
+                id="task1",
+                kind=TaskKind.set,
+                value=42,
+                out="task-result"
+            ),
+            TaskNode(
+                id="task2",
+                kind=TaskKind.set,
+                value="${task-result}",
+                out="final"
+            )
+        ],
+        edges=[]
+    )
+
+    # Should not raise any errors - 'out' keys can have hyphens
+    validate_references(spec, type_env)
+
+
+def test_validate_references_out_key_with_special_chars():
+    """
+    Test that 'out' keys with special characters work correctly.
+
+    Note: Some characters like '@', '#', etc. can be used in 'out' keys and referenced,
+    but '.', '[', ']' have special meaning in references (property/array access) so
+    they can be in 'out' keys but cannot be referenced directly.
+    """
+    type_env = TypeEnvironment()
+    type_env.register("task@result", {"type": "string"})
+    type_env.register("data#point", {"type": "number"})
+    type_env.register("result$value", {"type": "boolean"})
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            TaskNode(
+                id="task1",
+                kind=TaskKind.set,
+                value="${task@result}",
+                out="r1"
+            ),
+            TaskNode(
+                id="task2",
+                kind=TaskKind.set,
+                value="${data#point}",
+                out="r2"
+            ),
+            TaskNode(
+                id="task3",
+                kind=TaskKind.set,
+                value="${result$value}",
+                out="r3"
+            )
+        ],
+        edges=[]
+    )
+
+    # Should not raise any errors - 'out' keys can have special characters
+    validate_references(spec, type_env)
+
+
+def test_validate_references_out_key_with_unicode():
+    """Test that 'out' keys with Unicode characters work correctly."""
+    type_env = TypeEnvironment()
+    type_env.register("résultat", {"type": "string"})
+    type_env.register("数据", {"type": "object"})
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            TaskNode(
+                id="task1",
+                kind=TaskKind.set,
+                value="${résultat}",
+                out="output1"
+            ),
+            TaskNode(
+                id="task2",
+                kind=TaskKind.set,
+                value="${数据}",
+                out="output2"
+            )
+        ],
+        edges=[]
+    )
+
+    # Should not raise any errors - 'out' keys can have Unicode characters
+    validate_references(spec, type_env)
+
+
+def test_validate_references_out_key_with_nested_property_access():
+    """Test that 'out' keys with spaces can have nested property access."""
+    type_env = TypeEnvironment()
+    type_env.register("my task", {
+        "type": "object",
+        "properties": {
+            "result": {"type": "string"},
+            "count": {"type": "number"}
+        }
+    })
+    type_env.register("my task.result", {"type": "string"})
+    type_env.register("my task.count", {"type": "number"})
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            TaskNode(
+                id="task1",
+                kind=TaskKind.set,
+                value="${my task.result}",
+                out="output1"
+            ),
+            TaskNode(
+                id="task2",
+                kind=TaskKind.set,
+                value="${my task.count}",
+                out="output2"
+            )
+        ],
+        edges=[]
+    )
+
+    # Should not raise any errors
+    validate_references(spec, type_env)
+
+
+def test_validate_references_template_string_with_special_out_keys():
+    """Test template strings with references to 'out' keys containing special characters."""
+    type_env = TypeEnvironment()
+    type_env.register("first-name", {"type": "string"})
+    type_env.register("last name", {"type": "string"})
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            TaskNode(
+                id="task1",
+                kind=TaskKind.set,
+                value="Hello ${first-name} ${last name}!",
+                out="greeting"
+            )
+        ],
+        edges=[]
+    )
+
+    # Should not raise any errors
+    validate_references(spec, type_env)
+
+
+def test_validate_references_if_node_with_special_out_keys():
+    """Test IfNode condition with references to 'out' keys containing special characters."""
+    type_env = TypeEnvironment()
+    type_env.register("user-count", {"type": "number"})
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            IfNode(
+                id="if1",
+                condition="${user-count} > 100"
+            )
+        ],
+        edges=[]
+    )
+
+    # Should not raise any errors
+    validate_references(spec, type_env)
+
+
+def test_validate_references_foreach_with_special_out_keys():
+    """Test ForEachNode with references to 'out' keys containing special characters."""
+    type_env = TypeEnvironment()
+    type_env.register("data-items", {"type": "array", "items": {"type": "object"}})
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            ForEachNode(
+                id="loop1",
+                items="${data-items}",
+                item_var="item",
+                index_var="index"
+            )
+        ],
+        edges=[]
+    )
+
+    # Should not raise any errors
+    validate_references(spec, type_env)
+
+
+# =============================================================================
+# Whitespace and Special Character Tests for Trigger 'title' Keys
+# =============================================================================
+
+
+def test_validate_references_trigger_title_with_spaces():
+    """Test that trigger titles with spaces are properly validated (should work in references)."""
+    type_env = TypeEnvironment()
+    # Note: Trigger titles with spaces would fail during type_env building,
+    # but we can test the reference validation in isolation
+    type_env.register("My Trigger", {"type": "object", "properties": {"data": {"type": "string"}}})
+    type_env.register("My Trigger.data", {"type": "string"})
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[
+            TriggerSpec(
+                id="t1",
+                key="test.trigger",
+                title="My Trigger",
+                provider="test",
+                mode="polling",
+                schemas=TriggerSchemas(event={})
+            )
+        ],
+        nodes=[
+            TaskNode(
+                id="task1",
+                kind=TaskKind.set,
+                value="${My Trigger.data}",
+                out="result"
+            )
+        ],
+        edges=[]
+    )
+
+    # Reference validation should work if type_env has the symbol
+    # (Note: type_env building would reject "My Trigger" as invalid identifier)
+    validate_references(spec, type_env)
+
+
+def test_validate_references_trigger_title_with_hyphen():
+    """Test that trigger titles with hyphens work in references if registered."""
+    type_env = TypeEnvironment()
+    type_env.register("my-trigger", {"type": "object", "properties": {"value": {"type": "number"}}})
+    type_env.register("my-trigger.value", {"type": "number"})
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[
+            TriggerSpec(
+                id="t1",
+                key="test.trigger",
+                title="my-trigger",
+                provider="test",
+                mode="polling",
+                schemas=TriggerSchemas(event={})
+            )
+        ],
+        nodes=[
+            TaskNode(
+                id="task1",
+                kind=TaskKind.set,
+                value="${my-trigger.value}",
+                out="result"
+            )
+        ],
+        edges=[]
+    )
+
+    # Reference validation should work if type_env has the symbol
+    validate_references(spec, type_env)
+
+
+def test_validate_references_trigger_title_unicode():
+    """Test that trigger titles with Unicode characters work in references if registered."""
+    type_env = TypeEnvironment()
+    type_env.register("触发器", {"type": "object", "properties": {"消息": {"type": "string"}}})
+    type_env.register("触发器.消息", {"type": "string"})
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[
+            TriggerSpec(
+                id="t1",
+                key="test.trigger",
+                title="触发器",
+                provider="test",
+                mode="polling",
+                schemas=TriggerSchemas(event={})
+            )
+        ],
+        nodes=[
+            TaskNode(
+                id="task1",
+                kind=TaskKind.set,
+                value="${触发器.消息}",
+                out="result"
+            )
+        ],
+        edges=[]
+    )
+
+    # Reference validation should work if type_env has the symbol
+    validate_references(spec, type_env)
+
+
+def test_validate_references_complex_scenario_mixed_special_chars():
+    """Test complex scenario with multiple nodes using various special characters."""
+    type_env = TypeEnvironment()
+    type_env.register("api-response", {"type": "object", "properties": {"status": {"type": "string"}}})
+    type_env.register("api-response.status", {"type": "string"})
+    type_env.register("user count", {"type": "number"})
+    type_env.register("data@timestamp", {"type": "string"})
+    type_env.register("result_array", {"type": "array", "items": {"type": "object"}})
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            TaskNode(
+                id="task1",
+                kind=TaskKind.set,
+                value="${api-response.status}",
+                out="status"
+            ),
+            TaskNode(
+                id="task2",
+                kind=TaskKind.set,
+                value="Count: ${user count}, Time: ${data@timestamp}",
+                out="summary"
+            ),
+            IfNode(
+                id="if1",
+                condition="${user count} > 0"
+            ),
+            ForEachNode(
+                id="loop1",
+                items="${result_array}",
+                item_var="item",
+                index_var="idx"
+            )
+        ],
+        edges=[]
+    )
+
+    # Should not raise any errors
+    validate_references(spec, type_env)
