@@ -12,10 +12,10 @@ async def upgrade(db: BaseDBAsyncClient) -> str:
         ALTER TABLE "trigger_subscriptions" ADD "poll_status" VARCHAR(32) NOT NULL DEFAULT 'ok';
         ALTER TABLE "trigger_subscriptions" ADD "poll_lock_owner" VARCHAR(255);
         ALTER TABLE "trigger_subscriptions" ADD "poll_error_json" JSONB;
-        ALTER TABLE "trigger_subscriptions" ADD "next_poll_at" TIMESTAMPTZ NOT NULL;
+        ALTER TABLE "trigger_subscriptions" ADD "next_poll_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
         ALTER TABLE "trigger_subscriptions" ADD "poll_interval_seconds" INT NOT NULL DEFAULT 60;
         COMMENT ON COLUMN "trigger_events"."event_hash" IS 'Deterministic hash used when provider_event_id is unavailable.';
-COMMENT ON COLUMN "trigger_subscriptions"."next_poll_at" IS 'Next scheduled poll time (UTC).';
+        COMMENT ON COLUMN "trigger_subscriptions"."next_poll_at" IS 'Next scheduled poll time (UTC).';
         CREATE UNIQUE INDEX IF NOT EXISTS "uid_trigger_eve_trigger_bfc70c" ON "trigger_events" ("trigger_key", "provider_connection_id", "event_hash");"""
 
 

@@ -13,7 +13,7 @@ async def upgrade(db: BaseDBAsyncClient) -> str:
     "status" VARCHAR(10) NOT NULL DEFAULT 'active',
     "current_period_start" TIMESTAMPTZ,
     "current_period_end" TIMESTAMPTZ,
-    "cancel_at_period_end" BOOL NOT NULL DEFAULT False,
+    "cancel_at_period_end" BOOL NOT NULL DEFAULT false,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "user_id" INT NOT NULL UNIQUE REFERENCES "users" ("id") ON DELETE CASCADE
@@ -22,9 +22,17 @@ COMMENT ON COLUMN "user_subscriptions"."tier" IS 'FREE: free\nPRO: pro\nPRO_PLUS
 COMMENT ON COLUMN "user_subscriptions"."status" IS 'ACTIVE: active\nCANCELED: canceled\nPAST_DUE: past_due\nTRIALING: trialing\nINCOMPLETE: incomplete';
 COMMENT ON TABLE "user_subscriptions" IS 'Tracks user subscription state from Stripe.';
 
-ALTER TABLE trigger_subscriptions
-ADD CONSTRAINT IF NOT EXISTS trigger_subscriptions_workflow_id_fkey
-FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE constraint_name = 'trigger_subscriptions_workflow_id_fkey'
+    ) THEN
+        ALTER TABLE trigger_subscriptions
+        ADD CONSTRAINT trigger_subscriptions_workflow_id_fkey
+        FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE;
+    END IF;
+END $$;
 """
 
 

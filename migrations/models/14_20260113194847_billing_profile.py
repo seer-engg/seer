@@ -22,7 +22,7 @@ COMMENT ON TABLE "billing_profiles" IS 'Billing profile for a paying entity (ind
     "status" VARCHAR(10) NOT NULL DEFAULT 'active',
     "current_period_start" TIMESTAMPTZ,
     "current_period_end" TIMESTAMPTZ,
-    "cancel_at_period_end" BOOL NOT NULL DEFAULT False,
+    "cancel_at_period_end" BOOL NOT NULL DEFAULT false,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "billing_profile_id" INT NOT NULL UNIQUE REFERENCES "billing_profiles" ("id") ON DELETE CASCADE

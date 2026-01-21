@@ -6,7 +6,7 @@ RUN_IN_TRANSACTION = True
 async def upgrade(db: BaseDBAsyncClient) -> str:
     return """
         ALTER TABLE "trigger_subscriptions" RENAME COLUMN "bindings" TO "event_data_schema";
-        ALTER TABLE "trigger_subscriptions" ADD "is_polling" BOOL NOT NULL DEFAULT False;
+        ALTER TABLE "trigger_subscriptions" ADD "is_polling" BOOL NOT NULL DEFAULT false;
         ALTER TABLE "trigger_subscriptions" DROP COLUMN "input_contract";
         ALTER TABLE "trigger_subscriptions" DROP COLUMN "form_config";
         ALTER TABLE "trigger_subscriptions" DROP COLUMN "form_suffix";
