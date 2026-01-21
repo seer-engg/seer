@@ -9,7 +9,7 @@ import pytest
 from seer.core.compiler.validate_refs import (
     validate_references,
     _uses_trigger_references,
-    _node_uses_trigger_titles,
+    _node_uses_trigger_ids,
 )
 from seer.core.errors import ValidationPhaseError
 from seer.core.expr.typecheck import TypeEnvironment
@@ -41,8 +41,8 @@ def test_validate_references_minimal_workflow():
 def test_validate_references_with_valid_trigger_ref():
     """Test validation passes for valid trigger reference."""
     type_env = TypeEnvironment()
-    type_env.register("MyTrigger", {"type": "object", "properties": {"data": {"type": "string"}}})
-    type_env.register("MyTrigger.data", {"type": "string"})
+    type_env.register("t1", {"type": "object", "properties": {"data": {"type": "string"}}})
+    type_env.register("t1.data", {"type": "string"})
 
     spec = WorkflowSpec(
         version="2",
@@ -60,8 +60,7 @@ def test_validate_references_with_valid_trigger_ref():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="${MyTrigger.data}",
-                out="result"
+                value="${t1.data}"
             )
         ],
         edges=[]
@@ -83,14 +82,12 @@ def test_validate_references_with_node_output_ref():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="hello",
-                out="task1"
+                value="hello"
             ),
             TaskNode(
                 id="task2",
                 kind=TaskKind.set,
-                value="${task1}",
-                out="task2"
+                value="${task1}"
             )
         ],
         edges=[]
@@ -103,8 +100,8 @@ def test_validate_references_with_node_output_ref():
 def test_validate_references_with_multiple_refs():
     """Test validation with multiple valid references."""
     type_env = TypeEnvironment()
-    type_env.register("trigger1", {"type": "object", "properties": {"x": {"type": "number"}}})
-    type_env.register("trigger1.x", {"type": "number"})
+    type_env.register("t1", {"type": "object", "properties": {"x": {"type": "number"}}})
+    type_env.register("t1.x", {"type": "number"})
     type_env.register("task1", {"type": "number"})
 
     spec = WorkflowSpec(
@@ -123,14 +120,12 @@ def test_validate_references_with_multiple_refs():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="${trigger1.x}",
-                out="task1"
+                value="${t1.x}"
             ),
             TaskNode(
                 id="task2",
                 kind=TaskKind.set,
-                value="${task1}",
-                out="task2"
+                value="${task1}"
             )
         ],
         edges=[]
@@ -157,8 +152,7 @@ def test_validate_references_missing_trigger_declaration():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="${MyTrigger.data}",
-                out="result"
+                value="${MyTrigger.data}"
             )
         ],
         edges=[]
@@ -180,8 +174,7 @@ def test_validate_references_undefined_symbol():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="${undefined_var}",
-                out="result"
+                value="${undefined_var}"
             )
         ],
         edges=[]
@@ -203,8 +196,7 @@ def test_validate_references_undefined_property():
             TaskNode(
                 id="task2",
                 kind=TaskKind.set,
-                value="${task1.undefined_prop}",
-                out="result"
+                value="${task1.undefined_prop}"
             )
         ],
         edges=[]
@@ -374,8 +366,7 @@ def test_validate_references_template_string():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="Hello ${first} ${last}!",
-                out="greeting"
+                value="Hello ${first} ${last}!"
             )
         ],
         edges=[]
@@ -397,8 +388,7 @@ def test_validate_references_template_string_invalid_ref():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="Hello ${first} ${undefined}!",
-                out="greeting"
+                value="Hello ${first} ${undefined}!"
             )
         ],
         edges=[]
@@ -431,8 +421,7 @@ def test_uses_trigger_references_true():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="${MyTrigger.data}",
-                out="result"
+                value="${t1.data}"
             )
         ],
         edges=[]
@@ -459,8 +448,7 @@ def test_uses_trigger_references_false():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="static value",
-                out="result"
+                value="static value"
             )
         ],
         edges=[]
@@ -478,8 +466,7 @@ def test_uses_trigger_references_no_triggers():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="${other_var}",
-                out="result"
+                value="${other_var}"
             )
         ],
         edges=[]
@@ -488,54 +475,52 @@ def test_uses_trigger_references_no_triggers():
     assert _uses_trigger_references(spec) is False
 
 
-def test_node_uses_trigger_titles_task_node():
-    """Test detection of trigger titles in TaskNode."""
+def test_node_uses_trigger_ids_task_node():
+    """Test detection of trigger IDs in TaskNode."""
     node = TaskNode(
         id="task1",
         kind=TaskKind.set,
-        value="${TriggerTitle.data}",
-        out="result"
+        value="${t1.data}"
     )
-    trigger_titles = {"TriggerTitle"}
+    trigger_ids = {"t1"}
 
-    assert _node_uses_trigger_titles(node, trigger_titles) is True
+    assert _node_uses_trigger_ids(node, trigger_ids) is True
 
 
-def test_node_uses_trigger_titles_if_node():
-    """Test detection of trigger titles in IfNode."""
+def test_node_uses_trigger_ids_if_node():
+    """Test detection of trigger IDs in IfNode."""
     node = IfNode(
         id="if1",
-        condition="${TriggerTitle.value} > 10"
+        condition="${t1.value} > 10"
     )
-    trigger_titles = {"TriggerTitle"}
+    trigger_ids = {"t1"}
 
-    assert _node_uses_trigger_titles(node, trigger_titles) is True
+    assert _node_uses_trigger_ids(node, trigger_ids) is True
 
 
-def test_node_uses_trigger_titles_foreach_node():
-    """Test detection of trigger titles in ForEachNode."""
+def test_node_uses_trigger_ids_foreach_node():
+    """Test detection of trigger IDs in ForEachNode."""
     node = ForEachNode(
         id="loop1",
-        items="${TriggerTitle.items}",
+        items="${t1.items}",
         item_var="item",
         index_var="index"
     )
-    trigger_titles = {"TriggerTitle"}
+    trigger_ids = {"t1"}
 
-    assert _node_uses_trigger_titles(node, trigger_titles) is True
+    assert _node_uses_trigger_ids(node, trigger_ids) is True
 
 
-def test_node_uses_trigger_titles_false():
+def test_node_uses_trigger_ids_false():
     """Test that node without trigger references returns False."""
     node = TaskNode(
         id="task1",
         kind=TaskKind.set,
-        value="${other_var}",
-        out="result"
+        value="${other_var}"
     )
-    trigger_titles = {"TriggerTitle"}
+    trigger_ids = {"t1"}
 
-    assert _node_uses_trigger_titles(node, trigger_titles) is False
+    assert _node_uses_trigger_ids(node, trigger_ids) is False
 
 
 # =============================================================================
@@ -554,14 +539,12 @@ def test_validate_references_collects_multiple_errors():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="${undefined1}",
-                out="result1"
+                value="${undefined1}"
             ),
             TaskNode(
                 id="task2",
                 kind=TaskKind.set,
-                value="${undefined2}",
-                out="result2"
+                value="${undefined2}"
             )
         ],
         edges=[]
@@ -591,8 +574,7 @@ def test_validate_references_empty_value():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="",
-                out="result"
+                value=""
             )
         ],
         edges=[]
@@ -632,8 +614,7 @@ def test_validate_references_nested_object_access():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="${data.level1.level2.value}",
-                out="result"
+                value="${data.level1.level2.value}"
             )
         ],
         edges=[]
@@ -660,14 +641,12 @@ def test_validate_references_out_key_with_spaces():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="hello",
-                out="my task"
+                value="hello"
             ),
             TaskNode(
                 id="task2",
                 kind=TaskKind.set,
-                value="${my task}",
-                out="result"
+                value="${my task}"
             )
         ],
         edges=[]
@@ -689,14 +668,12 @@ def test_validate_references_out_key_with_hyphens():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value=42,
-                out="task-result"
+                value=42
             ),
             TaskNode(
                 id="task2",
                 kind=TaskKind.set,
-                value="${task-result}",
-                out="final"
+                value="${task-result}"
             )
         ],
         edges=[]
@@ -726,20 +703,17 @@ def test_validate_references_out_key_with_special_chars():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="${task@result}",
-                out="r1"
+                value="${task@result}"
             ),
             TaskNode(
                 id="task2",
                 kind=TaskKind.set,
-                value="${data#point}",
-                out="r2"
+                value="${data#point}"
             ),
             TaskNode(
                 id="task3",
                 kind=TaskKind.set,
-                value="${result$value}",
-                out="r3"
+                value="${result$value}"
             )
         ],
         edges=[]
@@ -762,14 +736,12 @@ def test_validate_references_out_key_with_unicode():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="${résultat}",
-                out="output1"
+                value="${résultat}"
             ),
             TaskNode(
                 id="task2",
                 kind=TaskKind.set,
-                value="${数据}",
-                out="output2"
+                value="${数据}"
             )
         ],
         edges=[]
@@ -799,14 +771,12 @@ def test_validate_references_out_key_with_nested_property_access():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="${my task.result}",
-                out="output1"
+                value="${my task.result}"
             ),
             TaskNode(
                 id="task2",
                 kind=TaskKind.set,
-                value="${my task.count}",
-                out="output2"
+                value="${my task.count}"
             )
         ],
         edges=[]
@@ -829,8 +799,7 @@ def test_validate_references_template_string_with_special_out_keys():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="Hello ${first-name} ${last name}!",
-                out="greeting"
+                value="Hello ${first-name} ${last name}!"
             )
         ],
         edges=[]
@@ -885,17 +854,16 @@ def test_validate_references_foreach_with_special_out_keys():
 
 
 # =============================================================================
-# Whitespace and Special Character Tests for Trigger 'title' Keys
+# Whitespace and Special Character Tests for Trigger IDs
 # =============================================================================
 
 
 def test_validate_references_trigger_title_with_spaces():
-    """Test that trigger titles with spaces are properly validated (should work in references)."""
+    """Test that trigger IDs are used in references (not titles with spaces)."""
     type_env = TypeEnvironment()
-    # Note: Trigger titles with spaces would fail during type_env building,
-    # but we can test the reference validation in isolation
-    type_env.register("My Trigger", {"type": "object", "properties": {"data": {"type": "string"}}})
-    type_env.register("My Trigger.data", {"type": "string"})
+    # Use trigger ID in references, not title
+    type_env.register("t1", {"type": "object", "properties": {"data": {"type": "string"}}})
+    type_env.register("t1.data", {"type": "string"})
 
     spec = WorkflowSpec(
         version="2",
@@ -903,7 +871,7 @@ def test_validate_references_trigger_title_with_spaces():
             TriggerSpec(
                 id="t1",
                 key="test.trigger",
-                title="My Trigger",
+                title="My Trigger",  # Title can have spaces, but references use ID
                 provider="test",
                 mode="polling",
                 schemas=TriggerSchemas(event={})
@@ -913,23 +881,21 @@ def test_validate_references_trigger_title_with_spaces():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="${My Trigger.data}",
-                out="result"
+                value="${t1.data}"
             )
         ],
         edges=[]
     )
 
-    # Reference validation should work if type_env has the symbol
-    # (Note: type_env building would reject "My Trigger" as invalid identifier)
+    # Reference validation uses trigger ID, not title
     validate_references(spec, type_env)
 
 
 def test_validate_references_trigger_title_with_hyphen():
-    """Test that trigger titles with hyphens work in references if registered."""
+    """Test that trigger IDs are used in references (titles are for display only)."""
     type_env = TypeEnvironment()
-    type_env.register("my-trigger", {"type": "object", "properties": {"value": {"type": "number"}}})
-    type_env.register("my-trigger.value", {"type": "number"})
+    type_env.register("t1", {"type": "object", "properties": {"value": {"type": "number"}}})
+    type_env.register("t1.value", {"type": "number"})
 
     spec = WorkflowSpec(
         version="2",
@@ -937,7 +903,7 @@ def test_validate_references_trigger_title_with_hyphen():
             TriggerSpec(
                 id="t1",
                 key="test.trigger",
-                title="my-trigger",
+                title="my-trigger",  # Title for display, ID for references
                 provider="test",
                 mode="polling",
                 schemas=TriggerSchemas(event={})
@@ -947,22 +913,21 @@ def test_validate_references_trigger_title_with_hyphen():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="${my-trigger.value}",
-                out="result"
+                value="${t1.value}"
             )
         ],
         edges=[]
     )
 
-    # Reference validation should work if type_env has the symbol
+    # Reference validation uses trigger ID
     validate_references(spec, type_env)
 
 
 def test_validate_references_trigger_title_unicode():
-    """Test that trigger titles with Unicode characters work in references if registered."""
+    """Test that trigger IDs are used in references even with Unicode titles."""
     type_env = TypeEnvironment()
-    type_env.register("触发器", {"type": "object", "properties": {"消息": {"type": "string"}}})
-    type_env.register("触发器.消息", {"type": "string"})
+    type_env.register("t1", {"type": "object", "properties": {"data": {"type": "string"}}})
+    type_env.register("t1.data", {"type": "string"})
 
     spec = WorkflowSpec(
         version="2",
@@ -970,7 +935,7 @@ def test_validate_references_trigger_title_unicode():
             TriggerSpec(
                 id="t1",
                 key="test.trigger",
-                title="触发器",
+                title="触发器",  # Unicode title for display
                 provider="test",
                 mode="polling",
                 schemas=TriggerSchemas(event={})
@@ -980,14 +945,13 @@ def test_validate_references_trigger_title_unicode():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="${触发器.消息}",
-                out="result"
+                value="${t1.data}"
             )
         ],
         edges=[]
     )
 
-    # Reference validation should work if type_env has the symbol
+    # Reference validation uses trigger ID
     validate_references(spec, type_env)
 
 
@@ -1007,14 +971,12 @@ def test_validate_references_complex_scenario_mixed_special_chars():
             TaskNode(
                 id="task1",
                 kind=TaskKind.set,
-                value="${api-response.status}",
-                out="status"
+                value="${api-response.status}"
             ),
             TaskNode(
                 id="task2",
                 kind=TaskKind.set,
-                value="Count: ${user count}, Time: ${data@timestamp}",
-                out="summary"
+                value="Count: ${user count}, Time: ${data@timestamp}"
             ),
             IfNode(
                 id="if1",

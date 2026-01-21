@@ -259,7 +259,7 @@ class NodeRuntime:
         else:
             raise ExecutionError(f"Unsupported task kind '{node.kind}'")
 
-        return self._prepare_output(node.out, result)
+        return self._prepare_output(node.id, result)
 
     def _run_tool(
         self,
@@ -289,7 +289,7 @@ class NodeRuntime:
         result = tool_def.handler(inputs, dict(config), runtime_context)
 
         # STEP 3: Prepare output (existing logic)
-        output = self._prepare_output(node.out, result)
+        output = self._prepare_output(node.id, result)
 
         # STEP 4: Store trace data
         # Use single underscore prefix to avoid LangGraph filtering double-underscore keys
@@ -299,7 +299,7 @@ class NodeRuntime:
             'node_type': 'tool',
             'inputs': inputs,  # Actual runtime inputs
             'output': result,  # Raw tool result (before prepare_output)
-            'output_key': node.out,
+            'output_key': node.id,
             'timestamp': datetime.now(timezone.utc).isoformat(),
         }
 
@@ -334,7 +334,7 @@ class NodeRuntime:
             result = await handler(inputs, dict(config), runtime_context)
 
         # STEP 3: Prepare output (existing logic)
-        output = self._prepare_output(node.out, result)
+        output = self._prepare_output(node.id, result)
 
         # STEP 4: Store trace data
         # Use single underscore prefix to avoid LangGraph filtering double-underscore keys
@@ -344,7 +344,7 @@ class NodeRuntime:
             'node_type': 'tool',
             'inputs': inputs,  # Actual runtime inputs
             'output': result,  # Raw tool result (before prepare_output)
-            'output_key': node.out,
+            'output_key': node.id,
             'timestamp': datetime.now(timezone.utc).isoformat(),
         }
 
@@ -412,7 +412,7 @@ class NodeRuntime:
             self._track_llm_usage_async(usage_metadata)
 
         # STEP 3: Prepare output
-        output = self._prepare_output(node.out, result)
+        output = self._prepare_output(node.id, result)
 
         # STEP 4: Store trace data
         # Use single underscore prefix to avoid LangGraph filtering double-underscore keys
@@ -422,7 +422,7 @@ class NodeRuntime:
             'node_type': 'llm',
             'inputs': inputs,  # Prompt template + evaluated input_refs
             'output': result,  # Raw LLM response
-            'output_key': node.out,
+            'output_key': node.id,
             'timestamp': datetime.now(timezone.utc).isoformat(),
             # Add usage metadata to trace
             'usage': {
@@ -645,15 +645,23 @@ class NodeRuntime:
             trigger=self._current_trigger,
         )
 
-    def _prepare_output(self, key: str | None, value: Any) -> Dict[str, Any]:
-        if not key:
-            return {}
-        if key.startswith(INTERNAL_STATE_PREFIX):
-            raise ExecutionError(f"State keys starting with '{INTERNAL_STATE_PREFIX}' are reserved")
-        schema = self._type_schemas.get(key)
+    def _prepare_output(self, node_id: str, value: Any) -> Dict[str, Any]:
+        """
+        Prepare node output for state storage using node ID as the key.
+
+        Args:
+            node_id: The node's unique ID (used as state key)
+            value: The output value to store
+
+        Returns:
+            Dictionary with node_id as key
+        """
+        if node_id.startswith(INTERNAL_STATE_PREFIX):
+            raise ExecutionError(f"Node IDs starting with '{INTERNAL_STATE_PREFIX}' are reserved")
+        schema = self._type_schemas.get(node_id)
         if schema is not None:
-            validate_against_schema(schema, value, schema_id=key)
-        return {key: value}
+            validate_against_schema(schema, value, schema_id=node_id)
+        return {node_id: value}
 
     # ------------------------------------------------------------------
     # Trace capture methods

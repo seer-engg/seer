@@ -86,11 +86,11 @@ def test_register_triggers_basic():
 
     _register_triggers(triggers, env)
 
-    # Trigger title should be registered
+    # Trigger ID should be registered
     symbols = env.as_dict()
-    assert "TestTrigger" in symbols
+    assert "t1" in symbols
     # Sub-properties should be registered
-    assert "TestTrigger.message" in symbols
+    assert "t1.message" in symbols
 
 
 def test_register_triggers_with_default_schema():
@@ -111,14 +111,19 @@ def test_register_triggers_with_default_schema():
 
     # Should use default schema with additionalProperties: True
     symbols = env.as_dict()
-    assert "SimpleTrigger" in symbols
-    schema = symbols["SimpleTrigger"]
+    assert "t1" in symbols
+    schema = symbols["t1"]
     assert schema["type"] == "object"
     assert schema.get("additionalProperties") is True
 
 
-def test_register_triggers_duplicate_title_error():
-    """Test that duplicate trigger titles raise TypeEnvironmentError."""
+def test_register_triggers_duplicate_id_allowed_different_titles():
+    """Test that triggers with duplicate titles but different IDs are allowed.
+
+    Note: Duplicate trigger IDs are caught at WorkflowSpec validation level,
+    not during type environment building. This test verifies that triggers
+    with different IDs can have the same title without issues.
+    """
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
@@ -132,25 +137,30 @@ def test_register_triggers_duplicate_title_error():
         TriggerSpec(
             id="t2",
             key="trigger2.key",
-            title="DuplicateTitle",  # Duplicate!
+            title="DuplicateTitle",  # Same title but different ID - OK
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
         )
     ]
 
-    with pytest.raises(TypeEnvironmentError, match="Duplicate trigger title 'DuplicateTitle'"):
-        _register_triggers(triggers, env)
+    # Should not raise an error since IDs are different
+    _register_triggers(triggers, env)
+
+    # Both IDs should be registered
+    symbols = env.as_dict()
+    assert "t1" in symbols
+    assert "t2" in symbols
 
 
-def test_register_triggers_with_hyphen_in_title():
-    """Test that trigger titles with hyphens are now accepted."""
+def test_register_triggers_with_hyphen_in_id():
+    """Test that trigger IDs with hyphens are accepted."""
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
-            id="t1",
+            id="trigger-with-hyphen",
             key="test.trigger",
-            title="invalid-title",  # Valid: hyphens are now allowed
+            title="My Trigger",
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
@@ -160,25 +170,25 @@ def test_register_triggers_with_hyphen_in_title():
     # Should not raise an error
     _register_triggers(triggers, env)
 
-    # Verify trigger is registered
+    # Verify trigger ID is registered
     symbols = env.as_dict()
-    assert "invalid-title" in symbols
+    assert "trigger-with-hyphen" in symbols
 
 
-@pytest.mark.parametrize("valid_title", [
+@pytest.mark.parametrize("valid_id", [
     "1StartWithNumber",
     "has-hyphen",
     "has.dot",
     "has space",
 ])
-def test_register_triggers_various_special_char_titles(valid_title):
-    """Test that trigger titles can now contain various special characters."""
+def test_register_triggers_various_special_char_ids(valid_id):
+    """Test that trigger IDs can contain various special characters."""
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
-            id="t1",
+            id=valid_id,  # All special chars are now valid in IDs
             key="test.trigger",
-            title=valid_title,  # All special chars are now valid
+            title="My Trigger",
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
@@ -188,9 +198,9 @@ def test_register_triggers_various_special_char_titles(valid_title):
     # Should not raise an error
     _register_triggers(triggers, env)
 
-    # Verify trigger is registered
+    # Verify trigger ID is registered
     symbols = env.as_dict()
-    assert valid_title in symbols
+    assert valid_id in symbols
 
 
 # =============================================================================
@@ -341,8 +351,8 @@ def test_build_type_environment_with_trigger():
     env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
 
     symbols = env.as_dict()
-    assert "MyTrigger" in symbols
-    assert "MyTrigger.data" in symbols
+    assert "t1" in symbols
+    assert "t1.data" in symbols
 
 
 def test_build_type_environment_with_task_node():
@@ -355,8 +365,7 @@ def test_build_type_environment_with_task_node():
                 id="task1",
                 type="task",
                 kind=TaskKind.set,
-                value="hello world",
-                out="result"
+                value="hello world"
             )
         ],
         edges=[]
@@ -367,8 +376,8 @@ def test_build_type_environment_with_task_node():
     env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
 
     symbols = env.as_dict()
-    assert "result" in symbols
-    assert symbols["result"]["type"] == "string"
+    assert "task1" in symbols
+    assert symbols["task1"]["type"] == "string"
 
 
 def test_build_type_environment_with_foreach_node():
@@ -382,8 +391,7 @@ def test_build_type_environment_with_foreach_node():
                 type="for_each",
                 items="${items}",
                 item_var="item",
-                index_var="index",
-                out="results"
+                index_var="index"
             )
         ],
         edges=[]
@@ -399,8 +407,8 @@ def test_build_type_environment_with_foreach_node():
     assert "index" in symbols
     assert symbols["index"]["type"] == "integer"
 
-    # Output should be registered
-    assert "results" in symbols
+    # Node ID should be registered as output
+    assert "loop1" in symbols
 
 
 def test_build_type_environment_with_llm_node():
@@ -414,8 +422,7 @@ def test_build_type_environment_with_llm_node():
                 type="llm",
                 model="gpt-4",
                 prompt="Generate a response",
-                output=OutputContract(mode=OutputMode.json, schema={"schema": {"type": "object"}}),
-                out="llm_result"
+                output=OutputContract(mode=OutputMode.json, schema={"schema": {"type": "object"}})
             )
         ],
         edges=[]
@@ -426,7 +433,7 @@ def test_build_type_environment_with_llm_node():
     env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
 
     symbols = env.as_dict()
-    assert "llm_result" in symbols
+    assert "llm1" in symbols
 
 
 def test_build_type_environment_with_multiple_nodes():
@@ -439,22 +446,19 @@ def test_build_type_environment_with_multiple_nodes():
                 id="task1",
                 type="task",
                 kind=TaskKind.set,
-                value=42,
-                out="number"
+                value=42
             ),
             TaskNode(
                 id="task2",
                 type="task",
                 kind=TaskKind.set,
-                value="text",
-                out="text"
+                value="text"
             ),
             TaskNode(
                 id="task3",
                 type="task",
                 kind=TaskKind.set,
-                value=True,
-                out="flag"
+                value=True
             )
         ],
         edges=[]
@@ -465,12 +469,12 @@ def test_build_type_environment_with_multiple_nodes():
     env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
 
     symbols = env.as_dict()
-    assert "number" in symbols
-    assert "text" in symbols
-    assert "flag" in symbols
-    assert symbols["number"]["type"] == "integer"
-    assert symbols["text"]["type"] == "string"
-    assert symbols["flag"]["type"] == "boolean"
+    assert "task1" in symbols
+    assert "task2" in symbols
+    assert "task3" in symbols
+    assert symbols["task1"]["type"] == "integer"
+    assert symbols["task2"]["type"] == "string"
+    assert symbols["task3"]["type"] == "boolean"
 
 
 # =============================================================================
@@ -478,8 +482,11 @@ def test_build_type_environment_with_multiple_nodes():
 # =============================================================================
 
 
-def test_build_type_environment_node_without_output():
-    """Test building type environment with node that has no output."""
+def test_build_type_environment_node_with_output():
+    """Test building type environment with node that produces output.
+
+    Note: All nodes with values now register their ID as output in the type environment.
+    """
     spec = WorkflowSpec(
         version="2",
         triggers=[],
@@ -489,7 +496,6 @@ def test_build_type_environment_node_without_output():
                 type="task",
                 kind=TaskKind.set,
                 value="hello"
-                # No 'out' field
             )
         ],
         edges=[]
@@ -499,12 +505,14 @@ def test_build_type_environment_node_without_output():
 
     env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
 
-    # No symbol should be registered since there's no output
-    assert len(env.as_dict()) == 0
+    # Node ID should be registered as symbol
+    symbols = env.as_dict()
+    assert "task1" in symbols
+    assert symbols["task1"]["type"] == "string"
 
 
 def test_build_type_environment_foreach_without_output():
-    """Test ForEach node without output still registers loop variables."""
+    """Test ForEach node without output contract still registers loop variables and node ID."""
     spec = WorkflowSpec(
         version="2",
         triggers=[],
@@ -515,7 +523,7 @@ def test_build_type_environment_foreach_without_output():
                 items="${items}",
                 item_var="item",
                 index_var="idx"
-                # No 'out' field
+                # No 'output' field
             )
         ],
         edges=[]
@@ -525,25 +533,29 @@ def test_build_type_environment_foreach_without_output():
 
     env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
 
-    # Loop variables should still be registered
+    # Loop variables should be registered
     symbols = env.as_dict()
     assert "item" in symbols
     assert "idx" in symbols
 
+    # Node ID should be registered with default array schema
+    assert "loop1" in symbols
+    assert symbols["loop1"]["type"] == "array"
+
 
 # =============================================================================
-# Special Character Tests for Trigger Titles
+# Special Character Tests for Trigger IDs
 # =============================================================================
 
 
-def test_register_triggers_title_with_spaces():
-    """Test that trigger titles with spaces are now accepted."""
+def test_register_triggers_id_with_spaces():
+    """Test that trigger IDs with spaces are accepted."""
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
-            id="t1",
+            id="My Trigger",  # Valid: spaces are allowed in IDs
             key="test.trigger",
-            title="My Trigger",  # Valid: spaces are now allowed
+            title="My Trigger Title",
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
@@ -553,19 +565,19 @@ def test_register_triggers_title_with_spaces():
     # Should not raise an error
     _register_triggers(triggers, env)
 
-    # Verify trigger is registered
+    # Verify trigger ID is registered
     symbols = env.as_dict()
     assert "My Trigger" in symbols
 
 
-def test_register_triggers_title_with_multiple_spaces():
-    """Test that trigger titles with multiple spaces are now accepted."""
+def test_register_triggers_id_with_multiple_spaces():
+    """Test that trigger IDs with multiple spaces are accepted."""
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
-            id="t1",
+            id="My  Complex  Trigger  ID",  # Valid: multiple spaces allowed in IDs
             key="test.trigger",
-            title="My  Complex  Trigger  Name",  # Valid: multiple spaces allowed
+            title="My Trigger Title",
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
@@ -575,19 +587,19 @@ def test_register_triggers_title_with_multiple_spaces():
     # Should not raise an error
     _register_triggers(triggers, env)
 
-    # Verify trigger is registered
+    # Verify trigger ID is registered
     symbols = env.as_dict()
-    assert "My  Complex  Trigger  Name" in symbols
+    assert "My  Complex  Trigger  ID" in symbols
 
 
-def test_register_triggers_title_with_another_hyphen():
-    """Test that trigger titles with hyphens are accepted."""
+def test_register_triggers_id_with_another_hyphen():
+    """Test that trigger IDs with hyphens are accepted."""
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
-            id="t1",
+            id="my-trigger-id",  # Valid: hyphens allowed in IDs
             key="test.trigger",
-            title="my-trigger",  # Valid: hyphens allowed
+            title="My Trigger",
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
@@ -597,30 +609,30 @@ def test_register_triggers_title_with_another_hyphen():
     # Should not raise an error
     _register_triggers(triggers, env)
 
-    # Verify trigger is registered
+    # Verify trigger ID is registered
     symbols = env.as_dict()
-    assert "my-trigger" in symbols
+    assert "my-trigger-id" in symbols
 
 
-def test_register_triggers_title_with_dot():
+def test_register_triggers_id_with_dot():
     """
-    Test that trigger titles with dots are accepted during registration.
+    Test that trigger IDs with dots are accepted during registration.
 
-    Note: While dots are allowed in trigger titles, they can create ambiguity
+    Note: While dots are allowed in trigger IDs, they can create ambiguity
     when used in references because dots have special meaning for property access.
-    For example, if a trigger title is "trigger.name" and you reference
+    For example, if a trigger ID is "trigger.name" and you reference
     "${trigger.name.property}", it's ambiguous whether this means:
     - The trigger "trigger.name" with property "property", or
     - The trigger "trigger" with nested property "name.property"
 
-    It's recommended to avoid dots in trigger titles to prevent confusion.
+    It's recommended to avoid dots in trigger IDs to prevent confusion.
     """
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
-            id="t1",
+            id="trigger.id",  # Valid: dots allowed in IDs, but may cause ambiguity
             key="test.trigger",
-            title="trigger.name",  # Valid: dots allowed, but may cause ambiguity
+            title="Trigger Name",
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
@@ -630,19 +642,19 @@ def test_register_triggers_title_with_dot():
     # Should not raise an error during registration
     _register_triggers(triggers, env)
 
-    # Verify trigger is registered
+    # Verify trigger ID is registered
     symbols = env.as_dict()
-    assert "trigger.name" in symbols
+    assert "trigger.id" in symbols
 
 
-def test_register_triggers_title_with_at_sign():
-    """Test that trigger titles with @ sign are now accepted."""
+def test_register_triggers_id_with_at_sign():
+    """Test that trigger IDs with @ sign are accepted."""
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
-            id="t1",
+            id="trigger@email",  # Valid: @ allowed in IDs
             key="test.trigger",
-            title="trigger@email",  # Valid: @ allowed
+            title="Trigger Email",
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
@@ -652,19 +664,19 @@ def test_register_triggers_title_with_at_sign():
     # Should not raise an error
     _register_triggers(triggers, env)
 
-    # Verify trigger is registered
+    # Verify trigger ID is registered
     symbols = env.as_dict()
     assert "trigger@email" in symbols
 
 
-def test_register_triggers_title_starts_with_number():
-    """Test that trigger titles starting with a number are now accepted."""
+def test_register_triggers_id_starts_with_number():
+    """Test that trigger IDs starting with a number are accepted."""
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
-            id="t1",
+            id="1trigger",  # Valid: IDs can start with number
             key="test.trigger",
-            title="1trigger",  # Valid: can start with number
+            title="Trigger 1",
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
@@ -674,19 +686,19 @@ def test_register_triggers_title_starts_with_number():
     # Should not raise an error
     _register_triggers(triggers, env)
 
-    # Verify trigger is registered
+    # Verify trigger ID is registered
     symbols = env.as_dict()
     assert "1trigger" in symbols
 
 
-def test_register_triggers_title_with_unicode():
-    """Test that trigger titles with Unicode characters are now accepted."""
+def test_register_triggers_id_with_unicode():
+    """Test that trigger IDs with Unicode characters are accepted."""
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
-            id="t1",
+            id="触发器",  # Valid: Unicode allowed in IDs
             key="test.trigger",
-            title="触发器",  # Valid: Unicode allowed
+            title="Trigger Title",
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
@@ -696,12 +708,12 @@ def test_register_triggers_title_with_unicode():
     # Should not raise an error
     _register_triggers(triggers, env)
 
-    # Verify trigger is registered
+    # Verify trigger ID is registered
     symbols = env.as_dict()
     assert "触发器" in symbols
 
 
-@pytest.mark.parametrize("special_char_title", [
+@pytest.mark.parametrize("special_char_id", [
     "trigger!name",
     "trigger#tag",
     "trigger$var",
@@ -729,14 +741,14 @@ def test_register_triggers_title_with_unicode():
     "trigger~tilde",
     "trigger`backtick",
 ])
-def test_register_triggers_title_with_various_special_chars(special_char_title):
-    """Test that trigger titles with various special characters are now accepted."""
+def test_register_triggers_id_with_various_special_chars(special_char_id):
+    """Test that trigger IDs with various special characters are accepted."""
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
-            id="t1",
+            id=special_char_id,  # Valid: all special chars allowed in IDs
             key="test.trigger",
-            title=special_char_title,  # Valid: all special chars allowed
+            title="Trigger Title",
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
@@ -746,28 +758,27 @@ def test_register_triggers_title_with_various_special_chars(special_char_title):
     # Should not raise an error
     _register_triggers(triggers, env)
 
-    # Verify trigger is registered
+    # Verify trigger ID is registered
     symbols = env.as_dict()
-    assert special_char_title in symbols
+    assert special_char_id in symbols
 
 
 # =============================================================================
-# Special Character Tests for Node 'out' Keys in Type Environment
+# Special Character Tests for Node IDs in Type Environment
 # =============================================================================
 
 
-def test_build_type_environment_out_key_with_spaces():
-    """Test that 'out' keys with spaces are accepted during type environment building."""
+def test_build_type_environment_node_id_with_spaces():
+    """Test that node IDs with spaces are accepted during type environment building."""
     spec = WorkflowSpec(
         version="2",
         triggers=[],
         nodes=[
             TaskNode(
-                id="task1",
+                id="my result",  # Valid: node IDs can have spaces
                 type="task",
                 kind=TaskKind.set,
-                value="hello world",
-                out="my result"  # Valid: out keys can have spaces
+                value="hello world"
             )
         ],
         edges=[]
@@ -782,18 +793,17 @@ def test_build_type_environment_out_key_with_spaces():
     assert symbols["my result"]["type"] == "string"
 
 
-def test_build_type_environment_out_key_with_hyphens():
-    """Test that 'out' keys with hyphens are accepted."""
+def test_build_type_environment_node_id_with_hyphens():
+    """Test that node IDs with hyphens are accepted."""
     spec = WorkflowSpec(
         version="2",
         triggers=[],
         nodes=[
             TaskNode(
-                id="task1",
+                id="task-result",  # Valid: node IDs can have hyphens
                 type="task",
                 kind=TaskKind.set,
-                value=42,
-                out="task-result"  # Valid: out keys can have hyphens
+                value=42
             )
         ],
         edges=[]
@@ -808,32 +818,29 @@ def test_build_type_environment_out_key_with_hyphens():
     assert symbols["task-result"]["type"] == "integer"
 
 
-def test_build_type_environment_out_key_with_special_chars():
-    """Test that 'out' keys with various special characters are accepted."""
+def test_build_type_environment_node_id_with_special_chars():
+    """Test that node IDs with various special characters are accepted."""
     spec = WorkflowSpec(
         version="2",
         triggers=[],
         nodes=[
             TaskNode(
-                id="task1",
+                id="data@2024",  # Valid: node IDs can have @ character
                 type="task",
                 kind=TaskKind.set,
-                value="test",
-                out="data@2024"  # Valid: out keys can have @ character
+                value="test"
             ),
             TaskNode(
-                id="task2",
+                id="result#value",  # Valid: node IDs can have # character
                 type="task",
                 kind=TaskKind.set,
-                value=100,
-                out="result#value"  # Valid: out keys can have # character
+                value=100
             ),
             TaskNode(
-                id="task3",
+                id="flag$state",  # Valid: node IDs can have $ character
                 type="task",
                 kind=TaskKind.set,
-                value=True,
-                out="flag$state"  # Valid: out keys can have $ character
+                value=True
             )
         ],
         edges=[]
@@ -849,25 +856,23 @@ def test_build_type_environment_out_key_with_special_chars():
     assert "flag$state" in symbols
 
 
-def test_build_type_environment_out_key_with_unicode():
-    """Test that 'out' keys with Unicode characters are accepted."""
+def test_build_type_environment_node_id_with_unicode():
+    """Test that node IDs with Unicode characters are accepted."""
     spec = WorkflowSpec(
         version="2",
         triggers=[],
         nodes=[
             TaskNode(
-                id="task1",
+                id="résultat",  # Valid: Unicode in node ID
                 type="task",
                 kind=TaskKind.set,
-                value="success",
-                out="résultat"  # Valid: Unicode in out key
+                value="success"
             ),
             TaskNode(
-                id="task2",
+                id="数据",  # Valid: Chinese characters in node ID
                 type="task",
                 kind=TaskKind.set,
-                value={"data": "value"},
-                out="数据"  # Valid: Chinese characters
+                value={"data": "value"}
             )
         ],
         edges=[]

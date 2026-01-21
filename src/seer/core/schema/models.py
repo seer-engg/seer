@@ -113,7 +113,6 @@ class Edge(StrictModel):
 class NodeBase(StrictModel):
     id: str = Field(min_length=1)
     type: str
-    out: Optional[str] = None
     meta: Dict[str, JSONValue] = Field(default_factory=dict)
 
 

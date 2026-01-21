@@ -107,14 +107,13 @@ async def test_if_branch_tool_runs_async_handler() -> None:
             {
                 "id": "conditional",
                 "type": "if",
-                "condition": "${TestTrigger.data.flag}",
+                "condition": "${test_trigger.data.flag}",
             },
             {
                 "id": "call_tool",
                 "type": "tool",
                 "tool": "test.echo",
-                "in": {"message": "${TestTrigger.data.payload}"},
-                "out": "tool_result",
+                "in": {"message": "${test_trigger.data.payload}"},
             },
         ],
         "edges": [
@@ -125,14 +124,14 @@ async def test_if_branch_tool_runs_async_handler() -> None:
 
     compiled = await _compile_workflow(spec, [tool_def])
     # Pass trigger envelope with event data and trigger_key for routing
-    trigger_envelope = {"trigger_key": "test.trigger", "title": "TestTrigger", "data": {"flag": True, "payload": "hello"}}
+    trigger_envelope = {"id": "test_trigger", "trigger_id": "test_trigger", "trigger_key": "test.trigger", "title": "TestTrigger", "data": {"flag": True, "payload": "hello"}}
     result = await compiled.ainvoke(
         config=None,
         context=None,
         trigger=trigger_envelope,
     )
 
-    assert result["tool_result"]["echo"] == "hello"
+    assert result["call_tool"]["echo"] == "hello"
     assert async_calls == ["hello"]
 
 
@@ -187,26 +186,23 @@ async def test_for_each_body_tools_use_async_handler() -> None:
                 "type": "task",
                 "kind": "set",
                 "value": ["alpha", "beta"],
-                "out": "items_state",
             },
             {
                 "id": "loop",
                 "type": "for_each",
-                "items": "${items_state}",
+                "items": "${items_seed}",
             },
             {
                 "id": "loop_tool",
                 "type": "tool",
                 "tool": "test.loop_echo",
                 "in": {"message": "${item}"},
-                "out": "loop_result",
             },
             {
                 "id": "done",
                 "type": "task",
                 "kind": "set",
                 "value": "finished",
-                "out": "status",
             },
         ],
         "edges": [
@@ -225,9 +221,9 @@ async def test_for_each_body_tools_use_async_handler() -> None:
     # Verify both loop iterations ran with async handler
     assert async_calls == ["alpha", "beta"]
     # Verify the loop completed and reached the done node
-    assert result["status"] == "finished"
+    assert result["done"] == "finished"
     # Verify the last iteration's result is in state
-    assert result["loop_result"]["echo"] == "beta-processed"
+    assert result["loop_tool"]["echo"] == "beta-processed"
 
 
 @pytest.mark.asyncio
@@ -251,7 +247,6 @@ async def test_trigger_routes_to_correct_node() -> None:
                 "type": "task",
                 "kind": "set",
                 "value": "webhook_handled",
-                "out": "result",
             },
         ],
         "edges": [
@@ -263,7 +258,7 @@ async def test_trigger_routes_to_correct_node() -> None:
     trigger_envelope = {"trigger_key": "webhook.received", "title": "Webhook"}
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
-    assert result["result"] == "webhook_handled"
+    assert result["handler"] == "webhook_handled"
 
 
 @pytest.mark.asyncio
@@ -295,14 +290,12 @@ async def test_multiple_triggers_route_to_different_nodes() -> None:
                 "type": "task",
                 "kind": "set",
                 "value": "push_handled",
-                "out": "result",
             },
             {
                 "id": "handle_pr",
                 "type": "task",
                 "kind": "set",
                 "value": "pr_handled",
-                "out": "result",
             },
         ],
         "edges": [
@@ -318,14 +311,14 @@ async def test_multiple_triggers_route_to_different_nodes() -> None:
         config=None, context=None,
         trigger={"trigger_id": "github_push", "trigger_key": "github.push", "title": "Push"}
     )
-    assert result["result"] == "push_handled"
+    assert result["handle_push"] == "push_handled"
 
     # Test PR trigger routes to handle_pr
     result = await compiled.ainvoke(
         config=None, context=None,
         trigger={"trigger_id": "github_pr", "trigger_key": "github.pr", "title": "PR"}
     )
-    assert result["result"] == "pr_handled"
+    assert result["handle_pr"] == "pr_handled"
 
 
 @pytest.mark.asyncio
@@ -357,7 +350,6 @@ async def test_multiple_triggers_route_to_same_node() -> None:
                 "type": "task",
                 "kind": "set",
                 "value": "shared_executed",
-                "out": "result",
             },
         ],
         "edges": [
@@ -374,7 +366,7 @@ async def test_multiple_triggers_route_to_same_node() -> None:
             config=None, context=None,
             trigger={"trigger_key": trigger_key, "title": title}
         )
-        assert result["result"] == "shared_executed"
+        assert result["shared_handler"] == "shared_executed"
 
 
 @pytest.mark.asyncio
@@ -398,7 +390,6 @@ async def test_unknown_trigger_key_fallback() -> None:
                 "type": "task",
                 "kind": "set",
                 "value": "handled",
-                "out": "result",
             },
         ],
         "edges": [
@@ -413,7 +404,7 @@ async def test_unknown_trigger_key_fallback() -> None:
         config=None, context=None,
         trigger={"trigger_key": "unknown_trigger", "title": "Known"}
     )
-    assert result["result"] == "handled"
+    assert result["handler"] == "handled"
 
 
 @pytest.mark.asyncio
@@ -448,8 +439,7 @@ async def test_trigger_data_accessible_after_routing() -> None:
                 "id": "echo",
                 "type": "task",
                 "kind": "set",
-                "value": "${Data.data.message}",
-                "out": "result",
+                "value": "${data_trigger.data.message}",
             },
         ],
         "edges": [
@@ -460,7 +450,7 @@ async def test_trigger_data_accessible_after_routing() -> None:
     compiled = await _compile_workflow(spec, [])
     result = await compiled.ainvoke(
         config=None, context=None,
-        trigger={"trigger_key": "data.trigger", "title": "Data", "data": {"message": "hello world"}}
+        trigger={"id": "data_trigger", "trigger_id": "data_trigger", "trigger_key": "data.trigger", "title": "Data", "data": {"message": "hello world"}}
     )
 
-    assert result["result"] == "hello world"
+    assert result["echo"] == "hello world"

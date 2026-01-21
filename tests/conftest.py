@@ -265,12 +265,11 @@ def complex_workflow_spec() -> dict:
                 "type": "task",
                 "kind": "set",
                 "value": {"result": {"success": True}},
-                "out": "task_1"
             },
             {
                 "id": "condition_1",
                 "type": "if",
-                "condition": "${task_1.success}",
+                "condition": "${task_1.result.success}",
             },
             {
                 "id": "task_2",

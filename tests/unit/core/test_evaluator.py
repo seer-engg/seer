@@ -189,12 +189,12 @@ def test_resolve_reference_from_trigger():
     ctx = EvaluationContext(
         state={},
         locals={},
-        trigger={"title": "MyTrigger", "data": {"message": "hello"}}
+        trigger={"id": "t1", "data": {"message": "hello"}}
     )
-    ref = parse_reference_string("MyTrigger")
+    ref = parse_reference_string("t1")
 
     result = resolve_reference(ctx, ref)
-    assert result == {"title": "MyTrigger", "data": {"message": "hello"}}
+    assert result == {"id": "t1", "data": {"message": "hello"}}
 
 
 def test_resolve_reference_trigger_property():
@@ -202,9 +202,9 @@ def test_resolve_reference_trigger_property():
     ctx = EvaluationContext(
         state={},
         locals={},
-        trigger={"title": "MyTrigger", "data": {"message": "hello"}}
+        trigger={"id": "t1", "data": {"message": "hello"}}
     )
-    ref = parse_reference_string("MyTrigger.data")
+    ref = parse_reference_string("t1.data")
 
     result = resolve_reference(ctx, ref)
     assert result == {"message": "hello"}
@@ -225,13 +225,13 @@ def test_resolve_reference_unknown_root():
 
 
 def test_resolve_reference_wrong_trigger():
-    """Test error when referencing wrong trigger title."""
+    """Test error when referencing wrong trigger ID."""
     ctx = EvaluationContext(
         state={},
         locals={},
-        trigger={"title": "TriggerA", "data": {}}
+        trigger={"id": "t1", "data": {}}
     )
-    ref = parse_reference_string("TriggerB")
+    ref = parse_reference_string("t2")
 
     with pytest.raises(EvaluationError, match="does not match the active trigger"):
         resolve_reference(ctx, ref)
