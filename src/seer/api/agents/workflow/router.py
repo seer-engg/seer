@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines # Reason: Complex API router with multiple endpoints, requires architectural refactoring to split
 """
 Workflow API router for CRUD and execution endpoints.
 """
@@ -7,12 +8,13 @@ from typing import Any, Dict, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from langchain_core.messages import HumanMessage
+from langgraph.types import Command
 
-from seer.agents.workflow_agent import (
+from seer.agents.nexus import (
     _current_thread_id,
     clear_proposed_spec_for_thread,
     clear_user_for_thread,
-    create_workflow_chat_agent,
+    create_nexus_chat_agent,
     extract_thinking_from_messages,
     get_proposed_spec_for_thread,
     set_user_for_thread,
@@ -63,7 +65,7 @@ from .services import (
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/workflow-agent", tags=["workflow-agent"])
+router = APIRouter(prefix="/nexus", tags=["nexus"])
 
 
 def _require_user(request: Request) -> User:
@@ -129,7 +131,7 @@ async def _verify_checkpoint_saved(checkpointer, thread_id: str) -> None:
             logger.info("Checkpoint verified for thread %s, checkpoint_id=%s", thread_id, checkpoint_id)
         else:
             logger.warning("No checkpoint found for thread %s after agent invocation", thread_id)
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Checkpoint verification is non-critical, log and continue
         logger.error("Error verifying checkpoint for thread %s: %s", thread_id, e, exc_info=True)
 
 
@@ -187,7 +189,7 @@ async def _maybe_create_proposal_from_spec(
 
 
 @router.post("/{workflow_id}/chat", response_model=ChatResponse)
-async def chat_with_workflow_endpoint(
+async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reason: Complex endpoint orchestrating multiple services, requires refactoring to service layer
     request: Request,
     workflow_id: str,
     chat_request: ChatRequest,
@@ -220,7 +222,7 @@ async def chat_with_workflow_endpoint(
     set_user_for_thread(thread_id, user)
 
     # Create agent
-    agent = create_workflow_chat_agent(
+    agent = create_nexus_chat_agent(
         model=model,
         checkpointer=checkpointer,
         workflow_state=workflow_state,
@@ -335,7 +337,7 @@ async def chat_with_workflow_endpoint(
             interrupt_required=interrupt_required,
             interrupt_data=interrupt_data,
         )
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught # Reason: API boundary, converting all exceptions to HTTP problem responses
         logger.error("Error in workflow chat: %s", e, exc_info=True)
         raise_problem(
             type_uri=VALIDATION_PROBLEM,
@@ -444,7 +446,7 @@ async def get_chat_session_endpoint(
 
 
 @router.post("/{workflow_id}/chat/resume")
-async def resume_chat_endpoint(
+async def resume_chat_endpoint(  # pylint: disable=too-many-locals # Reason: Complex endpoint with resume logic, requires refactoring to service layer
     request: Request,
     workflow_id: str,
     resume_data: Dict[str, Any],
@@ -455,8 +457,6 @@ async def resume_chat_endpoint(
     This endpoint handles resuming agent execution after a LangGraph interrupt.
     The resume_data should contain a Command object with resume information.
     """
-    from langgraph.types import Command
-
     logger.info("Resume request received: workflow_id=%s", workflow_id)
     user = _require_user(request)
 
@@ -501,7 +501,7 @@ async def resume_chat_endpoint(
     workflow_state = deepcopy(workflow_state_snapshot(workflow))
 
     # Create agent
-    agent = create_workflow_chat_agent(
+    agent = create_nexus_chat_agent(
         model=config.default_llm_model,
         checkpointer=checkpointer,
         workflow_state=workflow_state,
@@ -568,7 +568,7 @@ async def resume_chat_endpoint(
             thinking=thinking_steps if thinking_steps else None,
             interrupt_required=False,
         )
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught # Reason: API boundary, converting all exceptions to HTTP problem responses
         logger.error("Error resuming chat: %s", e, exc_info=True)
         raise_problem(
             type_uri=VALIDATION_PROBLEM,

@@ -10,7 +10,7 @@ async def upgrade(db: BaseDBAsyncClient) -> str:
     "project_name" VARCHAR(255) NOT NULL UNIQUE,
     "description" TEXT,
     "metadata" JSONB,
-    "is_active" BOOL NOT NULL DEFAULT True,
+    "is_active" BOOL NOT NULL DEFAULT true,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS "workflow_records" (
     "version" INT NOT NULL DEFAULT 1,
     "tags" JSONB,
     "meta" JSONB,
-    "last_compile_ok" BOOL NOT NULL DEFAULT False,
+    "last_compile_ok" BOOL NOT NULL DEFAULT false,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "user_id" INT NOT NULL REFERENCES "users" ("id") ON DELETE CASCADE
@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS "trigger_subscriptions" (
     "id" SERIAL NOT NULL PRIMARY KEY,
     "trigger_key" VARCHAR(255) NOT NULL,
     "provider_connection_id" INT,
-    "enabled" BOOL NOT NULL DEFAULT True,
+    "enabled" BOOL NOT NULL DEFAULT true,
     "filters" JSONB,
     "bindings" JSONB,
     "provider_config" JSONB,

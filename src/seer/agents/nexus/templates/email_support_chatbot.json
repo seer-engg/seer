@@ -1,0 +1,295 @@
+{
+  "name": "Email Support Chatbot with Knowledge Base",
+  "description": "Monitor support emails, fetch conversation threads, search knowledge base, generate contextual AI responses with proper email threading, log all interactions",
+  "tags": ["gmail", "support", "chatbot", "ai", "knowledge-base", "supabase", "conversation", "threading"],
+  "customization_guide": "Update support email filter query. Configure Supabase connection ID and table names (knowledge_base, conversation_logs). Adjust KB search parameters and matching criteria. Modify response generation prompts for your brand voice. Set appropriate confidence thresholds for KB matching.",
+  "spec": {
+    "version": "2",
+    "triggers": [
+      {
+        "id": "support_email_poll",
+        "key": "poll.gmail.email_received",
+        "title": "Support_Email_Monitor",
+        "provider": "gmail",
+        "mode": "polling",
+        "enabled": true,
+        "provider_config": {
+          "query": "in:inbox -in:spam label:support is:unread",
+          "max_results": 5
+        }
+      }
+    ],
+    "nodes": [
+      {
+        "id": "extract_message_info",
+        "type": "task",
+        "kind": "set",
+        "value": {
+          "message_id": "${trigger.data.id}",
+          "thread_id": "${trigger.data.thread_id}",
+          "from_email": "${trigger.data.from.email}",
+          "from_name": "${trigger.data.from.name}",
+          "subject": "${trigger.data.subject}"
+        },
+        "out": "message_info"
+      },
+      {
+        "id": "get_thread",
+        "type": "tool",
+        "tool": "gmail_get_thread",
+        "in": {
+          "thread_id": "${message_info.thread_id}"
+        },
+        "out": "thread"
+      },
+      {
+        "id": "extract_thread_context",
+        "type": "llm",
+        "model": "gpt-5-mini",
+        "temperature": 0.3,
+        "prompt": "Analyze this email thread and extract the key context:\n\nThread messages:\n${thread.messages}\n\nExtract:\n1. Customer's main issue or question\n2. Key topics and keywords for knowledge base search\n3. Conversation history summary\n4. Previous responses (if any)\n5. Current sentiment\n\nProvide 2-4 search keywords that would help find relevant KB articles.",
+        "out": "context",
+        "output": {
+          "mode": "json",
+          "schema": {
+            "json_schema": {
+              "type": "object",
+              "properties": {
+                "customer_issue": {
+                  "type": "string"
+                },
+                "search_keywords": {
+                  "type": "array",
+                  "items": {"type": "string"},
+                  "minItems": 2,
+                  "maxItems": 4
+                },
+                "conversation_summary": {
+                  "type": "string"
+                },
+                "sentiment": {
+                  "type": "string",
+                  "enum": ["positive", "neutral", "frustrated", "urgent"]
+                },
+                "is_followup": {
+                  "type": "boolean"
+                }
+              },
+              "required": ["customer_issue", "search_keywords", "conversation_summary", "sentiment", "is_followup"]
+            }
+          }
+        }
+      },
+      {
+        "id": "search_kb",
+        "type": "tool",
+        "tool": "supabase_table_query",
+        "in": {
+          "integration_resource_id": 123,
+          "table": "knowledge_base",
+          "select": "id,title,content,category,tags",
+          "match": {
+            "tags": "${context.search_keywords}"
+          },
+          "limit": 3
+        },
+        "out": "kb_results"
+      },
+      {
+        "id": "check_kb_results",
+        "type": "if",
+        "condition": "${kb_results.length > 0}"
+      },
+      {
+        "id": "generate_kb_response",
+        "type": "llm",
+        "model": "gpt-5",
+        "temperature": 0.7,
+        "prompt": "Generate a helpful response to this support email using the knowledge base articles:\n\n**Customer Issue:**\n${context.customer_issue}\n\n**Thread History:**\n${context.conversation_summary}\n\n**Customer Sentiment:** ${context.sentiment}\n**Is Follow-up:** ${context.is_followup}\n\n**Relevant KB Articles:**\n${kb_results}\n\n**Instructions:**\n1. Reference the KB articles naturally in your response\n2. Provide step-by-step guidance if needed\n3. Match the customer's sentiment (be empathetic if frustrated, enthusiastic if positive)\n4. Keep the response concise but complete\n5. Include relevant links or article titles\n6. If this is a follow-up, acknowledge previous messages\n\nGenerate a professional, helpful response.",
+        "out": "kb_response_data",
+        "output": {
+          "mode": "json",
+          "schema": {
+            "json_schema": {
+              "type": "object",
+              "properties": {
+                "response_body": {
+                  "type": "string"
+                },
+                "kb_articles_used": {
+                  "type": "array",
+                  "items": {"type": "string"}
+                },
+                "confidence": {
+                  "type": "string",
+                  "enum": ["high", "medium", "low"]
+                }
+              },
+              "required": ["response_body", "kb_articles_used", "confidence"]
+            }
+          }
+        }
+      },
+      {
+        "id": "send_kb_reply",
+        "type": "tool",
+        "tool": "gmail_send_email",
+        "in": {
+          "to": ["${message_info.from_email}"],
+          "subject": "Re: ${message_info.subject}",
+          "body_text": "${kb_response_data.response_body}",
+          "thread_id": "${message_info.thread_id}",
+          "in_reply_to": "${message_info.message_id}"
+        },
+        "out": "kb_email_result"
+      },
+      {
+        "id": "log_kb_conversation",
+        "type": "tool",
+        "tool": "supabase_table_insert",
+        "in": {
+          "integration_resource_id": 123,
+          "table": "conversation_logs",
+          "record": {
+            "thread_id": "${message_info.thread_id}",
+            "customer_email": "${message_info.from_email}",
+            "customer_issue": "${context.customer_issue}",
+            "response_text": "${kb_response_data.response_body}",
+            "kb_used": true,
+            "kb_articles": "${kb_response_data.kb_articles_used}",
+            "confidence": "${kb_response_data.confidence}",
+            "sentiment": "${context.sentiment}"
+          }
+        },
+        "out": "kb_log_result"
+      },
+      {
+        "id": "generate_general_response",
+        "type": "llm",
+        "model": "gpt-5",
+        "temperature": 0.7,
+        "prompt": "Generate a helpful response to this support email (no specific KB articles found):\n\n**Customer Issue:**\n${context.customer_issue}\n\n**Thread History:**\n${context.conversation_summary}\n\n**Customer Sentiment:** ${context.sentiment}\n**Is Follow-up:** ${context.is_followup}\n\n**Instructions:**\n1. Provide the best general guidance you can\n2. Be honest if you're not certain about something\n3. Suggest escalation to human support if the issue is complex\n4. Match the customer's sentiment appropriately\n5. If this is a follow-up, acknowledge previous messages\n6. Keep the response professional and helpful\n\nGenerate a thoughtful response.",
+        "out": "general_response_data",
+        "output": {
+          "mode": "json",
+          "schema": {
+            "json_schema": {
+              "type": "object",
+              "properties": {
+                "response_body": {
+                  "type": "string"
+                },
+                "escalation_suggested": {
+                  "type": "boolean"
+                },
+                "confidence": {
+                  "type": "string",
+                  "enum": ["high", "medium", "low"]
+                }
+              },
+              "required": ["response_body", "escalation_suggested", "confidence"]
+            }
+          }
+        }
+      },
+      {
+        "id": "send_general_reply",
+        "type": "tool",
+        "tool": "gmail_send_email",
+        "in": {
+          "to": ["${message_info.from_email}"],
+          "subject": "Re: ${message_info.subject}",
+          "body_text": "${general_response_data.response_body}",
+          "thread_id": "${message_info.thread_id}",
+          "in_reply_to": "${message_info.message_id}"
+        },
+        "out": "general_email_result"
+      },
+      {
+        "id": "log_general_conversation",
+        "type": "tool",
+        "tool": "supabase_table_insert",
+        "in": {
+          "integration_resource_id": 123,
+          "table": "conversation_logs",
+          "record": {
+            "thread_id": "${message_info.thread_id}",
+            "customer_email": "${message_info.from_email}",
+            "customer_issue": "${context.customer_issue}",
+            "response_text": "${general_response_data.response_body}",
+            "kb_used": false,
+            "confidence": "${general_response_data.confidence}",
+            "escalation_suggested": "${general_response_data.escalation_suggested}",
+            "sentiment": "${context.sentiment}"
+          }
+        },
+        "out": "general_log_result"
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "extract_message_info",
+        "target": "get_thread",
+        "type": "default"
+      },
+      {
+        "id": "e2",
+        "source": "get_thread",
+        "target": "extract_thread_context",
+        "type": "default"
+      },
+      {
+        "id": "e3",
+        "source": "extract_thread_context",
+        "target": "search_kb",
+        "type": "default"
+      },
+      {
+        "id": "e4",
+        "source": "search_kb",
+        "target": "check_kb_results",
+        "type": "default"
+      },
+      {
+        "id": "e5_kb_true",
+        "source": "check_kb_results",
+        "target": "generate_kb_response",
+        "type": "conditional_true"
+      },
+      {
+        "id": "e6_kb",
+        "source": "generate_kb_response",
+        "target": "send_kb_reply",
+        "type": "default"
+      },
+      {
+        "id": "e7_kb",
+        "source": "send_kb_reply",
+        "target": "log_kb_conversation",
+        "type": "default"
+      },
+      {
+        "id": "e5_kb_false",
+        "source": "check_kb_results",
+        "target": "generate_general_response",
+        "type": "conditional_false"
+      },
+      {
+        "id": "e8_general",
+        "source": "generate_general_response",
+        "target": "send_general_reply",
+        "type": "default"
+      },
+      {
+        "id": "e9_general",
+        "source": "send_general_reply",
+        "target": "log_general_conversation",
+        "type": "default"
+      }
+    ],
+    "meta": {
+      "description": "Thread-aware email support chatbot with knowledge base integration and conversation logging"
+    }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "name": "Multi-Tool Workflow - Email to Slack",
+  "description": "Search Gmail then log to Supabase - tests multi-tool discovery and chaining",
+  "tags": ["gmail", "supabase", "chaining", "logging"],
+  "customization_guide": "Tests RLM ability to discover multiple tools and understand workflow dependencies.",
+  "queries": [
+    "search email and save to database",
+    "find Gmail messages then log to Supabase",
+    "get emails about bugs and store in database"
+  ],
+  "expected_tools": ["gmail_read_emails", "supabase_table_insert"],
+  "spec": {
+    "version": "2",
+    "nodes": [
+      {
+        "id": "search_emails",
+        "type": "tool",
+        "tool": "gmail_read_emails",
+        "in": {
+          "q": "urgent",
+          "max_results": 3
+        },
+        "out": "email_results"
+      },
+      {
+        "id": "log_to_database",
+        "type": "tool",
+        "tool": "supabase_table_insert",
+        "in": {
+          "integration_resource_id": 123,
+          "table": "email_logs",
+          "records": [{"query": "urgent", "count": 3, "timestamp": "now"}]
+        },
+        "out": "insert_response"
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "search_emails",
+        "target": "log_to_database",
+        "type": "default"
+      }
+    ]
+  }
+}

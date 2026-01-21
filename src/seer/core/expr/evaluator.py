@@ -44,16 +44,16 @@ def _resolve_root(ctx: EvaluationContext, root: str) -> Any:
     if root in ctx.state:
         return ctx.state[root]
 
-    # Check if root matches the current trigger's title
+    # Check if root matches the current trigger's ID
     if ctx.trigger is not None:
-        trigger_title = ctx.trigger.get("title")
-        if root == trigger_title:
+        trigger_id = ctx.trigger.get("id")
+        if root == trigger_id:
             return ctx.trigger
 
         # Provide helpful error if referencing wrong trigger
         raise EvaluationError(
-            f"Reference root '{root}' does not match the active trigger '{trigger_title}'. "
-            f"Use ${{{trigger_title}.*}} to reference the current trigger's data."
+            f"Reference root '{root}' does not match the active trigger ID '{trigger_id}'. "
+            f"Use ${{{trigger_id}}} or ${{{trigger_id}.*}} to reference the trigger's data."
         )
 
     if ctx.config and root == "config":

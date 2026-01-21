@@ -39,7 +39,7 @@ def build_type_environment(
 ) -> TypeEnvironment:
     env = TypeEnvironment()
 
-    # Register each trigger by its title
+    # Register each trigger by its ID
     if spec.triggers:
         _register_triggers(spec.triggers, env)
 
@@ -55,44 +55,27 @@ def build_type_environment(
 
 def _register_triggers(triggers: List[TriggerSpec], env: TypeEnvironment) -> None:
     """
-    Register each trigger by its title as a symbol in the type environment.
+    Register each trigger by its ID as a symbol in the type environment.
 
-    Validates that all trigger titles are unique and are valid identifiers,
-    then registers each trigger's event schema under its title for reference resolution.
+    Registers each trigger's event schema under its ID for reference resolution.
+    Trigger IDs are already validated to be unique by WorkflowSpec validation.
+
+    Note: Trigger IDs can contain spaces, hyphens, special characters, and Unicode.
     """
-    seen_titles = set()
-
     for trigger in triggers:
-        # Validate title is a valid identifier
-        if not VALID_IDENTIFIER.match(trigger.title):
-            raise TypeEnvironmentError(
-                f"Invalid trigger title '{trigger.title}'. Titles must be valid identifiers "
-                f"(start with letter/underscore, contain only alphanumeric/underscore). "
-                f"Trigger ID: '{trigger.id}', Key: '{trigger.key}'. "
-                f"Examples: 'GmailInbox', 'Gmail_Inbox', 'webhook_1'"
-            )
-
-        # Validate title uniqueness
-        if trigger.title in seen_titles:
-            raise TypeEnvironmentError(
-                f"Duplicate trigger title '{trigger.title}'. Each trigger must have a unique title. "
-                f"Trigger ID: '{trigger.id}', Key: '{trigger.key}'"
-            )
-        seen_titles.add(trigger.title)
-
         # Get event schema
         event_schema = trigger.schemas.event if trigger.schemas.event else {
             "type": "object",
             "additionalProperties": True
         }
 
-        # Register title as symbol
-        env.register(trigger.title, event_schema)
+        # Register ID as symbol
+        env.register(trigger.id, event_schema)
 
         # Also register sub-properties for convenience
         properties = event_schema.get("properties", {})
         for name, schema in properties.items():
-            env.register(f"{trigger.title}.{name}", schema)
+            env.register(f"{trigger.id}.{name}", schema)
 
 
 def _register_loop_variables(spec: WorkflowSpec, env: TypeEnvironment) -> None:
@@ -124,7 +107,7 @@ def _process_node(
 ) -> None:
     if isinstance(node, TaskNode):
         schema = _schema_for_task(node, schema_registry)
-        _register_symbol(env, node.out, schema)
+        _register_symbol(env, node.id, schema)
         return
 
     if isinstance(node, ToolNode):
@@ -132,23 +115,22 @@ def _process_node(
         schema = tool_def.output_schema
         if node.expect_output is not None:
             expected = schema_from_output_contract(node.expect_output, schema_registry)
-            _ensure_schema_match(schema, expected, symbol=node.out or node.id)
-        _register_symbol(env, node.out, schema)
+            _ensure_schema_match(schema, expected, symbol=node.id)
+        _register_symbol(env, node.id, schema)
         return
 
     if isinstance(node, LLMNode):
         schema = schema_from_output_contract(node.output, schema_registry)
-        _register_symbol(env, node.out, schema)
+        _register_symbol(env, node.id, schema)
         return
 
     if isinstance(node, ForEachNode):
-        # Register output schema if the loop has an out key
-        if node.out:
-            if node.output:
-                loop_schema = schema_from_output_contract(node.output, schema_registry)
-            else:
-                loop_schema = {"type": "array"}
-            _register_symbol(env, node.out, loop_schema)
+        # Register loop output schema using node ID
+        if node.output:
+            loop_schema = schema_from_output_contract(node.output, schema_registry)
+        else:
+            loop_schema = {"type": "array"}
+        _register_symbol(env, node.id, loop_schema)
         return
 
     # IfNode doesn't produce output directly (branches do)

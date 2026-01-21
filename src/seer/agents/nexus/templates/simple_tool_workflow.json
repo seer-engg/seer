@@ -1,0 +1,28 @@
+{
+  "name": "Simple Tool Workflow - Gmail Search",
+  "description": "Search Gmail messages - tests single tool discovery",
+  "tags": ["gmail", "search", "simple"],
+  "customization_guide": "Basic workflow for testing tool discovery. Tests RLM ability to find 'gmail_search_messages' tool.",
+  "queries": [
+    "search my email for bugs",
+    "find messages about issues",
+    "look through Gmail for problem reports"
+  ],
+  "expected_tools": ["gmail_read_emails"],
+  "spec": {
+    "version": "2",
+    "nodes": [
+      {
+        "id": "search_emails",
+        "type": "tool",
+        "tool": "gmail_read_emails",
+        "in": {
+          "q": "bug OR issue",
+          "max_results": 5
+        },
+        "out": "email_results"
+      }
+    ],
+    "edges": []
+  }
+}
