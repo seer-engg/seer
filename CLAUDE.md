@@ -18,11 +18,7 @@
 - Tool registry: `src/seer/tools/` provides `BaseTool`, registry helpers, executor, and credential resolution; discovery is powered by `src/seer/tool_hub/`.
 - Trigger polling: trigger catalog + subscription management lives under `src/seer/api/workflows/services` and `src/seer/services/workflows/triggers.py`; Taskiq worker (`src/seer/worker/`) polls and dispatches runs.
 
-## Build, Test, and Development Commands
-- `docker compose up`: start Postgres, Redis, API, worker, and frontend via Docker.
-- `uv run uvicorn seer.api.main:app --reload --port 8000`: run the API locally without Docker.
-- `uv run taskiq worker seer.worker.broker:broker`: run the Taskiq background worker locally.
-- `uv run pytest` (or `pytest src/seer/core/tests`): run the Python test suite.
+
 
 ## Coding Style & Naming Conventions
 - Python 3.12, 4-space indentation, `snake_case` for functions/modules, `PascalCase` for classes.
@@ -31,8 +27,10 @@
 
 ## Testing Guidelines
 - `pytest` + `pytest-asyncio` (asyncio mode is `auto`).
-- Tests are named `test_*.py`; prefer `src/seer/core/tests/` or module-level test folders.
+- Tests are named `test_*.py`;
 - Add regression tests for bug fixes and workflow schema/validation changes.
+- all tests are in /tests
+- for every change related to `/src/seer/core` make sure to add concerned unit tests and full json spec tests and validate that the changes passess all the tests ( regression testing )
 
 ## Adding Tools, Triggers, and Workflow Nodes
 - New tool: add a `BaseTool` in `src/seer/tools/<provider>/`, register via `register_tool(...)`, and ensure the module is imported by the loader. Provide a JSON schema in `get_parameters_schema()`.
@@ -42,7 +40,3 @@
 ## Commit & Pull Request Guidelines
 - Commit messages follow Conventional Commits (e.g., `fix:`, `feat:`, `chore:`) based on recent history.
 - PRs should include: a concise summary, linked issue (if any), testing notes, and screenshots for UI/doc changes.
-
-## Security & Configuration Tips
-- Keep secrets in `.env` (e.g., `OPENAI_API_KEY`, `GOOGLE_CLIENT_SECRET`) and never commit them.
-- Docker compose injects `DATABASE_URL` and `REDIS_URL`; keep local overrides in `.env`.
