@@ -88,7 +88,7 @@ async def supervisor_router(state: SupervisorState) -> str:
         "discovered_tools_status": "available" if state.get("discovered_tools") else "not discovered",
         "discovered_triggers_status": "available" if state.get("discovered_triggers") else "not discovered",
         "workflow_draft_status": "exists" if state.get("workflow_draft") else "not created",
-        "validation_result_status": str(state.get("validation_result", {}).get("status", "not validated")),
+        "validation_result_status": str((state.get("validation_result") or {}).get("status", "not validated")),
         "workflow_complete": state.get("workflow_complete", False)
     }
 
