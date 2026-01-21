@@ -90,7 +90,7 @@ def test_tier_limit_properties():
     # PRO tier
     assert pro_limits.has_unlimited_workflows
     assert not pro_limits.has_unlimited_runs
-    assert pro_limits.has_unlimited_chat
+    assert not pro_limits.has_unlimited_chat  # PRO has 100 chat messages, not unlimited
     assert not pro_limits.is_chat_disabled
     assert not pro_limits.has_time_limit
 
@@ -157,7 +157,7 @@ def test_constants_match_tier_limits():
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_subscription_resolver_no_subscription():
+async def test_subscription_resolver_no_subscription(db_engine):
     """
     Integration test: Test resolving tier for user without subscription.
 
@@ -184,7 +184,7 @@ async def test_subscription_resolver_no_subscription():
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_usage_tracking_workflow_count():
+async def test_usage_tracking_workflow_count(db_engine):
     """
     Integration test: Test workflow counter operations.
 
