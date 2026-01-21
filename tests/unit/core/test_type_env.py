@@ -143,46 +143,54 @@ def test_register_triggers_duplicate_title_error():
         _register_triggers(triggers, env)
 
 
-def test_register_triggers_invalid_title_error():
-    """Test that invalid trigger titles raise TypeEnvironmentError."""
+def test_register_triggers_with_hyphen_in_title():
+    """Test that trigger titles with hyphens are now accepted."""
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
             id="t1",
             key="test.trigger",
-            title="invalid-title",  # Invalid: contains hyphen
+            title="invalid-title",  # Valid: hyphens are now allowed
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
         )
     ]
 
-    with pytest.raises(TypeEnvironmentError, match="Invalid trigger title 'invalid-title'"):
-        _register_triggers(triggers, env)
+    # Should not raise an error
+    _register_triggers(triggers, env)
+
+    # Verify trigger is registered
+    symbols = env.as_dict()
+    assert "invalid-title" in symbols
 
 
-@pytest.mark.parametrize("invalid_title", [
+@pytest.mark.parametrize("valid_title", [
     "1StartWithNumber",
     "has-hyphen",
     "has.dot",
     "has space",
 ])
-def test_register_triggers_various_invalid_titles(invalid_title):
-    """Test various invalid trigger title formats."""
+def test_register_triggers_various_special_char_titles(valid_title):
+    """Test that trigger titles can now contain various special characters."""
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
             id="t1",
             key="test.trigger",
-            title=invalid_title,
+            title=valid_title,  # All special chars are now valid
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
         )
     ]
 
-    with pytest.raises(TypeEnvironmentError, match=f"Invalid trigger title '{invalid_title}'"):
-        _register_triggers(triggers, env)
+    # Should not raise an error
+    _register_triggers(triggers, env)
+
+    # Verify trigger is registered
+    symbols = env.as_dict()
+    assert valid_title in symbols
 
 
 # =============================================================================
@@ -528,130 +536,169 @@ def test_build_type_environment_foreach_without_output():
 # =============================================================================
 
 
-def test_register_triggers_title_with_spaces_fails():
-    """Test that trigger titles with spaces are rejected during registration."""
+def test_register_triggers_title_with_spaces():
+    """Test that trigger titles with spaces are now accepted."""
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
             id="t1",
             key="test.trigger",
-            title="My Trigger",  # Invalid: contains space
+            title="My Trigger",  # Valid: spaces are now allowed
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
         )
     ]
 
-    with pytest.raises(TypeEnvironmentError, match="Invalid trigger title 'My Trigger'"):
-        _register_triggers(triggers, env)
+    # Should not raise an error
+    _register_triggers(triggers, env)
+
+    # Verify trigger is registered
+    symbols = env.as_dict()
+    assert "My Trigger" in symbols
 
 
-def test_register_triggers_title_with_multiple_spaces_fails():
-    """Test that trigger titles with multiple spaces are rejected."""
+def test_register_triggers_title_with_multiple_spaces():
+    """Test that trigger titles with multiple spaces are now accepted."""
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
             id="t1",
             key="test.trigger",
-            title="My  Complex  Trigger  Name",  # Invalid: multiple spaces
+            title="My  Complex  Trigger  Name",  # Valid: multiple spaces allowed
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
         )
     ]
 
-    with pytest.raises(TypeEnvironmentError, match="Invalid trigger title"):
-        _register_triggers(triggers, env)
+    # Should not raise an error
+    _register_triggers(triggers, env)
+
+    # Verify trigger is registered
+    symbols = env.as_dict()
+    assert "My  Complex  Trigger  Name" in symbols
 
 
-def test_register_triggers_title_with_hyphen_fails():
-    """Test that trigger titles with hyphens are rejected."""
+def test_register_triggers_title_with_another_hyphen():
+    """Test that trigger titles with hyphens are accepted."""
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
             id="t1",
             key="test.trigger",
-            title="my-trigger",  # Invalid: contains hyphen
+            title="my-trigger",  # Valid: hyphens allowed
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
         )
     ]
 
-    with pytest.raises(TypeEnvironmentError, match="Invalid trigger title 'my-trigger'"):
-        _register_triggers(triggers, env)
+    # Should not raise an error
+    _register_triggers(triggers, env)
+
+    # Verify trigger is registered
+    symbols = env.as_dict()
+    assert "my-trigger" in symbols
 
 
-def test_register_triggers_title_with_dot_fails():
-    """Test that trigger titles with dots are rejected."""
+def test_register_triggers_title_with_dot():
+    """
+    Test that trigger titles with dots are accepted during registration.
+
+    Note: While dots are allowed in trigger titles, they can create ambiguity
+    when used in references because dots have special meaning for property access.
+    For example, if a trigger title is "trigger.name" and you reference
+    "${trigger.name.property}", it's ambiguous whether this means:
+    - The trigger "trigger.name" with property "property", or
+    - The trigger "trigger" with nested property "name.property"
+
+    It's recommended to avoid dots in trigger titles to prevent confusion.
+    """
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
             id="t1",
             key="test.trigger",
-            title="trigger.name",  # Invalid: contains dot
+            title="trigger.name",  # Valid: dots allowed, but may cause ambiguity
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
         )
     ]
 
-    with pytest.raises(TypeEnvironmentError, match="Invalid trigger title 'trigger.name'"):
-        _register_triggers(triggers, env)
+    # Should not raise an error during registration
+    _register_triggers(triggers, env)
+
+    # Verify trigger is registered
+    symbols = env.as_dict()
+    assert "trigger.name" in symbols
 
 
-def test_register_triggers_title_with_at_sign_fails():
-    """Test that trigger titles with @ sign are rejected."""
+def test_register_triggers_title_with_at_sign():
+    """Test that trigger titles with @ sign are now accepted."""
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
             id="t1",
             key="test.trigger",
-            title="trigger@email",  # Invalid: contains @
+            title="trigger@email",  # Valid: @ allowed
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
         )
     ]
 
-    with pytest.raises(TypeEnvironmentError, match="Invalid trigger title 'trigger@email'"):
-        _register_triggers(triggers, env)
+    # Should not raise an error
+    _register_triggers(triggers, env)
+
+    # Verify trigger is registered
+    symbols = env.as_dict()
+    assert "trigger@email" in symbols
 
 
-def test_register_triggers_title_starts_with_number_fails():
-    """Test that trigger titles starting with a number are rejected."""
+def test_register_triggers_title_starts_with_number():
+    """Test that trigger titles starting with a number are now accepted."""
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
             id="t1",
             key="test.trigger",
-            title="1trigger",  # Invalid: starts with number
+            title="1trigger",  # Valid: can start with number
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
         )
     ]
 
-    with pytest.raises(TypeEnvironmentError, match="Invalid trigger title '1trigger'"):
-        _register_triggers(triggers, env)
+    # Should not raise an error
+    _register_triggers(triggers, env)
+
+    # Verify trigger is registered
+    symbols = env.as_dict()
+    assert "1trigger" in symbols
 
 
-def test_register_triggers_title_with_unicode_fails():
-    """Test that trigger titles with Unicode characters are rejected."""
+def test_register_triggers_title_with_unicode():
+    """Test that trigger titles with Unicode characters are now accepted."""
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
             id="t1",
             key="test.trigger",
-            title="触发器",  # Invalid: Unicode characters
+            title="触发器",  # Valid: Unicode allowed
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
         )
     ]
 
-    with pytest.raises(TypeEnvironmentError, match="Invalid trigger title '触发器'"):
-        _register_triggers(triggers, env)
+    # Should not raise an error
+    _register_triggers(triggers, env)
+
+    # Verify trigger is registered
+    symbols = env.as_dict()
+    assert "触发器" in symbols
 
 
 @pytest.mark.parametrize("special_char_title", [
@@ -682,23 +729,26 @@ def test_register_triggers_title_with_unicode_fails():
     "trigger~tilde",
     "trigger`backtick",
 ])
-def test_register_triggers_title_with_various_special_chars_fails(special_char_title):
-    """Test that trigger titles with various special characters are rejected."""
+def test_register_triggers_title_with_various_special_chars(special_char_title):
+    """Test that trigger titles with various special characters are now accepted."""
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
             id="t1",
             key="test.trigger",
-            title=special_char_title,
+            title=special_char_title,  # Valid: all special chars allowed
             provider="test",
             mode="polling",
             schemas=TriggerSchemas(event={})
         )
     ]
 
-    # Just match on "Invalid trigger title" without the specific title to avoid regex escaping issues
-    with pytest.raises(TypeEnvironmentError, match="Invalid trigger title"):
-        _register_triggers(triggers, env)
+    # Should not raise an error
+    _register_triggers(triggers, env)
+
+    # Verify trigger is registered
+    symbols = env.as_dict()
+    assert special_char_title in symbols
 
 
 # =============================================================================

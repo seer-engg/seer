@@ -13,7 +13,6 @@ from seer.core.compiler.lower_control_flow import build_execution_plan
 from seer.core.compiler.parse import parse_workflow_spec
 from seer.core.compiler.type_env import build_type_environment
 from seer.core.compiler.validate_refs import validate_references
-from seer.core.errors import TypeEnvironmentError
 from seer.core.registry.model_registry import ModelRegistry
 from seer.core.registry.tool_registry import ToolDefinition, ToolRegistry
 from seer.core.runtime.execution import CompiledWorkflow
@@ -311,15 +310,16 @@ async def test_workflow_with_foreach_special_out_keys():
 # =============================================================================
 
 
-def test_workflow_with_trigger_title_spaces_fails():
-    """Test that trigger titles with spaces fail during compilation."""
+@pytest.mark.asyncio
+async def test_workflow_with_trigger_title_spaces():
+    """Test that trigger titles with spaces are now accepted and work in full workflow."""
     spec = {
         "version": "2",
         "triggers": [
             {
                 "id": "t1",
                 "key": "test.trigger",
-                "title": "My Trigger",  # Invalid: spaces
+                "title": "My Trigger",  # Valid: spaces now allowed
                 "provider": "test",
                 "mode": "polling",
                 "schemas": {
@@ -330,88 +330,117 @@ def test_workflow_with_trigger_title_spaces_fails():
                 }
             }
         ],
-        "nodes": [],
+        "nodes": [
+            {
+                "id": "task1",
+                "type": "task",
+                "kind": "set",
+                "value": "${My Trigger.data}",  # Reference with space
+                "out": "result"
+            }
+        ],
         "edges": []
     }
 
-    schema_registry = SchemaRegistry()
-    tool_registry = ToolRegistry()
+    # Should compile successfully
+    workflow = await _compile_workflow(spec)
 
-    # Should fail during type environment building
-    parsed_spec = parse_workflow_spec(spec)
-    with pytest.raises(TypeEnvironmentError, match="Invalid trigger title 'My Trigger'"):
-        build_type_environment(
-            parsed_spec,
-            schema_registry=schema_registry,
-            tool_registry=tool_registry,
-        )
+    # Verify trigger is registered in type environment
+    assert "My Trigger" in workflow.type_env
+    assert "My Trigger.data" in workflow.type_env
+    assert "result" in workflow.type_env
 
 
-def test_workflow_with_trigger_title_hyphen_fails():
-    """Test that trigger titles with hyphens fail during compilation."""
+@pytest.mark.asyncio
+async def test_workflow_with_trigger_title_hyphen():
+    """Test that trigger titles with hyphens are now accepted and work in full workflow."""
     spec = {
         "version": "2",
         "triggers": [
             {
                 "id": "t1",
                 "key": "test.trigger",
-                "title": "my-trigger",  # Invalid: hyphen
+                "title": "my-trigger",  # Valid: hyphens now allowed
                 "provider": "test",
                 "mode": "polling",
-                "schemas": {"event": {}}
+                "schemas": {
+                    "event": {
+                        "type": "object",
+                        "properties": {"value": {"type": "number"}}
+                    }
+                }
             }
         ],
-        "nodes": [],
+        "nodes": [
+            {
+                "id": "task1",
+                "type": "task",
+                "kind": "set",
+                "value": "${my-trigger.value}",  # Reference with hyphen
+                "out": "result"
+            }
+        ],
         "edges": []
     }
 
-    schema_registry = SchemaRegistry()
-    tool_registry = ToolRegistry()
+    # Should compile successfully
+    workflow = await _compile_workflow(spec)
 
-    parsed_spec = parse_workflow_spec(spec)
-    with pytest.raises(TypeEnvironmentError, match="Invalid trigger title 'my-trigger'"):
-        build_type_environment(
-            parsed_spec,
-            schema_registry=schema_registry,
-            tool_registry=tool_registry,
-        )
+    # Verify trigger is registered in type environment
+    assert "my-trigger" in workflow.type_env
+    assert "my-trigger.value" in workflow.type_env
+    assert "result" in workflow.type_env
 
 
-@pytest.mark.parametrize("invalid_title", [
+@pytest.mark.parametrize("valid_title", [
     "trigger@email",
-    "trigger.name",
+    # Note: "trigger.name" is omitted because dots have special meaning in property access
+    # and would be ambiguous (trigger.name.message could be parsed as trigger["name"]["message"])
     "trigger:colon",
     "1trigger",
     "trigger!",
+    "数据触发器",  # Unicode
+    "trigger with spaces",
 ])
-def test_workflow_with_trigger_title_special_chars_fails(invalid_title):
-    """Test that trigger titles with various special characters fail during compilation."""
+@pytest.mark.asyncio
+async def test_workflow_with_trigger_title_special_chars(valid_title):
+    """Test that trigger titles with various special characters are now accepted."""
     spec = {
         "version": "2",
         "triggers": [
             {
                 "id": "t1",
                 "key": "test.trigger",
-                "title": invalid_title,
+                "title": valid_title,  # All special chars now valid
                 "provider": "test",
                 "mode": "polling",
-                "schemas": {"event": {}}
+                "schemas": {
+                    "event": {
+                        "type": "object",
+                        "properties": {"message": {"type": "string"}}
+                    }
+                }
             }
         ],
-        "nodes": [],
+        "nodes": [
+            {
+                "id": "task1",
+                "type": "task",
+                "kind": "set",
+                "value": f"${{{valid_title}.message}}",  # Reference with special char
+                "out": "result"
+            }
+        ],
         "edges": []
     }
 
-    schema_registry = SchemaRegistry()
-    tool_registry = ToolRegistry()
+    # Should compile successfully
+    workflow = await _compile_workflow(spec)
 
-    parsed_spec = parse_workflow_spec(spec)
-    with pytest.raises(TypeEnvironmentError, match=f"Invalid trigger title '{invalid_title}'"):
-        build_type_environment(
-            parsed_spec,
-            schema_registry=schema_registry,
-            tool_registry=tool_registry,
-        )
+    # Verify trigger is registered in type environment
+    assert valid_title in workflow.type_env
+    assert f"{valid_title}.message" in workflow.type_env
+    assert "result" in workflow.type_env
 
 
 # =============================================================================
@@ -552,3 +581,145 @@ async def test_workflow_template_strings_with_special_out_keys():
     assert "last name" in workflow.type_env
     assert "user@age" in workflow.type_env
     assert "user#profile" in workflow.type_env
+
+
+@pytest.mark.asyncio
+async def test_workflow_with_multiple_triggers_special_chars():
+    """Test workflow with multiple triggers having special characters in titles."""
+    spec = {
+        "version": "2",
+        "triggers": [
+            {
+                "id": "t1",
+                "key": "gmail.inbox",
+                "title": "Gmail Inbox",  # Space
+                "provider": "gmail",
+                "mode": "polling",
+                "schemas": {
+                    "event": {
+                        "type": "object",
+                        "properties": {"subject": {"type": "string"}}
+                    }
+                }
+            },
+            {
+                "id": "t2",
+                "key": "slack.message",
+                "title": "slack-message",  # Hyphen
+                "provider": "slack",
+                "mode": "webhook",
+                "schemas": {
+                    "event": {
+                        "type": "object",
+                        "properties": {"text": {"type": "string"}}
+                    }
+                }
+            },
+            {
+                "id": "t3",
+                "key": "custom.trigger",
+                "title": "trigger@webhook",  # @ character
+                "provider": "custom",
+                "mode": "webhook",
+                "schemas": {
+                    "event": {
+                        "type": "object",
+                        "properties": {"payload": {"type": "object"}}
+                    }
+                }
+            }
+        ],
+        "nodes": [
+            {
+                "id": "task1",
+                "type": "task",
+                "kind": "set",
+                "value": "Email: ${Gmail Inbox.subject}, Slack: ${slack-message.text}",
+                "out": "combined message"
+            },
+            {
+                "id": "if1",
+                "type": "if",
+                "condition": "${trigger@webhook.payload} != null"
+            }
+        ],
+        "edges": [
+            {"id": "edge_task1_if1", "source": "task1", "target": "if1", "type": "default"}
+        ]
+    }
+
+    # Should compile successfully
+    workflow = await _compile_workflow(spec)
+
+    # Verify all triggers are registered with their special character titles
+    assert "Gmail Inbox" in workflow.type_env
+    assert "Gmail Inbox.subject" in workflow.type_env
+    assert "slack-message" in workflow.type_env
+    assert "slack-message.text" in workflow.type_env
+    assert "trigger@webhook" in workflow.type_env
+    assert "trigger@webhook.payload" in workflow.type_env
+    assert "combined message" in workflow.type_env
+
+
+@pytest.mark.asyncio
+async def test_workflow_with_unicode_trigger_titles():
+    """Test workflow with Unicode characters in trigger titles."""
+    spec = {
+        "version": "2",
+        "triggers": [
+            {
+                "id": "t1",
+                "key": "chinese.trigger",
+                "title": "数据触发器",  # Chinese
+                "provider": "custom",
+                "mode": "polling",
+                "schemas": {
+                    "event": {
+                        "type": "object",
+                        "properties": {"数据": {"type": "string"}}
+                    }
+                }
+            },
+            {
+                "id": "t2",
+                "key": "french.trigger",
+                "title": "Déclencheur Français",  # French with accents and space
+                "provider": "custom",
+                "mode": "polling",
+                "schemas": {
+                    "event": {
+                        "type": "object",
+                        "properties": {"message": {"type": "string"}}
+                    }
+                }
+            }
+        ],
+        "nodes": [
+            {
+                "id": "task1",
+                "type": "task",
+                "kind": "set",
+                "value": "${数据触发器.数据}",
+                "out": "chinese_result"
+            },
+            {
+                "id": "task2",
+                "type": "task",
+                "kind": "set",
+                "value": "${Déclencheur Français.message}",
+                "out": "french_result"
+            }
+        ],
+        "edges": []
+    }
+
+    # Should compile successfully
+    workflow = await _compile_workflow(spec)
+
+    # Verify Unicode triggers are registered
+    assert "数据触发器" in workflow.type_env
+    assert "数据触发器.数据" in workflow.type_env
+    assert "Déclencheur Français" in workflow.type_env
+    assert "Déclencheur Français.message" in workflow.type_env
+    assert "chinese_result" in workflow.type_env
+    assert "french_result" in workflow.type_env

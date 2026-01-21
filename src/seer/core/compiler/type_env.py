@@ -57,21 +57,15 @@ def _register_triggers(triggers: List[TriggerSpec], env: TypeEnvironment) -> Non
     """
     Register each trigger by its title as a symbol in the type environment.
 
-    Validates that all trigger titles are unique and are valid identifiers,
-    then registers each trigger's event schema under its title for reference resolution.
+    Validates that all trigger titles are unique, then registers each trigger's
+    event schema under its title for reference resolution.
+
+    Note: Trigger titles can contain spaces, hyphens, special characters, and Unicode,
+    similar to 'out' keys in nodes.
     """
     seen_titles = set()
 
     for trigger in triggers:
-        # Validate title is a valid identifier
-        if not VALID_IDENTIFIER.match(trigger.title):
-            raise TypeEnvironmentError(
-                f"Invalid trigger title '{trigger.title}'. Titles must be valid identifiers "
-                f"(start with letter/underscore, contain only alphanumeric/underscore). "
-                f"Trigger ID: '{trigger.id}', Key: '{trigger.key}'. "
-                f"Examples: 'GmailInbox', 'Gmail_Inbox', 'webhook_1'"
-            )
-
         # Validate title uniqueness
         if trigger.title in seen_titles:
             raise TypeEnvironmentError(
