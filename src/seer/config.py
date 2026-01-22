@@ -156,6 +156,11 @@ class SeerConfig(BaseSettings):
         description="Enable supervisor-style multi-agent architecture (vs single nexus agent)"
     )
 
+    auto_open_browser: bool = Field(
+        default=True,
+        description="Automatically open frontend in browser on server startup (self-hosted mode only)"
+    )
+
     # ============================================================================
     # Trigger Poller
     # ============================================================================

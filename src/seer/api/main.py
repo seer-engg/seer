@@ -66,7 +66,7 @@ async def initialize_tool_index(app: FastAPI) -> None:
 
 async def open_frontend_after_startup() -> None:
     """Launch hosted frontend pointing at local backend for convenience."""
-    if config.is_cloud_mode:
+    if config.is_cloud_mode or not config.auto_open_browser:
         return
 
     frontend_url = config.FRONTEND_URL
