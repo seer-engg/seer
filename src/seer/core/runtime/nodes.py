@@ -415,9 +415,9 @@ class NodeRuntime:
             if not isinstance(result, str):
                 raise ExecutionError(f"LLM node '{node.id}' expected text response")
         elif node.outputs.mode == OutputMode.json:
-            schema = self._type_schemas.get(node.out or "")
+            schema = self._type_schemas.get(node.id)
             if schema is None:
-                raise ExecutionError(f"No schema recorded for '{node.out}'")
+                raise ExecutionError(f"No schema recorded for '{node.id}'")
             if model_def.json_handler is None:
                 raise ExecutionError(f"Model '{model}' does not support structured responses")
             # Handler now returns tuple
@@ -750,10 +750,10 @@ class NodeRuntime:
         This is the actual result before any transformation.
         """
         if isinstance(node, ToolNode):
-            # Output dict contains {node.out: result}
+            # Output dict contains {node.id: result}
             # Extract the raw result
-            if node.out and node.out in output_dict:
-                return output_dict[node.out]
+            if node.id in output_dict:
+                return output_dict[node.id]
             # Fallback: return first value
             if output_dict:
                 return next(iter(output_dict.values()))
@@ -761,8 +761,8 @@ class NodeRuntime:
 
         elif isinstance(node, LLMNode):
             # Similar - extract from output_dict
-            if node.out and node.out in output_dict:
-                return output_dict[node.out]
+            if node.id in output_dict:
+                return output_dict[node.id]
             if output_dict:
                 return next(iter(output_dict.values()))
             return None
