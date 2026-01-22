@@ -63,7 +63,6 @@ async def _get_draft_version(
         workflow=workflow,
         status=WorkflowVersionStatus.DRAFT,
         spec=spec_dict,
-        revision=1,
         created_by=user,
         updated_by=user,
         spec_hash=spec_hash,
@@ -86,7 +85,6 @@ async def _update_draft_version(
         )
 
     version.spec = spec_dict
-    version.revision += 1
     version.updated_by = user
     version.updated_at = _now()
     version.spec_hash = _hash_spec(spec_dict)

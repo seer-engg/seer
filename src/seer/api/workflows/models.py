@@ -187,14 +187,8 @@ class CompileResponse(BaseModel):
     artifacts: CompileArtifacts = Field(default_factory=CompileArtifacts)
 
 
-class WorkflowMeta(BaseModel):
-    last_compile_ok: bool = False
-
-
 class WorkflowBase(BaseModel):
     name: str
-    description: Optional[str] = None
-    tags: List[str] = Field(default_factory=list)
 
 
 class WorkflowCreateRequest(WorkflowBase):
@@ -203,12 +197,9 @@ class WorkflowCreateRequest(WorkflowBase):
 
 class WorkflowUpdateRequest(BaseModel):
     name: Optional[str] = None
-    description: Optional[str] = None
-    tags: Optional[List[str]] = None
 
 
 class WorkflowDraftPatchRequest(BaseModel):
-    base_revision: Optional[int] = None
     spec: WorkflowSpec
 
 
@@ -217,7 +208,7 @@ class WorkflowPublishRequest(BaseModel):
 
 
 class WorkflowVersionRestoreRequest(BaseModel):
-    base_revision: Optional[int] = None
+    pass
 
 
 class WorkflowVersionSummary(BaseModel):
@@ -235,27 +226,18 @@ class WorkflowVersionListItem(WorkflowVersionSummary):
 
 class WorkflowVersionListResponse(BaseModel):
     workflow_id: str
-    draft_revision: int
     versions: List[WorkflowVersionListItem] = Field(default_factory=list)
-    latest_version_id: Optional[int] = None
-    published_version_id: Optional[int] = None
 
 
 class WorkflowSummary(BaseModel):
     workflow_id: str
     name: str
-    description: Optional[str] = None
-    draft_revision: int
     created_at: datetime
     updated_at: datetime
 
 
 class WorkflowResponse(WorkflowSummary):
     spec: WorkflowSpec
-    tags: List[str] = Field(default_factory=list)
-    meta: WorkflowMeta = Field(default_factory=WorkflowMeta)
-    published_version: Optional[WorkflowVersionSummary] = None
-    latest_version: Optional[WorkflowVersionSummary] = None
 
 
 class WorkflowListResponse(BaseModel):
@@ -408,7 +390,6 @@ __all__ = [
     "CompileRequest",
     "CompileResponse",
     "CompileArtifacts",
-    "WorkflowMeta",
     "WorkflowCreateRequest",
     "WorkflowUpdateRequest",
     "WorkflowDraftPatchRequest",

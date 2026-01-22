@@ -63,9 +63,6 @@ class Workflow(models.Model):
     id = fields.IntField(primary_key=True)
     user = fields.ForeignKeyField("models.User", related_name="workflows")
     name = fields.CharField(max_length=255)
-    description = fields.TextField(null=True)
-    tags = fields.JSONField(null=True)
-    meta = fields.JSONField(null=True)
     published_version = fields.ForeignKeyField(
         "models.WorkflowVersion",
         related_name="published_workflows",
@@ -112,7 +109,6 @@ class WorkflowVersion(models.Model):
     spec_hash = fields.CharField(max_length=64)
     version_number = fields.IntField(default=0)
     # New fields for draft functionality
-    revision = fields.IntField(default=1)
     updated_at = fields.DatetimeField(auto_now=True)
     updated_by = fields.ForeignKeyField(
         "models.User",
