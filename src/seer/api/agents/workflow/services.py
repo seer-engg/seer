@@ -116,12 +116,10 @@ async def _get_workflow(user: User, workflow_id: str) -> Workflow:
 
     workflow = (
         await Workflow.filter(id=pk, user=user)
-        .prefetch_related("draft")
         .first()
     )
     if not workflow:
         raise HTTPException(status_code=404, detail=f"Workflow '{workflow_id}' not found")
-    await workflow.fetch_related("draft")
     return workflow
 
 

@@ -252,6 +252,23 @@ class SeerConfig(BaseSettings):
     )
 
     # ============================================================================
+    # Slack Error Notifications Configuration
+    # ============================================================================
+
+    slack_bot_token: Optional[str] = Field(
+        default=None,
+        description="Slack Bot OAuth token (xoxb-...) for sending error notifications"
+    )
+    slack_error_channel_id: Optional[str] = Field(
+        default=None,
+        description="Slack channel ID (C01234567890) for error notifications"
+    )
+    slack_notifications_enabled: bool = Field(
+        default=False,
+        description="Enable Slack notifications for ERROR and CRITICAL log levels"
+    )
+
+    # ============================================================================
     # Computed Properties
     # ============================================================================
 
@@ -286,6 +303,14 @@ class SeerConfig(BaseSettings):
         return (
             self.stripe_secret_key is not None
             and self.stripe_webhook_secret is not None
+        )
+
+    @property
+    def is_slack_configured(self) -> bool:
+        """Check if Slack error notifications are configured."""
+        return (
+            self.slack_bot_token is not None
+            and self.slack_error_channel_id is not None
         )
 
 
