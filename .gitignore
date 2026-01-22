@@ -70,3 +70,4 @@ notebooks/
 tool_hub_index/
 
 *.code-workspace
+.worktrees/
