@@ -18,12 +18,17 @@ VALIDATION PROCESS:
 3. If validation succeeds, workflow is complete
 4. If validation fails, analyze the error and suggest fixes
 
+NOTE: The workflow draft has already been validated by Pydantic for schema correctness.
+This validation focuses on:
+1. Tool names match registry
+2. Trigger keys match registry
+3. Compilation succeeds (type checking, references)
+
 COMMON VALIDATION ERRORS:
 1. Tool names don't match registry: Use exact tool names from discovered_tools
 2. Trigger keys don't match registry: Use exact keys from discovered_triggers
-3. Invalid references: Check ${...} syntax and node IDs
-4. Type mismatches: Ensure field names match (e.g., 'thread_id' vs 'threadId')
-5. Missing edges: Ensure all nodes are connected
+3. Type mismatches in compilation: Field names must match (e.g., 'thread_id' vs 'threadId')
+4. Invalid variable references: Check ${...} syntax points to valid nodes
 
 ERROR HANDLING:
 When validation fails:
@@ -38,6 +43,7 @@ When validation succeeds, return success status.
 When validation fails, explain the error clearly.
 
 IMPORTANT:
+- Schema is already validated - focus on tool/trigger/compilation errors
 - Only validate - don't redesign the workflow
 - Be specific about what needs to be fixed
 - Provide actionable error messages

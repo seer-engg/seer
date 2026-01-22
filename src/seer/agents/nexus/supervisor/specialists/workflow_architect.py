@@ -1,10 +1,13 @@
 """Workflow architect specialist agent."""
-import json
 from typing import Any
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import AIMessage
+from pydantic import ValidationError
 from seer.agents.nexus.supervisor.state import SupervisorState
-from seer.agents.nexus.tools.workflow_tools import analyze_workflow, get_workflow_template
+from seer.agents.nexus.tools.workflow_tools import create_workflow_spec_structured
 from seer.llm import get_llm_without_responses_api
+from seer.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 WORKFLOW_ARCHITECT_SYSTEM_PROMPT = """You are a workflow architect. Your job is to design complete workflow structures.
@@ -99,53 +102,44 @@ async def workflow_architect_specialist(state: SupervisorState) -> dict[str, Any
     """
     Workflow architect specialist agent.
 
-    Designs complete workflow structure based on discovered tools/triggers.
+    Designs complete workflow structure using structured output with automatic Pydantic validation.
     """
     llm = get_llm_without_responses_api(model="gpt-4o-mini", temperature=0)
-    tools = [get_workflow_template, analyze_workflow]
-    llm_with_tools = llm.bind_tools(tools)
 
-    # Build conversation context
-    messages = [SystemMessage(content=WORKFLOW_ARCHITECT_SYSTEM_PROMPT)]
+    # Extract context from state
+    user_intent = state.get("user_intent", "")
+    discovered_tools = state.get("discovered_tools", [])
+    discovered_triggers = state.get("discovered_triggers", [])
 
-    # Add user's original request
-    if state.get("user_intent"):
-        messages.append(HumanMessage(content=f"User request: {state['user_intent']}"))
+    # Use structured output to generate validated workflow spec
+    try:
+        proposal = create_workflow_spec_structured(
+            llm=llm,
+            user_intent=user_intent,
+            discovered_tools=discovered_tools,
+            discovered_triggers=discovered_triggers,
+        )
 
-    # Add discovered tools if available
-    if state.get("discovered_tools"):
-        tools_summary = "\n".join([
-            f"- {t['tool']} ({t.get('integration', 'unknown')}): {t.get('description', '')}"
-            for t in state["discovered_tools"]
-        ])
-        messages.append(HumanMessage(content=f"Available tools:\n{tools_summary}"))
+        # Already validated by Pydantic!
+        workflow_draft = proposal.spec.model_dump()
 
-    # Add discovered triggers if available
-    if state.get("discovered_triggers"):
-        triggers_summary = "\n".join([
-            f"- {t['key']} ({t.get('provider', 'unknown')}): {t.get('description', '')}"
-            for t in state["discovered_triggers"]
-        ])
-        messages.append(HumanMessage(content=f"Available triggers:\n{triggers_summary}"))
+        return {
+            "workflow_draft": workflow_draft,
+            "messages": [AIMessage(content=f"{proposal.summary}\n\nReasoning: {proposal.reasoning}")]
+        }
 
-    # Add recent conversation
-    messages.extend(state["messages"][-5:])
-
-    # Invoke specialist
-    response = await llm_with_tools.ainvoke(messages)
-
-    # Try to extract workflow draft from response
-    workflow_draft = None
-    if response.content:
-        try:
-            # Try to parse JSON from response
-            draft = json.loads(response.content)
-            if isinstance(draft, dict) and "nodes" in draft:
-                workflow_draft = draft
-        except (json.JSONDecodeError, KeyError):
-            pass
-
-    return {
-        "workflow_draft": workflow_draft,
-        "messages": [response]
-    }
+    except ValidationError as e:
+        # Pydantic validation failed - LLM generated invalid spec
+        error_msg = f"Generated invalid workflow spec: {e}"
+        logger.error(error_msg)
+        return {
+            "workflow_draft": None,
+            "messages": [AIMessage(content=error_msg)]
+        }
+    except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Catch all generation errors to return friendly message
+        error_msg = f"Failed to generate workflow: {e}"
+        logger.exception("Workflow generation failed")
+        return {
+            "workflow_draft": None,
+            "messages": [AIMessage(content=error_msg)]
+        }
