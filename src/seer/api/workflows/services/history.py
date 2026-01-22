@@ -220,15 +220,28 @@ async def _extract_node_traces_from_graph(
     )
 
     # Extract trace keys from full state
+    # Support both regular traces (_trace_{node_id}) and loop iteration traces (_trace_{node_id}_iter_{N})
     for key, value in state_values.items():
         if not key.startswith("_trace_"):
             continue
 
-        node_id = key.replace("_trace_", "")
-        if node_id in trace_keys_found:
+        # Extract node_id from trace key
+        # Handle both _trace_{node_id} and _trace_{node_id}_iter_{N}
+        if "_iter_" in key:
+            # Loop iteration trace: _trace_{node_id}_iter_{N}
+            node_id = key.replace("_trace_", "").split("_iter_")[0]
+            # For loop iterations, use full key as unique identifier
+            unique_trace_id = key
+        else:
+            # Regular trace: _trace_{node_id}
+            node_id = key.replace("_trace_", "")
+            unique_trace_id = node_id
+
+        # Skip if we already processed this exact trace
+        if unique_trace_id in trace_keys_found:
             continue
 
-        trace_keys_found.add(node_id)
+        trace_keys_found.add(unique_trace_id)
         if not isinstance(value, dict):
             continue
 
@@ -245,8 +258,9 @@ async def _extract_node_traces_from_graph(
             enriched_node = _enrich_node_with_spec(node_trace, node_id, workflow_spec)
             nodes.append(enriched_node)
             logger.info(
-                "Found trace data for node '%s' in graph state",
+                "Found trace data for node '%s' (trace_key='%s') in graph state",
                 node_id,
+                key,
                 extra={"run_id": run.run_id, "node_id": node_id}
             )
         except Exception as enrich_exc:
