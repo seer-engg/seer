@@ -27,8 +27,8 @@ class TestMultipleTriggersSameType:
                 {"id": "node2", "type": "task", "kind": "set", "value": "result2"},
             ],
             "edges": [
-                {"id": "edge1", "source": "trigger_1", "target": "node1", "type": "trigger"},
-                {"id": "edge2", "source": "trigger_2", "target": "node2", "type": "trigger"},
+                {"source": "trigger_1", "target": "node1", "type": "trigger"},
+                {"source": "trigger_2", "target": "node2", "type": "trigger"},
             ],
             "triggers": [
                 {
@@ -64,7 +64,7 @@ class TestMultipleTriggersSameType:
                 {"id": "node1", "type": "task", "kind": "set", "value": "result1"},
             ],
             "edges": [
-                {"id": "edge1", "source": "trigger_1", "target": "node1", "type": "trigger"},
+                {"source": "trigger_1", "target": "node1", "type": "trigger"},
             ],
             "triggers": [
                 {
@@ -98,7 +98,7 @@ class TestMultipleTriggersSameType:
                 {"id": "node1", "type": "task", "kind": "set", "value": "result1"},
             ],
             "edges": [
-                {"id": "edge1", "source": "nonexistent_trigger", "target": "node1", "type": "trigger"},
+                {"source": "nonexistent_trigger", "target": "node1", "type": "trigger"},
             ],
             "triggers": [
                 {
@@ -113,7 +113,7 @@ class TestMultipleTriggersSameType:
         }
 
         # Should raise validation error for missing trigger ID
-        with pytest.raises(ValidationPhaseError, match="source 'nonexistent_trigger' not found in triggers"):
+        with pytest.raises(ValidationPhaseError, match="Trigger edge with source 'nonexistent_trigger'.*not found in triggers"):
             parse_workflow_spec(spec_payload)
 
     def test_compiler_builds_separate_trigger_targets(self):
@@ -126,9 +126,9 @@ class TestMultipleTriggersSameType:
                 {"id": "node3", "type": "task", "kind": "set", "value": "result3"},
             ],
             "edges": [
-                {"id": "edge1", "source": "gmail_1", "target": "node1", "type": "trigger"},
-                {"id": "edge2", "source": "gmail_2", "target": "node2", "type": "trigger"},
-                {"id": "edge3", "source": "webhook_1", "target": "node3", "type": "trigger"},
+                {"source": "gmail_1", "target": "node1", "type": "trigger"},
+                {"source": "gmail_2", "target": "node2", "type": "trigger"},
+                {"source": "webhook_1", "target": "node3", "type": "trigger"},
             ],
             "triggers": [
                 {
@@ -182,8 +182,8 @@ class TestMultipleTriggersSameType:
                 {"id": "node2", "type": "task", "kind": "set", "value": "result2"},
             ],
             "edges": [
-                {"id": "edge1", "source": "trigger_1", "target": "node1", "type": "trigger"},
-                {"id": "edge2", "source": "trigger_1", "target": "node2", "type": "trigger"},  # Same source
+                {"source": "trigger_1", "target": "node1", "type": "trigger"},
+                {"source": "trigger_1", "target": "node2", "type": "trigger"},  # Same source
             ],
             "triggers": [
                 {
@@ -245,9 +245,9 @@ class TestMultipleTriggersSameType:
                 {"id": "process_sent", "type": "task", "kind": "set", "value": "sent processed"},
             ],
             "edges": [
-                {"id": "e1", "source": "gmail_inbox", "target": "process_inbox", "type": "trigger"},
-                {"id": "e2", "source": "gmail_important", "target": "process_important", "type": "trigger"},
-                {"id": "e3", "source": "gmail_sent", "target": "process_sent", "type": "trigger"},
+                {"source": "gmail_inbox", "target": "process_inbox", "type": "trigger"},
+                {"source": "gmail_important", "target": "process_important", "type": "trigger"},
+                {"source": "gmail_sent", "target": "process_sent", "type": "trigger"},
             ],
             "triggers": [
                 {

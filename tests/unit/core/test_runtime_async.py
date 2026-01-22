@@ -113,12 +113,12 @@ async def test_if_branch_tool_runs_async_handler() -> None:
                 "id": "call_tool",
                 "type": "tool",
                 "tool": "test.echo",
-                "in": {"message": "${test_trigger.data.payload}"},
+                "inputs": {"message": "${test_trigger.data.payload}"},
             },
         ],
         "edges": [
-            {"id": "e0", "source": "test_trigger", "target": "conditional", "type": "trigger"},
-            {"id": "e1", "source": "conditional", "target": "call_tool", "type": "conditional_true"},
+            {"source": "test_trigger", "target": "conditional", "type": "trigger"},
+            {"source": "conditional", "target": "call_tool", "type": "conditional_true"},
         ],
     }
 
@@ -196,7 +196,7 @@ async def test_for_each_body_tools_use_async_handler() -> None:
                 "id": "loop_tool",
                 "type": "tool",
                 "tool": "test.loop_echo",
-                "in": {"message": "${item}"},
+                "inputs": {"message": "${item}"},
             },
             {
                 "id": "done",
@@ -206,11 +206,11 @@ async def test_for_each_body_tools_use_async_handler() -> None:
             },
         ],
         "edges": [
-            {"id": "e0", "source": "loop_trigger", "target": "items_seed", "type": "trigger"},
-            {"id": "e1", "source": "items_seed", "target": "loop", "type": "default"},
-            {"id": "e2", "source": "loop", "target": "loop_tool", "type": "loop_body"},
-            {"id": "e3", "source": "loop_tool", "target": "loop", "type": "default"},
-            {"id": "e4", "source": "loop", "target": "done", "type": "loop_exit"},
+            {"source": "loop_trigger", "target": "items_seed", "type": "trigger"},
+            {"source": "items_seed", "target": "loop", "type": "default"},
+            {"source": "loop", "target": "loop_tool", "type": "loop_body"},
+            {"source": "loop_tool", "target": "loop", "type": "default"},
+            {"source": "loop", "target": "done", "type": "loop_exit"},
         ],
     }
 
@@ -250,7 +250,7 @@ async def test_trigger_routes_to_correct_node() -> None:
             },
         ],
         "edges": [
-            {"id": "e1", "source": "webhook_received", "target": "handler", "type": "trigger"},
+            {"source": "webhook_received", "target": "handler", "type": "trigger"},
         ],
     }
 
@@ -299,8 +299,8 @@ async def test_multiple_triggers_route_to_different_nodes() -> None:
             },
         ],
         "edges": [
-            {"id": "e1", "source": "github_push", "target": "handle_push", "type": "trigger"},
-            {"id": "e2", "source": "github_pr", "target": "handle_pr", "type": "trigger"},
+            {"source": "github_push", "target": "handle_push", "type": "trigger"},
+            {"source": "github_pr", "target": "handle_pr", "type": "trigger"},
         ],
     }
 
@@ -353,8 +353,8 @@ async def test_multiple_triggers_route_to_same_node() -> None:
             },
         ],
         "edges": [
-            {"id": "e1", "source": "trigger_a", "target": "shared_handler", "type": "trigger"},
-            {"id": "e2", "source": "trigger_b", "target": "shared_handler", "type": "trigger"},
+            {"source": "trigger_a", "target": "shared_handler", "type": "trigger"},
+            {"source": "trigger_b", "target": "shared_handler", "type": "trigger"},
         ],
     }
 
@@ -393,7 +393,7 @@ async def test_unknown_trigger_key_fallback() -> None:
             },
         ],
         "edges": [
-            {"id": "e1", "source": "known_trigger", "target": "handler", "type": "trigger"},
+            {"source": "known_trigger", "target": "handler", "type": "trigger"},
         ],
     }
 
@@ -443,7 +443,7 @@ async def test_trigger_data_accessible_after_routing() -> None:
             },
         ],
         "edges": [
-            {"id": "e1", "source": "data_trigger", "target": "echo", "type": "trigger"},
+            {"source": "data_trigger", "target": "echo", "type": "trigger"},
         ],
     }
 

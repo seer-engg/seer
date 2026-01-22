@@ -12,15 +12,17 @@ from seer.api.workflows import models as api_models
 from seer.api.workflows.services.shared import (
     VALIDATION_PROBLEM,
     _ensure_draft_version,
+    _get_draft_version,
     _get_workflow,
+    _hash_spec,
     _now,
     _raise_problem,
     _spec_to_dict,
+    _update_draft_version,
 )
 from seer.database import (
     User,
     Workflow,
-    WorkflowDraft,
     WorkflowVersion,
     WorkflowVersionStatus,
     parse_workflow_public_id,
@@ -30,9 +32,19 @@ from seer.core.schema.models import WorkflowSpec
 # ===== Helper Functions =====
 
 
-def _workflow_summary(workflow: Workflow) -> api_models.WorkflowSummary:
-    draft: Optional[WorkflowDraft] = getattr(workflow, "draft", None)
-    draft_revision = draft.revision if draft else 0
+async def _workflow_summary(workflow: Workflow, draft_version: Optional[WorkflowVersion] = None) -> api_models.WorkflowSummary:
+    """
+    Create a workflow summary.
+
+    If draft_version is not provided, it will be fetched from the database.
+    Pass it explicitly when available to avoid extra queries.
+    """
+    if draft_version is None:
+        draft_version = await WorkflowVersion.filter(
+            workflow=workflow,
+            status=WorkflowVersionStatus.DRAFT
+        ).first()
+    draft_revision = draft_version.revision if draft_version else 0
     return api_models.WorkflowSummary(
         workflow_id=workflow.workflow_id,
         name=workflow.name,
@@ -78,17 +90,15 @@ async def _recent_version(workflow: Workflow) -> Optional[WorkflowVersion]:
 
 
 async def _workflow_response(workflow: Workflow) -> api_models.WorkflowResponse:
-    draft: Optional[WorkflowDraft] = getattr(workflow, "draft", None)
-    if draft is None:
-        draft = await WorkflowDraft.get_or_none(workflow=workflow)
-    if draft is None:
+    draft_version = await _get_draft_version(workflow, create_if_missing=False)
+    if draft_version is None:
         _raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Missing draft",
             detail="Workflow draft state not initialized",
             status=500,
         )
-    raw_spec = draft.spec or {}
+    raw_spec = draft_version.spec or {}
     spec_version_raw = raw_spec.get("version")
     try:
         spec_version = Decimal(str(spec_version_raw))
@@ -115,7 +125,7 @@ async def _workflow_response(workflow: Workflow) -> api_models.WorkflowResponse:
         workflow_id=workflow.workflow_id,
         name=workflow.name,
         description=workflow.description,
-        draft_revision=draft.revision,
+        draft_revision=draft_version.revision,
         created_at=workflow.created_at,
         updated_at=workflow.updated_at,
         spec=spec,
@@ -153,13 +163,16 @@ async def create_workflow(user: User, payload: api_models.WorkflowCreateRequest)
         tags=list(payload.tags or []),
         meta={"last_compile_ok": False},
     )
-    await WorkflowDraft.create(
+    await WorkflowVersion.create(
         workflow=workflow,
+        status=WorkflowVersionStatus.DRAFT,
         spec=spec_dict,
         revision=1,
+        created_by=user,
         updated_by=user,
+        spec_hash=_hash_spec(spec_dict),
+        version_number=0,
     )
-    await workflow.fetch_related("draft")
 
     return await _workflow_response(workflow)
 
@@ -173,12 +186,29 @@ async def list_workflows(
     limit = max(1, min(limit, 100))
     cursor_pk = _parse_workflow_cursor(cursor)
 
-    query = Workflow.filter(user=user).prefetch_related("draft")
+    query = Workflow.filter(user=user)
     if cursor_pk:
         query = query.filter(id__lt=cursor_pk)
 
     records = await query.order_by("-id").limit(limit + 1)
-    items = [_workflow_summary(record) for record in records[:limit]]
+
+    # Fetch all DRAFT versions for these workflows
+    workflow_ids = [r.id for r in records[:limit]]
+    drafts_by_workflow = {}
+    if workflow_ids:
+        draft_versions = await WorkflowVersion.filter(
+            workflow_id__in=workflow_ids,
+            status=WorkflowVersionStatus.DRAFT
+        ).all()
+        for dv in draft_versions:
+            drafts_by_workflow[dv.workflow_id] = dv
+
+    # Build summaries
+    items = []
+    for record in records[:limit]:
+        draft_version = drafts_by_workflow.get(record.id)
+        items.append(await _workflow_summary(record, draft_version))
+
     next_cursor = items[-1].workflow_id if len(records) > limit and items else None
     return api_models.WorkflowListResponse(items=items, next_cursor=next_cursor)
 
@@ -190,7 +220,8 @@ async def get_workflow(user: User, workflow_id: str) -> api_models.WorkflowRespo
 
 async def list_workflow_versions(user: User, workflow_id: str) -> api_models.WorkflowVersionListResponse:
     workflow = await _get_workflow(user, workflow_id)
-    draft = workflow.draft or await WorkflowDraft.get(workflow=workflow)
+    draft_version = await _get_draft_version(workflow, create_if_missing=False)
+    draft_revision = draft_version.revision if draft_version else 0
     versions = (
         await WorkflowVersion.filter(workflow=workflow)
         .order_by("-created_at")
@@ -209,7 +240,7 @@ async def list_workflow_versions(user: User, workflow_id: str) -> api_models.Wor
     ]
     return api_models.WorkflowVersionListResponse(
         workflow_id=workflow.workflow_id,
-        draft_revision=draft.revision,
+        draft_revision=draft_revision,
         versions=items,
         latest_version_id=latest_version_id,
         published_version_id=published_version_id,
@@ -251,13 +282,15 @@ async def apply_workflow_from_spec(
             status=400,
         )
 
-    draft = await WorkflowDraft.get(workflow=workflow)
-    draft.spec = _spec_to_dict(spec)
-    draft.revision += 1
-    draft.updated_by = user
-    await draft.save()
-    await Workflow.filter(id=workflow.id).update(updated_at=_now())
-    await workflow.fetch_related("draft")
+    draft_version = await _get_draft_version(workflow, create_if_missing=True, user=user)
+    if not draft_version:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Failed to create draft",
+            detail="Could not create or retrieve draft version",
+            status=500,
+        )
+    await _update_draft_version(draft_version, _spec_to_dict(spec), user)
     return await _workflow_response(workflow)
 
 
@@ -267,9 +300,19 @@ async def patch_workflow_draft(
     payload: api_models.WorkflowDraftPatchRequest,
 ) -> api_models.WorkflowResponse:
     workflow = await _get_workflow(user, workflow_id)
-    draft = workflow.draft or await WorkflowDraft.get(workflow=workflow)
-    # TODO: discuss if want to have revision check here
-    # if payload.base_revision is not None and payload.base_revision != draft.revision:
+
+    # Get or create DRAFT version
+    draft_version = await _get_draft_version(workflow, create_if_missing=True, user=user)
+    if not draft_version:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Failed to create draft",
+            detail="Could not create or retrieve draft version",
+            status=500,
+        )
+
+    # Optional: Check revision conflict
+    # if payload.base_revision is not None and payload.base_revision != draft_version.revision:
     #     _raise_problem(
     #         type_uri=VALIDATION_PROBLEM,
     #         title="Draft revision mismatch",
@@ -277,15 +320,10 @@ async def patch_workflow_draft(
     #         status=409,
     #     )
 
-    # For now, we allow patching the draft without checking the revision
-    draft.revision = max(draft.revision, payload.base_revision or 0) + 1
+    # Update draft version in-place
+    spec_dict = _spec_to_dict(payload.spec)
+    await _update_draft_version(draft_version, spec_dict, user)
 
-    spec = payload.spec
-    draft.spec = _spec_to_dict(spec)
-    draft.updated_by = user
-    await draft.save()
-    await Workflow.filter(id=workflow.id).update(updated_at=_now())
-    await workflow.fetch_related("draft")
     return await _workflow_response(workflow)
 
 
@@ -305,20 +343,30 @@ async def restore_workflow_version(
             detail=f"Version '{version_id}' does not belong to workflow '{workflow_id}'",
             status=404,
         )
-    draft = workflow.draft or await WorkflowDraft.get(workflow=workflow)
-    if payload.base_revision is not None and payload.base_revision != draft.revision:
+
+    # Get or create DRAFT version
+    draft_version = await _get_draft_version(workflow, create_if_missing=True, user=user)
+    if not draft_version:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Failed to create draft",
+            detail="Could not create or retrieve draft version",
+            status=500,
+        )
+
+    # Check revision conflict
+    if payload.base_revision is not None and payload.base_revision != draft_version.revision:
         _raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Draft revision mismatch",
             detail="Draft has changed since last fetch",
             status=409,
         )
-    draft.spec = json.loads(json.dumps(version.spec or {}))
-    draft.revision += 1
-    draft.updated_by = user
-    await draft.save()
-    await Workflow.filter(id=workflow.id).update(updated_at=_now())
-    await workflow.fetch_related("draft", "published_version")
+
+    # Update draft to match restored version
+    spec_dict = json.loads(json.dumps(version.spec or {}))
+    await _update_draft_version(draft_version, spec_dict, user)
+
     return await _workflow_response(workflow)
 
 
@@ -339,25 +387,46 @@ async def publish_workflow(
     payload: api_models.WorkflowPublishRequest,
 ) -> api_models.WorkflowResponse:
     workflow = await _get_workflow(user, workflow_id)
-    version = await _ensure_draft_version(workflow, user)
 
+    # Get existing DRAFT version (must exist to publish)
+    draft_version = await _get_draft_version(workflow, create_if_missing=False)
+    if not draft_version:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="No draft to publish",
+            detail="Cannot publish workflow without a draft version",
+            status=400,
+        )
+
+    # Validate spec
+    spec = WorkflowSpec.model_validate(draft_version.spec)
+
+    # Sync trigger subscriptions
+    # pylint: disable=import-outside-toplevel
+    from seer.api.workflows.services.triggers import sync_trigger_subscriptions
+    await sync_trigger_subscriptions(user, workflow, spec, skip_validation=False)
+
+    # Archive previous release
     previous_release = getattr(workflow, "published_version", None)
     if previous_release and isinstance(previous_release, WorkflowVersion):
-        await WorkflowVersion.filter(id=previous_release.id).update(status=WorkflowVersionStatus.ARCHIVED)
+        await WorkflowVersion.filter(id=previous_release.id).update(
+            status=WorkflowVersionStatus.ARCHIVED
+        )
 
+    # Promote DRAFT to RELEASED
     release_number = await _next_release_number(workflow)
-    await WorkflowVersion.filter(id=version.id).update(
+    await WorkflowVersion.filter(id=draft_version.id).update(
         status=WorkflowVersionStatus.RELEASED,
         version_number=release_number,
     )
-    workflow.published_version = version
+
+    # Update workflow.published_version FK
     await Workflow.filter(id=workflow.id).update(
-        published_version_id=version.id,
+        published_version_id=draft_version.id,
         updated_at=_now(),
     )
-    # Refresh status for response
-    version.status = WorkflowVersionStatus.RELEASED
-    version.version_number = release_number
+
+    # Note: No new DRAFT is created here (on-demand creation)
 
     workflow = await _get_workflow(user, workflow_id)
     return await _workflow_response(workflow)
@@ -380,18 +449,19 @@ async def export_workflow(
 
     # 1. Fetch workflow and draft
     workflow = await _get_workflow(user, workflow_id)
-    draft = workflow.draft or await WorkflowDraft.get_or_none(workflow=workflow)
+    draft_version = await _get_draft_version(workflow, create_if_missing=False)
 
-    if not draft:
+    if not draft_version:
         _raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="No draft found",
             detail="Workflow has no draft to export",
             status=404,
         )
+        return {}  # Unreachable, but satisfies type checker
 
     # 2. Serialize workflow spec
-    spec_dict = draft.spec  # Already JSON
+    spec_dict = draft_version.spec  # Already JSON
 
     # 3. Fetch triggers from the spec (already embedded)
     triggers_data = spec_dict.get("triggers", []) if include_triggers else []
@@ -482,13 +552,17 @@ async def import_workflow(
     )
 
     # 4. Create draft with spec
-    await WorkflowDraft.create(
+    spec_dict = spec.model_dump(mode="json")
+    await WorkflowVersion.create(
         workflow=workflow,
-        spec=spec.model_dump(mode="json"),
+        status=WorkflowVersionStatus.DRAFT,
+        spec=spec_dict,
         revision=1,
+        created_by=user,
         updated_by=user,
+        spec_hash=_hash_spec(spec_dict),
+        version_number=0,
     )
 
     # 5. Return new workflow
-    await workflow.fetch_related("draft")
     return await _workflow_response(workflow)

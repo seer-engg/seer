@@ -25,7 +25,6 @@ from seer.database import (
     User,
     TriggerSubscription,
     Workflow,
-    WorkflowDraft,
     make_workflow_public_id,
 )
 from seer.logger import get_logger
@@ -461,19 +460,17 @@ def _extract_form_config_from_spec(trigger_spec) -> tuple[Optional[str], Optiona
     }
 
     # Convert JSON schema to form_fields array
-    form_fields = _json_schema_to_form_fields(trigger_spec.schemas)
+    form_fields = _json_schema_to_form_fields(trigger_spec.event_schema)
 
     return form_suffix, form_fields, form_config_json
 
 
-def _json_schema_to_form_fields(schemas) -> List[Dict[str, Any]]:
+def _json_schema_to_form_fields(event_schema: JsonSchema) -> List[Dict[str, Any]]:
     """
-    Convert schemas.event.properties.data (JSON schema) to form_fields array.
+    Convert event_schema.properties.data (JSON schema) to form_fields array.
     """
-    if not schemas or not schemas.event:
+    if not event_schema:
         return []
-
-    event_schema = schemas.event
     properties = event_schema.get("properties", {})
     data_schema = properties.get("data", {})
     data_properties = data_schema.get("properties", {})
@@ -603,7 +600,8 @@ async def sync_trigger_subscriptions(
     for trigger_spec in spec.triggers or []:
         definition = _load_trigger_definition(trigger_spec.key)
         if not skip_validation:
-            if definition.meta.requires_connection and trigger_spec.provider_connection_id is None:
+            provider_connection_id = trigger_spec.provider_config.get("provider_connection_id")
+            if definition.meta.requires_connection and provider_connection_id is None:
                 _raise_problem(
                     type_uri=VALIDATION_PROBLEM,
                     title="Missing trigger connection",
@@ -640,9 +638,9 @@ async def sync_trigger_subscriptions(
 
         if existing_subscription:
             existing_subscription.trigger_key = trigger_spec.key  # Update type reference
-            existing_subscription.title = trigger_spec.title  # Update title for reference resolution
-            existing_subscription.provider_connection_id = trigger_spec.provider_connection_id
-            existing_subscription.enabled = trigger_spec.enabled
+            existing_subscription.title = definition.title  # Update title for reference resolution from registry
+            existing_subscription.provider_connection_id = trigger_spec.provider_config.get("provider_connection_id")
+            existing_subscription.enabled = True  # Always enabled when in spec
             existing_subscription.filters = filters
             existing_subscription.provider_config = provider_config
             existing_subscription.secret_token = secret
@@ -670,9 +668,9 @@ async def sync_trigger_subscriptions(
                 workflow=workflow,
                 trigger_id=trigger_spec.id,
                 trigger_key=trigger_spec.key,
-                title=trigger_spec.title,
-                provider_connection_id=trigger_spec.provider_connection_id,
-                enabled=trigger_spec.enabled,
+                title=definition.title,
+                provider_connection_id=trigger_spec.provider_config.get("provider_connection_id"),
+                enabled=True,
                 filters=filters,
                 provider_config=provider_config,
                 secret_token=secret,

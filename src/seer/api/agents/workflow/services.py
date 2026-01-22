@@ -14,9 +14,15 @@ from seer.database import (
     Workflow,
     WorkflowChatMessage,
     WorkflowChatSession,
-    WorkflowDraft,
     WorkflowProposal,
+    WorkflowVersion,
+    WorkflowVersionStatus,
     parse_workflow_public_id,
+)
+from seer.api.workflows.services.shared import (
+    _get_draft_version,
+    _spec_to_dict,
+    _update_draft_version,
 )
 from seer.logger import get_logger
 
@@ -76,41 +82,29 @@ def workflow_state_from_spec(spec: Dict[str, Any]) -> Dict[str, Any]:
     return _workflow_state_from_spec(spec)
 
 
-def workflow_state_snapshot(workflow: Workflow) -> Dict[str, Any]:
+async def workflow_state_snapshot(workflow: Workflow) -> Dict[str, Any]:
     """Return the workflow draft's latest state in ReactFlow-friendly format."""
-    draft: Optional[WorkflowDraft] = getattr(workflow, "draft", None)
-    if draft and isinstance(draft.spec, dict):
-        return workflow_state_from_spec(draft.spec)
+    draft_version = await _get_draft_version(workflow, create_if_missing=False)
+    if draft_version and isinstance(draft_version.spec, dict):
+        return workflow_state_from_spec(draft_version.spec)
     return {"nodes": [], "edges": []}
 
 
-async def _ensure_workflow_draft(workflow: Workflow) -> WorkflowDraft:
+async def _ensure_workflow_draft(workflow: Workflow, user: User) -> WorkflowVersion:
     """
-    Ensure we return a resolved WorkflowDraft instance.
+    Get or create the DRAFT WorkflowVersion for this workflow.
 
-    Tortoise attaches a relation manager to unfetched reverse one-to-one fields,
-    which is truthy but not the actual model instance. Explicitly check for that
-    to avoid accidentally returning the manager and blowing up downstream when
-    we try to mutate attributes such as `spec`.
+    This replaces the old _ensure_workflow_draft that worked with WorkflowDraft model.
     """
+    draft_version = await _get_draft_version(workflow, create_if_missing=True, user=user)
 
-    draft_attr = getattr(workflow, "draft", None)
-    draft: Optional[WorkflowDraft] = (
-        draft_attr if isinstance(draft_attr, WorkflowDraft) else None
-    )
-
-    if draft is None:
-        draft = await WorkflowDraft.get_or_none(workflow=workflow)
-
-    if draft is None:
+    if draft_version is None:
         raise HTTPException(
             status_code=500,
             detail="Workflow draft state not initialized",
         )
 
-    # Cache the resolved draft on the workflow instance for future callers.
-    workflow.draft = draft
-    return draft
+    return draft_version
 
 
 async def _get_workflow(user: User, workflow_id: str) -> Workflow:
@@ -394,16 +388,17 @@ async def accept_workflow_proposal(
 
     workflow = await proposal.workflow
     normalized_spec = _normalize_spec(proposal.spec or {})
-    # draft = await _ensure_workflow_draft(workflow)
-    await workflow.fetch_related("draft")
-    draft = workflow.draft
-    draft.spec = normalized_spec
-    draft.revision += 1
-    if actor is not None:
-        draft.updated_by = actor
-    await draft.save()
-    workflow.updated_at = datetime.utcnow()
-    await workflow.save()
+
+    # Get or create DRAFT version
+    if actor is None:
+        raise HTTPException(status_code=400, detail="Actor is required for proposal acceptance")
+
+    draft_version = await _get_draft_version(workflow, create_if_missing=True, user=actor)
+    if not draft_version:
+        raise HTTPException(status_code=500, detail="Failed to create draft version")
+
+    # Update draft version with proposal spec
+    await _update_draft_version(draft_version, normalized_spec, actor)
 
     proposal.status = WorkflowProposal.STATUS_ACCEPTED
     proposal.applied_graph = normalized_spec

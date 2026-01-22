@@ -214,9 +214,8 @@ def sample_workflow_spec() -> dict:
             {
                 "id": "t1",
                 "key": "test.trigger",
-                "title": "TestTrigger",
-                "provider": "test",
                 "mode": "polling",
+                "event_schema": {},
             }
         ],
         "nodes": [
@@ -229,7 +228,6 @@ def sample_workflow_spec() -> dict:
         ],
         "edges": [
             {
-                "id": "e1",
                 "source": "t1",
                 "target": "n1",
                 "type": "trigger",
@@ -254,9 +252,8 @@ def complex_workflow_spec() -> dict:
             {
                 "id": "trigger_1",
                 "key": "test.complex_trigger",
-                "title": "ComplexTrigger",
-                "provider": "test",
                 "mode": "polling",
+                "event_schema": {},
             }
         ],
         "nodes": [
@@ -286,24 +283,24 @@ def complex_workflow_spec() -> dict:
         ],
         "edges": [
             {
-                "id": "e1",
+                
                 "source": "trigger_1",
                 "target": "task_1",
                 "type": "trigger",
             },
             {
-                "id": "e2",
+                
                 "source": "task_1",
                 "target": "condition_1",
             },
             {
-                "id": "e3",
+                
                 "source": "condition_1",
                 "target": "task_2",
                 "type": "conditional_true",
             },
             {
-                "id": "e4",
+                
                 "source": "condition_1",
                 "target": "task_3",
                 "type": "conditional_false",

@@ -10,7 +10,6 @@ from seer.api.core.errors import raise_problem as _raise_problem
 from seer.database import (
     User,
     Workflow,
-    WorkflowDraft,
     WorkflowRun,
     WorkflowVersion,
     WorkflowVersionStatus,
@@ -32,45 +31,97 @@ def _hash_spec(spec_dict: Dict[str, Any]) -> str:
     return hashlib.sha256(serialized).hexdigest()
 
 
+async def _get_draft_version(
+    workflow: Workflow,
+    create_if_missing: bool = True,
+    user: Optional[User] = None,
+) -> Optional[WorkflowVersion]:
+    """
+    Get existing DRAFT version, optionally create if missing.
+
+    If create_if_missing=True and no DRAFT exists:
+    - Copies from published version if exists
+    - Creates empty spec if no published version
+    """
+    draft = await WorkflowVersion.filter(
+        workflow=workflow,
+        status=WorkflowVersionStatus.DRAFT
+    ).first()
+
+    if draft or not create_if_missing:
+        return draft
+
+    # Create on-demand: copy from published or use empty spec
+    published = getattr(workflow, "published_version", None)
+    if published and isinstance(published, WorkflowVersion):
+        spec_dict = json.loads(json.dumps(published.spec))
+    else:
+        spec_dict = {"version": "2.0", "nodes": [], "edges": []}
+
+    spec_hash = _hash_spec(spec_dict)
+    return await WorkflowVersion.create(
+        workflow=workflow,
+        status=WorkflowVersionStatus.DRAFT,
+        spec=spec_dict,
+        revision=1,
+        created_by=user,
+        updated_by=user,
+        spec_hash=spec_hash,
+        version_number=0,
+    )
+
+
+async def _update_draft_version(
+    version: WorkflowVersion,
+    spec_dict: Dict[str, Any],
+    user: User,
+) -> None:
+    """Update DRAFT version in-place (enforces mutability rules)."""
+    if version.status != WorkflowVersionStatus.DRAFT:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Cannot modify non-draft version",
+            detail="Only DRAFT versions can be edited",
+            status=400,
+        )
+
+    version.spec = spec_dict
+    version.revision += 1
+    version.updated_by = user
+    version.updated_at = _now()
+    version.spec_hash = _hash_spec(spec_dict)
+    await version.save()
+    await Workflow.filter(id=version.workflow_id).update(updated_at=_now())
+
+
 async def _ensure_draft_version(
     workflow: Workflow,
     user: User,
     skip_validation: bool = False
 ) -> WorkflowVersion:
-    draft = await WorkflowDraft.get(workflow=workflow)
-    spec = WorkflowSpec.model_validate(draft.spec or {})
-    spec_dict = spec.model_dump(mode="json")
-    spec_hash = _hash_spec(spec_dict)
+    """
+    Get the existing DRAFT version without creating a new one.
+    This function is kept for backward compatibility during transition.
+    """
+    draft_version = await _get_draft_version(workflow, create_if_missing=True, user=user)
+
+    if not draft_version:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="No draft version",
+            detail="Workflow has no draft version",
+            status=500,
+        )
+
+    spec = WorkflowSpec.model_validate(draft_version.spec or {})
+
     # Sync trigger subscriptions declared in the spec so polling/webhooks stay in sync.
     # pylint: disable=import-outside-toplevel
     from seer.api.workflows.services.triggers import sync_trigger_subscriptions
 
     await sync_trigger_subscriptions(user, workflow, spec, skip_validation=skip_validation)
-    existing = (
-        await WorkflowVersion.filter(
-            workflow=workflow,
-            spec_hash=spec_hash,
-            status=WorkflowVersionStatus.DRAFT,
-            created_from_draft_revision=draft.revision,
-        )
-        .order_by("-created_at")
-        .first()
-    )
-    if existing:
-        return existing
-    latest_version = (
-        await WorkflowVersion.filter(workflow=workflow).order_by("-version_number").first()
-    )
-    return await WorkflowVersion.create(
-        workflow=workflow,
-        status=WorkflowVersionStatus.DRAFT,
-        spec=spec_dict,
-        created_from_draft_revision=draft.revision,
-        created_by=user,
-        manifest=None,
-        spec_hash=spec_hash,
-        version_number=(latest_version.version_number + 1) if latest_version else 0,
-    )
+
+    return draft_version
 
 
 
@@ -84,7 +135,7 @@ async def _get_workflow(user: User, workflow_id: str) -> Workflow:
             detail="Workflow id is invalid",
             status=400,
         )
-    workflow = await Workflow.filter(id=pk, user=user).prefetch_related("draft", "published_version").first()
+    workflow = await Workflow.filter(id=pk, user=user).prefetch_related("published_version").first()
     if workflow is None:
         _raise_problem(
             type_uri=VALIDATION_PROBLEM,
