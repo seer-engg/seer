@@ -46,7 +46,7 @@ def _resolve_root(ctx: EvaluationContext, root: str) -> Any:
 
     # Check if root matches the current trigger's ID
     if ctx.trigger is not None:
-        trigger_id = ctx.trigger.get("id")
+        trigger_id = ctx.trigger.get("trigger_id")
         if root == trigger_id:
             return ctx.trigger
 

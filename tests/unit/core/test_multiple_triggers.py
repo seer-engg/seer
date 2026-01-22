@@ -27,8 +27,8 @@ class TestMultipleTriggersSameType:
                 {"id": "node2", "type": "task", "kind": "set", "value": "result2"},
             ],
             "edges": [
-                {"id": "edge1", "source": "trigger_1", "target": "node1", "type": "trigger"},
-                {"id": "edge2", "source": "trigger_2", "target": "node2", "type": "trigger"},
+                {"source": "trigger_1", "target": "node1", "type": "trigger"},
+                {"source": "trigger_2", "target": "node2", "type": "trigger"},
             ],
             "triggers": [
                 {
@@ -64,7 +64,7 @@ class TestMultipleTriggersSameType:
                 {"id": "node1", "type": "task", "kind": "set", "value": "result1"},
             ],
             "edges": [
-                {"id": "edge1", "source": "trigger_1", "target": "node1", "type": "trigger"},
+                {"source": "trigger_1", "target": "node1", "type": "trigger"},
             ],
             "triggers": [
                 {
@@ -98,7 +98,7 @@ class TestMultipleTriggersSameType:
                 {"id": "node1", "type": "task", "kind": "set", "value": "result1"},
             ],
             "edges": [
-                {"id": "edge1", "source": "nonexistent_trigger", "target": "node1", "type": "trigger"},
+                {"source": "nonexistent_trigger", "target": "node1", "type": "trigger"},
             ],
             "triggers": [
                 {
@@ -113,7 +113,7 @@ class TestMultipleTriggersSameType:
         }
 
         # Should raise validation error for missing trigger ID
-        with pytest.raises(ValidationPhaseError, match="source 'nonexistent_trigger' not found in triggers"):
+        with pytest.raises(ValidationPhaseError, match="Trigger edge with source 'nonexistent_trigger'.*not found in triggers"):
             parse_workflow_spec(spec_payload)
 
     def test_compiler_builds_separate_trigger_targets(self):
@@ -126,9 +126,9 @@ class TestMultipleTriggersSameType:
                 {"id": "node3", "type": "task", "kind": "set", "value": "result3"},
             ],
             "edges": [
-                {"id": "edge1", "source": "gmail_1", "target": "node1", "type": "trigger"},
-                {"id": "edge2", "source": "gmail_2", "target": "node2", "type": "trigger"},
-                {"id": "edge3", "source": "webhook_1", "target": "node3", "type": "trigger"},
+                {"source": "gmail_1", "target": "node1", "type": "trigger"},
+                {"source": "gmail_2", "target": "node2", "type": "trigger"},
+                {"source": "webhook_1", "target": "node3", "type": "trigger"},
             ],
             "triggers": [
                 {
@@ -182,8 +182,8 @@ class TestMultipleTriggersSameType:
                 {"id": "node2", "type": "task", "kind": "set", "value": "result2"},
             ],
             "edges": [
-                {"id": "edge1", "source": "trigger_1", "target": "node1", "type": "trigger"},
-                {"id": "edge2", "source": "trigger_1", "target": "node2", "type": "trigger"},  # Same source
+                {"source": "trigger_1", "target": "node1", "type": "trigger"},
+                {"source": "trigger_1", "target": "node2", "type": "trigger"},  # Same source
             ],
             "triggers": [
                 {
@@ -245,9 +245,9 @@ class TestMultipleTriggersSameType:
                 {"id": "process_sent", "type": "task", "kind": "set", "value": "sent processed"},
             ],
             "edges": [
-                {"id": "e1", "source": "gmail_inbox", "target": "process_inbox", "type": "trigger"},
-                {"id": "e2", "source": "gmail_important", "target": "process_important", "type": "trigger"},
-                {"id": "e3", "source": "gmail_sent", "target": "process_sent", "type": "trigger"},
+                {"source": "gmail_inbox", "target": "process_inbox", "type": "trigger"},
+                {"source": "gmail_important", "target": "process_important", "type": "trigger"},
+                {"source": "gmail_sent", "target": "process_sent", "type": "trigger"},
             ],
             "triggers": [
                 {
@@ -321,6 +321,111 @@ class TestTriggerEventEnvelope:
         assert envelope["trigger_id"] == "gmail_inbox_123"
         assert envelope["trigger_key"] == "gmail.new_email"
         assert envelope["data"]["subject"] == "Test email"
+
+
+class TestTriggerReferenceResolution:
+    """Test trigger reference resolution with realistic envelope structure."""
+
+    @pytest.mark.asyncio
+    async def test_trigger_reference_with_mismatched_ids(self):
+        """Verify ${trigger-id} works when envelope.id != envelope.trigger_id."""
+        from seer.core.compiler.emit_langgraph import emit_langgraph
+        from seer.core.compiler.type_env import build_type_environment
+        from seer.core.compiler.validate_refs import validate_references
+        from seer.core.registry.model_registry import ModelRegistry
+        from seer.core.registry.tool_registry import ToolRegistry
+        from seer.core.runtime.execution import CompiledWorkflow
+        from seer.core.runtime.nodes import NodeRuntime, RuntimeServices
+        from seer.core.schema.schema_registry import SchemaRegistry
+
+        spec_payload = {
+            "version": "2",
+            "nodes": [
+                {
+                    "id": "echo_node",
+                    "type": "task",
+                    "kind": "set",
+                    "value": "${trigger-1.data.message}",
+                },
+            ],
+            "edges": [
+                {"source": "trigger-1", "target": "echo_node", "type": "trigger"},
+            ],
+            "triggers": [
+                {
+                    "id": "trigger-1",
+                    "key": "webhook.generic",
+                    "title": "Test Trigger",
+                    "provider": "webhook",
+                    "mode": "webhook",
+                    "enabled": True,
+                    "schemas": {
+                        "event": {
+                            "type": "object",
+                            "properties": {
+                                "data": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {"type": "string"},
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            ],
+        }
+
+        # Compile workflow using test pattern
+        schema_registry = SchemaRegistry()
+        tool_registry = ToolRegistry()
+        model_registry = ModelRegistry()
+
+        spec = parse_workflow_spec(spec_payload)
+        type_env = build_type_environment(
+            spec,
+            schema_registry=schema_registry,
+            tool_registry=tool_registry,
+        )
+        validate_references(spec, type_env)
+        plan = build_execution_plan(spec)
+
+        runtime = NodeRuntime(
+            RuntimeServices(
+                schema_registry=schema_registry,
+                tool_registry=tool_registry,
+                model_registry=model_registry,
+                type_env=type_env,
+            )
+        )
+        graph = await emit_langgraph(plan, runtime)
+        compiled = CompiledWorkflow(
+            spec=spec,
+            type_env=type_env.as_dict(),
+            graph=graph,
+            runtime=runtime,
+        )
+
+        # Create envelope mimicking production: id is UUID, trigger_id is spec ID
+        trigger_envelope = {
+            "id": "evt_c33d2cc513c44f1eb6b584beb5c20e11",  # System-generated UUID
+            "trigger_id": "trigger-1",  # Workflow spec ID
+            "trigger_key": "webhook.generic",
+            "title": "Test Trigger",
+            "data": {"message": "hello from trigger"},
+            "occurred_at": "2026-01-22T09:00:00Z",
+            "received_at": "2026-01-22T09:00:00Z",
+        }
+
+        result = await compiled.ainvoke(
+            config=None,
+            context=None,
+            trigger=trigger_envelope,
+        )
+
+        # Should successfully resolve ${trigger-1.data.message}
+        assert result["echo_node"] == "hello from trigger"
+
 
 
 if __name__ == "__main__":

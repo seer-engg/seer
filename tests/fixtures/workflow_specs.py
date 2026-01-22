@@ -9,7 +9,7 @@ Example:
         WorkflowSpecBuilder()
         .add_trigger("t1", "test.trigger")
         .add_task_node("n1", "test.tool", {"param": "value"})
-        .add_edge("e1", "t1", "n1")
+        .add_edge("t1", "n1")
         .build()
     )
 """
@@ -189,7 +189,6 @@ class WorkflowSpecBuilder:
 
     def add_edge(
         self,
-        edge_id: str,
         source: str,
         target: str,
         label: Optional[str] = None,
@@ -199,7 +198,6 @@ class WorkflowSpecBuilder:
         Add an edge connecting two nodes.
 
         Args:
-            edge_id: Unique edge identifier
             source: Source node ID
             target: Target node ID
             label: Edge label (for conditional branches, e.g., "true", "false")
@@ -209,7 +207,6 @@ class WorkflowSpecBuilder:
             Self for chaining
         """
         edge: Dict[str, Any] = {
-            "id": edge_id,
             "source": source,
             "target": target,
         }
@@ -268,7 +265,7 @@ class WorkflowSpecBuilder:
             cls()
             .add_trigger("t1", "test.trigger")
             .add_task_node("n1", "test.tool")
-            .add_edge("e1", "t1", "n1")
+            .add_edge("t1", "n1")
             .build()
         )
 
@@ -287,10 +284,10 @@ class WorkflowSpecBuilder:
             .add_condition_node("cond_1", "${task_1.result.success}", "Branch")
             .add_task_node("task_success", "test.on_success", {}, "Success Path")
             .add_task_node("task_failure", "test.on_failure", {}, "Failure Path")
-            .add_edge("e1", "t1", "task_1")
-            .add_edge("e2", "task_1", "cond_1")
-            .add_edge("e3", "cond_1", "task_success", label="true")
-            .add_edge("e4", "cond_1", "task_failure", label="false")
+            .add_edge("t1", "task_1")
+            .add_edge("task_1", "cond_1")
+            .add_edge("cond_1", "task_success", label="true")
+            .add_edge("cond_1", "task_failure", label="false")
             .build()
         )
 
@@ -307,8 +304,8 @@ class WorkflowSpecBuilder:
             .add_trigger("t1", "test.trigger")
             .add_loop_node("loop_1", "${trigger.data.items}", "Process Items")
             .add_task_node("task_1", "test.process_item", {"item": "${loop.current}"}, "Process")
-            .add_edge("e1", "t1", "loop_1")
-            .add_edge("e2", "loop_1", "task_1")
+            .add_edge("t1", "loop_1")
+            .add_edge("loop_1", "task_1")
             .build()
         )
 
@@ -327,11 +324,11 @@ class WorkflowSpecBuilder:
             .add_task_node("task_a", "test.task_a", {}, "Task A")
             .add_task_node("task_b", "test.task_b", {}, "Task B")
             .add_task_node("task_merge", "test.merge", {}, "Merge Results")
-            .add_edge("e1", "t1", "parallel_1")
-            .add_edge("e2", "parallel_1", "task_a")
-            .add_edge("e3", "parallel_1", "task_b")
-            .add_edge("e4", "task_a", "task_merge")
-            .add_edge("e5", "task_b", "task_merge")
+            .add_edge("t1", "parallel_1")
+            .add_edge("parallel_1", "task_a")
+            .add_edge("parallel_1", "task_b")
+            .add_edge("task_a", "task_merge")
+            .add_edge("task_b", "task_merge")
             .build()
         )
 
@@ -374,8 +371,8 @@ def create_invalid_spec_cyclic_edges() -> Dict[str, Any]:
             {"id": "n2", "type": "task", "label": "Task 2", "config": {"tool_call": {"tool_id": "test.tool", "parameters": {}}}},
         ],
         "edges": [
-            {"id": "e1", "source": "t1", "target": "n1"},
-            {"id": "e2", "source": "n1", "target": "n2"},
-            {"id": "e3", "source": "n2", "target": "n1"},  # Cycle!
+            {"source": "t1", "target": "n1"},
+            {"source": "n1", "target": "n2"},
+            {"source": "n2", "target": "n1"},  # Cycle!
         ],
     }

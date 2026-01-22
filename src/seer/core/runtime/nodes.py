@@ -252,7 +252,7 @@ class NodeRuntime:
         ctx = self._build_eval_context(state, config, locals_ctx)
         # Evaluate inputs even if current TaskKind does not use them – future
         # kinds may rely on the resolved values and we want early validation.
-        _ = {key: evaluate_value(ctx, value) for key, value in node.in_.items()}
+        _ = {key: evaluate_value(ctx, value) for key, value in node.inputs.items()}
 
         if node.kind == TaskKind.set:
             result = evaluate_value(ctx, node.value)
@@ -370,42 +370,62 @@ class NodeRuntime:
 
         # STEP 2: Execute LLM (existing logic)
         ctx = self._build_eval_context(state, config, locals_ctx)
-        prompt = render_template(ctx, node.prompt)
-        # Evaluate auxiliary inputs (e.g. grounding snippets)
-        auxiliary = {key: evaluate_value(ctx, value) for key, value in node.in_.items()}
-        model_def = self.services.model_registry.get(node.model)
+
+        # Extract LLM configuration from inputs dict
+        model = node.inputs.get("model")
+        if not isinstance(model, str):
+            raise ExecutionError(f"LLMNode {node.id}: 'model' must be a string in inputs")
+
+        prompt_template = node.inputs.get("prompt")
+        if not isinstance(prompt_template, str):
+            raise ExecutionError(f"LLMNode {node.id}: 'prompt' must be a string in inputs")
+
+        temperature = node.inputs.get("temperature")
+        max_tokens = node.inputs.get("max_tokens")
+
+        # All other keys are auxiliary data inputs
+        reserved_keys = {"model", "prompt", "temperature", "max_tokens"}
+        auxiliary = {
+            key: evaluate_value(ctx, value)
+            for key, value in node.inputs.items()
+            if key not in reserved_keys
+        }
+
+        # Render prompt and lookup model
+        prompt = render_template(ctx, prompt_template)
+        model_def = self.services.model_registry.get(model)
 
         invocation = {
             "prompt": prompt,
             "inputs": auxiliary,
             "config": dict(config),
             "parameters": {
-                "temperature": node.temperature,
-                "max_tokens": node.max_tokens,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
             },
-            "meta": node.meta,
+            "ui": node.ui,
         }
 
         usage_metadata = {}
-        if node.output.mode == OutputMode.text:
+        if node.outputs.mode == OutputMode.text:
             if model_def.text_handler is None:
-                raise ExecutionError(f"Model '{node.model}' does not support text responses")
+                raise ExecutionError(f"Model '{model}' does not support text responses")
             # Handler now returns tuple
             result, usage_metadata = model_def.text_handler(invocation)
             if not isinstance(result, str):
                 raise ExecutionError(f"LLM node '{node.id}' expected text response")
-        elif node.output.mode == OutputMode.json:
+        elif node.outputs.mode == OutputMode.json:
             schema = self._type_schemas.get(node.out or "")
             if schema is None:
                 raise ExecutionError(f"No schema recorded for '{node.out}'")
             if model_def.json_handler is None:
-                raise ExecutionError(f"Model '{node.model}' does not support structured responses")
+                raise ExecutionError(f"Model '{model}' does not support structured responses")
             # Handler now returns tuple
             result, usage_metadata = model_def.json_handler(invocation, schema)
             if not isinstance(result, dict):
                 raise ExecutionError(f"LLM node '{node.id}' expected JSON response")
         else:
-            raise ExecutionError(f"Unsupported output mode '{node.output.mode}' for node '{node.id}'")
+            raise ExecutionError(f"Unsupported output mode '{node.outputs.mode}' for node '{node.id}'")
 
         # STEP 2.5: Track usage asynchronously (fire and forget)
         if usage_metadata:
@@ -426,7 +446,7 @@ class NodeRuntime:
             'timestamp': datetime.now(timezone.utc).isoformat(),
             # Add usage metadata to trace
             'usage': {
-                'model': usage_metadata.get('model', node.model),
+                'model': usage_metadata.get('model', model),
                 'input_tokens': usage_metadata.get('input_tokens', 0),
                 'output_tokens': usage_metadata.get('output_tokens', 0),
                 'reasoning_tokens': usage_metadata.get('reasoning_tokens', 0),
@@ -682,15 +702,20 @@ class NodeRuntime:
         self, node: LLMNode, ctx: EvaluationContext
     ) -> Dict[str, Any]:
         """Capture LLM node specific inputs."""
-        inputs = {'prompt_template': node.prompt, 'model': node.model}
+        inputs = {
+            'prompt_template': node.inputs.get('prompt'),
+            'model': node.inputs.get('model')
+        }
 
-        if node.in_:
-            inputs['input_refs'] = self._evaluate_input_expressions(ctx, node.in_)
+        reserved_keys = {"model", "prompt", "temperature", "max_tokens"}
+        auxiliary = {k: v for k, v in node.inputs.items() if k not in reserved_keys}
+        if auxiliary:
+            inputs['input_refs'] = self._evaluate_input_expressions(ctx, auxiliary)
 
-        if node.temperature is not None:
-            inputs['temperature'] = node.temperature
-        if node.max_tokens is not None:
-            inputs['max_tokens'] = node.max_tokens
+        if 'temperature' in node.inputs:
+            inputs['temperature'] = node.inputs['temperature']
+        if 'max_tokens' in node.inputs:
+            inputs['max_tokens'] = node.inputs['max_tokens']
 
         return inputs
 
@@ -711,7 +736,7 @@ class NodeRuntime:
             return self._capture_llm_node_inputs(node, ctx)
 
         if isinstance(node, (ToolNode, TaskNode)):
-            return self._evaluate_input_expressions(ctx, node.in_)
+            return self._evaluate_input_expressions(ctx, node.inputs)
 
         return {}
 

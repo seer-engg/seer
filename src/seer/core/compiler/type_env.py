@@ -64,7 +64,7 @@ def _register_triggers(triggers: List[TriggerSpec], env: TypeEnvironment) -> Non
     """
     for trigger in triggers:
         # Get event schema
-        event_schema = trigger.schemas.event if trigger.schemas.event else {
+        event_schema = trigger.event_schema if trigger.event_schema else {
             "type": "object",
             "additionalProperties": True
         }
@@ -113,21 +113,21 @@ def _process_node(
     if isinstance(node, ToolNode):
         tool_def = tool_registry.get(node.tool)
         schema = tool_def.output_schema
-        if node.expect_output is not None:
-            expected = schema_from_output_contract(node.expect_output, schema_registry)
+        if node.expect_outputs is not None:
+            expected = schema_from_output_contract(node.expect_outputs, schema_registry)
             _ensure_schema_match(schema, expected, symbol=node.id)
         _register_symbol(env, node.id, schema)
         return
 
     if isinstance(node, LLMNode):
-        schema = schema_from_output_contract(node.output, schema_registry)
+        schema = schema_from_output_contract(node.outputs, schema_registry)
         _register_symbol(env, node.id, schema)
         return
 
     if isinstance(node, ForEachNode):
         # Register loop output schema using node ID
-        if node.output:
-            loop_schema = schema_from_output_contract(node.output, schema_registry)
+        if node.outputs:
+            loop_schema = schema_from_output_contract(node.outputs, schema_registry)
         else:
             loop_schema = {"type": "array"}
         _register_symbol(env, node.id, loop_schema)
@@ -138,8 +138,8 @@ def _process_node(
 
 
 def _schema_for_task(node: TaskNode, registry: SchemaRegistry) -> Optional[Dict]:
-    if node.output:
-        return schema_from_output_contract(node.output, registry)
+    if node.outputs:
+        return schema_from_output_contract(node.outputs, registry)
     if node.kind == TaskKind.set and node.value is not None:
         return _infer_schema_from_value(node.value)
     return None

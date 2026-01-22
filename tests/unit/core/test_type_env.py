@@ -75,12 +75,8 @@ def test_register_triggers_basic():
         TriggerSpec(
             id="t1",
             key="test.trigger",
-            title="TestTrigger",
-            provider="test",
             mode="polling",
-            schemas=TriggerSchemas(
-                event={"type": "object", "properties": {"message": {"type": "string"}}}
-            )
+            event_schema={"type": "object", "properties": {"message": {"type": "string"}}},
         )
     ]
 
@@ -100,10 +96,8 @@ def test_register_triggers_with_default_schema():
         TriggerSpec(
             id="t1",
             key="test.trigger",
-            title="SimpleTrigger",
-            provider="test",
             mode="polling",
-            schemas=TriggerSchemas()  # Use default (empty dict) for event schema
+            # Use default (empty dict) for event_schema
         )
     ]
 
@@ -129,18 +123,14 @@ def test_register_triggers_duplicate_id_allowed_different_titles():
         TriggerSpec(
             id="t1",
             key="trigger1.key",
-            title="DuplicateTitle",
-            provider="test",
             mode="polling",
-            schemas=TriggerSchemas(event={})
+            event_schema={},
         ),
         TriggerSpec(
             id="t2",
             key="trigger2.key",
-            title="DuplicateTitle",  # Same title but different ID - OK
-            provider="test",
             mode="polling",
-            schemas=TriggerSchemas(event={})
+            event_schema={},
         )
     ]
 
@@ -160,10 +150,8 @@ def test_register_triggers_with_hyphen_in_id():
         TriggerSpec(
             id="trigger-with-hyphen",
             key="test.trigger",
-            title="My Trigger",
-            provider="test",
             mode="polling",
-            schemas=TriggerSchemas(event={})
+            event_schema={},
         )
     ]
 
@@ -188,10 +176,8 @@ def test_register_triggers_various_special_char_ids(valid_id):
         TriggerSpec(
             id=valid_id,  # All special chars are now valid in IDs
             key="test.trigger",
-            title="My Trigger",
-            provider="test",
             mode="polling",
-            schemas=TriggerSchemas(event={})
+            event_schema={},
         )
     ]
 
@@ -334,12 +320,8 @@ def test_build_type_environment_with_trigger():
             TriggerSpec(
                 id="t1",
                 key="test.trigger",
-                title="MyTrigger",
-                provider="test",
                 mode="polling",
-                schemas=TriggerSchemas(
-                    event={"type": "object", "properties": {"data": {"type": "string"}}}
-                )
+                event_schema={"type": "object", "properties": {"data": {"type": "string"}}},
             )
         ],
         nodes=[],
@@ -420,9 +402,8 @@ def test_build_type_environment_with_llm_node():
             LLMNode(
                 id="llm1",
                 type="llm",
-                model="gpt-4",
-                prompt="Generate a response",
-                output=OutputContract(mode=OutputMode.json, schema={"schema": {"type": "object"}})
+                inputs={"model": "gpt-4", "prompt": "Generate a response"},
+                outputs=OutputContract(mode=OutputMode.json, schema={"schema": {"type": "object"}})
             )
         ],
         edges=[]
@@ -555,10 +536,8 @@ def test_register_triggers_id_with_spaces():
         TriggerSpec(
             id="My Trigger",  # Valid: spaces are allowed in IDs
             key="test.trigger",
-            title="My Trigger Title",
-            provider="test",
             mode="polling",
-            schemas=TriggerSchemas(event={})
+            event_schema={},
         )
     ]
 
@@ -577,10 +556,8 @@ def test_register_triggers_id_with_multiple_spaces():
         TriggerSpec(
             id="My  Complex  Trigger  ID",  # Valid: multiple spaces allowed in IDs
             key="test.trigger",
-            title="My Trigger Title",
-            provider="test",
             mode="polling",
-            schemas=TriggerSchemas(event={})
+            event_schema={},
         )
     ]
 
@@ -599,10 +576,8 @@ def test_register_triggers_id_with_another_hyphen():
         TriggerSpec(
             id="my-trigger-id",  # Valid: hyphens allowed in IDs
             key="test.trigger",
-            title="My Trigger",
-            provider="test",
             mode="polling",
-            schemas=TriggerSchemas(event={})
+            event_schema={},
         )
     ]
 
@@ -632,10 +607,8 @@ def test_register_triggers_id_with_dot():
         TriggerSpec(
             id="trigger.id",  # Valid: dots allowed in IDs, but may cause ambiguity
             key="test.trigger",
-            title="Trigger Name",
-            provider="test",
             mode="polling",
-            schemas=TriggerSchemas(event={})
+            event_schema={},
         )
     ]
 
@@ -654,10 +627,8 @@ def test_register_triggers_id_with_at_sign():
         TriggerSpec(
             id="trigger@email",  # Valid: @ allowed in IDs
             key="test.trigger",
-            title="Trigger Email",
-            provider="test",
             mode="polling",
-            schemas=TriggerSchemas(event={})
+            event_schema={},
         )
     ]
 
@@ -676,10 +647,8 @@ def test_register_triggers_id_starts_with_number():
         TriggerSpec(
             id="1trigger",  # Valid: IDs can start with number
             key="test.trigger",
-            title="Trigger 1",
-            provider="test",
             mode="polling",
-            schemas=TriggerSchemas(event={})
+            event_schema={},
         )
     ]
 
@@ -698,10 +667,8 @@ def test_register_triggers_id_with_unicode():
         TriggerSpec(
             id="触发器",  # Valid: Unicode allowed in IDs
             key="test.trigger",
-            title="Trigger Title",
-            provider="test",
             mode="polling",
-            schemas=TriggerSchemas(event={})
+            event_schema={},
         )
     ]
 
@@ -748,10 +715,8 @@ def test_register_triggers_id_with_various_special_chars(special_char_id):
         TriggerSpec(
             id=special_char_id,  # Valid: all special chars allowed in IDs
             key="test.trigger",
-            title="Trigger Title",
-            provider="test",
             mode="polling",
-            schemas=TriggerSchemas(event={})
+            event_schema={},
         )
     ]
 

@@ -63,9 +63,6 @@ class Workflow(models.Model):
     id = fields.IntField(primary_key=True)
     user = fields.ForeignKeyField("models.User", related_name="workflows")
     name = fields.CharField(max_length=255)
-    description = fields.TextField(null=True)
-    tags = fields.JSONField(null=True)
-    meta = fields.JSONField(null=True)
     published_version = fields.ForeignKeyField(
         "models.WorkflowVersion",
         related_name="published_workflows",
@@ -86,33 +83,6 @@ class Workflow(models.Model):
         return make_workflow_public_id(self.id)
 
 
-class WorkflowDraft(models.Model):
-    """Mutable draft state for a workflow."""
-
-    id = fields.IntField(primary_key=True)
-    workflow = fields.OneToOneField(
-        "models.Workflow", related_name="draft", on_delete=fields.CASCADE
-    )
-    spec = fields.JSONField()
-    revision = fields.IntField(default=1)
-    updated_at = fields.DatetimeField(auto_now=True)
-    updated_by = fields.ForeignKeyField(
-        "models.User",
-        related_name="updated_workflow_drafts",
-        null=True,
-    )
-    validation_errors = fields.JSONField(null=True)
-    validation_warnings = fields.JSONField(null=True)
-
-    class Meta:
-        table = "workflow_drafts"
-
-    def __str__(self) -> str:
-        return f"WorkflowDraft<wf={self.id} rev={self.revision}>"
-
-    @property
-    def workflow_public_id(self) -> str:
-        return self.workflow.workflow_id
 
 
 class WorkflowVersion(models.Model):
@@ -138,6 +108,15 @@ class WorkflowVersion(models.Model):
     manifest = fields.JSONField(null=True)
     spec_hash = fields.CharField(max_length=64)
     version_number = fields.IntField(default=0)
+    # New fields for draft functionality
+    updated_at = fields.DatetimeField(auto_now=True)
+    updated_by = fields.ForeignKeyField(
+        "models.User",
+        related_name="updated_workflow_versions",
+        null=True,
+    )
+    validation_errors = fields.JSONField(null=True)
+    validation_warnings = fields.JSONField(null=True)
 
     class Meta:
         table = "workflow_versions"

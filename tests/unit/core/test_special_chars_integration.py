@@ -81,7 +81,7 @@ async def test_workflow_with_node_ids_containing_spaces():
             }
         ],
         "edges": [
-            {"id": "edge_task1_task2", "source": "my task result", "target": "final output", "type": "default"}
+            {"source": "my task result", "target": "final output", "type": "default"}
         ]
     }
 
@@ -121,8 +121,8 @@ async def test_workflow_with_node_ids_containing_hyphens():
             }
         ],
         "edges": [
-            {"id": "edge_task1_task2", "source": "user-count", "target": "max-limit", "type": "default"},
-            {"id": "edge_task2_if1", "source": "max-limit", "target": "if1", "type": "default"}
+            {"source": "user-count", "target": "max-limit", "type": "default"},
+            {"source": "max-limit", "target": "if1", "type": "default"}
         ]
     }
 
@@ -205,8 +205,8 @@ async def test_workflow_with_unicode_node_ids():
             }
         ],
         "edges": [
-            {"id": "edge_task1_task2", "source": "résultat", "target": "结果", "type": "default"},
-            {"id": "edge_task2_task3", "source": "结果", "target": "summary", "type": "default"}
+            {"source": "résultat", "target": "结果", "type": "default"},
+            {"source": "结果", "target": "summary", "type": "default"}
         ]
     }
 
@@ -243,7 +243,7 @@ async def test_workflow_with_nested_property_access_special_chars():
             }
         ],
         "edges": [
-            {"id": "edge_task1_task2", "source": "api-response", "target": "user name", "type": "default"}
+            {"source": "api-response", "target": "user name", "type": "default"}
         ]
     }
 
@@ -277,7 +277,7 @@ async def test_workflow_with_foreach_special_node_ids():
             }
         ],
         "edges": [
-            {"id": "edge_task1_loop1", "source": "data-items", "target": "processed items", "type": "default"}
+            {"source": "data-items", "target": "processed items", "type": "default"}
         ]
     }
 
@@ -482,12 +482,12 @@ async def test_complex_workflow_with_mixed_special_characters():
             }
         ],
         "edges": [
-            {"id": "edge_task1_task2", "source": "api-response", "target": "user count", "type": "default"},
-            {"id": "edge_task2_task3", "source": "user count", "target": "timestamp@data", "type": "default"},
-            {"id": "edge_task3_if1", "source": "timestamp@data", "target": "if1", "type": "default"},
-            {"id": "edge_if1_task4", "source": "if1", "target": "final-summary", "type": "conditional_true"},
-            {"id": "edge_task4_task5", "source": "final-summary", "target": "data$array", "type": "default"},
-            {"id": "edge_task5_loop1", "source": "data$array", "target": "processed#results", "type": "default"}
+            {"source": "api-response", "target": "user count", "type": "default"},
+            {"source": "user count", "target": "timestamp@data", "type": "default"},
+            {"source": "timestamp@data", "target": "if1", "type": "default"},
+            {"source": "if1", "target": "final-summary", "type": "conditional_true"},
+            {"source": "final-summary", "target": "data$array", "type": "default"},
+            {"source": "data$array", "target": "processed#results", "type": "default"}
         ]
     }
 
@@ -540,9 +540,9 @@ async def test_workflow_template_strings_with_special_node_ids():
             }
         ],
         "edges": [
-            {"id": "edge_task1_task2", "source": "first-name", "target": "last name", "type": "default"},
-            {"id": "edge_task2_task3", "source": "last name", "target": "user@age", "type": "default"},
-            {"id": "edge_task3_task4", "source": "user@age", "target": "user#profile", "type": "default"}
+            {"source": "first-name", "target": "last name", "type": "default"},
+            {"source": "last name", "target": "user@age", "type": "default"},
+            {"source": "user@age", "target": "user#profile", "type": "default"}
         ]
     }
 
@@ -616,7 +616,7 @@ async def test_workflow_with_multiple_triggers_special_chars():
             }
         ],
         "edges": [
-            {"id": "edge_task1_if1", "source": "combined message", "target": "if1", "type": "default"}
+            {"source": "combined message", "target": "if1", "type": "default"}
         ]
     }
 

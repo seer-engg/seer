@@ -240,7 +240,7 @@ def test_parse_invalid_edge_structure():
         "nodes": [],
         "edges": [
             {
-                "id": "e1",
+                
                 # Missing required 'source' and 'target' fields
                 "label": "Test Edge"
             }
@@ -273,17 +273,15 @@ def test_parse_workflow_with_extra_fields():
 
 
 def test_parse_workflow_with_unicode_characters():
-    """Test parsing workflow with unicode characters in title."""
+    """Test parsing workflow with unicode characters in trigger ID."""
     unicode_spec = {
         "version": "2",
         "triggers": [
             {
-                "id": "t1",
+                "id": "触发器_t1",
                 "key": "test.trigger",
-                "title": "TestTrigger",
-                "provider": "test",
                 "mode": "polling",
-                "description": "测试触发器 🚀"
+                "event_schema": {},
             }
         ],
         "nodes": [],
@@ -293,7 +291,7 @@ def test_parse_workflow_with_unicode_characters():
     spec = parse_workflow_spec(unicode_spec)
 
     assert isinstance(spec, WorkflowSpec)
-    assert spec.triggers[0].description == "测试触发器 🚀"
+    assert spec.triggers[0].id == "触发器_t1"
 
 
 def test_parse_deeply_nested_node_config():

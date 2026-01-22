@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 from seer.api.workflows import models as api_models
 from seer.api.workflows.services.shared import (
     _ensure_draft_version,
+    _get_draft_version,
     _get_workflow,
     _now,
     _raise_problem,
@@ -21,7 +22,6 @@ from seer.database import (
     TriggerSubscription,
     User,
     Workflow,
-    WorkflowDraft,
     WorkflowRun,
     WorkflowRunSource,
     WorkflowRunStatus,
@@ -190,14 +190,23 @@ async def run_saved_workflow(
                 status=404,
             )
     else:
-        # NEW: Check for triggers BEFORE calling _ensure_draft_version
-        # to determine if we should skip validation (since we'll use sample events)
-        draft = await WorkflowDraft.get(workflow=workflow)
-        draft_spec = WorkflowSpec.model_validate(draft.spec or {})
-        has_triggers = bool(draft_spec.triggers)
+        # Always run latest DRAFT (create from published if needed)
+        version = await _get_draft_version(workflow, create_if_missing=True, user=user)
+        if not version:
+            _raise_problem(
+                type_uri=RUN_PROBLEM,
+                title="No draft version",
+                detail="Workflow has no draft version to run",
+                status=500,
+            )
 
-        # Pass skip_validation=True when triggers exist (we'll use sample events)
-        version = await _ensure_draft_version(workflow, user, skip_validation=has_triggers)
+        # Sync triggers for DRAFT
+        spec = WorkflowSpec.model_validate(version.spec)
+        has_triggers = bool(spec.triggers)
+        if has_triggers:
+            # pylint: disable=import-outside-toplevel
+            from seer.api.workflows.services.triggers import sync_trigger_subscriptions
+            await sync_trigger_subscriptions(user, workflow, spec, skip_validation=True)
 
     spec = WorkflowSpec.model_validate(version.spec)
 

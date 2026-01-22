@@ -117,35 +117,35 @@ def build_workflow_spec() -> Dict[str, Any]:
         "version": "2",
         "triggers": [
             {
+                "id": "trigger",
                 "key": "manual.trigger",
-                "schemas": {
-                    "event": {
-                        "type": "object",
-                        "properties": {
-                            "data": {
-                                "type": "object",
-                                "properties": {
-                                    "repo": {"type": "string"},
-                                    "query": {"type": "string"},
-                                },
-                                "required": ["repo", "query"],
-                            }
-                        },
-                    }
+                "mode": "manual",
+                "event_schema": {
+                    "type": "object",
+                    "properties": {
+                        "data": {
+                            "type": "object",
+                            "properties": {
+                                "repo": {"type": "string"},
+                                "query": {"type": "string"},
+                            },
+                            "required": ["repo", "query"],
+                        }
+                    },
                 },
             }
         ],
         "edges": [
-            {"id": "e0", "source": "manual.trigger", "target": "search_issue", "type": "trigger"}
+            {"source": "trigger", "target": "search_issue", "type": "trigger"}
         ],
         "nodes": [
             {
                 "id": "search_issue",
                 "type": "tool",
                 "tool": "github.search_issues",
-                "in": {"repo": "${trigger.data.repo}", "q": "${trigger.data.query}"},
+                "inputs": {"repo": "${trigger.data.repo}", "q": "${trigger.data.query}"},
                 "out": "issue_search",
-                "expect_output": {
+                "expect_outputs": {
                     "mode": "json",
                     "schema": {"id": "schemas.issue_results@v1"},
                 },
@@ -158,10 +158,12 @@ def build_workflow_spec() -> Dict[str, Any]:
                     {
                         "id": "summarize",
                         "type": "llm",
-                        "model": "demo-text-model",
-                        "prompt": "Summarize issue: ${issue_search.items[0].title}",
+                        "inputs": {
+                            "model": "demo-text-model",
+                            "prompt": "Summarize issue: ${issue_search.items[0].title}",
+                        },
                         "out": "summary",
-                        "output": {
+                        "outputs": {
                             "mode": "json",
                             "schema": {"id": "schemas.summary@v1"},
                         },
@@ -174,7 +176,7 @@ def build_workflow_spec() -> Dict[str, Any]:
                         "kind": "set",
                         "value": {"message": "No issues found"},
                         "out": "summary",
-                        "output": {
+                        "outputs": {
                             "mode": "json",
                             "schema": {"id": "schemas.summary@v1"},
                         },
@@ -182,7 +184,7 @@ def build_workflow_spec() -> Dict[str, Any]:
                 ],
             },
         ],
-        "output": "${summary}",
+        "outputs": "${summary}",
     }
 
 

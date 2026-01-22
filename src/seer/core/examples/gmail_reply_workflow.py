@@ -127,14 +127,14 @@ def build_workflow_spec(reply_schema: JsonSchema, read_schema: JsonSchema, draft
                 "id": "fetch_email",
                 "type": "tool",
                 "tool": READ_TOOL,
-                "in": {
+                "inputs": {
                     "user_id": "${trigger.data.user_id}",
                     "max_results": 1,
                     "label_ids": ["INBOX"],
                     "include_body": True,
                 },
                 "out": "emails",
-                "expect_output": {
+                "expect_outputs": {
                     "mode": "json",
                     "schema": {"json_schema": read_schema},
                 },
@@ -142,16 +142,18 @@ def build_workflow_spec(reply_schema: JsonSchema, read_schema: JsonSchema, draft
             {
                 "id": "draft_reply",
                 "type": "llm",
-                "model": MODEL_ID,
-                "prompt": (
-                    "You are a helpful assistant that writes short, friendly replies.\n"
-                    "Original email subject: ${emails[0].subject}\n"
-                    "Original body:\n${emails[0].body}\n\n"
-                    "Respond succinctly and confirm next steps."
-                ),
-                "in": {"email": "${emails[0]}"},
+                "inputs": {
+                    "model": MODEL_ID,
+                    "prompt": (
+                        "You are a helpful assistant that writes short, friendly replies.\n"
+                        "Original email subject: ${emails[0].subject}\n"
+                        "Original body:\n${emails[0].body}\n\n"
+                        "Respond succinctly and confirm next steps."
+                    ),
+                    "email": "${emails[0]}",
+                },
                 "out": "reply_payload",
-                "output": {
+                "outputs": {
                     "mode": "json",
                     "schema": {"json_schema": reply_schema},
                 },
@@ -160,20 +162,20 @@ def build_workflow_spec(reply_schema: JsonSchema, read_schema: JsonSchema, draft
                 "id": "save_draft",
                 "type": "tool",
                 "tool": DRAFT_TOOL,
-                "in": {
+                "inputs": {
                     "user_id": "${trigger.data.user_id}",
                     "to": "${reply_payload.to}",
                     "subject": "${reply_payload.subject}",
                     "body_text": "${reply_payload.body_text}",
                 },
                 "out": "draft_info",
-                "expect_output": {
+                "expect_outputs": {
                     "mode": "json",
                     "schema": {"json_schema": draft_schema},
                 },
             },
         ],
-        "output": "${draft_info}",
+        "outputs": "${draft_info}",
     }
 
 

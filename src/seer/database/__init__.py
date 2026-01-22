@@ -20,7 +20,6 @@ from seer.database.workflow_models import (
     Workflow,
     WorkflowChatMessage,
     WorkflowChatSession,
-    WorkflowDraft,
     WorkflowProposal,
     WorkflowRun,
     WorkflowRunSource,
@@ -85,7 +84,6 @@ __all__ = [
     "IntegrationSecret",
     # Workflow domain
     "Workflow",
-    "WorkflowDraft",
     "WorkflowVersion",
     "WorkflowRun",
     "WorkflowChatSession",

@@ -50,10 +50,8 @@ def test_validate_references_with_valid_trigger_ref():
             TriggerSpec(
                 id="t1",
                 key="test.trigger",
-                title="MyTrigger",
-                provider="test",
                 mode="polling",
-                schemas=TriggerSchemas(event={})
+                event_schema={},
             )
         ],
         nodes=[
@@ -111,9 +109,8 @@ def test_validate_references_with_multiple_refs():
                 id="t1",
                 key="test.trigger",
                 title="trigger1",
-                provider="test",
                 mode="polling",
-                schemas=TriggerSchemas(event={})
+                event_schema={},
             )
         ],
         nodes=[
@@ -411,10 +408,8 @@ def test_uses_trigger_references_true():
             TriggerSpec(
                 id="t1",
                 key="test.trigger",
-                title="MyTrigger",
-                provider="test",
                 mode="polling",
-                schemas=TriggerSchemas(event={})
+                event_schema={},
             )
         ],
         nodes=[
@@ -438,10 +433,8 @@ def test_uses_trigger_references_false():
             TriggerSpec(
                 id="t1",
                 key="test.trigger",
-                title="MyTrigger",
-                provider="test",
                 mode="polling",
-                schemas=TriggerSchemas(event={})
+                event_schema={},
             )
         ],
         nodes=[
@@ -872,9 +865,8 @@ def test_validate_references_trigger_title_with_spaces():
                 id="t1",
                 key="test.trigger",
                 title="My Trigger",  # Title can have spaces, but references use ID
-                provider="test",
                 mode="polling",
-                schemas=TriggerSchemas(event={})
+                event_schema={},
             )
         ],
         nodes=[
@@ -904,9 +896,8 @@ def test_validate_references_trigger_title_with_hyphen():
                 id="t1",
                 key="test.trigger",
                 title="my-trigger",  # Title for display, ID for references
-                provider="test",
                 mode="polling",
-                schemas=TriggerSchemas(event={})
+                event_schema={},
             )
         ],
         nodes=[
@@ -936,9 +927,8 @@ def test_validate_references_trigger_title_unicode():
                 id="t1",
                 key="test.trigger",
                 title="触发器",  # Unicode title for display
-                provider="test",
                 mode="polling",
-                schemas=TriggerSchemas(event={})
+                event_schema={},
             )
         ],
         nodes=[

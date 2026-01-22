@@ -25,6 +25,17 @@
 - Line length limit is 150 characters (see `pyproject.toml`).
 - Linting uses `pylint` and `pre-commit`; any `# pylint: disable=...` must include a reason comment.
 
+
+## Build & Run Commands
+- **Run Scripts:** Always use `uv run <script_name>` (e.g., `uv run main.py`)
+- **Install Packages:** Always use `uv add <package>` (NEVER use `pip install`)
+- **Run Tests:** `uv run pytest`
+- **Lockfile:** Rely on `uv.lock`. Do not create requirements.txt unless explicitly asked.
+
+## Environment
+- This project uses `uv` for dependency management.
+- Do not attempt to create virtual environments manually (venv). Let `uv` handle it.
+
 ## Testing Guidelines
 - `pytest` + `pytest-asyncio` (asyncio mode is `auto`).
 - Tests are named `test_*.py`;

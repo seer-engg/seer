@@ -59,14 +59,14 @@ def build_workflow_spec(
                 "id": "fetch_emails",
                 "type": "tool",
                 "tool": READ_TOOL,
-                "in": {
+                "inputs": {
                     "user_id": "${trigger.data.user_id}",
                     "max_results": 3,
                     "label_ids": ["INBOX"],
                     "include_body": True,
                 },
                 "out": "emails",
-                "expect_output": {
+                "expect_outputs": {
                     "mode": "json",
                     "schema": {"json_schema": read_schema},
                 },
@@ -81,17 +81,19 @@ def build_workflow_spec(
                     {
                         "id": "compose_reply",
                         "type": "llm",
-                        "model": MODEL_ID,
-                        "prompt": (
-                            "You are a helpful assistant drafting a concise, friendly reply.\n"
-                            "Keep the tone professional, propose next steps when relevant, and stay under 120 words.\n"
-                            "Email #${email_index} subject: ${email_item.subject}\n"
-                            "From: ${email_item.from}\n"
-                            "Body:\n${email_item.body}\n"
-                        ),
-                        "in": {"email": "${email_item}"},
+                        "inputs": {
+                            "model": MODEL_ID,
+                            "prompt": (
+                                "You are a helpful assistant drafting a concise, friendly reply.\n"
+                                "Keep the tone professional, propose next steps when relevant, and stay under 120 words.\n"
+                                "Email #${email_index} subject: ${email_item.subject}\n"
+                                "From: ${email_item.from}\n"
+                                "Body:\n${email_item.body}\n"
+                            ),
+                            "email": "${email_item}",
+                        },
                         "out": "loop_reply_payload",
-                        "output": {
+                        "outputs": {
                             "mode": "json",
                             "schema": {"json_schema": reply_schema},
                         },
@@ -100,7 +102,7 @@ def build_workflow_spec(
                         "id": "create_reply_draft",
                         "type": "tool",
                         "tool": DRAFT_TOOL,
-                        "in": {
+                        "inputs": {
                             "user_id": "${trigger.data.user_id}",
                             "to": "${loop_reply_payload.to}",
                             "subject": "${loop_reply_payload.subject}",
@@ -108,14 +110,14 @@ def build_workflow_spec(
                             "thread_id": "${email_item.threadId}",
                         },
                         "out": "loop_draft_record",
-                        "expect_output": {
+                        "expect_outputs": {
                             "mode": "json",
                             "schema": {"json_schema": draft_schema},
                         },
                     },
                 ],
                 "out": "drafts",
-                "output": {
+                "outputs": {
                     "mode": "json",
                     "schema": {
                         "json_schema": {
@@ -126,7 +128,7 @@ def build_workflow_spec(
                 },
             },
         ],
-        "output": {
+        "outputs": {
             "drafts": "${drafts}",
         },
     }

@@ -102,14 +102,14 @@ def build_workflow_spec(email_schema: JsonSchema) -> Dict[str, Any]:
                 "id": "fetch_emails",
                 "type": "tool",
                 "tool": TOOL_NAME,
-                "in": {
+                "inputs": {
                     "user_id": "${trigger.data.user_id}",
                     "max_results": 3,
                     "label_ids": ["INBOX"],
                     "include_body": True,
                 },
                 "out": "emails",
-                "expect_output": {
+                "expect_outputs": {
                     "mode": "json",
                     "schema": {"json_schema": email_schema},
                 },
@@ -117,17 +117,19 @@ def build_workflow_spec(email_schema: JsonSchema) -> Dict[str, Any]:
             {
                 "id": "summarize",
                 "type": "llm",
-                "model": MODEL_ID,
-                "prompt": (
-                    "Summarize the following emails for a busy engineer. "
-                    "Group similar items and call out any requests or deadlines."
-                ),
-                "in": {"emails": "${emails}"},
+                "inputs": {
+                    "model": MODEL_ID,
+                    "prompt": (
+                        "Summarize the following emails for a busy engineer. "
+                        "Group similar items and call out any requests or deadlines."
+                    ),
+                    "emails": "${emails}",
+                },
                 "out": "inbox_summary",
-                "output": {"mode": "text"},
+                "outputs": {"mode": "text"},
             },
         ],
-        "output": "${inbox_summary}",
+        "outputs": "${inbox_summary}",
     }
 
 

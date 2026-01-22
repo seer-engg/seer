@@ -100,11 +100,10 @@ class Edge(StrictModel):
     """
     Explicit edge connecting two nodes in the workflow graph.
     """
-    id: str = Field(min_length=1)
     source: str = Field(min_length=1)  # Source node ID
     target: str = Field(min_length=1)  # Target node ID
     type: EdgeType = EdgeType.default
-    meta: Dict[str, JSONValue] = Field(default_factory=dict)
+    ui: Dict[str, JSONValue] = Field(default_factory=dict)
 
 
 # -----------------------------
@@ -113,7 +112,7 @@ class Edge(StrictModel):
 class NodeBase(StrictModel):
     id: str = Field(min_length=1)
     type: str
-    meta: Dict[str, JSONValue] = Field(default_factory=dict)
+    ui: Dict[str, JSONValue] = Field(default_factory=dict)
 
 
 class TaskKind(str, Enum):
@@ -124,10 +123,10 @@ class TaskNode(NodeBase):
     type: Literal["task"] = "task"
     kind: TaskKind
     value: Optional[JSONValue] = None
-    in_: Dict[str, JSONValue] = Field(default_factory=dict, alias="in")
+    inputs: Dict[str, JSONValue] = Field(default_factory=dict)
 
     # Optional: declare output contract for tasks (esp for kind=set)
-    output: Optional[OutputContract] = None
+    outputs: Optional[OutputContract] = None
 
     @model_validator(mode="after")
     def _validate_set(self) -> "TaskNode":
@@ -139,25 +138,27 @@ class TaskNode(NodeBase):
 class ToolNode(NodeBase):
     type: Literal["tool"] = "tool"
     tool: str = Field(min_length=1)
-    in_: Dict[str, JSONValue] = Field(default_factory=dict, alias="in")
+    inputs: Dict[str, JSONValue] = Field(default_factory=dict)
 
     # Usually derived from ToolRegistry at compile time.
     # But allow client to assert expected schema (optional safety/version check).
-    expect_output: Optional[OutputContract] = None
+    expect_outputs: Optional[OutputContract] = None
 
 
 class LLMNode(NodeBase):
     type: Literal["llm"] = "llm"
-    model: str = Field(min_length=1)
-    prompt: str = Field(min_length=1)
-    in_: Dict[str, JSONValue] = Field(default_factory=dict, alias="in")
+    inputs: Dict[str, JSONValue] = Field(default_factory=dict)
 
     # Key addition: explicitly declare response mode + schema for structured outputs
-    output: OutputContract = Field(default_factory=lambda: OutputContract(mode=OutputMode.text))
+    outputs: OutputContract = Field(default_factory=lambda: OutputContract(mode=OutputMode.text))
 
-    # common knobs
-    temperature: Optional[float] = None
-    max_tokens: Optional[int] = None
+    @model_validator(mode="after")
+    def _validate_llm_inputs(self) -> "LLMNode":
+        required = ["model", "prompt"]
+        missing = [k for k in required if k not in self.inputs]
+        if missing:
+            raise ValueError(f'LLMNode requires {", ".join(missing)} in inputs')
+        return self
 
 
 class IfNode(NodeBase):
@@ -185,7 +186,7 @@ class ForEachNode(NodeBase):
 
     # Optional aggregation contract for what out holds after loop
     # (e.g. list of item results / reduce object)
-    output: Optional[OutputContract] = None
+    outputs: Optional[OutputContract] = None
 
 
 Node = Annotated[
@@ -220,21 +221,60 @@ class TriggerDefinition(StrictModel):
     schemas: TriggerSchemas = Field(default_factory=TriggerSchemas)
     meta: TriggerMetadata = Field(default_factory=TriggerMetadata)
 
-class TriggerSpec(TriggerDefinition):
+class TriggerSpec(StrictModel):
     """
     Declarative trigger configuration embedded in the workflow spec.
 
     Frontend supplies this alongside nodes so triggers can be versioned with the workflow.
+    No longer inherits from TriggerDefinition - only includes fields needed for workflow execution.
     """
 
     # Unique instance identifier (allows multiple triggers of same type)
     id: str = Field(min_length=1)
 
-    provider_connection_id: Optional[int] = None
-    enabled: bool = True
+    # Trigger type and mode
+    key: str  # Trigger type key (e.g., "gmail.new_email")
+    mode: str  # "polling", "webhook", etc.
+
+    # Event schema (flattened from schemas.event)
+    event_schema: JsonSchema = Field(default_factory=dict)
+
+    # Metadata
+    meta: TriggerMetadata = Field(default_factory=TriggerMetadata)
+
+    # Configuration
     filters: Dict[str, JSONValue] = Field(default_factory=dict)
     provider_config: Dict[str, JSONValue] = Field(default_factory=dict)
     ui_meta: Dict[str, JSONValue] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_fields(cls, data: Any) -> Any:
+        """Support legacy TriggerSpec format during migration."""
+        if not isinstance(data, dict):
+            return data
+
+        # Migrate schemas.event → event_schema
+        if "schemas" in data and "event_schema" not in data:
+            schemas = data.pop("schemas")
+            if isinstance(schemas, dict):
+                data["event_schema"] = schemas.get("event", {})
+            else:
+                data["event_schema"] = schemas.event if hasattr(schemas, "event") else {}
+
+        # Migrate provider_connection_id → provider_config
+        if "provider_connection_id" in data:
+            conn_id = data.pop("provider_connection_id")
+            if conn_id is not None:
+                data.setdefault("provider_config", {})["provider_connection_id"] = conn_id
+
+        # Remove fields no longer part of spec
+        data.pop("title", None)
+        data.pop("description", None)
+        data.pop("provider", None)
+        data.pop("enabled", None)
+
+        return data
 
 
 class WorkflowSpec(StrictModel):
@@ -243,7 +283,6 @@ class WorkflowSpec(StrictModel):
     nodes: List[Node] = Field(default_factory=list)
     edges: List[Edge] = Field(default_factory=list)
     triggers: List[TriggerSpec] = Field(default_factory=list)
-    meta: Dict[str, JSONValue] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _validate_workflow(self) -> "WorkflowSpec":
@@ -267,15 +306,15 @@ class WorkflowSpec(StrictModel):
             if edge.type == EdgeType.trigger:
                 # Trigger edges: source must be a trigger id, target must be a node
                 if edge.source not in trigger_ids:
-                    raise ValueError(f"Trigger edge '{edge.id}' source '{edge.source}' not found in triggers")
+                    raise ValueError(f"Trigger edge with source '{edge.source}' and target '{edge.target}' not found in triggers")
                 if edge.target not in node_ids:
-                    raise ValueError(f"Trigger edge '{edge.id}' target '{edge.target}' not found in nodes")
+                    raise ValueError(f"Trigger edge with source '{edge.source}' and target '{edge.target}' not found in nodes")
             else:
                 # Regular edges: source and target must be nodes
                 if edge.source not in node_ids:
-                    raise ValueError(f"Edge '{edge.id}' source '{edge.source}' not found in nodes")
+                    raise ValueError(f"Edge with source '{edge.source}' and target '{edge.target}' source not found in nodes")
                 if edge.target not in node_ids:
-                    raise ValueError(f"Edge '{edge.id}' target '{edge.target}' not found in nodes")
+                    raise ValueError(f"Edge with source '{edge.source}' and target '{edge.target}' target not found in nodes")
 
         # Validate unique node IDs
         seen_nodes = set()
@@ -287,16 +326,5 @@ class WorkflowSpec(StrictModel):
         if duplicate_nodes:
             dup_list = ", ".join(sorted(set(duplicate_nodes)))
             raise ValueError(f"Duplicate node id values are not allowed: {dup_list}")
-
-        # Validate unique edge IDs
-        seen_edges = set()
-        duplicate_edges = []
-        for edge in self.edges:
-            if edge.id in seen_edges:
-                duplicate_edges.append(edge.id)
-            seen_edges.add(edge.id)
-        if duplicate_edges:
-            dup_list = ", ".join(sorted(set(duplicate_edges)))
-            raise ValueError(f"Duplicate edge id values are not allowed: {dup_list}")
 
         return self

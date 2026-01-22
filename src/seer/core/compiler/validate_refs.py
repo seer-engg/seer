@@ -59,14 +59,12 @@ def _node_uses_trigger_ids(node: Node, trigger_ids: set[str]) -> bool:
     # Collect all values that may contain expressions
     values_to_check = []
 
-    if hasattr(node, "in_"):
-        values_to_check.extend(getattr(node, "in_").values())
+    if hasattr(node, "inputs"):
+        values_to_check.extend(getattr(node, "inputs").values())
     if hasattr(node, "value"):
         val = getattr(node, "value")
         if val is not None:
             values_to_check.append(val)
-    if hasattr(node, "prompt"):
-        values_to_check.append(node.prompt)
     if hasattr(node, "condition"):
         values_to_check.append(node.condition)
     if hasattr(node, "items"):
@@ -82,12 +80,12 @@ def _node_uses_trigger_ids(node: Node, trigger_ids: set[str]) -> bool:
 
 
 def _validate_node(node: Node, scope: Scope, errors: List[str]) -> None:
-    if hasattr(node, "in_"):
+    if hasattr(node, "inputs"):
         _validate_value_references(
-            getattr(node, "in_"),
+            getattr(node, "inputs"),
             scope,
             errors,
-            context=f"{node.id}.in",
+            context=f"{node.id}.inputs",
         )
 
     if hasattr(node, "value"):
@@ -97,9 +95,6 @@ def _validate_node(node: Node, scope: Scope, errors: List[str]) -> None:
             errors,
             context=f"{node.id}.value",
         )
-
-    if hasattr(node, "prompt"):
-        _validate_value_references(node.prompt, scope, errors, context=f"{node.id}.prompt")
 
     if isinstance(node, IfNode):
         _validate_value_references(node.condition, scope, errors, context=f"{node.id}.condition")
