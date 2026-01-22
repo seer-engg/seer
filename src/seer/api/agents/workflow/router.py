@@ -97,9 +97,9 @@ def _summarize_spec(spec: Dict[str, Any]) -> str:
     return ", ".join(parts)
 
 
-def _prepare_workflow_state(workflow, request_workflow_state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+async def _prepare_workflow_state(workflow, request_workflow_state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Prepare workflow state by merging saved and provided states."""
-    workflow_state = deepcopy(workflow_state_snapshot(workflow))
+    workflow_state = deepcopy(await workflow_state_snapshot(workflow))
 
     if request_workflow_state:
         workflow_state["nodes"] = request_workflow_state.get("nodes") or workflow_state.get("nodes", [])
@@ -217,7 +217,7 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
     )
 
     # Prepare workflow state
-    workflow_state = _prepare_workflow_state(workflow, chat_request.workflow_state)
+    workflow_state = await _prepare_workflow_state(workflow, chat_request.workflow_state)
     set_workflow_state_for_thread(thread_id, workflow_state)
     set_user_for_thread(thread_id, user)
 
