@@ -18,53 +18,27 @@ logger = get_logger(__name__)
 _SCHEMA_KEYS = ("title", "type", "properties", "required", "definitions", "default")
 
 _WORKFLOW_SPEC_EXAMPLE: Dict[str, Any] = {
-    "version": "1",
-    "inputs": {
-        "company": {
-            "type": "string",
-            "description": "Company name we are researching",
-            "required": True,
-        }
-    },
+    "version": "2",
+    "triggers": [],
     "nodes": [
         {
             "id": "fetch_news",
             "type": "tool",
             "tool": "demo.news_search",
-            "in": {
-                "query": "${inputs.company}",
+            "inputs": {
+                "query": "AI automation trends",
                 "timeframe_days": 7,
-            },
-            "out": "news_results",
-            "expect_output": {
-                "mode": "json",
-                "schema": {
-                    "json_schema": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "title": {"type": "string"},
-                                "url": {"type": "string"},
-                                "summary": {"type": "string"},
-                            },
-                            "required": ["title", "url"],
-                        },
-                    }
-                },
             },
         },
         {
             "id": "summarize",
             "type": "llm",
-            "model": "gpt-5-mini",
-            "prompt": (
-                "Summarize the top 3 recent articles about ${inputs.company}. "
-                "Use bullet points with source names."
-            ),
-            "in": {"articles": "${news_results}"},
-            "out": "company_summary",
-            "output": {
+            "inputs": {
+                "model": "gpt-4o-mini",
+                "prompt": "Summarize the top 3 recent articles. Use bullet points with source names.",
+                "articles": "${fetch_news}",
+            },
+            "outputs": {
                 "mode": "json",
                 "schema": {
                     "json_schema": {
@@ -81,50 +55,61 @@ _WORKFLOW_SPEC_EXAMPLE: Dict[str, Any] = {
             },
         },
     ],
-    "output": "${company_summary}",
-    "meta": {
-        "description": "Fetch latest company news and summarize key talking points."
-    },
+    "edges": [
+        {"source": "fetch_news", "target": "summarize"},
+    ],
 }
 
 _WORKFLOW_SPEC_TRIGGER_EXAMPLE: Dict[str, Any] = {
-    "version": "1",
+    "version": "2",
     "triggers": [
         {
+            "id": "new_signup",
             "key": "webhook.supabase.db_changes",
-            "config": {
+            "mode": "webhook",
+            "provider_config": {
                 "integration_resource_id": 123,
                 "table": "signups",
                 "schema": "public",
                 "events": ["INSERT"]
+            },
+            "event_schema": {
+                "type": "object",
+                "properties": {
+                    "record": {
+                        "type": "object",
+                        "properties": {
+                            "email": {"type": "string"},
+                            "name": {"type": "string"}
+                        }
+                    }
+                },
+                "required": ["record"]
             }
         }
     ],
-    "inputs": {},
     "nodes": [
         {
             "id": "extract_user",
             "type": "task",
             "kind": "set",
             "value": "${trigger.data.record}",
-            "out": "user"
         },
         {
-            "id": "create_welcome_draft",
+            "id": "create_draft",
             "type": "tool",
             "tool": "gmail_create_draft",
-            "in": {
-                "to": ["${user.email}"],
-                "subject": "Welcome to our platform!",
-                "body_text": "Hi ${user.name},\n\nWelcome! We're excited to have you on board."
+            "inputs": {
+                "to": ["${extract_user.email}"],
+                "subject": "Welcome!",
+                "body_text": "Hi ${extract_user.name}, welcome to our platform!"
             },
-            "out": "draft_result"
         }
     ],
-    "output": "${draft_result}",
-    "meta": {
-        "description": "Send welcome email draft when new user signs up in Supabase"
-    },
+    "edges": [
+        {"source": "new_signup", "target": "extract_user", "type": "trigger"},
+        {"source": "extract_user", "target": "create_draft"},
+    ],
 }
 
 

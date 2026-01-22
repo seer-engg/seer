@@ -23,32 +23,49 @@ A workflow spec has:
 NODE TYPES:
 1. tool: Execute a tool
    {
-     "id": "node_1",
+     "id": "fetch_data",
      "type": "tool",
      "tool": "tool_name",
      "inputs": {"param": "${trigger.data.field}"}
    }
 
-2. branch: Conditional routing
+2. llm: AI inference with structured output
    {
-     "id": "node_2",
-     "type": "branch",
-     "condition": "${node_1.output.success}",
-     "branches": {"true": "node_3", "false": "node_4"}
+     "id": "analyze",
+     "type": "llm",
+     "inputs": {
+       "model": "gpt-4o-mini",
+       "prompt": "Analyze: ${fetch_data}",
+       "data": "${fetch_data}"
+     },
+     "outputs": {
+       "mode": "json",
+       "schema": {"json_schema": {"type": "object", "properties": {"summary": {"type": "string"}}}}
+     }
    }
 
-3. transform: Data transformation
+3. task: Data transformation
    {
-     "id": "node_3",
-     "type": "transform",
-     "template": "Transformed: ${node_1.output.data}"
+     "id": "extract",
+     "type": "task",
+     "kind": "set",
+     "value": "${fetch_data.record}"
    }
 
-4. output: Final output
+4. if: Conditional branching
    {
-     "id": "node_4",
-     "type": "output",
-     "value": "${node_3.output}"
+     "id": "check_status",
+     "type": "if",
+     "condition": "${fetch_data.success} == true"
+   }
+
+5. for_each: Iterate over items
+   {
+     "id": "process_items",
+     "type": "for_each",
+     "items": "${fetch_data.items}",
+     "item_var": "item",
+     "index_var": "index"
    }
 
 INSTRUCTIONS:
@@ -62,18 +79,19 @@ INSTRUCTIONS:
 OUTPUT FORMAT:
 Return a complete workflow spec as JSON:
 {
-    "nodes": [...],
-    "edges": [...],
+    "version": "2",
     "triggers": [...],
-    "input_variables": [...]
+    "nodes": [...],
+    "edges": [...]
 }
 
 IMPORTANT:
 - All tool names must match discovered tools exactly
 - All trigger keys must match discovered triggers exactly
 - Use ${trigger.data.field} for trigger data
-- Use ${node_id.output.field} for node outputs
-- Ensure all edges connect valid node IDs
+- Use ${node_id} or ${node_id.field} for node outputs (node ID is the output variable)
+- Edges connect nodes: {"source": "node1", "target": "node2"}
+- Trigger edges: {"source": "trigger_id", "target": "node_id", "type": "trigger"}
 """
 
 
