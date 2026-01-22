@@ -11,7 +11,6 @@ from seer.config import config
 from seer.database import close_db, init_db
 from seer.logger import get_logger
 from seer.core.triggers.polling import TriggerPollScheduler  # lazy import
-from seer.analytics import analytics  # PostHog analytics
 
 logger = get_logger(__name__)
 
@@ -45,9 +44,6 @@ async def _on_worker_startup(_: TaskiqState) -> None:
     logger.info("Initializing Taskiq worker")
     await init_db()
 
-    # Initialize PostHog for worker analytics
-    analytics.initialize()
-
     if config.trigger_poller_enabled:
         logger.info("Starting trigger poll scheduler in worker")
         _poll_scheduler = TriggerPollScheduler(
@@ -64,18 +60,13 @@ async def _on_worker_startup(_: TaskiqState) -> None:
 @broker.on_event(TaskiqEvents.WORKER_SHUTDOWN)
 async def _on_worker_shutdown(_: TaskiqState) -> None:
     """Clean up background services when worker exits."""
-    # pylint: disable=import-outside-toplevel,global-statement
-    from seer.analytics import analytics  # PostHog analytics
+    # pylint: disable=global-statement
     global _poll_scheduler
 
     if _poll_scheduler:
         logger.info("Stopping trigger poll scheduler")
         await _poll_scheduler.stop()
         _poll_scheduler = None
-
-    # Flush and shutdown PostHog before closing DB
-    analytics.flush()
-    analytics.shutdown()
 
     await close_db()
     logger.info("Taskiq worker shutdown complete")

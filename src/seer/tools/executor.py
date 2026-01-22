@@ -2,13 +2,10 @@
 Tool executor for running registered tools with unified credential resolution.
 """
 
-import time
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
 
-from seer.analytics import analytics
-from seer.config import config
 from seer.database import User
 from seer.logger import get_logger
 from seer.tools.base import get_tool
@@ -56,51 +53,20 @@ async def execute_tool(
         logger.exception("Credential resolution failed", extra={"tool": tool_name})
         raise HTTPException(status_code=500, detail=f"Credential resolution failed: {str(exc)}") from exc
 
-    # Track tool execution timing and status
-    start_time = time.time()
-    success = True
-    error_type = None
-
     try:
         logger.info("Executing tool '%s' for user {user.user_id}", tool_name)
         result = await _execute_with_optional_credentials(tool, resolved, arguments or {})
         logger.info("Tool '%s' executed successfully", tool_name)
         return result
     except HTTPException:
-        success = False
-        error_type = "HTTPException"
         raise
     except Exception as e:
-        success = False
-        error_type = type(e).__name__
         logger.exception("Tool execution failed: %s", e)
-
-        # Track tool error to PostHog
-        analytics.capture_tool_error(
-            distinct_id=user.user_id,
-            tool_name=tool_name,
-            error=e,
-            context={"arguments": arguments},
-        )
 
         raise HTTPException(
             status_code=500,
             detail=f"Tool execution failed: {str(e)}"
         ) from e
-    finally:
-        # Always capture tool execution event
-        duration_ms = (time.time() - start_time) * 1000
-        analytics.capture(
-            distinct_id=user.user_id,
-            event="tool_executed",
-            properties={
-                "tool_name": tool_name,
-                "duration_ms": round(duration_ms, 2),
-                "success": success,
-                "error_type": error_type,
-                "deployment_mode": config.seer_mode,
-            },
-        )
 
 
 async def _execute_with_optional_credentials(

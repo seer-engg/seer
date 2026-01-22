@@ -2,8 +2,6 @@ from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
 
-from seer.analytics.workflows import WorkflowAnalytics
-
 from seer.core.schema.models import WorkflowSpec
 from seer.database import (
     TriggerEvent,
@@ -161,12 +159,11 @@ async def process_trigger_event(subscription_id: int, event_id: int) -> None:
         }
     )
     try:
-        output, metrics = await _execute_run(
+        output = await _execute_run(
             run,
             user,
             inputs={},
             config_payload={},
-            execution_mode="trigger",
             trigger_envelope=envelope,
         )
         await WorkflowRun.filter(id=run.id).update(
@@ -175,7 +172,6 @@ async def process_trigger_event(subscription_id: int, event_id: int) -> None:
             output=output,
         )
         await run.refresh_from_db()
-        await WorkflowAnalytics._complete_run(run, output, metrics)  # pylint: disable=protected-access  # use internal analytics hook until public API exists
         await TriggerEvent.filter(id=event.id).update(status=TriggerEventStatus.PROCESSED)
         logger.info(
             "Trigger job completed: workflow execution succeeded",

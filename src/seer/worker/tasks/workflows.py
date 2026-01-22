@@ -24,8 +24,6 @@ async def workflow_execution_task(
             "has_trigger": bool(trigger_envelope)
         }
     )
-    from seer.analytics import analytics  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
-    from seer.database import User  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
 
     try:
         await execute_saved_workflow_run(
@@ -33,18 +31,8 @@ async def workflow_execution_task(
             user_id=user_id,
             trigger_envelope=trigger_envelope
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Worker task failed for workflow execution", extra={"run_id": run_id})
-
-        # Track worker error to PostHog
-        user = await User.get_or_none(id=user_id)
-        if user:
-            analytics.capture_error(
-                distinct_id=user.user_id,
-                error=e,
-                context={"run_id": run_id, "task": "execute_saved_workflow"},
-                error_location="worker_task",
-            )
         raise
 
 

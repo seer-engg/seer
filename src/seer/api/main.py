@@ -22,7 +22,6 @@ from starlette.middleware.sessions import SessionMiddleware
 from seer.api.agents.checkpointer import checkpointer_lifespan
 from seer.api.router import router
 from seer.api.tools.router import router as tools_router
-from seer.analytics import analytics
 from seer.config import config
 from seer.database import db_lifespan
 from seer.logger import get_logger
@@ -90,7 +89,6 @@ async def open_frontend_after_startup() -> None:
 async def lifespan(fastapi_app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
     logger.info("🚀 Starting Seer API server...")
-    analytics.initialize()
 
     async with db_lifespan(fastapi_app):
         logger.info("✅ Database initialized")
@@ -111,7 +109,6 @@ async def lifespan(fastapi_app: FastAPI):
                 if hasattr(fastapi_app.state, "checkpointer"):
                     delattr(fastapi_app.state, "checkpointer")
 
-    analytics.shutdown()
     logger.info("👋 Seer API server shutting down...")
 
 
@@ -166,12 +163,6 @@ app.add_middleware(
 )
 app.add_middleware(SessionMiddleware, secret_key=os.getenv("SECRET_KEY", "dev_secret_key"))
 
-# PostHog analytics middleware - track requests and flush events
-if config.is_posthog_configured:
-    from seer.api.core.middleware.analytics import PostHogMiddleware
-    app.add_middleware(PostHogMiddleware)
-    logger.info("📊 PostHog analytics middleware enabled")
-
 # PyInstrument profiling middleware - writes HTML reports for inspection
 if config.request_profiling_enabled:
     from seer.api.core.middleware.profiling import PyInstrumentMiddleware  # pylint: disable=ungrouped-imports # Reason: Conditional import after config check
@@ -222,10 +213,8 @@ async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler that ensures CORS headers are included and tracks errors."""
     error_logger = get_logger("api.main.errors")
 
-    # Get correlation ID and user
+    # Get correlation ID
     correlation_id = getattr(request.state, 'correlation_id', 'unknown')
-    user = getattr(request.state, 'user', None)
-    distinct_id = user.user_id if user else f"anonymous_{request.client.host if request.client else 'unknown'}"
 
     # Log with correlation ID
     error_logger.error(
@@ -233,19 +222,6 @@ async def global_exception_handler(request: Request, exc: Exception):
         exc,
         exc_info=True,
         extra={'correlation_id': correlation_id}
-    )
-
-    # Track error to PostHog
-    analytics.capture_error(
-        distinct_id=distinct_id,
-        error=exc,
-        context={
-            "correlation_id": correlation_id,
-            "method": request.method,
-            "path": str(request.url.path),
-            "query_params": dict(request.query_params),
-        },
-        error_location="global_exception_handler",
     )
 
     # Create error response with CORS headers

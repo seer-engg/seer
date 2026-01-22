@@ -12,7 +12,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from seer.api.core.middleware.path_allowlist import is_public_path
-from seer.analytics import analytics
 from seer.database import User
 from seer.logger import get_logger
 from seer.observability import (
@@ -58,7 +57,7 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
         self._audience = list(audience) if audience else None
         self._extra_allowed_paths = set(allow_unauthenticated_paths or [])
 
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(self, request: Request, call_next):  # pylint: disable=too-many-return-statements # Reason: Authentication middleware requires early returns for various failure modes
         request.state.user = None
         request.state.db_user = None
         if self._should_skip(request):
@@ -84,7 +83,7 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
             )
         except InvalidTokenError as exc:
             return JSONResponse(status_code=401, content={"detail": str(exc)})
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: Defensive catch for unknown JWT validation errors to prevent auth bypass
             return JSONResponse(
                 status_code=401,
                 content={"detail": f"Authentication failed: {exc}"},
@@ -101,23 +100,12 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
             # Capture signup_source from query params (for new user signups)
             signup_source = request.query_params.get("signup_source")
             db_user = await User.get_or_create_from_auth(auth_user, signup_source=signup_source)
-        except Exception:  # pragma: no cover - defensive
+        except Exception:  # pylint: disable=broad-exception-caught # Reason: Defensive catch for database errors during user creation
             logger.exception("Failed to persist authenticated user")
             return JSONResponse(
                 status_code=500,
                 content={"detail": "Unable to persist authenticated user"},
             )
-
-        # Identify user in PostHog for analytics
-        analytics.identify(
-            distinct_id=auth_user.user_id,
-            properties={
-                "email": auth_user.email,
-                "first_name": auth_user.first_name,
-                "last_name": auth_user.last_name,
-                "signup_source": db_user.signup_source if db_user.signup_source else None,
-            },
-        )
 
         # Phase 2: Account Day Limit Gate
         # Check if user's trial has expired (only applies to Cloud Free tier)
@@ -168,9 +156,6 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
 class TokenDecodeWithoutValidationMiddleware(BaseHTTPMiddleware):
     """Decodes a JWT token without validating signature. Useful for development/testing."""
 
-    def __init__(self, app: ASGIApp) -> None:
-        super().__init__(app)
-
     async def dispatch(self, request: Request, call_next):
         request.state.user = None
         request.state.db_user = None
@@ -190,7 +175,7 @@ class TokenDecodeWithoutValidationMiddleware(BaseHTTPMiddleware):
         try:
             # Decode without signature verification
             claims = jwt.decode(token, options={"verify_signature": False})
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: Defensive catch for malformed JWT tokens in development mode
             return JSONResponse(
                 status_code=401,
                 content={"detail": f"Failed to decode User: {exc}"},
@@ -210,23 +195,12 @@ class TokenDecodeWithoutValidationMiddleware(BaseHTTPMiddleware):
             # Capture signup_source from query params (for new user signups)
             signup_source = request.query_params.get("signup_source")
             db_user = await User.get_or_create_from_auth(auth_user, signup_source=signup_source)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught # Reason: Defensive catch for database errors during user creation in development mode
             logger.exception("Failed to persist user from decoded token")
             return JSONResponse(
                 status_code=500,
                 content={"detail": "Failed to persist user from decoded token"},
             )
-
-        # Identify user in PostHog for analytics
-        analytics.identify(
-            distinct_id=auth_user.user_id,
-            properties={
-                "email": auth_user.email,
-                "first_name": auth_user.first_name,
-                "last_name": auth_user.last_name,
-                "signup_source": db_user.signup_source if db_user.signup_source else None,
-            },
-        )
 
         request.state.user = auth_user
         request.state.db_user = db_user

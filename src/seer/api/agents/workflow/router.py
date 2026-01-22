@@ -22,7 +22,6 @@ from seer.agents.nexus import (
 )
 from seer.api.agents.checkpointer import _recreate_checkpointer, get_checkpointer
 from seer.api.core.errors import AUTH_PROBLEM, VALIDATION_PROBLEM, raise_problem
-from seer.analytics import analytics
 from seer.config import config
 from seer.database import User, UserPublic
 from seer.logger import get_logger
@@ -171,20 +170,6 @@ async def _maybe_create_proposal_from_spec(
     await proposal.fetch_related('created_by', 'workflow', 'session')
     proposal_public = WorkflowProposalPublic.model_validate(proposal, from_attributes=True)
 
-    # Capture workflow proposal creation event
-    analytics.capture(
-        distinct_id=user.user_id,
-        event="workflow_proposal_created",
-        properties={
-            "proposal_id": proposal.id,
-            "workflow_id": workflow.workflow_id if workflow else None,
-            "session_id": session.id if session else None,
-            "model": model_name,
-            "spec_node_count": len(spec.get("nodes", [])),
-            "deployment_mode": config.seer_mode,
-        },
-    )
-
     return proposal, proposal_public, None
 
 
@@ -239,18 +224,6 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
 
     # Track user message (global count, not per-workflow)
     await increment_chat_message_count(user)
-
-    analytics.capture(
-        distinct_id=user.user_id,
-        event="chat_agent_message",
-        properties={
-            "workflow_id": workflow_id,
-            "session_id": session_id,
-            "message_role": "user",
-            "message_length": len(chat_request.message),
-            "deployment_mode": config.seer_mode,
-        },
-    )
 
     try:
         config_dict = {"configurable": {"thread_id": thread_id}}
@@ -310,22 +283,6 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
 
         # Track assistant message (global count, not per-workflow)
         await increment_chat_message_count(user)
-
-        analytics.capture(
-            distinct_id=user.user_id,
-            event="chat_agent_message",
-            properties={
-                "workflow_id": workflow_id,
-                "session_id": session_id,
-                "message_role": "assistant",
-                "message_length": len(response_text),
-                "model": model,
-                "created_proposal": proposal_public is not None,
-                "deployment_mode": config.seer_mode,
-            },
-        )
-
-        analytics.flush()
 
         return ChatResponse(
             response=response_text,
@@ -612,18 +569,6 @@ async def accept_proposal_endpoint(
     )
     await proposal.fetch_related('created_by', 'workflow', 'session')
 
-    # Capture proposal acceptance event
-    analytics.capture(
-        distinct_id=user.user_id,
-        event="workflow_proposal_accepted",
-        properties={
-            "proposal_id": proposal_id,
-            "workflow_id": workflow_id,
-            "session_id": proposal.session.id if proposal.session else None,
-            "deployment_mode": config.seer_mode,
-        },
-    )
-
     return WorkflowProposalActionResponse(
         proposal=WorkflowProposalPublic.model_validate(proposal, from_attributes=True),
         workflow_graph=workflow_state_snapshot(workflow),
@@ -641,18 +586,6 @@ async def reject_proposal_endpoint(
     workflow = await get_workflow(user, workflow_id)
     proposal = await reject_workflow_proposal(workflow, proposal_id)
     await proposal.fetch_related('created_by', 'workflow', 'session')
-
-    # Capture proposal rejection event
-    analytics.capture(
-        distinct_id=user.user_id,
-        event="workflow_proposal_rejected",
-        properties={
-            "proposal_id": proposal_id,
-            "workflow_id": workflow_id,
-            "session_id": proposal.session.id if proposal.session else None,
-            "deployment_mode": config.seer_mode,
-        },
-    )
 
     return WorkflowProposalActionResponse(
         proposal=WorkflowProposalPublic.model_validate(proposal, from_attributes=True),
