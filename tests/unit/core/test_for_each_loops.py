@@ -20,20 +20,26 @@ from seer.core.compiler.lower_control_flow import build_execution_plan
 from seer.core.compiler.parse import parse_workflow_spec
 from seer.core.compiler.type_env import build_type_environment
 from seer.core.compiler.validate_refs import validate_references
-from seer.core.registry.model_registry import ModelRegistry
+from seer.core.registry.model_registry import ModelDefinition, ModelRegistry
 from seer.core.registry.tool_registry import ToolDefinition, ToolRegistry
 from seer.core.runtime.execution import CompiledWorkflow
 from seer.core.runtime.nodes import NodeRuntime, RuntimeServices
 from seer.core.schema.schema_registry import SchemaRegistry
 
 
-async def _compile_workflow(spec_payload: dict, tool_defs: list[ToolDefinition]) -> CompiledWorkflow:
+async def _compile_workflow(
+    spec_payload: dict,
+    tool_defs: list[ToolDefinition],
+    model_defs: list[ModelDefinition] | None = None
+) -> CompiledWorkflow:
     """Helper to compile a workflow spec into an executable graph."""
     schema_registry = SchemaRegistry()
     tool_registry = ToolRegistry()
     for tool in tool_defs:
         tool_registry.register(tool)
     model_registry = ModelRegistry()
+    for model in model_defs or []:
+        model_registry.register(model)
 
     spec = parse_workflow_spec(spec_payload)
     type_env = build_type_environment(
@@ -748,6 +754,18 @@ async def test_for_each_without_explicit_back_edge() -> None:
 @pytest.mark.asyncio
 async def test_for_each_loop_iteration_traces() -> None:
     """Test that for_each loop creates separate trace keys for each iteration."""
+    
+    # Define a mock model for testing
+    def mock_text_handler(invocation):
+        # Handler returns (result, usage_metadata)
+        prompt = invocation.get("prompt", "")
+        return f"Response: {prompt}", {}
+    
+    model_def = ModelDefinition(
+        model_id="gpt-5-nano",
+        text_handler=mock_text_handler,
+    )
+    
     spec = {
         "version": "2",
         "triggers": [
@@ -797,7 +815,7 @@ async def test_for_each_loop_iteration_traces() -> None:
         ],
     }
 
-    compiled = await _compile_workflow(spec, [])
+    compiled = await _compile_workflow(spec, [], [model_def])
     trigger_envelope = {"trigger_key": "test.trigger"}
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
