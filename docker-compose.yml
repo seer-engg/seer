@@ -26,6 +26,22 @@ services:
       timeout: 5s
       retries: 5
 
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.8.1
+    ports:
+      - "5000:5000"
+    environment:
+      MLFLOW_BACKEND_STORE_URI: "sqlite:////mlflow/mlflow.db"
+      MLFLOW_DEFAULT_ARTIFACT_ROOT: "/mlflow/artifacts"
+      MLFLOW_ALLOWED_HOSTS: "*"
+    volumes:
+      - mlflow_data:/mlflow
+    command: >
+      sh -c "mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri ${MLFLOW_BACKEND_STORE_URI:-sqlite:////mlflow/mlflow.db}
+      --default-artifact-root ${MLFLOW_DEFAULT_ARTIFACT_ROOT:-/mlflow/artifacts}
+      --allowed-hosts \"${MLFLOW_ALLOWED_HOSTS:-*}\""
+
   api:
     build:
       context: .
@@ -44,6 +60,8 @@ services:
       REDIS_URL: "redis://redis:6379/0"
       UV_LINK_MODE: "copy"  # Use copy mode to avoid hardlink warnings in Docker volumes
       AUTO_APPLY_DATABASE_MIGRATIONS: "True"
+      MLFLOW_TRACKING_URI: "http://mlflow:5000"
+      MLFLOW_EXPERIMENT_NAME: "seer-workflow-agent"
     dns:
       - 8.8.8.8
       - 8.8.4.4
@@ -72,6 +90,8 @@ services:
       DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
       REDIS_URL: "redis://redis:6379/0"
       UV_LINK_MODE: "copy"
+      MLFLOW_TRACKING_URI: "http://mlflow:5000"
+      MLFLOW_EXPERIMENT_NAME: "seer-workflow-agent"
     volumes:
       - ./:/app
       - /app/.venv
@@ -84,3 +104,4 @@ services:
 
 volumes:
   postgres_data:
+  mlflow_data:

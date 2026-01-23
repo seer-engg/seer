@@ -78,6 +78,7 @@ dev = [
     "pre-commit>=4.0.1",
     "pylint>=2.15.0",
     "pyinstrument>=5.1.2",
+    "mlflow>=3.8.1",
 ]
 
 [project.urls]
