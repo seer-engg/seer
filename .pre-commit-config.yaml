@@ -13,6 +13,16 @@ repos:
   #       files: \.py$
   #       pass_filenames: true
 
+  # Migration linting - Detect dangerous database operations
+  - repo: local
+    hooks:
+      - id: lint-migrations
+        name: Lint Aerich Migrations
+        entry: uv run python scripts/lint-migrations.py
+        language: system
+        pass_filenames: false
+        files: ^migrations/models/.*\.py$
+
   # Pylint - Comprehensive linting with configured limits
   - repo: local
     hooks:
