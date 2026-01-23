@@ -595,7 +595,7 @@ async def resume_chat_endpoint(  # pylint: disable=too-many-locals # Reason: Com
     session_id = session.id
 
     # Get current workflow state (deep copy to avoid mutating DB graph)
-    workflow_state = deepcopy(workflow_state_snapshot(workflow))
+    workflow_state = deepcopy(await workflow_state_snapshot(workflow))
 
     # Create agent
     agent = create_nexus_chat_agent(
@@ -719,7 +719,7 @@ async def accept_proposal_endpoint(
 
     return WorkflowProposalActionResponse(
         proposal=WorkflowProposalPublic.model_validate(proposal, from_attributes=True),
-        workflow_graph=workflow_state_snapshot(workflow),
+        workflow_graph=await workflow_state_snapshot(workflow),
     )
 
 
