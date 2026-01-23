@@ -71,9 +71,9 @@ Helpful commands:
 - Run worker locally: `uv run taskiq worker seer.worker.broker:broker`
 - Tests: `uv run pytest`
 
-## Database Migrations
+## Self-Hosted Setup: Migrations
 
-**IMPORTANT**: Migrations do NOT run automatically. Run them manually when pulling new code.
+> Migrations do NOT run automatically. Run them manually when pulling new code.
 
 ### Running Migrations (Docker)
 
@@ -81,27 +81,6 @@ After pulling latest changes:
 
 ```bash
 docker compose exec api uv run aerich upgrade
-```
-
-### When to Run Migrations
-
-Run migrations whenever:
-- You pull code with new files in `/migrations/models/`
-- You see errors about missing columns or tables
-- After checking out a branch with schema changes
-
-### Checking Migration Status
-
-```bash
-docker compose exec api uv run aerich history
-```
-
-### Creating New Migrations
-
-After modifying database models:
-
-```bash
-docker compose exec api uv run aerich migrate --name "describe_your_change"
 ```
 
 ### Cloud Deployments (Railway)
