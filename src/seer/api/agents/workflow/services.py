@@ -16,12 +16,11 @@ from seer.database import (
     WorkflowChatSession,
     WorkflowProposal,
     WorkflowVersion,
-    WorkflowVersionStatus,
     parse_workflow_public_id,
 )
+from seer.database.workflow_models import WorkflowCreationMode, WorkflowDiscoveryChatSession
 from seer.api.workflows.services.shared import (
     _get_draft_version,
-    _spec_to_dict,
     _update_draft_version,
 )
 from seer.logger import get_logger
@@ -150,7 +149,7 @@ async def create_chat_session(
 
     await session.fetch_related("user")
 
-    logger.info(f"Created chat session {session.id} for workflow {workflow.workflow_id}")
+    logger.info("Created chat session %s for workflow %s", session.id, workflow.workflow_id)
     return session
 
 
@@ -237,7 +236,7 @@ async def list_chat_sessions(
     return sessions
 
 
-async def save_chat_message(
+async def save_chat_message(  # pylint: disable=too-many-positional-arguments # Reason: Service function with multiple optional params
     session_id: int,
     role: str,
     content: str,
@@ -279,7 +278,7 @@ async def save_chat_message(
         metadata=metadata,
     )
 
-    logger.debug(f"Saved chat message {message.id} to session {session_id}")
+    logger.debug("Saved chat message %s to session %s", message.id, session_id)
     return message
 
 
@@ -308,7 +307,7 @@ def _normalize_spec(spec: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="Workflow spec is required")
     try:
         # Lazy import to avoid circular deps
-        from seer.core.compiler.parse import parse_workflow_spec
+        from seer.core.compiler.parse import parse_workflow_spec  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
 
         validated = parse_workflow_spec(spec)
     except Exception as exc:
@@ -333,7 +332,7 @@ def _preview_from_spec(spec: Dict[str, Any]) -> Dict[str, Any]:
     return {"nodes": preview_nodes, "edges": preview_edges}
 
 
-async def create_workflow_proposal(
+async def create_workflow_proposal(  # pylint: disable=too-many-positional-arguments # Reason: Service function requires multiple params
     workflow: Workflow,
     session: Optional[WorkflowChatSession],
     user: User,
@@ -419,3 +418,63 @@ async def reject_workflow_proposal(
     proposal.decided_at = datetime.utcnow()
     await proposal.save()
     return proposal
+
+
+# ============================================================================
+# Discovery Chat Sessions
+# ============================================================================
+
+async def create_discovery_chat_session(
+    user: User,
+    thread_id: str,
+    workflow_creation_mode: WorkflowCreationMode,
+    title: Optional[str] = None,
+) -> WorkflowDiscoveryChatSession:
+    """Create a discovery chat session."""
+    session = await WorkflowDiscoveryChatSession.create(
+        user=user,
+        thread_id=thread_id,
+        title=title or "New workflow",
+        workflow_creation_mode=workflow_creation_mode,
+    )
+    return session
+
+
+async def get_discovery_chat_session(session_id: int, user: User) -> WorkflowDiscoveryChatSession:
+    """Get a discovery chat session by ID."""
+    session = await WorkflowDiscoveryChatSession.get_or_none(id=session_id, user=user)
+    if not session:
+        raise HTTPException(status_code=404, detail="Discovery session not found")
+    return session
+
+
+async def get_discovery_chat_session_by_thread_id(
+    thread_id: str, user: User
+) -> Optional[WorkflowDiscoveryChatSession]:
+    """Get a discovery chat session by thread ID."""
+    return await WorkflowDiscoveryChatSession.filter(
+        thread_id=thread_id, user=user
+    ).first()
+
+
+async def link_discovery_session_to_workflow(
+    session: WorkflowDiscoveryChatSession, workflow: Workflow
+) -> None:
+    """Link a discovery session to the created workflow."""
+    session.created_workflow = workflow
+    await session.save()
+
+
+async def get_user_workflow_creation_mode(user: User) -> WorkflowCreationMode:
+    """Get user's default workflow creation mode."""
+    mode_str = user.default_workflow_creation_mode or "ASK_FIRST"
+    return WorkflowCreationMode(mode_str)
+
+
+async def update_user_workflow_creation_mode(
+    user: User, mode: WorkflowCreationMode
+) -> User:
+    """Update user's default workflow creation mode."""
+    user.default_workflow_creation_mode = mode.value
+    await user.save()
+    return user
