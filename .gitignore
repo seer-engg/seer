@@ -32,6 +32,14 @@ ENV/
 # Environment variables
 .env
 
+# Test coverage
+.coverage
+coverage.xml
+htmlcov/
+
+# Documentation generated files
+documentation/data/
+
 # Seer generated/runtime files
 logs/
 
@@ -70,3 +78,6 @@ notebooks/
 tool_hub_index/
 
 *.code-workspace
+.env.thread
+.env.docker
+.worktrees/

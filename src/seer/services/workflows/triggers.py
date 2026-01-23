@@ -2,8 +2,6 @@ from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
 
-from seer.analytics.workflows import WorkflowAnalytics
-
 from seer.core.schema.models import WorkflowSpec
 from seer.database import (
     TriggerEvent,
@@ -15,6 +13,7 @@ from seer.database import (
 from seer.database.workflow_models import WorkflowRunStatus
 from seer.logger import get_logger
 from seer.services.workflows.execution import _execute_run, _now
+from seer.api.workflows.services.shared import get_published_version
 
 logger = get_logger(__name__)
 
@@ -51,7 +50,7 @@ async def process_trigger_event(subscription_id: int, event_id: int) -> None:
     Invoked by Taskiq worker tasks to convert stored trigger events into workflow runs.
     """
     subscription = await TriggerSubscription.get(id=subscription_id)
-    await subscription.fetch_related("workflow", "workflow__published_version", "user")
+    await subscription.fetch_related("workflow", "user")
     event = await TriggerEvent.get(id=event_id)
 
     logger.info(
@@ -112,7 +111,7 @@ async def process_trigger_event(subscription_id: int, event_id: int) -> None:
         )
         return
 
-    published_version = workflow.published_version
+    published_version = await get_published_version(workflow)
     if published_version is None:
         await TriggerEvent.filter(id=event.id).update(
             status=TriggerEventStatus.FAILED,
@@ -160,12 +159,11 @@ async def process_trigger_event(subscription_id: int, event_id: int) -> None:
         }
     )
     try:
-        output, metrics = await _execute_run(
+        output = await _execute_run(
             run,
             user,
             inputs={},
             config_payload={},
-            execution_mode="trigger",
             trigger_envelope=envelope,
         )
         await WorkflowRun.filter(id=run.id).update(
@@ -174,7 +172,6 @@ async def process_trigger_event(subscription_id: int, event_id: int) -> None:
             output=output,
         )
         await run.refresh_from_db()
-        await WorkflowAnalytics._complete_run(run, output, metrics)  # pylint: disable=protected-access  # use internal analytics hook until public API exists
         await TriggerEvent.filter(id=event.id).update(status=TriggerEventStatus.PROCESSED)
         logger.info(
             "Trigger job completed: workflow execution succeeded",

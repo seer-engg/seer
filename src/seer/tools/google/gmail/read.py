@@ -9,7 +9,6 @@ from seer.logger import get_logger
 from seer.tools.google.base import GoogleAPIClient
 from seer.tools.google.gmail.helpers import (
     GMAIL_API_BASE,
-    GMAIL_MESSAGE_SCHEMA,
     GMAIL_THREAD_SCHEMA,
     GMAIL_ATTACHMENT_BODY_SCHEMA,
     _coerce_int,
@@ -145,7 +144,7 @@ class GmailReadTool(GoogleAPIClient):
                     email_obj["body"] = _extract_text_body(payload)
 
                 results.append(email_obj)
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught  # Continue processing remaining messages on individual failures
                 logger.warning("Failed to fetch message %s: %s", msg['id'], e)
                 continue
 
@@ -162,7 +161,25 @@ class GmailGetMessageTool(GoogleAPIClient):
     integration_type = "gmail"
 
     def get_output_schema(self) -> Dict[str, Any]:
-        return GMAIL_MESSAGE_SCHEMA
+        # Extended schema with extracted common fields at top level
+        return {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "threadId": {"type": "string"},
+                "from": {"type": "string", "description": "Sender email address (extracted from headers)"},
+                "to": {"type": "string", "description": "Recipient email address (extracted from headers)"},
+                "subject": {"type": "string", "description": "Email subject (extracted from headers)"},
+                "date": {"type": "string", "description": "Email date (extracted from headers)"},
+                "body": {"type": "string", "description": "Email body text (extracted from payload)"},
+                "snippet": {"type": "string"},
+                "labelIds": {"type": "array", "items": {"type": "string"}},
+                "payload": {"type": "object", "description": "Full Gmail message payload"},
+                "raw": {"type": "string", "description": "Raw message (format=raw only)"},
+            },
+            "required": ["id"],
+            "additionalProperties": True,
+        }
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -196,7 +213,26 @@ class GmailGetMessageTool(GoogleAPIClient):
             access_token,
             params=params
         )
-        return resp.json()
+        msg_data = resp.json()
+
+        # Extract common fields from headers for easier access
+        payload = msg_data.get("payload", {})
+        headers_dict = _header_dict_from_payload(payload)
+
+        # Add extracted fields at top level while preserving raw response
+        result = {
+            **msg_data,  # Keep all original fields
+            "from": headers_dict.get("From", ""),
+            "to": headers_dict.get("To", ""),
+            "subject": headers_dict.get("Subject", ""),
+            "date": headers_dict.get("Date", ""),
+        }
+
+        # Extract body if full format
+        if msg_format == "full":
+            result["body"] = _extract_text_body(payload)
+
+        return result
 
 
 class GmailListThreadsTool(GoogleAPIClient):

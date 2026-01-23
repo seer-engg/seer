@@ -19,6 +19,7 @@ from seer.api.workflows.services.shared import (
     _raise_problem,
     _spec_to_dict,
     _update_draft_version,
+    get_published_version,
 )
 from seer.database import (
     User,
@@ -69,8 +70,8 @@ async def _workflow_response(workflow: Workflow) -> api_models.WorkflowResponse:
 
     # If no draft exists (e.g., after publishing), use published version spec
     if draft_version is None:
-        published_version_obj: Optional[WorkflowVersion] = getattr(workflow, "published_version", None)
-        if published_version_obj and isinstance(published_version_obj, WorkflowVersion):
+        published_version_obj = await get_published_version(workflow)
+        if published_version_obj:
             raw_spec = published_version_obj.spec or {}
         else:
             # No draft and no published version - this shouldn't happen for normal workflows
@@ -196,8 +197,8 @@ async def list_workflow_versions(user: User, workflow_id: str) -> api_models.Wor
         .order_by("-created_at")
         .all()
     )
-    published_version_obj: Optional[WorkflowVersion] = getattr(workflow, "published_version", None)
-    published_version_id = published_version_obj.id if isinstance(published_version_obj, WorkflowVersion) else None
+    published_version_obj = await get_published_version(workflow)
+    published_version_id = published_version_obj.id if published_version_obj else None
     latest_version_id = versions[0].id if versions else None
     items = [
         _serialize_version_list_item(
@@ -351,8 +352,8 @@ async def publish_workflow(
     await sync_trigger_subscriptions(user, workflow, spec, skip_validation=False)
 
     # Archive previous release
-    previous_release = getattr(workflow, "published_version", None)
-    if previous_release and isinstance(previous_release, WorkflowVersion):
+    previous_release = await get_published_version(workflow)
+    if previous_release:
         await WorkflowVersion.filter(id=previous_release.id).update(
             status=WorkflowVersionStatus.ARCHIVED
         )
@@ -364,9 +365,8 @@ async def publish_workflow(
         version_number=release_number,
     )
 
-    # Update workflow.published_version FK
+    # Update workflow timestamp
     await Workflow.filter(id=workflow.id).update(
-        published_version_id=draft_version.id,
         updated_at=_now(),
     )
 

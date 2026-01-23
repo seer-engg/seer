@@ -1,7 +1,16 @@
 {
   "name": "Lead Generation via Forms",
   "description": "Capture leads through hosted form, score quality with AI, route to sales team, store in database and sync to Google Sheets dashboard",
-  "tags": ["forms", "lead-generation", "ai", "scoring", "supabase", "gmail", "google-sheets", "sales"],
+  "tags": [
+    "forms",
+    "lead-generation",
+    "ai",
+    "scoring",
+    "supabase",
+    "gmail",
+    "google-sheets",
+    "sales"
+  ],
   "customization_guide": "Update sales notification email address. Configure Supabase connection ID and leads table name. Set Google Sheets spreadsheet ID and range. Adjust lead scoring criteria in LLM prompt. Modify high-quality lead threshold and notification templates. Customize form field validation rules.",
   "spec": {
     "version": "2",
@@ -9,40 +18,9 @@
       {
         "id": "lead_form_submission",
         "key": "form.hosted",
-        "title": "Lead_Capture_Form",
-        "provider": "form",
         "mode": "webhook",
-        "enabled": true,
-        "schemas": {
-          "event": {
-            "properties": {
-              "data": {
-                "properties": {
-                  "name": {
-                    "type": "string",
-                    "minLength": 2,
-                    "maxLength": 100
-                  },
-                  "email": {
-                    "type": "string",
-                    "format": "email"
-                  },
-                  "company": {
-                    "type": "string",
-                    "minLength": 2,
-                    "maxLength": 100
-                  },
-                  "message": {
-                    "type": "string",
-                    "minLength": 10,
-                    "maxLength": 1000
-                  }
-                },
-                "required": ["name", "email", "company", "message"]
-              }
-            }
-          }
-        }
+        "provider_config": {},
+        "event_schema": {}
       }
     ],
     "nodes": [
@@ -56,24 +34,23 @@
           "company": "${trigger.data.company}",
           "message": "${trigger.data.message}",
           "submitted_at": "${trigger.timestamp}"
-        },
-        "out": "lead"
+        }
       },
       {
         "id": "validate_email_domain",
         "type": "task",
         "kind": "set",
-        "value": "${lead.email.split('@')[1]}",
-        "out": "email_domain"
+        "value": "${lead.email.split('@')[1]}"
       },
       {
         "id": "score_lead_quality",
         "type": "llm",
-        "model": "gpt-5-mini",
-        "temperature": 0.3,
-        "prompt": "Analyze this lead submission and score its quality:\n\nName: ${lead.name}\nEmail: ${lead.email}\nCompany: ${lead.company}\nMessage: ${lead.message}\n\nScore from 1-10 based on:\n1. Company legitimacy (domain quality, known company)\n2. Message specificity and intent (clear need vs generic inquiry)\n3. Buyer signals (mentions team size, budget, timeline, pain points)\n4. Professional tone and detail level\n5. Email domain quality (corporate vs free email)\n\nClassify as:\n- high: 8-10 (strong buyer signals, clear need, legitimate company)\n- medium: 5-7 (some buyer signals, moderate detail)\n- low: 1-4 (generic inquiry, minimal detail, unclear intent)\n\nProvide reasoning for the score.",
-        "out": "quality_assessment",
-        "output": {
+        "inputs": {
+          "model": "gpt-5-mini",
+          "temperature": 0.3,
+          "prompt": "Analyze this lead submission and score its quality:\n\nName: ${lead.name}\nEmail: ${lead.email}\nCompany: ${lead.company}\nMessage: ${lead.message}\n\nScore from 1-10 based on:\n1. Company legitimacy (domain quality, known company)\n2. Message specificity and intent (clear need vs generic inquiry)\n3. Buyer signals (mentions team size, budget, timeline, pain points)\n4. Professional tone and detail level\n5. Email domain quality (corporate vs free email)\n\nClassify as:\n- high: 8-10 (strong buyer signals, clear need, legitimate company)\n- medium: 5-7 (some buyer signals, moderate detail)\n- low: 1-4 (generic inquiry, minimal detail, unclear intent)\n\nProvide reasoning for the score."
+        },
+        "outputs": {
           "mode": "json",
           "schema": {
             "json_schema": {
@@ -86,17 +63,28 @@
                 },
                 "quality": {
                   "type": "string",
-                  "enum": ["high", "medium", "low"]
+                  "enum": [
+                    "high",
+                    "medium",
+                    "low"
+                  ]
                 },
                 "reasoning": {
                   "type": "string"
                 },
                 "buyer_signals": {
                   "type": "array",
-                  "items": {"type": "string"}
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
-              "required": ["score", "quality", "reasoning", "buyer_signals"]
+              "required": [
+                "score",
+                "quality",
+                "reasoning",
+                "buyer_signals"
+              ]
             }
           }
         }
@@ -105,7 +93,7 @@
         "id": "store_lead_in_supabase",
         "type": "tool",
         "tool": "supabase_table_insert",
-        "in": {
+        "inputs": {
           "integration_resource_id": 123,
           "table": "leads",
           "record": {
@@ -119,8 +107,7 @@
             "submitted_at": "${lead.submitted_at}",
             "status": "new"
           }
-        },
-        "out": "db_result"
+        }
       },
       {
         "id": "check_if_high_quality",
@@ -131,29 +118,31 @@
         "id": "send_high_quality_alert",
         "type": "tool",
         "tool": "gmail_send_email",
-        "in": {
-          "to": ["sales@company.com"],
-          "subject": "🔥 HIGH QUALITY LEAD: ${lead.company}",
-          "body_text": "**URGENT: High-Quality Lead Submission**\n\nLead Score: ${quality_assessment.score}/10\nQuality: ${quality_assessment.quality}\n\n**Contact Details:**\nName: ${lead.name}\nEmail: ${lead.email}\nCompany: ${lead.company}\n\n**Message:**\n${lead.message}\n\n**AI Analysis:**\n${quality_assessment.reasoning}\n\n**Buyer Signals Detected:**\n${quality_assessment.buyer_signals}\n\n**Database ID:** ${db_result.id}\n**Submitted:** ${lead.submitted_at}\n\n⚡ Respond within 1 hour for best conversion rate."
-        },
-        "out": "high_quality_email_result"
+        "inputs": {
+          "to": [
+            "sales@company.com"
+          ],
+          "subject": "\ud83d\udd25 HIGH QUALITY LEAD: ${lead.company}",
+          "body_text": "**URGENT: High-Quality Lead Submission**\n\nLead Score: ${quality_assessment.score}/10\nQuality: ${quality_assessment.quality}\n\n**Contact Details:**\nName: ${lead.name}\nEmail: ${lead.email}\nCompany: ${lead.company}\n\n**Message:**\n${lead.message}\n\n**AI Analysis:**\n${quality_assessment.reasoning}\n\n**Buyer Signals Detected:**\n${quality_assessment.buyer_signals}\n\n**Database ID:** ${db_result.id}\n**Submitted:** ${lead.submitted_at}\n\n\u26a1 Respond within 1 hour for best conversion rate."
+        }
       },
       {
         "id": "send_normal_lead_notification",
         "type": "tool",
         "tool": "gmail_send_email",
-        "in": {
-          "to": ["sales@company.com"],
+        "inputs": {
+          "to": [
+            "sales@company.com"
+          ],
           "subject": "New Lead: ${lead.company}",
           "body_text": "New lead submission received.\n\nLead Score: ${quality_assessment.score}/10\nQuality: ${quality_assessment.quality}\n\n**Contact Details:**\nName: ${lead.name}\nEmail: ${lead.email}\nCompany: ${lead.company}\n\n**Message:**\n${lead.message}\n\n**AI Analysis:**\n${quality_assessment.reasoning}\n\n**Database ID:** ${db_result.id}\n**Submitted:** ${lead.submitted_at}"
-        },
-        "out": "normal_email_result"
+        }
       },
       {
         "id": "update_google_sheet",
         "type": "tool",
         "tool": "google_sheets_append",
-        "in": {
+        "inputs": {
           "spreadsheet_id": "YOUR_SPREADSHEET_ID",
           "range": "Leads!A:H",
           "values": [
@@ -168,8 +157,7 @@
               "${db_result.id}"
             ]
           ]
-        },
-        "out": "sheets_result"
+        }
       },
       {
         "id": "workflow_complete",
@@ -182,69 +170,48 @@
           "score": "${quality_assessment.score}",
           "notification_sent": true,
           "sheets_updated": true
-        },
-        "out": "completion_summary"
+        }
       }
     ],
     "edges": [
       {
-        "id": "e1",
         "source": "extract_lead_data",
-        "target": "validate_email_domain",
-        "type": "default"
+        "target": "validate_email_domain"
       },
       {
-        "id": "e2",
         "source": "validate_email_domain",
-        "target": "score_lead_quality",
-        "type": "default"
+        "target": "score_lead_quality"
       },
       {
-        "id": "e3",
         "source": "score_lead_quality",
-        "target": "store_lead_in_supabase",
-        "type": "default"
+        "target": "store_lead_in_supabase"
       },
       {
-        "id": "e4",
         "source": "store_lead_in_supabase",
-        "target": "check_if_high_quality",
-        "type": "default"
+        "target": "check_if_high_quality"
       },
       {
-        "id": "e5_high_true",
         "source": "check_if_high_quality",
         "target": "send_high_quality_alert",
         "type": "conditional_true"
       },
       {
-        "id": "e6_high",
         "source": "send_high_quality_alert",
-        "target": "update_google_sheet",
-        "type": "default"
+        "target": "update_google_sheet"
       },
       {
-        "id": "e5_high_false",
         "source": "check_if_high_quality",
         "target": "send_normal_lead_notification",
         "type": "conditional_false"
       },
       {
-        "id": "e7_normal",
         "source": "send_normal_lead_notification",
-        "target": "update_google_sheet",
-        "type": "default"
+        "target": "update_google_sheet"
       },
       {
-        "id": "e8",
         "source": "update_google_sheet",
-        "target": "workflow_complete",
-        "type": "default"
+        "target": "workflow_complete"
       }
-    ],
-    "output": "${completion_summary}",
-    "meta": {
-      "description": "Lead generation with AI quality scoring, conditional sales notifications, and multi-system data sync"
-    }
+    ]
   }
 }

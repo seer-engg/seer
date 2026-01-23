@@ -151,9 +151,14 @@ class SeerConfig(BaseSettings):
     # Feature Flags
     # ============================================================================
 
-    supervisor_mode_enabled: bool = Field(
-        default=False,
-        description="Enable supervisor-style multi-agent architecture (vs single nexus agent)"
+    auto_open_browser: bool = Field(
+        default=True,
+        description="Automatically open frontend in browser on server startup (self-hosted mode only)"
+    )
+
+    nexus_max_agent_steps: int = Field(
+        default=75,
+        description="Default maximum agent steps for Nexus chat (LangGraph recursion_limit)"
     )
 
     # ============================================================================
@@ -174,35 +179,6 @@ class SeerConfig(BaseSettings):
     trigger_poller_lock_timeout_seconds: int = Field(
         default=60,
         description="Lease timeout for poll locks in seconds.",
-    )
-
-    # ============================================================================
-    # PostHog Analytics Configuration
-    # ============================================================================
-
-    posthog_api_key: Optional[str] = Field(
-        default="phc_9s65auHWk9fXqXBEHA1x53FIuMKGurVOSF2ZfgfCWT2",
-        description="PostHog API key for analytics tracking"
-    )
-    posthog_host: Optional[str] = Field(
-        default="https://us.i.posthog.com",
-        description="PostHog host URL (e.g., https://app.posthog.com or self-hosted)"
-    )
-    posthog_enabled: bool = Field(
-        default=False,
-        description="Enable PostHog analytics and error tracking"
-    )
-    posthog_opt_out: bool = Field(
-        default=False,
-        description="Opt-out of all telemetry and analytics (privacy mode)"
-    )
-    posthog_error_sampling_rate: float = Field(
-        default=1.0,
-        description="Error event sampling rate (0.0 to 1.0)"
-    )
-    posthog_filter_sensitive_data: bool = Field(
-        default=True,
-        description="Filter PII and secrets from analytics events"
     )
 
     # ============================================================================
@@ -286,16 +262,6 @@ class SeerConfig(BaseSettings):
     def is_clerk_configured(self) -> bool:
         """Check if Clerk authentication is configured."""
         return self.clerk_jwks_url is not None and self.clerk_issuer is not None
-
-    @property
-    def is_posthog_configured(self) -> bool:
-        """Check if PostHog is configured and enabled."""
-        return (
-            self.posthog_enabled
-            and not self.posthog_opt_out
-            and self.posthog_api_key is not None
-            and self.posthog_host is not None
-        )
 
     @property
     def is_stripe_configured(self) -> bool:

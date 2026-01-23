@@ -22,7 +22,6 @@ from starlette.middleware.sessions import SessionMiddleware
 from seer.api.agents.checkpointer import checkpointer_lifespan
 from seer.api.router import router
 from seer.api.tools.router import router as tools_router
-from seer.analytics import analytics
 from seer.config import config
 from seer.database import db_lifespan
 from seer.logger import get_logger
@@ -36,13 +35,13 @@ from seer.observability.exceptions import ChatDisabledError, UsageLimitError
 logger = get_logger("api.main")
 
 
-async def initialize_tool_index(app: FastAPI) -> None:
+async def initialize_tool_index(fastapi_app: FastAPI) -> None:
     """Initialize tool index in background if enabled."""
     if not config.tool_index_auto_generate:
         return
 
     try:
-        from seer.tool_hub.index_manager import ensure_tool_index_exists
+        from seer.tool_hub.index_manager import ensure_tool_index_exists  # pylint: disable=import-outside-toplevel # Reason: Conditional import to avoid loading heavy dependencies when disabled
 
         async def init_tool_index():
             try:
@@ -50,27 +49,27 @@ async def initialize_tool_index(app: FastAPI) -> None:
                     auto_generate=config.tool_index_auto_generate
                 )
                 if toolhub:
-                    from seer.tool_hub.singleton import set_toolhub_instance
+                    from seer.tool_hub.singleton import set_toolhub_instance  # pylint: disable=import-outside-toplevel # Reason: Conditional import only when toolhub exists
                     set_toolhub_instance(toolhub)
                     logger.info("✅ Tool index initialized")
                 else:
                     logger.warning("⚠️ Tool index initialization skipped or failed")
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Background task should never crash server
                 logger.error("Error initializing tool index: %s", e, exc_info=True)
 
         task = asyncio.create_task(init_tool_index())
-        app.state.tool_index_init_task = task
-    except Exception as e:
+        fastapi_app.state.tool_index_init_task = task
+    except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Server startup should continue even if tool index fails
         logger.warning("Could not initialize tool index: %s. Tool search may not work.", e)
 
 
 async def open_frontend_after_startup() -> None:
     """Launch hosted frontend pointing at local backend for convenience."""
-    if config.is_cloud_mode:
+    if config.is_cloud_mode or not config.auto_open_browser:
         return
 
     frontend_url = config.FRONTEND_URL
-    backend_override = "localhost:8000"
+    backend_override = os.getenv("BACKEND_API_URL", "localhost:8000")
     target_url = f"{frontend_url}?{urlencode({'backend': backend_override})}"
 
     # Small delay to let the server finish binding before opening the browser
@@ -82,36 +81,34 @@ async def open_frontend_after_startup() -> None:
             logger.info("Opened frontend at %s", target_url)
         else:
             logger.warning("Could not open frontend automatically; url=%s", target_url)
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: Browser opening is non-critical and should never crash server
         logger.warning("Failed to open frontend in browser: %s (url=%s)", exc, target_url, exc_info=True)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(fastapi_app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
     logger.info("🚀 Starting Seer API server...")
-    analytics.initialize()
 
-    async with db_lifespan(app):
+    async with db_lifespan(fastapi_app):
         logger.info("✅ Database initialized")
         async with checkpointer_lifespan() as checkpointer:
             if checkpointer is not None:
-                app.state.checkpointer = checkpointer
+                fastapi_app.state.checkpointer = checkpointer
             logger.info("✅ Checkpointer initialized")
 
             trigger_status = "enabled – handled by Taskiq worker" if config.trigger_poller_enabled else "disabled via configuration"
             logger.info("Trigger poller %s", trigger_status)
 
-            await initialize_tool_index(app)
+            await initialize_tool_index(fastapi_app)
             asyncio.create_task(open_frontend_after_startup())
 
             try:
                 yield
             finally:
-                if hasattr(app.state, "checkpointer"):
-                    delattr(app.state, "checkpointer")
+                if hasattr(fastapi_app.state, "checkpointer"):
+                    delattr(fastapi_app.state, "checkpointer")
 
-    analytics.shutdown()
     logger.info("👋 Seer API server shutting down...")
 
 
@@ -131,7 +128,7 @@ app.add_middleware(CorrelationMiddleware)
 
 # Usage limit middleware - enforce subscription limits centrally
 # must be AFTER auth middleware to have user info
-from seer.api.core.middleware.usage_limit import UsageLimitMiddleware  # pylint: disable=ungrouped-imports # Reason: Import after auth middleware setup
+from seer.api.core.middleware.usage_limit import UsageLimitMiddleware  # pylint: disable=ungrouped-imports,wrong-import-position # Reason: Import after auth middleware setup
 app.add_middleware(UsageLimitMiddleware)
 logger.info("🔒 Usage limit middleware enabled")
 
@@ -142,6 +139,7 @@ if config.is_cloud_mode:
     logger.info("🔐 Cloud mode: Using Clerk authentication")
     from seer.api.core.middleware.auth import ClerkAuthMiddleware  # pylint: disable=ungrouped-imports # Reason: Conditional import after cloud mode check
 
+    # pylint: disable=no-member # Reason: Pydantic resolves Optional[str] at runtime, not FieldInfo
     app.add_middleware(
         ClerkAuthMiddleware,
         jwks_url=config.clerk_jwks_url,
@@ -165,12 +163,6 @@ app.add_middleware(
 )
 app.add_middleware(SessionMiddleware, secret_key=os.getenv("SECRET_KEY", "dev_secret_key"))
 
-# PostHog analytics middleware - track requests and flush events
-if config.is_posthog_configured:
-    from seer.api.core.middleware.analytics import PostHogMiddleware
-    app.add_middleware(PostHogMiddleware)
-    logger.info("📊 PostHog analytics middleware enabled")
-
 # PyInstrument profiling middleware - writes HTML reports for inspection
 if config.request_profiling_enabled:
     from seer.api.core.middleware.profiling import PyInstrumentMiddleware  # pylint: disable=ungrouped-imports # Reason: Conditional import after config check
@@ -185,6 +177,7 @@ if config.request_profiling_enabled:
 
 
 @app.exception_handler(UsageLimitError)
+# pylint: disable=unused-argument # Reason: FastAPI requires request parameter in exception handler signature
 async def usage_limit_exception_handler(request: Request, exc: UsageLimitError):
     """
     Handle usage limit violations by returning 402 Payment Required with upgrade prompt.
@@ -202,6 +195,7 @@ async def usage_limit_exception_handler(request: Request, exc: UsageLimitError):
 
 
 @app.exception_handler(ChatDisabledError)
+# pylint: disable=unused-argument # Reason: FastAPI requires request parameter in exception handler signature
 async def chat_disabled_exception_handler(request: Request, exc: ChatDisabledError):
     """
     Handle chat disabled errors (self-hosted mode) with 403 Forbidden.
@@ -219,10 +213,8 @@ async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler that ensures CORS headers are included and tracks errors."""
     error_logger = get_logger("api.main.errors")
 
-    # Get correlation ID and user
+    # Get correlation ID
     correlation_id = getattr(request.state, 'correlation_id', 'unknown')
-    user = getattr(request.state, 'user', None)
-    distinct_id = user.user_id if user else f"anonymous_{request.client.host if request.client else 'unknown'}"
 
     # Log with correlation ID
     error_logger.error(
@@ -230,19 +222,6 @@ async def global_exception_handler(request: Request, exc: Exception):
         exc,
         exc_info=True,
         extra={'correlation_id': correlation_id}
-    )
-
-    # Track error to PostHog
-    analytics.capture_error(
-        distinct_id=distinct_id,
-        error=exc,
-        context={
-            "correlation_id": correlation_id,
-            "method": request.method,
-            "path": str(request.url.path),
-            "query_params": dict(request.query_params),
-        },
-        error_location="global_exception_handler",
     )
 
     # Create error response with CORS headers

@@ -34,6 +34,14 @@ def validate_references(spec: WorkflowSpec, type_env: TypeEnvironment) -> None:
             "Add triggers to WorkflowSpec.triggers or remove trigger references."
         )
 
+    # Check for bare "trigger" references in multi-trigger workflows
+    if len(spec.triggers) > 1 and _uses_bare_trigger_reference(spec):
+        trigger_ids = [t.id for t in spec.triggers]
+        errors.append(
+            "Cannot use ${trigger.X} syntax in multi-trigger workflow. "
+            f"Use explicit trigger IDs: {', '.join(f'${{{tid}.X}}' for tid in trigger_ids)}"
+        )
+
     for node in spec.nodes:
         _validate_node(node, scope, errors)
 
@@ -51,6 +59,30 @@ def _uses_trigger_references(spec: WorkflowSpec) -> bool:
     for node in spec.nodes:
         if _node_uses_trigger_ids(node, trigger_ids):
             return True
+    return False
+
+
+def _uses_bare_trigger_reference(spec: WorkflowSpec) -> bool:
+    """Check if any node uses bare 'trigger' reference (not trigger.id)."""
+    for node in spec.nodes:
+        values_to_check = []
+
+        if hasattr(node, "inputs"):
+            values_to_check.extend(getattr(node, "inputs").values())
+        if hasattr(node, "value"):
+            val = getattr(node, "value")
+            if val is not None:
+                values_to_check.append(val)
+        if hasattr(node, "condition"):
+            values_to_check.append(node.condition)
+        if hasattr(node, "items"):
+            values_to_check.append(node.items)
+
+        refs = parser.collect_unique_references(values_to_check)
+        for ref in refs:
+            if ref.root == "trigger":
+                return True
+
     return False
 
 

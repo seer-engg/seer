@@ -1,6 +1,5 @@
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
-import time
 import traceback
 from fastapi import HTTPException
 
@@ -10,7 +9,6 @@ from seer.core.errors import WorkflowCompilerError
 from seer.database import WorkflowRun, User, WorkflowRunStatus
 from seer.core.runtime.context import WorkflowRuntimeContext
 
-from seer.analytics.workflows import ExecutionMetrics, WorkflowAnalytics
 from seer.core.runtime.global_compiler import WorkflowCompilerSingleton
 
 
@@ -62,9 +60,8 @@ async def _execute_run(
     *,
     inputs: Dict[str, Any],
     config_payload: Dict[str, Any],
-    execution_mode: str,
     trigger_envelope: Dict[str, Any] | None = None,
-) -> tuple[Dict[str, Any], ExecutionMetrics]:
+) -> Dict[str, Any]:
     """
     Fetches the workflow run object , compiles it using the global compiler instance and executes it.
     """
@@ -81,11 +78,6 @@ async def _execute_run(
         status=WorkflowRunStatus.RUNNING,
         started_at=_now(),
     )
-    metrics = ExecutionMetrics(
-        start_time=time.time(),
-        execution_mode=execution_mode,
-    )
-    WorkflowAnalytics._capture_workflow_start(run, user, execution_mode, inputs)
 
     checkpointer = await get_checkpointer()
     try:
@@ -97,7 +89,6 @@ async def _execute_run(
             finished_at=_now(),
             error=str(exc),
         )
-        await WorkflowAnalytics._handle_run_failure(run, user, exc, metrics, "CompilationError")
         raise
     try:
         run_config = dict(config_payload or {})
@@ -131,10 +122,9 @@ async def _execute_run(
             finished_at=_now(),
             error=str(exc),
         )
-        await WorkflowAnalytics._handle_run_failure(run, user, exc, metrics, "RuntimeError")
         raise
 
-    return result, metrics
+    return result
 
 
 
@@ -160,12 +150,11 @@ async def execute_saved_workflow_run(
     config_payload = dict(run.config or {})
 
     try:
-        output, metrics = await _execute_run(
+        output = await _execute_run(
             run,
             user,
             inputs=inputs,
             config_payload=config_payload,
-            execution_mode="taskiq_worker",
             trigger_envelope=trigger_envelope,
         )
         await WorkflowRun.filter(id=run.id).update(
@@ -174,7 +163,6 @@ async def execute_saved_workflow_run(
             output=output,
         )
         await run.refresh_from_db()
-        await WorkflowAnalytics._complete_run(run, output, metrics)
     except HTTPException:
         logger.exception(
             "Saved workflow run failed",

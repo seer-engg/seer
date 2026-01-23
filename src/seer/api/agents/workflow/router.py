@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional, Tuple
 from fastapi import APIRouter, HTTPException, Query, Request
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
+from tortoise.exceptions import DoesNotExist
 
 from seer.agents.nexus import (
     _current_thread_id,
@@ -22,9 +23,9 @@ from seer.agents.nexus import (
 )
 from seer.api.agents.checkpointer import _recreate_checkpointer, get_checkpointer
 from seer.api.core.errors import AUTH_PROBLEM, VALIDATION_PROBLEM, raise_problem
-from seer.analytics import analytics
 from seer.config import config
 from seer.database import User, UserPublic
+from seer.database.models import UserSettings
 from seer.logger import get_logger
 from seer.observability import (
     increment_chat_message_count,
@@ -37,6 +38,8 @@ from .chat_schema import (
     ChatSession,
     ChatSessionCreate,
     ChatSessionWithMessages,
+    DiscoveryChatRequest,
+    WorkflowCreationMode,
     WorkflowProposalActionResponse,
 )
 from .chat_services import (
@@ -51,15 +54,19 @@ from .models import WorkflowProposalPublic
 from .services import (
     accept_workflow_proposal,
     create_chat_session,
+    create_discovery_chat_session,
     create_workflow_proposal,
     get_chat_session,
     get_chat_session_by_thread_id,
+    get_discovery_chat_session_by_thread_id,
+    get_user_workflow_creation_mode,
     get_workflow,
     get_workflow_proposal,
     list_chat_sessions,
     load_chat_history,
     reject_workflow_proposal,
     save_chat_message,
+    update_user_workflow_creation_mode,
     workflow_state_snapshot,
 )
 
@@ -97,9 +104,9 @@ def _summarize_spec(spec: Dict[str, Any]) -> str:
     return ", ".join(parts)
 
 
-def _prepare_workflow_state(workflow, request_workflow_state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+async def _prepare_workflow_state(workflow, request_workflow_state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Prepare workflow state by merging saved and provided states."""
-    workflow_state = deepcopy(workflow_state_snapshot(workflow))
+    workflow_state = deepcopy(await workflow_state_snapshot(workflow))
 
     if request_workflow_state:
         workflow_state["nodes"] = request_workflow_state.get("nodes") or workflow_state.get("nodes", [])
@@ -171,21 +178,129 @@ async def _maybe_create_proposal_from_spec(
     await proposal.fetch_related('created_by', 'workflow', 'session')
     proposal_public = WorkflowProposalPublic.model_validate(proposal, from_attributes=True)
 
-    # Capture workflow proposal creation event
-    analytics.capture(
-        distinct_id=user.user_id,
-        event="workflow_proposal_created",
-        properties={
-            "proposal_id": proposal.id,
-            "workflow_id": workflow.workflow_id if workflow else None,
-            "session_id": session.id if session else None,
-            "model": model_name,
-            "spec_node_count": len(spec.get("nodes", [])),
-            "deployment_mode": config.seer_mode,
-        },
+    return proposal, proposal_public, None
+
+
+@router.post("/chat", response_model=ChatResponse)
+async def discovery_chat_endpoint(  # pylint: disable=too-many-locals # Reason: Complex endpoint with discovery logic, requires refactoring
+    request: Request,
+    chat_request: DiscoveryChatRequest,
+) -> ChatResponse:
+    """
+    Discovery chat without a workflow (for workflow creation).
+
+    The assistant can ask clarifying questions and create workflows based on user input.
+    """
+    logger.info("Discovery chat request: message_length=%d", len(chat_request.message))
+    user = _require_user(request)
+
+    # Get workflow creation mode
+    if chat_request.workflow_creation_mode:
+        creation_mode = chat_request.workflow_creation_mode
+    else:
+        creation_mode = await get_user_workflow_creation_mode(user)
+
+    model = chat_request.model or config.default_llm_model
+    checkpointer = await get_checkpointer()
+
+    # Get or create discovery session
+    if chat_request.thread_id:
+        thread_id = chat_request.thread_id
+        session = await get_discovery_chat_session_by_thread_id(thread_id, user)
+        if not session:
+            session = await create_discovery_chat_session(
+                user=user,
+                thread_id=thread_id,
+                workflow_creation_mode=creation_mode,
+            )
+        session_id = session.id
+    else:
+        thread_id = f"discovery-{uuid.uuid4().hex}"
+        session = await create_discovery_chat_session(
+            user=user,
+            thread_id=thread_id,
+            workflow_creation_mode=creation_mode,
+        )
+        session_id = session.id
+
+    # Set discovery mode context (no workflow state)
+    set_user_for_thread(thread_id, user)
+
+    # Create agent in discovery mode
+    agent = create_nexus_chat_agent(
+        model=model,
+        checkpointer=checkpointer,
+        workflow_state=None,  # No workflow in discovery mode
     )
 
-    return proposal, proposal_public, None
+    user_msg = HumanMessage(content=chat_request.message)
+
+    # Track message
+    await increment_chat_message_count(user)
+
+    try:
+        config_dict = {"configurable": {"thread_id": thread_id}}
+
+        # Initialize orchestrator
+        orchestrator = ChatOrchestrator(
+            agent=agent,
+            checkpointer=checkpointer,
+            health_service=CheckpointerHealthService(),
+            detector=IncompleteToolCallDetector(),
+            recovery_service=IncompleteToolCallRecoveryService(),
+            reconnect_func=_recreate_checkpointer,
+        )
+
+        # Invoke agent
+        result = await orchestrator.invoke_with_health_checks(user_msg, config_dict)
+
+        # Detect interrupts
+        interrupt_required, interrupt_data = InterruptHandler.extract_interrupt_from_result(result)
+        if not interrupt_required:
+            state_interrupt_required, state_interrupt_data = await InterruptHandler.extract_interrupt_from_state(
+                agent, config_dict
+            )
+            if state_interrupt_required:
+                interrupt_required = True
+                interrupt_data = state_interrupt_data
+
+        # Extract response
+        agent_messages = result.get("messages", []) if isinstance(result, dict) else []
+        response_text = _extract_response_text(result)
+
+        # Verify checkpoint
+        if checkpointer and thread_id:
+            await _verify_checkpoint_saved(checkpointer, thread_id)
+
+        # Extract thinking
+        thinking_steps = extract_thinking_from_messages(agent_messages)
+
+        # Track assistant message
+        await increment_chat_message_count(user)
+
+        # Check if workflow was created (placeholder - will be implemented with agent specialist)
+        workflow_created_id = None
+
+        return ChatResponse(
+            response=response_text,
+            session_id=session_id,
+            thread_id=thread_id,
+            thinking=thinking_steps if thinking_steps else None,
+            interrupt_required=interrupt_required,
+            interrupt_data=interrupt_data,
+            workflow_created_id=workflow_created_id,
+        )
+    except Exception as e:  # pylint: disable=broad-exception-caught # Reason: API boundary, converting all exceptions to HTTP problem responses
+        logger.error("Error in discovery chat: %s", e, exc_info=True)
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Discovery chat failed",
+            detail=f"Failed to process discovery chat: {str(e)}",
+            status=500
+        )
+    finally:
+        clear_proposed_spec_for_thread(thread_id)
+        clear_user_for_thread(thread_id)
 
 
 @router.post("/{workflow_id}/chat", response_model=ChatResponse)
@@ -217,7 +332,7 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
     )
 
     # Prepare workflow state
-    workflow_state = _prepare_workflow_state(workflow, chat_request.workflow_state)
+    workflow_state = await _prepare_workflow_state(workflow, chat_request.workflow_state)
     set_workflow_state_for_thread(thread_id, workflow_state)
     set_user_for_thread(thread_id, user)
 
@@ -240,20 +355,18 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
     # Track user message (global count, not per-workflow)
     await increment_chat_message_count(user)
 
-    analytics.capture(
-        distinct_id=user.user_id,
-        event="chat_agent_message",
-        properties={
-            "workflow_id": workflow_id,
-            "session_id": session_id,
-            "message_role": "user",
-            "message_length": len(chat_request.message),
-            "deployment_mode": config.seer_mode,
-        },
-    )
+    # Get user settings for max steps
+    try:
+        user_settings = await UserSettings.get(user=user)
+        max_agent_steps = user_settings.max_agent_steps or config.nexus_max_agent_steps
+    except DoesNotExist:
+        max_agent_steps = config.nexus_max_agent_steps
 
     try:
-        config_dict = {"configurable": {"thread_id": thread_id}}
+        config_dict = {
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": max_agent_steps,
+        }
 
         # Initialize orchestrator
         orchestrator = ChatOrchestrator(
@@ -310,22 +423,6 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
 
         # Track assistant message (global count, not per-workflow)
         await increment_chat_message_count(user)
-
-        analytics.capture(
-            distinct_id=user.user_id,
-            event="chat_agent_message",
-            properties={
-                "workflow_id": workflow_id,
-                "session_id": session_id,
-                "message_role": "assistant",
-                "message_length": len(response_text),
-                "model": model,
-                "created_proposal": proposal_public is not None,
-                "deployment_mode": config.seer_mode,
-            },
-        )
-
-        analytics.flush()
 
         return ChatResponse(
             response=response_text,
@@ -498,7 +595,7 @@ async def resume_chat_endpoint(  # pylint: disable=too-many-locals # Reason: Com
     session_id = session.id
 
     # Get current workflow state (deep copy to avoid mutating DB graph)
-    workflow_state = deepcopy(workflow_state_snapshot(workflow))
+    workflow_state = deepcopy(await workflow_state_snapshot(workflow))
 
     # Create agent
     agent = create_nexus_chat_agent(
@@ -510,11 +607,19 @@ async def resume_chat_endpoint(  # pylint: disable=too-many-locals # Reason: Com
     # Create Command object for resuming
     resume_command = Command(**command_data)
 
+    # Get user settings for max steps
+    try:
+        user_settings = await UserSettings.get(user=user)
+        max_agent_steps = user_settings.max_agent_steps or config.nexus_max_agent_steps
+    except DoesNotExist:
+        max_agent_steps = config.nexus_max_agent_steps
+
     # Resume agent execution
     config_dict = {
         "configurable": {
             "thread_id": thread_id,
         },
+        "recursion_limit": max_agent_steps,
     }
 
     # Set thread_id in context variable for tools to access
@@ -612,21 +717,9 @@ async def accept_proposal_endpoint(
     )
     await proposal.fetch_related('created_by', 'workflow', 'session')
 
-    # Capture proposal acceptance event
-    analytics.capture(
-        distinct_id=user.user_id,
-        event="workflow_proposal_accepted",
-        properties={
-            "proposal_id": proposal_id,
-            "workflow_id": workflow_id,
-            "session_id": proposal.session.id if proposal.session else None,
-            "deployment_mode": config.seer_mode,
-        },
-    )
-
     return WorkflowProposalActionResponse(
         proposal=WorkflowProposalPublic.model_validate(proposal, from_attributes=True),
-        workflow_graph=workflow_state_snapshot(workflow),
+        workflow_graph=await workflow_state_snapshot(workflow),
     )
 
 
@@ -642,22 +735,46 @@ async def reject_proposal_endpoint(
     proposal = await reject_workflow_proposal(workflow, proposal_id)
     await proposal.fetch_related('created_by', 'workflow', 'session')
 
-    # Capture proposal rejection event
-    analytics.capture(
-        distinct_id=user.user_id,
-        event="workflow_proposal_rejected",
-        properties={
-            "proposal_id": proposal_id,
-            "workflow_id": workflow_id,
-            "session_id": proposal.session.id if proposal.session else None,
-            "deployment_mode": config.seer_mode,
-        },
-    )
-
     return WorkflowProposalActionResponse(
         proposal=WorkflowProposalPublic.model_validate(proposal, from_attributes=True),
         workflow_graph=None,
     )
+
+
+@router.get("/user/workflow-creation-mode", response_model=Dict[str, str])
+async def get_user_creation_mode_endpoint(request: Request) -> Dict[str, str]:
+    """Get user's default workflow creation mode."""
+    user = _require_user(request)
+    mode = await get_user_workflow_creation_mode(user)
+    return {"mode": mode.value}
+
+
+@router.post("/user/workflow-creation-mode")
+async def update_user_creation_mode_endpoint(
+    request: Request,
+    body: Dict[str, str],
+) -> Dict[str, str]:
+    """Update user's default workflow creation mode."""
+    user = _require_user(request)
+    mode_str = body.get("mode")
+    if not mode_str:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Missing mode",
+            detail="mode is required",
+            status=400
+        )
+    try:
+        mode = WorkflowCreationMode(mode_str)
+    except ValueError:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Invalid mode",
+            detail=f"Invalid mode: {mode_str}. Must be one of: AUTO_CREATE, ASK_FIRST, ON_ACCEPTANCE",
+            status=400
+        )
+    await update_user_workflow_creation_mode(user, mode)
+    return {"mode": mode.value}
 
 
 __all__ = ["router"]

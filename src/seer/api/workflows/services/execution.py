@@ -2,22 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, Optional
 
-
+from seer.api.core.errors import  RUN_PROBLEM
 from seer.api.workflows import models as api_models
 from seer.api.workflows.services.shared import (
-    _ensure_draft_version,
     _get_draft_version,
     _get_workflow,
     _now,
     _raise_problem,
     _spec_to_dict,
 )
-from seer.api.core.errors import  RUN_PROBLEM
-from seer.analytics import analytics
-from seer.config import config as shared_config
+from seer.core.schema.models import WorkflowSpec
 from seer.database import (
     TriggerSubscription,
     User,
@@ -29,11 +27,9 @@ from seer.database import (
     WorkflowVersionStatus,
     make_workflow_public_id,
 )
-from seer.core.schema.models import WorkflowSpec
-import asyncio
+from seer.worker.tasks.workflows import workflow_execution_task
 
 logger = logging.getLogger(__name__)
-from seer.worker.tasks.workflows import workflow_execution_task
 
 
 
@@ -103,8 +99,8 @@ async def _generate_sample_trigger_envelope(
 
     Reuses existing logic from test_trigger_subscription.
     """
-    from seer.core.registry.trigger_registry import trigger_registry
-    from seer.core.triggers.events import build_event_envelope
+    from seer.core.registry.trigger_registry import trigger_registry  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
+    from seer.core.triggers.events import build_event_envelope  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
 
     # Load trigger definition from registry
     definition = trigger_registry.maybe_get(subscription.trigger_key)
@@ -164,7 +160,7 @@ async def list_workflow_runs(
     )
 
 
-async def run_saved_workflow(
+async def run_saved_workflow(  # pylint: disable=too-complex # Reason: Complex workflow routing logic for triggers vs manual runs
     user: User,
     workflow_id: str,
     payload: api_models.RunFromWorkflowRequest,
@@ -251,24 +247,11 @@ async def run_saved_workflow(
                     trigger_envelope=trigger_envelope
                 )
 
-                analytics.capture(
-                    distinct_id=user.user_id,
-                    event="workflow_run_started",
-                    properties={
-                        "run_id": run.run_id,
-                        "workflow_id": workflow.id,
-                        "workflow_name": workflow.name,
-                        "execution_mode": "api_async_with_sample_trigger",
-                        "trigger_key": subscription.trigger_key,
-                        "trigger_title": subscription.title,
-                        "deployment_mode": shared_config.seer_mode,
-                    },
-                )
                 runs.append({
                     "run": run,
                     "trigger_title": subscription.title or subscription.trigger_id,
                 })
-            except Exception as exc:
+            except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: Catch all task enqueue failures to continue processing other triggers
                 logger.exception(
                     "Failed to enqueue trigger-based run",
                     extra={
@@ -324,21 +307,6 @@ async def run_saved_workflow(
 
     try:
         await workflow_execution_task.kiq(run_id=run.id, user_id=user.id)
-
-        # Capture async workflow start event (actual execution tracked in worker)
-        analytics.capture(
-            distinct_id=user.user_id,
-            event="workflow_run_started",
-            properties={
-                "run_id": run.run_id,
-                "workflow_id": workflow.id,
-                "workflow_name": workflow.name,
-                "execution_mode": "api_async",
-                "has_inputs": bool(payload.inputs),
-                "input_keys": list((payload.inputs or {}).keys()),
-                "deployment_mode": shared_config.seer_mode,
-            },
-        )
     except (asyncio.TimeoutError, asyncio.CancelledError, ConnectionError) as exc:
         logger.exception(
             "Failed to enqueue workflow task",
@@ -356,7 +324,7 @@ async def run_saved_workflow(
             detail="An error occurred while queuing the workflow execution.",
             status=500,
         )
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: Catch all Taskiq broker failures to gracefully handle enqueue errors
         # Unexpected error - taskiq or broker issue
         logger.exception(
             "UNEXPECTED: Task enqueue failed",

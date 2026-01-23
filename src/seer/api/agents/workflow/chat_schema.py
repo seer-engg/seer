@@ -2,6 +2,7 @@
 Pydantic schemas for workflow chat assistant.
 """
 from datetime import datetime
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -9,6 +10,13 @@ from pydantic import BaseModel, Field
 from seer.database import UserPublic
 
 from .models import WorkflowProposalPublic
+
+
+class WorkflowCreationMode(str, Enum):
+    """Mode for workflow creation during discovery."""
+    AUTO_CREATE = "AUTO_CREATE"
+    ASK_FIRST = "ASK_FIRST"
+    ON_ACCEPTANCE = "ON_ACCEPTANCE"
 
 
 class ChatRequest(BaseModel):
@@ -31,6 +39,7 @@ class ChatResponse(BaseModel):
     thinking: Optional[List[str]] = Field(default=None, description="Agent thinking/reasoning steps (collapsible)")
     interrupt_required: bool = Field(default=False, description="Whether human input is required (human-in-the-loop)")
     interrupt_data: Optional[Dict[str, Any]] = Field(default=None, description="Data for human-in-the-loop interrupt")
+    workflow_created_id: Optional[str] = Field(default=None, description="Workflow ID if created during discovery chat")
 
 
 class ChatSessionCreate(BaseModel):
@@ -71,6 +80,27 @@ class WorkflowProposalActionResponse(BaseModel):
     """Response for proposal accept/reject actions."""
     proposal: WorkflowProposalPublic
     workflow_graph: Optional[Dict[str, Any]] = Field(default=None, description="Updated WorkflowSpec when accepted")
+
+
+class ClarificationQuestionOption(BaseModel):
+    """Option for a clarification question."""
+    value: str
+    label: str
+
+
+class ClarificationQuestion(BaseModel):
+    """Clarification question during discovery."""
+    question: str
+    options: List[ClarificationQuestionOption]
+
+
+class DiscoveryChatRequest(BaseModel):
+    """Request model for discovery chat endpoint (no workflow)."""
+    message: str = Field(..., description="User's chat message")
+    workflow_creation_mode: Optional[WorkflowCreationMode] = Field(default=None, description="Mode for workflow creation")
+    model: Optional[str] = Field(default=None, description="Model to use for chat")
+    thread_id: Optional[str] = Field(default=None, description="LangGraph thread ID to resume conversation")
+    session_id: Optional[int] = Field(default=None, description="Discovery session ID")
 
 
 class InterruptResponse(BaseModel):

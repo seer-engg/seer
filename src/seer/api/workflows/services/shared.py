@@ -22,6 +22,14 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+async def get_published_version(workflow: Workflow) -> Optional[WorkflowVersion]:
+    """Get the published (RELEASED) version for a workflow."""
+    return await WorkflowVersion.filter(
+        workflow=workflow,
+        status=WorkflowVersionStatus.RELEASED
+    ).first()
+
+
 def _spec_to_dict(spec: WorkflowSpec) -> Dict[str, Any]:
     return spec.model_dump(mode="json")
 
@@ -52,8 +60,8 @@ async def _get_draft_version(
         return draft
 
     # Create on-demand: copy from published or use empty spec
-    published = getattr(workflow, "published_version", None)
-    if published and isinstance(published, WorkflowVersion):
+    published = await get_published_version(workflow)
+    if published:
         spec_dict = json.loads(json.dumps(published.spec))
     else:
         spec_dict = {"version": "2.0", "nodes": [], "edges": []}
@@ -133,7 +141,7 @@ async def _get_workflow(user: User, workflow_id: str) -> Workflow:
             detail="Workflow id is invalid",
             status=400,
         )
-    workflow = await Workflow.filter(id=pk, user=user).prefetch_related("published_version").first()
+    workflow = await Workflow.filter(id=pk, user=user).first()
     if workflow is None:
         _raise_problem(
             type_uri=VALIDATION_PROBLEM,

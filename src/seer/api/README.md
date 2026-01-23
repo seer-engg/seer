@@ -93,8 +93,7 @@ async def list_workflows(request: Request):
 ```
 api/
 ├── main.py                    # FastAPI app, router registration
-├── middleware/                # Auth, analytics, error handling
-│   ├── analytics.py          # PostHog event tracking
+├── middleware/                # Auth, error handling
 │   ├── auth.py               # Clerk JWT validation
 │   └── timing.py             # Request timing headers
 ├── models/                    # API request/response schemas
@@ -155,20 +154,6 @@ workflow = await Workflow.filter(id=pk, user=user)\
 ```
 
 ⚠️ **Note**: No repository layer yet. Direct ORM queries throughout services.
-
-### Analytics Pattern
-
-Track events via `shared.analytics.analytics`:
-
-```python
-from seer.analytics import analytics
-
-analytics.track(
-    str(user.id),
-    "workflow_executed",
-    {"workflow_id": workflow.public_id, "mode": "sync"}
-)
-```
 
 ## Entry Points
 

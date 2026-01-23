@@ -8,6 +8,7 @@ from tortoise import fields, models
 
 if TYPE_CHECKING:
     from seer.api.core.middleware.auth import AuthenticatedUser
+    from seer.database.workflow_models import WorkflowCreationMode
 
 
 class User(models.Model):
@@ -20,6 +21,7 @@ class User(models.Model):
     last_name = fields.CharField(max_length=255, null=True)
     claims = fields.JSONField(null=True)
     signup_source = fields.CharField(max_length=50, null=True)
+    default_workflow_creation_mode = fields.CharField(max_length=20, default="ASK_FIRST")
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 
@@ -80,4 +82,28 @@ class UserPublic(BaseModel):
     last_name: Optional[str] = None
     signup_source: Optional[str] = None
     created_at: datetime
+    updated_at: datetime
+
+
+class UserSettings(models.Model):
+    """Database model for per-user settings."""
+
+    id = fields.IntField(primary_key=True)
+    user = fields.OneToOneField("models.User", related_name="settings")
+    max_agent_steps = fields.IntField(null=True)
+    preferences = fields.JSONField(default=dict)
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    class Meta:
+        table = "user_settings"
+
+
+class UserSettingsPublic(BaseModel):
+    """Pydantic model for UserSettings API responses."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    max_agent_steps: Optional[int] = None
+    preferences: Dict[str, Any] = {}
     updated_at: datetime

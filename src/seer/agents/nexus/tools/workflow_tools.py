@@ -5,9 +5,12 @@ Workflow agent tools for analysis and submitting complete workflow specs.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
+from pydantic import BaseModel, Field
 
 from seer.agents.nexus.context import (
     _current_thread_id,
@@ -15,7 +18,14 @@ from seer.agents.nexus.context import (
     set_proposed_spec_for_thread,
     get_user_for_thread,
 )
-from seer.agents.nexus.schema_context import get_workflow_templates
+from seer.agents.nexus.schema_context import (
+    get_workflow_templates,
+    generate_node_type_reference,
+    generate_validation_checklist_from_model,
+    generate_trigger_reference,
+    generate_edge_reference,
+    get_workflow_spec_example_text,
+)
 from seer.logger import get_logger
 from seer.tools.base import get_tool
 from seer.core.compiler.parse import parse_workflow_spec
@@ -26,8 +36,121 @@ from seer.core.errors import (
 )
 from seer.core.registry.trigger_registry import trigger_registry
 from seer.core.runtime.global_compiler import WorkflowCompilerSingleton
+from seer.core.schema.models import WorkflowSpec
 
 logger = get_logger(__name__)
+
+
+# -----------------------------
+# Structured Output Models
+# -----------------------------
+
+
+class WorkflowProposal(BaseModel):
+    """
+    Structured workflow proposal with validated spec and metadata.
+
+    This model wraps WorkflowSpec to add explanation fields while
+    maintaining full Pydantic validation of the spec itself.
+    """
+    spec: WorkflowSpec = Field(
+        ...,
+        description="Complete workflow specification conforming to v2 schema"
+    )
+    summary: str = Field(
+        ...,
+        description="1-2 sentence summary of what the workflow does"
+    )
+    reasoning: str = Field(
+        ...,
+        description="Explanation of design decisions: why these tools/triggers, why this structure"
+    )
+
+
+def create_workflow_spec_structured(
+    llm: BaseChatModel,
+    user_intent: str,
+    discovered_tools: List[Dict[str, Any]],
+    discovered_triggers: List[Dict[str, Any]],
+    template_hint: Optional[str] = None,
+) -> WorkflowProposal:
+    """
+    Generate WorkflowSpec using structured output with automatic Pydantic validation.
+
+    Uses LangChain's with_structured_output() to have the LLM generate a validated
+    WorkflowSpec object. Pydantic validates:
+    - Node types via discriminated union
+    - Required fields
+    - Field types
+    - Nested structures
+
+    Args:
+        llm: Language model to use for generation
+        user_intent: User's description of desired workflow
+        discovered_tools: List of tools from search_tools() results
+        discovered_triggers: List of triggers from search_triggers() results
+        template_hint: Optional template name to use as starting point
+
+    Returns:
+        WorkflowProposal with validated spec, summary, and reasoning
+
+    Raises:
+        ValidationError: If generated spec fails Pydantic validation
+    """
+    structured_llm = llm.with_structured_output(WorkflowProposal, method="function_calling")
+
+    # Format discovered tools/triggers for prompt
+    tools_text = json.dumps(discovered_tools, indent=2) if discovered_tools else "None discovered"
+    triggers_text = json.dumps(discovered_triggers, indent=2) if discovered_triggers else "None discovered"
+
+    # Build prompt with auto-generated schema docs
+    node_reference = generate_node_type_reference()
+    validation_checklist = generate_validation_checklist_from_model()
+    trigger_reference = generate_trigger_reference()
+    edge_reference = generate_edge_reference()
+    examples = get_workflow_spec_example_text()
+
+    template_section = ""
+    if template_hint:
+        template_section = f"\n**Template Hint:** Consider using or adapting the '{template_hint}' template as a starting point.\n"
+
+    prompt = f"""Design a complete workflow for: {user_intent}
+
+Available tools:
+{tools_text}
+
+Available triggers:
+{triggers_text}
+{template_section}
+**Node Types**
+{node_reference}
+
+**Triggers**
+{trigger_reference}
+
+**Edges**
+{edge_reference}
+
+**Requirements**
+{validation_checklist}
+
+**Examples**
+{examples}
+
+Create a complete WorkflowSpec with:
+- Appropriate nodes using discovered tools/triggers
+- Edges connecting all nodes (no orphaned nodes)
+- Variable references using ${{node_id}} or ${{node_id.field}} syntax
+- Triggers with all required fields if workflow is trigger-based
+- Proper edge types (default, trigger, conditional_true/false, loop_body/exit)
+
+Provide a summary and reasoning for your design decisions."""
+
+    # LLM generates WorkflowProposal, Pydantic validates automatically
+    proposal = structured_llm.invoke([HumanMessage(content=prompt)])
+
+    # If we get here, spec is valid!
+    return proposal
 
 
 def _resolve_workflow_state(
@@ -147,6 +270,24 @@ def _validate_pydantic(spec_dict: Dict) -> tuple[Optional[Any], Optional[str]]:
         return validated_spec, None
     except ValidationPhaseError as exc:
         logger.warning("Workflow spec validation failed", exc_info=exc)
+        error_msg = str(exc)
+
+        # Detect extra fields error and provide helpful hint
+        if "extra_forbidden" in error_msg or "Extra inputs" in error_msg.lower():
+            # Extract invalid field names if possible
+            invalid_fields = []
+            for key in spec_dict.keys():
+                if key not in ["version", "nodes", "edges", "triggers"]:
+                    invalid_fields.append(key)
+
+            hint = (
+                "WorkflowSpec v2 schema ONLY allows: version, nodes, edges, triggers. "
+                f"Invalid fields: {invalid_fields}. "
+                "Remove: input_variables, inputs, config, metadata, or custom fields. "
+                "Access trigger data via: ${trigger.data.field_name}"
+            )
+            return None, _error_response("parsing", f"Workflow spec validation failed: {exc}", hint)
+
         return None, _error_response("parsing", f"Workflow spec validation failed: {exc}")
 
 

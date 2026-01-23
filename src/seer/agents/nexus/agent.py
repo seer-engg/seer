@@ -1,8 +1,10 @@
+import os
 from typing import Optional, Dict, Any
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
     SummarizationMiddleware,
 )
+
 from seer.logger import get_logger
 from seer.llm import get_llm_without_responses_api
 from seer.agents.nexus.utils import get_workflow_tools
@@ -11,13 +13,34 @@ from seer.agents.nexus.schema_context import (
     get_workflow_spec_schema_text,
     get_workflow_templates_summary,
 )
-from seer.config import config
-
 logger = get_logger(__name__)
 
 WORKFLOW_SPEC_SCHEMA = get_workflow_spec_schema_text()
 WORKFLOW_SPEC_EXAMPLE = get_workflow_spec_example_text()
 
+
+def _ensure_mlflow_autologging() -> None:
+    """Enable MLflow LangChain autologging once per process with tracking URI and experiment."""
+
+    try:
+        import mlflow
+        from mlflow.langchain import autolog
+    except ImportError:
+        logger.warning("mlflow not installed, skipping mlflow autologging for langchain")
+        return
+
+    tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
+    experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "seer-workflow-agent")
+
+    try:
+        mlflow.set_tracking_uri(tracking_uri)
+        mlflow.set_experiment(experiment_name)
+        autolog()
+        logger.info("Enabled MLflow LangChain  autologging (tracking_uri=%s, experiment=%s)", tracking_uri, experiment_name)
+    except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: instrumentation should not break agent startup
+        logger.warning("Failed to enable MLflow autologging: %s", exc)
+
+_ensure_mlflow_autologging()
 
 def create_nexus_chat_agent(
     model: str = "gpt-4o-mini",
@@ -25,28 +48,20 @@ def create_nexus_chat_agent(
     workflow_state: Optional[Dict[str, Any]] = None,
 ) -> Any:
     """
-    Create a LangGraph agent for Nexus chat assistance.
+    Create a LangGraph agent for Nexus chat assistance using create_agent.
 
-    Supports two modes:
-    - Single-agent mode (default): Traditional create_agent with all tools
-    - Supervisor mode (config.supervisor_mode_enabled): Multi-agent architecture
+    Uses LangChain v1.0+ create_agent with middleware for summarization
+    and human-in-the-loop capabilities.
 
     Args:
         model: Model name to use (e.g., 'gpt-5.2', 'gpt-5-mini')
         checkpointer: Optional LangGraph checkpointer for persistence
-        workflow_state: Optional existing workflow state for editing
 
     Returns:
         LangGraph agent compiled with tools and middleware
     """
-    # Check if supervisor mode is enabled
-    if config.supervisor_mode_enabled:
-        logger.info("Using supervisor multi-agent architecture")
-        from seer.agents.nexus.supervisor.graph import create_supervisor_graph  # pylint: disable=import-outside-toplevel  # Conditional import for optional feature
-        return create_supervisor_graph(model, checkpointer, workflow_state)
 
-    # Default: single-agent mode
-    logger.info("Using single-agent mode")
+
     llm = get_llm_without_responses_api(model=model, temperature=0, api_key=None)
 
     # System prompt for the workflow assistant
@@ -61,6 +76,26 @@ def create_nexus_chat_agent(
 - Minimize inputs: Hardcode values unless user explicitly wants control or value varies per run
 - Prefer triggers: Use event-driven triggers over manual execution when user mentions timing/events
 - Validate thoroughly: Check all references, schemas, and required fields before submitting
+
+**WorkflowSpec v2 Schema (STRICT)**
+ONLY these top-level fields are allowed:
+- version: "1.0" (string literal)
+- nodes: Array of node objects (required)
+- edges: Array of edge objects (optional, default [])
+- triggers: Array of trigger objects (optional, default [])
+
+❌ NEVER include: input_variables, inputs, config, metadata, or ANY custom fields
+❌ NEVER add fields not explicitly in the schema above
+✅ Access trigger data: ${trigger.data.message_id}, ${trigger.data.from}
+✅ Access node outputs: ${node_id.output_field}
+
+Example valid spec:
+{
+  "version": "1.0",
+  "triggers": [{"id": "my_trigger", "key": "poll.gmail.email_received", ...}],
+  "nodes": [{"id": "node1", "type": "tool", ...}],
+  "edges": [{"source": "node1", "target": "node2"}]
+}
 
 **Tool Discovery (Always Use)**
 NEVER ask users for tool names. Users describe WHAT they want, you discover HOW:

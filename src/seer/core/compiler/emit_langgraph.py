@@ -189,6 +189,15 @@ async def emit_langgraph(
         graph.add_edge("__noop", END)
         return graph.compile(checkpointer=checkpointer) if checkpointer else graph.compile()
 
+    # Build loop body map: node_id -> parent_loop_id
+    loop_body_map: Dict[str, str] = {}
+    for loop_id, body_nodes in plan.loop_body_nodes.items():
+        for node_id in body_nodes:
+            loop_body_map[node_id] = loop_id
+
+    # Set loop body map in runtime for trace key generation
+    runtime.set_loop_body_map(loop_body_map)
+
     # Add all nodes to the graph
     node_map: Dict[str, Node] = {}
     for node in plan.nodes:
@@ -252,6 +261,22 @@ async def emit_langgraph(
 
         else:
             _add_regular_edges(graph, node, outgoing)
+
+    # Add implicit edges from loop terminal nodes back to loop nodes
+    for node in plan.nodes:
+        if isinstance(node, ForEachNode):
+            terminal_nodes = plan.loop_terminal_nodes.get(node.id, set())
+            for terminal_node_id in terminal_nodes:
+                # Check if explicit edge already exists
+                existing_edges = plan.outgoing_edges.get(terminal_node_id, [])
+                has_explicit_loop_back = any(
+                    e.target == node.id and e.type == EdgeType.default
+                    for e in existing_edges
+                )
+
+                if not has_explicit_loop_back:
+                    # Add implicit edge from terminal node back to loop
+                    graph.add_edge(terminal_node_id, node.id)
 
     if checkpointer:
         return graph.compile(checkpointer=checkpointer)

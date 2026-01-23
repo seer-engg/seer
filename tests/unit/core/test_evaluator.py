@@ -189,12 +189,12 @@ def test_resolve_reference_from_trigger():
     ctx = EvaluationContext(
         state={},
         locals={},
-        trigger={"id": "t1", "data": {"message": "hello"}}
+        trigger={"trigger_id": "t1", "data": {"message": "hello"}}
     )
     ref = parse_reference_string("t1")
 
     result = resolve_reference(ctx, ref)
-    assert result == {"id": "t1", "data": {"message": "hello"}}
+    assert result == {"trigger_id": "t1", "data": {"message": "hello"}}
 
 
 def test_resolve_reference_trigger_property():
@@ -202,7 +202,7 @@ def test_resolve_reference_trigger_property():
     ctx = EvaluationContext(
         state={},
         locals={},
-        trigger={"id": "t1", "data": {"message": "hello"}}
+        trigger={"trigger_id": "t1", "data": {"message": "hello"}}
     )
     ref = parse_reference_string("t1.data")
 

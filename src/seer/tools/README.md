@@ -277,23 +277,6 @@ async def execute(self, access_token, arguments, credentials=None):
 
 **Storage**: Secrets stored in `IntegrationSecret` table, encrypted at rest.
 
-## Analytics
-
-Tool execution automatically tracked via PostHog:
-
-```python
-analytics.capture(
-    distinct_id=user.user_id,
-    event="tool_executed",
-    properties={
-        "tool_name": tool_name,
-        "duration_ms": 123.45,
-        "success": True,
-        "error_type": None
-    }
-)
-```
-
 ## Error Handling
 
 ### In Tools

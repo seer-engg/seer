@@ -57,6 +57,7 @@ class NodeRuntime:
         self._type_schemas = services.type_env.as_dict()
         self._current_trigger: Mapping[str, Any] | None = None
         self._current_context: WorkflowRuntimeContext | None = None
+        self._loop_body_map: Dict[str, str] = {}  # node_id -> parent_loop_id
 
     def build_runner(self, node: Node) -> RunnableCallable:
         def runner(
@@ -81,6 +82,32 @@ class NodeRuntime:
 
     def bind_context(self, context: WorkflowRuntimeContext | None) -> None:
         self._current_context = context
+
+    def set_loop_body_map(self, loop_body_map: Dict[str, str]) -> None:
+        """Set mapping from node_id to parent loop_id for nodes inside loops."""
+        self._loop_body_map = loop_body_map
+
+    def _get_trace_key(self, node_id: str, state: WorkflowState) -> str:
+        """
+        Generate trace key for a node, including loop iteration if inside a loop.
+
+        Returns:
+            - `_trace_{node_id}` if not in a loop
+            - `_trace_{node_id}_iter_{N}` if in a loop (where N is the current iteration)
+        """
+        # Check if this node is inside a loop
+        parent_loop_id = self._loop_body_map.get(node_id)
+        if not parent_loop_id:
+            return f"_trace_{node_id}"
+
+        # Get the current loop iteration
+        loop_state_key = f"_loop_{parent_loop_id}"
+        loop_state = state.get(loop_state_key)
+        if not loop_state or not isinstance(loop_state, dict):
+            return f"_trace_{node_id}"
+
+        current_index = loop_state.get("current_index", 0)
+        return f"_trace_{node_id}_iter_{current_index}"
 
     def _check_llm_credit_limit_sync(self) -> None:
         """
@@ -293,7 +320,7 @@ class NodeRuntime:
 
         # STEP 4: Store trace data
         # Use single underscore prefix to avoid LangGraph filtering double-underscore keys
-        trace_key = f"_trace_{node.id}"
+        trace_key = self._get_trace_key(node.id, state)
         output[trace_key] = {
             'node_id': node.id,
             'node_type': 'tool',
@@ -338,7 +365,7 @@ class NodeRuntime:
 
         # STEP 4: Store trace data
         # Use single underscore prefix to avoid LangGraph filtering double-underscore keys
-        trace_key = f"_trace_{node.id}"
+        trace_key = self._get_trace_key(node.id, state)
         output[trace_key] = {
             'node_id': node.id,
             'node_type': 'tool',
@@ -436,7 +463,7 @@ class NodeRuntime:
 
         # STEP 4: Store trace data
         # Use single underscore prefix to avoid LangGraph filtering double-underscore keys
-        trace_key = f"_trace_{node.id}"
+        trace_key = self._get_trace_key(node.id, state)
         output[trace_key] = {
             'node_id': node.id,
             'node_type': 'llm',

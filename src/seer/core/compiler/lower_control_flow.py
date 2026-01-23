@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
-from seer.core.schema.models import Edge, EdgeType, Node, WorkflowSpec
+from seer.core.schema.models import Edge, EdgeType, ForEachNode, IfNode, Node, WorkflowSpec
 
 
 @dataclass(frozen=True)
@@ -26,6 +26,8 @@ class ExecutionPlan:
         outgoing_edges: Map from node_id to list of edges leaving that node
         incoming_edges: Map from node_id to list of edges entering that node
         trigger_targets: Map from trigger_id to target node_id for routing
+        loop_body_nodes: Map from loop_id to set of node_ids in the loop body
+        loop_terminal_nodes: Map from loop_id to set of node_ids that are terminal in the loop body
     """
     nodes: List[Node]
     edges: List[Edge]
@@ -33,13 +35,81 @@ class ExecutionPlan:
     outgoing_edges: Dict[str, List[Edge]] = field(default_factory=dict)
     incoming_edges: Dict[str, List[Edge]] = field(default_factory=dict)
     trigger_targets: Dict[str, str] = field(default_factory=dict)  # trigger_id -> node_id
+    loop_body_nodes: Dict[str, Set[str]] = field(default_factory=dict)  # loop_id -> body_node_ids
+    loop_terminal_nodes: Dict[str, Set[str]] = field(default_factory=dict)  # loop_id -> terminal_node_ids
+
+
+def _find_loop_body_nodes(
+    loop_node_id: str,
+    body_entry_id: str,
+    outgoing_edges: Dict[str, List[Edge]],
+    node_map: Dict[str, Node]
+) -> Tuple[Set[str], Set[str]]:
+    """
+    Detect all nodes in the loop body and identify terminal nodes.
+
+    Starting from the body entry node, follow default edges until we reach:
+    - A node with an edge back to the loop node (already handled)
+    - A node with no outgoing default edges (terminal)
+    - Another control flow node (IfNode/ForEachNode) - don't traverse into it
+
+    Args:
+        loop_node_id: ID of the ForEachNode
+        body_entry_id: ID of the first node in the loop body
+        outgoing_edges: Map from node_id to list of outgoing edges
+        node_map: Map from node_id to Node object
+
+    Returns:
+        (body_node_ids, terminal_node_ids)
+    """
+    body_nodes: Set[str] = set()
+    terminal_nodes: Set[str] = set()
+    visited: Set[str] = set()
+    queue: List[str] = [body_entry_id]
+
+    while queue:
+        current_id = queue.pop(0)
+        if current_id in visited:
+            continue
+        visited.add(current_id)
+        body_nodes.add(current_id)
+
+        edges_out = outgoing_edges.get(current_id, [])
+        default_edges = [e for e in edges_out if e.type == EdgeType.default]
+
+        # Check for edge back to loop
+        has_loop_back = any(e.target == loop_node_id for e in default_edges)
+        if has_loop_back:
+            # Already has explicit back-edge, don't mark as terminal
+            continue
+
+        # Check if this is a terminal node (no outgoing default edges)
+        if not default_edges:
+            terminal_nodes.add(current_id)
+            continue
+
+        # Add next nodes to queue, but stop at nested control flow
+        for edge in default_edges:
+            target_node = node_map.get(edge.target)
+            if not target_node:
+                continue
+
+            # Stop at nested control flow nodes (don't traverse into them)
+            if isinstance(target_node, (ForEachNode, IfNode)):
+                terminal_nodes.add(current_id)
+                continue
+
+            queue.append(edge.target)
+
+    return body_nodes, terminal_nodes
 
 
 def build_execution_plan(spec: WorkflowSpec) -> ExecutionPlan:
     """
     Build an execution plan from the workflow spec.
 
-    Computes entry node, edge indices, and trigger routing for efficient graph traversal.
+    Computes entry node, edge indices, trigger routing, and loop body detection
+    for efficient graph traversal.
     """
     # Build edge indices
     outgoing: Dict[str, List[Edge]] = defaultdict(list)
@@ -65,6 +135,35 @@ def build_execution_plan(spec: WorkflowSpec) -> ExecutionPlan:
                 entry_node_id = node.id
                 break
 
+    # Build node map for loop body detection
+    node_map: Dict[str, Node] = {node.id: node for node in spec.nodes}
+
+    # Detect loop bodies for all ForEachNodes
+    loop_body_nodes: Dict[str, Set[str]] = {}
+    loop_terminal_nodes: Dict[str, Set[str]] = {}
+
+    for node in spec.nodes:
+        if isinstance(node, ForEachNode):
+            # Find the loop_body edge to get entry point
+            loop_edges = outgoing.get(node.id, [])
+            body_entry: Optional[str] = None
+
+            for edge in loop_edges:
+                if edge.type == EdgeType.loop_body:
+                    body_entry = edge.target
+                    break
+
+            if body_entry:
+                # Detect all nodes in the loop body and terminal nodes
+                body_nodes, terminal_nodes = _find_loop_body_nodes(
+                    node.id,
+                    body_entry,
+                    outgoing,
+                    node_map
+                )
+                loop_body_nodes[node.id] = body_nodes
+                loop_terminal_nodes[node.id] = terminal_nodes
+
     return ExecutionPlan(
         nodes=list(spec.nodes),
         edges=list(spec.edges),
@@ -72,4 +171,6 @@ def build_execution_plan(spec: WorkflowSpec) -> ExecutionPlan:
         outgoing_edges=dict(outgoing),
         incoming_edges=dict(incoming),
         trigger_targets=trigger_targets,
+        loop_body_nodes=loop_body_nodes,
+        loop_terminal_nodes=loop_terminal_nodes,
     )

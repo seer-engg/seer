@@ -1,7 +1,15 @@
 {
   "name": "Customer Support Email Automation",
   "description": "Monitor support inbox, classify emails with AI, route urgent issues to ticketing system, auto-respond to FAQs, create drafts for complex questions",
-  "tags": ["gmail", "support", "automation", "ai", "supabase", "classification", "llm"],
+  "tags": [
+    "gmail",
+    "support",
+    "automation",
+    "ai",
+    "supabase",
+    "classification",
+    "llm"
+  ],
   "customization_guide": "Update support email address in trigger query. Configure Supabase connection ID and table names (support_tickets, support_interactions). Adjust label names for your Gmail setup. Modify LLM classification criteria and auto-response templates. Set appropriate urgency thresholds and categories for your support workflow.",
   "spec": {
     "version": "2",
@@ -9,16 +17,16 @@
       {
         "id": "support_inbox_poll",
         "key": "poll.gmail.email_received",
-        "title": "Support_Inbox_Monitor",
-        "provider": "gmail",
         "mode": "polling",
-        "enabled": true,
         "provider_config": {
-          "label_ids": ["INBOX"],
+          "label_ids": [
+            "INBOX"
+          ],
           "query": "is:unread to:support@company.com",
           "max_results": 10,
           "overlap_ms": 300000
-        }
+        },
+        "event_schema": {}
       }
     ],
     "nodes": [
@@ -26,26 +34,25 @@
         "id": "extract_email_id",
         "type": "task",
         "kind": "set",
-        "value": "${trigger.data.id}",
-        "out": "email_id"
+        "value": "${trigger.data.id}"
       },
       {
         "id": "fetch_full_email",
         "type": "tool",
         "tool": "gmail_get_message",
-        "in": {
+        "inputs": {
           "message_id": "${email_id}"
-        },
-        "out": "full_email"
+        }
       },
       {
         "id": "classify_email",
         "type": "llm",
-        "model": "gpt-5-mini",
-        "temperature": 0.3,
-        "prompt": "Analyze this support email and classify it:\n\nFrom: ${full_email.from.email}\nSubject: ${full_email.subject}\nBody: ${full_email.body}\n\nClassify by:\n1. Urgency (urgent/normal) - Is this a critical issue requiring immediate attention?\n2. Category (billing/technical/general/account) - What type of support request?\n3. Sentiment (positive/neutral/negative/frustrated) - Customer's emotional tone\n4. Auto-response capability (true/false) - Can this be answered with a standard FAQ response?\n\nProvide reasoning for urgency classification.",
-        "out": "classification",
-        "output": {
+        "inputs": {
+          "model": "gpt-5-mini",
+          "temperature": 0.3,
+          "prompt": "Analyze this support email and classify it:\n\nFrom: ${full_email.from.email}\nSubject: ${full_email.subject}\nBody: ${full_email.body}\n\nClassify by:\n1. Urgency (urgent/normal) - Is this a critical issue requiring immediate attention?\n2. Category (billing/technical/general/account) - What type of support request?\n3. Sentiment (positive/neutral/negative/frustrated) - Customer's emotional tone\n4. Auto-response capability (true/false) - Can this be answered with a standard FAQ response?\n\nProvide reasoning for urgency classification."
+        },
+        "outputs": {
           "mode": "json",
           "schema": {
             "json_schema": {
@@ -53,15 +60,28 @@
               "properties": {
                 "urgency": {
                   "type": "string",
-                  "enum": ["urgent", "normal"]
+                  "enum": [
+                    "urgent",
+                    "normal"
+                  ]
                 },
                 "category": {
                   "type": "string",
-                  "enum": ["billing", "technical", "general", "account"]
+                  "enum": [
+                    "billing",
+                    "technical",
+                    "general",
+                    "account"
+                  ]
                 },
                 "sentiment": {
                   "type": "string",
-                  "enum": ["positive", "neutral", "negative", "frustrated"]
+                  "enum": [
+                    "positive",
+                    "neutral",
+                    "negative",
+                    "frustrated"
+                  ]
                 },
                 "auto_response_capable": {
                   "type": "boolean"
@@ -70,7 +90,13 @@
                   "type": "string"
                 }
               },
-              "required": ["urgency", "category", "sentiment", "auto_response_capable", "reasoning"]
+              "required": [
+                "urgency",
+                "category",
+                "sentiment",
+                "auto_response_capable",
+                "reasoning"
+              ]
             }
           }
         }
@@ -84,7 +110,7 @@
         "id": "create_urgent_ticket",
         "type": "tool",
         "tool": "supabase_table_insert",
-        "in": {
+        "inputs": {
           "integration_resource_id": 123,
           "table": "support_tickets",
           "record": {
@@ -101,31 +127,34 @@
             "body": "${full_email.body}",
             "classification_reasoning": "${classification.reasoning}"
           }
-        },
-        "out": "urgent_ticket"
+        }
       },
       {
         "id": "create_urgent_draft",
         "type": "tool",
         "tool": "gmail_create_draft",
-        "in": {
-          "to": ["${full_email.from.email}"],
+        "inputs": {
+          "to": [
+            "${full_email.from.email}"
+          ],
           "subject": "Re: ${full_email.subject}",
           "body_text": "Hi ${full_email.from.name},\n\nThank you for contacting support. We've flagged your issue as urgent and our team will respond within 2 hours.\n\nTicket #: ${urgent_ticket.id}\nCategory: ${classification.category}\n\nWe appreciate your patience.\n\nBest regards,\nSupport Team",
           "thread_id": "${full_email.thread_id}"
-        },
-        "out": "urgent_draft"
+        }
       },
       {
         "id": "mark_urgent_processed",
         "type": "tool",
         "tool": "gmail_modify_message_labels",
-        "in": {
+        "inputs": {
           "message_id": "${email_id}",
-          "add_label_ids": ["URGENT_PROCESSED"],
-          "remove_label_ids": ["UNREAD"]
-        },
-        "out": "urgent_label_result"
+          "add_label_ids": [
+            "URGENT_PROCESSED"
+          ],
+          "remove_label_ids": [
+            "UNREAD"
+          ]
+        }
       },
       {
         "id": "check_if_auto_respond",
@@ -135,11 +164,12 @@
       {
         "id": "generate_auto_response",
         "type": "llm",
-        "model": "gpt-5",
-        "temperature": 0.7,
-        "prompt": "Generate a helpful, professional auto-response for this support email:\n\nFrom: ${full_email.from.email}\nName: ${full_email.from.name}\nSubject: ${full_email.subject}\nBody: ${full_email.body}\nCategory: ${classification.category}\nSentiment: ${classification.sentiment}\n\nProvide a complete, accurate response that addresses their question. Include relevant links or instructions if needed. Be empathetic and professional.",
-        "out": "auto_response_data",
-        "output": {
+        "inputs": {
+          "model": "gpt-5",
+          "temperature": 0.7,
+          "prompt": "Generate a helpful, professional auto-response for this support email:\n\nFrom: ${full_email.from.email}\nName: ${full_email.from.name}\nSubject: ${full_email.subject}\nBody: ${full_email.body}\nCategory: ${classification.category}\nSentiment: ${classification.sentiment}\n\nProvide a complete, accurate response that addresses their question. Include relevant links or instructions if needed. Be empathetic and professional."
+        },
+        "outputs": {
           "mode": "json",
           "schema": {
             "json_schema": {
@@ -150,10 +180,16 @@
                 },
                 "confidence": {
                   "type": "string",
-                  "enum": ["high", "medium"]
+                  "enum": [
+                    "high",
+                    "medium"
+                  ]
                 }
               },
-              "required": ["response_body", "confidence"]
+              "required": [
+                "response_body",
+                "confidence"
+              ]
             }
           }
         }
@@ -162,19 +198,20 @@
         "id": "send_auto_response",
         "type": "tool",
         "tool": "gmail_send_email",
-        "in": {
-          "to": ["${full_email.from.email}"],
+        "inputs": {
+          "to": [
+            "${full_email.from.email}"
+          ],
           "subject": "Re: ${full_email.subject}",
           "body_text": "${auto_response_data.response_body}",
           "thread_id": "${full_email.thread_id}"
-        },
-        "out": "auto_response_result"
+        }
       },
       {
         "id": "log_auto_response",
         "type": "tool",
         "tool": "supabase_table_insert",
-        "in": {
+        "inputs": {
           "integration_resource_id": 123,
           "table": "support_interactions",
           "record": {
@@ -185,25 +222,27 @@
             "interaction_type": "auto_response",
             "response_body": "${auto_response_data.response_body}"
           }
-        },
-        "out": "auto_response_log"
+        }
       },
       {
         "id": "mark_auto_responded",
         "type": "tool",
         "tool": "gmail_modify_message_labels",
-        "in": {
+        "inputs": {
           "message_id": "${email_id}",
-          "add_label_ids": ["AUTO_RESPONDED"],
-          "remove_label_ids": ["UNREAD"]
-        },
-        "out": "auto_response_label_result"
+          "add_label_ids": [
+            "AUTO_RESPONDED"
+          ],
+          "remove_label_ids": [
+            "UNREAD"
+          ]
+        }
       },
       {
         "id": "create_review_ticket",
         "type": "tool",
         "tool": "supabase_table_insert",
-        "in": {
+        "inputs": {
           "integration_resource_id": 123,
           "table": "support_tickets",
           "record": {
@@ -220,121 +259,97 @@
             "body": "${full_email.body}",
             "classification_reasoning": "${classification.reasoning}"
           }
-        },
-        "out": "review_ticket"
+        }
       },
       {
         "id": "create_review_draft",
         "type": "tool",
         "tool": "gmail_create_draft",
-        "in": {
-          "to": ["${full_email.from.email}"],
+        "inputs": {
+          "to": [
+            "${full_email.from.email}"
+          ],
           "subject": "Re: ${full_email.subject}",
           "body_text": "Hi ${full_email.from.name},\n\nThank you for your message. Our team is reviewing your ${classification.category} question and will provide a detailed response shortly.\n\nTicket #: ${review_ticket.id}\n\nBest regards,\nSupport Team",
           "thread_id": "${full_email.thread_id}"
-        },
-        "out": "review_draft"
+        }
       },
       {
         "id": "mark_needs_review",
         "type": "tool",
         "tool": "gmail_modify_message_labels",
-        "in": {
+        "inputs": {
           "message_id": "${email_id}",
-          "add_label_ids": ["NEEDS_REVIEW"],
-          "remove_label_ids": ["UNREAD"]
-        },
-        "out": "review_label_result"
+          "add_label_ids": [
+            "NEEDS_REVIEW"
+          ],
+          "remove_label_ids": [
+            "UNREAD"
+          ]
+        }
       }
     ],
     "edges": [
       {
-        "id": "e1",
         "source": "extract_email_id",
-        "target": "fetch_full_email",
-        "type": "default"
+        "target": "fetch_full_email"
       },
       {
-        "id": "e2",
         "source": "fetch_full_email",
-        "target": "classify_email",
-        "type": "default"
+        "target": "classify_email"
       },
       {
-        "id": "e3",
         "source": "classify_email",
-        "target": "check_if_urgent",
-        "type": "default"
+        "target": "check_if_urgent"
       },
       {
-        "id": "e4_urgent_true",
         "source": "check_if_urgent",
         "target": "create_urgent_ticket",
         "type": "conditional_true"
       },
       {
-        "id": "e5_urgent",
         "source": "create_urgent_ticket",
-        "target": "create_urgent_draft",
-        "type": "default"
+        "target": "create_urgent_draft"
       },
       {
-        "id": "e6_urgent",
         "source": "create_urgent_draft",
-        "target": "mark_urgent_processed",
-        "type": "default"
+        "target": "mark_urgent_processed"
       },
       {
-        "id": "e4_urgent_false",
         "source": "check_if_urgent",
         "target": "check_if_auto_respond",
         "type": "conditional_false"
       },
       {
-        "id": "e7_auto_true",
         "source": "check_if_auto_respond",
         "target": "generate_auto_response",
         "type": "conditional_true"
       },
       {
-        "id": "e8_auto",
         "source": "generate_auto_response",
-        "target": "send_auto_response",
-        "type": "default"
+        "target": "send_auto_response"
       },
       {
-        "id": "e9_auto",
         "source": "send_auto_response",
-        "target": "log_auto_response",
-        "type": "default"
+        "target": "log_auto_response"
       },
       {
-        "id": "e10_auto",
         "source": "log_auto_response",
-        "target": "mark_auto_responded",
-        "type": "default"
+        "target": "mark_auto_responded"
       },
       {
-        "id": "e7_auto_false",
         "source": "check_if_auto_respond",
         "target": "create_review_ticket",
         "type": "conditional_false"
       },
       {
-        "id": "e11_review",
         "source": "create_review_ticket",
-        "target": "create_review_draft",
-        "type": "default"
+        "target": "create_review_draft"
       },
       {
-        "id": "e12_review",
         "source": "create_review_draft",
-        "target": "mark_needs_review",
-        "type": "default"
+        "target": "mark_needs_review"
       }
-    ],
-    "meta": {
-      "description": "Automated support email triage with AI classification, conditional routing, and multi-stage processing"
-    }
+    ]
   }
 }
