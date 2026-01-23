@@ -151,14 +151,14 @@ class SeerConfig(BaseSettings):
     # Feature Flags
     # ============================================================================
 
-    supervisor_mode_enabled: bool = Field(
-        default=True,
-        description="Enable supervisor-style multi-agent architecture (vs single nexus agent)"
-    )
-
     auto_open_browser: bool = Field(
         default=True,
         description="Automatically open frontend in browser on server startup (self-hosted mode only)"
+    )
+
+    nexus_max_agent_steps: int = Field(
+        default=75,
+        description="Default maximum agent steps for Nexus chat (LangGraph recursion_limit)"
     )
 
     # ============================================================================

@@ -55,13 +55,15 @@ def build_type_environment(
 
 def _register_triggers(triggers: List[TriggerSpec], env: TypeEnvironment) -> None:
     """
-    Register each trigger by its ID as a symbol in the type environment.
+    Register triggers in type environment.
 
-    Registers each trigger's event schema under its ID for reference resolution.
-    Trigger IDs are already validated to be unique by WorkflowSpec validation.
+    Single-trigger workflows: registers both 'trigger' and trigger.id
+    Multi-trigger workflows: only registers by trigger.id
 
-    Note: Trigger IDs can contain spaces, hyphens, special characters, and Unicode.
+    For single-trigger workflows, allows intuitive ${trigger.data.X} syntax.
+    For multi-trigger workflows, requires explicit ${trigger_id.data.X} syntax.
     """
+    # Always register by trigger ID (explicit, works for all cases)
     for trigger in triggers:
         # Get event schema
         event_schema = trigger.event_schema if trigger.event_schema else {
@@ -72,10 +74,26 @@ def _register_triggers(triggers: List[TriggerSpec], env: TypeEnvironment) -> Non
         # Register ID as symbol
         env.register(trigger.id, event_schema)
 
-        # Also register sub-properties for convenience
+        # Also register sub-properties by ID
         properties = event_schema.get("properties", {})
         for name, schema in properties.items():
             env.register(f"{trigger.id}.{name}", schema)
+
+    # Single-trigger convenience: also register as "trigger"
+    if len(triggers) == 1:
+        trigger = triggers[0]
+        event_schema = trigger.event_schema if trigger.event_schema else {
+            "type": "object",
+            "additionalProperties": True
+        }
+
+        # Register "trigger" as root symbol
+        env.register("trigger", event_schema)
+
+        # Register "trigger.property" for all sub-properties
+        properties = event_schema.get("properties", {})
+        for name, schema in properties.items():
+            env.register(f"trigger.{name}", schema)
 
 
 def _register_loop_variables(spec: WorkflowSpec, env: TypeEnvironment) -> None:

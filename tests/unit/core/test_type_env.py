@@ -850,3 +850,135 @@ def test_build_type_environment_node_id_with_unicode():
     symbols = env.as_dict()
     assert "résultat" in symbols
     assert "数据" in symbols
+
+
+# =============================================================================
+# Single-Trigger Alias Tests (Bug Fix: Register "trigger" for single-trigger workflows)
+# =============================================================================
+
+
+def test_single_trigger_registers_trigger_alias():
+    """Test that single-trigger workflows register 'trigger' symbol as convenience alias."""
+    env = TypeEnvironment()
+    triggers = [
+        TriggerSpec(
+            id="gmail_trigger",
+            key="poll.gmail.email_received",
+            mode="polling",
+            event_schema={
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "message_id": {"type": "string"},
+                            "from": {"type": "string"},
+                        }
+                    }
+                }
+            },
+        )
+    ]
+
+    _register_triggers(triggers, env)
+
+    symbols = env.as_dict()
+
+    # Explicit ID should be registered
+    assert "gmail_trigger" in symbols
+    assert "gmail_trigger.data" in symbols
+
+    # Single-trigger convenience: "trigger" should also be registered
+    assert "trigger" in symbols
+    assert "trigger.data" in symbols
+
+    # Verify schemas match
+    assert symbols["trigger"] == symbols["gmail_trigger"]
+    assert symbols["trigger.data"] == symbols["gmail_trigger.data"]
+
+
+def test_multi_trigger_does_not_register_trigger_alias():
+    """Test that multi-trigger workflows do NOT register 'trigger' symbol."""
+    env = TypeEnvironment()
+    triggers = [
+        TriggerSpec(
+            id="gmail_trigger",
+            key="poll.gmail.email_received",
+            mode="polling",
+            event_schema={"type": "object", "properties": {"data": {"type": "object"}}},
+        ),
+        TriggerSpec(
+            id="webhook_trigger",
+            key="webhook.generic",
+            mode="webhook",
+            event_schema={"type": "object", "properties": {"payload": {"type": "object"}}},
+        ),
+    ]
+
+    _register_triggers(triggers, env)
+
+    symbols = env.as_dict()
+
+    # Explicit IDs should be registered
+    assert "gmail_trigger" in symbols
+    assert "webhook_trigger" in symbols
+
+    # Multi-trigger: "trigger" should NOT be registered
+    assert "trigger" not in symbols
+    assert "trigger.data" not in symbols
+
+
+def test_single_trigger_with_no_properties():
+    """Test single-trigger registration with event schema having no properties."""
+    env = TypeEnvironment()
+    triggers = [
+        TriggerSpec(
+            id="simple_trigger",
+            key="test.trigger",
+            mode="polling",
+            event_schema={"type": "object"},  # No properties field
+        )
+    ]
+
+    _register_triggers(triggers, env)
+
+    symbols = env.as_dict()
+
+    # Both explicit ID and "trigger" should be registered
+    assert "simple_trigger" in symbols
+    assert "trigger" in symbols
+
+    # No sub-properties should be registered (since no properties defined)
+    assert "simple_trigger.data" not in symbols
+    assert "trigger.data" not in symbols
+
+
+def test_single_trigger_with_nested_properties():
+    """Test single-trigger registration extracts all top-level properties."""
+    env = TypeEnvironment()
+    triggers = [
+        TriggerSpec(
+            id="email_trigger",
+            key="poll.gmail.email_received",
+            mode="polling",
+            event_schema={
+                "type": "object",
+                "properties": {
+                    "data": {"type": "object"},
+                    "id": {"type": "string"},
+                    "timestamp": {"type": "string"},
+                }
+            },
+        )
+    ]
+
+    _register_triggers(triggers, env)
+
+    symbols = env.as_dict()
+
+    # Verify all properties registered for both trigger ID and "trigger" alias
+    for prefix in ["email_trigger", "trigger"]:
+        assert prefix in symbols
+        assert f"{prefix}.data" in symbols
+        assert f"{prefix}.id" in symbols
+        assert f"{prefix}.timestamp" in symbols

@@ -360,6 +360,9 @@ class ChatOrchestrator:
         thread_id = config_dict.get("configurable", {}).get("thread_id")
         token = _current_thread_id.set(thread_id) if thread_id else None
 
+        recursion_limit = config_dict.get("recursion_limit", 25)
+        logger.info("Invoking agent thread=%s recursion_limit=%d timeout=%ds", thread_id or 'unknown', recursion_limit, int(timeout))
+
         try:
             return await asyncio.wait_for(
                 self.agent.ainvoke(messages, config=config_dict),

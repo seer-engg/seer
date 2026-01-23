@@ -984,3 +984,135 @@ def test_validate_references_complex_scenario_mixed_special_chars():
 
     # Should not raise any errors
     validate_references(spec, type_env)
+
+
+# =============================================================================
+# Multi-Trigger Validation Tests (Bug Fix: Reject bare "trigger" in multi-trigger)
+# =============================================================================
+
+
+def test_multi_trigger_rejects_bare_trigger_reference():
+    """Test that multi-trigger workflows reject ${trigger.X} references."""
+    type_env = TypeEnvironment()
+    # Only register explicit trigger IDs, not "trigger"
+    type_env.register("t1", {"type": "object", "properties": {"data": {"type": "string"}}})
+    type_env.register("t1.data", {"type": "string"})
+    type_env.register("t2", {"type": "object", "properties": {"payload": {"type": "string"}}})
+    type_env.register("t2.payload", {"type": "string"})
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[
+            TriggerSpec(id="t1", key="trigger1.key", mode="polling", event_schema={}),
+            TriggerSpec(id="t2", key="trigger2.key", mode="webhook", event_schema={}),
+        ],
+        nodes=[
+            TaskNode(
+                id="task1",
+                kind=TaskKind.set,
+                value="${trigger.data}"  # Invalid: bare "trigger" in multi-trigger workflow
+            )
+        ],
+        edges=[]
+    )
+
+    # Should raise ValidationPhaseError with helpful message
+    with pytest.raises(ValidationPhaseError) as exc_info:
+        validate_references(spec, type_env)
+
+    error_msg = str(exc_info.value)
+    assert "Cannot use ${trigger.X} syntax in multi-trigger workflow" in error_msg
+    assert "${t1.X}" in error_msg or "${t2.X}" in error_msg
+
+
+def test_multi_trigger_accepts_explicit_trigger_ids():
+    """Test that multi-trigger workflows accept explicit ${trigger_id.X} references."""
+    type_env = TypeEnvironment()
+    type_env.register("t1", {"type": "object", "properties": {"data": {"type": "string"}}})
+    type_env.register("t1.data", {"type": "string"})
+    type_env.register("t2", {"type": "object", "properties": {"payload": {"type": "string"}}})
+    type_env.register("t2.payload", {"type": "string"})
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[
+            TriggerSpec(id="t1", key="trigger1.key", mode="polling", event_schema={}),
+            TriggerSpec(id="t2", key="trigger2.key", mode="webhook", event_schema={}),
+        ],
+        nodes=[
+            TaskNode(
+                id="task1",
+                kind=TaskKind.set,
+                value="${t1.data}"  # Valid: explicit trigger ID
+            ),
+            TaskNode(
+                id="task2",
+                kind=TaskKind.set,
+                value="${t2.payload}"  # Valid: explicit trigger ID
+            )
+        ],
+        edges=[]
+    )
+
+    # Should not raise any errors
+    validate_references(spec, type_env)
+
+
+def test_single_trigger_accepts_bare_trigger_reference():
+    """Test that single-trigger workflows accept ${trigger.X} references."""
+    type_env = TypeEnvironment()
+    # Register both explicit ID and "trigger" alias
+    type_env.register("t1", {"type": "object", "properties": {"data": {"type": "string"}}})
+    type_env.register("t1.data", {"type": "string"})
+    type_env.register("trigger", {"type": "object", "properties": {"data": {"type": "string"}}})
+    type_env.register("trigger.data", {"type": "string"})
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[
+            TriggerSpec(id="t1", key="test.trigger", mode="polling", event_schema={}),
+        ],
+        nodes=[
+            TaskNode(
+                id="task1",
+                kind=TaskKind.set,
+                value="${trigger.data}"  # Valid: single-trigger convenience
+            )
+        ],
+        edges=[]
+    )
+
+    # Should not raise any errors
+    validate_references(spec, type_env)
+
+
+def test_single_trigger_accepts_explicit_id_too():
+    """Test that single-trigger workflows accept both ${trigger.X} and ${trigger_id.X}."""
+    type_env = TypeEnvironment()
+    type_env.register("email_trigger", {"type": "object", "properties": {"data": {"type": "object"}}})
+    type_env.register("email_trigger.data", {"type": "object"})
+    type_env.register("trigger", {"type": "object", "properties": {"data": {"type": "object"}}})
+    type_env.register("trigger.data", {"type": "object"})
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[
+            TriggerSpec(id="email_trigger", key="poll.gmail.email_received", mode="polling", event_schema={}),
+        ],
+        nodes=[
+            TaskNode(
+                id="task1",
+                kind=TaskKind.set,
+                value="${trigger.data}"  # Valid: convenience alias
+            ),
+            TaskNode(
+                id="task2",
+                kind=TaskKind.set,
+                value="${email_trigger.data}"  # Also valid: explicit ID
+            )
+        ],
+        edges=[]
+    )
+
+    # Should not raise any errors
+    validate_references(spec, type_env)

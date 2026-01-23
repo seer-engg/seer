@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional, Tuple
 from fastapi import APIRouter, HTTPException, Query, Request
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
+from tortoise.exceptions import DoesNotExist
 
 from seer.agents.nexus import (
     _current_thread_id,
@@ -24,6 +25,7 @@ from seer.api.agents.checkpointer import _recreate_checkpointer, get_checkpointe
 from seer.api.core.errors import AUTH_PROBLEM, VALIDATION_PROBLEM, raise_problem
 from seer.config import config
 from seer.database import User, UserPublic
+from seer.database.models import UserSettings
 from seer.logger import get_logger
 from seer.observability import (
     increment_chat_message_count,
@@ -225,8 +227,18 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
     # Track user message (global count, not per-workflow)
     await increment_chat_message_count(user)
 
+    # Get user settings for max steps
     try:
-        config_dict = {"configurable": {"thread_id": thread_id}}
+        user_settings = await UserSettings.get(user=user)
+        max_agent_steps = user_settings.max_agent_steps or config.nexus_max_agent_steps
+    except DoesNotExist:
+        max_agent_steps = config.nexus_max_agent_steps
+
+    try:
+        config_dict = {
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": max_agent_steps,
+        }
 
         # Initialize orchestrator
         orchestrator = ChatOrchestrator(
@@ -467,11 +479,19 @@ async def resume_chat_endpoint(  # pylint: disable=too-many-locals # Reason: Com
     # Create Command object for resuming
     resume_command = Command(**command_data)
 
+    # Get user settings for max steps
+    try:
+        user_settings = await UserSettings.get(user=user)
+        max_agent_steps = user_settings.max_agent_steps or config.nexus_max_agent_steps
+    except DoesNotExist:
+        max_agent_steps = config.nexus_max_agent_steps
+
     # Resume agent execution
     config_dict = {
         "configurable": {
             "thread_id": thread_id,
         },
+        "recursion_limit": max_agent_steps,
     }
 
     # Set thread_id in context variable for tools to access

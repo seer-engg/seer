@@ -270,6 +270,24 @@ def _validate_pydantic(spec_dict: Dict) -> tuple[Optional[Any], Optional[str]]:
         return validated_spec, None
     except ValidationPhaseError as exc:
         logger.warning("Workflow spec validation failed", exc_info=exc)
+        error_msg = str(exc)
+
+        # Detect extra fields error and provide helpful hint
+        if "extra_forbidden" in error_msg or "Extra inputs" in error_msg.lower():
+            # Extract invalid field names if possible
+            invalid_fields = []
+            for key in spec_dict.keys():
+                if key not in ["version", "nodes", "edges", "triggers"]:
+                    invalid_fields.append(key)
+
+            hint = (
+                "WorkflowSpec v2 schema ONLY allows: version, nodes, edges, triggers. "
+                f"Invalid fields: {invalid_fields}. "
+                "Remove: input_variables, inputs, config, metadata, or custom fields. "
+                "Access trigger data via: ${trigger.data.field_name}"
+            )
+            return None, _error_response("parsing", f"Workflow spec validation failed: {exc}", hint)
+
         return None, _error_response("parsing", f"Workflow spec validation failed: {exc}")
 
 
