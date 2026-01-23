@@ -5,6 +5,28 @@ import re
 import sys
 from pathlib import Path
 
+# Migrations that contain unsafe patterns but are already deployed to production.
+# These migrations predate the linter and were accepted before safety checks existed.
+# Adding new migrations to this list should be RARE and require explicit approval.
+# Each entry should include:
+# - Migration filename
+# - Date added to allowlist
+# - Reason why it's unsafe but acceptable
+ALLOWED_UNSAFE_MIGRATIONS = {
+    "9_20260109055152_add_form_feilds.py": {
+        "added_to_allowlist": "2026-01-23",
+        "reason": "Contains DROP COLUMN in downgrade(). Already deployed to production on main/dev since Jan 9, 2026. Predates linter introduction.",
+        "unsafe_patterns": ["DROP COLUMN"]
+    },
+    # Future entries should be added here only after careful review
+    # Example format:
+    # "10_YYYYMMDDHHMMSS_migration_name.py": {
+    #     "added_to_allowlist": "YYYY-MM-DD",
+    #     "reason": "Brief explanation of why this is safe despite being flagged",
+    #     "unsafe_patterns": ["PATTERN_NAME"]
+    # },
+}
+
 DANGEROUS_PATTERNS = {
     "NOT NULL without DEFAULT": re.compile(
         r'ADD\s+(?:COLUMN\s+)?["\w]+\s+\w+\s+NOT NULL(?!\s+DEFAULT)',
@@ -18,6 +40,10 @@ DANGEROUS_PATTERNS = {
     ),
     "Large UPDATE": re.compile(r'UPDATE\s+"\w+"\s+SET', re.IGNORECASE),
 }
+
+def is_migration_allowed(file_path: Path) -> bool:
+    """Check if a migration is in the allowlist of known safe but flagged migrations."""
+    return file_path.name in ALLOWED_UNSAFE_MIGRATIONS
 
 def lint_migration(file_path: Path) -> list[str]:
     """Check a migration file for dangerous patterns."""
@@ -41,9 +67,24 @@ def main():
     recent_migrations = migration_files[-5:] if len(migration_files) > 5 else migration_files
 
     all_issues = []
+    skipped_allowed = []
+
     for migration_file in recent_migrations:
+        # Skip migrations in the allowlist
+        if is_migration_allowed(migration_file):
+            skipped_allowed.append(migration_file.name)
+            continue
+
         issues = lint_migration(migration_file)
         all_issues.extend(issues)
+
+    # Show what was skipped (for transparency)
+    if skipped_allowed:
+        print(f"ℹ️  Skipped {len(skipped_allowed)} allowed legacy migration(s):")
+        for name in skipped_allowed:
+            info = ALLOWED_UNSAFE_MIGRATIONS[name]
+            print(f"   - {name}: {info['reason']}")
+        print()
 
     if all_issues:
         print("❌ Migration linting failed:\n")
