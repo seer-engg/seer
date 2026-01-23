@@ -80,3 +80,4 @@ tool_hub_index/
 *.code-workspace
 .env.thread
 .env.docker
+.worktrees/
