@@ -81,3 +81,27 @@ class UserPublic(BaseModel):
     signup_source: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+
+class UserSettings(models.Model):
+    """Database model for per-user settings."""
+
+    id = fields.IntField(primary_key=True)
+    user = fields.OneToOneField("models.User", related_name="settings")
+    max_agent_steps = fields.IntField(null=True)
+    preferences = fields.JSONField(default=dict)
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    class Meta:
+        table = "user_settings"
+
+
+class UserSettingsPublic(BaseModel):
+    """Pydantic model for UserSettings API responses."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    max_agent_steps: Optional[int] = None
+    preferences: Dict[str, Any] = {}
+    updated_at: datetime

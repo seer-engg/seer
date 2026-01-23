@@ -69,7 +69,7 @@ async def open_frontend_after_startup() -> None:
         return
 
     frontend_url = config.FRONTEND_URL
-    backend_override = "localhost:8000"
+    backend_override = os.getenv("BACKEND_API_URL", "localhost:8000")
     target_url = f"{frontend_url}?{urlencode({'backend': backend_override})}"
 
     # Small delay to let the server finish binding before opening the browser
