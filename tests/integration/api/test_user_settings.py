@@ -14,13 +14,13 @@ class TestUserSettingsAPI:
     @pytest.fixture
     async def settings_client(self, mock_app: FastAPI, db_engine, test_user) -> AsyncClient:  # pylint: disable=unused-argument # Reason: db_engine needed for database initialization
         """Create authenticated API client with settings router."""
-        from seer.api.users.settings import router
+        from seer.api.users.settings import router  # pylint: disable=import-outside-toplevel  # Dynamic import for test fixture
 
         # Add router to test app
         mock_app.include_router(router)
 
         # Mock authentication to inject test_user
-        from fastapi import Request
+        from fastapi import Request  # pylint: disable=import-outside-toplevel  # Dynamic import for test fixture
         async def mock_auth_middleware(request: Request, call_next):
             request.state.db_user = test_user
             response = await call_next(request)

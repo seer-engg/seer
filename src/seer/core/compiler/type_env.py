@@ -8,8 +8,7 @@ V2: With explicit edges, nodes no longer have nested children. Loop variables
 from __future__ import annotations
 
 import re
-from collections import defaultdict
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
 from seer.core.errors import TypeEnvironmentError
 from seer.core.expr.typecheck import (
@@ -18,7 +17,6 @@ from seer.core.expr.typecheck import (
 )
 from seer.core.registry.tool_registry import ToolRegistry
 from seer.core.schema.models import (
-    EdgeType,
     ForEachNode,
     JSONValue,
     LLMNode,
@@ -163,7 +161,7 @@ def _schema_for_task(node: TaskNode, registry: SchemaRegistry) -> Optional[Dict]
     return None
 
 
-def _infer_schema_from_value(value: JSONValue) -> Dict:
+def _infer_schema_from_value(value: JSONValue) -> Dict:  # pylint: disable=too-many-return-statements  # Type checking requires multiple returns
     if isinstance(value, str):
         return {"type": "string"}
     if isinstance(value, bool):

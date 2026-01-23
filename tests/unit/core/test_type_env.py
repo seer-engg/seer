@@ -4,6 +4,7 @@ Unit tests for type environment building (Stage 2 of compiler).
 Tests type environment construction, symbol registration, and schema inference.
 Target coverage: 90%+
 """
+# pylint: disable=too-many-lines  # Comprehensive test coverage requires extensive test cases
 import pytest
 
 from seer.core.compiler.type_env import (
@@ -12,7 +13,6 @@ from seer.core.compiler.type_env import (
     _infer_schema_from_value,
     _register_triggers,
 )
-from seer.core.errors import TypeEnvironmentError
 from seer.core.expr.typecheck import TypeEnvironment
 from seer.core.registry.tool_registry import ToolRegistry
 from seer.core.schema.models import (
@@ -22,9 +22,7 @@ from seer.core.schema.models import (
     OutputMode,
     TaskKind,
     TaskNode,
-    ToolNode,
     TriggerSpec,
-    TriggerSchemas,
     WorkflowSpec,
 )
 from seer.core.schema.schema_registry import SchemaRegistry

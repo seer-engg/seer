@@ -4,6 +4,7 @@ Unit tests for reference validation (Stage 3 of compiler).
 Tests validation of ${...} references against type environment.
 Target coverage: 90%+
 """
+# pylint: disable=too-many-lines  # Comprehensive test coverage requires extensive test cases
 import pytest
 
 from seer.core.compiler.validate_refs import (
@@ -19,7 +20,6 @@ from seer.core.schema.models import (
     TaskKind,
     TaskNode,
     TriggerSpec,
-    TriggerSchemas,
     WorkflowSpec,
 )
 

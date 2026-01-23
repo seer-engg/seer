@@ -12,8 +12,8 @@ class TestChatRecursionLimit:
 
     async def test_get_recursion_limit_default(self, db_engine, test_user):  # pylint: disable=unused-argument # Reason: db_engine needed for database initialization
         """Test recursion limit falls back to config default when no user settings exist."""
-        from seer.config import config
-        from seer.database.models import UserSettings
+        from seer.config import config  # pylint: disable=import-outside-toplevel  # Dynamic import for test isolation
+        from seer.database.models import UserSettings  # pylint: disable=import-outside-toplevel  # Dynamic import for test isolation
 
         # Verify user has no settings
         with pytest.raises(DoesNotExist):
@@ -31,8 +31,8 @@ class TestChatRecursionLimit:
 
     async def test_get_recursion_limit_user_override(self, db_engine, test_user):  # pylint: disable=unused-argument # Reason: db_engine needed for database initialization
         """Test recursion limit uses user settings when they exist."""
-        from seer.config import config
-        from seer.database.models import UserSettings
+        from seer.config import config  # pylint: disable=import-outside-toplevel  # Dynamic import for test isolation
+        from seer.database.models import UserSettings  # pylint: disable=import-outside-toplevel  # Dynamic import for test isolation
 
         # Create user settings with custom value
         await UserSettings.create(user=test_user, max_agent_steps=120)
@@ -48,8 +48,8 @@ class TestChatRecursionLimit:
 
     async def test_get_recursion_limit_user_null_falls_back(self, db_engine, test_user):  # pylint: disable=unused-argument # Reason: db_engine needed for database initialization
         """Test recursion limit falls back to config when user setting is null."""
-        from seer.config import config
-        from seer.database.models import UserSettings
+        from seer.config import config  # pylint: disable=import-outside-toplevel  # Dynamic import for test isolation
+        from seer.database.models import UserSettings  # pylint: disable=import-outside-toplevel  # Dynamic import for test isolation
 
         # Create user settings with null max_agent_steps (uses preferences only)
         await UserSettings.create(user=test_user, max_agent_steps=None, preferences={"theme": "dark"})

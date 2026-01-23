@@ -3,10 +3,8 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, Request
 from pydantic import BaseModel
-from tortoise.exceptions import DoesNotExist
 
 from seer.api.core.errors import AUTH_PROBLEM, VALIDATION_PROBLEM, raise_problem
-from seer.config import config
 from seer.database import User
 from seer.database.models import UserSettings, UserSettingsPublic
 
@@ -19,7 +17,7 @@ class UserSettingsUpdate(BaseModel):
     preferences: Optional[Dict[str, Any]] = None
 
 
-def _require_user(request: Request) -> User:
+def _require_user(request: Request) -> User:  # pylint: disable=duplicate-code  # Standard auth pattern duplicated across routers
     user = getattr(request.state, "db_user", None)
     if user is None:
         raise_problem(

@@ -9,7 +9,6 @@ from seer.logger import get_logger
 from seer.tools.google.base import GoogleAPIClient
 from seer.tools.google.gmail.helpers import (
     GMAIL_API_BASE,
-    GMAIL_MESSAGE_SCHEMA,
     GMAIL_THREAD_SCHEMA,
     GMAIL_ATTACHMENT_BODY_SCHEMA,
     _coerce_int,
@@ -145,7 +144,7 @@ class GmailReadTool(GoogleAPIClient):
                     email_obj["body"] = _extract_text_body(payload)
 
                 results.append(email_obj)
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught  # Continue processing remaining messages on individual failures
                 logger.warning("Failed to fetch message %s: %s", msg['id'], e)
                 continue
 
