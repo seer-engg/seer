@@ -31,6 +31,12 @@ class TriggerEventStatus(str, Enum):
     FAILED = "failed"
 
 
+class WorkflowCreationMode(str, Enum):
+    AUTO_CREATE = "AUTO_CREATE"
+    ASK_FIRST = "ASK_FIRST"
+    ON_ACCEPTANCE = "ON_ACCEPTANCE"
+
+
 def make_workflow_public_id(pk: int) -> str:
     return f"{WORKFLOW_ID_PREFIX}{pk}"
 
@@ -389,3 +395,46 @@ class WorkflowProposal(models.Model):
     def workflow_public_id(self) -> str:
         """Expose wf_* identifier used by public APIs."""
         return make_workflow_public_id(self.workflow.id)
+
+
+class WorkflowDiscoveryChatSession(models.Model):
+    """Discovery chat session before workflow creation."""
+
+    id = fields.IntField(primary_key=True)
+    user = fields.ForeignKeyField("models.User", related_name="discovery_chat_sessions")
+    thread_id = fields.CharField(
+        max_length=255,
+        unique=True,
+        db_index=True,
+        description="LangGraph thread ID for discovery session",
+    )
+    title = fields.CharField(
+        max_length=255,
+        null=True,
+        description="Optional title for discovery session",
+    )
+    workflow_creation_mode = fields.CharEnumField(
+        WorkflowCreationMode,
+        max_length=20,
+        default=WorkflowCreationMode.ASK_FIRST,
+        description="How workflow should be created",
+    )
+    created_workflow = fields.ForeignKeyField(
+        "models.Workflow",
+        related_name="discovery_sessions",
+        null=True,
+        description="Workflow created from this discovery session",
+    )
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    class Meta:
+        table = "workflow_discovery_chat_sessions"
+        ordering = ("-updated_at",)
+        indexes = (
+            ("user_id",),
+            ("thread_id",),
+        )
+
+    def __str__(self) -> str:
+        return f"WorkflowDiscoveryChatSession<{self.id}:{self.thread_id}>"

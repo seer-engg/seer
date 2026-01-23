@@ -8,6 +8,7 @@ from tortoise import fields, models
 
 if TYPE_CHECKING:
     from seer.api.core.middleware.auth import AuthenticatedUser
+    from seer.database.workflow_models import WorkflowCreationMode
 
 
 class User(models.Model):
@@ -20,6 +21,7 @@ class User(models.Model):
     last_name = fields.CharField(max_length=255, null=True)
     claims = fields.JSONField(null=True)
     signup_source = fields.CharField(max_length=50, null=True)
+    default_workflow_creation_mode = fields.CharField(max_length=20, default="ASK_FIRST")
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 
