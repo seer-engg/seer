@@ -1,5 +1,5 @@
-# pylint: disable=too-many-lines,unused-argument
-# Reason: Comprehensive test coverage for expression evaluator requires many test cases; pytest fixtures may have unused args
+# pylint: disable=too-many-lines,unused-argument,duplicate-code
+# Reason: Expression evaluator tests need many cases; schema snippets intentionally mirror examples
 """
 Unit tests for expression evaluator.
 

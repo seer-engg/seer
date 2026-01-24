@@ -11,7 +11,6 @@ from tortoise.exceptions import DoesNotExist
 from seer.api.workflows import models as api_models
 from seer.api.workflows.services.shared import (
     VALIDATION_PROBLEM,
-    _ensure_draft_version,
     _get_draft_version,
     _get_workflow,
     _hash_spec,
@@ -40,11 +39,13 @@ async def _workflow_summary(workflow: Workflow, draft_version: Optional[Workflow
     If draft_version is not provided, it will be fetched from the database.
     Pass it explicitly when available to avoid extra queries.
     """
+    updated_at = draft_version.updated_at if draft_version else workflow.updated_at
+
     return api_models.WorkflowSummary(
         workflow_id=workflow.workflow_id,
         name=workflow.name,
         created_at=workflow.created_at,
-        updated_at=workflow.updated_at,
+        updated_at=updated_at,
     )
 
 
@@ -237,7 +238,7 @@ async def apply_workflow_from_spec(
     workflow = await _get_workflow(user, workflow_id)
     try:
         spec = WorkflowSpec.model_validate(spec_payload)
-    except Exception as exc:
+    except (ValidationError, TypeError, ValueError) as exc:
         _raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Invalid workflow spec",
@@ -287,6 +288,7 @@ async def restore_workflow_version(
     version_id: int,
     payload: api_models.WorkflowVersionRestoreRequest,
 ) -> api_models.WorkflowResponse:
+    del payload  # payload reserved for future extensions (e.g., metadata), kept for API compatibility
     workflow = await _get_workflow(user, workflow_id)
     try:
         version = await WorkflowVersion.get(id=version_id, workflow=workflow)
@@ -331,6 +333,7 @@ async def publish_workflow(
     workflow_id: str,
     payload: api_models.WorkflowPublishRequest,
 ) -> api_models.WorkflowResponse:
+    del payload  # payload reserved for future publish options, kept for API compatibility
     workflow = await _get_workflow(user, workflow_id)
 
     # Get existing DRAFT version (must exist to publish)

@@ -1,22 +1,31 @@
-from fastapi import APIRouter, HTTPException, Query, Request
+"""Integration resource routes."""
+# pylint: disable=duplicate-code  # Supabase REST validation mirrors supabase database tool usage
 import json
-from typing import Optional
-from seer.database import User, IntegrationResource, IntegrationSecret
-from seer.services.integrations.constants import SUPABASE_RESOURCE_PROVIDER
-from seer.services.integrations.resource_browser import ResourceBrowser
-from seer.config import config
-from seer.api.integrations.services import bind_supabase_project, bind_supabase_project_manual, deactivate_integration_resource, list_resource_secrets, serialize_integration_resource, serialize_integration_secret
-from seer.api.integrations.models import SupabaseBindRequest, SupabaseManualBindRequest
-from seer.api.core.errors import INTEGRATION_PROBLEM, VALIDATION_PROBLEM, raise_problem
-from seer.tools.supabase.common import _resolve_rest_url, _service_headers
+from typing import Any, Iterable, Optional
+
 import httpx
+from fastapi import APIRouter, HTTPException, Query, Request
+
+from seer.api.core.errors import INTEGRATION_PROBLEM, VALIDATION_PROBLEM, raise_problem
+from seer.api.integrations.models import SupabaseBindRequest, SupabaseManualBindRequest
+from seer.api.integrations.services import (
+    bind_supabase_project,
+    bind_supabase_project_manual,
+    deactivate_integration_resource,
+    get_valid_access_token,
+    list_resource_secrets,
+    serialize_integration_resource,
+    serialize_integration_secret,
+)
+from seer.config import config
+from seer.database import IntegrationResource, IntegrationSecret, User
 from seer.logger import get_logger
+from seer.services.integrations.constants import SUPABASE_RESOURCE_PROVIDER
+from seer.services.integrations.resource_browser import ResourceBrowser, ResourceListOptions
 from seer.tools.oauth_manager import get_oauth_token
-from seer.api.integrations.services import get_valid_access_token
+from seer.tools.supabase.common import _resolve_rest_url, _service_headers
 
 logger = get_logger(__name__)
-
-
 
 
 router = APIRouter(tags=["integrations.resources"])
@@ -125,38 +134,6 @@ async def _get_supabase_rest_context(user: User, integration_resource_id: int) -
         )
 
     return resource, service_key.value_enc, rest_url
-
-
-async def _fetch_supabase_metadata(
-    *,
-    rest_url: str,
-    service_role_key: str,
-    path: str,
-    params: dict,
-) -> list[dict]:
-    url = f"{rest_url.rstrip('/')}/{path.lstrip('/')}"
-    headers = _service_headers(service_role_key)
-    if path.startswith("information_schema."):
-        headers["Accept-Profile"] = "information_schema"
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.get(url, params=params, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-            if isinstance(data, list):
-                return data
-            return []
-    except httpx.HTTPStatusError as exc:
-        logger.error(
-            "Supabase metadata fetch failed %s %s %s",url, exc.response.status_code, exc.response.text[:200]
-        )
-        raise HTTPException(
-            status_code=exc.response.status_code,
-            detail="Failed to fetch Supabase metadata. Please check your project binding.",
-        )
-    except Exception as exc:
-        logger.exception("Supabase metadata fetch failed", extra={"url": url})
-        raise HTTPException(status_code=500, detail="Failed to fetch Supabase metadata") from exc
 
 
 async def _execute_supabase_sql(
@@ -277,9 +254,107 @@ async def _call_supabase_rpc(
         raise HTTPException(status_code=500, detail="Failed to fetch Supabase metadata") from exc
 
 
+def _parse_depends_on(depends_on: Optional[str], *, error_detail: str) -> dict[str, Any]:
+    if not depends_on:
+        return {}
+    try:
+        parsed = json.loads(depends_on)
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=error_detail) from exc
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=400, detail=error_detail)
+    return parsed
+
+
+def _resolve_resource_id(
+    integration_resource_id: Optional[int],
+    depends_on_values: dict[str, Any],
+) -> int:
+    if integration_resource_id is not None:
+        return integration_resource_id
+    candidate = depends_on_values.get("integration_resource_id")
+    if candidate is None:
+        raise HTTPException(status_code=400, detail="integration_resource_id is required")
+    try:
+        return int(candidate)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="integration_resource_id is required") from exc
+
+
+def _parse_offset(page_token: Optional[str]) -> int:
+    if not page_token:
+        return 0
+    try:
+        return int(page_token)
+    except ValueError:
+        return 0
+
+
+def _extract_name(entry: Any, keys: Iterable[str]) -> Optional[str]:
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        for key in keys:
+            value = entry.get(key)
+            if value:
+                return str(value)
+    return None
+
+
+def _filter_entries(raw_entries: list[Any], *, name_keys: Iterable[str], query: Optional[str], skip_system: bool) -> list[str]:
+    filtered: list[str] = []
+    for entry in raw_entries:
+        name = _extract_name(entry, name_keys)
+        if not name:
+            continue
+        if skip_system and (name == "information_schema" or name.startswith("pg_")):
+            continue
+        filtered.append(name)
+    if query:
+        lowered = query.lower()
+        filtered = [name for name in filtered if lowered in name.lower()]
+    return filtered
+
+
+def _paginate_items(
+    names: list[str],
+    *,
+    page_size: int,
+    offset: int,
+    item_type: str,
+    description: Optional[str] = None,
+) -> dict[str, Any]:
+    paged = names[offset: offset + page_size]
+    items = [
+        {
+            "id": name,
+            "name": name,
+            "display_name": name,
+            "type": item_type,
+            **({"description": description} if description else {}),
+        }
+        for name in paged
+    ]
+    next_page_token = str(offset + page_size) if offset + page_size < len(names) else None
+    return {
+        "items": items,
+        "next_page_token": next_page_token,
+        "supports_search": True,
+        "supports_hierarchy": False,
+    }
+
+
+async def _attempt_metadata_provision(resource: IntegrationResource) -> None:
+    try:
+        await _ensure_supabase_metadata_functions(resource)
+    except HTTPException as exc:
+        logger.info("Proceeding without auto-provisioning Supabase metadata functions: %s", exc.detail)
+
+
 @router.get("/supabase/resources/schemas")
 async def list_supabase_schemas(
     request: Request,
+    *,
     integration_resource_id: Optional[int] = Query(
         None, description="Persisted Supabase project resource ID", ge=1
     ),
@@ -290,32 +365,13 @@ async def list_supabase_schemas(
 ):
     user: User = request.state.db_user
 
-    resource_id = integration_resource_id
-    if resource_id is None and depends_on:
-        try:
-            parsed = json.loads(depends_on)
-            candidate = parsed.get("integration_resource_id")
-            if candidate is not None:
-                resource_id = int(candidate)
-        except (ValueError, json.JSONDecodeError):
-            raise HTTPException(status_code=400, detail="Invalid depends_on JSON for Supabase schemas")
-
-    if resource_id is None:
-        raise HTTPException(status_code=400, detail="integration_resource_id is required")
+    depends_on_values = _parse_depends_on(depends_on, error_detail="Invalid depends_on JSON for Supabase schemas")
+    resource_id = _resolve_resource_id(integration_resource_id, depends_on_values)
 
     resource, service_role_key, rest_url = await _get_supabase_rest_context(user, resource_id)
-    try:
-        await _ensure_supabase_metadata_functions(resource)
-    except HTTPException as exc:
-        logger.info("Proceeding without auto-provisioning Supabase metadata functions: %s", exc.detail)
+    await _attempt_metadata_provision(resource)
 
-    offset = 0
-    if page_token:
-        try:
-            offset = int(page_token)
-        except ValueError:
-            offset = 0
-
+    offset = _parse_offset(page_token)
     raw_schemas = await _call_supabase_rpc(
         rest_url=rest_url,
         service_role_key=service_role_key,
@@ -323,48 +379,14 @@ async def list_supabase_schemas(
         payload={},
     )
 
-    filtered: list[str] = []
-    for entry in raw_schemas:
-        if isinstance(entry, str):
-            name = entry
-        elif isinstance(entry, dict):
-            name = entry.get("schema_name") or entry.get("name")
-        else:
-            name = None
-        if not name:
-            continue
-        if name == "information_schema" or name.startswith("pg_"):
-            continue
-        filtered.append(name)
-
-    if q:
-        filtered = [name for name in filtered if q.lower() in name.lower()]
-
-    paged = filtered[offset: offset + page_size]
-
-    items = [
-        {
-            "id": name,
-            "name": name,
-            "display_name": name,
-            "type": "schema",
-        }
-        for name in paged
-    ]
-
-    next_page_token = str(offset + page_size) if offset + page_size < len(filtered) else None
-
-    return {
-        "items": items,
-        "next_page_token": next_page_token,
-        "supports_search": True,
-        "supports_hierarchy": False,
-    }
+    names = _filter_entries(raw_schemas, name_keys=("schema_name", "name"), query=q, skip_system=True)
+    return _paginate_items(names, page_size=page_size, offset=offset, item_type="schema")
 
 
 @router.get("/supabase/resources/tables")
 async def list_supabase_tables(
     request: Request,
+    *,
     integration_resource_id: Optional[int] = Query(
         None, description="Persisted Supabase project resource ID", ge=1
     ),
@@ -376,36 +398,19 @@ async def list_supabase_tables(
 ):
     user: User = request.state.db_user
 
-    resource_id = integration_resource_id
-    schema_name = (schema or "public").strip() or "public"
-    if depends_on:
-        try:
-            depends = json.loads(depends_on)
-            schema_override = depends.get("schema")
-            candidate = depends.get("integration_resource_id")
-            if candidate is not None and resource_id is None:
-                resource_id = int(candidate)
-            if isinstance(schema_override, str) and schema_override.strip():
-                schema_name = schema_override.strip()
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="Invalid depends_on JSON for Supabase tables")
-
-    if resource_id is None:
-        raise HTTPException(status_code=400, detail="integration_resource_id is required")
+    depends_on_values = _parse_depends_on(depends_on, error_detail="Invalid depends_on JSON for Supabase tables")
+    resource_id = _resolve_resource_id(integration_resource_id, depends_on_values)
+    schema_override = depends_on_values.get("schema")
+    schema_name = (
+        schema_override.strip()
+        if isinstance(schema_override, str) and schema_override.strip()
+        else (schema or "public").strip() or "public"
+    )
 
     resource, service_role_key, rest_url = await _get_supabase_rest_context(user, resource_id)
-    try:
-        await _ensure_supabase_metadata_functions(resource)
-    except HTTPException as exc:
-        logger.info("Proceeding without auto-provisioning Supabase metadata functions: %s", exc.detail)
+    await _attempt_metadata_provision(resource)
 
-    offset = 0
-    if page_token:
-        try:
-            offset = int(page_token)
-        except ValueError:
-            offset = 0
-
+    offset = _parse_offset(page_token)
     raw_tables = await _call_supabase_rpc(
         rest_url=rest_url,
         service_role_key=service_role_key,
@@ -413,42 +418,8 @@ async def list_supabase_tables(
         payload={"_schema": schema_name},
     )
 
-    filtered: list[str] = []
-    for entry in raw_tables:
-        if isinstance(entry, str):
-            table_name = entry
-        elif isinstance(entry, dict):
-            table_name = entry.get("table_name") or entry.get("name")
-        else:
-            table_name = None
-        if not table_name:
-            continue
-        filtered.append(table_name)
-
-    if q:
-        filtered = [name for name in filtered if q.lower() in name.lower()]
-
-    paged = filtered[offset: offset + page_size]
-
-    items = [
-        {
-            "id": name,
-            "name": name,
-            "display_name": name,
-            "type": "table",
-            "description": schema_name,
-        }
-        for name in paged
-    ]
-
-    next_page_token = str(offset + page_size) if offset + page_size < len(filtered) else None
-
-    return {
-        "items": items,
-        "next_page_token": next_page_token,
-        "supports_search": True,
-        "supports_hierarchy": False,
-    }
+    names = _filter_entries(raw_tables, name_keys=("table_name", "name"), query=q, skip_system=False)
+    return _paginate_items(names, page_size=page_size, offset=offset, item_type="table", description=schema_name)
 
 
 # =============================================================================
@@ -456,7 +427,7 @@ async def list_supabase_tables(
 # =============================================================================
 
 @router.get("/resources/types")
-async def list_resource_types(request: Request):
+async def list_resource_types(_request: Request):
     """
     List all supported resource types across all providers.
 
@@ -476,7 +447,7 @@ async def list_resource_types(request: Request):
 
 
 @router.get("/resources/{provider}/types")
-async def list_provider_resource_types(request: Request, provider: str):
+async def list_provider_resource_types(_request: Request, provider: str):
     """
     List supported resource types for a specific provider.
 
@@ -567,11 +538,13 @@ async def browse_resources(
     try:
         result = await browser.list_resources(
             resource_type=resource_type,
-            query=q,
-            parent_id=parent_id,
-            page_token=page_token,
-            page_size=page_size,
-            depends_on_values=depends_on_values,
+            options=ResourceListOptions(
+                query=q,
+                parent_id=parent_id,
+                page_token=page_token,
+                page_size=page_size,
+                depends_on_values=depends_on_values,
+            ),
         )
 
         if "error" in result and result["error"]:
@@ -585,18 +558,18 @@ async def browse_resources(
 
         return result
 
-    except ValueError as e:
+    except ValueError as exc:
         raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Invalid request",
-            detail=str(e),
+            detail=str(exc),
             status=400
         )
-    except Exception as e:
-        logger.exception("Error browsing resources: %s", e)
+    except Exception as exc:  # pylint: disable=broad-exception-caught  # provider implementations may raise varied errors
+        logger.exception("Error browsing resources: %s", exc)
         raise_problem(
             type_uri=INTEGRATION_PROBLEM,
             title="Resource browsing failed",
-            detail=f"Error browsing resources: {str(e)}",
+            detail=f"Error browsing resources: {str(exc)}",
             status=500
         )

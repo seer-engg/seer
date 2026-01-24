@@ -1,14 +1,13 @@
 from typing import Any, Dict, Optional
 
-import httpx
 from fastapi import HTTPException
 
 from seer.logger import get_logger
-from seer.tools.base import BaseTool, ResourcePickerConfig
 from seer.tools.supabase.common import (
+    SupabaseProjectTool,
+    _service_request_json_or_ok,
     _require_project_and_key,
     _resolve_auth_url,
-    _service_headers,
 )
 
 logger = get_logger("shared.tools.supabase.auth_admin")
@@ -18,14 +17,9 @@ logger = get_logger("shared.tools.supabase.auth_admin")
 # Auth Admin (/auth/v1) - server-side only
 # -----------------------------
 
-class SupabaseAuthAdminListUsersTool(BaseTool):
+class SupabaseAuthAdminListUsersTool(SupabaseProjectTool):
     name = "supabase_auth_admin_list_users"
     description = "List users via Supabase Auth Admin API (server-side)."
-    integration_type = "supabase"
-    provider = "supabase"
-    required_scopes: list[str] = []
-    required_secrets = ["supabase_service_role_key"]
-    default_resource = {"provider": "supabase", "resource_type": "project", "required": True}
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -36,17 +30,6 @@ class SupabaseAuthAdminListUsersTool(BaseTool):
                 "per_page": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 50},
             },
             "required": ["integration_resource_id"],
-        }
-
-    def get_resource_pickers(self) -> Dict[str, "ResourcePickerConfig"]:
-        return {
-            "integration_resource_id": {
-                "resource_type": "supabase_project",
-                "display_field": "name",
-                "value_field": "id",
-                "search_enabled": True,
-                "endpoint": "/integrations/supabase/resources/bindings",
-            }
         }
 
     def get_output_schema(self) -> Dict[str, Any]:
@@ -60,29 +43,15 @@ class SupabaseAuthAdminListUsersTool(BaseTool):
 
         params = {"page": arguments.get("page", 1), "per_page": arguments.get("per_page", 50)}
         url = f"{auth_url.rstrip('/')}/admin/users"
-        headers = _service_headers(service_key)
 
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.get(url, headers=headers, params=params)
-                if resp.status_code >= 400:
-                    raise HTTPException(status_code=resp.status_code, detail=f"List users failed: {resp.text[:500]}")
-                return resp.json()
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.exception("Supabase auth admin list users error")
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}") from exc
+        return await _service_request_json_or_ok(
+            "GET", service_key, url, params=params, logger_obj=logger, error_detail="List users failed"
+        )
 
 
-class SupabaseAuthAdminCreateUserTool(BaseTool):
+class SupabaseAuthAdminCreateUserTool(SupabaseProjectTool):
     name = "supabase_auth_admin_create_user"
     description = "Create a user via Supabase Auth Admin API (server-side)."
-    integration_type = "supabase"
-    provider = "supabase"
-    required_scopes: list[str] = []
-    required_secrets = ["supabase_service_role_key"]
-    default_resource = {"provider": "supabase", "resource_type": "project", "required": True}
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -96,17 +65,6 @@ class SupabaseAuthAdminCreateUserTool(BaseTool):
                 "app_metadata": {"type": "object", "additionalProperties": True},
             },
             "required": ["integration_resource_id", "email"],
-        }
-
-    def get_resource_pickers(self) -> Dict[str, "ResourcePickerConfig"]:
-        return {
-            "integration_resource_id": {
-                "resource_type": "supabase_project",
-                "display_field": "name",
-                "value_field": "id",
-                "search_enabled": True,
-                "endpoint": "/integrations/supabase/resources/bindings",
-            }
         }
 
     def get_output_schema(self) -> Dict[str, Any]:
@@ -130,29 +88,14 @@ class SupabaseAuthAdminCreateUserTool(BaseTool):
             payload["app_metadata"] = arguments["app_metadata"]
 
         url = f"{auth_url.rstrip('/')}/admin/users"
-        headers = _service_headers(service_key, extra={"Content-Type": "application/json"})
-
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(url, headers=headers, json=payload)
-                if resp.status_code >= 400:
-                    raise HTTPException(status_code=resp.status_code, detail=f"Create user failed: {resp.text[:500]}")
-                return resp.json()
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.exception("Supabase auth admin create user error", extra={"email": arguments.get("email")})
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}") from exc
+        return await _service_request_json_or_ok(
+            "POST", service_key, url, json_body=payload, logger_obj=logger, error_detail="Create user failed"
+        )
 
 
-class SupabaseAuthAdminDeleteUserTool(BaseTool):
+class SupabaseAuthAdminDeleteUserTool(SupabaseProjectTool):
     name = "supabase_auth_admin_delete_user"
     description = "Delete a user via Supabase Auth Admin API (server-side)."
-    integration_type = "supabase"
-    provider = "supabase"
-    required_scopes: list[str] = []
-    required_secrets = ["supabase_service_role_key"]
-    default_resource = {"provider": "supabase", "resource_type": "project", "required": True}
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -162,17 +105,6 @@ class SupabaseAuthAdminDeleteUserTool(BaseTool):
                 "user_id": {"type": "string", "description": "User UUID."},
             },
             "required": ["integration_resource_id", "user_id"],
-        }
-
-    def get_resource_pickers(self) -> Dict[str, "ResourcePickerConfig"]:
-        return {
-            "integration_resource_id": {
-                "resource_type": "supabase_project",
-                "display_field": "name",
-                "value_field": "id",
-                "search_enabled": True,
-                "endpoint": "/integrations/supabase/resources/bindings",
-            }
         }
 
     def get_output_schema(self) -> Dict[str, Any]:
@@ -186,19 +118,6 @@ class SupabaseAuthAdminDeleteUserTool(BaseTool):
 
         user_id = arguments["user_id"]
         url = f"{auth_url.rstrip('/')}/admin/users/{user_id}"
-        headers = _service_headers(service_key)
-
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.delete(url, headers=headers)
-                if resp.status_code >= 400:
-                    raise HTTPException(status_code=resp.status_code, detail=f"Delete user failed: {resp.text[:500]}")
-                # Some responses are empty; normalize.
-                if resp.headers.get("content-type", "").startswith("application/json"):
-                    return resp.json()
-                return {"ok": True}
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.exception("Supabase auth admin delete user error", extra={"user_id": user_id})
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}") from exc
+        return await _service_request_json_or_ok(
+            "DELETE", service_key, url, logger_obj=logger, error_detail="Delete user failed", ok_fallback={"ok": True}
+        )

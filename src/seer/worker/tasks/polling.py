@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from seer.worker.broker import broker
+from seer.worker.broker_instance import broker
 from seer.config import config
 from seer.logger import get_logger
 

@@ -20,7 +20,7 @@ from seer.database import TriggerSubscription
 from seer.logger import get_logger
 from seer.tools.oauth_manager import get_oauth_token
 from seer.core.registry.trigger_registry import trigger_registry
-from seer.core.triggers.events import build_event_envelope,persist_event
+from seer.core.triggers.events import TriggerEventEnvelopeInput, build_event_envelope, persist_event
 
 
 logger = get_logger(__name__)
@@ -222,14 +222,16 @@ class TriggerPollEngine:
         for polled in events:
             logger.info("Building event envelope for subscription %s", subscription.id)
             envelope = build_event_envelope(
-                trigger_id=subscription.trigger_id,
-                trigger_key=subscription.trigger_key,
-                title=subscription.title,
-                provider=provider,
-                provider_connection_id=subscription.provider_connection_id,
-                payload=polled.payload,
-                raw=polled.raw,
-                occurred_at=polled.occurred_at,
+                TriggerEventEnvelopeInput(
+                    trigger_id=subscription.trigger_id,
+                    trigger_key=subscription.trigger_key,
+                    title=subscription.title,
+                    provider=provider,
+                    provider_connection_id=subscription.provider_connection_id,
+                    payload=polled.payload,
+                    raw=polled.raw,
+                    occurred_at=polled.occurred_at,
+                )
             )
 
             provider_event_id = polled.provider_event_id

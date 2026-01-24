@@ -11,10 +11,12 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from seer.api.agents.checkpointer import get_checkpointer  # noqa: E402
+from seer.api.agents.checkpointer import get_checkpointer  # pylint: disable=wrong-import-position  # Reason: requires sys.path modification for script execution
 
 
 async def inspect_checkpoint_blob(thread_id: str):
+    # pylint: disable=too-complex
+    # Reason: diagnostic script prints detailed checkpoint state; refactor not prioritized for tooling
     """Inspect checkpoint data for a given thread_id."""
     checkpointer = await get_checkpointer()
     if not checkpointer:

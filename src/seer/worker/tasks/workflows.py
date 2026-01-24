@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from seer.worker.broker import broker
+from seer.worker.broker_instance import broker
 from seer.logger import get_logger
 from seer.services.workflows.execution import execute_saved_workflow_run
 

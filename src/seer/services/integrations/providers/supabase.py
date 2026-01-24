@@ -31,6 +31,7 @@ class SupabaseProvider(IntegrationProvider):
         *,
         project_ref: Optional[str] = None,
         connection_id: Optional[str] = None,
+        **kwargs,
     ):
         if resource_type != SUPABASE_RESOURCE_TYPE_PROJECT:
             raise HTTPException(status_code=400, detail=f"Unsupported Supabase resource type '{resource_type}'")

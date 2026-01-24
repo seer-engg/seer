@@ -1,5 +1,5 @@
-# pylint: disable=too-complex,import-outside-toplevel,broad-exception-caught
-# Reason: Model execution has branching for structured output; lazy imports; broad exception handling for model errors
+# pylint: disable=too-complex,import-outside-toplevel,broad-exception-caught,duplicate-code
+# Reason: Structured output branching, lazy imports, broad error handling, shared schema shape with other tools
 """
 Model block tool for running LLM inference.
 

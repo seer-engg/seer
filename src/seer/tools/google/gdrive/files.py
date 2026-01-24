@@ -9,7 +9,11 @@ import httpx
 from fastapi import HTTPException
 
 from seer.logger import get_logger
-from seer.tools.google.base import GoogleAPIClient
+from seer.tools.google.gdrive.base import (
+    GoogleDriveFileScopeTool,
+    GoogleDriveMetadataScopeTool,
+    GoogleDriveReadonlyScopeTool,
+)
 from seer.tools.google.gdrive.helpers import (
     _drive_file_list_schema,
     _drive_file_schema,
@@ -19,13 +23,11 @@ from seer.tools.google.gdrive.helpers import (
 logger = get_logger("shared.tools.gdrive.files")
 
 
-class GoogleDriveListFilesTool(GoogleAPIClient):
+class GoogleDriveListFilesTool(GoogleDriveMetadataScopeTool):
     """List/search Google Drive files with query support."""
 
     name = "google_drive_list_files"
     description = "List/search Google Drive files. Supports Drive query 'q' and pagination."
-    required_scopes = ["https://www.googleapis.com/auth/drive.metadata.readonly"]
-    integration_type = "google_drive"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -84,13 +86,11 @@ class GoogleDriveListFilesTool(GoogleAPIClient):
         return resp.json()
 
 
-class GoogleDriveGetFileMetadataTool(GoogleAPIClient):
+class GoogleDriveGetFileMetadataTool(GoogleDriveMetadataScopeTool):
     """Get Google Drive file metadata by ID."""
 
     name = "google_drive_get_file_metadata"
     description = "Get metadata for a Google Drive file by ID."
-    required_scopes = ["https://www.googleapis.com/auth/drive.metadata.readonly"]
-    integration_type = "google_drive"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -129,13 +129,11 @@ class GoogleDriveGetFileMetadataTool(GoogleAPIClient):
         return resp.json()
 
 
-class GoogleDriveDownloadFileTool(GoogleAPIClient):
+class GoogleDriveDownloadFileTool(GoogleDriveReadonlyScopeTool):
     """Download Google Drive file content."""
 
     name = "google_drive_download_file"
     description = "Download Google Drive file content (binary data returned as base64)."
-    required_scopes = ["https://www.googleapis.com/auth/drive.readonly"]
-    integration_type = "google_drive"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -187,13 +185,11 @@ class GoogleDriveDownloadFileTool(GoogleAPIClient):
         }
 
 
-class GoogleDriveUploadFileTool(GoogleAPIClient):
+class GoogleDriveUploadFileTool(GoogleDriveFileScopeTool):
     """Upload file to Google Drive."""
 
     name = "google_drive_upload_file"
     description = "Upload a file to Google Drive using multipart upload."
-    required_scopes = ["https://www.googleapis.com/auth/drive.file"]
-    integration_type = "google_drive"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -259,13 +255,11 @@ class GoogleDriveUploadFileTool(GoogleAPIClient):
         return resp.json()
 
 
-class GoogleDriveUpdateFileTool(GoogleAPIClient):
+class GoogleDriveUpdateFileTool(GoogleDriveFileScopeTool):
     """Update Google Drive file metadata and/or content."""
 
     name = "google_drive_update_file"
     description = "Update Google Drive file metadata and/or content."
-    required_scopes = ["https://www.googleapis.com/auth/drive.file"]
-    integration_type = "google_drive"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {

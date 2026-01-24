@@ -12,9 +12,8 @@ from seer.database import (
 )
 from seer.logger import get_logger
 from seer.core.registry.trigger_registry import trigger_registry
-from seer.core.triggers.events import build_event_envelope
+from seer.core.triggers.events import TriggerEventEnvelopeInput, build_event_envelope, persist_event
 from seer.worker.trigger_dispatcher import dispatch_trigger_event
-from seer.core.triggers.events import persist_event
 
 logger = get_logger(__name__)
 
@@ -81,14 +80,16 @@ async def handle_generic_webhook(
         "body": payload,
     }
     envelope = build_event_envelope(
-        trigger_id=subscription.trigger_id,
-        trigger_key=subscription.trigger_key,
-        title=subscription.title,
-        provider=provider,
-        provider_connection_id=subscription.provider_connection_id,
-        payload=payload,
-        raw=raw_payload,
-        occurred_at=_utcnow(),
+        TriggerEventEnvelopeInput(
+            trigger_id=subscription.trigger_id,
+            trigger_key=subscription.trigger_key,
+            title=subscription.title,
+            provider=provider,
+            provider_connection_id=subscription.provider_connection_id,
+            payload=payload,
+            raw=raw_payload,
+            occurred_at=_utcnow(),
+        )
     )
     event, created = await persist_event(
         subscription=subscription,

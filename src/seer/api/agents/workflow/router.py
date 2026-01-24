@@ -543,7 +543,7 @@ async def get_chat_session_endpoint(
 
 
 @router.post("/{workflow_id}/chat/resume")
-async def resume_chat_endpoint(  # pylint: disable=too-many-locals # Reason: Complex endpoint with resume logic, requires refactoring to service layer
+async def resume_chat_endpoint(  # pylint: disable=too-many-locals,too-complex # Reason: Complex endpoint with resume logic, requires refactoring to service layer
     request: Request,
     workflow_id: str,
     resume_data: Dict[str, Any],
