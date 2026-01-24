@@ -89,7 +89,7 @@ class GoogleAPIClient(BaseTool, ABC):
             "Accept": "application/json"
         }
 
-    async def _make_request(
+    async def _make_request(  # pylint: disable=too-many-arguments  # Reason: Google API base method requires all HTTP request parameters
         self,
         method: str,
         url: str,

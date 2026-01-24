@@ -43,7 +43,7 @@ def _coerce_int(value: Any, default: int, *, min_value: int, max_value: int) -> 
             for key in ["value", "count", "output", "result", "number", "max_results", "maxResults"]:
                 if key in value and isinstance(value[key], (int, float, str)):
                     return _coerce_int(value[key], default, min_value=min_value, max_value=max_value)
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught  # Reason: Gmail API adapter error handling for parameter coercion
         pass
     return max(min_value, min(default, max_value))
 
@@ -74,7 +74,7 @@ def _coerce_str_list(value: Any, default: List[str]) -> List[str]:
                 parsed = json.loads(trimmed)
                 if isinstance(parsed, list):
                     return [str(x).strip() for x in parsed if str(x).strip()]
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught  # Reason: Gmail API adapter error handling for list parsing
                 inner = trimmed[1:-1].strip()
                 if inner:
                     trimmed = inner
@@ -146,7 +146,7 @@ def _decode_body_data(data: Optional[str]) -> str:
         return ""
     try:
         return _b64url_decode(data).decode("utf-8", errors="ignore")
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught  # Reason: Gmail API adapter error handling for base64 decoding
         return ""
 
 
@@ -194,10 +194,10 @@ def _decode_attachment_data(data_b64: str, filename: str) -> Optional[bytes]:
     """Decode attachment data from base64."""
     try:
         return base64.b64decode(str(data_b64), validate=False)
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught  # Reason: Gmail API adapter error handling for attachment decoding
         try:
             return _b64url_decode(str(data_b64))
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught  # Reason: Gmail API adapter error handling for attachment decoding fallback
             logger.warning("Attachment '%s' has invalid base64; skipping", filename)
             return None
 
@@ -237,7 +237,7 @@ def _set_optional_addresses(msg: EmailMessage, name: str, addresses: Optional[Li
         msg[name] = ", ".join(sanitized)
 
 
-def _build_mime_email(
+def _build_mime_email(  # pylint: disable=too-many-arguments  # Reason: Gmail send helper requires all email components
     *,
     to: List[str],
     subject: str,

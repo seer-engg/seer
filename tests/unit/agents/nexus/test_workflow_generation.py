@@ -38,8 +38,8 @@ class TestWorkflowProposal:
             reasoning="Testing purposes"
         )
 
-        assert proposal.spec.version == "2"
-        assert len(proposal.spec.nodes) == 1
+        assert proposal.spec.version == "2"  # pylint: disable=no-member  # Reason: Pydantic FieldInfo internals
+        assert len(proposal.spec.nodes) == 1  # pylint: disable=no-member  # Reason: Pydantic FieldInfo internals
         assert proposal.summary == "Test workflow"
         assert proposal.reasoning == "Testing purposes"
 

@@ -384,6 +384,7 @@ class WorkflowCompilerSingleton:
             # Need to check if response has metadata or if it's in underlying call
             usage_metadata = {}
             if hasattr(structured_llm, "_last_response"):
+                # pylint: disable=protected-access  # Reason: accessing LangChain internal state for usage metadata
                 usage_metadata = extract_usage_metadata(structured_llm._last_response, model_id)
             elif hasattr(response, "usage_metadata") or hasattr(response, "response_metadata"):
                 usage_metadata = extract_usage_metadata(response, model_id)

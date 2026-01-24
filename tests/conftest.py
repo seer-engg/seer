@@ -118,7 +118,7 @@ async def test_user_with_subscription(test_user):
     # Create billing profile
     profile = await BillingProfile.create(
         user=test_user,
-        profile_type=BillingProfileType.STRIPE,
+        profile_type=BillingProfileType.INDIVIDUAL,
         stripe_customer_id="cus_test_123",
     )
 
