@@ -1,0 +1,95 @@
+name: Deploy to Amazon ECS (Multi-Env)
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to deploy'
+        required: true
+        type: choice
+        options:
+          - dev
+          - main
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+  CONTAINER_NAME: ${{ secrets.CONTAINER_NAME }} # Assumes same container name in both task defs
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      # ----------------------------------------------------------------
+      # LOGIC STEP: Determine which environment we are deploying to
+      # ----------------------------------------------------------------
+      - name: Set Environment Specific Variables
+        id: env-selector
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "Deploying to PRODUCTION"
+            echo "ecs_service=${{ secrets.ECS_SERVICE_MAIN }}" >> $GITHUB_ENV
+            echo "ecs_cluster=${{ secrets.ECS_CLUSTER_MAIN }}" >> $GITHUB_ENV
+            echo "task_def_file=task-definition-main.json" >> $GITHUB_ENV
+          elif [[ "${{ github.ref }}" == "refs/heads/dev" ]]; then
+            echo "Deploying to DEVELOPMENT"
+            echo "ecs_service=${{ secrets.ECS_SERVICE_DEV }}" >> $GITHUB_ENV
+            echo "ecs_cluster=${{ secrets.ECS_CLUSTER_DEV }}" >> $GITHUB_ENV
+            echo "task_def_file=task-definition-dev.json" >> $GITHUB_ENV
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # We use the same ECR repo, but the specific Task Definition
+          # determines which Service pulls this image.
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Fill in the new image ID in the Amazon ECS task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          # Uses the variable set in the "Set Environment Specific Variables" step
+          task-definition: ${{ env.task_def_file }}
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ecs_service }}
+          cluster: ${{ env.ecs_cluster }}
+          wait-for-service-stability: true
