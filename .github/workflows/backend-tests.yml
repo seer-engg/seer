@@ -29,3 +29,5 @@ jobs:
 
       - name: Run test suite
         run: uv run pytest
+        env:
+          DATABASE_URL: "postgresql://test:test@localhost:5432/seer_test"

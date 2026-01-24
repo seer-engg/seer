@@ -4,7 +4,6 @@ Custom exceptions for usage limit enforcement.
 Provides structured exceptions that include metadata for upgrade prompts
 and detailed error responses.
 """
-from typing import Optional
 
 from seer.database.subscription_models import SubscriptionTier
 
@@ -33,7 +32,7 @@ class UsageLimitError(Exception):
         tier: SubscriptionTier,
         message: str,
         upgrade_url: str = "/pricing",
-    ):
+    ):  # pylint: disable=too-many-positional-arguments  # Exception classes need structured error data
         self.resource = resource
         self.limit = limit
         self.current = current
@@ -176,7 +175,7 @@ class CreditLimitExceeded(UsageLimitError):
         tier: SubscriptionTier,
         is_soft_limit: bool = False,
         upgrade_url: str = "/pricing",
-    ):
+    ):  # pylint: disable=too-many-positional-arguments  # Exception classes need structured error data
         if is_soft_limit:
             message = (
                 f"Warning: You've used ${current:.2f} of your ${limit:.2f} monthly LLM credit allowance "
