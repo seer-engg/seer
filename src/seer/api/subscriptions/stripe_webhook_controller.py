@@ -1,14 +1,13 @@
 """Dedicated controller for processing Stripe webhook events."""
 from __future__ import annotations
 
-from typing import Any, Optional, Union
+from typing import Optional, Union
 
 import stripe
 
 from seer.api.subscriptions import stripe_service
 from seer.api.subscriptions.clerk_sync import sync_stripe_customer_to_clerk
 from seer.config import config
-from seer.database.subscription_models import BillingProfile, BillingSubscription
 from seer.logger import get_logger
 
 logger = get_logger("api.subscriptions.stripe_webhook_controller")

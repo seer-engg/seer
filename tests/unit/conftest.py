@@ -63,7 +63,7 @@ def mock_tool_registry():
     """
     Mock tool registry with a few test tools registered.
     """
-    from seer.tools.registry import ToolRegistry
+    from seer.core.registry.tool_registry import ToolRegistry
 
     registry = ToolRegistry()
 

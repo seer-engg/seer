@@ -17,12 +17,12 @@ Usage:
     tools = get_postgres_tools(connection_string="postgresql://...")
 """
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from langchain_core.tools import BaseTool
 
 # Re-exports from submodules
-from seer.tools.postgres_client import PostgresClient, _get_asyncpg
+from seer.tools.postgres_client import PostgresClient
 from seer.tools.postgres_provider import PostgresProvider
 
 __all__ = [
@@ -34,7 +34,7 @@ __all__ = [
 ]
 
 # Global client instance for simple usage
-_default_client: Optional[PostgresClient] = None
+_default_client: Optional[PostgresClient] = None  # pylint: disable=invalid-name  # Reason: Module-level singleton cache
 _default_client_lock = asyncio.Lock()
 
 
@@ -49,12 +49,12 @@ async def get_default_client(connection_string: Optional[str] = None) -> Postgre
     Returns:
         PostgresClient instance
     """
-    global _default_client
+    global _default_client  # pylint: disable=global-statement  # Reason: Singleton caching pattern
 
     async with _default_client_lock:
         if _default_client is None:
             if connection_string is None:
-                from seer.config import config
+                from seer.config import config  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
                 connection_string = config.DATABASE_URL
 
             if not connection_string:
@@ -71,7 +71,7 @@ async def get_default_client(connection_string: Optional[str] = None) -> Postgre
 
 async def close_default_client() -> None:
     """Close the default PostgresClient if it exists."""
-    global _default_client
+    global _default_client  # pylint: disable=global-statement  # Reason: Singleton caching pattern
 
     async with _default_client_lock:
         if _default_client is not None:
@@ -108,7 +108,7 @@ def get_postgres_tools(
         return client.get_tools()
 
     if connection_string is None:
-        from seer.config import config
+        from seer.config import config  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
         connection_string = config.DATABASE_URL
 
     if not connection_string:

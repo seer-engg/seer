@@ -59,8 +59,8 @@ SchemaSpec = Union[SchemaRef, InlineSchema]
 
 
 class OutputMode(str, Enum):
-    text = "text"
-    json = "json"
+    text = "text"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
+    json = "json"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
 
 
 class OutputContract(StrictModel):
@@ -88,12 +88,12 @@ class OutputContract(StrictModel):
 # -----------------------------
 class EdgeType(str, Enum):
     """Types of edges in the workflow graph."""
-    default = "default"                      # Sequential flow
-    conditional_true = "conditional_true"    # If condition true branch
-    conditional_false = "conditional_false"  # If condition false branch
-    loop_body = "loop_body"                  # For-each loop body entry
-    loop_exit = "loop_exit"                  # For-each loop exit
-    trigger = "trigger"                      # Trigger to node entry point
+    default = "default"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
+    conditional_true = "conditional_true"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
+    conditional_false = "conditional_false"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
+    loop_body = "loop_body"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
+    loop_exit = "loop_exit"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
+    trigger = "trigger"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
 
 
 class Edge(StrictModel):
@@ -116,7 +116,7 @@ class NodeBase(StrictModel):
 
 
 class TaskKind(str, Enum):
-    set = "set"
+    set = "set"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
 
 
 class TaskNode(NodeBase):
@@ -285,7 +285,7 @@ class WorkflowSpec(StrictModel):
     triggers: List[TriggerSpec] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _validate_workflow(self) -> "WorkflowSpec":
+    def _validate_workflow(self) -> "WorkflowSpec":  # pylint: disable=too-complex  # Reason: Comprehensive workflow validation requires multiple checks
         # Validate unique trigger IDs (allow duplicate keys for same type)
         seen_trigger_ids = set()
         duplicate_trigger_ids = []

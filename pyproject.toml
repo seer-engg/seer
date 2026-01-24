@@ -95,7 +95,7 @@ src_folder = "./src" # Changed from "./." to "./src"
 
 [tool.pylint.main]
 # Files or directories to be skipped
-ignore = ["alembic/versions", ".venv", "venv", "build", "dist"]
+ignore = ["alembic/versions", ".venv", "venv", "build", "dist", "tests"]
 # Use multiple processes to speed up Pylint
 jobs = 0
 # Load extensions

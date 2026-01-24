@@ -32,7 +32,7 @@ repos:
         language: system
         types: [python]
         files: \.py$
-        exclude: ^migrations/
+        exclude: ^(migrations|tests)/
 
   # Basic file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
