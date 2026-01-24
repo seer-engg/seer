@@ -2,6 +2,8 @@
 Gmail management operations - labels, trash, delete.
 """
 
+# pylint: disable=duplicate-code
+# Reason: Schema definitions intentionally mirror send endpoint to maintain consistent payload shapes
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException

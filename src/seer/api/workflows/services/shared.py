@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# pylint: disable=duplicate-code  # Reason: Shared workflow version helpers intentionally overlap with lifecycle module
 import hashlib
 import json
 from datetime import datetime, timezone
@@ -10,7 +11,6 @@ from seer.api.core.errors import raise_problem as _raise_problem
 from seer.database import (
     User,
     Workflow,
-    WorkflowRun,
     WorkflowVersion,
     WorkflowVersionStatus,
     parse_workflow_public_id,
@@ -98,37 +98,6 @@ async def _update_draft_version(
     version.spec_hash = _hash_spec(spec_dict)
     await version.save()
     await Workflow.filter(id=version.workflow_id).update(updated_at=_now())
-
-
-async def _ensure_draft_version(
-    workflow: Workflow,
-    user: User,
-    skip_validation: bool = False
-) -> WorkflowVersion:
-    """
-    Get the existing DRAFT version without creating a new one.
-    This function is kept for backward compatibility during transition.
-    """
-    draft_version = await _get_draft_version(workflow, create_if_missing=True, user=user)
-
-    if not draft_version:
-        _raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="No draft version",
-            detail="Workflow has no draft version",
-            status=500,
-        )
-
-    spec = WorkflowSpec.model_validate(draft_version.spec or {})
-
-    # Sync trigger subscriptions declared in the spec so polling/webhooks stay in sync.
-    # pylint: disable=import-outside-toplevel
-    from seer.api.workflows.services.triggers import sync_trigger_subscriptions
-
-    await sync_trigger_subscriptions(user, workflow, spec, skip_validation=skip_validation)
-
-    return draft_version
-
 
 
 async def _get_workflow(user: User, workflow_id: str) -> Workflow:

@@ -1,3 +1,5 @@
+# pylint: disable=too-many-lines,unused-argument,duplicate-code
+# Reason: Expression evaluator tests need many cases; schema snippets intentionally mirror examples
 """
 Unit tests for expression evaluator.
 

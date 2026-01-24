@@ -1,3 +1,5 @@
+# pylint: disable=too-complex,import-outside-toplevel,broad-exception-caught,duplicate-code
+# Reason: Structured output branching, lazy imports, broad error handling, shared schema shape with other tools
 """
 Model block tool for running LLM inference.
 
@@ -150,13 +152,13 @@ class ModelBlockTool(BaseTool):
             raise HTTPException(
                 status_code=500,
                 detail=f"Model execution failed: {str(e)}"
-            )
+            ) from e
         except Exception as e:
             logger.exception("Unexpected error in model block: %s", e)
             raise HTTPException(
                 status_code=500,
                 detail=f"Model execution error: {str(e)}"
-            )
+            ) from e
 
 
 # Register the tool

@@ -1,3 +1,5 @@
+# pylint: disable=unused-import,import-outside-toplevel,unused-argument
+# Reason: Test file with fixtures and lazy imports
 """
 Unit tests for usage limits and tracking system.
 

@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code  # Reason: SettingsConfigDict block shared with observability.constants for consistent env loading
 """
 Type-safe configuration for Seer using Pydantic Settings.
 

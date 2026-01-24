@@ -5,8 +5,9 @@ import httpx
 from fastapi import HTTPException
 
 from seer.logger import get_logger
-from seer.tools.base import BaseTool, ResourcePickerConfig
 from seer.tools.supabase.common import (
+    SupabaseProjectTool,
+    _service_request_json_or_ok,
     _require_project_and_key,
     _resolve_storage_url,
     _service_headers,
@@ -19,14 +20,9 @@ logger = get_logger("shared.tools.supabase.storage")
 # Storage (/storage/v1)
 # -----------------------------
 
-class SupabaseStorageListBucketsTool(BaseTool):
+class SupabaseStorageListBucketsTool(SupabaseProjectTool):
     name = "supabase_storage_list_buckets"
     description = "List Storage buckets in a Supabase project."
-    integration_type = "supabase"
-    provider = "supabase"
-    required_scopes: list[str] = []
-    required_secrets = ["supabase_service_role_key"]
-    default_resource = {"provider": "supabase", "resource_type": "project", "required": True}
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -38,17 +34,6 @@ class SupabaseStorageListBucketsTool(BaseTool):
                 "search": {"type": "string"},
             },
             "required": ["integration_resource_id"],
-        }
-
-    def get_resource_pickers(self) -> Dict[str, "ResourcePickerConfig"]:
-        return {
-            "integration_resource_id": {
-                "resource_type": "supabase_project",
-                "display_field": "name",
-                "value_field": "id",
-                "search_enabled": True,
-                "endpoint": "/integrations/supabase/resources/bindings",
-            }
         }
 
     def get_output_schema(self) -> Dict[str, Any]:
@@ -68,29 +53,14 @@ class SupabaseStorageListBucketsTool(BaseTool):
             params["search"] = arguments["search"]
 
         url = f"{storage_url.rstrip('/')}/bucket"
-        headers = _service_headers(service_key)
-
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.get(url, headers=headers, params=params)
-                if resp.status_code >= 400:
-                    raise HTTPException(status_code=resp.status_code, detail=f"List buckets failed: {resp.text[:500]}")
-                return resp.json()
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.exception("Supabase storage list buckets error")
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+        return await _service_request_json_or_ok(
+            "GET", service_key, url, params=params, logger_obj=logger, error_detail="List buckets failed"
+        )
 
 
-class SupabaseStorageCreateBucketTool(BaseTool):
+class SupabaseStorageCreateBucketTool(SupabaseProjectTool):
     name = "supabase_storage_create_bucket"
     description = "Create a Storage bucket."
-    integration_type = "supabase"
-    provider = "supabase"
-    required_scopes: list[str] = []
-    required_secrets = ["supabase_service_role_key"]
-    default_resource = {"provider": "supabase", "resource_type": "project", "required": True}
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -103,17 +73,6 @@ class SupabaseStorageCreateBucketTool(BaseTool):
                 "allowed_mime_types": {"type": ["array", "null"], "items": {"type": "string"}},
             },
             "required": ["integration_resource_id", "name"],
-        }
-
-    def get_resource_pickers(self) -> Dict[str, "ResourcePickerConfig"]:
-        return {
-            "integration_resource_id": {
-                "resource_type": "supabase_project",
-                "display_field": "name",
-                "value_field": "id",
-                "search_enabled": True,
-                "endpoint": "/integrations/supabase/resources/bindings",
-            }
         }
 
     def get_output_schema(self) -> Dict[str, Any]:
@@ -135,29 +94,15 @@ class SupabaseStorageCreateBucketTool(BaseTool):
             payload["allowed_mime_types"] = arguments.get("allowed_mime_types")
 
         url = f"{storage_url.rstrip('/')}/bucket"
-        headers = _service_headers(service_key, extra={"Content-Type": "application/json"})
-
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(url, headers=headers, json=payload)
-                if resp.status_code >= 400:
-                    raise HTTPException(status_code=resp.status_code, detail=f"Create bucket failed: {resp.text[:500]}")
-                return resp.json()
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.exception("Supabase storage create bucket error")
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+        return await _service_request_json_or_ok(
+            "POST", service_key, url, json_body=payload, logger_obj=logger, error_detail="Create bucket failed",
+            extra_headers={"Content-Type": "application/json"},
+        )
 
 
-class SupabaseStorageUploadObjectTool(BaseTool):
+class SupabaseStorageUploadObjectTool(SupabaseProjectTool):
     name = "supabase_storage_upload_object"
     description = "Upload/overwrite an object into a bucket (simple upload)."
-    integration_type = "supabase"
-    provider = "supabase"
-    required_scopes: list[str] = []
-    required_secrets = ["supabase_service_role_key"]
-    default_resource = {"provider": "supabase", "resource_type": "project", "required": True}
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -171,17 +116,6 @@ class SupabaseStorageUploadObjectTool(BaseTool):
                 "cache_control": {"type": "string", "description": "Optional cache control header, e.g. '3600'."},
             },
             "required": ["integration_resource_id", "bucket", "path", "content_base64"],
-        }
-
-    def get_resource_pickers(self) -> Dict[str, "ResourcePickerConfig"]:
-        return {
-            "integration_resource_id": {
-                "resource_type": "supabase_project",
-                "display_field": "name",
-                "value_field": "id",
-                "search_enabled": True,
-                "endpoint": "/integrations/supabase/resources/bindings",
-            }
         }
 
     def get_output_schema(self) -> Dict[str, Any]:
@@ -200,8 +134,8 @@ class SupabaseStorageUploadObjectTool(BaseTool):
 
         try:
             data = base64.b64decode(arguments["content_base64"])
-        except Exception:
-            raise HTTPException(status_code=400, detail="content_base64 is not valid base64")
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="content_base64 is not valid base64") from exc
 
         # Simple PUT to /object/<bucket>/<path>
         url = f"{storage_url.rstrip('/')}/object/{bucket}/{path}"
@@ -210,32 +144,22 @@ class SupabaseStorageUploadObjectTool(BaseTool):
         if cache_control:
             extra["cache-control"] = cache_control
 
-        headers = _service_headers(service_key, extra=extra)
-
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.put(url, headers=headers, content=data)
-                if resp.status_code >= 400:
-                    raise HTTPException(status_code=resp.status_code, detail=f"Upload failed: {resp.text[:500]}")
-                # Some storage endpoints return JSON, some empty. Normalize.
-                if resp.headers.get("content-type", "").startswith("application/json"):
-                    return resp.json()
-                return {"ok": True}
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.exception("Supabase storage upload error", extra={"bucket": bucket, "path": path})
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+        return await _service_request_json_or_ok(
+            "PUT",
+            service_key,
+            url,
+            extra_headers=extra,
+            content=data,
+            logger_obj=logger,
+            error_detail="Upload failed",
+            ok_fallback={"ok": True},
+            timeout=60.0,
+        )
 
 
-class SupabaseStorageDownloadObjectTool(BaseTool):
+class SupabaseStorageDownloadObjectTool(SupabaseProjectTool):
     name = "supabase_storage_download_object"
     description = "Download an object from Storage (returns base64)."
-    integration_type = "supabase"
-    provider = "supabase"
-    required_scopes: list[str] = []
-    required_secrets = ["supabase_service_role_key"]
-    default_resource = {"provider": "supabase", "resource_type": "project", "required": True}
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -252,17 +176,6 @@ class SupabaseStorageDownloadObjectTool(BaseTool):
                 },
             },
             "required": ["integration_resource_id", "bucket", "path"],
-        }
-
-    def get_resource_pickers(self) -> Dict[str, "ResourcePickerConfig"]:
-        return {
-            "integration_resource_id": {
-                "resource_type": "supabase_project",
-                "display_field": "name",
-                "value_field": "id",
-                "search_enabled": True,
-                "endpoint": "/integrations/supabase/resources/bindings",
-            }
         }
 
     def get_output_schema(self) -> Dict[str, Any]:
@@ -305,17 +218,12 @@ class SupabaseStorageDownloadObjectTool(BaseTool):
             raise
         except Exception as exc:
             logger.exception("Supabase storage download error", extra={"bucket": bucket, "path": path})
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}") from exc
 
 
-class SupabaseStorageCreateSignedObjectUrlTool(BaseTool):
+class SupabaseStorageCreateSignedObjectUrlTool(SupabaseProjectTool):
     name = "supabase_storage_create_signed_object_url"
     description = "Create a signed URL for a Storage object (server-side)."
-    integration_type = "supabase"
-    provider = "supabase"
-    required_scopes: list[str] = []
-    required_secrets = ["supabase_service_role_key"]
-    default_resource = {"provider": "supabase", "resource_type": "project", "required": True}
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -328,18 +236,6 @@ class SupabaseStorageCreateSignedObjectUrlTool(BaseTool):
             },
             "required": ["integration_resource_id", "bucket", "path"],
         }
-
-    def get_resource_pickers(self) -> Dict[str, "ResourcePickerConfig"]:
-        return {
-            "integration_resource_id": {
-                "resource_type": "supabase_project",
-                "display_field": "name",
-                "value_field": "id",
-                "search_enabled": True,
-                "endpoint": "/integrations/supabase/resources/bindings",
-            }
-        }
-
     def get_output_schema(self) -> Dict[str, Any]:
         return {"type": "object", "additionalProperties": True}
 
@@ -355,17 +251,14 @@ class SupabaseStorageCreateSignedObjectUrlTool(BaseTool):
 
         # URL pattern referenced in Supabase Storage docs: /storage/v1/object/sign/<bucket>/<path>
         url = f"{storage_url.rstrip('/')}/object/sign/{bucket}/{path}"
-        headers = _service_headers(service_key, extra={"Content-Type": "application/json"})
         payload = {"expiresIn": expires_in}
 
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(url, headers=headers, json=payload)
-                if resp.status_code >= 400:
-                    raise HTTPException(status_code=resp.status_code, detail=f"Create signed URL failed: {resp.text[:500]}")
-                return resp.json()
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.exception("Supabase storage signed URL error", extra={"bucket": bucket, "path": path})
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+        return await _service_request_json_or_ok(
+            "POST",
+            service_key,
+            url,
+            json_body=payload,
+            logger_obj=logger,
+            error_detail="Create signed URL failed",
+            extra_headers={"Content-Type": "application/json"},
+        )

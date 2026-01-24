@@ -57,6 +57,6 @@ async def sync_stripe_customer_to_clerk(clerk_user_id: str, stripe_customer_id: 
             e.response.status_code, e.response.text[:200]
         )
         return False
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Clerk webhook processing should not crash on errors
         logger.error("Failed to sync Stripe customer to Clerk: %s", str(e))
         return False

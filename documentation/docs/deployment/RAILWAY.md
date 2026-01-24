@@ -55,13 +55,14 @@ The Seer Railway deployment consists of 4 services:
    DATABASE_URL=${{Postgres.DATABASE_URL}}
    REDIS_URL=${{Redis.REDIS_URL}}
    PORT=8000
-   AUTO_APPLY_DATABASE_MIGRATIONS=true
    OPENAI_API_KEY=[your-key-for-testing]
    ```
 
+   **Note:** Migrations run automatically via `railway.json` `preDeployCommand` - no environment variable needed.
+
 6. **Service Configuration:**
    - Go to "Settings" tab
-   - Under "Railway Config File Path", enter: `railway.toml`
+   - Under "Railway Config File Path", enter: `railway.json`
    - Enable "Public Networking"
    - Click "Generate Domain" to create a public URL
 
@@ -85,14 +86,14 @@ The Seer Railway deployment consists of 4 services:
    ```
    DATABASE_URL=${{Postgres.DATABASE_URL}}
    REDIS_URL=${{Redis.REDIS_URL}}
-   AUTO_APPLY_DATABASE_MIGRATIONS=false
    OPENAI_API_KEY=${{seer-api.OPENAI_API_KEY}}
    ```
-   Note: Worker references API's OPENAI_API_KEY to avoid duplication
+   **Notes:**
+   - Worker references API's OPENAI_API_KEY to avoid duplication
+   - Migrations run ONLY on API service - worker connects to already-migrated database
 
 6. **Service Configuration:**
    - Go to "Settings" tab
-   - Under "Railway Config File Path", enter: `railway.worker.toml`
    - **Do NOT** enable "Public Networking" (worker is private)
 
 7. **Deploy:**
@@ -123,8 +124,8 @@ Check that all 4 services show "Active" status:
 
 1. Click on `seer-api` service
 2. Check the deployment logs
-3. Look for "Running database migrations..." message
-4. Ensure migrations completed without errors
+3. Look for pre-deploy output: `Running preDeployCommand: uv run aerich upgrade`
+4. Ensure migrations completed successfully before app starts
 
 ### 2.4 Test Workflow Creation
 

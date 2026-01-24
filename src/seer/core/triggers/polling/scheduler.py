@@ -4,7 +4,7 @@ import asyncio
 from typing import Optional, Callable
 
 # Ensure adapters register themselves.
-import seer.core.triggers.polling.adapters  # noqa: F401
+import seer.core.triggers.polling.adapters  # pylint: disable=unused-import  # Reason: import side effects register adapters
 from seer.core.triggers.polling.engine import TriggerPollEngine
 from seer.logger import get_logger
 
@@ -49,7 +49,7 @@ class TriggerPollScheduler:
         while not self._stop_event.is_set():
             try:
                 await self.engine.tick()
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught  # Reason: scheduler must continue running despite errors
                 logger.exception("Trigger poll engine tick failed")
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=self.interval_seconds)

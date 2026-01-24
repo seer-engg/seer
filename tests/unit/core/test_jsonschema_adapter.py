@@ -5,7 +5,6 @@ import pytest
 from seer.core.errors import ExecutionError
 from seer.core.runtime.validate_output import validate_against_schema
 from seer.core.schema.jsonschema_adapter import (
-    check_schema,
     get_validator,
     validate_instance,
 )

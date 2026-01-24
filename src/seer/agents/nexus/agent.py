@@ -23,8 +23,8 @@ def _ensure_mlflow_autologging() -> None:
     """Enable MLflow LangChain autologging once per process with tracking URI and experiment."""
 
     try:
-        import mlflow
-        from mlflow.langchain import autolog
+        import mlflow  # pylint: disable=import-outside-toplevel  # Reason: lazy loading to avoid dependency if not used
+        from mlflow.langchain import autolog  # pylint: disable=import-outside-toplevel  # Reason: lazy loading to avoid dependency if not used
     except ImportError:
         logger.warning("mlflow not installed, skipping mlflow autologging for langchain")
         return

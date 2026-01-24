@@ -25,7 +25,7 @@ def print_tier_limits(tier: SubscriptionTier, limits) -> None:
     print(f"{'='*60}")
 
 
-def main():
+def main():  # pylint: disable=too-many-statements  # Reason: demo script complexity for comprehensive output
     """Demonstrate usage limits system."""
     print("\n" + "="*60)
     print(" Usage Limits System - Phase 1 Demonstration")

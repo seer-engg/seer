@@ -1,3 +1,5 @@
+# pylint: disable=import-outside-toplevel,too-many-locals,unused-import
+# Reason: Test file with lazy imports and complex workflow setup
 """
 Tests for multiple triggers of the same type in a workflow.
 
@@ -302,10 +304,10 @@ class TestTriggerEventEnvelope:
 
     def test_event_envelope_structure(self):
         """Verify event envelopes include both trigger_id and trigger_key."""
-        from seer.core.triggers.events import build_event_envelope
+        from seer.core.triggers.events import build_event_envelope, TriggerEventEnvelopeInput
         from datetime import datetime, timezone
 
-        envelope = build_event_envelope(
+        event_input = TriggerEventEnvelopeInput(
             trigger_id="gmail_inbox_123",
             trigger_key="gmail.new_email",
             title="GmailInbox",
@@ -315,6 +317,7 @@ class TestTriggerEventEnvelope:
             raw={"raw_data": "..."},
             occurred_at=datetime.now(timezone.utc),
         )
+        envelope = build_event_envelope(event_input)
 
         assert "trigger_id" in envelope
         assert "trigger_key" in envelope

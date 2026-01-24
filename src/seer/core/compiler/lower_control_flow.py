@@ -15,7 +15,7 @@ from seer.core.schema.models import Edge, EdgeType, ForEachNode, IfNode, Node, W
 
 
 @dataclass(frozen=True)
-class ExecutionPlan:
+class ExecutionPlan:  # pylint: disable=too-many-instance-attributes  # Reason: execution plan carries multiple indexed views.
     """
     Execution plan with explicit graph structure.
 
@@ -104,7 +104,7 @@ def _find_loop_body_nodes(
     return body_nodes, terminal_nodes
 
 
-def build_execution_plan(spec: WorkflowSpec) -> ExecutionPlan:
+def build_execution_plan(spec: WorkflowSpec) -> ExecutionPlan:  # pylint: disable=too-complex  # Reason: control-flow lowering requires multiple phases.
     """
     Build an execution plan from the workflow spec.
 

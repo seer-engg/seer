@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code  # Reason: Gmail draft and send tools intentionally share schemas and MIME-building logic
 """
 Gmail draft operations - creating, listing, sending drafts.
 """

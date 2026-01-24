@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 """Ensure Stripe products and prices exist for all subscription tiers."""
 
+import stripe
+
 from seer.api.subscriptions.pricing_catalog import create_prices_in_stripe
 from seer.config import config
 
@@ -12,7 +14,7 @@ def main() -> int:
 
     try:
         price_ids = create_prices_in_stripe()
-    except Exception as exc:  # noqa: BLE001
+    except (ValueError, stripe.error.StripeError) as exc:
         print(f"Failed to ensure Stripe catalog: {exc}")  # noqa: T201
         return 1
 

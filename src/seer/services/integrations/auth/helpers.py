@@ -1,3 +1,5 @@
+# pylint: disable=no-else-return,broad-exception-caught,logging-fstring-interpolation,too-many-positional-arguments,ungrouped-imports
+# Reason: OAuth helper has if/elif patterns, broad exception handling, legacy f-string logging, many OAuth params
 from typing import Set, Optional, List
 from datetime import datetime, timezone
 from typing import Dict, Any

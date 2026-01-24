@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -48,15 +47,8 @@ logger = get_logger("shared.database")
 
 async def init_db() -> None:
     """Initialize Tortoise ORM with the configured settings."""
-
-    # Initialize Tortoise for the application (Command closes connections on exit)
     await Tortoise.init(config=TORTOISE_ORM)
-
-    # Auto-apply migrations if enabled
-    if os.getenv("AUTO_APPLY_DATABASE_MIGRATIONS", "false").lower() == "true":
-        logger.info("AUTO_APPLY_DATABASE_MIGRATIONS=true, running migrations...")
-        await Tortoise.generate_schemas(safe=True)
-        logger.info("Migrations applied successfully")
+    logger.info("Database connection initialized")
 
 
 async def close_db() -> None:

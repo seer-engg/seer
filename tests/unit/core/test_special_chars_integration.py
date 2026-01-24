@@ -1,3 +1,5 @@
+# pylint: disable=too-many-lines,duplicate-code
+# Reason: Comprehensive integration tests for special character handling; test helper code shared with test_multiple_triggers
 """
 Integration tests for workflow compilation with special characters in node IDs and trigger IDs.
 

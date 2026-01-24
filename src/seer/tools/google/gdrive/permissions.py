@@ -7,7 +7,10 @@ from typing import Any, Dict, Optional
 from fastapi import HTTPException
 
 from seer.logger import get_logger
-from seer.tools.google.base import GoogleAPIClient
+from seer.tools.google.gdrive.base import (
+    GoogleDriveFileScopeTool,
+    GoogleDriveMetadataScopeTool,
+)
 from seer.tools.google.gdrive.helpers import (
     _drive_permission_schema,
     _drive_about_schema,
@@ -16,13 +19,11 @@ from seer.tools.google.gdrive.helpers import (
 logger = get_logger("shared.tools.gdrive.permissions")
 
 
-class GoogleDriveCreatePermissionTool(GoogleAPIClient):
+class GoogleDriveCreatePermissionTool(GoogleDriveFileScopeTool):
     """Share a Google Drive file by creating a permission."""
 
     name = "google_drive_create_permission"
     description = "Share a Google Drive file by creating a permission (grant access to user/group/domain)."
-    required_scopes = ["https://www.googleapis.com/auth/drive.file"]
-    integration_type = "google_drive"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -96,13 +97,11 @@ class GoogleDriveCreatePermissionTool(GoogleAPIClient):
         return resp.json()
 
 
-class GoogleDriveAboutGetTool(GoogleAPIClient):
+class GoogleDriveAboutGetTool(GoogleDriveMetadataScopeTool):
     """Get Google Drive account information and storage quota."""
 
     name = "google_drive_about_get"
     description = "Get information about the user's Google Drive account (storage quota, capabilities)."
-    required_scopes = ["https://www.googleapis.com/auth/drive.metadata.readonly"]
-    integration_type = "google_drive"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {

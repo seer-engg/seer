@@ -25,6 +25,8 @@ if TYPE_CHECKING:
 
 
 class _ResourceUpserter(Protocol):
+    # pylint: disable=too-many-arguments
+    # Reason: Resource upsert requires all metadata fields to persist integration resources
     def __call__(
         self,
         *,
@@ -41,6 +43,8 @@ class _ResourceUpserter(Protocol):
 
 
 class _SecretUpserter(Protocol):
+    # pylint: disable=too-many-arguments
+    # Reason: Secret upsert requires full context for encryption, linking, and metadata
     def __call__(
         self,
         *,
@@ -129,6 +133,7 @@ class IntegrationProvider:
         scope: str,
     ) -> Dict[str, Any]:
         """Customize authorize_redirect kwargs."""
+        _ = context  # Context available for overrides; unused in base implementation
         return {"state": state, "scope": scope}
 
     def resolve_granted_scopes(
@@ -148,6 +153,8 @@ class IntegrationProvider:
         state_data: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Return profile details for the connected account."""
+        _ = client  # client/state_data reserved for provider-specific overrides
+        _ = state_data
         return token.get("userinfo") or {}
 
 

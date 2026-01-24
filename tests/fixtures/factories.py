@@ -1,3 +1,5 @@
+# pylint: disable=too-many-positional-arguments,no-member
+# Reason: Factory functions require many parameters; enum members checked at runtime
 """
 Model factories for creating test data.
 

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from seer.database import Workflow, parse_workflow_public_id
 from seer.logger import get_logger
 
-from .checkpointer import get_checkpointer
+from seer.api.agents.checkpointer import get_checkpointer
 
 logger = get_logger("api.agents.traces")
 
@@ -213,15 +213,15 @@ async def _get_workflow_name(workflow_id: Optional[str]) -> Optional[str]:
     try:
         pk = parse_workflow_public_id(workflow_id)
     except ValueError as exc:
-        logger.debug(f"Invalid workflow public id '{workflow_id}': {exc}")
+        logger.debug("Invalid workflow public id '%s': %s", workflow_id, exc)
         return None
 
     try:
         workflow = await Workflow.get_or_none(id=pk)
         if workflow:
             return workflow.name
-    except Exception as exc:
-        logger.debug(f"Could not lookup workflow name for {workflow_id}: {exc}")
+    except Exception as exc:  # pylint: disable=broad-exception-caught  # DB failures should not break trace listing
+        logger.debug("Could not lookup workflow name for %s: %s", workflow_id, exc)
 
     return None
 
@@ -278,7 +278,7 @@ def _parse_checkpoint_timestamp(ts_str: str) -> datetime:
     """Parse checkpoint timestamp."""
     try:
         return datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
-    except Exception:
+    except (TypeError, ValueError):
         return datetime.utcnow()
 
 
@@ -319,7 +319,7 @@ async def _build_trace_summary(thread_id: str, data: Dict[str, Any]) -> AgentTra
 
 
 async def list_agent_traces(
-    request: Request,
+    request: Request,  # pylint: disable=unused-argument  # FastAPI injects Request; kept for parity with other routes
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> AgentTraceListResponse:
@@ -370,9 +370,9 @@ async def list_agent_traces(
 
         return AgentTraceListResponse(traces=paginated_traces, total=total)
 
-    except Exception as e:
-        logger.error(f"Error listing agent traces: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to list traces: {str(e)}") from e
+    except Exception as exc:  # pylint: disable=broad-exception-caught  # Defensive: checkpoint stores may raise unexpected errors
+        logger.error("Error listing agent traces: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list traces: {exc}") from exc
 
 
 @router.get("/{thread_id}", response_model=AgentTraceDetail)
@@ -384,7 +384,7 @@ async def _find_earliest_timestamp(checkpointer, config: dict, default: datetime
         try:
             cp_ts = datetime.fromisoformat(cp_ts_str.replace('Z', '+00:00'))
             earliest_ts = min(earliest_ts, cp_ts)
-        except Exception:
+        except (TypeError, ValueError):
             pass
     return earliest_ts
 
@@ -399,7 +399,7 @@ def _convert_messages(messages_raw: Any, ts_str: str) -> List[AgentMessage]:
 
 
 async def get_agent_trace(
-    request: Request,
+    request: Request,  # pylint: disable=unused-argument  # FastAPI injects Request; kept for parity with other routes
     thread_id: str,
 ) -> AgentTraceDetail:
     """
@@ -443,6 +443,6 @@ async def get_agent_trace(
 
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error getting agent trace: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to get trace: {str(e)}") from e
+    except Exception as exc:  # pylint: disable=broad-exception-caught  # Defensive: checkpoint stores may raise unexpected errors
+        logger.error("Error getting agent trace: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get trace: {exc}") from exc

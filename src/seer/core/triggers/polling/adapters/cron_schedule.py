@@ -76,6 +76,8 @@ class CronScheduleAdapter(PollAdapter):
             "timezone": tz_name,
         }
 
+    # pylint: disable=too-complex,too-many-locals,broad-exception-caught
+    # Reason: Cron scheduling requires timezone handling, interval calculation, and cursor management; broad except for polling errors
     async def poll(self, ctx: PollContext, cursor: Dict[str, Any]) -> PollResult:
         """
         Check if it's time to fire based on the cron schedule.
@@ -136,11 +138,8 @@ class CronScheduleAdapter(PollAdapter):
             # Not yet time - return empty result but hint when to wake up
             seconds_until_next = max(1, int((next_exec_utc - now_utc).total_seconds()))
             logger.info(
-                f"""Cron schedule not yet due:
-                    subscription_id: {ctx.subscription.id},
-                    next_execution: {next_exec_utc.isoformat()},
-                    seconds_until_next: {seconds_until_next},
-                """,
+                "Cron schedule not yet due: subscription_id=%s, next_execution=%s, seconds_until_next=%s",
+                ctx.subscription.id, next_exec_utc.isoformat(), seconds_until_next,
             )
             return PollResult(
                 events=[],
@@ -155,7 +154,7 @@ class CronScheduleAdapter(PollAdapter):
 
         # Time to fire!
         logger.info(
-            f"Cron schedule triggered: {cron_expr}",
+            "Cron schedule triggered: %s", cron_expr,
             extra={
                 "subscription_id": ctx.subscription.id,
                 "scheduled_time": next_exec_utc.isoformat(),

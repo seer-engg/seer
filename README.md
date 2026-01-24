@@ -18,7 +18,12 @@ cd seer
 docker compose up
 ```
 
-2) Access the app:
+2) Run database migrations:
+```bash
+docker compose exec api uv run aerich upgrade
+```
+
+3) Access the app:
 - Frontend: http://localhost:5173/workflows?backend=http://localhost:8000
 - Backend API: http://localhost:8000
 
@@ -65,6 +70,30 @@ Helpful commands:
 - Run API locally: `uv run uvicorn seer.api.main:app --reload --port 8000`
 - Run worker locally: `uv run taskiq worker seer.worker.broker:broker`
 - Tests: `uv run pytest`
+
+## Self-Hosted Setup: Migrations
+
+> Migrations do NOT run automatically. Run them manually when pulling new code.
+
+### Running Migrations (Docker)
+
+After pulling latest changes:
+
+```bash
+docker compose exec api uv run aerich upgrade
+```
+
+### Cloud Deployments (Railway)
+
+Migrations run automatically before deployment via Railway's `preDeployCommand`.
+No manual action needed for production.
+
+### Non-Docker Development
+
+If not using Docker, run migrations directly:
+```bash
+uv run aerich upgrade
+```
 
 ### Key Features
 

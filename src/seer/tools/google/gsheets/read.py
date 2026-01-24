@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code  # Reason: Read/write tools share picker and schema definitions with minor differences
 """
 Google Sheets read operations - reading data from spreadsheets.
 """

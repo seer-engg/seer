@@ -4,8 +4,8 @@ import httpx
 from fastapi import HTTPException
 
 from seer.logger import get_logger
-from seer.tools.base import BaseTool, ResourcePickerConfig
 from seer.tools.supabase.common import (
+    SupabaseProjectTool,
     _require_project_and_key,
     _resolve_functions_url,
     _service_headers,
@@ -19,14 +19,9 @@ logger = get_logger("shared.tools.supabase.edge_functions")
 # -----------------------------
 
 
-class SupabaseFunctionInvokeTool(BaseTool):
+class SupabaseFunctionInvokeTool(SupabaseProjectTool):
     name = "supabase_function_invoke"
     description = "Invoke a Supabase Edge Function (POST)."
-    integration_type = "supabase"
-    provider = "supabase"
-    required_scopes: list[str] = []
-    required_secrets = ["supabase_service_role_key"]
-    default_resource = {"provider": "supabase", "resource_type": "project", "required": True}
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -38,17 +33,6 @@ class SupabaseFunctionInvokeTool(BaseTool):
                 "headers": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Optional extra headers."},
             },
             "required": ["integration_resource_id", "function"],
-        }
-
-    def get_resource_pickers(self) -> Dict[str, "ResourcePickerConfig"]:
-        return {
-            "integration_resource_id": {
-                "resource_type": "supabase_project",
-                "display_field": "name",
-                "value_field": "id",
-                "search_enabled": True,
-                "endpoint": "/integrations/supabase/resources/bindings",
-            }
         }
 
     def get_output_schema(self) -> Dict[str, Any]:
@@ -83,4 +67,4 @@ class SupabaseFunctionInvokeTool(BaseTool):
             raise
         except Exception as exc:
             logger.exception("Supabase function invoke error", extra={"function": fn})
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}") from exc

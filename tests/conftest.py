@@ -1,3 +1,5 @@
+# pylint: disable=import-outside-toplevel,redefined-outer-name,reimported
+# Reason: Test fixtures commonly use lazy imports and pytest fixture pattern requires name reuse
 """
 Global test fixtures for Seer test suite.
 
@@ -116,7 +118,7 @@ async def test_user_with_subscription(test_user):
     # Create billing profile
     profile = await BillingProfile.create(
         user=test_user,
-        profile_type=BillingProfileType.STRIPE,
+        profile_type=BillingProfileType.INDIVIDUAL,
         stripe_customer_id="cus_test_123",
     )
 
@@ -283,24 +285,24 @@ def complex_workflow_spec() -> dict:
         ],
         "edges": [
             {
-                
+
                 "source": "trigger_1",
                 "target": "task_1",
                 "type": "trigger",
             },
             {
-                
+
                 "source": "task_1",
                 "target": "condition_1",
             },
             {
-                
+
                 "source": "condition_1",
                 "target": "task_2",
                 "type": "conditional_true",
             },
             {
-                
+
                 "source": "condition_1",
                 "target": "task_3",
                 "type": "conditional_false",

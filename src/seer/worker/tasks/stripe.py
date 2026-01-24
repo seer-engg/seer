@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from seer.worker.broker import broker
+from seer.worker.broker_instance import broker
 from seer.database.subscription_models import (
     StripeWebhookEvent,
     StripeWebhookEventStatus,

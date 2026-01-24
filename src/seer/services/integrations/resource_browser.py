@@ -3,6 +3,7 @@ Resource Browser facade that delegates to provider-specific implementations.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -14,6 +15,16 @@ from seer.services.integrations.resource_providers import (
 from seer.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class ResourceListOptions:
+    query: Optional[str] = None
+    parent_id: Optional[str] = None
+    page_token: Optional[str] = None
+    page_size: int = 50
+    filter_params: Optional[Dict[str, Any]] = None
+    depends_on_values: Optional[Dict[str, str]] = None
 
 
 class ResourceBrowser:
@@ -38,34 +49,30 @@ class ResourceBrowser:
     async def list_resources(
         self,
         resource_type: str,
-        query: Optional[str] = None,
-        parent_id: Optional[str] = None,
-        page_token: Optional[str] = None,
-        page_size: int = 50,
-        filter_params: Optional[Dict[str, Any]] = None,
-        depends_on_values: Optional[Dict[str, str]] = None,
+        options: Optional[ResourceListOptions] = None,
     ) -> Dict[str, Any]:
         configs = get_all_resource_configs()
         if resource_type not in configs:
             raise ValueError(f"Unknown resource type: {resource_type}")
 
         provider_impl = self._get_provider()
-        logger.info(f"Listing resources for provider: {provider_impl.provider}")
+        logger.info("Listing resources for provider: %s", provider_impl.provider)
         if not provider_impl.supports_resource_type(resource_type):
             raise HTTPException(
                 status_code=400,
                 detail=f"Resource type '{resource_type}' not supported by provider '{self.provider}'",
             )
 
+        resolved_options = options or ResourceListOptions()
         return await provider_impl.list_resources(
             access_token=self.access_token,
             resource_type=resource_type,
-            query=query,
-            parent_id=parent_id,
-            page_token=page_token,
-            page_size=page_size,
-            filter_params=filter_params,
-            depends_on_values=depends_on_values,
+            query=resolved_options.query,
+            parent_id=resolved_options.parent_id,
+            page_token=resolved_options.page_token,
+            page_size=resolved_options.page_size,
+            filter_params=resolved_options.filter_params,
+            depends_on_values=resolved_options.depends_on_values,
         )
 
     @classmethod

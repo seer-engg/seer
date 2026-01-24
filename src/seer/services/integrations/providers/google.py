@@ -71,7 +71,7 @@ class GoogleProvider(IntegrationProvider):
             userinfo = await client.userinfo(token=token)
             logger.info("Fetched Google userinfo via client.userinfo")
             return userinfo
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught  # Reason: adapter boundary converting Google API errors to error responses
             logger.warning("client.userinfo failed: %s; falling back to manual request", exc)
 
         access_token = token.get("access_token")

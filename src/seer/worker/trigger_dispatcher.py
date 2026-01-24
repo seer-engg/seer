@@ -4,14 +4,15 @@ from fastapi import HTTPException
 from starlette import status
 from seer.database import TriggerSubscription, TriggerEvent, TriggerEventStatus
 from seer.logger import get_logger
-logger = get_logger(__name__)
 
 from seer.worker.tasks.triggers import trigger_event_task
+
+logger = get_logger(__name__)
 
 async def dispatch_trigger_event(
     subscription: TriggerSubscription,
     event: TriggerEvent,
-    envelope: Dict[str, Any],
+    envelope: Dict[str, Any],  # pylint: disable=unused-argument  # Reserved for future envelope metadata
 ) -> None:
     # Defensive check: verify workflow and user exist before dispatching
     await subscription.fetch_related("workflow", "user")

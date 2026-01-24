@@ -95,7 +95,7 @@ src_folder = "./src" # Changed from "./." to "./src"
 
 [tool.pylint.main]
 # Files or directories to be skipped
-ignore = ["alembic/versions", ".venv", "venv", "build", "dist"]
+ignore = ["alembic/versions", ".venv", "venv", "build", "dist", "tests"]
 # Use multiple processes to speed up Pylint
 jobs = 0
 # Load extensions
@@ -118,6 +118,16 @@ max-branches = 15
 max-locals = 20
 # Maximum number of statements in function/method body
 max-statements = 60
+
+[tool.pylint.SIMILARITIES]
+# Minimum lines number of a similarity.
+min-similarity-lines = 10
+
+# Ignore imports when computing similarities.
+ignore-imports = true
+
+# Ignore comments when computing similarities.
+ignore-comments = true
 
 [tool.pylint.messages_control]
 # Only run error/fatal checks

@@ -113,7 +113,7 @@ async def get_total_chat_message_count(user: User) -> int:
 
 
 # Deprecated: Use get_total_chat_message_count instead
-async def get_chat_message_count(user: User, workflow_id: str) -> int:
+async def get_chat_message_count(user: User) -> int:
     """
     DEPRECATED: Use get_total_chat_message_count() instead.
 
@@ -124,7 +124,7 @@ async def get_chat_message_count(user: User, workflow_id: str) -> int:
     return await get_total_chat_message_count(user)
 
 
-async def track_llm_usage(
+async def track_llm_usage(  # pylint: disable=too-many-arguments,too-many-positional-arguments  # Reason: essential parameters for LLM tracking
     user: User,
     provider: str,
     model: str,

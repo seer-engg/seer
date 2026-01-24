@@ -147,11 +147,17 @@ At least one LLM API key is required.
 
 ## Advanced Configuration
 
-### Database Management
+### Database Migrations
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `AUTO_APPLY_DATABASE_MIGRATIONS` | Run Aerich migrations on startup | `true` in Railway |
+Migrations are managed via the following methods:
+
+| Environment | How Migrations Run |
+|-------------|-------------------|
+| **Local Dev (Docker)** | Manual: `docker compose exec api uv run aerich upgrade` |
+| **Self-Hosted** | Manual: `uv run aerich upgrade` before deployment |
+| **Railway** | Automatic: `preDeployCommand` in `railway.json` |
+
+See [Safe Migrations Guide](/guides/safe-migrations) for best practices.
 
 ### Worker Configuration
 

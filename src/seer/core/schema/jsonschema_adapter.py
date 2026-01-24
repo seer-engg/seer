@@ -15,6 +15,7 @@ def get_validator(schema: JsonSchema, *, schema_id: str | None = None) -> Valida
     """
     Compile a jsonschema validator for the provided schema.
     """
+    _ = schema_id  # schema_id reserved for future resolver selection
     validator_cls = validator_for(schema, default=Draft202012Validator)
     return validator_cls(schema)
 
@@ -24,7 +25,8 @@ def validate_instance(schema: JsonSchema, instance: Any, *, schema_id: str | Non
     Validate an instance against the provided schema.
     """
 
-    validator = get_validator(schema, schema_id=schema_id)
+    _ = schema_id  # schema_id reserved for future resolver selection
+    validator = get_validator(schema)
     validator.validate(instance)
 
 

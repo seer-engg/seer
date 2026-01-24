@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code  # Reason: Shares SettingsConfigDict configuration with seer.config to keep env parsing consistent
 """
 Numerical constants for usage limits across subscription tiers.
 
@@ -8,8 +9,6 @@ Convention:
   - -1 means unlimited
   - 0 means disabled/not allowed
 """
-from typing import Optional
-
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 

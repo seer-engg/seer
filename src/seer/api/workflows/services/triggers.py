@@ -1,4 +1,5 @@
 """Trigger subscription management and event binding validation."""
+# pylint: disable=too-many-lines  # Reason: Comprehensive trigger management requires extensive validation logic
 
 from __future__ import annotations
 
@@ -33,8 +34,9 @@ from seer.observability import (
     get_limits_for_user,
     resolve_user_tier,
 )
-from seer.core.registry.trigger_registry import trigger_registry
+from seer.core.registry.trigger_registry import POLLING_TRIGGERS, trigger_registry
 from seer.core.schema.models import (
+    JsonSchema,
     WorkflowSpec,
 )
 
@@ -368,7 +370,7 @@ async def delete_trigger_subscription(user: User, subscription_id: int) -> None:
     if subscription.trigger_key == "webhook.supabase.db_changes":
         try:
             await delete_database_webhook(subscription)
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught  # Reason: Webhook cleanup is best-effort, shouldn't block deletion
             # Log but don't block deletion - trigger cleanup is best-effort
             logger.warning(
                 "Failed to delete Supabase webhook (non-fatal) %s", str(exc),
@@ -505,31 +507,6 @@ def _json_schema_to_form_fields(event_schema: JsonSchema) -> List[Dict[str, Any]
     return form_fields
 
 
-def _validate_form_suffix(suffix: str) -> None:
-    """Validate form suffix format."""
-    if not suffix:
-        return
-
-    # Check format: lowercase alphanumeric and hyphens only
-    if not re.match(r'^[a-z0-9-]+$', suffix):
-        _raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Invalid form suffix",
-            detail="Form suffix must contain only lowercase letters, numbers, and hyphens.",
-            status=400,
-        )
-
-    # Check for reserved words
-    reserved = ['workflows', 'settings', 'sign-in', 'sign-up', 'api', 'admin', 'forms']
-    if suffix in reserved:
-        _raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Invalid form suffix",
-            detail=f"Form suffix '{suffix}' is reserved and cannot be used.",
-            status=400,
-        )
-
-
 async def _validate_form_suffix_uniqueness(
     user: User,
     form_suffix: Optional[str],
@@ -561,8 +538,7 @@ async def _validate_form_suffix_uniqueness(
         )
 
 
-from seer.core.registry.trigger_registry import POLLING_TRIGGERS
-async def sync_trigger_subscriptions(
+async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-locals,too-many-branches  # Reason: Comprehensive trigger sync requires extensive state reconciliation
     user: User,
     workflow: Workflow,
     spec: WorkflowSpec,

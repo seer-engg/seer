@@ -15,10 +15,10 @@ from seer.core.triggers.polling.adapters.base import (
     register_adapter,
 )
 from seer.logger import get_logger
+from seer.tools.google.gmail.helpers import GMAIL_API_BASE, build_gmail_list_params
 
 logger = get_logger(__name__)
 
-GMAIL_API_BASE = "https://www.googleapis.com/gmail/v1/users/me"
 DEFAULT_OVERLAP_MS = 5 * 60 * 1000  # 5 minutes
 MAX_MESSAGES_PER_POLL = 25
 
@@ -47,9 +47,14 @@ class GmailEmailReceivedAdapter(PollAdapter):
 
     async def bootstrap_cursor(self, ctx: PollContext) -> Dict[str, Any]:
         now_ms = _utc_ms(datetime.now(timezone.utc))
-        overlap_ms = ctx.subscription.provider_config.get("overlap_ms", DEFAULT_OVERLAP_MS) if ctx.subscription.provider_config else DEFAULT_OVERLAP_MS
+        overlap_ms = (
+            ctx.subscription.provider_config.get("overlap_ms", DEFAULT_OVERLAP_MS)
+            if ctx.subscription.provider_config else DEFAULT_OVERLAP_MS
+        )
         return {"watermark_ms": now_ms, "overlap_ms": overlap_ms}
 
+    # pylint: disable=too-many-locals
+    # Reason: Gmail polling requires many variables for message parsing and cursor management
     async def poll(self, ctx: PollContext, cursor: Dict[str, Any]) -> PollResult:
         label_ids = self._resolve_label_ids(ctx)
         max_results = self._resolve_max_results(ctx)
@@ -63,11 +68,7 @@ class GmailEmailReceivedAdapter(PollAdapter):
         query = " ".join(query_parts).strip()
 
         headers = {"Authorization": f"Bearer {ctx.access_token}", "Accept": "application/json"}
-        params: Dict[str, Any] = {"maxResults": max_results}
-        if label_ids:
-            params["labelIds"] = ",".join(label_ids)
-        if query:
-            params["q"] = query
+        params = build_gmail_list_params(max_results, label_ids, query)
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -111,7 +112,7 @@ class GmailEmailReceivedAdapter(PollAdapter):
             raise
         except Exception as exc:
             logger.exception("Unexpected Gmail polling failure")
-            raise PollAdapterError("Unexpected Gmail polling failure", detail={"error": str(exc)})
+            raise PollAdapterError("Unexpected Gmail polling failure", detail={"error": str(exc)}) from exc
 
     def _normalize_message(self, msg_data: Dict[str, Any]) -> Dict[str, Any]:
         payload = msg_data.get("payload") or {}
