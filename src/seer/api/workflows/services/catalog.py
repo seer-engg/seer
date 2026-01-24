@@ -1,3 +1,5 @@
+# pylint: disable=import-outside-toplevel,broad-exception-caught
+# Reason: Catalog service uses lazy imports for LLM generation; broad exception handling for catalog operations
 """Registry and catalog endpoints for node types, tools, models, and schemas."""
 
 from __future__ import annotations

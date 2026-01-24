@@ -222,7 +222,7 @@ class GoogleDriveUploadFileTool(GoogleAPIClient):
         try:
             content_bytes = base64.b64decode(content_b64)
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid base64 content: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Invalid base64 content: {str(e)}") from e
 
         mime_type = arguments.get("mime_type", "application/octet-stream")
         metadata = {"name": name, "mimeType": mime_type}
@@ -314,7 +314,7 @@ class GoogleDriveUpdateFileTool(GoogleAPIClient):
         try:
             content_bytes = base64.b64decode(content_b64)
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid base64: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Invalid base64: {str(e)}") from e
 
         mime_type = arguments.get("mime_type", "application/octet-stream")
         multipart = _encode_multipart_related(metadata, content_bytes, mime_type)

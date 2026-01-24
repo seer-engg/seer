@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException, Request, status
-from tortoise.exceptions import DoesNotExist
+# DoesNotExist was removed but may be needed for future error handling
+# from tortoise.exceptions import DoesNotExist
 
 from seer.api.forms.validation import validate_form_data
 from seer.api.webhooks.services import handle_generic_webhook
@@ -128,4 +129,4 @@ async def submit_form(suffix: str, request: Request) -> Dict[str, Any]:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to submit form",
-        )
+        ) from exc

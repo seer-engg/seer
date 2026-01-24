@@ -1,3 +1,5 @@
+# pylint: disable=broad-exception-caught,import-outside-toplevel,consider-using-f-string
+# Reason: History service needs broad exception handling for checkpoint operations; lazy imports; legacy % formatting
 """Workflow run history, checkpoints, and result retrieval."""
 
 from __future__ import annotations
@@ -20,8 +22,6 @@ from seer.database import (
 )
 from seer.logger import get_logger
 from seer.core.schema.models import (
-    ForEachNode,
-    IfNode,
     LLMNode,
     Node,
     ToolNode,
