@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code  # Reason: Shared workflow version mutation snippets are reused in services.shared
 """Workflow CRUD operations and version management."""
 
 from __future__ import annotations

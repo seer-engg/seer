@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code  # Reason: Shares SettingsConfigDict configuration with seer.config to keep env parsing consistent
 """
 Numerical constants for usage limits across subscription tiers.
 

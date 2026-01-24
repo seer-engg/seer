@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code  # Reason: Shared singleton initialization logic is mirrored in tool_hub.index_manager
 """Shared LocalToolHub singleton instance."""
 from typing import Optional
 

@@ -1,5 +1,5 @@
-# pylint: disable=broad-exception-caught,import-outside-toplevel
-# Reason: Stripe operations require broad error handling; webhook controller imported lazily
+# pylint: disable=broad-exception-caught,import-outside-toplevel,cyclic-import
+# Reason: Stripe operations require broad error handling; webhook controller imported lazily to avoid cycles during app init
 """
 Stripe service layer for subscription management.
 

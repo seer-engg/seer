@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code  # Reason: HTTP client helper mirrors google.base for consistent request handling
 from typing import Any, Dict, Optional
 
 import httpx

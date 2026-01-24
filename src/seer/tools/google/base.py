@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code  # Reason: HTTP client helper mirrors supabase.common for consistent request handling
 """
 Base class for Google API tools.
 

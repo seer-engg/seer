@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code  # Reason: Shared singleton initialization logic is mirrored in tool_hub.singleton
 """
 Tool index management utilities.
 
