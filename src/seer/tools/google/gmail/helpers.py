@@ -26,6 +26,16 @@ logger = get_logger("shared.tools.gmail.helpers")
 GMAIL_API_BASE = "https://www.googleapis.com/gmail/v1/users/me"
 
 
+def build_gmail_list_params(max_results: int, label_ids: Optional[List[str]], query: Optional[str]) -> Dict[str, Any]:
+    """Build Gmail list query params consistently across tools and adapters."""
+    params: Dict[str, Any] = {"maxResults": max_results}
+    if label_ids:
+        params["labelIds"] = ",".join(label_ids)
+    if query:
+        params["q"] = query
+    return params
+
+
 # -----------------------------
 # Type Coercion (Legacy - TODO: Replace with Pydantic)
 # -----------------------------
