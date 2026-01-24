@@ -282,11 +282,7 @@ class GmailListThreadsTool(GoogleAPIClient):
         label_ids = arguments.get("label_ids")
         query = arguments.get("q")
 
-        params: Dict[str, Any] = {"maxResults": max_results}
-        if label_ids:
-            params["labelIds"] = ",".join(label_ids)
-        if query:
-            params["q"] = query
+        params = build_gmail_list_params(max_results, label_ids, query)
 
         resp = await self._make_request(
             "GET",

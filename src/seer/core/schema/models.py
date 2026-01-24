@@ -211,13 +211,17 @@ class TriggerMetadata(StrictModel):
     requires_connection: bool = True
 
 
-class TriggerDefinition(StrictModel):
-    """Complete trigger definition with identity, schemas, and metadata."""
+class TriggerIdentity(StrictModel):
+    """Shared trigger identity fields used across API and compiler models."""
     key: str
     title: str
     provider: str
     mode: str
     description: Optional[str] = None
+
+
+class TriggerDefinition(TriggerIdentity):
+    """Complete trigger definition with identity, schemas, and metadata."""
     schemas: TriggerSchemas = Field(default_factory=TriggerSchemas)
     meta: TriggerMetadata = Field(default_factory=TriggerMetadata)
 

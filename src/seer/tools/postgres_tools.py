@@ -14,14 +14,14 @@ from langgraph.types import interrupt
 
 from seer.config import config
 from seer.logger import get_logger
-from seer.tools.postgres_client import _get_asyncpg
+from seer.tools.postgres_common import get_asyncpg
 
 logger = get_logger("shared.tools.postgres_tools")
 
 
 def _get_database_error_message(exc: Exception, context: str) -> Optional[str]:
     try:
-        asyncpg = _get_asyncpg()
+        asyncpg = get_asyncpg()
     except Exception as import_error:  # pylint: disable=broad-exception-caught  # optional dependency detection
         logger.debug("Failed to load asyncpg for error classification: %s", import_error)
         return None
