@@ -1,3 +1,5 @@
+# pylint: disable=broad-exception-caught,import-outside-toplevel
+# Reason: Stripe operations require broad error handling; webhook controller imported lazily
 """
 Stripe service layer for subscription management.
 
@@ -20,7 +22,6 @@ from seer.database.subscription_models import (
     SubscriptionTier,
 )
 from seer.logger import get_logger
-from seer.api.subscriptions.clerk_sync import sync_stripe_customer_to_clerk
 from seer.api.subscriptions.pricing_catalog import get_pricing_catalog
 
 logger = get_logger("api.subscriptions.stripe_service")

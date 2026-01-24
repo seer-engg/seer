@@ -72,7 +72,7 @@ class SupabaseAuthAdminListUsersTool(BaseTool):
             raise
         except Exception as exc:
             logger.exception("Supabase auth admin list users error")
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}") from exc
 
 
 class SupabaseAuthAdminCreateUserTool(BaseTool):
@@ -142,7 +142,7 @@ class SupabaseAuthAdminCreateUserTool(BaseTool):
             raise
         except Exception as exc:
             logger.exception("Supabase auth admin create user error", extra={"email": arguments.get("email")})
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}") from exc
 
 
 class SupabaseAuthAdminDeleteUserTool(BaseTool):
@@ -201,4 +201,4 @@ class SupabaseAuthAdminDeleteUserTool(BaseTool):
             raise
         except Exception as exc:
             logger.exception("Supabase auth admin delete user error", extra={"user_id": user_id})
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}") from exc

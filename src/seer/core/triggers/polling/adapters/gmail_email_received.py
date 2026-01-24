@@ -47,9 +47,14 @@ class GmailEmailReceivedAdapter(PollAdapter):
 
     async def bootstrap_cursor(self, ctx: PollContext) -> Dict[str, Any]:
         now_ms = _utc_ms(datetime.now(timezone.utc))
-        overlap_ms = ctx.subscription.provider_config.get("overlap_ms", DEFAULT_OVERLAP_MS) if ctx.subscription.provider_config else DEFAULT_OVERLAP_MS
+        overlap_ms = (
+            ctx.subscription.provider_config.get("overlap_ms", DEFAULT_OVERLAP_MS)
+            if ctx.subscription.provider_config else DEFAULT_OVERLAP_MS
+        )
         return {"watermark_ms": now_ms, "overlap_ms": overlap_ms}
 
+    # pylint: disable=too-many-locals
+    # Reason: Gmail polling requires many variables for message parsing and cursor management
     async def poll(self, ctx: PollContext, cursor: Dict[str, Any]) -> PollResult:
         label_ids = self._resolve_label_ids(ctx)
         max_results = self._resolve_max_results(ctx)
@@ -111,7 +116,7 @@ class GmailEmailReceivedAdapter(PollAdapter):
             raise
         except Exception as exc:
             logger.exception("Unexpected Gmail polling failure")
-            raise PollAdapterError("Unexpected Gmail polling failure", detail={"error": str(exc)})
+            raise PollAdapterError("Unexpected Gmail polling failure", detail={"error": str(exc)}) from exc
 
     def _normalize_message(self, msg_data: Dict[str, Any]) -> Dict[str, Any]:
         payload = msg_data.get("payload") or {}

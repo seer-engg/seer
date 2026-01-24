@@ -167,6 +167,8 @@ def _add_regular_edges(
         graph.add_edge(node.id, edge.target)
 
 
+# pylint: disable=too-complex,too-many-branches,unused-argument,protected-access
+# Reason: Workflow compilation to LangGraph requires branching logic for all node types; protected access for internal state
 async def emit_langgraph(
     plan: ExecutionPlan,
     runtime: NodeRuntime,

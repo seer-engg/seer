@@ -1,3 +1,5 @@
+# pylint: disable=too-many-lines,unused-argument,import-outside-toplevel,broad-exception-caught,too-many-return-statements,no-else-return
+# Reason: Node runtime contains executors for all workflow node types; splitting would reduce cohesion; context params required by interface
 """
 Runtime node executors – each workflow node type is compiled into a callable
 that LangGraph can schedule. Control flow nodes (if / for_each) execute their
@@ -11,7 +13,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Mapping, Sequence
+from typing import Any, Dict, Mapping, Sequence
 
 from langgraph._internal._runnable import RunnableCallable
 
@@ -152,7 +154,6 @@ class NodeRuntime:
             logger.warning("Cannot track LLM usage: no user context")
             return
 
-        from decimal import Decimal
         from seer.observability.credit_calculator import calculate_cost
         from seer.observability.tracking import track_llm_usage
 
@@ -219,7 +220,7 @@ class NodeRuntime:
             else:
                 loop.run_until_complete(do_track())
         except Exception as e:
-            logger.error(f"Failed to schedule LLM usage tracking: {e}")
+            logger.error("Failed to schedule LLM usage tracking: %s", e)
 
     # ------------------------------------------------------------------
     # Node handlers
@@ -333,7 +334,7 @@ class NodeRuntime:
         # Diagnostic logging: Verify trace key is in output
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
-                f"Tool node '{node.id}' output keys: {list(output.keys())}, trace_key present: {trace_key in output}",
+                "Tool node '%s' output keys: %s, trace_key present: %s", node.id, list(output.keys()), trace_key in output,
                 extra={"node_id": node.id, "output_keys": list(output.keys()), "trace_key": trace_key}
             )
 
@@ -378,12 +379,14 @@ class NodeRuntime:
         # Diagnostic logging: Verify trace key is in output
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
-                f"Tool node '{node.id}' (async) output keys: {list(output.keys())}, trace_key present: {trace_key in output}",
+                "Tool node '%s' (async) output keys: %s, trace_key present: %s", node.id, list(output.keys()), trace_key in output,
                 extra={"node_id": node.id, "output_keys": list(output.keys()), "trace_key": trace_key}
             )
 
         return output
 
+    # pylint: disable=too-complex,too-many-locals
+    # Reason: LLM node execution inherently complex with prompt construction, model invocation, and usage tracking
     def _run_llm(
         self,
         node: LLMNode,
@@ -488,7 +491,7 @@ class NodeRuntime:
         # Diagnostic logging: Verify trace key is in output
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
-                f"LLM node '{node.id}' output keys: {list(output.keys())}, trace_key present: {trace_key in output}",
+                "LLM node '%s' output keys: %s, trace_key present: %s", node.id, list(output.keys()), trace_key in output,
                 extra={"node_id": node.id, "output_keys": list(output.keys()), "trace_key": trace_key}
             )
 

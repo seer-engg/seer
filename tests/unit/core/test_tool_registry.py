@@ -1,10 +1,12 @@
+# pylint: disable=too-many-lines
+# Reason: Comprehensive test coverage for tool registry requires many test cases
 """
 Unit tests for tool registry and base tool functionality.
 
 Tests tool registration, retrieval, metadata generation, and resource pickers.
 Target coverage: 90%+
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import pytest
 
@@ -155,7 +157,7 @@ def test_get_tool_not_found():
 
 def test_list_tools_empty():
     """Test listing tools when registry is empty."""
-    assert list_tools() == []
+    assert not list_tools()
 
 
 def test_list_tools_returns_copies():
@@ -200,7 +202,7 @@ def test_get_metadata_full():
     assert metadata["required_scopes"] == ["scope1", "scope2"]
     assert metadata["integration_type"] == "test_integration"
     assert metadata["provider"] == "test_provider"
-    assert metadata["required_secrets"] == []
+    assert not metadata["required_secrets"]
     assert "parameters" in metadata
     assert "output_schema" in metadata
 
@@ -252,10 +254,10 @@ def test_get_metadata_minimal_tool():
 
     assert metadata["name"] == "minimal_tool"
     assert metadata["description"] == "A minimal tool"
-    assert metadata["required_scopes"] == []
+    assert not metadata["required_scopes"]
     assert metadata["integration_type"] is None
     assert metadata["provider"] is None
-    assert metadata["required_secrets"] == []
+    assert not metadata["required_secrets"]
 
 
 # =============================================================================
@@ -269,8 +271,8 @@ def test_default_parameters_schema():
     schema = tool.get_parameters_schema()
 
     assert schema["type"] == "object"
-    assert schema["properties"] == {}
-    assert schema["required"] == []
+    assert not schema["properties"]
+    assert not schema["required"]
 
 
 def test_default_output_schema():
@@ -279,8 +281,8 @@ def test_default_output_schema():
     schema = tool.get_output_schema()
 
     assert schema["type"] == "object"
-    assert schema["properties"] == {}
-    assert schema["required"] == []
+    assert not schema["properties"]
+    assert not schema["required"]
 
 
 def test_default_resource_pickers():
@@ -288,7 +290,7 @@ def test_default_resource_pickers():
     tool = MinimalTool()
     pickers = tool.get_resource_pickers()
 
-    assert pickers == {}
+    assert not pickers
 
 
 # =============================================================================
@@ -445,7 +447,7 @@ def test_tool_provider():
 def test_tool_default_required_secrets():
     """Test tool default required_secrets is empty list."""
     tool = MinimalTool()
-    assert tool.required_secrets == []
+    assert not tool.required_secrets
 
 
 def test_tool_default_resource_requirement():
@@ -554,9 +556,9 @@ def test_tool_name_uniqueness_enforcement():
 def test_tool_with_empty_scopes():
     """Test tool with empty required_scopes."""
     tool = MinimalTool()
-    assert tool.required_scopes == []
+    assert not tool.required_scopes
     metadata = tool.get_metadata()
-    assert metadata["required_scopes"] == []
+    assert not metadata["required_scopes"]
 
 
 def test_tool_metadata_required_secrets_as_list():

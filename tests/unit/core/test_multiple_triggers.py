@@ -1,3 +1,5 @@
+# pylint: disable=import-outside-toplevel,too-many-locals,unused-import
+# Reason: Test file with lazy imports and complex workflow setup
 """
 Tests for multiple triggers of the same type in a workflow.
 

@@ -145,7 +145,7 @@ class SupabaseTableQueryTool(BaseTool):
             raise
         except Exception as exc:
             logger.exception("Supabase query error", extra={"table": table})
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}") from exc
 
 
 # -----------------------------
@@ -225,7 +225,7 @@ class SupabaseTableInsertTool(BaseTool):
             raise
         except Exception as exc:
             logger.exception("Supabase insert error", extra={"table": table})
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}") from exc
 
 
 class SupabaseTableUpsertTool(BaseTool):
@@ -299,7 +299,7 @@ class SupabaseTableUpsertTool(BaseTool):
             raise
         except Exception as exc:
             logger.exception("Supabase upsert error", extra={"table": table})
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}") from exc
 
 
 class SupabaseTableUpdateTool(BaseTool):
@@ -375,7 +375,7 @@ class SupabaseTableUpdateTool(BaseTool):
             raise
         except Exception as exc:
             logger.exception("Supabase update error", extra={"table": table})
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}") from exc
 
 
 class SupabaseTableDeleteTool(BaseTool):
@@ -446,7 +446,7 @@ class SupabaseTableDeleteTool(BaseTool):
             raise
         except Exception as exc:
             logger.exception("Supabase delete error", extra={"table": table})
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}") from exc
 
 
 class SupabaseRpcCallTool(BaseTool):
@@ -506,4 +506,4 @@ class SupabaseRpcCallTool(BaseTool):
             raise
         except Exception as exc:
             logger.exception("Supabase rpc error", extra={"function": fn})
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}") from exc

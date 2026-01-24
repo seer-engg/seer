@@ -33,14 +33,14 @@ All notable changes to this project will be documented in this file.
 
 ### Feature
 - discord chat bot trigger
-- guardrails on costs / tokens 
+- guardrails on costs / tokens
     -  for agent
     -  llm nodes in workflows
 
 ### UX/UI
 - agent first interface
 - triggers
-    - clean & minimal trigger config panel   
+    - clean & minimal trigger config panel
     - easy code snippets for webhooks
 
 
@@ -49,8 +49,8 @@ All notable changes to this project will be documented in this file.
 ## [0.1.5] - 2026-01-20
 
 ### Added
-- workflow spec v2 schema : 
-    - root level trigger objects 
+- workflow spec v2 schema :
+    - root level trigger objects
     - edges instead of nested json
     - inline ui meta in nodes/triggers/edges
     - support "Diamond Pattern" (Split-Merge)

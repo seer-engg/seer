@@ -21,10 +21,15 @@ GITHUB_TOOL_SCOPES: Dict[str, list[str]] = {
 }
 
 
+# pylint: disable=broad-exception-caught
+# Reason: GitHub API errors should be caught and converted to HTTP exceptions
 class GitHubTool(BaseTool):
     """GitHub tool that calls GitHub API directly."""
 
-    def __init__(self, tool_name: str, description: str, parameters_schema: Optional[Dict[str, Any]] = None, integration_type: Optional[str] = "github"):
+    def __init__(
+        self, tool_name: str, description: str,
+        parameters_schema: Optional[Dict[str, Any]] = None, integration_type: Optional[str] = "github"
+    ):
         self.tool_name = tool_name
         self.name = f"github_{tool_name.replace(':', '_')}"
         self.description = description
@@ -71,7 +76,7 @@ class GitHubTool(BaseTool):
             raise HTTPException(
                 status_code=500,
                 detail=f"GitHub tool execution failed: {str(e)}"
-            )
+            ) from e
 
     async def _execute_via_github_api(self, access_token: str, arguments: Dict[str, Any]) -> Any:
         """

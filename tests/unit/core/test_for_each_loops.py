@@ -1,3 +1,5 @@
+# pylint: disable=too-many-lines,unused-argument
+# Reason: Comprehensive test coverage for for_each loops requires many test cases; mock functions have required signatures
 """
 Comprehensive tests for for_each loop functionality in the workflow compiler.
 
@@ -754,18 +756,18 @@ async def test_for_each_without_explicit_back_edge() -> None:
 @pytest.mark.asyncio
 async def test_for_each_loop_iteration_traces() -> None:
     """Test that for_each loop creates separate trace keys for each iteration."""
-    
+
     # Define a mock model for testing
     def mock_text_handler(invocation):
         # Handler returns (result, usage_metadata)
         prompt = invocation.get("prompt", "")
         return f"Response: {prompt}", {}
-    
+
     model_def = ModelDefinition(
         model_id="gpt-5-nano",
         text_handler=mock_text_handler,
     )
-    
+
     spec = {
         "version": "2",
         "triggers": [

@@ -9,7 +9,6 @@ import pytest
 from seer.core.expr.parser import (
     IndexSegment,
     PropertySegment,
-    ReferenceExpr,
     TemplateLiteral,
     TemplateReference,
     parse_reference_string,
@@ -343,9 +342,9 @@ def test_iterate_value_references_mixed_structure():
 
 def test_iterate_value_references_non_string_primitives():
     """Test iterating references in non-string primitives (no refs)."""
-    assert list(iterate_value_references(42)) == []
-    assert list(iterate_value_references(True)) == []
-    assert list(iterate_value_references(None)) == []
+    assert not list(iterate_value_references(42))
+    assert not list(iterate_value_references(True))
+    assert not list(iterate_value_references(None))
 
 
 # =============================================================================

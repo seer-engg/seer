@@ -10,7 +10,6 @@ from seer.api.core.errors import raise_problem as _raise_problem
 from seer.database import (
     User,
     Workflow,
-    WorkflowRun,
     WorkflowVersion,
     WorkflowVersionStatus,
     parse_workflow_public_id,

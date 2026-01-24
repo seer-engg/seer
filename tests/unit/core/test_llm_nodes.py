@@ -1,3 +1,5 @@
+# pylint: disable=unused-argument
+# Reason: Mock handlers require specific function signatures even if not all params are used
 """
 Tests for LLM node execution in workflows.
 
@@ -28,7 +30,7 @@ async def _compile_workflow_with_models(
     schema_registry = SchemaRegistry()
     tool_registry = ToolRegistry()
     model_registry = ModelRegistry()
-    
+
     # Register models
     for model in model_defs:
         model_registry.register(model)
@@ -62,17 +64,17 @@ async def _compile_workflow_with_models(
 @pytest.mark.asyncio
 async def test_llm_node_with_text_output() -> None:
     """Test LLM node execution with text output mode."""
-    
+
     def mock_text_handler(invocation):
         # Handler returns (result, usage_metadata)
         prompt = invocation.get("prompt", "")
         return f"Mock response to: {prompt}", {}
-    
+
     model_def = ModelDefinition(
         model_id="test-text-model",
         text_handler=mock_text_handler,
     )
-    
+
     spec = {
         "version": "2",
         "triggers": [
@@ -102,11 +104,11 @@ async def test_llm_node_with_text_output() -> None:
             {"source": "text_trigger", "target": "llm_text", "type": "trigger"},
         ],
     }
-    
+
     compiled = await _compile_workflow_with_models(spec, [model_def])
     trigger_envelope = {"trigger_key": "test.text", "title": "TextTest"}
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
-    
+
     # Result should be stored under node.id
     assert "llm_text" in result
     assert result["llm_text"] == "Mock response to: Generate a greeting"
@@ -116,11 +118,11 @@ async def test_llm_node_with_text_output() -> None:
 async def test_llm_node_with_json_output() -> None:
     """
     Test LLM node execution with JSON output mode.
-    
+
     This test would have caught the bug where node.out was referenced
     instead of node.id for schema lookup.
     """
-    
+
     def mock_json_handler(invocation, schema):
         # Handler returns (result, usage_metadata)
         # Return structured data matching the schema
@@ -128,12 +130,12 @@ async def test_llm_node_with_json_output() -> None:
             "pet1": "Fluffy",
             "pet2": "Spot",
         }, {}
-    
+
     model_def = ModelDefinition(
         model_id="gpt-5-mini",
         json_handler=mock_json_handler,
     )
-    
+
     # This is the exact spec that was failing in production
     spec = {
         "version": "2",
@@ -179,11 +181,11 @@ async def test_llm_node_with_json_output() -> None:
             {"source": "json_trigger", "target": "llm-1", "type": "trigger"},
         ],
     }
-    
+
     compiled = await _compile_workflow_with_models(spec, [model_def])
     trigger_envelope = {"trigger_key": "test.json", "title": "JsonTest"}
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
-    
+
     # Before the fix, this would fail with:
     # AttributeError: 'LLMNode' object has no attribute 'out'
     assert "llm-1" in result
@@ -194,15 +196,15 @@ async def test_llm_node_with_json_output() -> None:
 @pytest.mark.asyncio
 async def test_llm_node_output_used_in_next_node() -> None:
     """Test that LLM node output can be referenced by subsequent nodes."""
-    
+
     def mock_text_handler(invocation):
         return "test-value", {}
-    
+
     model_def = ModelDefinition(
         model_id="test-model",
         text_handler=mock_text_handler,
     )
-    
+
     spec = {
         "version": "2",
         "triggers": [
@@ -239,11 +241,11 @@ async def test_llm_node_output_used_in_next_node() -> None:
             {"source": "llm1", "target": "task1", "type": "default"},
         ],
     }
-    
+
     compiled = await _compile_workflow_with_models(spec, [model_def])
     trigger_envelope = {"trigger_key": "test.chain", "title": "ChainTest"}
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
-    
+
     assert result["llm1"] == "test-value"
     assert result["task1"] == "test-value"
 
@@ -251,15 +253,15 @@ async def test_llm_node_output_used_in_next_node() -> None:
 @pytest.mark.asyncio
 async def test_llm_node_in_conditional_branch() -> None:
     """Test LLM node execution within conditional branches."""
-    
+
     def mock_json_handler(invocation, schema):
         return {"success": True, "message": "OK"}, {}
-    
+
     model_def = ModelDefinition(
         model_id="test-model",
         json_handler=mock_json_handler,
     )
-    
+
     spec = {
         "version": "2",
         "triggers": [
@@ -316,7 +318,7 @@ async def test_llm_node_in_conditional_branch() -> None:
             {"source": "condition", "target": "llm_on_true", "type": "conditional_true"},
         ],
     }
-    
+
     compiled = await _compile_workflow_with_models(spec, [model_def])
     trigger_envelope = {
         "id": "cond_trigger",
@@ -326,7 +328,7 @@ async def test_llm_node_in_conditional_branch() -> None:
         "data": {"should_run": True}
     }
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
-    
+
     assert "llm_on_true" in result
     assert result["llm_on_true"]["success"] is True
     assert result["llm_on_true"]["message"] == "OK"
@@ -335,19 +337,19 @@ async def test_llm_node_in_conditional_branch() -> None:
 @pytest.mark.asyncio
 async def test_llm_node_with_dynamic_prompt_from_trigger() -> None:
     """Test LLM node with prompt that references trigger data."""
-    
+
     received_prompts = []
-    
+
     def mock_text_handler(invocation):
         prompt = invocation.get("prompt", "")
         received_prompts.append(prompt)
         return f"Response to: {prompt}", {}
-    
+
     model_def = ModelDefinition(
         model_id="test-model",
         text_handler=mock_text_handler,
     )
-    
+
     spec = {
         "version": "2",
         "triggers": [
@@ -389,7 +391,7 @@ async def test_llm_node_with_dynamic_prompt_from_trigger() -> None:
             {"source": "dynamic_trigger", "target": "llm_dynamic", "type": "trigger"},
         ],
     }
-    
+
     compiled = await _compile_workflow_with_models(spec, [model_def])
     trigger_envelope = {
         "id": "dynamic_trigger",
@@ -399,7 +401,7 @@ async def test_llm_node_with_dynamic_prompt_from_trigger() -> None:
         "data": {"user_input": "What is the weather?"}
     }
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
-    
+
     assert result["llm_dynamic"] == "Response to: User asked: What is the weather?"
     assert received_prompts == ["User asked: What is the weather?"]
 
@@ -407,28 +409,28 @@ async def test_llm_node_with_dynamic_prompt_from_trigger() -> None:
 @pytest.mark.asyncio
 async def test_multiple_llm_nodes_in_sequence() -> None:
     """Test multiple LLM nodes using outputs from previous ones."""
-    
+
     call_order = []
-    
+
     def mock_handler_1(invocation):
         call_order.append("llm1")
         return "first result", {}
-    
+
     def mock_handler_2(invocation):
         call_order.append("llm2")
         prompt = invocation.get("prompt", "")
         return f"second result based on: {prompt}", {}
-    
+
     model_def_1 = ModelDefinition(
         model_id="model-1",
         text_handler=mock_handler_1,
     )
-    
+
     model_def_2 = ModelDefinition(
         model_id="model-2",
         text_handler=mock_handler_2,
     )
-    
+
     spec = {
         "version": "2",
         "triggers": [
@@ -470,11 +472,11 @@ async def test_multiple_llm_nodes_in_sequence() -> None:
             {"source": "llm_first", "target": "llm_second", "type": "default"},
         ],
     }
-    
+
     compiled = await _compile_workflow_with_models(spec, [model_def_1, model_def_2])
     trigger_envelope = {"trigger_key": "test.sequence", "title": "SeqTest"}
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
-    
+
     assert call_order == ["llm1", "llm2"]
     assert result["llm_first"] == "first result"
     assert result["llm_second"] == "second result based on: Process: first result"

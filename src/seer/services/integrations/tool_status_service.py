@@ -92,6 +92,8 @@ def determine_tool_auth_requirements(tool: Any) -> Dict[str, Any]:
     }
 
 
+# pylint: disable=too-many-locals,import-outside-toplevel
+# Reason: Tool status building requires many variables for auth checking and provider resolution
 def build_tool_status(
     tool: Any,
     auth_requirements: Dict[str, Any],

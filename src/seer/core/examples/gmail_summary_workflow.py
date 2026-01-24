@@ -1,3 +1,5 @@
+# pylint: disable=protected-access,redefined-outer-name
+# Reason: Example code intentionally demonstrates internal compiler APIs
 """
 Example workflow that reads the latest three Gmail messages and summarizes them
 with an LLM.

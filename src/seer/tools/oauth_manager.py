@@ -13,6 +13,8 @@ from seer.logger import get_logger
 logger = get_logger("shared.tools.oauth_manager")
 
 
+# pylint: disable=too-complex
+# Reason: OAuth token refresh handles multiple providers with different auth flows and error cases
 async def refresh_oauth_token(connection: OAuthConnection) -> OAuthConnection:
     """
     Refresh an expired OAuth token using the stored refresh token.
@@ -79,10 +81,10 @@ async def refresh_oauth_token(connection: OAuthConnection) -> OAuthConnection:
             "Token refresh failed",
             extra={"connection_id": connection.id, "status_code": exc.response.status_code, "body": exc.response.text[:200]},
         )
-        raise HTTPException(status_code=401, detail=f"Token refresh failed: {exc.response.text[:200]}")
+        raise HTTPException(status_code=401, detail=f"Token refresh failed: {exc.response.text[:200]}") from exc
     except Exception as exc:
         logger.exception("Unexpected error refreshing token", extra={"connection_id": connection.id})
-        raise HTTPException(status_code=500, detail=f"Token refresh error: {str(exc)}")
+        raise HTTPException(status_code=500, detail=f"Token refresh error: {str(exc)}") from exc
 
 
 async def get_oauth_token(
@@ -101,8 +103,8 @@ async def get_oauth_token(
             db_id = connection_id
         try:
             connection = await OAuthConnection.get(id=int(db_id), user=user, status="active")
-        except Exception:
-            raise HTTPException(status_code=404, detail=f"OAuth connection {connection_id} not found")
+        except Exception as exc:
+            raise HTTPException(status_code=404, detail=f"OAuth connection {connection_id} not found") from exc
     elif provider:
         connection = await OAuthConnection.get_or_none(user=user, provider=provider, status="active")
         if not connection:

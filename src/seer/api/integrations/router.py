@@ -12,15 +12,16 @@
 # Reason: Lazy imports for list_tools to avoid circular dependencies.
 # FastAPI Request parameter is used by framework for dependency injection.
 
+# pylint: disable=wrong-import-position,wrong-import-order
+# Reason: Imports organized by logical grouping for router setup
 import base64
 import json
 import time
-from typing import List, Optional
+from typing import Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, Field
 
 from seer.services.integrations.providers import get_integration_provider
 from seer.services.integrations.providers.base import OAuthAuthorizeContext, OAuthHelpers

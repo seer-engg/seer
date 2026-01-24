@@ -1,3 +1,5 @@
+# pylint: disable=too-many-lines,unused-argument
+# Reason: Comprehensive test coverage for expression evaluator requires many test cases; pytest fixtures may have unused args
 """
 Unit tests for expression evaluator.
 

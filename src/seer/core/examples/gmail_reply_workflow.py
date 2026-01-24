@@ -1,3 +1,5 @@
+# pylint: disable=protected-access
+# Reason: Example code intentionally demonstrates internal compiler APIs
 """
 Example workflow that:
 
