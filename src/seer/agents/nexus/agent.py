@@ -5,6 +5,7 @@ from langchain.agents.middleware import (
     SummarizationMiddleware,
 )
 
+from seer.config import config
 from seer.logger import get_logger
 from seer.llm import get_llm_without_responses_api
 from seer.agents.nexus.utils import get_workflow_tools
@@ -17,7 +18,6 @@ logger = get_logger(__name__)
 
 WORKFLOW_SPEC_SCHEMA = get_workflow_spec_schema_text()
 WORKFLOW_SPEC_EXAMPLE = get_workflow_spec_example_text()
-
 
 def _ensure_mlflow_autologging() -> None:
     """Enable MLflow LangChain autologging once per process with tracking URI and experiment."""
@@ -40,7 +40,8 @@ def _ensure_mlflow_autologging() -> None:
     except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: instrumentation should not break agent startup
         logger.warning("Failed to enable MLflow autologging: %s", exc)
 
-_ensure_mlflow_autologging()
+if config.MLFLOW_ENABLED:
+    _ensure_mlflow_autologging()
 
 def create_nexus_chat_agent(
     model: str = "gpt-4o-mini",
