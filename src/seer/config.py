@@ -245,6 +245,13 @@ class SeerConfig(BaseSettings):
         description="Enable Slack notifications for ERROR and CRITICAL log levels"
     )
 
+    # ===========================================================================
+    # MLflow Configuration
+    # ============================================================================
+    MLFLOW_ENABLED: bool = Field(
+        default=False, description="Enable MLflow autologging for LangChain"
+    )
+
     # ============================================================================
     # Computed Properties
     # ============================================================================
