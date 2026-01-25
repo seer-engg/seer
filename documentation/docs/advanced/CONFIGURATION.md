@@ -16,10 +16,10 @@ OPENAI_API_KEY=sk-...
 
 # Optional (for persistence)
 DATABASE_URL=postgresql://user:password@host:port/database
-REDIS_URL=redis://localhost:6379/0
+REDIS_URL=redis://localhost:6379/0  # Valkey-compatible
 ```
 
-Docker development automatically configures `DATABASE_URL` and `REDIS_URL`.
+Docker development automatically configures `DATABASE_URL` and `REDIS_URL` (uses Valkey).
 
 ---
 
@@ -50,17 +50,19 @@ At least one LLM API key is required.
 
 **Railway**: Use the `DATABASE_URL` provided by Railway Postgres service
 
-### Redis
+### Valkey (Task Queue)
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `REDIS_URL` | Redis connection string for task queue | Auto-configured in Docker |
+| `REDIS_URL` | Valkey/Redis connection string for task queue | Auto-configured in Docker |
 
 **Format**: `redis://host:port/db`
 
-**Docker**: Automatically set to `redis://redis:6379/0`
+**Docker**: Automatically set to `redis://valkey:6379/0` (uses Valkey container)
 
-**Railway**: Use the `REDIS_URL` provided by Railway Redis service
+**Railway**: Use the `REDIS_URL` provided by Railway Redis service (Redis-compatible)
+
+> **Note**: We use Valkey (open-source Redis fork) in self-hosted deployments for licensing reasons, but maintain Redis protocol compatibility.
 
 ---
 

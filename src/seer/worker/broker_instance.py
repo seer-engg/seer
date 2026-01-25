@@ -12,7 +12,11 @@ logger = get_logger(__name__)
 
 
 def _resolve_redis_url() -> str:
-    """Prefer config.redis_url but fall back to REDIS_URL or localhost."""
+    """Prefer config.redis_url but fall back to REDIS_URL or localhost.
+
+    Note: We use Valkey (Redis-compatible) in production, but maintain
+    'redis_url' naming for backward compatibility with existing configs.
+    """
     configured: Optional[str] = getattr(config, "redis_url", None)
     if configured:
         return configured

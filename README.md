@@ -11,7 +11,7 @@ Seer is a **open-source workflow builder with built-in oversight and cost contro
 
 ## Quick Start (Docker)
 
-1) Clone and start the stack (Postgres, Redis, API, worker):
+1) Clone and start the stack (Postgres, Valkey, API, worker):
 ```bash
 git clone https://github.com/seer-engg/seer
 cd seer
@@ -29,7 +29,7 @@ docker compose exec api uv run aerich upgrade
 
 ## Local Development (without full Docker)
 
-- Prereqs: Python 3.12+, [uv](https://github.com/astral-sh/uv) installed (`pip install uv`), Postgres + Redis running (use `docker compose up postgres redis`).
+- Prereqs: Python 3.12+, [uv](https://github.com/astral-sh/uv) installed (`pip install uv`), Postgres + Valkey running (use `docker compose up postgres valkey`).
 - Install deps: `uv sync`
 - Run API: `uv run uvicorn seer.api.main:app --reload --port 8000`
 - Run worker: `uv run taskiq worker seer.worker.broker:broker`
