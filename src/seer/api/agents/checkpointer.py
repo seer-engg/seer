@@ -73,14 +73,14 @@ async def get_checkpointer() -> Optional[AsyncPostgresSaver]:
         if _checkpointer is not None:
             return _checkpointer
 
-        if not config.DATABASE_URL:
+        if not config.database_url:
             logger.warning("DATABASE_URL not configured, workflows will run without checkpointing")
             return None
 
         logger.info("Initializing AsyncPostgresSaver checkpointer")
         try:
             global _checkpointer_cm  # pylint: disable=global-statement  # Reason: Singleton caching pattern
-            _checkpointer_cm = open_checkpointer(config.DATABASE_URL)
+            _checkpointer_cm = open_checkpointer(config.database_url)
 
             _checkpointer = await _checkpointer_cm.__aenter__()  # pylint: disable=no-member,unnecessary-dunder-call  # Reason: Async context manager protocol
 

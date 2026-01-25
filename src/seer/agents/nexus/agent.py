@@ -40,7 +40,7 @@ def _ensure_mlflow_autologging() -> None:
     except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: instrumentation should not break agent startup
         logger.warning("Failed to enable MLflow autologging: %s", exc)
 
-if config.MLFLOW_ENABLED:
+if config.mlflow_enabled:
     _ensure_mlflow_autologging()
 
 def create_nexus_chat_agent(

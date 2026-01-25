@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import ssl
 from typing import Optional
 
 from taskiq_redis import RedisAsyncResultBackend, RedisStreamBroker
@@ -27,7 +28,14 @@ def _resolve_redis_url() -> str:
 
 
 redis_url = _resolve_redis_url()
-result_backend = RedisAsyncResultBackend(redis_url=redis_url)
-broker = RedisStreamBroker(url=redis_url).with_result_backend(result_backend)
+
+# Enable TLS/SSL for rediss:// URLs
+ssl_kwargs = {}
+if redis_url.startswith("rediss://"):
+    ssl_kwargs["ssl_cert_reqs"] = ssl.CERT_REQUIRED
+    logger.info("TLS/SSL enabled for Valkey/Redis connections")
+
+result_backend = RedisAsyncResultBackend(redis_url=redis_url, **ssl_kwargs)
+broker = RedisStreamBroker(url=redis_url, **ssl_kwargs).with_result_backend(result_backend)
 
 __all__ = ["broker", "redis_url", "result_backend"]

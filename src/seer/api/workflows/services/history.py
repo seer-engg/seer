@@ -329,7 +329,7 @@ async def _extract_node_traces_from_checkpoints(
 
 async def _validate_history_prerequisites() -> None:
     """Validate that history retrieval prerequisites are met."""
-    if not shared_config.DATABASE_URL:
+    if not shared_config.database_url:
         raise_problem(
             type_uri=RUN_PROBLEM,
             title="History unavailable",

@@ -4,8 +4,9 @@ import logging
 import os
 from typing import Any, Dict
 from urllib.parse import urlparse
+from seer.config import config
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # pylint: disable=wrong-import-order  # Reason: dotenv must be imported after seer.config to ensure config module is loaded first
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +54,10 @@ def _parse_postgres_credentials(url: str) -> Dict[str, Any]:
     return credentials
 
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-DB_MAX_CONNECTIONS = int(os.getenv("DB_MAX_CONNECTIONS", "10"))
-DB_MIN_CONNECTIONS = int(os.getenv("DB_MIN_CONNECTIONS", "1"))
-DB_GENERATE_SCHEMAS = _get_bool("DB_GENERATE_SCHEMAS", "false")
+DATABASE_URL = config.database_url
+DB_MAX_CONNECTIONS = config.db_max_connections
+DB_MIN_CONNECTIONS = config.db_min_connections
+DB_GENERATE_SCHEMAS = config.db_generate_schemas
 
 try:
     DB_CREDENTIALS = _parse_postgres_credentials(DATABASE_URL)

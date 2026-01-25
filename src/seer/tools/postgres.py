@@ -55,7 +55,7 @@ async def get_default_client(connection_string: Optional[str] = None) -> Postgre
         if _default_client is None:
             if connection_string is None:
                 from seer.config import config  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
-                connection_string = config.DATABASE_URL
+                connection_string = config.database_url
 
             if not connection_string:
                 raise ValueError(
@@ -109,7 +109,7 @@ def get_postgres_tools(
 
     if connection_string is None:
         from seer.config import config  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
-        connection_string = config.DATABASE_URL
+        connection_string = config.database_url
 
     if not connection_string:
         raise ValueError(
