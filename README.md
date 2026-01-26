@@ -24,8 +24,12 @@ docker compose exec api uv run aerich upgrade
 ```
 
 3) Access the app:
-- Frontend: http://localhost:5173/workflows?backend=http://localhost:8000
-- Backend API: http://localhost:8000
+- **Cloud Frontend (Default):** Visit http://localhost:8000 → redirects to https://app.getseer.dev
+- **Local Frontend:** Set `FRONTEND_URL=http://localhost:5173` in `.env` file
+- API Docs: http://localhost:8000/docs
+- Backend Health: http://localhost:8000/health
+
+Your browser will automatically open and connect the cloud frontend to your local backend. Sign in with Clerk to start using Seer.
 
 ## Local Development (without full Docker)
 
