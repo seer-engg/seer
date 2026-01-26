@@ -41,12 +41,10 @@ jobs:
             echo "Deploying to PRODUCTION"
             echo "ecs_service=${{ secrets.ECS_SERVICE_MAIN }}" >> $GITHUB_ENV
             echo "ecs_cluster=${{ secrets.ECS_CLUSTER_MAIN }}" >> $GITHUB_ENV
-            echo "task_def_file=task-definition-main.json" >> $GITHUB_ENV
           elif [[ "${{ github.ref }}" == "refs/heads/dev" ]]; then
             echo "Deploying to DEVELOPMENT"
             echo "ecs_service=${{ secrets.ECS_SERVICE_DEV }}" >> $GITHUB_ENV
             echo "ecs_cluster=${{ secrets.ECS_CLUSTER_DEV }}" >> $GITHUB_ENV
-            echo "task_def_file=task-definition-dev.json" >> $GITHUB_ENV
           fi
 
       - name: Configure AWS credentials
@@ -61,35 +59,39 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Run database migrations
+        run: |
+          uv sync
+          uv run aerich upgrade
+        env:
+          # Add any required database connection environment variables here
+          # These should be configured in your GitHub secrets
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
 
       - name: Build, tag, and push image to Amazon ECR
-        id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          # We use the same ECR repo, but the specific Task Definition
-          # determines which Service pulls this image.
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      - name: Fill in the new image ID in the Amazon ECS task definition
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          # Uses the variable set in the "Set Environment Specific Variables" step
-          task-definition: ${{ env.task_def_file }}
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ steps.build-image.outputs.image }}
+      - name: Force ECS service deployment
+        run: |
+          aws ecs update-service \
+            --cluster ${{ env.ecs_cluster }} \
+            --service ${{ env.ecs_service }} \
+            --force-new-deployment
 
-      - name: Deploy Amazon ECS task definition
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-        with:
-          task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.ecs_service }}
-          cluster: ${{ env.ecs_cluster }}
-          wait-for-service-stability: true
+          aws ecs wait services-stable \
+            --cluster ${{ env.ecs_cluster }} \
+            --services ${{ env.ecs_service }}
