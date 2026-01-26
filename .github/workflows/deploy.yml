@@ -25,7 +25,7 @@ env:
 jobs:
   deploy:
     name: Deploy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
 
     steps:
@@ -80,17 +80,6 @@ jobs:
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
-
-      - name: Verify and fix line endings in docker-entrypoint.sh
-        run: |
-          echo "Checking line endings in docker-entrypoint.sh..."
-          file docker-entrypoint.sh
-          echo "First line hex dump:"
-          head -1 docker-entrypoint.sh | od -c
-          echo "Ensuring LF line endings..."
-          sed -i 's/\r$//' docker-entrypoint.sh
-          echo "After fix:"
-          file docker-entrypoint.sh
 
       - name: Build, tag, and push image to Amazon ECR
         env:
