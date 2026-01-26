@@ -19,7 +19,7 @@ Workflow triggers allow workflows to be executed automatically in response to ev
 
 ## Worker Setup
 - A dedicated Taskiq worker handles trigger polling, webhook dispatch, and saved-workflow execution so the FastAPI app stays responsive.
-- Start it with `taskiq worker worker.broker:broker` (remember to point `REDIS_URL` at your Redis instance).
+- Start it with `taskiq worker worker.broker:broker` (remember to point `REDIS_URL` at your Valkey/Redis instance).
 
 ## Related Documentation
 - [Configuration Reference](./CONFIGURATION)

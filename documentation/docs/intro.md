@@ -22,7 +22,7 @@ git clone <repo> && cd seer
 docker compose up
 ```
 
-That's it! This starts all Docker services (Postgres, Redis, backend, worker), streams logs, and waits for readiness.
+That's it! This starts all Docker services (Postgres, Valkey, backend, worker), streams logs, and waits for readiness.
 
 ## Using the Workflow Editor
 
@@ -44,7 +44,7 @@ GOOGLE_CLIENT_SECRET=...
 TAVILY_API_KEY=...
 ```
 
-Docker automatically configures `DATABASE_URL` and `REDIS_URL`.
+Docker automatically configures `DATABASE_URL` and `REDIS_URL` (uses Valkey for task queuing).
 
 For complete configuration options, see [Configuration Reference](./advanced/CONFIGURATION.md).
 
@@ -89,7 +89,7 @@ For complete configuration options, see [Configuration Reference](./advanced/CON
 **Services started:**
 - **Backend API** (port 8000): FastAPI server with workflow execution engine
 - **Postgres** (port 5432): Workflow and user data persistence
-- **Redis** (port 6379): Taskiq message broker
+- **Valkey** (port 6379): Taskiq message broker (Redis-compatible)
 - **Taskiq Worker**: Run `uv run taskiq worker worker.broker:broker` to process triggers/polling/workflow runs
 
 ## Next Steps

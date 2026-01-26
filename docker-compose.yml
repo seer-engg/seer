@@ -16,12 +16,12 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7-alpine
+  valkey:
+    image: valkey/valkey:7-alpine
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -51,13 +51,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      valkey:
         condition: service_healthy
     env_file:
       - .env
     environment:
       DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
-      REDIS_URL: "redis://redis:6379/0"
+      REDIS_URL: "redis://valkey:6379/0"
       UV_LINK_MODE: "copy"  # Use copy mode to avoid hardlink warnings in Docker volumes
       MLFLOW_TRACKING_URI: "http://mlflow:5000"
       MLFLOW_EXPERIMENT_NAME: "seer-workflow-agent"
@@ -67,12 +67,7 @@ services:
     volumes:
       - ./:/app  # Mount source code for instant updates in development (overrides COPY in Dockerfile)
       - /app/.venv  # Exclude local .venv (Docker will create its own venv)
-    command: >
-      sh -c "
-        echo 'Waiting for database to be ready...' &&
-        sleep 2 &&
-        uv run uvicorn seer.api.main:app --host 0.0.0.0 --port 8000 --reload
-      "
+    command: ["api", "--reload"]  # Use --reload for hot-reloading in development
 
   worker:
     build:
@@ -81,25 +76,20 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      valkey:
         condition: service_healthy
     env_file:
       - .env
     environment:
       DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
-      REDIS_URL: "redis://redis:6379/0"
+      REDIS_URL: "redis://valkey:6379/0"
       UV_LINK_MODE: "copy"
       MLFLOW_TRACKING_URI: "http://mlflow:5000"
       MLFLOW_EXPERIMENT_NAME: "seer-workflow-agent"
     volumes:
       - ./:/app
       - /app/.venv
-    command: >
-      sh -c "
-        echo 'Waiting for dependencies to be ready...' &&
-        sleep 2 &&
-        uv run taskiq worker seer.worker.broker:broker
-      "
+    command: ["worker"]
 
 volumes:
   postgres_data:

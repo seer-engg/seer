@@ -92,7 +92,7 @@ def _check_existing_scopes(
                 normalized_scope_list,
                 existing_connection.scopes[:100],
             )
-            final_redirect = redirect_to or f"{config.FRONTEND_URL}/settings/integrations"
+            final_redirect = redirect_to or f"{config.frontend_url}/settings/integrations"
             connected_param = integration_type or oauth_provider
             return RedirectResponse(url=f"{final_redirect}?connected={connected_param}")
     return None
@@ -108,7 +108,7 @@ def _build_oauth_state(
     state_data = {
         'user_id': user.user_id,
         'user_email': user.email,
-        'redirect_to': redirect_to or f"{config.FRONTEND_URL}/settings/integrations",
+        'redirect_to': redirect_to or f"{config.frontend_url}/settings/integrations",
         'oauth_provider': oauth_provider,
         'integration_type': integration_type or oauth_provider,
         'requested_scope': scope_string,
@@ -282,7 +282,7 @@ async def connect(
         return early_return
 
     redirect_uri = request.url_for('auth_callback', provider=oauth_provider)
-    if config.REDIRECT_URI_SCHEME == "https" and redirect_uri.scheme == "http":
+    if config.redirect_uri_scheme == "https" and redirect_uri.scheme == "http":
         redirect_uri = redirect_uri.replace(scheme="https")
 
     logger.info(
@@ -345,7 +345,7 @@ async def auth_callback(request: Request, provider: str):
     # This bypasses Authlib's session-based state validation which fails with multiple workers
     client = oauth.create_client(oauth_provider)
     redirect_uri = str(request.url_for('auth_callback', provider=oauth_provider))
-    if config.REDIRECT_URI_SCHEME == "https" and "http://" in redirect_uri:
+    if config.redirect_uri_scheme == "https" and "http://" in redirect_uri:
         redirect_uri = redirect_uri.replace("http://", "https://")
 
     try:

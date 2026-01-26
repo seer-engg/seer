@@ -19,13 +19,13 @@ services:
     networks:
       - seer-thread-2-network
 
-  redis:
-    container_name: seer-thread-2-redis
-    image: redis:7-alpine
+  valkey:
+    container_name: seer-thread-2-valkey
+    image: valkey/valkey:7-alpine
     ports:
       - "10201:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -42,7 +42,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      valkey:
         condition: service_healthy
     env_file:
       - /Users/pika/Projects/seer/.worktrees/thread-2/.env.docker
@@ -78,7 +78,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      valkey:
         condition: service_healthy
       api:
         condition: service_healthy

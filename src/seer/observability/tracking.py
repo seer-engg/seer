@@ -5,7 +5,7 @@ Provides functions to:
 - Increment usage counters
 - Query current usage across different time periods
 - Track LLM usage and costs
-- Support Redis caching for performance
+- Support Valkey/Redis caching for performance
 """
 from datetime import datetime, timezone
 from decimal import Decimal

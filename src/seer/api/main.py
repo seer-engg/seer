@@ -68,7 +68,7 @@ async def open_frontend_after_startup() -> None:
     if config.is_cloud_mode or not config.auto_open_browser:
         return
 
-    frontend_url = config.FRONTEND_URL
+    frontend_url = config.frontend_url
     backend_override = os.getenv("BACKEND_API_URL", "localhost:8000")
     target_url = f"{frontend_url}?{urlencode({'backend': backend_override})}"
 

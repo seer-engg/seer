@@ -1,7 +1,7 @@
 """
 Integration test fixtures.
 
-Integration tests interact with real database, Redis, and other services.
+Integration tests interact with real database, Valkey, and other services.
 These fixtures provide setup/teardown for integration testing scenarios.
 """
 from unittest.mock import AsyncMock
@@ -171,7 +171,7 @@ def mock_trigger_adapter():
 @pytest.fixture
 def mock_taskiq_broker():
     """
-    Mock Taskiq broker for testing worker tasks without Redis.
+    Mock Taskiq broker for testing worker tasks without Valkey.
     """
     broker = AsyncMock()
     broker.startup.return_value = None

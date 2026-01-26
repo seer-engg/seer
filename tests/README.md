@@ -54,7 +54,7 @@ uv run pytest tests/unit -m unit
 
 ### Integration Tests (`tests/integration/`)
 
-Tests that verify component interactions with real database, Redis, or other services.
+Tests that verify component interactions with real database, Valkey, or other services.
 
 - **Purpose**: Test database operations, tool execution, trigger polling
 - **Speed**: 1-5s per test

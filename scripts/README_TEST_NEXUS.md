@@ -27,7 +27,7 @@ Type messages like "Build a workflow that sends daily email reports" and interac
 
 1. **Start local services:**
    ```bash
-   docker compose up postgres redis -d
+   docker compose up postgres valkey -d
    uv run uvicorn seer.api.main:app --reload --port 8000
    ```
 

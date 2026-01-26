@@ -2,11 +2,11 @@
 
 # Seer Worker
 
-Taskiq powers our background worker so that long-running operations do not block the FastAPI app. The worker listens on Redis Streams, fans out jobs, coordinates trigger polling, and keeps a database connection pool ready for workflow executions.
+Taskiq powers our background worker so that long-running operations do not block the FastAPI app. The worker listens on Valkey Streams, fans out jobs, coordinates trigger polling, and keeps a database connection pool ready for workflow executions.
 
 ## Architecture
 
-- `worker.broker` configures a `RedisStreamBroker` plus `RedisAsyncResultBackend`. The broker url comes from, in priority order, `config.redis_url`, `REDIS_URL`, then `redis://localhost:6379/0`.
+- `worker.broker` configures a `RedisStreamBroker` plus `RedisAsyncResultBackend` (Valkey-compatible). The broker url comes from, in priority order, `config.redis_url`, `REDIS_URL`, then `redis://localhost:6379/0`.
 - On `TaskiqEvents.WORKER_STARTUP` the worker:
   - Initializes shared DB connections (`init_db`).
   - Boots a `TriggerPollScheduler` if `config.trigger_poller_enabled` is true. Scheduler cadence, batch size, and lock timeout all come from `config.trigger_poller_*` settings.
@@ -26,7 +26,7 @@ All tasks are async functions decorated with `@broker.task`, which gives the API
 
 | Setting | Source | Description |
 | ------- | ------ | ----------- |
-| `redis_url` | `shared.config.SeerConfig` (env `REDIS_URL`) | Redis connection string for both broker and result backend. |
+| `redis_url` | `shared.config.SeerConfig` (env `REDIS_URL`) | Valkey/Redis connection string for both broker and result backend. |
 | `DATABASE_URL` | env / `.env` | Used by Tortoise ORM when the worker initializes the DB. |
 | `trigger_poller_enabled` | config/env | Toggles background polling entirely. Set `False` to disable in dev. |
 | `trigger_poller_interval_seconds` | config/env | Sleep between scheduler ticks. |
@@ -43,7 +43,7 @@ Local development:
 uv run taskiq worker worker.broker:broker
 ```
 
-Docker compose already defines a `taskiq-worker` service that runs the same command after Redis/Postgres are healthy. The worker only needs network access to Redis and the database; the FastAPI app communicates via Redis tasks.
+Docker compose already defines a `taskiq-worker` service that runs the same command after Valkey/Postgres are healthy. The worker only needs network access to Valkey and the database; the FastAPI app communicates via Valkey tasks.
 
 ## Development tips
 

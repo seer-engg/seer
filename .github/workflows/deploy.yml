@@ -1,0 +1,97 @@
+name: Deploy to Amazon ECS (Multi-Env)
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to deploy'
+        required: true
+        type: choice
+        options:
+          - dev
+          - main
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+  CONTAINER_NAME: ${{ secrets.CONTAINER_NAME }} # Assumes same container name in both task defs
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      # ----------------------------------------------------------------
+      # LOGIC STEP: Determine which environment we are deploying to
+      # ----------------------------------------------------------------
+      - name: Set Environment Specific Variables
+        id: env-selector
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "Deploying to PRODUCTION"
+            echo "ecs_service=${{ secrets.ECS_SERVICE_MAIN }}" >> $GITHUB_ENV
+            echo "ecs_cluster=${{ secrets.ECS_CLUSTER_MAIN }}" >> $GITHUB_ENV
+          elif [[ "${{ github.ref }}" == "refs/heads/dev" ]]; then
+            echo "Deploying to DEVELOPMENT"
+            echo "ecs_service=${{ secrets.ECS_SERVICE_DEV }}" >> $GITHUB_ENV
+            echo "ecs_cluster=${{ secrets.ECS_CLUSTER_DEV }}" >> $GITHUB_ENV
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Run database migrations
+        run: |
+          uv sync
+          uv run aerich upgrade
+        env:
+          # Add any required database connection environment variables here
+          # These should be configured in your GitHub secrets
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build, tag, and push image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      - name: Force ECS service deployment
+        run: |
+          aws ecs update-service \
+            --cluster ${{ env.ecs_cluster }} \
+            --service ${{ env.ecs_service }} \
+            --force-new-deployment
+
+          aws ecs wait services-stable \
+            --cluster ${{ env.ecs_cluster }} \
+            --services ${{ env.ecs_service }}

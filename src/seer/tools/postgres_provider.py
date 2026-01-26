@@ -22,7 +22,7 @@ class PostgresProvider:
     def __init__(self, connection_string: Optional[str] = None):
         if connection_string is None:
             from seer.config import config  # pylint: disable=import-outside-toplevel  # Reason: avoid config import unless needed.
-            connection_string = config.DATABASE_URL
+            connection_string = config.database_url
         self._connection_string = connection_string
         self._client: Optional[Any] = None
 

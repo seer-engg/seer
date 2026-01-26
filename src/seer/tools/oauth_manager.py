@@ -29,22 +29,22 @@ async def refresh_oauth_token(connection: OAuthConnection) -> OAuthConnection:
     logger.info("Refreshing OAuth token", extra={"connection_id": connection.id, "provider": connection.provider})
 
     if connection.provider in ["google", "googledrive", "gmail"]:
-        if not config.GOOGLE_CLIENT_ID or not config.GOOGLE_CLIENT_SECRET:
+        if not config.google_client_id or not config.google_client_secret:
             raise HTTPException(status_code=500, detail="Google OAuth client credentials not configured")
         refresh_url = "https://oauth2.googleapis.com/token"
         refresh_data = {
-            "client_id": config.GOOGLE_CLIENT_ID,
-            "client_secret": config.GOOGLE_CLIENT_SECRET,
+            "client_id": config.google_client_id,
+            "client_secret": config.google_client_secret,
             "refresh_token": connection.refresh_token_enc,
             "grant_type": "refresh_token",
         }
     elif connection.provider == "github":
-        if not config.GITHUB_CLIENT_ID or not config.GITHUB_CLIENT_SECRET:
+        if not config.github_client_id or not config.github_client_secret:
             raise HTTPException(status_code=500, detail="GitHub OAuth client credentials not configured")
         refresh_url = "https://github.com/login/oauth/access_token"
         refresh_data = {
-            "client_id": config.GITHUB_CLIENT_ID,
-            "client_secret": config.GITHUB_CLIENT_SECRET,
+            "client_id": config.github_client_id,
+            "client_secret": config.github_client_secret,
             "refresh_token": connection.refresh_token_enc,
             "grant_type": "refresh_token",
         }
