@@ -243,7 +243,7 @@ class SeerConfig(BaseSettings):
         description="Clerk secret key for updating user metadata"
     )
     frontend_url: str = Field(
-        default="http://localhost:5173",
+        default="https://app.getseer.dev",
         description="Frontend application URL (e.g., OAuth redirects, checkout redirects)"
     )
 

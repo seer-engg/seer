@@ -61,6 +61,10 @@ services:
       UV_LINK_MODE: "copy"  # Use copy mode to avoid hardlink warnings in Docker volumes
       MLFLOW_TRACKING_URI: "http://mlflow:5000"
       MLFLOW_EXPERIMENT_NAME: "seer-workflow-agent"
+      FRONTEND_URL: "${FRONTEND_URL:-https://app.getseer.dev}"
+      BACKEND_API_URL: "${BACKEND_API_URL:-localhost:8000}"
+      AUTO_OPEN_BROWSER: "${AUTO_OPEN_BROWSER:-true}"
+      CHAT_MESSAGES_TOTAL_SELF_HOSTED: "${CHAT_MESSAGES_TOTAL_SELF_HOSTED:--1}"
     dns:
       - 8.8.8.8
       - 8.8.4.4
