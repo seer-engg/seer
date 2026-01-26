@@ -1,4 +1,4 @@
-name: Deploy to Amazon ECS (Multi-Env)
+name: Deploy to AWS
 
 on:
   push:
@@ -19,7 +19,8 @@ on:
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
   ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
-  CONTAINER_NAME: ${{ secrets.CONTAINER_NAME }} # Assumes same container name in both task defs
+  ECS_API_SERVICE: ${{ secrets.ECS_API_SERVICE }}
+  ECS_WORKER_SERVICE: ${{ secrets.ECS_WORKER_SERVICE }}
 
 jobs:
   deploy:
@@ -39,12 +40,14 @@ jobs:
         run: |
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             echo "Deploying to PRODUCTION"
-            echo "ecs_service=${{ secrets.ECS_SERVICE_MAIN }}" >> $GITHUB_ENV
-            echo "ecs_cluster=${{ secrets.ECS_CLUSTER_MAIN }}" >> $GITHUB_ENV
+            echo "ECS_CLUSTER=${{ secrets.ECS_CLUSTER_MAIN }}" >> $GITHUB_ENV
+            echo "IMAGE_TAG=main" >> $GITHUB_ENV
+            echo "DATABASE_URL=${{ secrets.DATABASE_URL_MAIN }}" >> $GITHUB_ENV
           elif [[ "${{ github.ref }}" == "refs/heads/dev" ]]; then
             echo "Deploying to DEVELOPMENT"
-            echo "ecs_service=${{ secrets.ECS_SERVICE_DEV }}" >> $GITHUB_ENV
-            echo "ecs_cluster=${{ secrets.ECS_CLUSTER_DEV }}" >> $GITHUB_ENV
+            echo "ECS_CLUSTER=${{ secrets.ECS_CLUSTER_DEV }}" >> $GITHUB_ENV
+            echo "IMAGE_TAG=dev" >> $GITHUB_ENV
+            echo "DATABASE_URL=${{ secrets.DATABASE_URL_DEV }}" >> $GITHUB_ENV
           fi
 
       - name: Configure AWS credentials
@@ -65,13 +68,14 @@ jobs:
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Run database migrations
-        run: |
-          uv sync
-          uv run aerich upgrade
         env:
-          # Add any required database connection environment variables here
-          # These should be configured in your GitHub secrets
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+
+        run: |
+          uv sync --frozen
+          echo "Running database migrations"
+          echo "Migrations HEADS: $(uv run aerich heads)"
+          uv run aerich upgrade
 
       - name: Login to Amazon ECR
         id: login-ecr
@@ -80,18 +84,33 @@ jobs:
       - name: Build, tag, and push image to Amazon ECR
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
-      - name: Force ECS service deployment
+      - name: Force ECS service deployment API Service
         run: |
           aws ecs update-service \
-            --cluster ${{ env.ecs_cluster }} \
-            --service ${{ env.ecs_service }} \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_API_SERVICE }} \
             --force-new-deployment
 
+
+      - name: Force ECS service deployment Worker Service
+        run: |
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_WORKER_SERVICE }} \
+            --force-new-deployment
+
+
+      - name: Wait for ECS services to be stable
+
           aws ecs wait services-stable \
-            --cluster ${{ env.ecs_cluster }} \
-            --services ${{ env.ecs_service }}
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_API_SERVICE }}
+
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_WORKER_SERVICE }}
