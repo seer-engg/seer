@@ -2,7 +2,7 @@ services:
   postgres:
     image: postgres:16-alpine
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
@@ -19,7 +19,7 @@ services:
   valkey:
     image: valkey/valkey:7-alpine
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
@@ -29,7 +29,7 @@ services:
   mlflow:
     image: ghcr.io/mlflow/mlflow:v3.8.1
     ports:
-      - "5000:5000"
+      - "${MLFLOW_PORT:-5000}:5000"
     environment:
       MLFLOW_BACKEND_STORE_URI: "sqlite:////mlflow/mlflow.db"
       MLFLOW_DEFAULT_ARTIFACT_ROOT: "/mlflow/artifacts"
@@ -47,7 +47,7 @@ services:
       context: .
       dockerfile: Dockerfile          # <-- your existing root Dockerfile
     ports:
-      - "8000:8000"                   # change if your server uses another port
+      - "${API_PORT:-8000}:8000"                   # change if your server uses another port
     depends_on:
       postgres:
         condition: service_healthy
@@ -56,13 +56,13 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
-      REDIS_URL: "redis://valkey:6379/0"
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-seer}"
+      REDIS_URL: "redis://valkey:${REDIS_PORT:-6379}/0"
       UV_LINK_MODE: "copy"  # Use copy mode to avoid hardlink warnings in Docker volumes
-      MLFLOW_TRACKING_URI: "http://mlflow:5000"
+      MLFLOW_TRACKING_URI: "http://mlflow:${MLFLOW_PORT:-5000}"
       MLFLOW_EXPERIMENT_NAME: "seer-workflow-agent"
       FRONTEND_URL: "${FRONTEND_URL:-https://app.getseer.dev}"
-      BACKEND_API_URL: "${BACKEND_API_URL:-localhost:8000}"
+      BACKEND_API_URL: "${BACKEND_API_URL:-localhost:${API_PORT:-8000}}"
       AUTO_OPEN_BROWSER: "${AUTO_OPEN_BROWSER:-true}"
       CHAT_MESSAGES_TOTAL_SELF_HOSTED: "${CHAT_MESSAGES_TOTAL_SELF_HOSTED:--1}"
     dns:
@@ -85,10 +85,10 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
-      REDIS_URL: "redis://valkey:6379/0"
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-seer}"
+      REDIS_URL: "redis://valkey:${REDIS_PORT:-6379}/0"
       UV_LINK_MODE: "copy"
-      MLFLOW_TRACKING_URI: "http://mlflow:5000"
+      MLFLOW_TRACKING_URI: "http://mlflow:${MLFLOW_PORT:-5000}"
       MLFLOW_EXPERIMENT_NAME: "seer-workflow-agent"
     volumes:
       - ./:/app
