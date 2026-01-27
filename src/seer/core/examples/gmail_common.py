@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Mapping, Optional, TypedDict
 
 from tortoise import Tortoise
 
+from seer.core.schema.models import JsonSchema
 from seer.api.integrations.services import get_valid_access_token
 
 logger = logging.getLogger(__name__)
@@ -143,3 +144,25 @@ class GmailDemoService:
                 },
             },
         }
+
+
+def get_gmail_reply_schemas(service: GmailDemoService) -> tuple[JsonSchema, JsonSchema, JsonSchema]:
+    """
+    Return the common schemas used by Gmail reply workflows:
+    (reply_schema, read_schema, draft_schema)
+    """
+    reply_schema: JsonSchema = {
+        "type": "object",
+        "properties": {
+            "to": {"type": "array", "items": {"type": "string"}},
+            "subject": {"type": "string"},
+            "body_text": {"type": "string"},
+        },
+        "required": ["to", "subject", "body_text"],
+        "additionalProperties": False,
+    }
+
+    read_schema = service.read_tool.get_output_schema()
+    draft_schema = service.create_draft_tool.get_output_schema()
+
+    return reply_schema, read_schema, draft_schema
