@@ -213,6 +213,16 @@ def extract_provider_account_id(oauth_provider: str, profile: Dict[str, Any]) ->
                 f"Profile keys: {list(profile.keys())}"
             )
         return str(provider_id)
+    elif oauth_provider == 'discord':
+        # For Discord bot installations, use the id from profile (which is user_id)
+        # or fall back to a default format
+        provider_id = profile.get('id')
+        if provider_id is None:
+            raise ValueError(
+                f"Discord profile missing required field 'id'. "
+                f"Profile keys: {list(profile.keys())}"
+            )
+        return str(provider_id)
     else:
         provider_id = profile.get('id')
         if provider_id is None:
