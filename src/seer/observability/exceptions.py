@@ -207,6 +207,38 @@ class CreditLimitExceeded(UsageLimitError):
         return data
 
 
+class RunCostCapExceeded(Exception):
+    """Raised when per-execution cost cap is exceeded."""
+
+    def __init__(
+        self,
+        run_identifier: str,
+        accumulated_cost: float,
+        cost_cap: float,
+        run_type: str,  # "workflow" or "chat"
+    ):
+        self.run_identifier = run_identifier
+        self.accumulated_cost = accumulated_cost
+        self.cost_cap = cost_cap
+        self.run_type = run_type
+
+        message = (
+            f"{run_type.capitalize()} run '{run_identifier}' exceeded cost cap: "
+            f"${accumulated_cost:.2f} > ${cost_cap:.2f}"
+        )
+        super().__init__(message)
+
+    def to_dict(self) -> dict:
+        return {
+            "error": "run_cost_cap_exceeded",
+            "run_identifier": self.run_identifier,
+            "accumulated_cost": round(self.accumulated_cost, 2),
+            "cost_cap": round(self.cost_cap, 2),
+            "run_type": self.run_type,
+            "message": str(self),
+        }
+
+
 class PollingIntervalTooFast(UsageLimitError):
     """
     Raised when user attempts to set a polling interval faster than their tier allows.

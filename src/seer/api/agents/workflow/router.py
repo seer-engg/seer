@@ -21,15 +21,22 @@ from seer.agents.nexus import (
     set_user_for_thread,
     set_workflow_state_for_thread,
 )
+from seer.agents.nexus.cost_callback import (
+    CostCapCallbackHandler,
+    set_chat_runtime_context,
+    clear_chat_runtime_context,
+)
 from seer.api.agents.checkpointer import _recreate_checkpointer, get_checkpointer
 from seer.api.core.errors import AUTH_PROBLEM, VALIDATION_PROBLEM, raise_problem
 from seer.config import config
+from seer.core.runtime.context import WorkflowRuntimeContext
 from seer.database import User, UserPublic
 from seer.database.models import UserSettings
 from seer.logger import get_logger
 from seer.observability import (
     increment_chat_message_count,
 )
+from seer.observability.exceptions import RunCostCapExceeded
 
 from .chat_schema import (
     ChatMessage,
@@ -181,31 +188,23 @@ async def _maybe_create_proposal_from_spec(
     return proposal, proposal_public, None
 
 
-@router.post("/chat", response_model=ChatResponse)
-async def discovery_chat_endpoint(  # pylint: disable=too-many-locals # Reason: Complex endpoint with discovery logic, requires refactoring
-    request: Request,
-    chat_request: DiscoveryChatRequest,
-) -> ChatResponse:
+async def _get_or_create_discovery_session(
+    user: User,
+    thread_id: str | None,
+    creation_mode: WorkflowCreationMode,
+) -> Tuple[Any, str, str]:
     """
-    Discovery chat without a workflow (for workflow creation).
+    Get or create discovery chat session.
 
-    The assistant can ask clarifying questions and create workflows based on user input.
+    Args:
+        user: User object
+        thread_id: Optional thread ID from request
+        creation_mode: Workflow creation mode
+
+    Returns:
+        Tuple of (session, thread_id, session_id)
     """
-    logger.info("Discovery chat request: message_length=%d", len(chat_request.message))
-    user = _require_user(request)
-
-    # Get workflow creation mode
-    if chat_request.workflow_creation_mode:
-        creation_mode = chat_request.workflow_creation_mode
-    else:
-        creation_mode = await get_user_workflow_creation_mode(user)
-
-    model = chat_request.model or config.default_llm_model
-    checkpointer = await get_checkpointer()
-
-    # Get or create discovery session
-    if chat_request.thread_id:
-        thread_id = chat_request.thread_id
+    if thread_id:
         session = await get_discovery_chat_session_by_thread_id(thread_id, user)
         if not session:
             session = await create_discovery_chat_session(
@@ -223,6 +222,74 @@ async def discovery_chat_endpoint(  # pylint: disable=too-many-locals # Reason: 
         )
         session_id = session.id
 
+    return session, thread_id, session_id
+
+
+async def _setup_cost_tracking_context(user: User, thread_id: str) -> WorkflowRuntimeContext:
+    """
+    Setup cost tracking context for chat.
+
+    Args:
+        user: User object
+        thread_id: Thread ID for the chat
+
+    Returns:
+        WorkflowRuntimeContext configured with user settings
+    """
+    # Get user settings for cost cap
+    try:
+        user_settings = await UserSettings.get(user=user)
+        per_run_cost_cap_usd = user_settings.preferences.get("per_run_cost_cap_usd", 5.0)
+    except DoesNotExist:
+        per_run_cost_cap_usd = 5.0
+
+    # Create runtime context for cost tracking
+    runtime_context = WorkflowRuntimeContext(
+        user=user,
+        workflow_run_id=None,
+        thread_id=thread_id,
+        per_run_cost_cap_usd=per_run_cost_cap_usd,
+        accumulated_cost_usd=0.0,
+    )
+
+    # Set context for callback access
+    set_chat_runtime_context(runtime_context)
+
+    return runtime_context
+
+
+@router.post("/chat", response_model=ChatResponse)
+async def discovery_chat_endpoint(  # pylint: disable=too-many-locals  # Reason: orchestration endpoint requires multiple local vars for clarity
+    request: Request,
+    chat_request: DiscoveryChatRequest,
+) -> ChatResponse:
+    """
+    Discovery chat without a workflow (for workflow creation).
+
+    The assistant can ask clarifying questions and create workflows based on user input.
+    """
+    logger.info("Discovery chat request: message_length=%d", len(chat_request.message))
+    user = _require_user(request)
+
+    # Get workflow creation mode
+    creation_mode = (
+        chat_request.workflow_creation_mode
+        or await get_user_workflow_creation_mode(user)
+    )
+
+    model = chat_request.model or config.default_llm_model
+    checkpointer = await get_checkpointer()
+
+    # Get or create discovery session
+    _session, thread_id, session_id = await _get_or_create_discovery_session(
+        user=user,
+        thread_id=chat_request.thread_id,
+        creation_mode=creation_mode,
+    )
+
+    # Setup cost tracking context (sets global context as side effect)
+    _runtime_context = await _setup_cost_tracking_context(user=user, thread_id=thread_id)
+
     # Set discovery mode context (no workflow state)
     set_user_for_thread(thread_id, user)
 
@@ -239,7 +306,14 @@ async def discovery_chat_endpoint(  # pylint: disable=too-many-locals # Reason: 
     await increment_chat_message_count(user)
 
     try:
-        config_dict = {"configurable": {"thread_id": thread_id}}
+        # Create cost tracking callback
+        cost_callback = CostCapCallbackHandler()
+
+        # Configure with callbacks
+        config_dict = {
+            "configurable": {"thread_id": thread_id},
+            "callbacks": [cost_callback],
+        }
 
         # Initialize orchestrator
         orchestrator = ChatOrchestrator(
@@ -290,6 +364,21 @@ async def discovery_chat_endpoint(  # pylint: disable=too-many-locals # Reason: 
             interrupt_data=interrupt_data,
             workflow_created_id=workflow_created_id,
         )
+    except RunCostCapExceeded as e:
+        logger.warning(
+            "Discovery chat cost cap exceeded",
+            extra={
+                "thread_id": thread_id,
+                "accumulated_cost": e.accumulated_cost,
+                "cost_cap": e.cost_cap,
+            },
+        )
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Cost cap exceeded",
+            detail=e.to_dict(),
+            status=402,
+        )
     except Exception as e:  # pylint: disable=broad-exception-caught # Reason: API boundary, converting all exceptions to HTTP problem responses
         logger.error("Error in discovery chat: %s", e, exc_info=True)
         raise_problem(
@@ -299,6 +388,7 @@ async def discovery_chat_endpoint(  # pylint: disable=too-many-locals # Reason: 
             status=500
         )
     finally:
+        clear_chat_runtime_context()
         clear_proposed_spec_for_thread(thread_id)
         clear_user_for_thread(thread_id)
 
@@ -355,17 +445,36 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
     # Track user message (global count, not per-workflow)
     await increment_chat_message_count(user)
 
-    # Get user settings for max steps
+    # Get user settings for max steps and cost cap
     try:
         user_settings = await UserSettings.get(user=user)
         max_agent_steps = user_settings.max_agent_steps or config.nexus_max_agent_steps
+        per_run_cost_cap_usd = user_settings.preferences.get("per_run_cost_cap_usd", 5.0)
     except DoesNotExist:
         max_agent_steps = config.nexus_max_agent_steps
+        per_run_cost_cap_usd = 5.0
+
+    # Create runtime context for cost tracking
+    runtime_context = WorkflowRuntimeContext(
+        user=user,
+        workflow_run_id=None,
+        thread_id=thread_id,
+        per_run_cost_cap_usd=per_run_cost_cap_usd,
+        accumulated_cost_usd=0.0,
+    )
+
+    # Set context for callback access
+    set_chat_runtime_context(runtime_context)
 
     try:
+        # Create cost tracking callback
+        cost_callback = CostCapCallbackHandler()
+
+        # Configure with callbacks
         config_dict = {
             "configurable": {"thread_id": thread_id},
             "recursion_limit": max_agent_steps,
+            "callbacks": [cost_callback],
         }
 
         # Initialize orchestrator
@@ -434,7 +543,24 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
             interrupt_required=interrupt_required,
             interrupt_data=interrupt_data,
         )
+    except RunCostCapExceeded as e:
+        logger.warning(
+            "Chat cost cap exceeded for thread '%s'",
+            thread_id,
+            extra={
+                "thread_id": thread_id,
+                "accumulated_cost": e.accumulated_cost,
+                "cost_cap": e.cost_cap,
+            },
+        )
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Cost cap exceeded",
+            detail=e.to_dict(),
+            status=402,
+        )
     except Exception as e:  # pylint: disable=broad-exception-caught # Reason: API boundary, converting all exceptions to HTTP problem responses
+        # Handle other exceptions
         logger.error("Error in workflow chat: %s", e, exc_info=True)
         raise_problem(
             type_uri=VALIDATION_PROBLEM,
@@ -443,6 +569,7 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
             status=500
         )
     finally:
+        clear_chat_runtime_context()
         clear_proposed_spec_for_thread(thread_id)
         clear_user_for_thread(thread_id)
 

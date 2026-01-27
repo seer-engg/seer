@@ -15,6 +15,7 @@ class UserSettingsUpdate(BaseModel):
     """Request model for updating user settings."""
     max_agent_steps: Optional[int] = None
     preferences: Optional[Dict[str, Any]] = None
+    per_run_cost_cap_usd: Optional[float] = None
 
 
 def _require_user(request: Request) -> User:  # pylint: disable=duplicate-code  # Standard auth pattern duplicated across routers
@@ -55,6 +56,16 @@ async def update_user_settings(
                 status=400,
             )
         settings.max_agent_steps = update_data.max_agent_steps
+
+    if update_data.per_run_cost_cap_usd is not None:
+        if not 0.10 <= update_data.per_run_cost_cap_usd <= 1000.0:
+            raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Invalid per-run cost cap",
+                detail="Cost cap must be between $0.10 and $1000.00",
+                status=400,
+            )
+        settings.preferences["per_run_cost_cap_usd"] = update_data.per_run_cost_cap_usd
 
     if update_data.preferences:
         settings.preferences.update(update_data.preferences)
