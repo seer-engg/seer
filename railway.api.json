@@ -5,6 +5,13 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
+    "runtime": "V2",
+    "numReplicas": 1,
+    "preDeployCommand": [
+      "uv run aerich upgrade"
+    ],
+    "startCommand": "uv run uvicorn seer.api.main:app --host 0.0.0.0 --port 8000 ",
+    "sleepApplication": false,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }

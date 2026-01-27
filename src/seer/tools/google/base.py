@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code  # Reason: HTTP client helper mirrors supabase.common for consistent request handling
 """
 Base class for Google API tools.
 
@@ -89,7 +90,7 @@ class GoogleAPIClient(BaseTool, ABC):
             "Accept": "application/json"
         }
 
-    async def _make_request(
+    async def _make_request(  # pylint: disable=too-many-arguments  # Reason: Google API base method requires all HTTP request parameters
         self,
         method: str,
         url: str,

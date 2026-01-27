@@ -224,11 +224,11 @@ class CredentialResolver:
             if key in arguments and arguments[key] is not None:
                 try:
                     return int(arguments[key])
-                except (TypeError, ValueError):
+                except (TypeError, ValueError) as exc:
                     raise HTTPException(
                         status_code=400,
                         detail=f"Invalid resource identifier '{arguments[key]}' for parameter '{key}'",
-                    )
+                    ) from exc
         return None
 
     def _infer_provider(

@@ -1,3 +1,5 @@
+# pylint: disable=too-many-arguments,logging-fstring-interpolation,broad-exception-caught
+# Reason: Resource provider list_resources has many filter parameters; legacy f-string logging; broad exception for API errors
 from __future__ import annotations
 
 from typing import Any, Dict, Optional

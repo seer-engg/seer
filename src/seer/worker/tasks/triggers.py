@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from seer.worker.broker import broker
+from seer.worker.broker_instance import broker
 from seer.logger import get_logger
 from seer.services.workflows.triggers import process_trigger_event
 logger = get_logger(__name__)

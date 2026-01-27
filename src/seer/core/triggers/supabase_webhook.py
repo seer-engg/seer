@@ -23,6 +23,8 @@ class SupabaseWebhookError(Exception):
     """Raised when Supabase webhook operations fail."""
 
 
+# pylint: disable=too-complex,broad-exception-caught,too-many-positional-arguments
+# Reason: Webhook creation involves SQL generation, HTTP requests, and error handling for multiple scenarios
 async def create_database_webhook(
     subscription: TriggerSubscription,
     webhook_url: str,

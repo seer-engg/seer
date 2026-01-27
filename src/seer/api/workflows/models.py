@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from seer.core.schema.models import WorkflowSpec
+from seer.core.schema.models import TriggerIdentity, WorkflowSpec
 
 
 class ProblemError(BaseModel):
@@ -54,12 +54,7 @@ class ToolRegistryResponse(BaseModel):
     tools: List[ToolDescriptor]
 
 
-class TriggerDescriptor(BaseModel):
-    key: str
-    title: str
-    provider: str
-    mode: str
-    description: Optional[str] = None
+class TriggerDescriptor(TriggerIdentity):
     event_schema: Dict[str, Any]
     filter_schema: Optional[Dict[str, Any]] = None
     config_schema: Optional[Dict[str, Any]] = None

@@ -11,17 +11,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@v3
         with:
-          python-version: '3.12'
+          python-version: "3.12"
+          enable-cache: true
 
       - name: Install dependencies
         run: |
-          pip install pre-commit
-          pip install pylint
+          uv sync --frozen --group dev
 
       - name: Run pre-commit hooks
-        run: pre-commit run --all-files
+        run: |
+          uv run pre-commit install
+          uv run pre-commit run --all-files
         env:
-          SKIP: no-commit-to-branch  # Allow commits in CI
+          SKIP: no-commit-to-branch
+          DATABASE_URL: "postgresql://dummy:dummy@localhost:5432/dummy"

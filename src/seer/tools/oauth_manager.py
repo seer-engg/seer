@@ -13,6 +13,8 @@ from seer.logger import get_logger
 logger = get_logger("shared.tools.oauth_manager")
 
 
+# pylint: disable=too-complex
+# Reason: OAuth token refresh handles multiple providers with different auth flows and error cases
 async def refresh_oauth_token(connection: OAuthConnection) -> OAuthConnection:
     """
     Refresh an expired OAuth token using the stored refresh token.
@@ -27,22 +29,22 @@ async def refresh_oauth_token(connection: OAuthConnection) -> OAuthConnection:
     logger.info("Refreshing OAuth token", extra={"connection_id": connection.id, "provider": connection.provider})
 
     if connection.provider in ["google", "googledrive", "gmail"]:
-        if not config.GOOGLE_CLIENT_ID or not config.GOOGLE_CLIENT_SECRET:
+        if not config.google_client_id or not config.google_client_secret:
             raise HTTPException(status_code=500, detail="Google OAuth client credentials not configured")
         refresh_url = "https://oauth2.googleapis.com/token"
         refresh_data = {
-            "client_id": config.GOOGLE_CLIENT_ID,
-            "client_secret": config.GOOGLE_CLIENT_SECRET,
+            "client_id": config.google_client_id,
+            "client_secret": config.google_client_secret,
             "refresh_token": connection.refresh_token_enc,
             "grant_type": "refresh_token",
         }
     elif connection.provider == "github":
-        if not config.GITHUB_CLIENT_ID or not config.GITHUB_CLIENT_SECRET:
+        if not config.github_client_id or not config.github_client_secret:
             raise HTTPException(status_code=500, detail="GitHub OAuth client credentials not configured")
         refresh_url = "https://github.com/login/oauth/access_token"
         refresh_data = {
-            "client_id": config.GITHUB_CLIENT_ID,
-            "client_secret": config.GITHUB_CLIENT_SECRET,
+            "client_id": config.github_client_id,
+            "client_secret": config.github_client_secret,
             "refresh_token": connection.refresh_token_enc,
             "grant_type": "refresh_token",
         }
@@ -79,10 +81,10 @@ async def refresh_oauth_token(connection: OAuthConnection) -> OAuthConnection:
             "Token refresh failed",
             extra={"connection_id": connection.id, "status_code": exc.response.status_code, "body": exc.response.text[:200]},
         )
-        raise HTTPException(status_code=401, detail=f"Token refresh failed: {exc.response.text[:200]}")
+        raise HTTPException(status_code=401, detail=f"Token refresh failed: {exc.response.text[:200]}") from exc
     except Exception as exc:
         logger.exception("Unexpected error refreshing token", extra={"connection_id": connection.id})
-        raise HTTPException(status_code=500, detail=f"Token refresh error: {str(exc)}")
+        raise HTTPException(status_code=500, detail=f"Token refresh error: {str(exc)}") from exc
 
 
 async def get_oauth_token(
@@ -101,8 +103,8 @@ async def get_oauth_token(
             db_id = connection_id
         try:
             connection = await OAuthConnection.get(id=int(db_id), user=user, status="active")
-        except Exception:
-            raise HTTPException(status_code=404, detail=f"OAuth connection {connection_id} not found")
+        except Exception as exc:
+            raise HTTPException(status_code=404, detail=f"OAuth connection {connection_id} not found") from exc
     elif provider:
         connection = await OAuthConnection.get_or_none(user=user, provider=provider, status="active")
         if not connection:

@@ -14,28 +14,9 @@ from typing import Any, Dict, List, Optional
 from langchain_core.tools import BaseTool
 
 from seer.logger import get_logger
+from seer.tools.postgres_common import get_asyncpg
 
 logger = get_logger("shared.tools.postgres_client")
-
-# Lazy import for asyncpg to avoid import errors if not installed
-_asyncpg = None
-
-
-def _get_asyncpg():
-    """Lazy load asyncpg to avoid import errors."""
-    global _asyncpg
-    if _asyncpg is None:
-        try:
-            import asyncpg
-            _asyncpg = asyncpg
-        except ImportError:
-            # pylint: disable=raise-missing-from # Reason: Clear install instructions don't need traceback chain
-            raise ImportError(
-                "asyncpg is required for PostgreSQL operations. "
-                "Install it with: pip install asyncpg"
-            )
-    return _asyncpg
-
 
 class PostgresClient:
     """
@@ -81,7 +62,7 @@ class PostgresClient:
 
     async def connect(self) -> None:
         """Initialize the connection pool."""
-        asyncpg = _get_asyncpg()
+        asyncpg = get_asyncpg()
         async with self._lock:
             if self._pool is None:
                 logger.info("Creating PostgreSQL connection pool")

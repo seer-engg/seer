@@ -21,8 +21,8 @@ class PostgresProvider:
 
     def __init__(self, connection_string: Optional[str] = None):
         if connection_string is None:
-            from seer.config import config
-            connection_string = config.DATABASE_URL
+            from seer.config import config  # pylint: disable=import-outside-toplevel  # Reason: avoid config import unless needed.
+            connection_string = config.database_url
         self._connection_string = connection_string
         self._client: Optional[Any] = None
 
@@ -55,7 +55,7 @@ class PostgresProvider:
             logger.warning("No DATABASE_URL configured, skipping PostgreSQL provisioning")
             return {}
 
-        from seer.tools.postgres_client import PostgresClient
+        from seer.tools.postgres_client import PostgresClient  # pylint: disable=import-outside-toplevel  # Reason: avoid heavy import at module load.
 
         self._client = PostgresClient(self._connection_string)
         await self._client.connect()
@@ -87,7 +87,7 @@ class PostgresProvider:
     async def cleanup_resources(
         self,
         resources: Dict[str, Any],
-        user_id: str,
+        user_id: str,  # pylint: disable=unused-argument  # Reason: interface requires user_id for parity with provision.
     ) -> None:
         """
         Cleanup PostgreSQL resources (drop tables created during provisioning).
@@ -99,7 +99,7 @@ class PostgresProvider:
         if not self._client:
             if not self._connection_string:
                 return
-            from seer.tools.postgres_client import PostgresClient
+            from seer.tools.postgres_client import PostgresClient  # pylint: disable=import-outside-toplevel  # Reason: avoid heavy import at module load.
             self._client = PostgresClient(self._connection_string)
             await self._client.connect()
 
@@ -119,6 +119,8 @@ class PostgresProvider:
     def get_tools(self) -> List[BaseTool]:
         """Get LangChain tools for this provider."""
         if self._client is None:
-            from seer.tools.postgres_client import PostgresClient
+            if not self._connection_string:
+                raise ValueError("DATABASE_URL is required to initialize Postgres tools")
+            from seer.tools.postgres_client import PostgresClient  # pylint: disable=import-outside-toplevel  # Reason: defer client import.
             self._client = PostgresClient(self._connection_string)
         return self._client.get_tools()

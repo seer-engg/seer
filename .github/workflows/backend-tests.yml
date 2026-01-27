@@ -27,5 +27,31 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --group dev
 
+      - name: Lint migrations
+        run: uv run python scripts/lint-migrations.py
+
+      - name: Test migrations
+        run: |
+          # Start test database
+          docker run -d --name test-postgres \
+            -e POSTGRES_USER=test \
+            -e POSTGRES_PASSWORD=test \
+            -e POSTGRES_DB=seer_test \
+            -p 5432:5432 \
+            postgres:16-alpine
+
+          # Wait for postgres
+          sleep 5
+
+          # Run migrations
+          export DATABASE_URL="postgresql://test:test@localhost:5432/seer_test"
+          uv run aerich upgrade
+
+          # Cleanup
+          docker stop test-postgres
+          docker rm test-postgres
+
       - name: Run test suite
         run: uv run pytest
+        env:
+          DATABASE_URL: "postgresql://test:test@localhost:5432/seer_test"

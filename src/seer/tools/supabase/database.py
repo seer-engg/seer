@@ -4,8 +4,8 @@ import httpx
 from fastapi import HTTPException
 
 from seer.logger import get_logger
-from seer.tools.base import BaseTool, ResourcePickerConfig
 from seer.tools.supabase.common import (
+    SupabaseProjectTool,
     _apply_eq_filters,
     _require_project_and_key,
     _resolve_rest_url,
@@ -22,18 +22,9 @@ logger = get_logger("shared.tools.supabase.database")
 # and your existing _resolve_rest_url(resource)
 
 
-class SupabaseTableQueryTool(BaseTool):
+class SupabaseTableQueryTool(SupabaseProjectTool):
     name = "supabase_table_query"
     description = "Query a Supabase table via the REST interface (read-only)."
-    integration_type = "supabase"
-    provider = "supabase"
-    required_scopes: list[str] = []
-    required_secrets = ["supabase_service_role_key"]
-    default_resource = {
-        "provider": "supabase",
-        "resource_type": "project",
-        "required": True,
-    }
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -70,17 +61,6 @@ class SupabaseTableQueryTool(BaseTool):
                 },
             },
             "required": ["integration_resource_id", "table"],
-        }
-
-    def get_resource_pickers(self) -> Dict[str, ResourcePickerConfig]:
-        return {
-            "integration_resource_id": {
-                "resource_type": "supabase_project",
-                "display_field": "name",
-                "value_field": "id",
-                "search_enabled": True,
-                "endpoint": "/integrations/supabase/resources/bindings",
-            }
         }
 
     def get_output_schema(self) -> Dict[str, Any]:
@@ -145,21 +125,16 @@ class SupabaseTableQueryTool(BaseTool):
             raise
         except Exception as exc:
             logger.exception("Supabase query error", extra={"table": table})
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}") from exc
 
 
 # -----------------------------
 # Database (PostgREST) - WRITE
 # -----------------------------
 
-class SupabaseTableInsertTool(BaseTool):
+class SupabaseTableInsertTool(SupabaseProjectTool):
     name = "supabase_table_insert"
     description = "Insert rows into a Supabase table via PostgREST."
-    integration_type = "supabase"
-    provider = "supabase"
-    required_scopes: list[str] = []
-    required_secrets = ["supabase_service_role_key"]
-    default_resource = {"provider": "supabase", "resource_type": "project", "required": True}
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -180,17 +155,6 @@ class SupabaseTableInsertTool(BaseTool):
                 },
             },
             "required": ["integration_resource_id", "table", "rows"],
-        }
-
-    def get_resource_pickers(self) -> Dict[str, "ResourcePickerConfig"]:
-        return {
-            "integration_resource_id": {
-                "resource_type": "supabase_project",
-                "display_field": "name",
-                "value_field": "id",
-                "search_enabled": True,
-                "endpoint": "/integrations/supabase/resources/bindings",
-            }
         }
 
     def get_output_schema(self) -> Dict[str, Any]:
@@ -225,17 +189,12 @@ class SupabaseTableInsertTool(BaseTool):
             raise
         except Exception as exc:
             logger.exception("Supabase insert error", extra={"table": table})
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}") from exc
 
 
-class SupabaseTableUpsertTool(BaseTool):
+class SupabaseTableUpsertTool(SupabaseProjectTool):
     name = "supabase_table_upsert"
     description = "Upsert rows into a Supabase table via PostgREST (merge duplicates)."
-    integration_type = "supabase"
-    provider = "supabase"
-    required_scopes: list[str] = []
-    required_secrets = ["supabase_service_role_key"]
-    default_resource = {"provider": "supabase", "resource_type": "project", "required": True}
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -251,17 +210,6 @@ class SupabaseTableUpsertTool(BaseTool):
                 "return_rows": {"type": "boolean", "default": True},
             },
             "required": ["integration_resource_id", "table", "rows"],
-        }
-
-    def get_resource_pickers(self) -> Dict[str, "ResourcePickerConfig"]:
-        return {
-            "integration_resource_id": {
-                "resource_type": "supabase_project",
-                "display_field": "name",
-                "value_field": "id",
-                "search_enabled": True,
-                "endpoint": "/integrations/supabase/resources/bindings",
-            }
         }
 
     def get_output_schema(self) -> Dict[str, Any]:
@@ -299,17 +247,12 @@ class SupabaseTableUpsertTool(BaseTool):
             raise
         except Exception as exc:
             logger.exception("Supabase upsert error", extra={"table": table})
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}") from exc
 
 
-class SupabaseTableUpdateTool(BaseTool):
+class SupabaseTableUpdateTool(SupabaseProjectTool):
     name = "supabase_table_update"
     description = "Update rows in a Supabase table via PostgREST (PATCH)."
-    integration_type = "supabase"
-    provider = "supabase"
-    required_scopes: list[str] = []
-    required_secrets = ["supabase_service_role_key"]
-    default_resource = {"provider": "supabase", "resource_type": "project", "required": True}
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -326,17 +269,6 @@ class SupabaseTableUpdateTool(BaseTool):
                 "return_rows": {"type": "boolean", "default": True},
             },
             "required": ["integration_resource_id", "table", "patch", "filters"],
-        }
-
-    def get_resource_pickers(self) -> Dict[str, "ResourcePickerConfig"]:
-        return {
-            "integration_resource_id": {
-                "resource_type": "supabase_project",
-                "display_field": "name",
-                "value_field": "id",
-                "search_enabled": True,
-                "endpoint": "/integrations/supabase/resources/bindings",
-            }
         }
 
     def get_output_schema(self) -> Dict[str, Any]:
@@ -375,17 +307,12 @@ class SupabaseTableUpdateTool(BaseTool):
             raise
         except Exception as exc:
             logger.exception("Supabase update error", extra={"table": table})
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}") from exc
 
 
-class SupabaseTableDeleteTool(BaseTool):
+class SupabaseTableDeleteTool(SupabaseProjectTool):
     name = "supabase_table_delete"
     description = "Delete rows from a Supabase table via PostgREST (DELETE)."
-    integration_type = "supabase"
-    provider = "supabase"
-    required_scopes: list[str] = []
-    required_secrets = ["supabase_service_role_key"]
-    default_resource = {"provider": "supabase", "resource_type": "project", "required": True}
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -397,17 +324,6 @@ class SupabaseTableDeleteTool(BaseTool):
                 "return_rows": {"type": "boolean", "default": False},
             },
             "required": ["integration_resource_id", "table", "filters"],
-        }
-
-    def get_resource_pickers(self) -> Dict[str, "ResourcePickerConfig"]:
-        return {
-            "integration_resource_id": {
-                "resource_type": "supabase_project",
-                "display_field": "name",
-                "value_field": "id",
-                "search_enabled": True,
-                "endpoint": "/integrations/supabase/resources/bindings",
-            }
         }
 
     def get_output_schema(self) -> Dict[str, Any]:
@@ -446,17 +362,12 @@ class SupabaseTableDeleteTool(BaseTool):
             raise
         except Exception as exc:
             logger.exception("Supabase delete error", extra={"table": table})
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}") from exc
 
 
-class SupabaseRpcCallTool(BaseTool):
+class SupabaseRpcCallTool(SupabaseProjectTool):
     name = "supabase_rpc_call"
     description = "Call a Postgres function via PostgREST RPC endpoint."
-    integration_type = "supabase"
-    provider = "supabase"
-    required_scopes: list[str] = []
-    required_secrets = ["supabase_service_role_key"]
-    default_resource = {"provider": "supabase", "resource_type": "project", "required": True}
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -467,17 +378,6 @@ class SupabaseRpcCallTool(BaseTool):
                 "args": {"type": "object", "additionalProperties": True, "description": "JSON args passed to the function."},
             },
             "required": ["integration_resource_id", "function"],
-        }
-
-    def get_resource_pickers(self) -> Dict[str, "ResourcePickerConfig"]:
-        return {
-            "integration_resource_id": {
-                "resource_type": "supabase_project",
-                "display_field": "name",
-                "value_field": "id",
-                "search_enabled": True,
-                "endpoint": "/integrations/supabase/resources/bindings",
-            }
         }
 
     def get_output_schema(self) -> Dict[str, Any]:
@@ -506,4 +406,4 @@ class SupabaseRpcCallTool(BaseTool):
             raise
         except Exception as exc:
             logger.exception("Supabase rpc error", extra={"function": fn})
-            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}")
+            raise HTTPException(status_code=500, detail=f"Supabase request failed: {str(exc)}") from exc

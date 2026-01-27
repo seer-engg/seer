@@ -16,7 +16,7 @@ from seer.core.expr.typecheck import Scope, TypeEnvironment, typecheck_reference
 from seer.core.runtime.global_compiler import WorkflowCompilerSingleton
 from seer.core.schema.models import WorkflowSpec
 
-compiler = WorkflowCompilerSingleton.instance()
+COMPILER = WorkflowCompilerSingleton.instance()
 
 
 def _type_env_from_compiled(compiled) -> TypeEnvironment:
@@ -25,7 +25,7 @@ def _type_env_from_compiled(compiled) -> TypeEnvironment:
 
 async def _prepare_type_env(user: User, spec: WorkflowSpec) -> TypeEnvironment:
     checkpointer = await get_checkpointer()
-    compiled = await compiler.compile(
+    compiled = await COMPILER.compile(
         user,
         _spec_to_dict(spec),
         checkpointer=checkpointer,
@@ -63,7 +63,7 @@ def typecheck_expression(user: User, payload: api_models.ExpressionTypecheckRequ
             detail=str(exc),
             status=400,
         )
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught  # Reason: converting validation errors to API responses
         _raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Expression validation failed",

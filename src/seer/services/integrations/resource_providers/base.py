@@ -24,7 +24,7 @@ class ResourceProvider:
     def get_resource_config(self, resource_type: str) -> Optional[Dict[str, Any]]:
         return self.resource_configs.get(resource_type)
 
-    async def list_resources(
+    async def list_resources(  # pylint: disable=too-many-arguments  # Provider interface requires full query context
         self,
         *,
         access_token: str,

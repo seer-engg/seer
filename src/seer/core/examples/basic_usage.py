@@ -1,3 +1,5 @@
+# pylint: disable=protected-access,unused-argument
+# Reason: Example code intentionally demonstrates internal compiler APIs and mock functions
 """
 Minimal end-to-end example that compiles and runs a workflow using the
 workflow_compiler package.

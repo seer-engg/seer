@@ -127,7 +127,14 @@ async def _execute_run(
     return result
 
 
-
+async def _mark_run_succeeded(run: WorkflowRun, output: Dict[str, Any]) -> None:
+    """Persist workflow success state and refresh the run instance."""
+    await WorkflowRun.filter(id=run.id).update(
+        status=WorkflowRunStatus.SUCCEEDED,
+        finished_at=_now(),
+        output=output,
+    )
+    await run.refresh_from_db()
 
 
 async def execute_saved_workflow_run(
@@ -157,12 +164,7 @@ async def execute_saved_workflow_run(
             config_payload=config_payload,
             trigger_envelope=trigger_envelope,
         )
-        await WorkflowRun.filter(id=run.id).update(
-            status=WorkflowRunStatus.SUCCEEDED,
-            finished_at=_now(),
-            output=output,
-        )
-        await run.refresh_from_db()
+        await _mark_run_succeeded(run, output)
     except HTTPException:
         logger.exception(
             "Saved workflow run failed",

@@ -10,9 +10,8 @@ from seer.database import (
     WorkflowRun,
     WorkflowRunSource,
 )
-from seer.database.workflow_models import WorkflowRunStatus
 from seer.logger import get_logger
-from seer.services.workflows.execution import _execute_run, _now
+from seer.services.workflows.execution import _execute_run, _mark_run_succeeded
 from seer.api.workflows.services.shared import get_published_version
 
 logger = get_logger(__name__)
@@ -166,12 +165,7 @@ async def process_trigger_event(subscription_id: int, event_id: int) -> None:
             config_payload={},
             trigger_envelope=envelope,
         )
-        await WorkflowRun.filter(id=run.id).update(
-            status=WorkflowRunStatus.SUCCEEDED,
-            finished_at=_now(),
-            output=output,
-        )
-        await run.refresh_from_db()
+        await _mark_run_succeeded(run, output)
         await TriggerEvent.filter(id=event.id).update(status=TriggerEventStatus.PROCESSED)
         logger.info(
             "Trigger job completed: workflow execution succeeded",

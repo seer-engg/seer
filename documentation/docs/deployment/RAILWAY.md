@@ -10,7 +10,7 @@ This guide walks you through creating a Railway template for one-click Seer depl
 
 The Seer Railway deployment consists of 4 services:
 1. **PostgreSQL** - Database (Railway-managed)
-2. **Redis** - Task queue and cache (Railway-managed)
+2. **Valkey** - Task queue and cache (Railway-managed, Redis-compatible)
 3. **seer-api** - FastAPI backend server (custom)
 4. **seer-worker** - Background task worker (custom)
 
@@ -31,12 +31,14 @@ The Seer Railway deployment consists of 4 services:
 3. Railway will automatically provision the database
 4. Note: `DATABASE_URL` is automatically created as a reference variable
 
-### 1.3 Add Redis Service
+### 1.3 Add Valkey Service
 
 1. Click "+ New" in your project
-2. Select "Database" → "Redis"
-3. Railway will automatically provision Redis
+2. Select "Database" → "Redis" (Valkey is Redis-compatible)
+3. Railway will automatically provision Redis/Valkey
 4. Note: `REDIS_URL` is automatically created as a reference variable
+
+> **Note**: Railway uses Redis under the hood, but Valkey is fully compatible. For self-hosted deployments, use Valkey instead.
 
 ### 1.4 Add API Service
 
@@ -55,13 +57,14 @@ The Seer Railway deployment consists of 4 services:
    DATABASE_URL=${{Postgres.DATABASE_URL}}
    REDIS_URL=${{Redis.REDIS_URL}}
    PORT=8000
-   AUTO_APPLY_DATABASE_MIGRATIONS=true
    OPENAI_API_KEY=[your-key-for-testing]
    ```
 
+   **Note:** Migrations run automatically via `railway.json` `preDeployCommand` - no environment variable needed.
+
 6. **Service Configuration:**
    - Go to "Settings" tab
-   - Under "Railway Config File Path", enter: `railway.toml`
+   - Under "Railway Config File Path", enter: `railway.json`
    - Enable "Public Networking"
    - Click "Generate Domain" to create a public URL
 
@@ -85,14 +88,14 @@ The Seer Railway deployment consists of 4 services:
    ```
    DATABASE_URL=${{Postgres.DATABASE_URL}}
    REDIS_URL=${{Redis.REDIS_URL}}
-   AUTO_APPLY_DATABASE_MIGRATIONS=false
    OPENAI_API_KEY=${{seer-api.OPENAI_API_KEY}}
    ```
-   Note: Worker references API's OPENAI_API_KEY to avoid duplication
+   **Notes:**
+   - Worker references API's OPENAI_API_KEY to avoid duplication
+   - Migrations run ONLY on API service - worker connects to already-migrated database
 
 6. **Service Configuration:**
    - Go to "Settings" tab
-   - Under "Railway Config File Path", enter: `railway.worker.toml`
    - **Do NOT** enable "Public Networking" (worker is private)
 
 7. **Deploy:**
@@ -105,7 +108,7 @@ The Seer Railway deployment consists of 4 services:
 
 Check that all 4 services show "Active" status:
 - ✅ Postgres (green)
-- ✅ Redis (green)
+- ✅ Valkey/Redis (green)
 - ✅ seer-api (green)
 - ✅ seer-worker (green)
 
@@ -123,8 +126,8 @@ Check that all 4 services show "Active" status:
 
 1. Click on `seer-api` service
 2. Check the deployment logs
-3. Look for "Running database migrations..." message
-4. Ensure migrations completed without errors
+3. Look for pre-deploy output: `Running preDeployCommand: uv run aerich upgrade`
+4. Ensure migrations completed successfully before app starts
 
 ### 2.4 Test Workflow Creation
 
@@ -157,7 +160,7 @@ Includes:
 - FastAPI backend with workflow execution engine
 - Background task worker for triggers and polling
 - PostgreSQL database for persistence
-- Redis for task queuing
+- Valkey for task queuing (Redis-compatible)
 
 Perfect for self-hosting workflow automation with enterprise-grade features.
 ```
@@ -173,7 +176,7 @@ This template deploys a complete Seer instance with all required services.
 - **API Server**: FastAPI backend with workflow builder
 - **Worker**: Background task processor for triggers and workflow execution
 - **PostgreSQL**: Workflow and user data storage
-- **Redis**: Task queue and caching
+- **Valkey**: Task queue and caching (Redis-compatible)
 
 ## Required Configuration
 
@@ -212,7 +215,7 @@ Define which environment variables users must provide:
 |----------|-------------|---------------|
 | `OPENAI_API_KEY` | OpenAI API key for workflow execution and AI assistance | (none - user must provide) |
 
-**Note:** All other variables (DATABASE_URL, REDIS_URL, etc.) are automatically configured via service references.
+**Note:** All other variables (DATABASE_URL, REDIS_URL, etc.) are automatically configured via service references. Railway uses Redis-compatible services that work seamlessly with Valkey.
 
 ### 3.4 Set Template Icon and Tags
 

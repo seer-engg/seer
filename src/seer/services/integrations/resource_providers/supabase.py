@@ -1,3 +1,5 @@
+# pylint: disable=broad-exception-caught,too-many-arguments
+# Reason: Resource provider needs broad exception handling for API errors; list_resources has many filter params
 from __future__ import annotations
 
 from typing import Any, Dict, Optional

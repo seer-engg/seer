@@ -131,4 +131,4 @@ class UserToolPreference(models.Model):
         ordering = ("-last_updated",)
 
     def __str__(self) -> str:
-        return f"UserToolPreference<user={self.user_id} searches={self.total_searches}>"
+        return f"UserToolPreference<user={self.user_id} searches={self.total_searches}>"  # pylint: disable=no-member  # Reason: user_id is a Tortoise ORM field

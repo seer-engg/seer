@@ -8,13 +8,11 @@
 # Broad exception catching is intentional for logging and graceful degradation.
 
 import hashlib
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 
 from seer.services.integrations.constants import (
-    SUPABASE_OAUTH_PROVIDER,
     SUPABASE_RESOURCE_PROVIDER,
     SUPABASE_RESOURCE_TYPE_PROJECT,
 )
@@ -54,7 +52,7 @@ async def get_connection_for_provider(user: User, provider: str) -> Optional[OAu
         )
         return connection
     except Exception as e:
-        logger.error(f"Error getting connection for provider {provider}: {e}")
+        logger.error("Error getting connection for provider %s: %s", provider, e)
         return None
 
 
@@ -90,10 +88,10 @@ async def disconnect_provider(user: User, provider: str):
             ).update(status="revoked")
 
         logger.info(
-            f"Revoked {len(connections)} connections for provider {oauth_provider} (user {user.user_id})"
+            "Revoked %s connections for provider %s (user %s)", len(connections), oauth_provider, user.user_id
         )
     except Exception as e:
-        logger.error(f"Error disconnecting provider {provider} for user {user.user_id}: {e}")
+        logger.error("Error disconnecting provider %s for user %s: %s", provider, user.user_id, e)
         raise
 
 
@@ -133,13 +131,13 @@ async def delete_connection_by_id(user: User, connection_id: str):
         ).update(status="revoked")
 
         logger.info(
-            f"Revoked connection {db_id} with {len(linked_resources)} resources for user {user.user_id}"
+            "Revoked connection %s with %s resources for user %s", db_id, len(linked_resources), user.user_id
         )
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting connection {connection_id} for user {user.user_id}: {e}")
+        logger.error("Error deleting connection %s for user %s: %s", connection_id, user.user_id, e)
         raise
 
 

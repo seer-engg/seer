@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code  # Reason: Gmail send and draft tools intentionally mirror schema and argument handling
 """
 Gmail send operations - sending emails and replies.
 """

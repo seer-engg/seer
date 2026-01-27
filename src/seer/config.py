@@ -1,8 +1,14 @@
+# pylint: disable=duplicate-code  # Reason: SettingsConfigDict block shared with observability.constants for consistent env loading
 """
 Type-safe configuration for Seer using Pydantic Settings.
 
-This module provides a centralized, type-safe configuration system
-that loads from environment variables and .env files.
+This module provides a centralized, type-safe configuration system with the following priority:
+1. Environment variables
+2. .env file
+3. AWS Parameter Store (if configured)
+4. Default values
+
+This ensures local development works with defaults while production can use AWS Parameter Store.
 
 Usage:
     from seer.config import config
@@ -10,11 +16,12 @@ Usage:
     if score >= config.eval_pass_threshold:
         ...
 """
-from typing import Optional
+from typing import Optional, Tuple, Type
 
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
+from seer.utilities.aws.parameter_store import AwsSsmSettingsSource
 
 class SeerConfig(BaseSettings):
     """
@@ -30,6 +37,12 @@ class SeerConfig(BaseSettings):
         case_sensitive=False,
     )
 
+    env: str = Field(
+        default="dev", description="Environment"
+    )
+
+    #### SECRETS ####
+
     # ============================================================================
     # API Keys & Authentication
     # ============================================================================
@@ -40,18 +53,12 @@ class SeerConfig(BaseSettings):
     anthropic_api_key: Optional[str] = Field(
         default=None, description="Anthropic API key for Claude models"
     )
-    tavily_api_key: Optional[str] = Field(
-        default=None, description="Tavily API key for web search"
-    )
-    github_token: Optional[str] = Field(
-        default=None, description="GitHub token for sandbox provisioning"
-    )
 
     # ============================================================================
     # LangGraph Checkpointer Configuration
     # ============================================================================
 
-    DATABASE_URL: Optional[str] = Field(
+    database_url: Optional[str] = Field(
         default=None,
         description=(
             "PostgreSQL connection string for LangGraph checkpointer "
@@ -59,6 +66,34 @@ class SeerConfig(BaseSettings):
             "Required for human-in-the-loop interrupts."
         )
     )
+    db_max_connections: int = Field(
+        default=10, description="Maximum number of database connections"
+    )
+    db_min_connections: int = Field(
+        default=1, description="Minimum number of database connections"
+    )
+    db_generate_schemas: bool = Field(
+        default=False, description="Generate database schemas"
+    )
+
+
+    # ============================================================================
+    # Clerk Authentication Configuration
+    # ============================================================================
+
+    clerk_jwks_url: Optional[str] = Field(
+        default=None, description="Clerk JWKS URL for JWT verification"
+    )
+    clerk_issuer: Optional[str] = Field(
+        default=None, description="Clerk JWT issuer (e.g., https://clerk.your-domain.com)"
+    )
+    clerk_audience: Optional[str] = Field(
+        default=None, description="Clerk JWT audience (e.g., ['api.your-domain.com'])"
+    )
+
+
+
+    ### Flags ####
 
     # ============================================================================
     # PostgreSQL Tool Autonomy Configuration
@@ -92,26 +127,14 @@ class SeerConfig(BaseSettings):
         default="self-hosted", description="Deployment mode: 'self-hosted' or 'cloud'"
     )
 
-    # ============================================================================
-    # Clerk Authentication Configuration
-    # ============================================================================
 
-    clerk_jwks_url: Optional[str] = Field(
-        default=None, description="Clerk JWKS URL for JWT verification"
-    )
-    clerk_issuer: Optional[str] = Field(
-        default=None, description="Clerk JWT issuer (e.g., https://clerk.your-domain.com)"
-    )
-    clerk_audience: Optional[str] = Field(
-        default=None, description="Clerk JWT audience (e.g., ['api.your-domain.com'])"
-    )
 
     default_llm_model: str = Field(default="gpt-5-mini", description="Default LLM model")
 
-    # Taskiq / Redis configuration
+    # Taskiq / Valkey configuration
     redis_url: str = Field(
         default="redis://localhost:6379/0",
-        description="Redis connection string for Taskiq broker and result backend",
+        description="Valkey/Redis connection string for Taskiq broker and result backend. Use 'rediss://' for TLS/SSL connections.",
     )
 
     # Tool index configuration
@@ -122,13 +145,13 @@ class SeerConfig(BaseSettings):
         default=True, description="Auto-generate tool index on startup if missing"
     )
 
-    GOOGLE_CLIENT_ID: str = Field(default="", description="Google OAuth client ID")
-    GOOGLE_CLIENT_SECRET: str = Field(default="", description="Google OAuth client secret")
+    google_client_id: str = Field(default="", description="Google OAuth client ID")
+    google_client_secret: str = Field(default="", description="Google OAuth client secret")
 
-    GITHUB_CLIENT_ID: Optional[str] = Field(
+    github_client_id: Optional[str] = Field(
         default=None, description="GitHub OAuth client ID"
     )
-    GITHUB_CLIENT_SECRET: Optional[str] = Field(
+    github_client_secret: Optional[str] = Field(
         default=None, description="GitHub OAuth client secret"
     )
 
@@ -143,9 +166,6 @@ class SeerConfig(BaseSettings):
         description="Supabase management API base URL",
     )
 
-    FRONTEND_URL:str = Field(
-        default="http://localhost:5173", description="Frontend application URL"
-    )
 
     # ============================================================================
     # Feature Flags
@@ -201,7 +221,7 @@ class SeerConfig(BaseSettings):
             "Defaults to http://localhost:8000 if not set."
         ),
     )
-    REDIRECT_URI_SCHEME: str = Field(
+    redirect_uri_scheme: str = Field(
         default="http",
         description="Scheme for redirect URIs (e.g., https or http)"
     )
@@ -223,8 +243,8 @@ class SeerConfig(BaseSettings):
         description="Clerk secret key for updating user metadata"
     )
     frontend_url: str = Field(
-        default="http://localhost:5173",
-        description="Frontend URL for Stripe checkout redirects"
+        default="https://app.getseer.dev",
+        description="Frontend application URL (e.g., OAuth redirects, checkout redirects)"
     )
 
     # ============================================================================
@@ -242,6 +262,13 @@ class SeerConfig(BaseSettings):
     slack_notifications_enabled: bool = Field(
         default=False,
         description="Enable Slack notifications for ERROR and CRITICAL log levels"
+    )
+
+    # ===========================================================================
+    # MLflow Configuration
+    # ============================================================================
+    mlflow_enabled: bool = Field(
+        default=False, description="Enable MLflow autologging for LangChain"
     )
 
     # ============================================================================
@@ -277,6 +304,38 @@ class SeerConfig(BaseSettings):
         return (
             self.slack_bot_token is not None
             and self.slack_error_channel_id is not None
+        )
+
+    @classmethod
+    def settings_customise_sources(  # pylint: disable=too-many-positional-arguments  # Reason: Method signature is defined by Pydantic's BaseSettings API and cannot be modified
+        cls,
+        settings_cls: Type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> Tuple[PydanticBaseSettingsSource, ...]:
+        """
+        Customize the priority order of settings sources.
+
+        Priority (highest to lowest):
+        1. init_settings: Values passed to __init__
+        2. env_settings: Environment variables
+        3. dotenv_settings: .env file
+        4. AWS Parameter Store: Fallback for production secrets
+        5. Pydantic defaults: Default values defined in Field()
+
+        This ensures:
+        - Local development can use .env files or defaults
+        - Production can use AWS Parameter Store without .env files
+        - AWS credentials are optional (graceful fallback for local dev)
+        """
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            AwsSsmSettingsSource(settings_cls),  # AWS Parameter Store fallback
+            file_secret_settings,
         )
 
 

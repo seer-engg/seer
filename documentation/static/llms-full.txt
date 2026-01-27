@@ -32,7 +32,7 @@ git clone <repo> && cd seer
 docker compose up
 ```
 
-That's it! This starts all Docker services (Postgres, Redis, backend, worker), streams logs, and waits for readiness.
+That's it! This starts all Docker services (Postgres, Valkey, backend, worker), streams logs, and waits for readiness.
 
 ## Using the Workflow Editor
 
@@ -54,7 +54,7 @@ GOOGLE_CLIENT_SECRET=...
 TAVILY_API_KEY=...
 ```
 
-Docker automatically configures `DATABASE_URL` and `REDIS_URL`.
+Docker automatically configures `DATABASE_URL` and `REDIS_URL` (uses Valkey for task queuing).
 
 ## Key Features
 
@@ -97,7 +97,7 @@ Docker automatically configures `DATABASE_URL` and `REDIS_URL`.
 **Services started:**
 - **Backend API** (port 8000): FastAPI server with workflow execution engine
 - **Postgres** (port 5432): Workflow and user data persistence
-- **Redis** (port 6379): Taskiq message broker
+- **Valkey** (port 6379): Taskiq message broker (Redis-compatible)
 - **Taskiq Worker**: Run `uv run taskiq worker worker.broker:broker` to process triggers/polling/workflow runs
 
 ---
@@ -136,21 +136,23 @@ GITHUB_CLIENT_SECRET=your-github-secret
 - Enable SSL for production connections: `?sslmode=require`
 - Consider read replicas for high-traffic deployments
 
-### Redis Configuration
+### Valkey Configuration
 
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
-| `REDIS_URL` | Redis connection string | `redis://redis:6379/0` | Yes |
+| `REDIS_URL` | Valkey/Redis connection string | `redis://valkey:6379/0` | Yes |
 
-**Docker Compose:** Automatically configured.
+**Docker Compose:** Automatically configured (uses Valkey container).
 
 **Manual/Production:** Use format `redis://host:port/db` or `redis://password@host:port/db`
 
 **Best Practices:**
-- Use Redis 6+ for ACL support
+- Use Valkey 7+ for full Redis 7 compatibility
 - Configure maxmemory and eviction policies
 - Enable persistence (AOF) for production
-- Consider Redis Sentinel or Cluster for HA
+- Consider clustering for HA
+
+> **Note**: We use Valkey (open-source Redis fork) in self-hosted deployments. It's fully compatible with Redis clients and protocols.
 
 ## AI & LLM Configuration
 
@@ -352,7 +354,7 @@ Triggers are processed by a dedicated Taskiq worker that:
 
 ## Worker Setup
 - A dedicated Taskiq worker handles trigger polling, webhook dispatch, and saved-workflow execution so the FastAPI app stays responsive.
-- Start it with `taskiq worker worker.broker:broker` (remember to point `REDIS_URL` at your Redis instance).
+- Start it with `taskiq worker worker.broker:broker` (remember to point `REDIS_URL` at your Valkey/Redis instance).
 
 ## Trigger Configuration
 
@@ -567,7 +569,7 @@ This guide walks you through creating a Railway template for one-click Seer depl
 
 The Seer Railway deployment consists of 4 services:
 1. **PostgreSQL** - Database (Railway-managed)
-2. **Redis** - Task queue and cache (Railway-managed)
+2. **Valkey/Redis** - Task queue and cache (Railway-managed, Redis-compatible)
 3. **seer-api** - FastAPI backend server (custom)
 4. **seer-worker** - Background task worker (custom)
 
@@ -593,11 +595,13 @@ The Seer Railway deployment consists of 4 services:
 2. Railway automatically provisions and connects the database
 3. `DATABASE_URL` is auto-injected as environment variable
 
-### 1.3 Add Redis
+### 1.3 Add Valkey/Redis
 
 1. Click "New" → "Database" → "Add Redis"
-2. Railway provisions Redis instance
+2. Railway provisions Redis instance (Valkey-compatible)
 3. `REDIS_URL` is auto-injected as environment variable
+
+> **Note**: Railway uses Redis, which is fully compatible with Valkey. For self-hosted deployments, use Valkey.
 
 ## Step 2: Configure API Service
 
@@ -719,7 +723,7 @@ Railway pricing (as of 2026):
 
 Typical Seer deployment:
 - PostgreSQL: ~$5-10/month
-- Redis: ~$3-5/month
+- Valkey/Redis: ~$3-5/month
 - API + Worker: ~$7-15/month
 
 **Total:** $15-30/month for production deployment
@@ -737,7 +741,7 @@ echo $DATABASE_URL
 ### Worker Not Starting
 
 ```bash
-# Verify Redis connection
+# Verify Valkey/Redis connection
 redis-cli -u $REDIS_URL ping
 # Should return: PONG
 ```

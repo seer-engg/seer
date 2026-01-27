@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from seer.worker.broker import broker
+from seer.worker.broker_instance import broker
 from seer.config import config
 from seer.logger import get_logger
 
@@ -10,8 +10,8 @@ logger = get_logger(__name__)
 @broker.task
 async def poll_triggers_once() -> None:
     """Run a single TriggerPollEngine tick. Useful for ad-hoc debugging."""
-    from seer.core.triggers.polling.engine import TriggerPollEngine  # local import
-    from seer.worker.trigger_dispatcher import dispatch_trigger_event
+    from seer.core.triggers.polling.engine import TriggerPollEngine  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports in worker task
+    from seer.worker.trigger_dispatcher import dispatch_trigger_event  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports in worker task
 
     engine = TriggerPollEngine(
         max_batch_size=config.trigger_poller_max_batch_size,

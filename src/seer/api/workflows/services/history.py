@@ -1,3 +1,5 @@
+# pylint: disable=broad-exception-caught,import-outside-toplevel,consider-using-f-string
+# Reason: History service needs broad exception handling for checkpoint operations; lazy imports; legacy % formatting
 """Workflow run history, checkpoints, and result retrieval."""
 
 from __future__ import annotations
@@ -20,8 +22,6 @@ from seer.database import (
 )
 from seer.logger import get_logger
 from seer.core.schema.models import (
-    ForEachNode,
-    IfNode,
     LLMNode,
     Node,
     ToolNode,
@@ -329,7 +329,7 @@ async def _extract_node_traces_from_checkpoints(
 
 async def _validate_history_prerequisites() -> None:
     """Validate that history retrieval prerequisites are met."""
-    if not shared_config.DATABASE_URL:
+    if not shared_config.database_url:
         raise_problem(
             type_uri=RUN_PROBLEM,
             title="History unavailable",

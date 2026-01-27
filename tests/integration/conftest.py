@@ -1,10 +1,9 @@
 """
 Integration test fixtures.
 
-Integration tests interact with real database, Redis, and other services.
+Integration tests interact with real database, Valkey, and other services.
 These fixtures provide setup/teardown for integration testing scenarios.
 """
-from typing import AsyncGenerator
 from unittest.mock import AsyncMock
 
 import pytest
@@ -23,7 +22,7 @@ async def test_workflow(test_user):
     Returns:
         Workflow: A workflow with a simple spec
     """
-    from seer.database.workflow_models import Workflow, WorkflowVersionStatus
+    from seer.database.workflow_models import Workflow, WorkflowVersionStatus  # pylint: disable=import-outside-toplevel  # Reason: Lazy import in test fixture
 
     workflow = await Workflow.create(
         user=test_user,
@@ -54,7 +53,7 @@ async def test_workflow(test_user):
             ],
             "edges": [{"id": "e1", "source": "t1", "target": "n1"}],
         },
-        status=WorkflowVersionStatus.PUBLISHED,
+        status=WorkflowVersionStatus.RELEASED,
     )
     return workflow
 
@@ -67,7 +66,7 @@ async def test_workflow_run(test_workflow):
     Returns:
         WorkflowRun: A run for the test workflow
     """
-    from seer.database.workflow_models import (
+    from seer.database.workflow_models import (  # pylint: disable=import-outside-toplevel  # Reason: Lazy import in test fixture
         WorkflowRun,
         WorkflowRunSource,
         WorkflowRunStatus,
@@ -77,7 +76,7 @@ async def test_workflow_run(test_workflow):
         workflow=test_workflow,
         run_id="run_test_123",
         source=WorkflowRunSource.MANUAL,
-        status=WorkflowRunStatus.PENDING,
+        status=WorkflowRunStatus.QUEUED,
         initial_state={},
         final_state=None,
     )
@@ -92,7 +91,7 @@ async def test_trigger_subscription(test_workflow):
     Returns:
         TriggerSubscription: A subscription for the test workflow
     """
-    from seer.database.workflow_models import TriggerSubscription
+    from seer.database.workflow_models import TriggerSubscription  # pylint: disable=import-outside-toplevel  # Reason: Lazy import in test fixture
 
     subscription = await TriggerSubscription.create(
         workflow=test_workflow,
@@ -129,7 +128,7 @@ async def test_integration_resource(test_user):
     """
     Create a test integration resource (e.g., connected Gmail account).
     """
-    from seer.database.models_integrations import IntegrationResource
+    from seer.database.models_integrations import IntegrationResource  # pylint: disable=import-outside-toplevel  # Reason: Lazy import in test fixture
 
     resource = await IntegrationResource.create(
         user=test_user,
@@ -172,7 +171,7 @@ def mock_trigger_adapter():
 @pytest.fixture
 def mock_taskiq_broker():
     """
-    Mock Taskiq broker for testing worker tasks without Redis.
+    Mock Taskiq broker for testing worker tasks without Valkey.
     """
     broker = AsyncMock()
     broker.startup.return_value = None
@@ -188,7 +187,7 @@ async def test_workflow_with_run(test_workflow):
     Returns:
         tuple: (workflow, run)
     """
-    from seer.database.workflow_models import (
+    from seer.database.workflow_models import (  # pylint: disable=import-outside-toplevel  # Reason: Lazy import in test fixture
         WorkflowRun,
         WorkflowRunSource,
         WorkflowRunStatus,
@@ -198,7 +197,7 @@ async def test_workflow_with_run(test_workflow):
         workflow=test_workflow,
         run_id="run_exec_test",
         source=WorkflowRunSource.MANUAL,
-        status=WorkflowRunStatus.PENDING,
+        status=WorkflowRunStatus.QUEUED,
         initial_state={},
     )
     return test_workflow, run

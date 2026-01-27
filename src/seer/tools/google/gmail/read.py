@@ -11,6 +11,7 @@ from seer.tools.google.gmail.helpers import (
     GMAIL_API_BASE,
     GMAIL_THREAD_SCHEMA,
     GMAIL_ATTACHMENT_BODY_SCHEMA,
+    build_gmail_list_params,
     _coerce_int,
     _b64url_decode,
     _header_dict_from_payload,
@@ -86,11 +87,7 @@ class GmailReadTool(GoogleAPIClient):
         query = arguments.get("q")
         include_body = arguments.get("include_body", False)
 
-        params: Dict[str, Any] = {"maxResults": max_results}
-        if label_ids:
-            params["labelIds"] = ",".join(label_ids)
-        if query:
-            params["q"] = query
+        params = build_gmail_list_params(max_results, label_ids, query)
 
         logger.info("Fetching Gmail messages: max_results=%s, label_ids=%s, q=%s", max_results, label_ids, query)
 
@@ -285,11 +282,7 @@ class GmailListThreadsTool(GoogleAPIClient):
         label_ids = arguments.get("label_ids")
         query = arguments.get("q")
 
-        params: Dict[str, Any] = {"maxResults": max_results}
-        if label_ids:
-            params["labelIds"] = ",".join(label_ids)
-        if query:
-            params["q"] = query
+        params = build_gmail_list_params(max_results, label_ids, query)
 
         resp = await self._make_request(
             "GET",

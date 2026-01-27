@@ -16,7 +16,7 @@ from urllib.parse import urlencode
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 
 from seer.api.agents.checkpointer import checkpointer_lifespan
@@ -64,11 +64,11 @@ async def initialize_tool_index(fastapi_app: FastAPI) -> None:
 
 
 async def open_frontend_after_startup() -> None:
-    """Launch hosted frontend pointing at local backend for convenience."""
+    """Launch frontend pointing at local backend."""
     if config.is_cloud_mode or not config.auto_open_browser:
         return
 
-    frontend_url = config.FRONTEND_URL
+    frontend_url = config.frontend_url
     backend_override = os.getenv("BACKEND_API_URL", "localhost:8000")
     target_url = f"{frontend_url}?{urlencode({'backend': backend_override})}"
 
@@ -78,11 +78,13 @@ async def open_frontend_after_startup() -> None:
     try:
         opened = webbrowser.open(target_url)
         if opened:
-            logger.info("Opened frontend at %s", target_url)
+            logger.info("✅ Opened frontend at %s", target_url)
         else:
-            logger.warning("Could not open frontend automatically; url=%s", target_url)
+            logger.warning("⚠️  Could not auto-open browser")
+            logger.info("📋 Visit http://localhost:8000 to connect")
     except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: Browser opening is non-critical and should never crash server
-        logger.warning("Failed to open frontend in browser: %s (url=%s)", exc, target_url, exc_info=True)
+        logger.warning("Failed to open browser: %s", exc)
+        logger.info("📋 Visit http://localhost:8000 to connect")
 
 
 @asynccontextmanager
@@ -259,6 +261,27 @@ async def health_check():
         "server": "Seer LangGraph API",
         "version": "1.0.0"
     }
+
+
+@app.get("/", tags=["System"], include_in_schema=False)
+async def root_redirect():
+    """
+    Root endpoint - redirects to frontend with backend URL configured.
+    For API docs, visit /docs (Swagger UI) or /redoc.
+    """
+    # Get backend URL to pass to frontend
+    backend_url = os.getenv("BACKEND_API_URL", "localhost:8000")
+
+    # Get frontend URL from config
+    frontend_url = config.frontend_url
+
+    # Build redirect URL with backend parameter
+    query_params = urlencode({"backend": backend_url})
+    redirect_url = f"{frontend_url}?{query_params}"
+
+    logger.info("Root path accessed, redirecting to: %s", redirect_url)
+
+    return RedirectResponse(url=redirect_url, status_code=302)
 
 
 # =============================================================================

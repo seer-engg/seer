@@ -240,7 +240,7 @@ def test_parse_invalid_edge_structure():
         "nodes": [],
         "edges": [
             {
-                
+
                 # Missing required 'source' and 'target' fields
                 "label": "Test Edge"
             }

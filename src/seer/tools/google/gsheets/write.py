@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code  # Reason: Read/write tools share picker and schema definitions with minor differences
 """
 Google Sheets write operations - writing and updating data.
 """
@@ -76,7 +77,7 @@ class GoogleSheetsWriteTool(GoogleAPIClient):
             try:
                 values = json.loads(values)
             except json.JSONDecodeError as e:
-                raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
+                raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}") from e
 
         params = {"valueInputOption": arguments.get("value_input_option", "USER_ENTERED")}
         body = {"values": values}

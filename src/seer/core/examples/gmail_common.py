@@ -1,3 +1,5 @@
+# pylint: disable=invalid-name,wrong-import-position,broad-exception-caught,no-else-return
+# Reason: Example code with intentional naming and import patterns for demonstration
 """
 Shared Gmail helper utilities for workflow examples.
 """

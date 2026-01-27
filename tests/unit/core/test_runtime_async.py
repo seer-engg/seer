@@ -1,3 +1,5 @@
+# pylint: disable=unused-argument
+# Reason: Mock handlers require specific function signatures even if not all params are used
 from __future__ import annotations
 
 import pytest
@@ -124,7 +126,10 @@ async def test_if_branch_tool_runs_async_handler() -> None:
 
     compiled = await _compile_workflow(spec, [tool_def])
     # Pass trigger envelope with event data and trigger_key for routing
-    trigger_envelope = {"id": "test_trigger", "trigger_id": "test_trigger", "trigger_key": "test.trigger", "title": "TestTrigger", "data": {"flag": True, "payload": "hello"}}
+    trigger_envelope = {
+        "id": "test_trigger", "trigger_id": "test_trigger", "trigger_key": "test.trigger",
+        "title": "TestTrigger", "data": {"flag": True, "payload": "hello"}
+    }
     result = await compiled.ainvoke(
         config=None,
         context=None,
@@ -450,7 +455,10 @@ async def test_trigger_data_accessible_after_routing() -> None:
     compiled = await _compile_workflow(spec, [])
     result = await compiled.ainvoke(
         config=None, context=None,
-        trigger={"id": "data_trigger", "trigger_id": "data_trigger", "trigger_key": "data.trigger", "title": "Data", "data": {"message": "hello world"}}
+        trigger={
+            "id": "data_trigger", "trigger_id": "data_trigger", "trigger_key": "data.trigger",
+            "title": "Data", "data": {"message": "hello world"}
+        }
     )
 
     assert result["echo"] == "hello world"

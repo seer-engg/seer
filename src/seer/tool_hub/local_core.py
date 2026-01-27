@@ -22,6 +22,8 @@ from .models import EnrichedTool, Tool, ToolFunction
 logger = get_logger("shared.tool_hub.local_core")
 
 
+# pylint: disable=too-many-instance-attributes
+# Reason: ToolHub manages vector store, embeddings, LLM, and configuration state
 class LocalToolHub:
     """
     Local ToolHub using Chroma for vector storage.
@@ -29,6 +31,8 @@ class LocalToolHub:
     Stores tool embeddings locally in Docker, eliminating need for Pinecone credentials.
     """
 
+    # pylint: disable=too-many-positional-arguments
+    # Reason: Configuration requires multiple parameters for vector store and LLM settings
     def __init__(
         self,
         openai_api_key: str,
@@ -133,6 +137,8 @@ class LocalToolHub:
 
         return normalized_tools
 
+    # pylint: disable=too-complex,too-many-locals
+    # Reason: Tool ingestion involves enrichment, embedding generation, and batch processing
     async def ingest(
         self,
         tools: List[Union[Tool, Dict[str, Any]]],

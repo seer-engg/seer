@@ -11,8 +11,8 @@ oauth = OAuth()
 # Scopes are controlled by frontend - minimal default for identity only
 oauth.register(
     name='google',
-    client_id=config.GOOGLE_CLIENT_ID,
-    client_secret=config.GOOGLE_CLIENT_SECRET,
+    client_id=config.google_client_id,
+    client_secret=config.google_client_secret,
     server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
     client_kwargs={
         'scope': 'openid email profile'  # Minimal default - frontend will override with specific scopes
@@ -23,8 +23,8 @@ oauth.register(
 # Scopes are controlled by frontend - minimal default for identity only
 oauth.register(
     name='github',
-    client_id=config.GITHUB_CLIENT_ID or os.getenv('GITHUB_CLIENT_ID'),
-    client_secret=config.GITHUB_CLIENT_SECRET or os.getenv('GITHUB_CLIENT_SECRET'),
+    client_id=config.github_client_id or os.getenv('GITHUB_CLIENT_ID'),
+    client_secret=config.github_client_secret or os.getenv('GITHUB_CLIENT_SECRET'),
     authorize_url='https://github.com/login/oauth/authorize',
     access_token_url='https://github.com/login/oauth/access_token',
     api_base_url='https://api.github.com/',

@@ -11,20 +11,29 @@ Seer is a **open-source workflow builder with built-in oversight and cost contro
 
 ## Quick Start (Docker)
 
-1) Clone and start the stack (Postgres, Redis, API, worker):
+1) Clone and start the stack (Postgres, Valkey, API, worker):
 ```bash
 git clone https://github.com/seer-engg/seer
 cd seer
 docker compose up
 ```
 
-2) Access the app:
-- Frontend: http://localhost:5173/workflows?backend=http://localhost:8000
-- Backend API: http://localhost:8000
+2) Run database migrations:
+```bash
+docker compose exec api uv run aerich upgrade
+```
+
+3) Access the app:
+- **Cloud Frontend (Default):** Visit http://localhost:8000 → redirects to https://app.getseer.dev
+- **Local Frontend:** Set `FRONTEND_URL=http://localhost:5173` in `.env` file
+- API Docs: http://localhost:8000/docs
+- Backend Health: http://localhost:8000/health
+
+Your browser will automatically open and connect the cloud frontend to your local backend. Sign in with Clerk to start using Seer.
 
 ## Local Development (without full Docker)
 
-- Prereqs: Python 3.12+, [uv](https://github.com/astral-sh/uv) installed (`pip install uv`), Postgres + Redis running (use `docker compose up postgres redis`).
+- Prereqs: Python 3.12+, [uv](https://github.com/astral-sh/uv) installed (`pip install uv`), Postgres + Valkey running (use `docker compose up postgres valkey`).
 - Install deps: `uv sync`
 - Run API: `uv run uvicorn seer.api.main:app --reload --port 8000`
 - Run worker: `uv run taskiq worker seer.worker.broker:broker`
@@ -65,6 +74,30 @@ Helpful commands:
 - Run API locally: `uv run uvicorn seer.api.main:app --reload --port 8000`
 - Run worker locally: `uv run taskiq worker seer.worker.broker:broker`
 - Tests: `uv run pytest`
+
+## Self-Hosted Setup: Migrations
+
+> Migrations do NOT run automatically. Run them manually when pulling new code.
+
+### Running Migrations (Docker)
+
+After pulling latest changes:
+
+```bash
+docker compose exec api uv run aerich upgrade
+```
+
+### Cloud Deployments (Railway)
+
+Migrations run automatically before deployment via Railway's `preDeployCommand`.
+No manual action needed for production.
+
+### Non-Docker Development
+
+If not using Docker, run migrations directly:
+```bash
+uv run aerich upgrade
+```
 
 ### Key Features
 

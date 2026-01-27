@@ -41,4 +41,4 @@ class EnrichedTool(BaseModel):
     original_tool: Tool = Field(description="The original tool object")
 
     def get_executable(self) -> Optional[Any]:
-        return self.original_tool.executable
+        return self.original_tool.executable  # pylint: disable=no-member  # Reason: Pydantic field access

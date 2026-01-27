@@ -100,7 +100,10 @@ async def _generate_sample_trigger_envelope(
     Reuses existing logic from test_trigger_subscription.
     """
     from seer.core.registry.trigger_registry import trigger_registry  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
-    from seer.core.triggers.events import build_event_envelope  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
+    from seer.core.triggers.events import (  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
+        TriggerEventEnvelopeInput,
+        build_event_envelope,
+    )
 
     # Load trigger definition from registry
     definition = trigger_registry.maybe_get(subscription.trigger_key)
@@ -128,14 +131,16 @@ async def _generate_sample_trigger_envelope(
 
     # Build event envelope (reuse existing helper)
     envelope = build_event_envelope(
-        trigger_id=subscription.trigger_id,
-        trigger_key=subscription.trigger_key,
-        title=subscription.title or subscription.trigger_id,
-        provider=definition.provider,
-        provider_connection_id=subscription.provider_connection_id,
-        payload=sample_event.get("data", sample_event),  # Handle both wrapped and unwrapped formats
-        raw=sample_event.get("raw"),
-        occurred_at=None,  # Uses current time
+        TriggerEventEnvelopeInput(
+            trigger_id=subscription.trigger_id,
+            trigger_key=subscription.trigger_key,
+            title=subscription.title or subscription.trigger_id,
+            provider=definition.provider,
+            provider_connection_id=subscription.provider_connection_id,
+            payload=sample_event.get("data", sample_event),  # Handle both wrapped and unwrapped formats
+            raw=sample_event.get("raw"),
+            occurred_at=None,  # Uses current time
+        )
     )
 
     return envelope

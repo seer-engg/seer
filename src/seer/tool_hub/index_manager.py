@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code  # Reason: Shared singleton initialization logic is mirrored in tool_hub.singleton
 """
 Tool index management utilities.
 
@@ -9,15 +10,49 @@ from typing import Any, Dict, List, Optional
 from seer.config import config
 from seer.logger import get_logger
 from seer.tool_hub.local_core import LocalToolHub
-from seer.tool_hub.models import Tool
+from seer.tool_hub.models import Tool, ToolFunction
 from seer.tools.registry import get_tools_by_integration
 
 logger = get_logger("shared.tool_hub.index_manager")
 
 
+def _group_tools_by_integration(all_tools_meta: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    tools_by_integration: Dict[str, List[Dict[str, Any]]] = {}
+    for tool_meta in all_tools_meta:
+        integration_type = tool_meta.get("integration_type", "unknown")
+        tools_by_integration.setdefault(integration_type, []).append(tool_meta)
+    return tools_by_integration
+
+
+def _build_tool_objects(
+    tools_by_integration: Dict[str, List[Dict[str, Any]]]
+) -> Dict[str, List[Tool]]:
+    tools_by_integration_objects: Dict[str, List[Tool]] = {}
+    for integration_type, tool_meta_list in tools_by_integration.items():
+        tool_objects = []
+        for tool_meta in tool_meta_list:
+            tool_function = ToolFunction(
+                name=tool_meta.get("name", ""),
+                description=tool_meta.get("description", ""),
+                parameters=tool_meta.get("parameters", {}),
+            )
+            tool_objects.append(Tool(function=tool_function))
+        tools_by_integration_objects[integration_type] = tool_objects
+    return tools_by_integration_objects
+
+
+def _ingest_tools(toolhub: LocalToolHub, tools_by_integration_objects: Dict[str, List[Tool]]) -> None:
+    for integration_type, tools in tools_by_integration_objects.items():
+        logger.info("Ingesting %s tools for integration: %s", len(tools), integration_type)
+        try:
+            threading.Thread(target=toolhub.ingest, args=(tools, integration_type)).start()
+        except Exception as exc:  # pylint: disable=broad-exception-caught  # ingestion should not crash startup
+            logger.error("Failed to ingest tools for %s: %s", integration_type, exc)
+
+
 async def generate_tool_index(
     toolhub: LocalToolHub,
-    force_regenerate: bool = False
+    force_regenerate: bool = False,
 ) -> bool:
     """
     Generate tool index from all registered tools.
@@ -39,54 +74,26 @@ async def generate_tool_index(
 
         logger.info("Starting tool index generation...")
 
-        # Get all tools from registry
         all_tools_meta = get_tools_by_integration()
 
         if not all_tools_meta:
             logger.warning("No tools found in registry. Cannot generate index.")
             return False
 
-        # Group tools by integration type
-        tools_by_integration: Dict[str, List[Dict[str, Any]]] = {}
+        tools_by_integration = _group_tools_by_integration(all_tools_meta)
+        logger.info(
+            "Found %s tools across %s integrations",
+            len(all_tools_meta),
+            len(tools_by_integration),
+        )
 
-        for tool_meta in all_tools_meta:
-            integration_type = tool_meta.get("integration_type", "unknown")
-            if integration_type not in tools_by_integration:
-                tools_by_integration[integration_type] = []
-            tools_by_integration[integration_type].append(tool_meta)
+        tools_by_integration_objects = _build_tool_objects(tools_by_integration)
+        _ingest_tools(toolhub, tools_by_integration_objects)
+        return True
 
-        logger.info("Found %s tools across {len(tools_by_integration)} integrations", len(all_tools_meta))
-
-        # Convert tool metadata to Tool objects
-        # We need to convert the metadata dicts to Tool objects
-        from seer.tool_hub.models import ToolFunction
-
-        tools_by_integration_objects: Dict[str, List[Tool]] = {}
-
-        for integration_type, tool_meta_list in tools_by_integration.items():
-            tool_objects = []
-            for tool_meta in tool_meta_list:
-                # Convert metadata dict to Tool object
-                tool_function = ToolFunction(
-                    name=tool_meta.get("name", ""),
-                    description=tool_meta.get("description", ""),
-                    parameters=tool_meta.get("parameters", {}),
-                )
-                tool_obj = Tool(function=tool_function)
-                tool_objects.append(tool_obj)
-            tools_by_integration_objects[integration_type] = tool_objects
-
-        # Ingest tools for each integration
-        for integration_type, tools in tools_by_integration_objects.items():
-            logger.info("Ingesting %s tools for integration: {integration_type}", len(tools))
-            try:
-                threading.Thread(target=toolhub.ingest, args=(tools, integration_type)).start()
-            except Exception:
-                logger.error("Failed to ingest tools for %s: {e}", integration_type)
-                continue
-
-    except Exception:
+    except Exception as exc:  # pylint: disable=broad-exception-caught  # protect startup path
         logger.exception("Error generating tool index")
+        logger.debug("Tool index generation failure details: %s", exc)
         return False
 
 
@@ -137,6 +144,6 @@ async def ensure_tool_index_exists(
         logger.warning("Tool index not found and auto_generate is disabled.")
         return None
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: initialization failures should not crash startup
         logger.exception("Error ensuring tool index exists: %s", e)
         return None

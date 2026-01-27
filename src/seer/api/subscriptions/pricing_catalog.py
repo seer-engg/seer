@@ -155,7 +155,7 @@ def _cache_valid(now: datetime) -> bool:
 
 def _get_cached_stripe_price_ids() -> dict[str, str]:
     """Return cached Stripe price IDs if valid, otherwise fetch and cache them."""
-    global _PRICE_ID_CACHE, _PRICE_ID_CACHE_EXPIRES_AT
+    global _PRICE_ID_CACHE, _PRICE_ID_CACHE_EXPIRES_AT  # pylint: disable=global-statement  # Reason: intentional caching pattern
     now = datetime.now(timezone.utc)
     if _cache_valid(now):
         return dict(_PRICE_ID_CACHE)
@@ -309,7 +309,7 @@ def create_prices_in_stripe() -> dict[str, str]:
         ValueError: if Stripe secret key is not configured.
         stripe.error.StripeError: if Stripe operations fail.
     """
-    global _PRICE_ID_CACHE, _PRICE_ID_CACHE_EXPIRES_AT
+    global _PRICE_ID_CACHE, _PRICE_ID_CACHE_EXPIRES_AT  # pylint: disable=global-statement  # Reason: intentional caching pattern
     if not config.stripe_secret_key:
         raise ValueError("Stripe secret key is not configured")
 

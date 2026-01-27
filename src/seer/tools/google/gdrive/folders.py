@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 from fastapi import HTTPException
 
 from seer.logger import get_logger
-from seer.tools.google.base import GoogleAPIClient
+from seer.tools.google.gdrive.base import GoogleDriveFileScopeTool
 from seer.tools.google.gdrive.helpers import (
     _drive_file_schema,
     _empty_object_schema,
@@ -16,13 +16,11 @@ from seer.tools.google.gdrive.helpers import (
 logger = get_logger("shared.tools.gdrive.folders")
 
 
-class GoogleDriveCreateFolderTool(GoogleAPIClient):
+class GoogleDriveCreateFolderTool(GoogleDriveFileScopeTool):
     """Create a new folder in Google Drive."""
 
     name = "google_drive_create_folder"
     description = "Create a new folder in Google Drive."
-    required_scopes = ["https://www.googleapis.com/auth/drive.file"]
-    integration_type = "google_drive"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -66,13 +64,11 @@ class GoogleDriveCreateFolderTool(GoogleAPIClient):
         return resp.json()
 
 
-class GoogleDriveDeleteFileTool(GoogleAPIClient):
+class GoogleDriveDeleteFileTool(GoogleDriveFileScopeTool):
     """Delete a Google Drive file or folder."""
 
     name = "google_drive_delete_file"
     description = "Delete a Google Drive file or folder (moves to trash by default)."
-    required_scopes = ["https://www.googleapis.com/auth/drive.file"]
-    integration_type = "google_drive"
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {

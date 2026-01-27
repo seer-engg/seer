@@ -32,7 +32,7 @@ class GitHubResourceProvider(ResourceProvider):
         },
     }
 
-    async def list_resources(
+    async def list_resources(  # pylint: disable=too-many-arguments  # Reason: GitHub resource provider initialization requires all parameters
         self,
         *,
         access_token: str,
@@ -76,7 +76,7 @@ class GitHubResourceProvider(ResourceProvider):
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(url, headers=headers, params=params)
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught  # Reason: GitHub API adapter error handling
             logger.exception("Error listing GitHub repos: %s", exc)
             return {"items": [], "error": str(exc)}
 
@@ -127,7 +127,7 @@ class GitHubResourceProvider(ResourceProvider):
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(url, headers=headers)
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught  # Reason: GitHub API adapter error handling
             logger.exception("Error listing GitHub branches: %s", exc)
             return {"items": [], "error": str(exc)}
 

@@ -32,7 +32,7 @@ async def list_tools(integration_type: Optional[str] = None) -> Dict[str, Any]:
         raise HTTPException(
             status_code=500,
             detail=f"Error listing tools: {str(e)}"
-        )
+        ) from e
 
 
 async def execute_tool_service(
@@ -77,4 +77,4 @@ async def execute_tool_service(
         raise HTTPException(
             status_code=500,
             detail=f"Error executing tool: {str(e)}"
-        )
+        ) from e

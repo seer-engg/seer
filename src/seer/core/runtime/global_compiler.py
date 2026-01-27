@@ -14,17 +14,14 @@ from seer.database import User
 from seer.llm import get_llm
 from seer.tools.base import get_tool
 from seer.tools.executor import execute_tool
+from seer.core.compiler.compile_pipeline import compile_parsed_workflow
 from seer.core.compiler.context import CompilerContext
-from seer.core.compiler.lower_control_flow import build_execution_plan
 from seer.core.compiler.parse import parse_workflow_spec
-from seer.core.compiler.type_env import build_type_environment
-from seer.core.compiler.validate_refs import validate_references
 from seer.core.errors import ExecutionError, WorkflowCompilerError
 from seer.core.registry.model_registry import ModelDefinition, ModelRegistry
 from seer.core.registry.tool_registry import ToolDefinition, ToolRegistry
 from seer.core.runtime.context import WorkflowRuntimeContext
 from seer.core.runtime.execution import CompiledWorkflow
-from seer.core.runtime.nodes import NodeRuntime, RuntimeServices
 from seer.core.schema.jsonschema_adapter import SchemaError, check_schema
 from seer.core.schema.models import (
     LLMNode,
@@ -384,6 +381,7 @@ class WorkflowCompilerSingleton:
             # Need to check if response has metadata or if it's in underlying call
             usage_metadata = {}
             if hasattr(structured_llm, "_last_response"):
+                # pylint: disable=protected-access  # Reason: accessing LangChain internal state for usage metadata
                 usage_metadata = extract_usage_metadata(structured_llm._last_response, model_id)
             elif hasattr(response, "usage_metadata") or hasattr(response, "response_metadata"):
                 usage_metadata = extract_usage_metadata(response, model_id)
@@ -415,28 +413,8 @@ class WorkflowCompilerSingleton:
             model_registry=self._model_registry,
         )
 
-        type_env = build_type_environment(
+        return await compile_parsed_workflow(
             spec,
-            schema_registry=context.schema_registry,
-            tool_registry=context.tool_registry,
-        )
-        validate_references(spec, type_env)
-        plan = build_execution_plan(spec)
-        runtime = NodeRuntime(
-            RuntimeServices(
-                schema_registry=context.schema_registry,
-                tool_registry=context.tool_registry,
-                model_registry=context.model_registry,
-                type_env=type_env,
-            )
-        )
-        # pylint: disable=import-outside-toplevel # Reason: Avoid circular import (emit_langgraph -> runtime.nodes -> runtime.global_compiler)
-        from seer.core.compiler.emit_langgraph import emit_langgraph
-
-        graph = await emit_langgraph(plan, runtime, checkpointer=checkpointer)
-        return CompiledWorkflow(
-            spec=spec,
-            type_env=type_env.as_dict(),
-            graph=graph,
-            runtime=runtime,
+            context,
+            checkpointer=checkpointer,
         )
