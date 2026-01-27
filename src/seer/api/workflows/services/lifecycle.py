@@ -44,6 +44,7 @@ async def _enrich_trigger_specs_with_subscriptions(workflow: Workflow, spec: Wor
         return
 
     # Import here to avoid circular dependency
+    # pylint: disable=import-outside-toplevel
     from seer.database import TriggerSubscription
     from seer.api.workflows.services.triggers import (
         _build_webhook_url,
