@@ -22,6 +22,7 @@ from seer.database.models import User
 from seer.core.examples.gmail_common import (
     GmailDemoService,
     fetch_oauth_credentials,
+    get_gmail_reply_schemas,
 )
 from seer.core.examples.gmail_reply_workflow import (
     DRAFT_TOOL,
@@ -139,19 +140,7 @@ def main() -> None:
     credentials = asyncio.run(fetch_oauth_credentials(user_id))
     service = GmailDemoService(credentials)
 
-    reply_schema: JsonSchema = {
-        "type": "object",
-        "properties": {
-            "to": {"type": "array", "items": {"type": "string"}},
-            "subject": {"type": "string"},
-            "body_text": {"type": "string"},
-        },
-        "required": ["to", "subject", "body_text"],
-        "additionalProperties": False,
-    }
-
-    read_schema = service.read_tool.get_output_schema()
-    draft_schema = service.create_draft_tool.get_output_schema()
+    reply_schema, read_schema, draft_schema = get_gmail_reply_schemas(service)
 
     register_demo_components(service)
     compiler = WorkflowCompilerSingleton.instance()

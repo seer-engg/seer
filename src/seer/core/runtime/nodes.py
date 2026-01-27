@@ -154,53 +154,21 @@ class NodeRuntime:
             logger.warning("Cannot track LLM usage: no user context")
             return
 
-        from seer.observability.credit_calculator import calculate_cost
-        from seer.observability.tracking import track_llm_usage
+        from seer.observability.cost_tracking import CostTracker
+        from seer.observability.exceptions import RunCostCapExceeded
 
         async def do_track():
             try:
-                # Calculate cost
-                cost = calculate_cost(
-                    model=usage_metadata["model"],
-                    input_tokens=usage_metadata["input_tokens"],
-                    output_tokens=usage_metadata["output_tokens"],
-                    reasoning_tokens=usage_metadata.get("reasoning_tokens", 0),
-                )
-
-                # Detect provider from model name
-                model = usage_metadata["model"]
-                if model.startswith(("gpt-", "o3-", "o1-")):
-                    provider = "openai"
-                elif model.startswith("claude-"):
-                    provider = "anthropic"
-                else:
-                    provider = "unknown"
-
-                # Track usage
-                await track_llm_usage(
-                    user=self._current_context.user,
-                    provider=provider,
-                    model=model,
-                    input_tokens=usage_metadata["input_tokens"],
-                    output_tokens=usage_metadata["output_tokens"],
-                    cost=cost,
-                    workflow_run_id=self._current_context.workflow_run_id,
+                await CostTracker.track_and_enforce_cap(
+                    usage_metadata=usage_metadata,
+                    context=self._current_context,
                     operation="workflow_execution",
-                    metadata={
-                        "reasoning_tokens": usage_metadata.get("reasoning_tokens", 0),
-                    },
                 )
-
-                logger.debug(
-                    "Tracked LLM usage: model=%s, tokens=%d/%d, cost=$%.6f",
-                    model,
-                    usage_metadata["input_tokens"],
-                    usage_metadata["output_tokens"],
-                    cost,
-                )
-
+            except RunCostCapExceeded:
+                # Re-raise cost cap exception to stop execution
+                raise
             except Exception as e:
-                # Log error but don't fail workflow
+                # Log error but don't fail workflow for other tracking errors
                 logger.error(
                     "Failed to track LLM usage: %s",
                     str(e),

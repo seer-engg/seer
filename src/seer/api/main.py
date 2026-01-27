@@ -94,6 +94,13 @@ async def lifespan(fastapi_app: FastAPI):
 
     async with db_lifespan(fastapi_app):
         logger.info("✅ Database initialized")
+
+        # Capture main event loop for cross-thread async operations
+        # Import inside lifespan to ensure correct initialization order
+        from seer.core.event_loop import set_main_event_loop  # pylint: disable=import-outside-toplevel  # Reason: must run during lifespan after async context is available
+        set_main_event_loop(asyncio.get_running_loop())
+        logger.info("✅ Main event loop captured for cross-thread scheduling")
+
         async with checkpointer_lifespan() as checkpointer:
             if checkpointer is not None:
                 fastapi_app.state.checkpointer = checkpointer

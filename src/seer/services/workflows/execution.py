@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from seer.api.agents.checkpointer import get_checkpointer
 from seer.core.errors import WorkflowCompilerError
 from seer.database import WorkflowRun, User, WorkflowRunStatus
+from seer.database.models import UserSettings
 from seer.core.runtime.context import WorkflowRuntimeContext
 
 from seer.core.runtime.global_compiler import WorkflowCompilerSingleton
@@ -107,15 +108,43 @@ async def _execute_run(
             extra={"run_id": run.run_id, "config": effective_config},
         )
         # Create runtime context with workflow_run_id for usage tracking
+        # Fetch user settings for cost cap
+        user_settings, _ = await UserSettings.get_or_create(user=user)
+        per_run_cost_cap_usd = user_settings.preferences.get("per_run_cost_cap_usd", 5.0)
 
         runtime_context = WorkflowRuntimeContext(
             user=user,
             workflow_run_id=run.run_id,
+            thread_id=None,  # Not a chat thread
+            per_run_cost_cap_usd=per_run_cost_cap_usd,
+            accumulated_cost_usd=0.0,
         )
         result = await compiled.ainvoke(
             config=effective_config, context=runtime_context, trigger=trigger_envelope
         )
     except Exception as exc:
+        # Conditional import here to avoid circular dependency during module initialization
+        from seer.observability.exceptions import RunCostCapExceeded  # pylint: disable=import-outside-toplevel  # Reason: circular dependency
+
+        # Handle cost cap exceeded with structured error
+        if isinstance(exc, RunCostCapExceeded):
+            logger.warning(
+                "Run cost cap exceeded for workflow run '%s'",
+                run.run_id,
+                extra={
+                    "run_id": run.run_id,
+                    "accumulated_cost": exc.accumulated_cost,
+                    "cost_cap": exc.cost_cap,
+                },
+            )
+            await WorkflowRun.filter(id=run.id).update(
+                status=WorkflowRunStatus.FAILED,
+                finished_at=_now(),
+                error=exc.to_dict(),
+            )
+            raise HTTPException(status_code=402, detail=exc.to_dict()) from exc
+
+        # Handle other exceptions
         print(f"{traceback.format_exc()}")
         await WorkflowRun.filter(id=run.id).update(
             status=WorkflowRunStatus.FAILED,
