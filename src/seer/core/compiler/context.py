@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from seer.core.registry.mcp_client_registry import MCPClientRegistry
 from seer.core.registry.model_registry import ModelRegistry
 from seer.core.registry.tool_registry import ToolRegistry
 from seer.core.schema.schema_registry import SchemaRegistry
@@ -16,3 +17,4 @@ class CompilerContext:
     schema_registry: SchemaRegistry
     tool_registry: ToolRegistry
     model_registry: ModelRegistry
+    mcp_client_registry: MCPClientRegistry

@@ -61,6 +61,19 @@ NODE_TYPE_DESCRIPTORS = api_models.NodeTypeResponse(
                 api_models.NodeFieldDescriptor(name="out", kind="string"),
             ],
         ),
+        api_models.NodeTypeDescriptor(
+            type="mcp",
+            title="MCP Tool",
+            fields=[
+                api_models.NodeFieldDescriptor(name="id", kind="string", required=True),
+                api_models.NodeFieldDescriptor(name="server", kind="string", required=True),
+                api_models.NodeFieldDescriptor(name="server_type", kind="select", required=True, source="mcp_server_types"),
+                api_models.NodeFieldDescriptor(name="tool", kind="string", required=True),
+                api_models.NodeFieldDescriptor(name="auth", kind="json"),
+                api_models.NodeFieldDescriptor(name="inputs", kind="json"),
+                api_models.NodeFieldDescriptor(name="expect_outputs", kind="output_contract"),
+            ],
+        ),
         # Note: 'task' node type is not supported in the frontend builder UI
         # It's only used internally in workflow specs
     ]
