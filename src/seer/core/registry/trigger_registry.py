@@ -64,6 +64,7 @@ def _enveloped_event_schema(payload_schema: JsonSchema) -> JsonSchema:
 
 POLLING_TRIGGERS = [
     "poll.gmail.email_received",
+    "poll.discord.message_received",
     "schedule.cron",
 ]
 
@@ -93,6 +94,23 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
                 config=_gmail_email_received_config_schema(),
             ),
             meta=TriggerMetadata(sample_event=_gmail_email_received_sample_event()),
+        )
+    )
+    registry.register(
+        TriggerDefinition(
+            key="poll.discord.message_received",
+            title="Discord",
+            provider="discord",
+            mode="polling",
+            description="Poll a Discord channel for newly received messages using bot credentials.",
+            schemas=TriggerSchemas(
+                event=_enveloped_event_schema(_discord_message_received_payload_schema()),
+                config=_discord_message_received_config_schema(),
+            ),
+            meta=TriggerMetadata(
+                sample_event=_discord_message_received_sample_event(),
+                requires_connection=True,
+            ),
         )
     )
     registry.register(
@@ -241,6 +259,116 @@ def _gmail_email_received_sample_event() -> Dict[str, Any]:
         "received_at": "2025-12-13T10:00:05Z",
         "data": payload,
         "raw": {"payload": payload},
+    }
+
+
+def _discord_message_received_payload_schema() -> JsonSchema:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "message_id": {"type": "string"},
+            "channel_id": {"type": "string"},
+            "guild_id": {"type": ["string", "null"]},
+            "author": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "id": {"type": "string"},
+                    "username": {"type": "string"},
+                    "discriminator": {"type": ["string", "null"]},
+                    "bot": {"type": "boolean"},
+                },
+                "required": ["id", "username", "bot"],
+            },
+            "content": {"type": ["string", "null"]},
+            "timestamp": {"type": "string"},
+            "edited_timestamp": {"type": ["string", "null"]},
+            "mentions_bot": {"type": "boolean"},
+            "attachments": {"type": "array", "items": {"type": "object"}},
+            "embeds": {"type": "array", "items": {"type": "object"}},
+        },
+        "required": ["message_id", "channel_id", "author", "timestamp", "mentions_bot"],
+    }
+
+
+def _discord_message_received_config_schema() -> JsonSchema:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "guild_id": {
+                "type": "string",
+                "description": "Discord server (guild) ID to monitor for new messages.",
+                "x-resource-picker": {
+                    "provider": "discord",
+                    "resource_type": "guild",
+                    "display_field": "name",
+                    "value_field": "resource_id",
+                    "search_enabled": True,
+                },
+            },
+            "channel_id": {
+                "type": "string",
+                "description": "Discord channel ID within the guild to monitor for new messages.",
+                "x-resource-picker": {
+                    "provider": "discord",
+                    "resource_type": "channel",
+                    "display_field": "name",
+                    "value_field": "id",
+                    "search_enabled": True,
+                    "depends_on": "guild_id",
+                },
+            },
+            "include_bot_messages": {
+                "type": "boolean",
+                "default": False,
+                "description": "Whether to include messages sent by bots (defaults to false).",
+            },
+            "only_mentions": {
+                "type": "boolean",
+                "default": False,
+                "description": "Only trigger if the bot is explicitly mentioned in the message (defaults to false).",
+            },
+            "max_results": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 50,
+                "description": "Maximum number of messages to examine per poll cycle (capped at 100).",
+            },
+        },
+        "required": ["guild_id", "channel_id"],
+    }
+
+
+def _discord_message_received_sample_event() -> Dict[str, Any]:
+    payload = {
+        "message_id": "1234567890123456789",
+        "channel_id": "9876543210987654321",
+        "guild_id": "1111111111111111111",
+        "author": {
+            "id": "2222222222222222222",
+            "username": "johndoe",
+            "discriminator": "1234",
+            "bot": False,
+        },
+        "content": "Hello, world!",
+        "timestamp": "2025-12-13T10:00:00.000000+00:00",
+        "edited_timestamp": None,
+        "mentions_bot": False,
+        "attachments": [],
+        "embeds": [],
+    }
+    return {
+        "id": "evt_sample_poll_discord_message_received",
+        "trigger_key": "poll.discord.message_received",
+        "provider": "discord",
+        "account_id": None,
+        "occurred_at": "2025-12-13T10:00:00Z",
+        "received_at": "2025-12-13T10:00:05Z",
+        "data": payload,
+        "raw": payload,
     }
 
 

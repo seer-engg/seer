@@ -783,10 +783,10 @@ async def browse_resources(
     return await _browse_oauth_resources(
         user=user,
         provider=provider,
-        resource_type=resource_type,
+            resource_type=resource_type,
         q=q,
-        parent_id=parent_id,
-        page_token=page_token,
-        page_size=page_size,
+                parent_id=parent_id,
+                page_token=page_token,
+                page_size=page_size,
         depends_on=depends_on,
-    )
+        )
