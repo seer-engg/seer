@@ -113,39 +113,41 @@ def test_mcp_node_with_expect_outputs():
     schema_dict = node.expect_outputs.schema.json_schema
     assert "results" in schema_dict["properties"]
 
+# =============================================================================
+# not testing this as from frontend we get empty strings initaly in autosave
+# =============================================================================
+# def test_mcp_node_missing_server():
+#     """Test that MCP node requires server field."""
+#     with pytest.raises(ValidationError) as exc_info:
+#         MCPNode(
+#             id="bad_node",
+#             server="",  # Empty server
+#             server_type="http",
+#             tool="test_tool",
+#         )
 
-def test_mcp_node_missing_server():
-    """Test that MCP node requires server field."""
-    with pytest.raises(ValidationError) as exc_info:
-        MCPNode(
-            id="bad_node",
-            server="",  # Empty server
-            server_type="http",
-            tool="test_tool",
-        )
-
-    errors = exc_info.value.errors()
-    assert any(
-        err["loc"] == ("server",) and "at least 1 character" in str(err["msg"]).lower()
-        for err in errors
-    )
+#     errors = exc_info.value.errors()
+#     assert any(
+#         err["loc"] == ("server",) and "at least 1 character" in str(err["msg"]).lower()
+#         for err in errors
+#     )
 
 
-def test_mcp_node_missing_tool():
-    """Test that MCP node requires tool field."""
-    with pytest.raises(ValidationError) as exc_info:
-        MCPNode(
-            id="bad_node",
-            server="http://localhost:8080/mcp",
-            server_type="http",
-            tool="",  # Empty tool
-        )
+# def test_mcp_node_missing_tool():
+#     """Test that MCP node requires tool field."""
+#     with pytest.raises(ValidationError) as exc_info:
+#         MCPNode(
+#             id="bad_node",
+#             server="http://localhost:8080/mcp",
+#             server_type="http",
+#             tool="",  # Empty tool
+#         )
 
-    errors = exc_info.value.errors()
-    assert any(
-        err["loc"] == ("tool",) and "at least 1 character" in str(err["msg"]).lower()
-        for err in errors
-    )
+#     errors = exc_info.value.errors()
+#     assert any(
+#         err["loc"] == ("tool",) and "at least 1 character" in str(err["msg"]).lower()
+#         for err in errors
+#     )
 
 
 def test_mcp_node_invalid_server_type():
