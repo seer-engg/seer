@@ -15,51 +15,24 @@ import pytest
 
 
 @pytest.fixture
-async def test_workflow(test_user):
+async def test_workflow(test_user, db_engine):
     """
     Create a test workflow in the database.
 
     Returns:
         Workflow: A workflow with a simple spec
     """
-    from seer.database.workflow_models import Workflow, WorkflowVersionStatus  # pylint: disable=import-outside-toplevel  # Reason: Lazy import in test fixture
+    from seer.database.workflow_models import Workflow  # pylint: disable=import-outside-toplevel  # Reason: Lazy import in test fixture
 
     workflow = await Workflow.create(
         user=test_user,
-        workflow_id="wf_test_123",
         name="Test Workflow",
-        spec={
-            "version": "2",
-            "triggers": [
-                {
-                    "id": "t1",
-                    "key": "test.trigger",
-                    "label": "Test",
-                    "config": {},
-                }
-            ],
-            "nodes": [
-                {
-                    "id": "n1",
-                    "type": "task",
-                    "label": "Task",
-                    "config": {
-                        "tool_call": {
-                            "tool_id": "test.tool",
-                            "parameters": {},
-                        }
-                    },
-                }
-            ],
-            "edges": [{"id": "e1", "source": "t1", "target": "n1"}],
-        },
-        status=WorkflowVersionStatus.RELEASED,
     )
     return workflow
 
 
 @pytest.fixture
-async def test_workflow_run(test_workflow):
+async def test_workflow_run(test_workflow, db_engine):
     """
     Create a test workflow run in the database.
 
@@ -73,18 +46,17 @@ async def test_workflow_run(test_workflow):
     )
 
     run = await WorkflowRun.create(
+        user=test_workflow.user,
         workflow=test_workflow,
-        run_id="run_test_123",
+        spec={"version": "2"},
         source=WorkflowRunSource.MANUAL,
         status=WorkflowRunStatus.QUEUED,
-        initial_state={},
-        final_state=None,
     )
     return run
 
 
 @pytest.fixture
-async def test_trigger_subscription(test_workflow):
+async def test_trigger_subscription(test_workflow, db_engine):
     """
     Create a test trigger subscription in the database.
 
@@ -94,13 +66,12 @@ async def test_trigger_subscription(test_workflow):
     from seer.database.workflow_models import TriggerSubscription  # pylint: disable=import-outside-toplevel  # Reason: Lazy import in test fixture
 
     subscription = await TriggerSubscription.create(
+        user=test_workflow.user,
         workflow=test_workflow,
-        subscription_id="sub_test_123",
         trigger_id="t1",
         trigger_key="test.trigger",
-        config={},
-        last_poll_at=None,
-        last_event_at=None,
+        is_polling=True,
+        enabled=True,
     )
     return subscription
 
@@ -135,8 +106,8 @@ async def test_integration_resource(test_user):
         resource_id="res_test_123",
         provider="gmail",
         resource_type="account",
-        identifier="test@gmail.com",
-        metadata={"name": "Test Gmail Account"},
+        resource_key="test@gmail.com",
+        resource_metadata={"name": "Test Gmail Account"},
     )
     return resource
 
@@ -180,7 +151,7 @@ def mock_taskiq_broker():
 
 
 @pytest.fixture
-async def test_workflow_with_run(test_workflow):
+async def test_workflow_with_run(test_workflow, db_engine):
     """
     Create a workflow with an associated run for testing execution.
 
@@ -194,11 +165,11 @@ async def test_workflow_with_run(test_workflow):
     )
 
     run = await WorkflowRun.create(
+        user=test_workflow.user,
         workflow=test_workflow,
-        run_id="run_exec_test",
+        spec={"version": "2"},
         source=WorkflowRunSource.MANUAL,
         status=WorkflowRunStatus.QUEUED,
-        initial_state={},
     )
     return test_workflow, run
 
