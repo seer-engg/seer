@@ -33,6 +33,59 @@ from seer.core.schema.models import WorkflowSpec
 # ===== Helper Functions =====
 
 
+async def _enrich_trigger_specs_with_subscriptions(workflow: Workflow, spec: WorkflowSpec) -> None:
+    """
+    Enrich trigger specs with subscription data in ui_meta field.
+
+    Adds webhook_url, secret_token, form_url to trigger.ui_meta by fetching
+    TriggerSubscription records.
+    """
+    if not spec.triggers:
+        return
+
+    # Import here to avoid circular dependency
+    # pylint: disable=import-outside-toplevel
+    from seer.database import TriggerSubscription
+    from seer.api.workflows.services.triggers import (
+        _build_webhook_url,
+        _build_form_url,
+        _should_emit_webhook_url,
+    )
+
+    # Fetch all subscriptions for this workflow in one query (efficient)
+    subscriptions = await TriggerSubscription.filter(workflow=workflow).all()
+    subscription_map = {sub.trigger_id: sub for sub in subscriptions}
+
+    # Enrich each trigger spec's ui_meta
+    for trigger in spec.triggers:
+        subscription = subscription_map.get(trigger.id)
+
+        # If no subscription exists (e.g., draft only), skip enrichment
+        if not subscription:
+            continue
+
+        # Build webhook URL if applicable
+        webhook_url = None
+        if _should_emit_webhook_url(subscription.trigger_key):
+            webhook_url = _build_webhook_url(subscription.id, subscription.trigger_key)
+
+        # Build form URL if applicable
+        form_url = None
+        if subscription.trigger_key == "form.hosted":
+            form_url = _build_form_url(subscription)
+
+        # Add enrichment data to ui_meta
+        trigger.ui_meta["secret_token"] = subscription.secret_token
+        if webhook_url:
+            trigger.ui_meta["webhook_url"] = webhook_url
+        if form_url:
+            trigger.ui_meta["form_url"] = form_url
+        if subscription.created_at:
+            trigger.ui_meta["created_at"] = subscription.created_at.isoformat()
+        if subscription.updated_at:
+            trigger.ui_meta["updated_at"] = subscription.updated_at.isoformat()
+
+
 async def _workflow_summary(workflow: Workflow, draft_version: Optional[WorkflowVersion] = None) -> api_models.WorkflowSummary:
     """
     Create a workflow summary.
@@ -105,6 +158,10 @@ async def _workflow_response(workflow: Workflow) -> api_models.WorkflowResponse:
             status=400,
         )
     spec = WorkflowSpec.model_validate(raw_spec)
+
+    # Enrich trigger specs with subscription data in ui_meta
+    await _enrich_trigger_specs_with_subscriptions(workflow, spec)
+
     return api_models.WorkflowResponse(
         workflow_id=workflow.workflow_id,
         name=workflow.name,
