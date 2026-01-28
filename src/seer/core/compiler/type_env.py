@@ -15,11 +15,13 @@ from seer.core.expr.typecheck import (
     TypeEnvironment,
     schema_from_output_contract,
 )
+from seer.core.registry.mcp_client_registry import MCPClientRegistry, MCPServerConfig
 from seer.core.registry.tool_registry import ToolRegistry
 from seer.core.schema.models import (
     ForEachNode,
     JSONValue,
     LLMNode,
+    MCPNode,
     Node,
     TaskKind,
     TaskNode,
@@ -33,17 +35,55 @@ VALID_IDENTIFIER = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
 
 
 def build_type_environment(
-    spec: WorkflowSpec, *, schema_registry: SchemaRegistry, tool_registry: ToolRegistry
+    spec: WorkflowSpec,
+    *,
+    schema_registry: SchemaRegistry,
+    tool_registry: ToolRegistry,
+    _mcp_client_registry: Optional[MCPClientRegistry] = None,
 ) -> TypeEnvironment:
+    """
+    Build the type environment synchronously.
+
+    For workflows with MCP nodes, use build_type_environment_async() instead
+    to enable compile-time MCP server validation.
+    """
     env = TypeEnvironment()
 
     # Register each trigger by its ID
     if spec.triggers:
         _register_triggers(spec.triggers, env)
 
-    # Process all nodes
+    # Process all nodes (sync path — skips MCP validation)
     for node in spec.nodes:
-        _process_node(node, env, schema_registry, tool_registry)
+        _process_node_sync(node, env, schema_registry, tool_registry)
+
+    # Register loop variable symbols for nodes inside loop bodies
+    _register_loop_variables(spec, env)
+
+    return env
+
+
+async def build_type_environment_async(
+    spec: WorkflowSpec,
+    *,
+    schema_registry: SchemaRegistry,
+    tool_registry: ToolRegistry,
+    mcp_client_registry: MCPClientRegistry,
+) -> TypeEnvironment:
+    """
+    Build the type environment with MCP compile-time validation.
+
+    Use this in the async compile pipeline when MCP nodes may be present.
+    """
+    env = TypeEnvironment()
+
+    # Register each trigger by its ID
+    if spec.triggers:
+        _register_triggers(spec.triggers, env)
+
+    # Process all nodes (async path — includes MCP validation)
+    for node in spec.nodes:
+        await _process_node_async(node, env, schema_registry, tool_registry, mcp_client_registry)
 
     # Register loop variable symbols for nodes inside loop bodies
     _register_loop_variables(spec, env)
@@ -115,12 +155,13 @@ def _register_loop_variables(spec: WorkflowSpec, env: TypeEnvironment) -> None:
         env.register(node.index_var, {"type": "integer"})
 
 
-def _process_node(
+def _process_node_sync(
     node: Node,
     env: TypeEnvironment,
     schema_registry: SchemaRegistry,
     tool_registry: ToolRegistry,
 ) -> None:
+    """Process a node synchronously. MCP nodes are registered with a generic schema."""
     if isinstance(node, TaskNode):
         schema = _schema_for_task(node, schema_registry)
         _register_symbol(env, node.id, schema)
@@ -132,6 +173,15 @@ def _process_node(
         if node.expect_outputs is not None:
             expected = schema_from_output_contract(node.expect_outputs, schema_registry)
             _ensure_schema_match(schema, expected, symbol=node.id)
+        _register_symbol(env, node.id, schema)
+        return
+
+    if isinstance(node, MCPNode):
+        # Sync path: register with user-declared schema or generic fallback
+        if node.expect_outputs:
+            schema = schema_from_output_contract(node.expect_outputs, schema_registry)
+        else:
+            schema = {"type": "object", "additionalProperties": True}
         _register_symbol(env, node.id, schema)
         return
 
@@ -151,6 +201,53 @@ def _process_node(
 
     # IfNode doesn't produce output directly (branches do)
     # No special handling needed
+
+
+async def _process_node_async(
+    node: Node,
+    env: TypeEnvironment,
+    schema_registry: SchemaRegistry,
+    tool_registry: ToolRegistry,
+    mcp_client_registry: MCPClientRegistry,
+) -> None:
+    """Process a node with async MCP validation."""
+    if isinstance(node, MCPNode):
+        # Build server config (auth not resolved yet - use placeholder)
+        server_config = MCPServerConfig(
+            server=node.server,
+            server_type=node.server_type,
+            auth=None,  # Auth resolved at runtime
+        )
+
+        # Validate tool existence and fetch schema at compile time
+        try:
+            await mcp_client_registry.validate_tool(server_config, node.tool)
+            # MCP tools don't typically have output schemas, so we use a generic object schema
+            output_schema = {"type": "object", "additionalProperties": True}
+        except ConnectionError as exc:
+            raise TypeEnvironmentError(
+                f"MCP connection failed for server '{node.server}': {exc}"
+            ) from exc
+        except ValueError as exc:
+            raise TypeEnvironmentError(
+                f"MCP tool '{node.tool}' not found on server '{node.server}': {exc}"
+            ) from exc
+        except Exception as exc:
+            raise TypeEnvironmentError(
+                f"Failed to validate MCP tool '{node.tool}' on server '{node.server}': {exc}"
+            ) from exc
+
+        # If expect_outputs specified, use client-declared schema
+        if node.expect_outputs:
+            schema = schema_from_output_contract(node.expect_outputs, schema_registry)
+        else:
+            schema = output_schema
+
+        _register_symbol(env, node.id, schema)
+        return
+
+    # Non-MCP nodes use the sync path
+    _process_node_sync(node, env, schema_registry, tool_registry)
 
 
 def _schema_for_task(node: TaskNode, registry: SchemaRegistry) -> Optional[Dict]:

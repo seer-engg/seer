@@ -145,6 +145,24 @@ class ToolNode(NodeBase):
     expect_outputs: Optional[OutputContract] = None
 
 
+class MCPNode(NodeBase):
+    """
+    MCP (Model Context Protocol) node for invoking tools from external MCP servers.
+
+    Supports both HTTP and stdio MCP servers with optional authentication.
+    Auth expressions like ${secrets.api_key} are resolved at runtime.
+    """
+    type: Literal["mcp"] = "mcp"
+    server: str = Field()
+    server_type: Literal["http", "stdio"] = "http"
+    auth: Optional[Dict[str, Any]] = None
+    tool: str = Field()
+    inputs: Dict[str, JSONValue] = Field(default_factory=dict)
+
+    # Optional: declare expected output contract for validation
+    expect_outputs: Optional[OutputContract] = None
+
+
 class LLMNode(NodeBase):
     type: Literal["llm"] = "llm"
     inputs: Dict[str, JSONValue] = Field(default_factory=dict)
@@ -190,7 +208,7 @@ class ForEachNode(NodeBase):
 
 
 Node = Annotated[
-    Union[TaskNode, ToolNode, LLMNode, IfNode, ForEachNode],
+    Union[TaskNode, ToolNode, LLMNode, MCPNode, IfNode, ForEachNode],
     Field(discriminator="type"),
 ]
 

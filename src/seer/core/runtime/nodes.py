@@ -13,7 +13,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, Mapping, Sequence
+from typing import Any, Dict, Mapping, Optional, Sequence
 
 from langgraph._internal._runnable import RunnableCallable
 
@@ -25,6 +25,7 @@ from seer.core.expr.evaluator import (
     render_template,
 )
 from seer.core.expr.typecheck import TypeEnvironment
+from seer.core.registry.mcp_client_registry import MCPClientRegistry
 from seer.core.registry.model_registry import ModelRegistry
 from seer.core.registry.tool_registry import ToolRegistry
 from seer.core.runtime.context import WorkflowRuntimeContext
@@ -34,6 +35,7 @@ from seer.core.schema.models import (
     ForEachNode,
     IfNode,
     LLMNode,
+    MCPNode,
     Node,
     OutputMode,
     TaskKind,
@@ -51,6 +53,7 @@ class RuntimeServices:
     tool_registry: ToolRegistry
     model_registry: ModelRegistry
     type_env: TypeEnvironment
+    mcp_client_registry: Optional[MCPClientRegistry] = None
 
 
 class NodeRuntime:
@@ -206,6 +209,8 @@ class NodeRuntime:
             return self._run_task(node, state, config, locals_ctx=locals_ctx)
         if isinstance(node, ToolNode):
             return self._run_tool(node, state, config, locals_ctx=locals_ctx, context=context)
+        if isinstance(node, MCPNode):
+            return self._run_mcp(node, state, config, locals_ctx=locals_ctx, context=context)
         if isinstance(node, LLMNode):
             self._check_llm_credit_limit_sync()
             return self._run_llm(node, state, config, locals_ctx=locals_ctx)
@@ -226,6 +231,8 @@ class NodeRuntime:
     ) -> Dict[str, Any]:
         if isinstance(node, ToolNode):
             return await self._run_tool_async(node, state, config, locals_ctx=locals_ctx, context=context)
+        if isinstance(node, MCPNode):
+            return await self._run_mcp_async(node, state, config, locals_ctx=locals_ctx, context=context)
         if isinstance(node, TaskNode):
             return self._run_task(node, state, config, locals_ctx=locals_ctx)
         if isinstance(node, LLMNode):
@@ -352,6 +359,139 @@ class NodeRuntime:
             )
 
         return output
+
+    def _run_mcp(
+        self,
+        node: MCPNode,
+        state: WorkflowState,
+        config: Mapping[str, Any],
+        *,
+        locals_ctx: Mapping[str, Any] | None,
+        context: WorkflowRuntimeContext | None,
+    ) -> Dict[str, Any]:
+        """Execute MCP node synchronously (delegates to async implementation)."""
+        return asyncio.run(
+            self._run_mcp_async(node, state, config, locals_ctx=locals_ctx, context=context)
+        )
+
+    async def _run_mcp_async(
+        self,
+        node: MCPNode,
+        state: WorkflowState,
+        config: Mapping[str, Any],
+        *,
+        locals_ctx: Mapping[str, Any] | None,
+        context: WorkflowRuntimeContext | None,
+    ) -> Dict[str, Any]:
+        """Execute MCP node with runtime auth resolution."""
+        from seer.core.registry.mcp_client_registry import MCPServerConfig
+
+        if self.services.mcp_client_registry is None:
+            raise ExecutionError(
+                "MCPClientRegistry is required to execute MCP nodes. "
+                "Ensure the compiler is initialized with MCP support."
+            )
+
+        inputs = self._capture_node_inputs(node, state, config, locals_ctx)
+        ctx = self._build_eval_context(state, config, locals_ctx)
+        resolved_auth = self._resolve_mcp_auth(node, ctx)
+
+        server_config = MCPServerConfig(
+            server=node.server,
+            server_type=node.server_type,
+            auth=resolved_auth,
+        )
+
+        result = await self._invoke_mcp_tool(server_config, node, inputs)
+
+        if node.expect_outputs:
+            schema = self._type_schemas.get(node.id)
+            if schema:
+                validate_against_schema(schema, result, schema_id=node.id)
+
+        output = self._prepare_output(node.id, result)
+        self._attach_mcp_trace(output, node, state, inputs=inputs, result=result, resolved_auth=resolved_auth)
+        return output
+
+    def _resolve_mcp_auth(self, node: MCPNode, ctx: EvaluationContext) -> Optional[Dict[str, Any]]:
+        """Resolve runtime auth expressions (headers / env) for an MCP node."""
+        if not node.auth:
+            return None
+
+        resolved: Dict[str, Any] = {}
+        for section in ("headers", "env"):
+            if section in node.auth:
+                resolved[section] = {
+                    k: evaluate_value(ctx, v) if isinstance(v, str) and "${" in v else v
+                    for k, v in node.auth[section].items()
+                }
+        return resolved
+
+    async def _invoke_mcp_tool(
+        self,
+        server_config: Any,
+        node: MCPNode,
+        inputs: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Invoke the MCP tool and normalise the result to a dict."""
+        try:
+            result = await self.services.mcp_client_registry.invoke_tool(
+                server_config, node.tool, inputs
+            )
+        except ConnectionError as exc:
+            raise ExecutionError(f"MCP connection failed for server '{node.server}': {exc}") from exc
+        except Exception as exc:
+            raise ExecutionError(
+                f"MCP tool '{node.tool}' failed on server '{node.server}': {exc}"
+            ) from exc
+
+        # MCP tools return strings or content lists; downstream expects objects.
+        if not isinstance(result, dict):
+            result = {"result": result}
+        return result
+
+    def _attach_mcp_trace(
+        self,
+        output: Dict[str, Any],
+        node: MCPNode,
+        state: WorkflowState,
+        *,
+        inputs: Dict[str, Any],
+        result: Any,
+        resolved_auth: Optional[Dict[str, Any]],
+    ) -> None:
+        """Attach trace data to MCP output, redacting sensitive auth values."""
+        trace_key = self._get_trace_key(node.id, state)
+
+        safe_auth = None
+        if resolved_auth:
+            safe_auth = {
+                "headers": {k: "***REDACTED***" for k in resolved_auth.get("headers", {})},
+                "env": {k: "***REDACTED***" for k in resolved_auth.get("env", {})},
+            }
+
+        output[trace_key] = {
+            "node_id": node.id,
+            "node_type": "mcp",
+            "server": node.server,
+            "server_type": node.server_type,
+            "tool": node.tool,
+            "auth": safe_auth,
+            "inputs": inputs,
+            "output": result,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "MCP node '%s' (server='%s', tool='%s') output keys: %s, trace_key present: %s",
+                node.id,
+                node.server,
+                node.tool,
+                list(output.keys()),
+                trace_key in output,
+                extra={"node_id": node.id, "output_keys": list(output.keys()), "trace_key": trace_key},
+            )
 
     # pylint: disable=too-complex,too-many-locals
     # Reason: LLM node execution inherently complex with prompt construction, model invocation, and usage tracking
@@ -733,7 +873,7 @@ class NodeRuntime:
         if isinstance(node, LLMNode):
             return self._capture_llm_node_inputs(node, ctx)
 
-        if isinstance(node, (ToolNode, TaskNode)):
+        if isinstance(node, (ToolNode, TaskNode, MCPNode)):
             return self._evaluate_input_expressions(ctx, node.inputs)
 
         return {}
