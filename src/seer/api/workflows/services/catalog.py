@@ -237,6 +237,43 @@ Generate appropriate title and description:"""
         )
 
 
+async def list_mcp_tools(payload: api_models.McpToolsRequest) -> api_models.McpToolsResponse:
+    """Fetch available tools from an MCP server for the config panel UI."""
+    from seer.core.registry.mcp_client_registry import MCPServerConfig
+
+    try:
+        server_config = MCPServerConfig(
+            server=payload.server,
+            server_type=payload.server_type,
+            auth=payload.auth,
+        )
+        tools = await COMPILER.mcp_client_registry.list_tools(server_config)
+        return api_models.McpToolsResponse(
+            tools=[
+                api_models.McpToolDescriptor(
+                    name=t.name,
+                    description=t.description or "",
+                    input_schema=t.inputSchema,
+                )
+                for t in tools
+            ]
+        )
+    except (OSError, RuntimeError, ConnectionError) as exc:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="MCP server connection failed",
+            detail=str(exc),
+            status=422,
+        )
+    except Exception as exc:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Failed to fetch MCP tools",
+            detail=str(exc),
+            status=422,
+        )
+
+
 def _collect_warnings_from_nodes(nodes: Iterable[Node]) -> List[api_models.WorkflowWarning]:
     warnings: List[api_models.WorkflowWarning] = []
     for node in nodes:
