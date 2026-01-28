@@ -18,12 +18,14 @@ from seer.core.triggers.supabase_webhook import (
 from seer.api.workflows import models as api_models
 from seer.api.workflows.services.shared import (
     VALIDATION_PROBLEM,
+    _get_draft_version,
     _get_workflow,
     _raise_problem,
 )
 from seer.config import config as shared_config
 from seer.database import (
     User,
+    TriggerEvent,
     TriggerSubscription,
     Workflow,
     make_workflow_public_id,
@@ -659,3 +661,157 @@ async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-lo
             )
             if not skip_validation and trigger_spec.key == "webhook.supabase.db_changes" and secret:
                 await _create_supabase_webhook(subscription, secret)
+
+
+async def start_listening_for_trigger(
+    user: User,
+    workflow_id: str,
+    trigger_id: str,
+) -> api_models.StartListeningResponse:
+    """
+    Provision a TriggerSubscription for a webhook trigger immediately (without publish).
+
+    Idempotent: if a subscription already exists for this trigger, reuse it.
+    Returns the webhook URL and signing secret the client can use right away.
+    """
+    workflow = await _get_workflow(user, workflow_id)
+
+    # Verify trigger exists in the draft spec
+    draft_version = await _get_draft_version(workflow, create_if_missing=False)
+    if not draft_version:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="No draft found",
+            detail="Cannot start listening without a draft version. Save the workflow first.",
+            status=400,
+        )
+
+    spec = WorkflowSpec.model_validate(draft_version.spec)
+    trigger_spec = None
+    for t in (spec.triggers or []):
+        if t.id == trigger_id:
+            trigger_spec = t
+            break
+
+    if trigger_spec is None:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Trigger not found in spec",
+            detail=f"Trigger '{trigger_id}' not found in workflow draft.",
+            status=404,
+        )
+
+    if not _should_emit_webhook_url(trigger_spec.key):
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Not a webhook trigger",
+            detail=f"Trigger '{trigger_spec.key}' does not support webhook URLs.",
+            status=400,
+        )
+
+    definition = _load_trigger_definition(trigger_spec.key)
+
+    # Find or create subscription (idempotent)
+    existing = await TriggerSubscription.filter(
+        workflow=workflow, trigger_id=trigger_id
+    ).first()
+
+    if existing and existing.secret_token:
+        # Reuse existing subscription
+        subscription = existing
+    else:
+        secret = _generate_subscription_secret()
+        if existing:
+            # Update existing subscription that was missing a secret
+            existing.secret_token = secret
+            existing.enabled = True
+            await existing.save()
+            subscription = existing
+        else:
+            # Create new subscription
+            subscription = await TriggerSubscription.create(
+                user=user,
+                workflow=workflow,
+                trigger_id=trigger_id,
+                trigger_key=trigger_spec.key,
+                title=definition.title,
+                provider_connection_id=trigger_spec.provider_config.get("provider_connection_id"),
+                enabled=True,
+                filters=dict(trigger_spec.filters or {}),
+                provider_config=dict(trigger_spec.provider_config or {}),
+                secret_token=secret,
+            )
+
+    webhook_url = _build_webhook_url(subscription.id, subscription.trigger_key)
+    if not webhook_url:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Could not build webhook URL",
+            detail="Failed to generate webhook URL for this trigger type.",
+            status=500,
+        )
+
+    # Prepend the base URL so the client gets a fully usable URL
+    webhook_base_url = shared_config.webhook_base_url or "http://localhost:8000"
+    full_url = f"{webhook_base_url.rstrip('/')}{webhook_url}"
+
+    return api_models.StartListeningResponse(
+        webhook_url=full_url,
+        secret_token=subscription.secret_token,
+        subscription_id=subscription.id,
+    )
+
+
+async def get_pending_events(
+    user: User,
+    workflow_id: str,
+    trigger_id: str,
+    since: Optional[int] = None,
+) -> api_models.PendingEventsResponse:
+    """
+    Fetch recent webhook events for a trigger subscription.
+
+    Used by the frontend to poll for events while the user is in "Start Listening" mode.
+    Events are matched by trigger_key and the envelope's trigger_id field.
+    """
+    workflow = await _get_workflow(user, workflow_id)
+
+    subscription = await TriggerSubscription.filter(
+        workflow=workflow, trigger_id=trigger_id
+    ).first()
+
+    if not subscription:
+        return api_models.PendingEventsResponse(events=[], latest_event_id=None)
+
+    # TriggerEvent has no direct FK to subscription, so filter by trigger_key
+    # and then match the envelope's trigger_id in application code.
+    query = TriggerEvent.filter(
+        trigger_key=subscription.trigger_key,
+    ).order_by("-received_at")
+
+    if since is not None:
+        query = query.filter(id__gt=since)
+
+    # Fetch a batch and filter by trigger_id in the envelope
+    candidates = await query.limit(50)
+
+    items = []
+    latest_id = None
+    for event in candidates:
+        envelope = event.event or {}
+        # Match by the trigger_id stored in the event envelope
+        if envelope.get("trigger_id") != subscription.trigger_id:
+            continue
+        data = envelope.get("data", {})
+        received_at = event.received_at.isoformat() if event.received_at else ""
+        items.append(api_models.PendingEventItem(
+            event_id=event.id,
+            data=data if isinstance(data, dict) else {},
+            received_at=received_at,
+        ))
+        if latest_id is None or event.id > latest_id:
+            latest_id = event.id
+        if len(items) >= 20:
+            break
+
+    return api_models.PendingEventsResponse(events=items, latest_event_id=latest_id)

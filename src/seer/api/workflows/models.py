@@ -116,6 +116,23 @@ class TriggerSubscriptionTestResponse(BaseModel):
     errors: List[str] = Field(default_factory=list)
 
 
+class StartListeningResponse(BaseModel):
+    webhook_url: str
+    secret_token: str
+    subscription_id: int
+
+
+class PendingEventItem(BaseModel):
+    event_id: int
+    data: Dict[str, Any]
+    received_at: str
+
+
+class PendingEventsResponse(BaseModel):
+    events: List[PendingEventItem] = Field(default_factory=list)
+    latest_event_id: Optional[int] = None
+
+
 class ModelDescriptor(BaseModel):
     id: str
     title: str
@@ -373,6 +390,9 @@ __all__ = [
     "TriggerSubscriptionListResponse",
     "TriggerSubscriptionTestRequest",
     "TriggerSubscriptionTestResponse",
+    "StartListeningResponse",
+    "PendingEventItem",
+    "PendingEventsResponse",
     "ModelDescriptor",
     "ModelRegistryResponse",
     "SchemaResponse",
