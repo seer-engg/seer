@@ -234,8 +234,10 @@ class TestEdgeCases:
         """Test validation when granted has many permissions."""
         connection = Mock()
         connection.id = "test_connection"
-        # Large number representing many combined permissions
-        connection.provider_metadata = {"permissions": 536871935}
+        # Permission value includes multiple permissions including VIEW_CHANNEL and SEND_MESSAGES.
+        # Original 536871935 had MANAGE_WEBHOOKS, KICK_MEMBERS, etc. but was missing VIEW_CHANNEL/SEND_MESSAGES.
+        # 536871935 | 3072 = 536874943 ensures we have VIEW_CHANNEL (1024) and SEND_MESSAGES (2048) included.
+        connection.provider_metadata = {"permissions": 536874943}
 
         # Should pass for any subset
         validate_discord_permissions(
