@@ -166,6 +166,16 @@ class SeerConfig(BaseSettings):
         description="Supabase management API base URL",
     )
 
+    discord_client_id: Optional[str] = Field(
+        default=None, description="Discord OAuth client ID"
+    )
+    discord_client_secret: Optional[str] = Field(
+        default=None, description="Discord OAuth client secret"
+    )
+    discord_bot_token: Optional[str] = Field(
+        default=None, description="Discord bot token for API calls"
+    )
+
 
     # ============================================================================
     # Feature Flags

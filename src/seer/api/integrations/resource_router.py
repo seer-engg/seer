@@ -1,7 +1,8 @@
 """Integration resource routes."""
-# pylint: disable=duplicate-code  # Supabase REST validation mirrors supabase database tool usage
+# pylint: disable=duplicate-code,too-many-lines
+# Reason: Supabase REST validation mirrors supabase database tool usage; this module aggregates many integration endpoints and helpers.
 import json
-from typing import Any, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -13,6 +14,7 @@ from seer.api.integrations.services import (
     bind_supabase_project_manual,
     deactivate_integration_resource,
     get_valid_access_token,
+    list_integration_resources,
     list_resource_secrets,
     serialize_integration_resource,
     serialize_integration_secret,
@@ -21,6 +23,7 @@ from seer.config import config
 from seer.database import IntegrationResource, IntegrationSecret, User
 from seer.logger import get_logger
 from seer.services.integrations.constants import SUPABASE_RESOURCE_PROVIDER
+from seer.services.integrations.providers.discord import DiscordProvider
 from seer.services.integrations.resource_browser import ResourceBrowser, ResourceListOptions
 from seer.tools.oauth_manager import get_oauth_token
 from seer.tools.supabase.common import _resolve_rest_url, _service_headers
@@ -81,17 +84,19 @@ async def bind_supabase_project_manual_route(request: Request, payload: Supabase
     if payload.connection_id:
         resource = await bind_supabase_project(user, payload.project_ref, payload.connection_id)
     else:
-        if not payload.service_role_key:
+        if payload.service_role_key is None:
             raise_problem(
                 type_uri=VALIDATION_PROBLEM,
                 title="Missing service_role_key",
                 detail="service_role_key is required when connection_id is not provided",
                 status=400
             )
+        assert payload.service_role_key is not None
+        service_role_key = payload.service_role_key
         resource = await bind_supabase_project_manual(
             user,
             project_ref=payload.project_ref,
-            service_role_key=payload.service_role_key,
+            service_role_key=service_role_key,
             project_name=payload.project_name,
             anon_key=payload.anon_key,
         )
@@ -169,10 +174,11 @@ async def _ensure_supabase_metadata_functions(resource: IntegrationResource) -> 
     Best-effort creation of metadata RPC helpers (list_schemas, list_tables).
     Uses Supabase management API when OAuth connection is available.
     """
-    oauth_connection = await resource.oauth_connection
-    if not oauth_connection:
+    oauth_connection_rel = resource.oauth_connection
+    if oauth_connection_rel is None:
         logger.info("Skipping metadata function provisioning: no OAuth connection on resource %s", resource.id)
         return
+    oauth_connection = await oauth_connection_rel
 
     user = await resource.user
     _, access_token = await get_oauth_token(user, connection_id=str(oauth_connection.id), provider="supabase_mgmt")
@@ -279,6 +285,257 @@ def _resolve_resource_id(
         return int(candidate)
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail="integration_resource_id is required") from exc
+
+
+async def _browse_discord_channels(
+    user: User,
+    guild_id: str,
+    q: Optional[str],
+    page_token: Optional[str],
+    page_size: int,
+) -> Dict[str, Any]:
+    """
+    Browse Discord channels for a specific guild.
+
+    Args:
+        user: Current user
+        guild_id: Discord guild ID
+        q: Optional search query
+        page_token: Pagination token
+        page_size: Number of results per page
+
+    Returns:
+        Dictionary with items, next_page_token, and metadata
+    """
+    # Verify user has access to this guild
+    guild_resource = await IntegrationResource.get_or_none(
+        user=user,
+        provider="discord",
+        resource_type="guild",
+        resource_id=guild_id,
+        status="active"
+    )
+    if not guild_resource:
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="Guild not found",
+            detail=f"Discord guild {guild_id} not found or you don't have access to it",
+            status=404
+        )
+
+    bot_token = config.discord_bot_token
+    if not bot_token:
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="Configuration error",
+            detail="Discord bot token not configured",
+            status=500
+        )
+    assert bot_token is not None
+
+    provider_impl = DiscordProvider()
+    try:
+        channels = await provider_impl.fetch_guild_channels(
+            guild_id=guild_id,
+            bot_token=bot_token
+        )
+    except HTTPException as exc:
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="Failed to fetch channels",
+            detail=exc.detail,
+            status=exc.status_code
+        )
+
+    # Filter channels (only text channels that bot can send messages to)
+    # Channel types: 0=GUILD_TEXT, 2=GUILD_VOICE, 4=GUILD_CATEGORY, 5=GUILD_NEWS, 15=GUILD_FORUM
+    # We'll include text channels (0), news channels (5), and forum channels (15)
+    text_channels = [
+        ch for ch in channels
+        if ch.get("type") in [0, 5, 15]  # GUILD_TEXT, GUILD_NEWS, GUILD_FORUM
+    ]
+
+    # Apply search filter if provided
+    filtered_channels = text_channels
+    if q:
+        q_lower = q.lower()
+        filtered_channels = [
+            ch for ch in text_channels
+            if q_lower in (ch.get("name") or "").lower()
+        ]
+
+    # Pagination
+    offset = _parse_offset(page_token)
+    paged_channels = filtered_channels[offset:offset + page_size]
+
+    items = [
+        {
+            "id": str(ch.get("id", "")),
+            "name": ch.get("name") or f"Channel {ch.get('id', '')}",
+            "display_name": ch.get("name") or f"Channel {ch.get('id', '')}",
+            "type": "channel",
+            "metadata": {
+                "channel_id": str(ch.get("id", "")),
+                "channel_name": ch.get("name"),
+                "channel_type": ch.get("type"),
+                "guild_id": guild_id,
+            },
+        }
+        for ch in paged_channels
+    ]
+
+    next_page_token = str(offset + page_size) if offset + page_size < len(filtered_channels) else None
+
+    return {
+        "items": items,
+        "next_page_token": next_page_token,
+        "supports_search": True,
+        "supports_hierarchy": False,
+    }
+
+
+async def _browse_discord_guilds(
+    user: User,
+    q: Optional[str],
+    page_token: Optional[str],
+    page_size: int,
+) -> Dict[str, Any]:
+    """
+    Browse Discord guilds (servers) for the current user.
+
+    Args:
+        user: Current user
+        q: Optional search query
+        page_token: Pagination token
+        page_size: Number of results per page
+
+    Returns:
+        Dictionary with items, next_page_token, and metadata
+    """
+    # List guilds from IntegrationResource records
+    resources = await list_integration_resources(
+        user,
+        provider="discord",
+        resource_type="guild",
+    )
+
+    # Apply search filter if provided
+    filtered_resources = resources
+    if q:
+        q_lower = q.lower()
+        filtered_resources = [
+            r for r in resources
+            if q_lower in (r.name or "").lower() or q_lower in (r.resource_id or "").lower()
+        ]
+
+    # Pagination
+    offset = _parse_offset(page_token)
+    paged_resources = filtered_resources[offset:offset + page_size]
+
+    items = [
+        {
+            "id": r.resource_id,  # guild_id
+            "name": r.name or f"Discord Server {r.resource_id}",
+            "display_name": r.name or f"Discord Server {r.resource_id}",
+            "type": "guild",
+            "metadata": r.resource_metadata or {},
+        }
+        for r in paged_resources
+    ]
+
+    next_page_token = str(offset + page_size) if offset + page_size < len(filtered_resources) else None
+
+    return {
+        "items": items,
+        "next_page_token": next_page_token,
+        "supports_search": True,
+        "supports_hierarchy": False,
+    }
+
+
+async def _browse_oauth_resources(  # pylint: disable=too-many-arguments  # Keeps `browse_resources` small while staying explicit at call sites.
+    *,
+    user: User,
+    provider: str,
+    resource_type: str,
+    q: Optional[str],
+    parent_id: Optional[str],
+    page_token: Optional[str],
+    page_size: int,
+    depends_on: Optional[str],
+) -> dict[str, Any]:
+    """
+    Browse API-backed resources using an OAuth access token and ResourceBrowser.
+
+    This keeps `browse_resources` small enough to satisfy pylint complexity limits.
+    """
+    access_token = await get_valid_access_token(user, provider)
+    if access_token is None:
+        msg = (
+            f"No active {provider} connection. "
+            f"Please connect your {provider} account first."
+        )
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="No active connection",
+            detail=msg,
+            status=401,
+        )
+    assert access_token is not None
+
+    depends_on_values = None
+    if depends_on:
+        try:
+            depends_on_values = json.loads(depends_on)
+        except json.JSONDecodeError:
+            raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Invalid JSON",
+                detail="Invalid depends_on JSON",
+                status=400
+            )
+
+    browser = ResourceBrowser(access_token, provider)
+
+    try:
+        result = await browser.list_resources(
+            resource_type=resource_type,
+            options=ResourceListOptions(
+                query=q,
+                parent_id=parent_id,
+                page_token=page_token,
+                page_size=page_size,
+                depends_on_values=depends_on_values,
+            ),
+        )
+
+        if "error" in result and result["error"]:
+            logger.error("Resource browser error: %s", result["error"])
+            raise_problem(
+                type_uri=INTEGRATION_PROBLEM,
+                title="Resource browser error",
+                detail=result["error"],
+                status=500
+            )
+
+        return result
+
+    except ValueError as exc:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Invalid request",
+            detail=str(exc),
+            status=400
+        )
+    except Exception as exc:  # pylint: disable=broad-exception-caught  # provider implementations may raise varied errors
+        logger.exception("Error browsing resources: %s", exc)
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="Resource browsing failed",
+            detail=f"Error browsing resources: {str(exc)}",
+            status=500
+        )
+    raise AssertionError("Unreachable")  # pragma: no cover
 
 
 def _parse_offset(page_token: Optional[str]) -> int:
@@ -505,71 +762,31 @@ async def browse_resources(
     """
     user: User = request.state.db_user
 
-    # Get valid access token
-    access_token = await get_valid_access_token(user, provider)
-    if not access_token:
-        msg = (
-            f"No active {provider} connection. "
-            f"Please connect your {provider} account first."
-        )
-        raise_problem(
-            type_uri=INTEGRATION_PROBLEM,
-            title="No active connection",
-            detail=msg,
-            status=401,
-        )
-
-    # Parse depends_on if provided
-    depends_on_values = None
-    if depends_on:
-        try:
-            depends_on_values = json.loads(depends_on)
-        except json.JSONDecodeError:
+    # Special handling for Discord channels (API-backed, requires guild_id)
+    if provider == "discord" and resource_type == "channel":
+        depends_on_values = _parse_depends_on(depends_on, error_detail="Invalid depends_on JSON")
+        guild_id = str(depends_on_values.get("guild_id") or "")
+        if not guild_id:
             raise_problem(
                 type_uri=VALIDATION_PROBLEM,
-                title="Invalid JSON",
-                detail="Invalid depends_on JSON",
+                title="Missing required parameter",
+                detail="guild_id is required to list Discord channels. Please select a guild first.",
                 status=400
             )
 
-    # Create browser and list resources
-    browser = ResourceBrowser(access_token, provider)
+        return await _browse_discord_channels(user, guild_id, q, page_token, page_size)
 
-    try:
-        result = await browser.list_resources(
+    # Special handling for Discord guilds (database-backed, not API-backed)
+    if provider == "discord" and resource_type == "guild":
+        return await _browse_discord_guilds(user, q, page_token, page_size)
+
+    return await _browse_oauth_resources(
+        user=user,
+        provider=provider,
             resource_type=resource_type,
-            options=ResourceListOptions(
-                query=q,
+        q=q,
                 parent_id=parent_id,
                 page_token=page_token,
                 page_size=page_size,
-                depends_on_values=depends_on_values,
-            ),
-        )
-
-        if "error" in result and result["error"]:
-            logger.error("Resource browser error: %s", result["error"])
-            raise_problem(
-                type_uri=INTEGRATION_PROBLEM,
-                title="Resource browser error",
-                detail=result["error"],
-                status=500
-            )
-
-        return result
-
-    except ValueError as exc:
-        raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Invalid request",
-            detail=str(exc),
-            status=400
-        )
-    except Exception as exc:  # pylint: disable=broad-exception-caught  # provider implementations may raise varied errors
-        logger.exception("Error browsing resources: %s", exc)
-        raise_problem(
-            type_uri=INTEGRATION_PROBLEM,
-            title="Resource browsing failed",
-            detail=f"Error browsing resources: {str(exc)}",
-            status=500
+        depends_on=depends_on,
         )

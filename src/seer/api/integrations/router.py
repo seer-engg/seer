@@ -1,4 +1,4 @@
-# pylint: disable=too-many-lines,too-complex,too-many-positional-arguments,too-many-locals
+# pylint: disable=too-many-lines,too-complex,too-many-positional-arguments,too-many-locals,too-many-statements
 # Reason: Integration router consolidates OAuth, resource management, and provider-specific endpoints.
 # The Supabase schema/table endpoints have high complexity due to dynamic depends_on handling.
 # TODO: Split into separate routers (oauth.py, resources.py, supabase.py) in future refactor.
@@ -441,7 +441,14 @@ async def auth_callback(request: Request, provider: str):
         client=client, token=token, state_data=state_data
     )
 
-    await store_oauth_connection(
+    # For Discord, we need to handle the profile differently since bot installations
+    # don't return a traditional user profile. Use user_id as provider_account_id.
+    if oauth_provider == "discord":
+        # Discord bot installations don't have user profiles in the token
+        # Use a synthetic profile with the user_id as the id
+        user_info = {"id": user_id, "type": "bot_installation"}
+
+    connection = await store_oauth_connection(
         user_id=user_id,
         provider=oauth_provider,
         token=token,
@@ -449,6 +456,85 @@ async def auth_callback(request: Request, provider: str):
         granted_scopes=granted_scopes,
         integration_type=integration_type
     )
+
+    # Discord-specific: Store permissions and guild information
+    if oauth_provider == "discord":
+        # Calculate and store permissions from requested tools
+        requested_scope = state_data.get('requested_scope', '')
+        from seer.tools.discord.permissions import calculate_permissions, get_permission_names
+
+        tool_names = requested_scope.split() if requested_scope else []
+        calculated_permissions = calculate_permissions(tool_names)
+
+        # Update connection metadata with permissions
+        if connection:
+            metadata = connection.provider_metadata or {}
+
+            # Merge permissions (bitwise OR) with existing permissions
+            existing_perms = metadata.get("permissions", 0)
+            merged_perms = existing_perms | calculated_permissions
+
+            metadata["permissions"] = merged_perms
+            metadata["permission_names"] = list(get_permission_names(merged_perms))
+
+            connection.provider_metadata = metadata
+            await connection.save()
+
+            logger.info(
+                "Stored Discord permissions: existing=%s, calculated=%s, merged=%s, names=%s",
+                existing_perms,
+                calculated_permissions,
+                merged_perms,
+                metadata["permission_names"]
+            )
+
+        # Store guild information
+
+        guild_id = request.query_params.get('guild_id')
+        if guild_id and config.discord_bot_token:
+            provider_impl = get_integration_provider(oauth_provider)
+            if provider_impl:
+                # Type check for DiscordProvider
+                from seer.services.integrations.providers.discord import DiscordProvider
+                if isinstance(provider_impl, DiscordProvider):
+                    try:
+                        guild_info = await provider_impl.fetch_guild_info(
+                            guild_id=guild_id,
+                            bot_token=config.discord_bot_token
+                        )
+
+                        # Store guild as IntegrationResource
+                        from seer.api.integrations.services import _upsert_integration_resource
+                        user = await User.get(user_id=user_id)
+                        await _upsert_integration_resource(
+                            user=user,
+                            oauth_connection=connection,
+                            provider="discord",
+                            resource_type="guild",
+                            resource_id=guild_id,
+                            resource_key=None,
+                            name=guild_info.get("name", f"Discord Server {guild_id}"),
+                            metadata={
+                                "guild_id": guild_id,
+                                "guild_name": guild_info.get("name"),
+                                "icon": guild_info.get("icon"),
+                                "owner_id": guild_info.get("owner_id"),
+                            }
+                        )
+                        logger.info(
+                            "Stored Discord guild: guild_id=%s, name=%s",
+                            guild_id,
+                            guild_info.get("name")
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "Failed to store Discord guild: guild_id=%s, error=%s",
+                            guild_id,
+                            exc,
+                            exc_info=True
+                        )
+                        # Don't fail the OAuth flow if guild storage fails
+                        # The connection is still stored, user can retry later
 
     connected_param = integration_type or oauth_provider
     return RedirectResponse(url=f"{redirect_to}?connected={connected_param}")
@@ -487,6 +573,54 @@ async def list_persisted_resources(
         resource_type=resource_type,
     )
     return {"items": [serialize_integration_resource(r) for r in resources]}
+
+
+# =============================================================================
+# DISCORD-SPECIFIC ENDPOINTS
+# =============================================================================
+
+@router.get("/discord/guilds")
+async def list_discord_guilds(request: Request):
+    """
+    List Discord servers (guilds) where the bot is installed for the current user.
+
+    Returns guild information from IntegrationResource records.
+    """
+    user: User = request.state.db_user
+    resources = await list_integration_resources(
+        user,
+        provider="discord",
+        resource_type="guild",
+    )
+    return {"guilds": [serialize_integration_resource(r) for r in resources]}
+
+
+@router.post("/discord/guilds/{guild_id}/disconnect")
+async def disconnect_discord_guild(guild_id: str, request: Request):
+    """
+    Disconnect bot from a specific Discord server.
+    Marks the IntegrationResource as inactive.
+    """
+    user: User = request.state.db_user
+    # Find and deactivate the specific guild resource
+    from seer.database import IntegrationResource
+    resource = await IntegrationResource.get_or_none(
+        user=user,
+        provider="discord",
+        resource_type="guild",
+        resource_id=guild_id,
+        status="active"
+    )
+    if not resource:
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="Guild not found",
+            detail=f"Discord guild {guild_id} not found or already disconnected",
+            status=404
+        )
+    resource.status = "inactive"
+    await resource.save()
+    return {"status": "success", "guild_id": guild_id}
 
 
 router.include_router(resource_router)

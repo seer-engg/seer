@@ -44,6 +44,33 @@ async def test_trigger_subscription(
     return await services.test_trigger_subscription(user, subscription_id, payload)
 
 
+@router.post(
+    "/workflows/{workflow_id}/triggers/{trigger_id}/start-listening",
+    response_model=api_models.StartListeningResponse,
+)
+async def start_listening(
+    request: Request,
+    workflow_id: str,
+    trigger_id: str,
+):
+    user = _require_user(request)
+    return await services.start_listening_for_trigger(user, workflow_id, trigger_id)
+
+
+@router.get(
+    "/workflows/{workflow_id}/triggers/{trigger_id}/pending-events",
+    response_model=api_models.PendingEventsResponse,
+)
+async def get_pending_events(
+    request: Request,
+    workflow_id: str,
+    trigger_id: str,
+    since: int | None = Query(None),
+):
+    user = _require_user(request)
+    return await services.get_pending_events(user, workflow_id, trigger_id, since=since)
+
+
 @router.get("/registries/tools", response_model=api_models.ToolRegistryResponse)
 async def get_tool_registry(request: Request, include_schemas: bool = Query(False)):
     _require_user(request)
@@ -70,6 +97,12 @@ async def generate_schema_metadata(
     """Generate schema title and description using LLM analysis."""
     _require_user(request)
     return await services.generate_schema_metadata(payload)
+
+
+@router.post("/mcp/tools", response_model=api_models.McpToolsResponse)
+async def list_mcp_tools(request: Request, payload: api_models.McpToolsRequest):
+    _require_user(request)
+    return await services.list_mcp_tools(payload)
 
 
 @router.post("/workflows", response_model=api_models.WorkflowResponse, status_code=status.HTTP_201_CREATED)

@@ -116,6 +116,23 @@ class TriggerSubscriptionTestResponse(BaseModel):
     errors: List[str] = Field(default_factory=list)
 
 
+class StartListeningResponse(BaseModel):
+    webhook_url: str
+    secret_token: str
+    subscription_id: int
+
+
+class PendingEventItem(BaseModel):
+    event_id: int
+    data: Dict[str, Any]
+    received_at: str
+
+
+class PendingEventsResponse(BaseModel):
+    events: List[PendingEventItem] = Field(default_factory=list)
+    latest_event_id: Optional[int] = None
+
+
 class ModelDescriptor(BaseModel):
     id: str
     title: str
@@ -143,6 +160,22 @@ class SchemaMetadataGenerateResponse(BaseModel):
     """Response with generated schema metadata."""
     title: str = Field(..., description="Generated schema title (PascalCase, 2-4 words)")
     description: str = Field(..., description="Generated schema description (1-2 sentences)")
+
+
+class McpToolsRequest(BaseModel):
+    server: str
+    server_type: str = "http"
+    auth: Optional[Dict[str, Any]] = None
+
+
+class McpToolDescriptor(BaseModel):
+    name: str
+    description: str = ""
+    input_schema: Optional[Dict[str, Any]] = None
+
+
+class McpToolsResponse(BaseModel):
+    tools: List[McpToolDescriptor]
 
 
 class WorkflowWarning(BaseModel):
@@ -373,6 +406,9 @@ __all__ = [
     "TriggerSubscriptionListResponse",
     "TriggerSubscriptionTestRequest",
     "TriggerSubscriptionTestResponse",
+    "StartListeningResponse",
+    "PendingEventItem",
+    "PendingEventsResponse",
     "ModelDescriptor",
     "ModelRegistryResponse",
     "SchemaResponse",

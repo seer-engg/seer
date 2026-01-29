@@ -48,6 +48,18 @@ if config.supabase_client_id and config.supabase_client_secret:
         client_kwargs={'scope': 'read:projects'},
     )
 
+# Discord Bot Installation
+if config.discord_client_id and config.discord_client_secret:
+    oauth.register(
+        name='discord',
+        client_id=config.discord_client_id,
+        client_secret=config.discord_client_secret,
+        authorize_url='https://discord.com/api/oauth2/authorize',
+        access_token_url='https://discord.com/api/oauth2/token',
+        api_base_url='https://discord.com/api/',
+        client_kwargs={'scope': 'bot'},
+    )
+
 
 
 def get_oauth_provider(integration_type: str) -> str:
@@ -66,5 +78,7 @@ def get_oauth_provider(integration_type: str) -> str:
         return 'google'
     if integration_type in ['supabase', 'supabase_mgmt']:
         return SUPABASE_OAUTH_PROVIDER
+    if integration_type == 'discord':
+        return 'discord'
     # For other providers, the integration type is the same as the provider
     return integration_type

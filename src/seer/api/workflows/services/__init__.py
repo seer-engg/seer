@@ -8,6 +8,7 @@ Provides backwards-compatible imports for the router.
 from .catalog import (
     compile_spec,
     generate_schema_metadata,
+    list_mcp_tools,
     list_models,
     list_node_types,
     list_tools,
@@ -53,8 +54,10 @@ from .lifecycle import (
 # Import from triggers module
 from .triggers import (
     delete_trigger_subscription,
+    get_pending_events,
     get_trigger_subscription,
     list_trigger_subscriptions,
+    start_listening_for_trigger,
     test_trigger_subscription,
     sync_trigger_subscriptions,
 )
@@ -62,6 +65,7 @@ from .triggers import (
 __all__ = [
     "list_node_types",
     "list_tools",
+    "list_mcp_tools",
     "list_models",
     "list_triggers",
     "resolve_schema",
@@ -90,5 +94,7 @@ __all__ = [
     "delete_trigger_subscription",
     "test_trigger_subscription",
     "sync_trigger_subscriptions",
+    "start_listening_for_trigger",
+    "get_pending_events",
     "_create_run_record",
 ]
