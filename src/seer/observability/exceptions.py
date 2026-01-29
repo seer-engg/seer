@@ -279,6 +279,25 @@ class PollingIntervalTooFast(UsageLimitError):
         return data
 
 
+class PaymentMethodRequiredError(UsageLimitError):
+    """Raised when user has no payment method on file."""
+
+    def __init__(self, upgrade_url: str = "/onboarding?step=4"):
+        message = (
+            "Payment method required to complete your trial. "
+            "Your card won't be charged for 14 days. "
+            "No risk, cancel anytime."
+        )
+        super().__init__(
+            resource="payment_method",
+            limit=1,
+            current=0,
+            tier=SubscriptionTier.FREE,
+            message=message,
+            upgrade_url=upgrade_url,
+        )
+
+
 class ChatDisabledError(Exception):
     """
     Raised when chat AI is accessed in self-hosted mode where it's disabled.

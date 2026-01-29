@@ -8,6 +8,7 @@ import stripe
 from seer.api.subscriptions import stripe_service
 from seer.api.subscriptions.clerk_sync import sync_stripe_customer_to_clerk
 from seer.config import config
+from seer.database.subscription_models import BillingProfile
 from seer.logger import get_logger
 
 logger = get_logger("api.subscriptions.stripe_webhook_controller")
@@ -57,12 +58,33 @@ class StripeWebhookController:
     async def _handle_checkout_session_completed(self, data: dict) -> None:
         customer_id = data.get("customer")
         user_id = data.get("metadata", {}).get("user_id")
+        is_early_adopter = data.get("metadata", {}).get("is_early_adopter") == "true"
+
         if customer_id and user_id:
             await sync_stripe_customer_to_clerk(user_id, customer_id)
 
+        billing_profile = await BillingProfile.get_or_none(stripe_customer_id=customer_id)
+        if billing_profile:
+            billing_profile.payment_method_on_file = True
+            await billing_profile.save(update_fields=["payment_method_on_file"])
+
         subscription_id = data.get("subscription")
         if subscription_id:
-            await stripe_service.sync_subscription_from_stripe(subscription_id)
+            subscription_obj = await stripe_service.sync_subscription_from_stripe(subscription_id)
+
+            if subscription_obj and is_early_adopter and billing_profile:
+                stripe.api_key = stripe.api_key or config.stripe_secret_key
+                try:
+                    stripe_subscription = stripe.Subscription.retrieve(subscription_id)
+                    metadata = getattr(stripe_subscription, "metadata", None) or stripe_subscription.get("metadata", {})
+                    early_adopter_num = metadata.get("early_adopter_number")
+
+                    if early_adopter_num:
+                        billing_profile.is_early_adopter = True
+                        billing_profile.early_adopter_number = int(early_adopter_num)
+                        await billing_profile.save(update_fields=["is_early_adopter", "early_adopter_number"])
+                except Exception as exc:  # pylint: disable=broad-except  # Reason: non-critical early adopter metadata
+                    logger.warning("Failed to set early adopter metadata: %s", exc)
 
     async def _handle_invoice_event(self, event_type: str, invoice: dict) -> None:
         subscription_source = await self._resolve_subscription_for_invoice(invoice)

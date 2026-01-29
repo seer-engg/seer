@@ -243,6 +243,65 @@ async def create_checkout_session(
     return session.url
 
 
+async def create_trial_checkout_session(
+    user: User,
+    price_id: str,
+    is_early_adopter: bool,
+    early_adopter_number: Optional[int],
+    success_url: str,
+    cancel_url: str,
+) -> str:
+    """
+    Create Stripe Checkout for 14-day trial subscription.
+
+    Args:
+        user: The authenticated user
+        price_id: Stripe Price ID for the subscription plan
+        is_early_adopter: Whether user is getting early adopter pricing
+        early_adopter_number: Early adopter position (if applicable)
+        success_url: URL to redirect to on successful payment
+        cancel_url: URL to redirect to if payment is canceled
+
+    Returns:
+        The Stripe Checkout session URL
+    """
+    customer_id = await get_or_create_stripe_customer(user)
+
+    session = stripe.checkout.Session.create(
+        customer=customer_id,
+        mode="subscription",
+        line_items=[{"price": price_id, "quantity": 1}],
+        subscription_data={
+            "trial_period_days": 14,
+            "trial_settings": {
+                "end_behavior": {
+                    "missing_payment_method": "cancel"
+                }
+            },
+            "metadata": {
+                "is_early_adopter": "true" if is_early_adopter else "false",
+                "early_adopter_number": str(early_adopter_number) if early_adopter_number else "",
+            }
+        },
+        success_url=success_url,
+        cancel_url=cancel_url,
+        payment_method_collection="always",
+        billing_address_collection="required",
+        metadata={
+            "user_id": user.user_id,
+            "signup_trial": "true",
+            "is_early_adopter": "true" if is_early_adopter else "false",
+        },
+    )
+
+    logger.info(
+        "Created trial checkout session %s for user %s, price %s, early_adopter=%s",
+        session.id, user.user_id, price_id, is_early_adopter
+    )
+
+    return session.url
+
+
 async def create_portal_session(user: User, return_url: str) -> str:
     """
     Create a Stripe Customer Portal session and return the portal URL.

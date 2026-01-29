@@ -18,16 +18,18 @@ from tortoise.exceptions import IntegrityError
 from seer.config import config
 from seer.database.models import User
 from seer.database.subscription_models import (
+    BillingProfile,
     StripeWebhookEvent,
     StripeWebhookEventStatus,
 )
 from seer.logger import get_logger
 from seer.worker.tasks.stripe import process_stripe_webhook_event
 
-from .pricing_catalog import TierPricing, get_pricing_catalog
+from .pricing_catalog import EARLY_ADOPTER_LIMIT, TierPricing, get_pricing_catalog
 from .stripe_service import (
     create_checkout_session,
     create_portal_session,
+    create_trial_checkout_session,
     get_user_subscription,
     list_customer_invoices,
     list_customer_payments,
@@ -190,6 +192,56 @@ async def create_checkout(request: Request, body: CheckoutRequest):
         return CheckoutResponse(checkout_url=checkout_url)
     except stripe.error.StripeError as exc:
         logger.error("Stripe checkout error for user %s: %s", user.user_id, str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/checkout/trial", response_model=CheckoutResponse)
+async def create_trial_checkout(request: Request):
+    """
+    Create Stripe Checkout for 14-day trial with payment method collection.
+
+    Determines pricing tier (early adopter vs standard) and creates a trial subscription.
+    """
+    if not config.is_stripe_configured:
+        raise HTTPException(status_code=503, detail="Stripe is not configured")
+
+    user = _require_user(request)
+
+    billing_profile = await BillingProfile.get_or_none(owner_user=user)
+    if billing_profile and billing_profile.payment_method_on_file:
+        raise HTTPException(status_code=400, detail="Payment method already added")
+
+    early_adopter_count = await BillingProfile.filter(is_early_adopter=True).count()
+    is_early_adopter = early_adopter_count < EARLY_ADOPTER_LIMIT
+
+    pricing = get_pricing_catalog()
+    price_id = None
+    for tier_pricing in pricing:
+        if is_early_adopter and tier_pricing.tier == "pro_early_adopter":
+            price_id = tier_pricing.monthly.price_id
+            break
+        if not is_early_adopter and tier_pricing.tier == "pro":
+            price_id = tier_pricing.monthly.price_id
+            break
+
+    if not price_id:
+        raise HTTPException(status_code=500, detail="Pricing configuration error")
+
+    success_url = f"{config.frontend_url}/onboarding?payment_success=true&step=4"
+    cancel_url = f"{config.frontend_url}/onboarding?payment_canceled=true&step=4"
+
+    try:
+        checkout_url = await create_trial_checkout_session(
+            user=user,
+            price_id=price_id,
+            is_early_adopter=is_early_adopter,
+            early_adopter_number=early_adopter_count + 1 if is_early_adopter else None,
+            success_url=success_url,
+            cancel_url=cancel_url,
+        )
+        return CheckoutResponse(checkout_url=checkout_url)
+    except stripe.error.StripeError as exc:
+        logger.error("Stripe trial checkout error for user %s: %s", user.user_id, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

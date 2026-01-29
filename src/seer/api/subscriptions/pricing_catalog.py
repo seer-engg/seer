@@ -11,6 +11,9 @@ from seer.logger import get_logger
 
 logger = get_logger("api.subscriptions.pricing_catalog")
 
+# Early adopter limit
+EARLY_ADOPTER_LIMIT = 50
+
 
 class PriceInfo(BaseModel):
     """Price information for a billing cycle."""
@@ -51,6 +54,11 @@ PRODUCT_DEFINITIONS: dict[str, ProductDefinition] = {
         name="Seer Pro",
         description="Pro tier subscription for Seer",
     ),
+    "pro_early_adopter": ProductDefinition(
+        tier="pro_early_adopter",
+        name="Seer Pro (Early Adopter)",
+        description="Early adopter Pro tier subscription for Seer",
+    ),
     "pro_plus": ProductDefinition(
         tier="pro_plus",
         name="Seer Pro+",
@@ -63,15 +71,22 @@ PRICE_DEFINITIONS: tuple[PriceDefinition, ...] = (
         tier="pro",
         name="Pro",
         interval="month",
-        amount=20,
+        amount=39,
         lookup_key="pro_monthly",
     ),
     PriceDefinition(
         tier="pro",
         name="Pro",
         interval="year",
-        amount=200,
+        amount=390,
         lookup_key="pro_annual",
+    ),
+    PriceDefinition(
+        tier="pro_early_adopter",
+        name="Pro (Early Adopter)",
+        interval="month",
+        amount=29,
+        lookup_key="pro_early_adopter_monthly",
     ),
     PriceDefinition(
         tier="pro_plus",
