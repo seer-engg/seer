@@ -41,7 +41,7 @@ class DiscordProvider(IntegrationProvider):
         Returns:
             Permission bitfield (int)
         """
-        from seer.tools.discord.permissions import calculate_permissions
+        from seer.tools.discord.permissions import calculate_permissions  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import between providers and tools
 
         # If requested_scopes contains tool names, calculate permissions
         if context.requested_scopes:

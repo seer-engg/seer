@@ -1,7 +1,5 @@
 """Runtime permission validation for Discord tools."""
 
-from typing import Optional
-
 from fastapi import HTTPException
 
 from seer.database import OAuthConnection

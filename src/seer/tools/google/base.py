@@ -143,7 +143,7 @@ class GoogleAPIClient(BaseTool, ABC):
         """
         # Validate scopes before making request
         if credentials and hasattr(self, 'required_scopes') and self.required_scopes:
-            from seer.tools.google.validators import validate_google_scopes
+            from seer.tools.google.validators import validate_google_scopes  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import between base and validators
 
             connection = getattr(credentials, 'oauth_connection', None)
             if connection:

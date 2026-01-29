@@ -142,7 +142,7 @@ class DiscordAPIClient(BaseTool, ABC):
         """
         # Validate permissions before making request
         if credentials and hasattr(self, 'required_permissions') and self.required_permissions:
-            from seer.tools.discord.validators import validate_discord_permissions
+            from seer.tools.discord.validators import validate_discord_permissions  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import between base and validators
 
             connection = getattr(credentials, 'oauth_connection', None)
             if connection:
