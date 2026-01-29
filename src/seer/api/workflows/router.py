@@ -99,6 +99,12 @@ async def generate_schema_metadata(
     return await services.generate_schema_metadata(payload)
 
 
+@router.post("/mcp/tools", response_model=api_models.McpToolsResponse)
+async def list_mcp_tools(request: Request, payload: api_models.McpToolsRequest):
+    _require_user(request)
+    return await services.list_mcp_tools(payload)
+
+
 @router.post("/workflows", response_model=api_models.WorkflowResponse, status_code=status.HTTP_201_CREATED)
 async def create_workflow(request: Request, payload: api_models.WorkflowCreateRequest):
     user = _require_user(request)

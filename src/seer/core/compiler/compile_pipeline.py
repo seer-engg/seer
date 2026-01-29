@@ -6,7 +6,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from seer.core.compiler.context import CompilerContext
 from seer.core.compiler.lower_control_flow import build_execution_plan
-from seer.core.compiler.type_env import build_type_environment
+from seer.core.compiler.type_env import build_type_environment_async
 from seer.core.compiler.validate_refs import validate_references
 from seer.core.schema.models import WorkflowSpec
 
@@ -26,10 +26,11 @@ async def compile_parsed_workflow(
     This builds the type environment, validates references, lowers the control
     flow to an execution plan, and emits a LangGraph graph with a runtime.
     """
-    type_env = build_type_environment(
+    type_env = await build_type_environment_async(
         spec,
         schema_registry=context.schema_registry,
         tool_registry=context.tool_registry,
+        mcp_client_registry=context.mcp_client_registry,
     )
     validate_references(spec, type_env)
     plan = build_execution_plan(spec)
@@ -45,6 +46,7 @@ async def compile_parsed_workflow(
             tool_registry=context.tool_registry,
             model_registry=context.model_registry,
             type_env=type_env,
+            mcp_client_registry=context.mcp_client_registry,
         )
     )
 

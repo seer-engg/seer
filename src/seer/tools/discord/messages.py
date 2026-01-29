@@ -21,6 +21,9 @@ class DiscordSendChannelMessageTool(DiscordAPIClient):
     required_scopes = ["bot"]
     integration_type = "discord"
 
+    # Required permissions: VIEW_CHANNEL (1024) | SEND_MESSAGES (2048) = 3072
+    required_permissions = 3072
+
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
@@ -146,6 +149,9 @@ class DiscordSendDirectMessageTool(DiscordAPIClient):
     description = "Send a direct message (DM) to a Discord user. The bot must share a server with the user."
     required_scopes = ["bot"]
     integration_type = "discord"
+
+    # Required permissions: SEND_MESSAGES (2048) only
+    required_permissions = 2048
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
