@@ -457,8 +457,39 @@ async def auth_callback(request: Request, provider: str):
         integration_type=integration_type
     )
 
-    # Discord-specific: Store guild information
+    # Discord-specific: Store permissions and guild information
     if oauth_provider == "discord":
+        # Calculate and store permissions from requested tools
+        requested_scope = state_data.get('requested_scope', '')
+        from seer.tools.discord.permissions import calculate_permissions, get_permission_names
+
+        tool_names = requested_scope.split() if requested_scope else []
+        calculated_permissions = calculate_permissions(tool_names)
+
+        # Update connection metadata with permissions
+        if connection:
+            metadata = connection.provider_metadata or {}
+
+            # Merge permissions (bitwise OR) with existing permissions
+            existing_perms = metadata.get("permissions", 0)
+            merged_perms = existing_perms | calculated_permissions
+
+            metadata["permissions"] = merged_perms
+            metadata["permission_names"] = list(get_permission_names(merged_perms))
+
+            connection.provider_metadata = metadata
+            await connection.save()
+
+            logger.info(
+                "Stored Discord permissions: existing=%s, calculated=%s, merged=%s, names=%s",
+                existing_perms,
+                calculated_permissions,
+                merged_perms,
+                metadata["permission_names"]
+            )
+
+        # Store guild information
+
         guild_id = request.query_params.get('guild_id')
         if guild_id and config.discord_bot_token:
             provider_impl = get_integration_provider(oauth_provider)

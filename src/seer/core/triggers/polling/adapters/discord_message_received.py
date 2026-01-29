@@ -44,10 +44,29 @@ class DiscordMessageReceivedAdapter(PollAdapter):
     trigger_key = "poll.discord.message_received"
 
     async def bootstrap_cursor(self, ctx: PollContext) -> Dict[str, Any]:
-        """Initialize cursor - fetch recent messages on first poll."""
-        # Start with None to fetch the most recent messages
-        # We'll track the newest message ID we've seen
-        return {"last_message_id": None}
+        """Initialize cursor by fetching the most recent message ID to skip historical messages."""
+        bot_token = self._get_bot_token()
+        channel_id = self._resolve_channel_id(ctx)
+
+        try:
+            # Fetch only the single most recent message to establish the cursor
+            messages = await self._fetch_discord_messages(bot_token, channel_id, last_message_id=None, max_results=1)
+
+            if messages and len(messages) > 0:
+                # Set cursor to the most recent message ID
+                # Only messages AFTER this will be processed in future polls
+                most_recent_id = messages[0].get("id")
+                return {"last_message_id": most_recent_id}
+
+            # No messages in channel yet - start with None
+            # First message will be processed when it arrives
+            return {"last_message_id": None}
+
+        except PollAdapterError:
+            # If we can't fetch messages during bootstrap (permissions, rate limit, etc.)
+            # start with None and let the first poll handle it
+            logger.warning("Failed to bootstrap cursor for channel %s, starting with None", channel_id)
+            return {"last_message_id": None}
 
     async def poll(self, ctx: PollContext, cursor: Dict[str, Any]) -> PollResult:
         """Poll Discord channel for new messages."""

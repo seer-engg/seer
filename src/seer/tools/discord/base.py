@@ -35,7 +35,7 @@ class DiscordAPIClient(BaseTool, ABC):
     error translation, and consistent behavior.
 
     Subclasses only need to implement:
-    - Class attributes (name, description, required_scopes, integration_type)
+    - Class attributes (name, description, required_scopes, integration_type, required_permissions)
     - execute() method with business logic
 
     Example:
@@ -44,6 +44,7 @@ class DiscordAPIClient(BaseTool, ABC):
             description = "Send a message to Discord"
             required_scopes = ["bot"]
             integration_type = "discord"
+            required_permissions = 3072  # VIEW_CHANNEL | SEND_MESSAGES
 
             async def execute(self, access_token, arguments, credentials=None):
                 resp = await self._make_request(
@@ -57,6 +58,7 @@ class DiscordAPIClient(BaseTool, ABC):
 
     provider = "discord"
     default_timeout: float = 30.0
+    required_permissions: int = 0  # Override in subclasses with Discord permission bitfield
 
     def _get_bot_token(self, credentials: Optional[ResolvedCredentials] = None) -> str:  # pylint: disable=unused-argument
         """
@@ -108,6 +110,7 @@ class DiscordAPIClient(BaseTool, ABC):
         Make authenticated HTTP request to Discord API.
 
         Handles:
+        - Runtime permission validation (if required_permissions is set)
         - Bot token retrieval from config
         - Header construction
         - Timeout management
@@ -125,7 +128,7 @@ class DiscordAPIClient(BaseTool, ABC):
             httpx.Response object (already checked for errors)
 
         Raises:
-            HTTPException: 500 for config errors, 401 for auth errors, 403 for permissions,
+            HTTPException: 403 for missing permissions, 500 for config errors, 401 for auth errors,
                           404 for not found, 429 for rate limits, 504 for timeouts, 500 for other errors
 
         Example:
@@ -137,6 +140,18 @@ class DiscordAPIClient(BaseTool, ABC):
             )
             data = resp.json()
         """
+        # Validate permissions before making request
+        if credentials and hasattr(self, 'required_permissions') and self.required_permissions:
+            from seer.tools.discord.validators import validate_discord_permissions
+
+            connection = getattr(credentials, 'oauth_connection', None)
+            if connection:
+                validate_discord_permissions(
+                    connection=connection,
+                    required_permissions=self.required_permissions,
+                    tool_name=self.name
+                )
+
         bot_token = self._get_bot_token(credentials)
         headers = self._build_headers(bot_token)
         timeout_value = timeout or self.default_timeout

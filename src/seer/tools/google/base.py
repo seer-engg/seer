@@ -20,6 +20,7 @@ from fastapi import HTTPException
 
 from seer.logger import get_logger
 from seer.tools.base import BaseTool
+from seer.tools.credential_resolver import ResolvedCredentials
 
 logger = get_logger("shared.tools.google.base")
 
@@ -100,11 +101,13 @@ class GoogleAPIClient(BaseTool, ABC):
         json_body: Optional[Dict[str, Any]] = None,
         content: Optional[bytes] = None,
         timeout: Optional[float] = None,
+        credentials: Optional[ResolvedCredentials] = None,
     ) -> httpx.Response:
         """
         Make authenticated HTTP request to Google API.
 
         Handles:
+        - Runtime scope validation (if credentials provided and required_scopes set)
         - Token validation
         - Header construction
         - Timeout management
@@ -118,12 +121,13 @@ class GoogleAPIClient(BaseTool, ABC):
             json_body: JSON request body
             content: Raw bytes content (for file uploads)
             timeout: Request timeout in seconds (default: 30.0)
+            credentials: Optional ResolvedCredentials for scope validation
 
         Returns:
             httpx.Response object (already checked for errors)
 
         Raises:
-            HTTPException: 401 for auth errors, 403 for permissions,
+            HTTPException: 403 for missing scopes, 401 for auth errors, 403 for permissions,
                           404 for not found, 429 for rate limits,
                           504 for timeouts, 500 for other errors
 
@@ -132,10 +136,23 @@ class GoogleAPIClient(BaseTool, ABC):
                 "GET",
                 "https://www.googleapis.com/gmail/v1/users/me/messages",
                 access_token,
-                params={"q": "is:unread"}
+                params={"q": "is:unread"},
+                credentials=credentials
             )
             data = resp.json()
         """
+        # Validate scopes before making request
+        if credentials and hasattr(self, 'required_scopes') and self.required_scopes:
+            from seer.tools.google.validators import validate_google_scopes
+
+            connection = getattr(credentials, 'oauth_connection', None)
+            if connection:
+                validate_google_scopes(
+                    connection=connection,
+                    required_scopes=self.required_scopes,
+                    tool_name=self.name
+                )
+
         token = self._validate_token(access_token)
         headers = self._build_headers(token)
         timeout_value = timeout or self.default_timeout

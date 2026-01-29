@@ -24,6 +24,9 @@ class DiscordFindUserTool(DiscordAPIClient):
     required_scopes = ["bot", "identify"]
     integration_type = "discord"
 
+    # Required permissions: VIEW_CHANNEL (1024) to see user list
+    required_permissions = 1024
+
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
