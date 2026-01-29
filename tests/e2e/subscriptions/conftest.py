@@ -128,6 +128,10 @@ async def trial_subscription_setup(user_with_payment_method, stripe_test_clock):
         metadata={"user_id": user.user_id},
     )
 
+    # Sync subscription to database (creates BillingSubscription record)
+    from seer.api.subscriptions.stripe_service import sync_subscription_from_stripe
+    await sync_subscription_from_stripe(stripe_subscription)
+
     yield user, billing_profile, stripe_subscription, test_clock
 
     # Cleanup: Cancel subscription
