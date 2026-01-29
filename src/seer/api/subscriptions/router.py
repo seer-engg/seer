@@ -20,11 +20,17 @@ from seer.database.models import User
 from seer.database.subscription_models import (
     StripeWebhookEvent,
     StripeWebhookEventStatus,
+    SubscriptionTier,
 )
 from seer.logger import get_logger
 from seer.worker.tasks.stripe import process_stripe_webhook_event
 
-from .pricing_catalog import TierPricing, get_pricing_catalog
+from .early_adopter_service import (
+    EARLY_ADOPTER_LIMIT,
+    check_and_claim_early_adopter_slot,
+    get_early_adopter_count,
+)
+from .pricing_catalog import TierPricing, get_price_id_for_checkout, get_pricing_catalog
 from .stripe_service import (
     create_checkout_session,
     create_portal_session,
@@ -52,7 +58,8 @@ def _require_user(request: Request) -> User:
 
 class CheckoutRequest(BaseModel):
     """Request body for creating a checkout session."""
-    price_id: str
+    tier: str  # "pro", "pro_plus"
+    interval: str  # "month", "year"
 
 
 class CheckoutResponse(BaseModel):
@@ -76,6 +83,7 @@ class SubscriptionResponse(BaseModel):
 class PricingResponse(BaseModel):
     """Response containing all subscription pricing."""
     prices: list[TierPricing]
+    early_adopter_slots_remaining: Optional[int] = None
 
 
 class PaginationMeta(BaseModel):
@@ -153,12 +161,18 @@ async def get_stripe_config():
 @router.get("/pricing", response_model=PricingResponse)
 async def get_pricing():
     """
-    Get available subscription prices.
+    Get available subscription prices with early adopter availability.
 
     Returns pricing information for all subscription tiers with
-    monthly and annual options.
+    monthly and annual options, plus early adopter slot availability.
     """
-    return PricingResponse(prices=get_pricing_catalog())
+    pro_count = await get_early_adopter_count(SubscriptionTier.PRO)
+    slots_remaining = max(0, EARLY_ADOPTER_LIMIT - pro_count)
+
+    return PricingResponse(
+        prices=get_pricing_catalog(),
+        early_adopter_slots_remaining=slots_remaining if slots_remaining > 0 else None,
+    )
 
 
 @router.get("/current", response_model=SubscriptionResponse)
@@ -186,7 +200,7 @@ async def get_current_subscription(request: Request):
 @router.post("/checkout", response_model=CheckoutResponse)
 async def create_checkout(request: Request, body: CheckoutRequest):
     """
-    Create Stripe Checkout session for subscription.
+    Create Stripe Checkout session with early adopter pricing if eligible.
 
     Creates a hosted checkout page for the user to complete payment.
     On success, redirects to billing settings with success message.
@@ -195,6 +209,24 @@ async def create_checkout(request: Request, body: CheckoutRequest):
         raise HTTPException(status_code=503, detail="Stripe is not configured")
 
     user = _require_user(request)
+    subscription = await get_user_subscription(user)
+
+    try:
+        tier = SubscriptionTier(body.tier)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid tier: {body.tier}") from exc
+
+    # Check early adopter eligibility and claim slot atomically
+    is_early_adopter = await check_and_claim_early_adopter_slot(tier, subscription)
+
+    # Get appropriate price_id
+    price_id = get_price_id_for_checkout(body.tier, body.interval, is_early_adopter)
+
+    if not price_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Price not found for tier={body.tier}, interval={body.interval}"
+        )
 
     success_url = f"{config.frontend_url}/settings/billing?success=true"
     cancel_url = f"{config.frontend_url}/settings/billing?canceled=true"
@@ -202,9 +234,10 @@ async def create_checkout(request: Request, body: CheckoutRequest):
     try:
         checkout_url = await create_checkout_session(
             user=user,
-            price_id=body.price_id,
+            price_id=price_id,
             success_url=success_url,
             cancel_url=cancel_url,
+            metadata={"is_early_adopter": str(is_early_adopter)},
         )
         return CheckoutResponse(checkout_url=checkout_url)
     except stripe.error.StripeError as exc:

@@ -59,20 +59,37 @@ PRODUCT_DEFINITIONS: dict[str, ProductDefinition] = {
 }
 
 PRICE_DEFINITIONS: tuple[PriceDefinition, ...] = (
+    # Regular Pro prices (updated from $20/$200)
     PriceDefinition(
         tier="pro",
         name="Pro",
         interval="month",
-        amount=20,
+        amount=39,
         lookup_key="pro_monthly",
     ),
     PriceDefinition(
         tier="pro",
         name="Pro",
         interval="year",
-        amount=200,
+        amount=390,
         lookup_key="pro_annual",
     ),
+    # Early adopter Pro prices (new)
+    PriceDefinition(
+        tier="pro",
+        name="Pro (Early Adopter)",
+        interval="month",
+        amount=29,
+        lookup_key="pro_monthly_early_adopter",
+    ),
+    PriceDefinition(
+        tier="pro",
+        name="Pro (Early Adopter)",
+        interval="year",
+        amount=290,
+        lookup_key="pro_annual_early_adopter",
+    ),
+    # Pro+ unchanged
     PriceDefinition(
         tier="pro_plus",
         name="Pro+",
@@ -241,6 +258,33 @@ def _build_pricing(price_ids: Dict[str, Optional[str]]) -> list[TierPricing]:
 def get_pricing_catalog() -> list[TierPricing]:
     """Return pricing details using Stripe price IDs (cached) or config fallbacks."""
     return _build_pricing(_resolve_price_ids())
+
+
+def get_price_id_for_checkout(tier: str, interval: str, is_early_adopter: bool = False) -> Optional[str]:
+    """Get Stripe price_id for tier/interval with optional early adopter pricing.
+
+    Args:
+        tier: Subscription tier (e.g., "pro", "pro_plus")
+        interval: Billing interval ("month" or "year")
+        is_early_adopter: Whether to use early adopter pricing
+
+    Returns:
+        Stripe price_id string or None if not found
+    """
+    # Map frontend interval values to Stripe lookup key suffixes
+    interval_mapping = {
+        "month": "monthly",
+        "year": "annual"
+    }
+    interval_suffix = interval_mapping.get(interval, interval)
+
+    if is_early_adopter and tier == "pro":
+        lookup_key = f"pro_{interval_suffix}_early_adopter"
+    else:
+        lookup_key = f"{tier}_{interval_suffix}"
+
+    price_ids = _resolve_price_ids()
+    return price_ids.get(lookup_key)
 
 
 def _get_existing_price(lookup_key: str, price_id: Optional[str], product_id: Optional[str]) -> Optional[dict]:
