@@ -69,6 +69,7 @@ async def persist_event(
             event=envelope,
             raw_payload=raw,
             status=TriggerEventStatus.RECEIVED,
+            subscription_id=subscription.id,
         )
         return event, True
     except IntegrityError:
