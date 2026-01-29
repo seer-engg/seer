@@ -145,6 +145,22 @@ class SchemaMetadataGenerateResponse(BaseModel):
     description: str = Field(..., description="Generated schema description (1-2 sentences)")
 
 
+class McpToolsRequest(BaseModel):
+    server: str
+    server_type: str = "http"
+    auth: Optional[Dict[str, Any]] = None
+
+
+class McpToolDescriptor(BaseModel):
+    name: str
+    description: str = ""
+    input_schema: Optional[Dict[str, Any]] = None
+
+
+class McpToolsResponse(BaseModel):
+    tools: List[McpToolDescriptor]
+
+
 class WorkflowWarning(BaseModel):
     code: str
     node_id: str

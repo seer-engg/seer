@@ -18,6 +18,7 @@ from seer.core.compiler.compile_pipeline import compile_parsed_workflow
 from seer.core.compiler.context import CompilerContext
 from seer.core.compiler.parse import parse_workflow_spec
 from seer.core.errors import ExecutionError, WorkflowCompilerError
+from seer.core.registry.mcp_client_registry import MCPClientRegistry
 from seer.core.registry.model_registry import ModelDefinition, ModelRegistry
 from seer.core.registry.tool_registry import ToolDefinition, ToolRegistry
 from seer.core.runtime.context import WorkflowRuntimeContext
@@ -25,6 +26,7 @@ from seer.core.runtime.execution import CompiledWorkflow
 from seer.core.schema.jsonschema_adapter import SchemaError, check_schema
 from seer.core.schema.models import (
     LLMNode,
+    MCPNode,
     Node,
     ToolNode,
     WorkflowSpec,
@@ -102,6 +104,7 @@ class WorkflowCompilerSingleton:
         self._schema_registry = SchemaRegistry()
         self._tool_registry = ToolRegistry()
         self._model_registry = ModelRegistry()
+        self._mcp_client_registry = MCPClientRegistry()
         self._registry_lock = Lock()
 
     @property
@@ -115,6 +118,10 @@ class WorkflowCompilerSingleton:
     @property
     def model_registry(self) -> ModelRegistry:
         return self._model_registry
+
+    @property
+    def mcp_client_registry(self) -> MCPClientRegistry:
+        return self._mcp_client_registry
 
     @classmethod
     def instance(cls) -> WorkflowCompilerSingleton:
@@ -160,18 +167,22 @@ class WorkflowCompilerSingleton:
     def _ensure_dependencies(self, spec: WorkflowSpec) -> None:
         tool_names: Set[str] = set()
         model_ids: Set[str] = set()
-        self._collect_dependencies(spec.nodes, tool_names, model_ids)
+        mcp_servers: Set[tuple[str, str]] = set()
+        self._collect_dependencies(spec.nodes, tool_names, model_ids, mcp_servers)
 
         for tool_name in tool_names:
             self._ensure_tool_registered(tool_name)
         for model_id in model_ids:
             self._ensure_model_registered(model_id)
+        if mcp_servers:
+            logger.info("Workflow uses %d MCP servers", len(mcp_servers))
 
     def _collect_dependencies(
         self,
         nodes: Sequence[Node],
         tool_acc: Set[str],
         model_acc: Set[str],
+        mcp_acc: Set[tuple[str, str]],
     ) -> None:
         for node in nodes:
             if isinstance(node, ToolNode):
@@ -180,6 +191,8 @@ class WorkflowCompilerSingleton:
                 model = node.inputs.get("model")
                 if model and isinstance(model, str):
                     model_acc.add(model)
+            elif isinstance(node, MCPNode):
+                mcp_acc.add((node.server, node.server_type))
             # No recursion needed - all nodes are at top level in spec.nodes
 
     def _ensure_tool_registered(self, tool_name: str) -> None:
@@ -411,6 +424,7 @@ class WorkflowCompilerSingleton:
             schema_registry=self._schema_registry,
             tool_registry=self._tool_registry,
             model_registry=self._model_registry,
+            mcp_client_registry=self._mcp_client_registry,
         )
 
         return await compile_parsed_workflow(

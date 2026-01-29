@@ -61,6 +61,19 @@ NODE_TYPE_DESCRIPTORS = api_models.NodeTypeResponse(
                 api_models.NodeFieldDescriptor(name="out", kind="string"),
             ],
         ),
+        api_models.NodeTypeDescriptor(
+            type="mcp",
+            title="MCP Tool",
+            fields=[
+                api_models.NodeFieldDescriptor(name="id", kind="string", required=True),
+                api_models.NodeFieldDescriptor(name="server", kind="string", required=True),
+                api_models.NodeFieldDescriptor(name="server_type", kind="select", required=True, source="mcp_server_types"),
+                api_models.NodeFieldDescriptor(name="tool", kind="string", required=True),
+                api_models.NodeFieldDescriptor(name="auth", kind="json"),
+                api_models.NodeFieldDescriptor(name="inputs", kind="json"),
+                api_models.NodeFieldDescriptor(name="expect_outputs", kind="output_contract"),
+            ],
+        ),
         # Note: 'task' node type is not supported in the frontend builder UI
         # It's only used internally in workflow specs
     ]
@@ -221,6 +234,43 @@ Generate appropriate title and description:"""
         return api_models.SchemaMetadataGenerateResponse(
             title="OutputSchema",
             description="Structured output schema"
+        )
+
+
+async def list_mcp_tools(payload: api_models.McpToolsRequest) -> api_models.McpToolsResponse:
+    """Fetch available tools from an MCP server for the config panel UI."""
+    from seer.core.registry.mcp_client_registry import MCPServerConfig
+
+    try:
+        server_config = MCPServerConfig(
+            server=payload.server,
+            server_type=payload.server_type,
+            auth=payload.auth,
+        )
+        tools = await COMPILER.mcp_client_registry.list_tools(server_config)
+        return api_models.McpToolsResponse(
+            tools=[
+                api_models.McpToolDescriptor(
+                    name=t.name,
+                    description=t.description or "",
+                    input_schema=t.inputSchema,
+                )
+                for t in tools
+            ]
+        )
+    except (OSError, RuntimeError, ConnectionError) as exc:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="MCP server connection failed",
+            detail=str(exc),
+            status=422,
+        )
+    except Exception as exc:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Failed to fetch MCP tools",
+            detail=str(exc),
+            status=422,
         )
 
 
