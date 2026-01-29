@@ -128,7 +128,26 @@ class PaymentListResponse(BaseModel):
     pagination: PaginationMeta
 
 
+class StripeConfigResponse(BaseModel):
+    """Stripe publishable key for frontend."""
+    publishable_key: str
+
+
 # --- Endpoints ---
+
+
+@router.get("/config", response_model=StripeConfigResponse)
+async def get_stripe_config():
+    """
+    Get Stripe publishable key for frontend.
+
+    This is a public endpoint (no auth required) that returns the
+    Stripe publishable key needed to initialize Stripe.js on the frontend.
+    """
+    if not config.stripe_publishable_key:
+        raise HTTPException(status_code=503, detail="Stripe publishable key not configured")
+
+    return StripeConfigResponse(publishable_key=config.stripe_publishable_key)
 
 
 @router.get("/pricing", response_model=PricingResponse)

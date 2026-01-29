@@ -244,6 +244,10 @@ class SeerConfig(BaseSettings):
         default=None,
         description="Stripe secret API key (sk_test_... or sk_live_...)"
     )
+    stripe_publishable_key: Optional[str] = Field(
+        default=None,
+        description="Stripe publishable key for frontend (pk_test_... or pk_live_...)"
+    )
     stripe_webhook_secret: Optional[str] = Field(
         default=None,
         description="Stripe webhook signing secret (whsec_...)"

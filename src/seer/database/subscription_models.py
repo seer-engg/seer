@@ -46,6 +46,8 @@ class BillingProfile(models.Model):
         on_delete=fields.CASCADE,
     )
     stripe_customer_id = fields.CharField(max_length=255, unique=True, null=True)
+    has_payment_method = fields.BooleanField(default=False)
+    payment_method_added_at = fields.DatetimeField(null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 
