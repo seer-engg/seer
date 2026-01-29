@@ -772,7 +772,7 @@ async def get_pending_events(
     Fetch recent webhook events for a trigger subscription.
 
     Used by the frontend to poll for events while the user is in "Start Listening" mode.
-    Events are matched by trigger_key and the envelope's trigger_id field.
+    Filters directly by subscription_id for per-subscription isolation.
     """
     workflow = await _get_workflow(user, workflow_id)
 
@@ -783,25 +783,20 @@ async def get_pending_events(
     if not subscription:
         return api_models.PendingEventsResponse(events=[], latest_event_id=None)
 
-    # TriggerEvent has no direct FK to subscription, so filter by trigger_key
-    # and then match the envelope's trigger_id in application code.
+    # Direct indexed lookup by subscription_id — no trigger_key scan or in-memory filtering needed
     query = TriggerEvent.filter(
-        trigger_key=subscription.trigger_key,
+        subscription_id=subscription.id,
     ).order_by("-received_at")
 
     if since is not None:
         query = query.filter(id__gt=since)
 
-    # Fetch a batch and filter by trigger_id in the envelope
-    candidates = await query.limit(50)
+    events = await query.limit(20)
 
-    items = []
-    latest_id = None
-    for event in candidates:
+    items: list[api_models.PendingEventItem] = []
+    latest_id: Optional[int] = None
+    for event in events:
         envelope = event.event or {}
-        # Match by the trigger_id stored in the event envelope
-        if envelope.get("trigger_id") != subscription.trigger_id:
-            continue
         data = envelope.get("data", {})
         received_at = event.received_at.isoformat() if event.received_at else ""
         items.append(api_models.PendingEventItem(
@@ -811,7 +806,5 @@ async def get_pending_events(
         ))
         if latest_id is None or event.id > latest_id:
             latest_id = event.id
-        if len(items) >= 20:
-            break
 
     return api_models.PendingEventsResponse(events=items, latest_event_id=latest_id)

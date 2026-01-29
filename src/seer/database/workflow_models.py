@@ -322,6 +322,7 @@ class TriggerEvent(models.Model):
         TriggerEventStatus, max_length=20, default=TriggerEventStatus.RECEIVED
     )
     error = fields.JSONField(null=True)
+    subscription_id = fields.IntField(null=True)
 
     class Meta:
         table = "trigger_events"
@@ -332,6 +333,7 @@ class TriggerEvent(models.Model):
         indexes = (
             ("status", "received_at"),
             ("trigger_key", "provider_connection_id"),
+            ("subscription_id",),
         )
 
     def __str__(self) -> str:
