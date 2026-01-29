@@ -34,9 +34,11 @@ from .pricing_catalog import TierPricing, get_price_id_for_checkout, get_pricing
 from .stripe_service import (
     create_checkout_session,
     create_portal_session,
+    get_or_create_stripe_customer,
     get_user_subscription,
     list_customer_invoices,
     list_customer_payments,
+    sync_subscription_from_stripe,
     verify_webhook_signature,
 )
 
@@ -139,6 +141,19 @@ class PaymentListResponse(BaseModel):
 class StripeConfigResponse(BaseModel):
     """Stripe publishable key for frontend."""
     publishable_key: str
+
+
+class CreateSubscriptionWithTrialRequest(BaseModel):
+    """Request body for creating a subscription with trial period."""
+    tier: str  # "pro", "pro_plus"
+    interval: str  # "month", "year"
+
+
+class CreateSubscriptionWithTrialResponse(BaseModel):
+    """Response containing subscription details after trial creation."""
+    subscription_id: str
+    status: str
+    trial_end: Optional[str] = None
 
 
 # --- Endpoints ---
@@ -323,6 +338,122 @@ async def list_payments(
         items=result["items"],
         pagination=PaginationMeta(page=page, page_size=page_size, has_more=result["has_more"]),
     )
+
+
+@router.post("/create-with-trial", response_model=CreateSubscriptionWithTrialResponse)
+async def create_subscription_with_trial(
+    request: Request,
+    body: CreateSubscriptionWithTrialRequest,
+):
+    """
+    Create a subscription with trial period immediately after payment method added.
+
+    This endpoint is used during onboarding to start a trial subscription
+    after the user has added their payment method via Setup Intent.
+    The trial period is automatically applied from the price configuration.
+
+    Args:
+        body: Request containing tier and interval selection
+
+    Returns:
+        Subscription details including trial end date
+
+    Raises:
+        400: If no payment method found or invalid tier/interval
+        503: If Stripe is not configured
+    """
+    if not config.is_stripe_configured:
+        raise HTTPException(status_code=503, detail="Stripe is not configured")
+
+    user = _require_user(request)
+    subscription = await get_user_subscription(user)
+
+    # Validate tier
+    try:
+        tier = SubscriptionTier(body.tier)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid tier: {body.tier}") from exc
+
+    # Check early adopter eligibility and claim slot atomically
+    is_early_adopter = await check_and_claim_early_adopter_slot(tier, subscription)
+
+    # Get appropriate price_id
+    price_id = get_price_id_for_checkout(body.tier, body.interval, is_early_adopter)
+
+    if not price_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Price not found for tier={body.tier}, interval={body.interval}",
+        )
+
+    # Get or create Stripe customer
+    customer_id = await get_or_create_stripe_customer(user)
+
+    try:
+        # Verify customer has a payment method attached
+        customer = stripe.Customer.retrieve(customer_id)
+        payment_methods = stripe.PaymentMethod.list(customer=customer_id, type="card")
+
+        if not payment_methods.data:
+            raise HTTPException(
+                status_code=400,
+                detail="No payment method found. Please add a payment method first.",
+            )
+
+        # Create subscription with trial period
+        # Trial period starts immediately - no charge until trial ends
+        stripe_subscription = stripe.Subscription.create(
+            customer=customer_id,
+            items=[{"price": price_id}],
+            trial_period_days=14,  # Start 14-day trial immediately
+            metadata={
+                "user_id": user.user_id,
+                "is_early_adopter": str(is_early_adopter),
+            },
+        )
+
+        # Sync subscription to database
+        db_subscription = await sync_subscription_from_stripe(
+            stripe_subscription,
+            is_early_adopter=is_early_adopter,
+        )
+
+        if not db_subscription:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to sync subscription to database",
+            )
+
+        # Format trial end date if in trial
+        trial_end = None
+        if stripe_subscription.trial_end:
+            from datetime import datetime, timezone
+            trial_end = datetime.fromtimestamp(
+                stripe_subscription.trial_end,
+                tz=timezone.utc,
+            ).isoformat()
+
+        logger.info(
+            "Created trial subscription for user %s: subscription_id=%s, tier=%s, status=%s",
+            user.user_id,
+            stripe_subscription.id,
+            body.tier,
+            stripe_subscription.status,
+        )
+
+        return CreateSubscriptionWithTrialResponse(
+            subscription_id=stripe_subscription.id,
+            status=stripe_subscription.status,
+            trial_end=trial_end,
+        )
+
+    except stripe.error.StripeError as exc:
+        logger.error(
+            "Stripe error creating trial subscription for user %s: %s",
+            user.user_id,
+            str(exc),
+        )
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 # --- Webhook Handler ---

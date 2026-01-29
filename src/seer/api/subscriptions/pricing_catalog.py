@@ -43,6 +43,7 @@ class PriceDefinition:
     amount: int
     lookup_key: str
     currency: str = "usd"
+    trial_period_days: Optional[int] = None
 
 
 PRODUCT_DEFINITIONS: dict[str, ProductDefinition] = {
@@ -66,6 +67,7 @@ PRICE_DEFINITIONS: tuple[PriceDefinition, ...] = (
         interval="month",
         amount=39,
         lookup_key="pro_monthly",
+        trial_period_days=14,
     ),
     PriceDefinition(
         tier="pro",
@@ -81,6 +83,7 @@ PRICE_DEFINITIONS: tuple[PriceDefinition, ...] = (
         interval="month",
         amount=29,
         lookup_key="pro_monthly_early_adopter",
+        trial_period_days=14,
     ),
     PriceDefinition(
         tier="pro",
@@ -96,6 +99,7 @@ PRICE_DEFINITIONS: tuple[PriceDefinition, ...] = (
         interval="month",
         amount=60,
         lookup_key="pro_plus_monthly",
+        trial_period_days=14,
     ),
     PriceDefinition(
         tier="pro_plus",
@@ -327,11 +331,17 @@ def _get_existing_price(lookup_key: str, price_id: Optional[str], product_id: Op
 def _create_stripe_price(definition: PriceDefinition, product_id: str) -> dict:
     """Create a Stripe price for the given definition."""
     stripe.api_key = stripe.api_key or config.stripe_secret_key
+
+    # Build recurring configuration
+    # Note: trial_period_days is NOT supported in the recurring config by Stripe API
+    # Trials must be specified at subscription creation time, not on the price
+    recurring_config = {"interval": definition.interval}
+
     try:
         return stripe.Price.create(
             currency=definition.currency,
             unit_amount=definition.amount * 100,
-            recurring={"interval": definition.interval},
+            recurring=recurring_config,
             lookup_key=definition.lookup_key,
             nickname=f"{definition.name} {definition.interval}",
             product=product_id,
