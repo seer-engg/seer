@@ -12,7 +12,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from seer.api.core.middleware.path_allowlist import is_public_path
+from seer.config import config
 from seer.database import User
+from seer.database.models import UserSettings
+from seer.database.subscription_models import BillingProfile
 from seer.logger import get_logger
 from seer.observability import (
     TrialExpiredError,
@@ -57,13 +60,12 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
         self._audience = list(audience) if audience else None
         self._extra_allowed_paths = set(allow_unauthenticated_paths or [])
 
-    async def dispatch(self, request: Request, call_next):  # pylint: disable=too-many-return-statements # Reason: Authentication middleware requires early returns for various failure modes
+    async def dispatch(self, request: Request, call_next):
         request.state.user = None
         request.state.db_user = None
         if self._should_skip(request):
             return await call_next(request)
 
-        # Try Authorization header first, then fall back to query param (for OAuth redirects)
         token = self._extract_token(request)
         if not token:
             return JSONResponse(
@@ -71,6 +73,25 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
                 content={"detail": "Missing or invalid Authorization header"},
             )
 
+        claims = self._verify_token(token)
+        if isinstance(claims, JSONResponse):
+            return claims
+
+        auth_user = self._create_auth_user(claims)
+        db_user = await self._get_or_create_db_user(request, auth_user)
+        if isinstance(db_user, JSONResponse):
+            return db_user
+
+        gate_response = await self._check_access_gates(request, db_user)
+        if gate_response:
+            return gate_response
+
+        request.state.user = auth_user
+        request.state.db_user = db_user
+        return await call_next(request)
+
+    def _verify_token(self, token: str) -> Dict[str, Any] | JSONResponse:
+        """Verify JWT token and return claims or error response."""
         try:
             signing_key = self._jwks_client.get_signing_key_from_jwt(token)
             claims = jwt.decode(
@@ -81,6 +102,7 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
                 audience=self._audience,
                 options={"verify_aud": self._audience is not None},
             )
+            return claims
         except InvalidTokenError as exc:
             return JSONResponse(status_code=401, content={"detail": str(exc)})
         except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: Defensive catch for unknown JWT validation errors to prevent auth bypass
@@ -89,17 +111,21 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
                 content={"detail": f"Authentication failed: {exc}"},
             )
 
-        auth_user = AuthenticatedUser(
+    def _create_auth_user(self, claims: Dict[str, Any]) -> AuthenticatedUser:
+        """Create AuthenticatedUser from JWT claims."""
+        return AuthenticatedUser(
             user_id=self._extract_user_id(claims),
             email=claims.get("email"),
             first_name=claims.get("first_name"),
             last_name=claims.get("last_name"),
             claims=claims,
         )
+
+    async def _get_or_create_db_user(self, request: Request, auth_user: AuthenticatedUser) -> User | JSONResponse:
+        """Get or create database user from authenticated user."""
         try:
-            # Capture signup_source from query params (for new user signups)
             signup_source = request.query_params.get("signup_source")
-            db_user = await User.get_or_create_from_auth(auth_user, signup_source=signup_source)
+            return await User.get_or_create_from_auth(auth_user, signup_source=signup_source)
         except Exception:  # pylint: disable=broad-exception-caught # Reason: Defensive catch for database errors during user creation
             logger.exception("Failed to persist authenticated user")
             return JSONResponse(
@@ -107,20 +133,51 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
                 content={"detail": "Unable to persist authenticated user"},
             )
 
+    async def _check_access_gates(self, request: Request, db_user: User) -> Optional[JSONResponse]:
+        """Check trial expiry and payment method gates. Returns error response or None."""
         # Phase 2: Account Day Limit Gate
-        # Check if user's trial has expired (only applies to Cloud Free tier)
         if await is_trial_expired(db_user):
             days_since_signup = await get_account_age_days(db_user)
-            # Raise trial expired error
             error = TrialExpiredError(days_since_signup=days_since_signup)
             return JSONResponse(
-                status_code=402,  # Payment Required
+                status_code=402,
                 content=error.to_dict(),
             )
 
-        request.state.user = auth_user
-        request.state.db_user = db_user
-        return await call_next(request)
+        # Phase 3: Payment Method Gate (Cloud only)
+        if not config.is_self_hosted:
+            payment_gate_response = await self._check_payment_method_gate(request, db_user)
+            if payment_gate_response:
+                return payment_gate_response
+
+        return None
+
+    async def _check_payment_method_gate(self, request: Request, db_user: User) -> Optional[JSONResponse]:
+        """Check if payment method is required for this request."""
+        path = request.scope.get("path") or request.url.path
+
+        # Allow onboarding-related endpoints and settings API
+        if path.startswith("/api/subscriptions") or path == "/api/users/me/settings":
+            return None
+
+        billing_profile = await BillingProfile.get_or_none(owner_user=db_user)
+
+        # Require payment method unless they're still in onboarding
+        if not billing_profile or not billing_profile.has_payment_method:
+            settings = await UserSettings.get_or_none(user=db_user)
+            onboarding_complete = settings and settings.preferences.get("onboarding", {}).get("completed", False)
+
+            if onboarding_complete:
+                return JSONResponse(
+                    status_code=402,
+                    content={
+                        "error": "payment_method_required",
+                        "message": "Payment method required to access this resource",
+                        "requires_payment_method": True
+                    }
+                )
+
+        return None
 
     def _extract_token(self, request: Request) -> Optional[str]:
         """Extract JWT token from Authorization header or query parameter."""

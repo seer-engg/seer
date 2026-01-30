@@ -69,7 +69,7 @@ def test_parse_complex_workflow(complex_workflow_spec):
 
     # Verify node types
     node_types = {node.type for node in spec.nodes}
-    assert "task" in node_types
+    assert "tool" in node_types
     assert "if" in node_types
 
 
@@ -302,13 +302,13 @@ def test_parse_deeply_nested_node_config():
         "nodes": [
             {
                 "id": "n1",
-                "type": "task",
-                "kind": "set",
-                "value": {
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": {
                     "nested": {
                         "deeply": {
                             "very_deep": {
-                                "value": "found"
+                                "inputs": {"value": "found"}}
                             }
                         }
                     }

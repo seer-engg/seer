@@ -14,10 +14,8 @@ from seer.core.schema.models import (
     EdgeType,
     ToolNode,
     LLMNode,
-    TaskNode,
     IfNode,
     ForEachNode,
-    TaskKind,
     TriggerSpec,
     Edge,
 )
@@ -101,25 +99,18 @@ _WORKFLOW_SPEC_TRIGGER_EXAMPLE: Dict[str, Any] = {
     ],
     "nodes": [
         {
-            "id": "extract_user",
-            "type": "task",
-            "kind": "set",
-            "value": "${trigger.data.record}",
-        },
-        {
             "id": "create_draft",
             "type": "tool",
             "tool": "gmail_create_draft",
             "inputs": {
-                "to": ["${extract_user.email}"],
+                "to": ["${trigger.data.record.email}"],
                 "subject": "Welcome!",
-                "body_text": "Hi ${extract_user.name}, welcome to our platform!"
+                "body_text": "Hi ${trigger.data.record.name}, welcome to our platform!"
             },
         }
     ],
     "edges": [
-        {"source": "new_signup", "target": "extract_user", "type": "trigger"},
-        {"source": "extract_user", "target": "create_draft"},
+        {"source": "new_signup", "target": "create_draft", "type": "trigger"},
     ],
 }
 
@@ -228,11 +219,6 @@ def _format_node_type_usage_notes(node_type: str) -> List[str]:
             "**Important:** LLM nodes require `model` and `prompt` in inputs. "
             "Use `outputs` to specify structured JSON output with schema."
         ],
-        "task": [
-            f"**Task kinds:** {', '.join(k.value for k in TaskKind)}",
-            "**Important:** `kind=set` requires `value` field. "
-            "Use variable references like `${node_id}` to access node outputs."
-        ],
         "if": [
             "**Important:** Condition should be a boolean expression. "
             "Use edges with `type=conditional_true` and `type=conditional_false` for branching."
@@ -250,7 +236,7 @@ def generate_node_type_reference() -> str:
     """
     Auto-generate node type reference from Pydantic models.
 
-    Extracts documentation from ToolNode, LLMNode, TaskNode, IfNode, ForEachNode
+    Extracts documentation from ToolNode, LLMNode, IfNode, ForEachNode
     including required fields, all fields with descriptions, and usage notes.
 
     Returns:
@@ -259,7 +245,6 @@ def generate_node_type_reference() -> str:
     node_types = {
         "tool": (ToolNode, "Execute a tool from the tool registry"),
         "llm": (LLMNode, "AI inference with model configuration"),
-        "task": (TaskNode, "Data transformation and manipulation"),
         "if": (IfNode, "Conditional branching based on expression"),
         "for_each": (ForEachNode, "Iterate over a list with loop body"),
     }
@@ -341,10 +326,9 @@ def generate_validation_checklist_from_model() -> str:
 
     lines.append("Node requirements:")
     lines.append("- Each node must have unique `id` (string, min 1 char)")
-    lines.append("- Each node must have `type` field: tool, llm, task, if, or for_each")
+    lines.append("- Each node must have `type` field: tool, llm, if, or for_each")
     lines.append("- Tool nodes: require `tool` (string) and `inputs` (object)")
     lines.append("- LLM nodes: require `inputs` with `model` and `prompt` fields")
-    lines.append("- Task nodes: require `kind` (set) and `value` if kind=set")
     lines.append("- If nodes: require `condition` (boolean expression)")
     lines.append("- ForEach nodes: require `items` (list expression)")
     lines.append("- Tool nodes MUST NOT have `outputs` field (derived from registry)")

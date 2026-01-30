@@ -55,10 +55,11 @@ def require_subscription(min_tier: SubscriptionTier = SubscriptionTier.PRO) -> C
 
             subscription = await get_user_subscription(user)
 
-            if subscription.status != SubscriptionStatus.ACTIVE:
+            # Allow both active and trialing subscriptions to access premium features
+            if subscription.status not in [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING]:
                 raise HTTPException(
                     status_code=403,
-                    detail="Subscription is not active"
+                    detail=f"Active subscription required. Current status: {subscription.status.value}"
                 )
 
             if TIER_ORDER[subscription.tier] < TIER_ORDER[min_tier]:
@@ -96,7 +97,8 @@ async def check_subscription_tier(request: Request, min_tier: SubscriptionTier) 
 
     subscription = await get_user_subscription(user)
 
-    if subscription.status != SubscriptionStatus.ACTIVE:
+    # Allow both active and trialing subscriptions
+    if subscription.status not in [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING]:
         return False
 
     return TIER_ORDER[subscription.tier] >= TIER_ORDER[min_tier]

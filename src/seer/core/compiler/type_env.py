@@ -19,12 +19,9 @@ from seer.core.registry.mcp_client_registry import MCPClientRegistry, MCPServerC
 from seer.core.registry.tool_registry import ToolRegistry
 from seer.core.schema.models import (
     ForEachNode,
-    JSONValue,
     LLMNode,
     MCPNode,
     Node,
-    TaskKind,
-    TaskNode,
     ToolNode,
     TriggerSpec,
     WorkflowSpec,
@@ -162,11 +159,6 @@ def _process_node_sync(
     tool_registry: ToolRegistry,
 ) -> None:
     """Process a node synchronously. MCP nodes are registered with a generic schema."""
-    if isinstance(node, TaskNode):
-        schema = _schema_for_task(node, schema_registry)
-        _register_symbol(env, node.id, schema)
-        return
-
     if isinstance(node, ToolNode):
         tool_def = tool_registry.get(node.tool)
         schema = tool_def.output_schema
@@ -248,39 +240,6 @@ async def _process_node_async(
 
     # Non-MCP nodes use the sync path
     _process_node_sync(node, env, schema_registry, tool_registry)
-
-
-def _schema_for_task(node: TaskNode, registry: SchemaRegistry) -> Optional[Dict]:
-    if node.outputs:
-        return schema_from_output_contract(node.outputs, registry)
-    if node.kind == TaskKind.set and node.value is not None:
-        return _infer_schema_from_value(node.value)
-    return None
-
-
-def _infer_schema_from_value(value: JSONValue) -> Dict:  # pylint: disable=too-many-return-statements  # Type checking requires multiple returns
-    if isinstance(value, str):
-        return {"type": "string"}
-    if isinstance(value, bool):
-        return {"type": "boolean"}
-    if isinstance(value, int):
-        return {"type": "integer"}
-    if isinstance(value, float):
-        return {"type": "number"}
-    if value is None:
-        return {"type": "null"}
-    if isinstance(value, list):
-        item_schema = None
-        if value:
-            item_schema = _infer_schema_from_value(value[0])
-        schema: Dict = {"type": "array"}
-        if item_schema:
-            schema["items"] = item_schema
-        return schema
-    if isinstance(value, dict):
-        properties = {k: _infer_schema_from_value(v) for k, v in value.items()}
-        return {"type": "object", "properties": properties, "additionalProperties": True}
-    raise TypeEnvironmentError(f"Unsupported literal type {type(value).__name__}")
 
 
 def _register_symbol(env: TypeEnvironment, symbol: str | None, schema: Dict | None) -> None:

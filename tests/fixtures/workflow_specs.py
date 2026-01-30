@@ -66,40 +66,6 @@ class WorkflowSpecBuilder:
         )
         return self
 
-    def add_task_node(
-        self,
-        node_id: str,
-        tool_id: str,
-        parameters: Optional[Dict[str, Any]] = None,
-        label: Optional[str] = None,
-    ) -> "WorkflowSpecBuilder":
-        """
-        Add a task node to the workflow.
-
-        Args:
-            node_id: Unique node identifier
-            tool_id: Tool to execute (e.g., "gmail.send_email")
-            parameters: Tool parameters
-            label: Human-readable label
-
-        Returns:
-            Self for chaining
-        """
-        self.nodes.append(
-            {
-                "id": node_id,
-                "type": "task",
-                "label": label or tool_id,
-                "config": {
-                    "tool_call": {
-                        "tool_id": tool_id,
-                        "parameters": parameters or {},
-                    }
-                },
-            }
-        )
-        return self
-
     def add_condition_node(
         self,
         node_id: str,
@@ -367,8 +333,8 @@ def create_invalid_spec_cyclic_edges() -> Dict[str, Any]:
         "version": "2",
         "triggers": [{"id": "t1", "key": "test.trigger", "label": "Test", "config": {}}],
         "nodes": [
-            {"id": "n1", "type": "task", "label": "Task 1", "config": {"tool_call": {"tool_id": "test.tool", "parameters": {}}}},
-            {"id": "n2", "type": "task", "label": "Task 2", "config": {"tool_call": {"tool_id": "test.tool", "parameters": {}}}},
+            {"id": "n1", "type": "tool", "label": "Task 1", "config": {"tool_call": {"tool_id": "test.tool", "parameters": {}}}},
+            {"id": "n2", "type": "tool", "label": "Task 2", "config": {"tool_call": {"tool_id": "test.tool", "parameters": {}}}},
         ],
         "edges": [
             {"source": "t1", "target": "n1"},

@@ -29,6 +29,28 @@ from seer.core.runtime.nodes import NodeRuntime, RuntimeServices
 from seer.core.schema.schema_registry import SchemaRegistry
 
 
+def _create_mock_tool() -> ToolDefinition:
+    """Create a mock test.tool that simply returns its input value."""
+    def handler(inputs, config, context):
+        return inputs.get("value", "")
+
+    async def async_handler(inputs, config, context):
+        return inputs.get("value", "")
+
+    return ToolDefinition(
+        name="test.tool",
+        version="v1",
+        input_schema={
+            "type": "object",
+            "properties": {"value": {"type": ["string", "array", "object", "number", "boolean", "null"]}},
+            "additionalProperties": False,
+        },
+        output_schema={"type": ["string", "array", "object", "number", "boolean", "null"]},
+        handler=handler,
+        async_handler=async_handler,
+    )
+
+
 async def _compile_workflow(
     spec_payload: dict,
     tool_defs: list[ToolDefinition],
@@ -79,51 +101,52 @@ async def test_for_each_basic_iteration() -> None:
                 "id": "test_trigger",
                 "key": "test.trigger",
                 "mode": "webhook",
-                "schemas": {"event": {"type": "object"}},
+                "event_schema": {
+                    "type": "object",
+                    "properties": {
+                        "items": {"type": "array"}
+                    }
+                },
             }
         ],
         "nodes": [
             {
-                "id": "items",
-                "type": "task",
-                "kind": "set",
-                "value": ["one", "two", "three"],
-            },
-            {
                 "id": "loop",
                 "type": "for_each",
-                "items": "${items}",
+                "items": "${test_trigger.items}",
             },
             {
                 "id": "process_item",
-                "type": "task",
-                "kind": "set",
-                "value": "${item}",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${item}"},
             },
             {
                 "id": "exit",
-                "type": "task",
-                "kind": "set",
-                "value": "done",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "done"},
             },
         ],
         "edges": [
-            {"source": "test_trigger", "target": "items", "type": "trigger"},
-            {"source": "items", "target": "loop", "type": "default"},
+            {"source": "test_trigger", "target": "loop", "type": "trigger"},
             {"source": "loop", "target": "process_item", "type": "loop_body"},
             {"source": "process_item", "target": "loop", "type": "default"},
             {"source": "loop", "target": "exit", "type": "loop_exit"},
         ],
     }
 
-    compiled = await _compile_workflow(spec, [])
-    trigger_envelope = {"trigger_key": "test.trigger"}
+    mock_tool = _create_mock_tool()
+    compiled = await _compile_workflow(spec, [mock_tool])
+    trigger_envelope = {
+        "trigger_id": "test_trigger",
+        "trigger_key": "test.trigger",
+        "items": ["one", "two", "three"]
+    }
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Verify loop completed
     assert result["exit"] == "done"
-    # Verify items list was created
-    assert result["items"] == ["one", "two", "three"]
     # Verify last iteration result
     assert result["process_item"] == "three"
 
@@ -138,51 +161,52 @@ async def test_for_each_empty_list() -> None:
                 "id": "test_trigger",
                 "key": "test.trigger",
                 "mode": "webhook",
-                "schemas": {"event": {"type": "object"}},
+                "event_schema": {
+                    "type": "object",
+                    "properties": {
+                        "items": {"type": "array"}
+                    }
+                },
             }
         ],
         "nodes": [
             {
-                "id": "items",
-                "type": "task",
-                "kind": "set",
-                "value": [],  # Empty list
-            },
-            {
                 "id": "loop",
                 "type": "for_each",
-                "items": "${items}",
+                "items": "${test_trigger.items}",
             },
             {
                 "id": "process_item",
-                "type": "task",
-                "kind": "set",
-                "value": "${item}",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${item}"},
             },
             {
                 "id": "exit",
-                "type": "task",
-                "kind": "set",
-                "value": "done",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "done"},
             },
         ],
         "edges": [
-            {"source": "test_trigger", "target": "items", "type": "trigger"},
-            {"source": "items", "target": "loop", "type": "default"},
+            {"source": "test_trigger", "target": "loop", "type": "trigger"},
             {"source": "loop", "target": "process_item", "type": "loop_body"},
             {"source": "process_item", "target": "loop", "type": "default"},
             {"source": "loop", "target": "exit", "type": "loop_exit"},
         ],
     }
 
-    compiled = await _compile_workflow(spec, [])
-    trigger_envelope = {"trigger_key": "test.trigger"}
+    mock_tool = _create_mock_tool()
+    compiled = await _compile_workflow(spec, [mock_tool])
+    trigger_envelope = {
+        "trigger_id": "test_trigger",
+        "trigger_key": "test.trigger",
+        "items": []  # Empty list
+    }
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Verify loop exited immediately without processing
     assert result["exit"] == "done"
-    # Verify items list is empty
-    assert result["items"] == []
     # Verify process_item was never executed (key should not exist in final state)
     # Note: In LangGraph, unexecuted nodes don't write to state
 
@@ -197,47 +221,50 @@ async def test_for_each_with_index_access() -> None:
                 "id": "test_trigger",
                 "key": "test.trigger",
                 "mode": "webhook",
-                "schemas": {"event": {"type": "object"}},
+                "event_schema": {
+                    "type": "object",
+                    "properties": {
+                        "items": {"type": "array"}
+                    }
+                },
             }
         ],
         "nodes": [
             {
-                "id": "items",
-                "type": "task",
-                "kind": "set",
-                "value": ["a", "b", "c"],
-            },
-            {
                 "id": "loop",
                 "type": "for_each",
-                "items": "${items}",
+                "items": "${test_trigger.items}",
                 "item_var": "item",
                 "index_var": "index",
             },
             {
                 "id": "store_item",
-                "type": "task",
-                "kind": "set",
-                "value": "${item}",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${item}"},
             },
             {
                 "id": "done",
-                "type": "task",
-                "kind": "set",
-                "value": "finished",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "finished"},
             },
         ],
         "edges": [
-            {"source": "test_trigger", "target": "items", "type": "trigger"},
-            {"source": "items", "target": "loop", "type": "default"},
+            {"source": "test_trigger", "target": "loop", "type": "trigger"},
             {"source": "loop", "target": "store_item", "type": "loop_body"},
             {"source": "store_item", "target": "loop", "type": "default"},
             {"source": "loop", "target": "done", "type": "loop_exit"},
         ],
     }
 
-    compiled = await _compile_workflow(spec, [])
-    trigger_envelope = {"trigger_key": "test.trigger"}
+    mock_tool = _create_mock_tool()
+    compiled = await _compile_workflow(spec, [mock_tool])
+    trigger_envelope = {
+        "trigger_id": "test_trigger",
+        "trigger_key": "test.trigger",
+        "items": ["a", "b", "c"]
+    }
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Verify loop completed
@@ -260,53 +287,50 @@ async def test_for_each_custom_variable_names() -> None:
                 "id": "test_trigger",
                 "key": "test.trigger",
                 "mode": "webhook",
-                "schemas": {"event": {"type": "object"}},
+                "event_schema": {
+                    "type": "object",
+                    "properties": {
+                        "numbers": {"type": "array"}
+                    }
+                },
             }
         ],
         "nodes": [
             {
-                "id": "numbers",
-                "type": "task",
-                "kind": "set",
-                "value": [10, 20, 30],
-            },
-            {
                 "id": "loop",
                 "type": "for_each",
-                "items": "${numbers}",
+                "items": "${test_trigger.numbers}",
                 "item_var": "num",      # Custom item variable name
                 "index_var": "position",  # Custom index variable name
             },
             {
                 "id": "compute",
-                "type": "task",
-                "kind": "set",
-                "value": "${num}",
-                "outputs": {
-                    "mode": "json",
-                    "schema": {
-                        "json_schema": {"type": "integer"}
-                    }
-                }
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${num}"},
             },
             {
                 "id": "done",
-                "type": "task",
-                "kind": "set",
-                "value": "complete",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "complete"},
             },
         ],
         "edges": [
-            {"source": "test_trigger", "target": "numbers", "type": "trigger"},
-            {"source": "numbers", "target": "loop", "type": "default"},
+            {"source": "test_trigger", "target": "loop", "type": "trigger"},
             {"source": "loop", "target": "compute", "type": "loop_body"},
             {"source": "compute", "target": "loop", "type": "default"},
             {"source": "loop", "target": "done", "type": "loop_exit"},
         ],
     }
 
-    compiled = await _compile_workflow(spec, [])
-    trigger_envelope = {"trigger_key": "test.trigger"}
+    mock_tool = _create_mock_tool()
+    compiled = await _compile_workflow(spec, [mock_tool])
+    trigger_envelope = {
+        "trigger_id": "test_trigger",
+        "trigger_key": "test.trigger",
+        "numbers": [10, 20, 30]
+    }
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Verify loop completed with custom variable names
@@ -356,20 +380,19 @@ async def test_for_each_with_tool_nodes() -> None:
                 "id": "test_trigger",
                 "key": "test.trigger",
                 "mode": "webhook",
-                "schemas": {"event": {"type": "object"}},
+                "event_schema": {
+                    "type": "object",
+                    "properties": {
+                        "items": {"type": "array"}
+                    }
+                },
             }
         ],
         "nodes": [
             {
-                "id": "items",
-                "type": "task",
-                "kind": "set",
-                "value": ["alpha", "beta", "gamma"],
-            },
-            {
                 "id": "loop",
                 "type": "for_each",
-                "items": "${items}",
+                "items": "${test_trigger.items}",
             },
             {
                 "id": "process_tool",
@@ -379,22 +402,26 @@ async def test_for_each_with_tool_nodes() -> None:
             },
             {
                 "id": "done",
-                "type": "task",
-                "kind": "set",
-                "value": "finished",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "finished"},
             },
         ],
         "edges": [
-            {"source": "test_trigger", "target": "items", "type": "trigger"},
-            {"source": "items", "target": "loop", "type": "default"},
+            {"source": "test_trigger", "target": "loop", "type": "trigger"},
             {"source": "loop", "target": "process_tool", "type": "loop_body"},
             {"source": "process_tool", "target": "loop", "type": "default"},
             {"source": "loop", "target": "done", "type": "loop_exit"},
         ],
     }
 
-    compiled = await _compile_workflow(spec, [tool_def])
-    trigger_envelope = {"trigger_key": "test.trigger"}
+    mock_tool = _create_mock_tool()
+    compiled = await _compile_workflow(spec, [tool_def, mock_tool])
+    trigger_envelope = {
+        "trigger_id": "test_trigger",
+        "trigger_key": "test.trigger",
+        "items": ["alpha", "beta", "gamma"]
+    }
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Verify all items were processed
@@ -415,60 +442,48 @@ async def test_for_each_with_numeric_items() -> None:
                 "id": "test_trigger",
                 "key": "test.trigger",
                 "mode": "webhook",
-                "schemas": {"event": {"type": "object"}},
+                "event_schema": {
+                    "type": "object",
+                    "properties": {
+                        "numbers": {"type": "array"}
+                    }
+                },
             }
         ],
         "nodes": [
             {
-                "id": "numbers",
-                "type": "task",
-                "kind": "set",
-                "value": [1, 2, 3, 4, 5],
-                "outputs": {
-                    "mode": "json",
-                    "schema": {
-                        "json_schema": {
-                            "type": "array",
-                            "items": {"type": "integer"}
-                        }
-                    }
-                }
-            },
-            {
                 "id": "loop",
                 "type": "for_each",
-                "items": "${numbers}",
+                "items": "${test_trigger.numbers}",
             },
             {
                 "id": "store_num",
-                "type": "task",
-                "kind": "set",
-                "value": "${item}",
-                "outputs": {
-                    "mode": "json",
-                    "schema": {
-                        "json_schema": {"type": "integer"}
-                    }
-                }
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${item}"},
             },
             {
                 "id": "exit",
-                "type": "task",
-                "kind": "set",
-                "value": "complete",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "complete"},
             },
         ],
         "edges": [
-            {"source": "test_trigger", "target": "numbers", "type": "trigger"},
-            {"source": "numbers", "target": "loop", "type": "default"},
+            {"source": "test_trigger", "target": "loop", "type": "trigger"},
             {"source": "loop", "target": "store_num", "type": "loop_body"},
             {"source": "store_num", "target": "loop", "type": "default"},
             {"source": "loop", "target": "exit", "type": "loop_exit"},
         ],
     }
 
-    compiled = await _compile_workflow(spec, [])
-    trigger_envelope = {"trigger_key": "test.trigger"}
+    mock_tool = _create_mock_tool()
+    compiled = await _compile_workflow(spec, [mock_tool])
+    trigger_envelope = {
+        "trigger_id": "test_trigger",
+        "trigger_key": "test.trigger",
+        "numbers": [1, 2, 3, 4, 5]
+    }
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Verify loop completed
@@ -487,78 +502,52 @@ async def test_for_each_with_object_items() -> None:
                 "id": "test_trigger",
                 "key": "test.trigger",
                 "mode": "webhook",
-                "schemas": {"event": {"type": "object"}},
+                "event_schema": {
+                    "type": "object",
+                    "properties": {
+                        "users": {"type": "array"}
+                    }
+                },
             }
         ],
         "nodes": [
             {
-                "id": "users",
-                "type": "task",
-                "kind": "set",
-                "value": [
-                    {"name": "Alice", "age": 30},
-                    {"name": "Bob", "age": 25},
-                ],
-                "outputs": {
-                    "mode": "json",
-                    "schema": {
-                        "json_schema": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "name": {"type": "string"},
-                                    "age": {"type": "integer"}
-                                },
-                                "additionalProperties": True
-                            }
-                        }
-                    }
-                }
-            },
-            {
                 "id": "loop",
                 "type": "for_each",
-                "items": "${users}",
+                "items": "${test_trigger.users}",
                 "item_var": "user",
             },
             {
                 "id": "extract",
-                "type": "task",
-                "kind": "set",
-                "value": "${user}",
-                "outputs": {
-                    "mode": "json",
-                    "schema": {
-                        "json_schema": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string"},
-                                "age": {"type": "integer"}
-                            },
-                            "additionalProperties": True
-                        }
-                    }
-                }
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${user}"},
             },
             {
                 "id": "done",
-                "type": "task",
-                "kind": "set",
-                "value": "processed",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "processed"},
             },
         ],
         "edges": [
-            {"source": "test_trigger", "target": "users", "type": "trigger"},
-            {"source": "users", "target": "loop", "type": "default"},
+            {"source": "test_trigger", "target": "loop", "type": "trigger"},
             {"source": "loop", "target": "extract", "type": "loop_body"},
             {"source": "extract", "target": "loop", "type": "default"},
             {"source": "loop", "target": "done", "type": "loop_exit"},
         ],
     }
 
-    compiled = await _compile_workflow(spec, [])
-    trigger_envelope = {"trigger_key": "test.trigger"}
+    mock_tool = _create_mock_tool()
+    compiled = await _compile_workflow(spec, [mock_tool])
+    trigger_envelope = {
+        "trigger_id": "test_trigger",
+        "trigger_key": "test.trigger",
+        "users": [
+            {"name": "Alice", "age": 30},
+            {"name": "Bob", "age": 25},
+        ]
+    }
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Verify loop completed
@@ -578,45 +567,48 @@ async def test_for_each_single_item() -> None:
                 "id": "test_trigger",
                 "key": "test.trigger",
                 "mode": "webhook",
-                "schemas": {"event": {"type": "object"}},
+                "event_schema": {
+                    "type": "object",
+                    "properties": {
+                        "items": {"type": "array"}
+                    }
+                },
             }
         ],
         "nodes": [
             {
-                "id": "items",
-                "type": "task",
-                "kind": "set",
-                "value": ["only_one"],
-            },
-            {
                 "id": "loop",
                 "type": "for_each",
-                "items": "${items}",
+                "items": "${test_trigger.items}",
             },
             {
                 "id": "process",
-                "type": "task",
-                "kind": "set",
-                "value": "${item}",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${item}"},
             },
             {
                 "id": "done",
-                "type": "task",
-                "kind": "set",
-                "value": "finished",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "finished"},
             },
         ],
         "edges": [
-            {"source": "test_trigger", "target": "items", "type": "trigger"},
-            {"source": "items", "target": "loop", "type": "default"},
+            {"source": "test_trigger", "target": "loop", "type": "trigger"},
             {"source": "loop", "target": "process", "type": "loop_body"},
             {"source": "process", "target": "loop", "type": "default"},
             {"source": "loop", "target": "done", "type": "loop_exit"},
         ],
     }
 
-    compiled = await _compile_workflow(spec, [])
-    trigger_envelope = {"trigger_key": "test.trigger"}
+    mock_tool = _create_mock_tool()
+    compiled = await _compile_workflow(spec, [mock_tool])
+    trigger_envelope = {
+        "trigger_id": "test_trigger",
+        "trigger_key": "test.trigger",
+        "items": ["only_one"]
+    }
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Verify loop completed
@@ -637,45 +629,48 @@ async def test_for_each_state_isolation() -> None:
                 "id": "test_trigger",
                 "key": "test.trigger",
                 "mode": "webhook",
-                "schemas": {"event": {"type": "object"}},
+                "event_schema": {
+                    "type": "object",
+                    "properties": {
+                        "items": {"type": "array"}
+                    }
+                },
             }
         ],
         "nodes": [
             {
-                "id": "items",
-                "type": "task",
-                "kind": "set",
-                "value": ["x", "y"],
-            },
-            {
                 "id": "loop",
                 "type": "for_each",
-                "items": "${items}",
+                "items": "${test_trigger.items}",
             },
             {
                 "id": "body",
-                "type": "task",
-                "kind": "set",
-                "value": "${item}",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${item}"},
             },
             {
                 "id": "done",
-                "type": "task",
-                "kind": "set",
-                "value": "complete",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "complete"},
             },
         ],
         "edges": [
-            {"source": "test_trigger", "target": "items", "type": "trigger"},
-            {"source": "items", "target": "loop", "type": "default"},
+            {"source": "test_trigger", "target": "loop", "type": "trigger"},
             {"source": "loop", "target": "body", "type": "loop_body"},
             {"source": "body", "target": "loop", "type": "default"},
             {"source": "loop", "target": "done", "type": "loop_exit"},
         ],
     }
 
-    compiled = await _compile_workflow(spec, [])
-    trigger_envelope = {"trigger_key": "test.trigger"}
+    mock_tool = _create_mock_tool()
+    compiled = await _compile_workflow(spec, [mock_tool])
+    trigger_envelope = {
+        "trigger_id": "test_trigger",
+        "trigger_key": "test.trigger",
+        "items": ["x", "y"]
+    }
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Verify loop state exists in result
@@ -701,50 +696,52 @@ async def test_for_each_without_explicit_back_edge() -> None:
                 "id": "test_trigger",
                 "key": "test.trigger",
                 "mode": "webhook",
-                "schemas": {"event": {"type": "object"}},
+                "event_schema": {
+                    "type": "object",
+                    "properties": {
+                        "items": {"type": "array"}
+                    }
+                },
             }
         ],
         "nodes": [
             {
-                "id": "items",
-                "type": "task",
-                "kind": "set",
-                "value": ["alpha", "beta", "gamma"],
-            },
-            {
                 "id": "loop",
                 "type": "for_each",
-                "items": "${items}",
+                "items": "${test_trigger.items}",
             },
             {
                 "id": "process_item",
-                "type": "task",
-                "kind": "set",
-                "value": "${item}",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${item}"},
             },
             {
                 "id": "exit",
-                "type": "task",
-                "kind": "set",
-                "value": "done",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "done"},
             },
         ],
         "edges": [
-            {"source": "test_trigger", "target": "items", "type": "trigger"},
-            {"source": "items", "target": "loop", "type": "default"},
+            {"source": "test_trigger", "target": "loop", "type": "trigger"},
             {"source": "loop", "target": "process_item", "type": "loop_body"},
             # NOTE: No explicit edge from process_item back to loop - it should be implicit!
             {"source": "loop", "target": "exit", "type": "loop_exit"},
         ],
     }
 
-    compiled = await _compile_workflow(spec, [])
-    trigger_envelope = {"trigger_key": "test.trigger"}
+    mock_tool = _create_mock_tool()
+    compiled = await _compile_workflow(spec, [mock_tool])
+    trigger_envelope = {
+        "trigger_id": "test_trigger",
+        "trigger_key": "test.trigger",
+        "items": ["alpha", "beta", "gamma"]
+    }
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Verify loop completed all iterations
     assert result["exit"] == "done"
-    assert result["items"] == ["alpha", "beta", "gamma"]
     # Verify last iteration result
     assert result["process_item"] == "gamma"
     # Verify loop completed
@@ -775,20 +772,19 @@ async def test_for_each_loop_iteration_traces() -> None:
                 "id": "test_trigger",
                 "key": "test.trigger",
                 "mode": "webhook",
-                "schemas": {"event": {"type": "object"}},
+                "event_schema": {
+                    "type": "object",
+                    "properties": {
+                        "items": {"type": "array"}
+                    }
+                },
             }
         ],
         "nodes": [
             {
-                "id": "items",
-                "type": "task",
-                "kind": "set",
-                "value": ["apple", "banana", "cherry"],
-            },
-            {
                 "id": "loop",
                 "type": "for_each",
-                "items": "${items}",
+                "items": "${test_trigger.items}",
             },
             {
                 "id": "process",
@@ -803,22 +799,26 @@ async def test_for_each_loop_iteration_traces() -> None:
             },
             {
                 "id": "done",
-                "type": "task",
-                "kind": "set",
-                "value": "complete",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "complete"},
             },
         ],
         "edges": [
-            {"source": "test_trigger", "target": "items", "type": "trigger"},
-            {"source": "items", "target": "loop", "type": "default"},
+            {"source": "test_trigger", "target": "loop", "type": "trigger"},
             {"source": "loop", "target": "process", "type": "loop_body"},
             # No explicit back-edge
             {"source": "loop", "target": "done", "type": "loop_exit"},
         ],
     }
 
-    compiled = await _compile_workflow(spec, [], [model_def])
-    trigger_envelope = {"trigger_key": "test.trigger"}
+    mock_tool = _create_mock_tool()
+    compiled = await _compile_workflow(spec, [mock_tool], [model_def])
+    trigger_envelope = {
+        "trigger_id": "test_trigger",
+        "trigger_key": "test.trigger",
+        "items": ["apple", "banana", "cherry"]
+    }
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Verify loop completed
@@ -845,70 +845,47 @@ async def test_for_each_multi_node_body_without_back_edge() -> None:
                 "id": "test_trigger",
                 "key": "test.trigger",
                 "mode": "webhook",
-                "schemas": {"event": {"type": "object"}},
+                "event_schema": {
+                    "type": "object",
+                    "properties": {
+                        "items": {"type": "array"}
+                    }
+                },
             }
         ],
         "nodes": [
             {
-                "id": "items",
-                "type": "task",
-                "kind": "set",
-                "value": [1, 2, 3],
-                "outputs": {
-                    "mode": "json",
-                    "schema": {
-                        "json_schema": {
-                            "type": "array",
-                            "items": {"type": "integer"}
-                        }
-                    }
-                }
-            },
-            {
                 "id": "loop",
                 "type": "for_each",
-                "items": "${items}",
+                "items": "${test_trigger.items}",
             },
             {
                 "id": "step_a",
-                "type": "task",
-                "kind": "set",
-                "value": "${item}",
-                "outputs": {
-                    "mode": "json",
-                    "schema": {"json_schema": {"type": "integer"}}
-                }
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${item}"},
             },
             {
                 "id": "step_b",
-                "type": "task",
-                "kind": "set",
-                "value": "${step_a}",
-                "outputs": {
-                    "mode": "json",
-                    "schema": {"json_schema": {"type": "integer"}}
-                }
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${step_a}"},
             },
             {
                 "id": "step_c",
-                "type": "task",
-                "kind": "set",
-                "value": "${step_b}",
-                "outputs": {
-                    "mode": "json",
-                    "schema": {"json_schema": {"type": "integer"}}
-                }
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${step_b}"},
             },
             {
                 "id": "done",
-                "type": "task",
-                "kind": "set",
-                "value": "finished",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "finished"},
             },
         ],
         "edges": [
-            {"source": "test_trigger", "target": "items", "type": "trigger"},
-            {"source": "items", "target": "loop", "type": "default"},
+            {"source": "test_trigger", "target": "loop", "type": "trigger"},
             {"source": "loop", "target": "step_a", "type": "loop_body"},
             {"source": "step_a", "target": "step_b", "type": "default"},
             {"source": "step_b", "target": "step_c", "type": "default"},
@@ -917,8 +894,13 @@ async def test_for_each_multi_node_body_without_back_edge() -> None:
         ],
     }
 
-    compiled = await _compile_workflow(spec, [])
-    trigger_envelope = {"trigger_key": "test.trigger"}
+    mock_tool = _create_mock_tool()
+    compiled = await _compile_workflow(spec, [mock_tool])
+    trigger_envelope = {
+        "trigger_id": "test_trigger",
+        "trigger_key": "test.trigger",
+        "items": [1, 2, 3]
+    }
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Verify loop completed all iterations
