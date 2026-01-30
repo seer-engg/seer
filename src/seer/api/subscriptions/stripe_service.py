@@ -6,6 +6,7 @@ Stripe service layer for subscription management.
 Handles Stripe customer creation, checkout sessions, portal sessions,
 and subscription state synchronization from webhooks.
 """
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Tuple, Union
 
@@ -171,6 +172,8 @@ async def get_or_create_stripe_customer(user: User) -> str:
     """
     Get existing Stripe customer or create a new one.
 
+    In dev environment, attaches a test clock to enable time simulation for testing.
+
     Returns the Stripe customer ID.
     """
     billing_profile = await get_or_create_billing_profile(user)
@@ -185,14 +188,26 @@ async def get_or_create_stripe_customer(user: User) -> str:
             return locked_profile.stripe_customer_id
 
         name = f"{user.first_name or ''} {user.last_name or ''}".strip() or None
-        customer = stripe.Customer.create(
-            email=user.email,
-            name=name,
-            metadata={
+
+        # In dev environment, create and attach a test clock for time simulation
+        customer_params = {
+            "email": user.email,
+            "name": name,
+            "metadata": {
                 "user_id": user.user_id,  # Clerk user ID
                 "seer_user_id": str(user.id),
             }
-        )
+        }
+
+        if config.env == "dev":
+            test_clock = stripe.test_helpers.TestClock.create(
+                frozen_time=int(time.time()),
+                name=f"Test clock for {user.email}",
+            )
+            customer_params["test_clock"] = test_clock.id
+            logger.info("Created test clock %s for user %s", test_clock.id, user.user_id)
+
+        customer = stripe.Customer.create(**customer_params)
 
         logger.info("Created Stripe customer %s for user %s", customer.id, user.user_id)
 
@@ -207,6 +222,7 @@ async def create_checkout_session(
     price_id: str,
     success_url: str,
     cancel_url: str,
+    metadata: Optional[dict] = None,
 ) -> str:
     """
     Create a Stripe Checkout session and return the checkout URL.
@@ -216,11 +232,16 @@ async def create_checkout_session(
         price_id: Stripe Price ID for the subscription plan
         success_url: URL to redirect to on successful payment
         cancel_url: URL to redirect to if payment is canceled
+        metadata: Optional metadata to attach to the session
 
     Returns:
         The Stripe Checkout session URL
     """
     customer_id = await get_or_create_stripe_customer(user)
+
+    session_metadata = {"user_id": user.user_id}
+    if metadata:
+        session_metadata.update(metadata)
 
     session = stripe.checkout.Session.create(
         customer=customer_id,
@@ -230,9 +251,7 @@ async def create_checkout_session(
         cancel_url=cancel_url,
         allow_promotion_codes=True,
         billing_address_collection="auto",
-        metadata={
-            "user_id": user.user_id,
-        }
+        metadata=session_metadata,
     )
 
     logger.info(
@@ -363,7 +382,8 @@ async def list_customer_payments(user: User, page: int, page_size: int) -> dict:
 
 
 async def sync_subscription_from_stripe(
-    stripe_subscription: Union[dict, str, stripe.Subscription]
+    stripe_subscription: Union[dict, str, stripe.Subscription],
+    is_early_adopter: Optional[bool] = None,
 ) -> Optional[BillingSubscription]:
     """
     Sync subscription state from Stripe webhook data.
@@ -373,6 +393,7 @@ async def sync_subscription_from_stripe(
 
     Args:
         stripe_subscription: The Stripe subscription object or subscription ID
+        is_early_adopter: Optional early adopter flag from checkout metadata
 
     Returns:
         The updated BillingSubscription or None if customer not found
@@ -429,6 +450,9 @@ async def sync_subscription_from_stripe(
     if current_period_end_ts is not None:
         subscription.current_period_end = _timestamp_to_datetime(current_period_end_ts)
     subscription.cancel_at_period_end = bool(subscription_obj.get("cancel_at_period_end", False))
+
+    if is_early_adopter is not None:
+        subscription.is_early_adopter = is_early_adopter
 
     await subscription.save()
 

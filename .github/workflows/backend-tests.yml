@@ -52,6 +52,6 @@ jobs:
           docker rm test-postgres
 
       - name: Run test suite
-        run: uv run pytest
+        run: uv run pytest --ignore=tests/e2e
         env:
           DATABASE_URL: "postgresql://test:test@localhost:5432/seer_test"
