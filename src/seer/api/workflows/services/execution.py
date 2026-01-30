@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from seer.api.core.errors import  RUN_PROBLEM
 from seer.api.workflows import models as api_models
@@ -15,7 +15,7 @@ from seer.api.workflows.services.shared import (
     _raise_problem,
     _spec_to_dict,
 )
-from seer.core.schema.models import WorkflowSpec
+from seer.core.schema.models import TriggerSpec, WorkflowSpec
 from seer.database import (
     TriggerSubscription,
     User,
@@ -91,13 +91,13 @@ def _serialize_run_summary(run: WorkflowRun) -> api_models.WorkflowRunSummary:
 
 
 async def _generate_sample_trigger_envelope(
-    subscription: "TriggerSubscription",
+    trigger: Union["TriggerSubscription", TriggerSpec],
 ) -> Optional[Dict[str, Any]]:
     """
-    Generate a sample event envelope for a trigger subscription.
+    Generate a sample event envelope for a trigger (subscription or spec).
     Returns None if sample event is unavailable.
 
-    Reuses existing logic from test_trigger_subscription.
+    Supports both TriggerSubscription (DB model) and TriggerSpec (from workflow spec).
     """
     from seer.core.registry.trigger_registry import trigger_registry  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
     from seer.core.triggers.events import (  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
@@ -105,26 +105,55 @@ async def _generate_sample_trigger_envelope(
         build_event_envelope,
     )
 
-    # Load trigger definition from registry
-    definition = trigger_registry.maybe_get(subscription.trigger_key)
-    if definition is None:
-        logger.warning(
-            "Cannot generate sample event: unknown trigger_key",
-            extra={
-                "subscription_id": subscription.id,
-                "trigger_key": subscription.trigger_key,
-            }
-        )
-        return None
+    # Extract fields based on type
+    if isinstance(trigger, TriggerSpec):
+        trigger_id = trigger.id
+        trigger_key = trigger.key
+        title = trigger.ui_meta.get("title", trigger.key)
+        provider_connection_id = trigger.provider_config.get("provider_connection_id")
+        sample_event = trigger.meta.sample_event
 
-    # Get sample event from trigger metadata
-    sample_event = definition.meta.sample_event
+        # Get provider from registry
+        definition = trigger_registry.maybe_get(trigger_key)
+        if definition is None:
+            logger.warning(
+                "Cannot generate sample event: unknown trigger_key",
+                extra={
+                    "trigger_id": trigger_id,
+                    "trigger_key": trigger_key,
+                }
+            )
+            return None
+        provider = definition.provider
+    else:
+        # TriggerSubscription
+        trigger_id = trigger.trigger_id
+        trigger_key = trigger.trigger_key
+        title = trigger.title or trigger.trigger_id
+        provider_connection_id = trigger.provider_connection_id
+
+        # Load trigger definition from registry
+        definition = trigger_registry.maybe_get(trigger_key)
+        if definition is None:
+            logger.warning(
+                "Cannot generate sample event: unknown trigger_key",
+                extra={
+                    "subscription_id": trigger.id,
+                    "trigger_key": trigger_key,
+                }
+            )
+            return None
+
+        provider = definition.provider
+        sample_event = definition.meta.sample_event
+
+    # Get sample event
     if sample_event is None:
         logger.warning(
             "Cannot generate sample event: no sample_event in trigger definition",
             extra={
-                "subscription_id": subscription.id,
-                "trigger_key": subscription.trigger_key,
+                "trigger_id": trigger_id,
+                "trigger_key": trigger_key,
             }
         )
         return None
@@ -132,11 +161,11 @@ async def _generate_sample_trigger_envelope(
     # Build event envelope (reuse existing helper)
     envelope = build_event_envelope(
         TriggerEventEnvelopeInput(
-            trigger_id=subscription.trigger_id,
-            trigger_key=subscription.trigger_key,
-            title=subscription.title or subscription.trigger_id,
-            provider=definition.provider,
-            provider_connection_id=subscription.provider_connection_id,
+            trigger_id=trigger_id,
+            trigger_key=trigger_key,
+            title=title,
+            provider=provider,
+            provider_connection_id=provider_connection_id,
             payload=sample_event.get("data", sample_event),  # Handle both wrapped and unwrapped formats
             raw=sample_event.get("raw"),
             occurred_at=None,  # Uses current time
@@ -211,23 +240,20 @@ async def run_saved_workflow(  # pylint: disable=too-complex # Reason: Complex w
 
     spec = WorkflowSpec.model_validate(version.spec)
 
-    # NEW: Query enabled trigger subscriptions
-    subscriptions = await TriggerSubscription.filter(
-        workflow=workflow,
-        enabled=True
-    ).all()
+    # Read triggers directly from WorkflowSpec
+    trigger_specs = spec.triggers if spec.triggers else []
 
-    # NEW: If triggers exist, create multiple runs (one per trigger)
-    if subscriptions:
+    # If triggers exist, create multiple runs (one per trigger)
+    if trigger_specs:
         runs = []
-        for subscription in subscriptions:
+        for trigger_spec in trigger_specs:
             # Generate sample trigger envelope
-            trigger_envelope = await _generate_sample_trigger_envelope(subscription)
+            trigger_envelope = await _generate_sample_trigger_envelope(trigger_spec)
             if trigger_envelope is None:
                 logger.warning(
-                    "Skipping trigger subscription without sample event",
+                    "Skipping trigger without sample event",
                     extra={
-                        "subscription_id": subscription.id,
+                        "trigger_id": trigger_spec.id,
                         "workflow_id": workflow_id,
                     }
                 )
@@ -252,9 +278,11 @@ async def run_saved_workflow(  # pylint: disable=too-complex # Reason: Complex w
                     trigger_envelope=trigger_envelope
                 )
 
+                # Get trigger title from ui_meta or fallback to key
+                trigger_title = trigger_spec.ui_meta.get("title", trigger_spec.key)
                 runs.append({
                     "run": run,
-                    "trigger_title": subscription.title or subscription.trigger_id,
+                    "trigger_title": trigger_title,
                 })
             except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: Catch all task enqueue failures to continue processing other triggers
                 logger.exception(
@@ -262,7 +290,7 @@ async def run_saved_workflow(  # pylint: disable=too-complex # Reason: Complex w
                     extra={
                         "workflow_id": workflow_id,
                         "run_id": run.run_id,
-                        "trigger_id": subscription.trigger_id,
+                        "trigger_id": trigger_spec.id,
                     }
                 )
                 await WorkflowRun.filter(id=run.id).update(
@@ -274,8 +302,8 @@ async def run_saved_workflow(  # pylint: disable=too-complex # Reason: Complex w
         if not runs:
             _raise_problem(
                 type_uri=RUN_PROBLEM,
-                title="No valid trigger subscriptions",
-                detail="Workflow has trigger subscriptions but none have valid sample events",
+                title="No valid triggers",
+                detail="Workflow has triggers but none have valid sample events",
                 status=400,
             )
 
