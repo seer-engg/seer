@@ -240,7 +240,7 @@ def _build_pricing(price_ids: Dict[str, Optional[str]]) -> list[TierPricing]:
     for definition in PRICE_DEFINITIONS:
         tier_entry = tiers.setdefault(definition.tier, {"name": definition.name})
         price_info = PriceInfo(
-            price=definition.amount,
+            price=definition.amount * 100,
             price_id=price_ids.get(definition.lookup_key),
         )
         if definition.interval == "month":
