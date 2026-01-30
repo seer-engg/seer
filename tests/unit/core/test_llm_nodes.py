@@ -17,18 +17,44 @@ from seer.core.compiler.parse import parse_workflow_spec
 from seer.core.compiler.type_env import build_type_environment
 from seer.core.compiler.validate_refs import validate_references
 from seer.core.registry.model_registry import ModelDefinition, ModelRegistry
-from seer.core.registry.tool_registry import ToolRegistry
+from seer.core.registry.tool_registry import ToolDefinition, ToolRegistry
 from seer.core.runtime.execution import CompiledWorkflow
 from seer.core.runtime.nodes import NodeRuntime, RuntimeServices
 from seer.core.schema.schema_registry import SchemaRegistry
 
 
+def _create_mock_tool() -> ToolDefinition:
+    """Create a mock test.tool that simply returns its input value."""
+    def handler(inputs, config, context):
+        return inputs.get("value", "")
+
+    async def async_handler(inputs, config, context):
+        return inputs.get("value", "")
+
+    return ToolDefinition(
+        name="test.tool",
+        version="v1",
+        input_schema={
+            "type": "object",
+            "properties": {"value": {"type": ["string", "array", "object", "number", "boolean", "null"]}},
+            "additionalProperties": False,
+        },
+        output_schema={"type": ["string", "array", "object", "number", "boolean", "null"]},
+        handler=handler,
+        async_handler=async_handler,
+    )
+
+
 async def _compile_workflow_with_models(
-    spec_payload: dict, model_defs: list[ModelDefinition]
+    spec_payload: dict, model_defs: list[ModelDefinition], tool_defs: list[ToolDefinition] | None = None
 ) -> CompiledWorkflow:
     """Helper to compile a workflow with model registry."""
     schema_registry = SchemaRegistry()
     tool_registry = ToolRegistry()
+
+    # Register tools
+    for tool in tool_defs or []:
+        tool_registry.register(tool)
     model_registry = ModelRegistry()
 
     # Register models
@@ -231,9 +257,9 @@ async def test_llm_node_output_used_in_next_node() -> None:
             },
             {
                 "id": "task1",
-                "type": "task",
-                "kind": "set",
-                "value": "${llm1}",  # Reference LLM output by node.id
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${llm1}"},  # Reference LLM output by node.id
             }
         ],
         "edges": [
@@ -242,7 +268,8 @@ async def test_llm_node_output_used_in_next_node() -> None:
         ],
     }
 
-    compiled = await _compile_workflow_with_models(spec, [model_def])
+    mock_tool = _create_mock_tool()
+    compiled = await _compile_workflow_with_models(spec, [model_def], [mock_tool])
     trigger_envelope = {"trigger_key": "test.chain", "title": "ChainTest"}
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 

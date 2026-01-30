@@ -208,9 +208,9 @@ class TestWorkflowCompilation:
             "nodes": [
                 {
                     "id": "task1",
-                    "type": "task",
-                    "kind": "set",
-                    "value": {"message": "Hello, World!"},
+                    "type": "tool",
+                    "tool": "test.tool",
+                    "inputs": {"value": {"message": "Hello, World!"}},
                 }
             ],
             "edges": [],
