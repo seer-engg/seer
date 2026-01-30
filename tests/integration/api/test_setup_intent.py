@@ -15,7 +15,7 @@ from seer.database.subscription_models import BillingProfile
 
 
 @pytest.fixture
-async def test_user(db_session):
+async def test_user(db_engine):  # pylint: disable=unused-argument # Reason: db_engine needed for database initialization
     """Create a test user with billing profile."""
     user = await User.create(
         user_id="test_user_123",
@@ -30,6 +30,15 @@ async def test_user(db_session):
     yield user, billing_profile
     await billing_profile.delete()
     await user.delete()
+
+
+@pytest.fixture
+def app_with_subscriptions(mock_app: FastAPI):
+    """Create test app with subscriptions router."""
+    from seer.api.router import router as api_router  # pylint: disable=import-outside-toplevel  # Reason: Dynamic import for test fixture
+
+    mock_app.include_router(api_router)
+    return mock_app
 
 
 @pytest.fixture
@@ -54,14 +63,14 @@ def mock_stripe_setup_intent():
 class TestSetupIntentEndpoints:
     """Test Setup Intent API endpoints."""
 
-    async def test_create_setup_intent_success(self, app: FastAPI, test_user, mock_stripe_setup_intent):
+    async def test_create_setup_intent_success(self, app_with_subscriptions: FastAPI, test_user, mock_stripe_setup_intent):
         """Test creating a Setup Intent for payment method collection."""
         user, billing_profile = test_user
 
         # Mock authentication
         with patch("seer.api.subscriptions.setup_intent._require_user", return_value=user):
             with patch("seer.api.subscriptions.setup_intent.get_or_create_stripe_customer", return_value="cus_test123"):
-                async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
                     response = await client.post("/api/subscriptions/setup-intent")
 
         assert response.status_code == 200
@@ -70,14 +79,14 @@ class TestSetupIntentEndpoints:
         assert data["stripe_customer_id"] == "cus_test123"
         mock_stripe_setup_intent.create.assert_called_once()
 
-    async def test_create_setup_intent_unauthenticated(self, app: FastAPI):
+    async def test_create_setup_intent_unauthenticated(self, app_with_subscriptions: FastAPI):
         """Test creating Setup Intent without authentication."""
         with patch("seer.api.subscriptions.setup_intent._require_user", side_effect=Exception("Authentication required")):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
                 with pytest.raises(Exception):
                     await client.post("/api/subscriptions/setup-intent")
 
-    async def test_confirm_setup_intent_success(self, app: FastAPI, test_user, mock_stripe_setup_intent):
+    async def test_confirm_setup_intent_success(self, app_with_subscriptions: FastAPI, test_user, mock_stripe_setup_intent):
         """Test confirming a successful Setup Intent."""
         user, billing_profile = test_user
 
@@ -86,7 +95,7 @@ class TestSetupIntentEndpoints:
         assert billing_profile.payment_method_added_at is None
 
         with patch("seer.api.subscriptions.setup_intent._require_user", return_value=user):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
                 response = await client.post(
                     "/api/subscriptions/setup-intent/confirm",
                     json={"setup_intent_id": "seti_test123"}
@@ -103,7 +112,7 @@ class TestSetupIntentEndpoints:
         assert billing_profile.payment_method_added_at is not None
         mock_stripe_setup_intent.retrieve.assert_called_once_with("seti_test123")
 
-    async def test_confirm_setup_intent_not_succeeded(self, app: FastAPI, test_user):
+    async def test_confirm_setup_intent_not_succeeded(self, app_with_subscriptions: FastAPI, test_user):
         """Test confirming Setup Intent that hasn't succeeded yet."""
         user, billing_profile = test_user
 
@@ -115,7 +124,7 @@ class TestSetupIntentEndpoints:
             )
 
             with patch("seer.api.subscriptions.setup_intent._require_user", return_value=user):
-                async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
                     response = await client.post(
                         "/api/subscriptions/setup-intent/confirm",
                         json={"setup_intent_id": "seti_test123"}
@@ -128,7 +137,7 @@ class TestSetupIntentEndpoints:
         await billing_profile.refresh_from_db()
         assert billing_profile.has_payment_method is False
 
-    async def test_get_payment_method_status_has_method(self, app: FastAPI, test_user):
+    async def test_get_payment_method_status_has_method(self, app_with_subscriptions: FastAPI, test_user):
         """Test getting payment method status when user has payment method."""
         user, billing_profile = test_user
 
@@ -138,7 +147,7 @@ class TestSetupIntentEndpoints:
         await billing_profile.save()
 
         with patch("seer.api.subscriptions.setup_intent._require_user", return_value=user):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
                 response = await client.get("/api/subscriptions/payment-method/status")
 
         assert response.status_code == 200
@@ -146,12 +155,12 @@ class TestSetupIntentEndpoints:
         assert data["has_payment_method"] is True
         assert data["payment_method_added_at"] is not None
 
-    async def test_get_payment_method_status_no_method(self, app: FastAPI, test_user):
+    async def test_get_payment_method_status_no_method(self, app_with_subscriptions: FastAPI, test_user):
         """Test getting payment method status when user has no payment method."""
         user, billing_profile = test_user
 
         with patch("seer.api.subscriptions.setup_intent._require_user", return_value=user):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
                 response = await client.get("/api/subscriptions/payment-method/status")
 
         assert response.status_code == 200
@@ -159,7 +168,7 @@ class TestSetupIntentEndpoints:
         assert data["has_payment_method"] is False
         assert data["payment_method_added_at"] is None
 
-    async def test_get_payment_method_status_no_billing_profile(self, app: FastAPI):
+    async def test_get_payment_method_status_no_billing_profile(self, app_with_subscriptions: FastAPI, db_engine):  # pylint: disable=unused-argument # Reason: db_engine needed for database initialization
         """Test getting payment method status when user has no billing profile."""
         user = await User.create(
             user_id="no_billing_user",
@@ -168,7 +177,7 @@ class TestSetupIntentEndpoints:
 
         try:
             with patch("seer.api.subscriptions.setup_intent._require_user", return_value=user):
-                async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
                     response = await client.get("/api/subscriptions/payment-method/status")
 
             assert response.status_code == 200
@@ -223,7 +232,7 @@ class TestWebhookHandler:
         # Should not raise exception, just log warning
         await stripe_webhook_controller._handle_setup_intent_succeeded(webhook_data)
 
-    async def test_setup_intent_succeeded_webhook_no_billing_profile(self):
+    async def test_setup_intent_succeeded_webhook_no_billing_profile(self, db_engine):  # pylint: disable=unused-argument # Reason: db_engine needed for database initialization
         """Test webhook for non-existent billing profile."""
         from seer.api.subscriptions.stripe_webhook_controller import stripe_webhook_controller
 
@@ -243,24 +252,24 @@ class TestWebhookHandler:
 class TestStripeConfig:
     """Test Stripe config endpoint."""
 
-    async def test_get_stripe_config_success(self, app: FastAPI):
+    async def test_get_stripe_config_success(self, app_with_subscriptions: FastAPI):
         """Test getting Stripe publishable key."""
         with patch("seer.api.subscriptions.router.config") as mock_config:
             mock_config.stripe_publishable_key = "pk_test_123"
 
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
                 response = await client.get("/api/subscriptions/config")
 
         assert response.status_code == 200
         data = response.json()
         assert data["publishable_key"] == "pk_test_123"
 
-    async def test_get_stripe_config_not_configured(self, app: FastAPI):
+    async def test_get_stripe_config_not_configured(self, app_with_subscriptions: FastAPI):
         """Test getting Stripe config when not configured."""
         with patch("seer.api.subscriptions.router.config") as mock_config:
             mock_config.stripe_publishable_key = None
 
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
                 response = await client.get("/api/subscriptions/config")
 
         assert response.status_code == 503
