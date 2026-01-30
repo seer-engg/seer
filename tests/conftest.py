@@ -207,7 +207,7 @@ def sample_workflow_spec() -> dict:
 
     Returns a version 2 workflow with:
     - One test trigger
-    - One task node
+    - One tool node
     - One edge connecting them
     """
     return {
@@ -223,9 +223,9 @@ def sample_workflow_spec() -> dict:
         "nodes": [
             {
                 "id": "n1",
-                "type": "task",
-                "kind": "set",
-                "value": {"result": "test"},
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "test"},
             }
         ],
         "edges": [
@@ -245,7 +245,7 @@ def complex_workflow_spec() -> dict:
 
     Includes:
     - Conditional branching
-    - Multiple tasks
+    - Multiple tools
     - Control flow nodes
     """
     return {
@@ -261,9 +261,9 @@ def complex_workflow_spec() -> dict:
         "nodes": [
             {
                 "id": "task_1",
-                "type": "task",
-                "kind": "set",
-                "value": {"result": {"success": True}},
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": {"success": True}},
             },
             {
                 "id": "condition_1",
@@ -272,15 +272,15 @@ def complex_workflow_spec() -> dict:
             },
             {
                 "id": "task_2",
-                "type": "task",
-                "kind": "set",
-                "value": {"status": "success"},
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"status": "success"},
             },
             {
                 "id": "task_3",
-                "type": "task",
-                "kind": "set",
-                "value": {"status": "failure"},
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"status": "failure"},
             },
         ],
         "edges": [

@@ -22,6 +22,96 @@ from seer.core.runtime.nodes import NodeRuntime, RuntimeServices
 from seer.core.schema.schema_registry import SchemaRegistry
 
 
+def _create_mock_tool() -> ToolDefinition:
+    """Create a mock test.tool that simply returns its input value."""
+    def handler(inputs, config, context):
+        return inputs.get("value", "")
+
+    async def async_handler(inputs, config, context):
+        return inputs.get("value", "")
+
+    return ToolDefinition(
+        name="test.tool",
+        version="v1",
+        input_schema={
+            "type": "object",
+            "properties": {"value": {"type": ["string", "array", "object", "number", "boolean", "null"]}},
+            "additionalProperties": False,
+        },
+        output_schema={"type": ["string", "array", "object", "number", "boolean", "null"]},
+        handler=handler,
+        async_handler=async_handler,
+    )
+
+
+def _create_mock_tool_with_object_output(tool_name: str = "test.tool", output_props: dict | None = None) -> ToolDefinition:
+    """Create a mock tool that returns an object."""
+    def handler(inputs, config, context):
+        return inputs.get("value", {})
+
+    async def async_handler(inputs, config, context):
+        return inputs.get("value", {})
+
+    if output_props is None:
+        output_props = {
+            "user": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "age": {"type": "number"}
+                }
+            },
+            "status": {"type": "string"}
+        }
+
+    return ToolDefinition(
+        name=tool_name,
+        version="v1",
+        input_schema={
+            "type": "object",
+            "properties": {"value": {"type": "object"}},
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": output_props
+        },
+        handler=handler,
+        async_handler=async_handler,
+    )
+
+
+def _create_mock_tool_with_array_output(tool_name: str = "test.tool", item_schema: dict | None = None) -> ToolDefinition:
+    """Create a mock tool that returns an array."""
+    def handler(inputs, config, context):
+        return inputs.get("value", [])
+
+    async def async_handler(inputs, config, context):
+        return inputs.get("value", [])
+
+    if item_schema is None:
+        item_schema = {
+            "type": "object",
+            "properties": {"id": {"type": "number"}}
+        }
+
+    return ToolDefinition(
+        name=tool_name,
+        version="v1",
+        input_schema={
+            "type": "object",
+            "properties": {"value": {"type": "array"}},
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "array",
+            "items": item_schema
+        },
+        handler=handler,
+        async_handler=async_handler,
+    )
+
+
 async def _compile_workflow(spec_payload: dict, tool_defs: list[ToolDefinition] | None = None) -> CompiledWorkflow:
     """Compile a workflow spec into a CompiledWorkflow object."""
     schema_registry = SchemaRegistry()
@@ -71,15 +161,15 @@ async def test_workflow_with_node_ids_containing_spaces():
         "nodes": [
             {
                 "id": "my task result",  # Node ID with spaces
-                "type": "task",
-                "kind": "set",
-                "value": "Hello World"
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "Hello World"}
             },
             {
                 "id": "final output",  # Node ID with spaces
-                "type": "task",
-                "kind": "set",
-                "value": "${my task result}"  # Reference with spaces
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${my task result}"}  # Reference with spaces
             }
         ],
         "edges": [
@@ -88,13 +178,14 @@ async def test_workflow_with_node_ids_containing_spaces():
     }
 
     # Should compile successfully
-    workflow = await _compile_workflow(spec)
+    workflow = await _compile_workflow(spec, [_create_mock_tool()])
 
     # Verify type environment has the correct symbols (node IDs)
     assert "my task result" in workflow.type_env
     assert "final output" in workflow.type_env
-    assert workflow.type_env["my task result"]["type"] == "string"
-    assert workflow.type_env["final output"]["type"] == "string"
+    # Mock tool returns union type
+    assert workflow.type_env["my task result"]["type"] == ["string", "array", "object", "number", "boolean", "null"]
+    assert workflow.type_env["final output"]["type"] == ["string", "array", "object", "number", "boolean", "null"]
 
 
 @pytest.mark.asyncio
@@ -106,15 +197,15 @@ async def test_workflow_with_node_ids_containing_hyphens():
         "nodes": [
             {
                 "id": "user-count",  # Node ID with hyphen
-                "type": "task",
-                "kind": "set",
-                "value": 42
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": 42}
             },
             {
                 "id": "max-limit",  # Node ID with hyphen
-                "type": "task",
-                "kind": "set",
-                "value": 100
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": 100}
             },
             {
                 "id": "if1",
@@ -129,7 +220,7 @@ async def test_workflow_with_node_ids_containing_hyphens():
     }
 
     # Should compile successfully
-    workflow = await _compile_workflow(spec)
+    workflow = await _compile_workflow(spec, [_create_mock_tool()])
 
     # Verify type environment (node IDs)
     assert "user-count" in workflow.type_env
@@ -151,28 +242,28 @@ async def test_workflow_with_node_ids_containing_special_chars():
         "nodes": [
             {
                 "id": "email@field",  # Node ID with @ character
-                "type": "task",
-                "kind": "set",
-                "value": "test@example.com"
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "test@example.com"}
             },
             {
                 "id": "api#response",  # Node ID with # character
-                "type": "task",
-                "kind": "set",
-                "value": {"status": "ok"}
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": {"status": "ok"}}
             },
             {
                 "id": "data$items",  # Node ID with $ character
-                "type": "task",
-                "kind": "set",
-                "value": [1, 2, 3]
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": [1, 2, 3]}
             }
         ],
         "edges": []
     }
 
     # Should compile successfully
-    workflow = await _compile_workflow(spec)
+    workflow = await _compile_workflow(spec, [_create_mock_tool()])
 
     # Verify all special character node IDs are registered
     assert "email@field" in workflow.type_env
@@ -189,21 +280,21 @@ async def test_workflow_with_unicode_node_ids():
         "nodes": [
             {
                 "id": "résultat",  # Node ID with French accent
-                "type": "task",
-                "kind": "set",
-                "value": "Success"
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "Success"}
             },
             {
                 "id": "结果",  # Node ID with Chinese characters
-                "type": "task",
-                "kind": "set",
-                "value": {"message": "完成"}
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": {"message": "完成"}}
             },
             {
                 "id": "summary",
-                "type": "task",
-                "kind": "set",
-                "value": "Combined: ${résultat} - ${结果}"
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "Combined: ${résultat} - ${结果}"}
             }
         ],
         "edges": [
@@ -213,7 +304,7 @@ async def test_workflow_with_unicode_node_ids():
     }
 
     # Should compile successfully
-    workflow = await _compile_workflow(spec)
+    workflow = await _compile_workflow(spec, [_create_mock_tool()])
 
     # Verify Unicode node IDs are registered
     assert "résultat" in workflow.type_env
@@ -230,18 +321,18 @@ async def test_workflow_with_nested_property_access_special_chars():
         "nodes": [
             {
                 "id": "api-response",  # Node ID with hyphen
-                "type": "task",
-                "kind": "set",
-                "value": {
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": {
                     "user": {"name": "John", "age": 30},
                     "status": "active"
-                }
+                }}
             },
             {
                 "id": "user name",  # Node ID with space
-                "type": "task",
-                "kind": "set",
-                "value": "${api-response.user.name}"  # Nested property access
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${api-response.user.name}"}  # Nested property access
             }
         ],
         "edges": [
@@ -250,7 +341,7 @@ async def test_workflow_with_nested_property_access_special_chars():
     }
 
     # Should compile successfully
-    workflow = await _compile_workflow(spec)
+    workflow = await _compile_workflow(spec, [_create_mock_tool_with_object_output()])
 
     # Verify both node IDs are registered
     assert "api-response" in workflow.type_env
@@ -266,9 +357,9 @@ async def test_workflow_with_foreach_special_node_ids():
         "nodes": [
             {
                 "id": "data-items",  # Node ID with hyphen
-                "type": "task",
-                "kind": "set",
-                "value": [{"id": 1}, {"id": 2}, {"id": 3}]
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": [{"id": 1}, {"id": 2}, {"id": 3}]}
             },
             {
                 "id": "processed items",  # Node ID with space
@@ -284,7 +375,7 @@ async def test_workflow_with_foreach_special_node_ids():
     }
 
     # Should compile successfully
-    workflow = await _compile_workflow(spec)
+    workflow = await _compile_workflow(spec, [_create_mock_tool_with_array_output()])
 
     # Verify node IDs and loop variables are registered
     assert "data-items" in workflow.type_env
@@ -321,16 +412,16 @@ async def test_workflow_with_trigger_id_spaces():
         "nodes": [
             {
                 "id": "task1",
-                "type": "task",
-                "kind": "set",
-                "value": "${My Trigger.data}"  # Reference with space
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${My Trigger.data}"}  # Reference with space
             }
         ],
         "edges": []
     }
 
     # Should compile successfully
-    workflow = await _compile_workflow(spec)
+    workflow = await _compile_workflow(spec, [_create_mock_tool()])
 
     # Verify trigger is registered in type environment (by trigger ID)
     assert "My Trigger" in workflow.type_env
@@ -361,16 +452,16 @@ async def test_workflow_with_trigger_id_hyphen():
         "nodes": [
             {
                 "id": "task1",
-                "type": "task",
-                "kind": "set",
-                "value": "${my-trigger.value}"  # Reference with hyphen
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${my-trigger.value}"}  # Reference with hyphen
             }
         ],
         "edges": []
     }
 
     # Should compile successfully
-    workflow = await _compile_workflow(spec)
+    workflow = await _compile_workflow(spec, [_create_mock_tool()])
 
     # Verify trigger is registered in type environment (by trigger ID)
     assert "my-trigger" in workflow.type_env
@@ -411,16 +502,16 @@ async def test_workflow_with_trigger_id_special_chars(valid_id):
         "nodes": [
             {
                 "id": "task1",
-                "type": "task",
-                "kind": "set",
-                "value": f"${{{valid_id}.message}}"  # Reference with special char
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": f"${{{valid_id}.message}}"}  # Reference with special char
             }
         ],
         "edges": []
     }
 
     # Should compile successfully
-    workflow = await _compile_workflow(spec)
+    workflow = await _compile_workflow(spec, [_create_mock_tool()])
 
     # Verify trigger is registered in type environment (by trigger ID)
     assert valid_id in workflow.type_env
@@ -442,21 +533,21 @@ async def test_complex_workflow_with_mixed_special_characters():
         "nodes": [
             {
                 "id": "api-response",  # Node ID with hyphen
-                "type": "task",
-                "kind": "set",
-                "value": {"status": 200, "message": "OK"}
+                "type": "tool",
+                "tool": "test.object",
+                "inputs": {"value": {"status": 200, "message": "OK"}}
             },
             {
                 "id": "user count",  # Node ID with space
-                "type": "task",
-                "kind": "set",
-                "value": 150
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": 150}
             },
             {
                 "id": "timestamp@data",  # Node ID with @ character
-                "type": "task",
-                "kind": "set",
-                "value": "2024-01-15T10:30:00Z"
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "2024-01-15T10:30:00Z"}
             },
             {
                 "id": "if1",
@@ -465,15 +556,15 @@ async def test_complex_workflow_with_mixed_special_characters():
             },
             {
                 "id": "final-summary",  # Node ID with hyphen
-                "type": "task",
-                "kind": "set",
-                "value": "Status: ${api-response.status}, Users: ${user count}, Time: ${timestamp@data}"
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "Status: ${api-response.status}, Users: ${user count}, Time: ${timestamp@data}"}
             },
             {
                 "id": "data$array",  # Node ID with $ character
-                "type": "task",
-                "kind": "set",
-                "value": [1, 2, 3, 4, 5]
+                "type": "tool",
+                "tool": "test.array",
+                "inputs": {"value": [1, 2, 3, 4, 5]}
             },
             {
                 "id": "processed#results",  # Node ID with # character
@@ -494,7 +585,11 @@ async def test_complex_workflow_with_mixed_special_characters():
     }
 
     # Should compile successfully
-    workflow = await _compile_workflow(spec)
+    workflow = await _compile_workflow(spec, [
+        _create_mock_tool(),
+        _create_mock_tool_with_object_output("test.object", {"status": {"type": "number"}, "message": {"type": "string"}}),
+        _create_mock_tool_with_array_output("test.array", {"type": "number"})
+    ])
 
     # Verify all special character node IDs are registered
     assert "api-response" in workflow.type_env
@@ -518,27 +613,27 @@ async def test_workflow_template_strings_with_special_node_ids():
         "nodes": [
             {
                 "id": "first-name",  # Node ID with hyphen
-                "type": "task",
-                "kind": "set",
-                "value": "John"
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "John"}
             },
             {
                 "id": "last name",  # Node ID with space
-                "type": "task",
-                "kind": "set",
-                "value": "Doe"
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "Doe"}
             },
             {
                 "id": "user@age",  # Node ID with @ sign
-                "type": "task",
-                "kind": "set",
-                "value": 30
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": 30}
             },
             {
                 "id": "user#profile",  # Node ID with # character
-                "type": "task",
-                "kind": "set",
-                "value": "Name: ${first-name} ${last name}, Age: ${user@age}"  # Template with all special refs
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "Name: ${first-name} ${last name}, Age: ${user@age}"}  # Template with all special refs
             }
         ],
         "edges": [
@@ -549,7 +644,7 @@ async def test_workflow_template_strings_with_special_node_ids():
     }
 
     # Should compile successfully
-    workflow = await _compile_workflow(spec)
+    workflow = await _compile_workflow(spec, [_create_mock_tool()])
 
     # Verify all node IDs are registered
     assert "first-name" in workflow.type_env
@@ -607,9 +702,9 @@ async def test_workflow_with_multiple_triggers_special_chars():
         "nodes": [
             {
                 "id": "combined message",  # Node ID with space
-                "type": "task",
-                "kind": "set",
-                "value": "Email: ${Gmail Inbox.subject}, Slack: ${slack-message.text}"
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "Email: ${Gmail Inbox.subject}, Slack: ${slack-message.text}"}
             },
             {
                 "id": "if1",
@@ -623,7 +718,7 @@ async def test_workflow_with_multiple_triggers_special_chars():
     }
 
     # Should compile successfully
-    workflow = await _compile_workflow(spec)
+    workflow = await _compile_workflow(spec, [_create_mock_tool()])
 
     # Verify all triggers are registered with their special character IDs
     assert "Gmail Inbox" in workflow.type_env
@@ -671,22 +766,22 @@ async def test_workflow_with_unicode_trigger_ids():
         "nodes": [
             {
                 "id": "chinese_result",
-                "type": "task",
-                "kind": "set",
-                "value": "${数据触发器.数据}"
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${数据触发器.数据}"}
             },
             {
                 "id": "french_result",
-                "type": "task",
-                "kind": "set",
-                "value": "${Déclencheur Français.message}"
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${Déclencheur Français.message}"}
             }
         ],
         "edges": []
     }
 
     # Should compile successfully
-    workflow = await _compile_workflow(spec)
+    workflow = await _compile_workflow(spec, [_create_mock_tool()])
 
     # Verify Unicode triggers are registered (by trigger ID)
     assert "数据触发器" in workflow.type_env

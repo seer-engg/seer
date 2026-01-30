@@ -23,9 +23,9 @@ class TestWorkflowProposal:
             nodes=[
                 {
                     "id": "test_node",
-                    "type": "task",
-                    "kind": "set",
-                    "value": {"result": "test"},
+                    "type": "tool",
+                    "tool": "test.tool",
+                    "inputs": {"value": {"result": "test"}},
                 }
             ],
             edges=[],
