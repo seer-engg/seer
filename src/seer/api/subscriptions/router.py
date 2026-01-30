@@ -7,6 +7,7 @@ Provides endpoints for:
 - Creating Stripe Customer Portal sessions
 - Handling Stripe webhooks
 """
+from datetime import datetime, timezone
 from typing import Optional
 
 import stripe
@@ -391,7 +392,6 @@ async def create_subscription_with_trial(
 
     try:
         # Verify customer has a payment method attached
-        customer = stripe.Customer.retrieve(customer_id)
         payment_methods = stripe.PaymentMethod.list(customer=customer_id, type="card")
 
         if not payment_methods.data:
@@ -400,12 +400,24 @@ async def create_subscription_with_trial(
                 detail="No payment method found. Please add a payment method first.",
             )
 
+        # Get the most recently added payment method
+        default_payment_method_id = payment_methods.data[0].id
+
+        # Set default payment method on customer for future invoices
+        stripe.Customer.modify(
+            customer_id,
+            invoice_settings={
+                "default_payment_method": default_payment_method_id
+            }
+        )
+
         # Create subscription with trial period
         # Trial period starts immediately - no charge until trial ends
         stripe_subscription = stripe.Subscription.create(
             customer=customer_id,
             items=[{"price": price_id}],
             trial_period_days=14,  # Start 14-day trial immediately
+            default_payment_method=default_payment_method_id,  # Set payment method for subscription
             metadata={
                 "user_id": user.user_id,
                 "is_early_adopter": str(is_early_adopter),
@@ -427,18 +439,18 @@ async def create_subscription_with_trial(
         # Format trial end date if in trial
         trial_end = None
         if stripe_subscription.trial_end:
-            from datetime import datetime, timezone
             trial_end = datetime.fromtimestamp(
                 stripe_subscription.trial_end,
                 tz=timezone.utc,
             ).isoformat()
 
         logger.info(
-            "Created trial subscription for user %s: subscription_id=%s, tier=%s, status=%s",
+            "Created trial subscription for user %s: subscription_id=%s, tier=%s, status=%s, payment_method=%s",
             user.user_id,
             stripe_subscription.id,
             body.tier,
             stripe_subscription.status,
+            default_payment_method_id,
         )
 
         return CreateSubscriptionWithTrialResponse(

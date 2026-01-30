@@ -326,3 +326,58 @@ async def test_invalid_interval_rejected(authenticated_subscription_client):
     # The endpoint uses get_price_id_for_checkout which returns None for invalid intervals
     error_detail = response.json()["detail"]
     assert "price not found" in error_detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_subscription_has_default_payment_method(
+    authenticated_subscription_client, user_with_payment_method
+):
+    """
+    Verify subscription is created with default payment method.
+
+    This test ensures that:
+    - Subscription has default_payment_method set
+    - Customer has invoice_settings.default_payment_method set
+    - Payment method IDs match the one attached to the customer
+
+    This prevents payment failures when the trial period ends.
+    """
+    user, billing_profile, stripe_customer_id = user_with_payment_method
+
+    # Create subscription via API
+    response = await authenticated_subscription_client.post(
+        "/api/subscriptions/create-with-trial",
+        json={"tier": "pro", "interval": "month"},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+
+    # Retrieve subscription from Stripe
+    stripe.api_key = config.stripe_secret_key
+    subscription = stripe.Subscription.retrieve(result["subscription_id"])
+
+    # Assert subscription has default payment method set
+    assert subscription.default_payment_method is not None, (
+        "Subscription must have default_payment_method to charge after trial"
+    )
+    assert subscription.default_payment_method.startswith("pm_"), (
+        f"Expected payment method ID starting with 'pm_', got {subscription.default_payment_method}"
+    )
+
+    # Also verify customer-level default
+    customer = stripe.Customer.retrieve(stripe_customer_id)
+    assert customer.invoice_settings.default_payment_method is not None, (
+        "Customer must have default_payment_method for future invoices"
+    )
+
+    # Verify both defaults point to the same payment method
+    assert subscription.default_payment_method == customer.invoice_settings.default_payment_method, (
+        "Subscription and customer default payment methods should match"
+    )
+
+    # Verify the payment method actually exists and is attached to the customer
+    payment_method = stripe.PaymentMethod.retrieve(subscription.default_payment_method)
+    assert payment_method.customer == stripe_customer_id, (
+        "Payment method must be attached to the customer"
+    )
