@@ -1,6 +1,7 @@
 """Dedicated controller for processing Stripe webhook events."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Optional, Union
 
 import stripe
@@ -8,6 +9,7 @@ import stripe
 from seer.api.subscriptions import stripe_service
 from seer.api.subscriptions.clerk_sync import sync_stripe_customer_to_clerk
 from seer.config import config
+from seer.database.subscription_models import BillingProfile
 from seer.logger import get_logger
 
 logger = get_logger("api.subscriptions.stripe_webhook_controller")
@@ -52,6 +54,10 @@ class StripeWebhookController:
             await self._handle_invoice_event(event_type, data)
             return
 
+        if event_type == "setup_intent.succeeded":
+            await self._handle_setup_intent_succeeded(data)
+            return
+
         logger.info("Not consuming Stripe event %s", event_type)
 
     async def _handle_checkout_session_completed(self, data: dict) -> None:
@@ -62,7 +68,8 @@ class StripeWebhookController:
 
         subscription_id = data.get("subscription")
         if subscription_id:
-            await stripe_service.sync_subscription_from_stripe(subscription_id)
+            is_early_adopter = data.get("metadata", {}).get("is_early_adopter") == "true"
+            await stripe_service.sync_subscription_from_stripe(subscription_id, is_early_adopter=is_early_adopter)
 
     async def _handle_invoice_event(self, event_type: str, invoice: dict) -> None:
         subscription_source = await self._resolve_subscription_for_invoice(invoice)
@@ -114,6 +121,38 @@ class StripeWebhookController:
             return None
 
         return subscriptions[0]
+
+    async def _handle_setup_intent_succeeded(self, data: dict) -> None:
+        """
+        Handle successful Setup Intent - update BillingProfile with payment method status.
+
+        Called when a user successfully adds a payment method during onboarding.
+        Updates the has_payment_method flag to allow app access.
+        """
+        setup_intent = data.get("object") if "object" in data else data
+        customer_id = setup_intent.get("customer")
+
+        if not customer_id:
+            logger.warning("Setup Intent succeeded event missing customer ID")
+            return
+
+        billing_profile = await BillingProfile.get_or_none(stripe_customer_id=customer_id)
+        if not billing_profile:
+            logger.warning(
+                "No billing profile found for Stripe customer %s on Setup Intent success",
+                customer_id
+            )
+            return
+
+        billing_profile.has_payment_method = True
+        billing_profile.payment_method_added_at = datetime.now(timezone.utc)
+        await billing_profile.save(update_fields=["has_payment_method", "payment_method_added_at"])
+
+        logger.info(
+            "Updated payment method status for customer %s (Setup Intent: %s)",
+            customer_id,
+            setup_intent.get("id")
+        )
 
 
 stripe_webhook_controller = StripeWebhookController()
