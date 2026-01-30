@@ -38,6 +38,7 @@ from seer.core.schema.models import (
     MCPNode,
     Node,
     OutputMode,
+    SwitchNode,
     ToolNode,
 )
 from seer.core.schema.schema_registry import SchemaRegistry
@@ -212,6 +213,8 @@ class NodeRuntime:
             return self._run_llm(node, state, config, locals_ctx=locals_ctx)
         if isinstance(node, IfNode):
             return self._run_if(node, state, config, locals_ctx=locals_ctx, context=context)
+        if isinstance(node, SwitchNode):
+            return self._run_switch(node, state, config, locals_ctx=locals_ctx, context=context)
         if isinstance(node, ForEachNode):
             return self._run_for_each(node, state, config, locals_ctx=locals_ctx, context=context)
         raise ExecutionError(f"Unsupported node type '{node.type}'")
@@ -234,6 +237,8 @@ class NodeRuntime:
             return self._run_llm(node, state, config, locals_ctx=locals_ctx)
         if isinstance(node, IfNode):
             return await self._run_if_async(node, state, config, locals_ctx=locals_ctx, context=context)
+        if isinstance(node, SwitchNode):
+            return await self._run_switch_async(node, state, config, locals_ctx=locals_ctx, context=context)
         if isinstance(node, ForEachNode):
             return await self._run_for_each_async(node, state, config, locals_ctx=locals_ctx, context=context)
         raise ExecutionError(f"Unsupported node type '{node.type}'")
@@ -619,6 +624,62 @@ class NodeRuntime:
 
         # Store condition result for the router
         return {f"_if_result_{node.id}": condition_result}
+
+    def _run_switch(
+        self,
+        node: SwitchNode,
+        state: WorkflowState,
+        config: Mapping[str, Any],
+        *,
+        locals_ctx: Mapping[str, Any] | None,
+        context: WorkflowRuntimeContext | None,
+    ) -> Dict[str, Any]:
+        """
+        Evaluate switch cases in order and store the matched route label.
+
+        First-match-wins: evaluates cases sequentially until one returns True.
+        If no cases match, stores None (router will use default or END).
+
+        Router reads _switch_result_{node_id} to determine which branch to take.
+        """
+        ctx = self._build_eval_context(state, config, locals_ctx)
+
+        matched_label: Optional[str] = None
+        for case in node.cases:
+            try:
+                condition_result = evaluate_condition(ctx, case.condition)
+                if condition_result:
+                    matched_label = case.label
+                    break
+            except Exception as exc:  # pylint: disable=broad-except  # Reason: Resilient evaluation - continue to next case on any error
+                logger.warning(
+                    "Switch node %s case '%s' evaluation failed: %s",
+                    node.id,
+                    case.label,
+                    exc,
+                    exc_info=True
+                )
+                continue
+
+        # Store result for router
+        return {f"_switch_result_{node.id}": matched_label}
+
+    async def _run_switch_async(
+        self,
+        node: SwitchNode,
+        state: WorkflowState,
+        config: Mapping[str, Any],
+        *,
+        locals_ctx: Mapping[str, Any] | None,
+        context: WorkflowRuntimeContext | None,
+    ) -> Dict[str, Any]:
+        """
+        Async version of _run_switch.
+
+        Evaluates switch cases sequentially and stores matched route label.
+        """
+        # evaluate_condition is synchronous, so we call the sync version
+        return self._run_switch(node, state, config, locals_ctx=locals_ctx, context=context)
 
     def _run_for_each(
         self,

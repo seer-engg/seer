@@ -6,6 +6,7 @@ V2 uses explicit edges with conditional routing for if/else and loop control flo
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Any, Dict, List, Optional
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -13,7 +14,9 @@ from langgraph.graph import END, START, StateGraph
 
 from seer.core.compiler.lower_control_flow import ExecutionPlan
 from seer.core.runtime.nodes import NodeRuntime
-from seer.core.schema.models import Edge, EdgeType, ForEachNode, IfNode, Node
+from seer.core.schema.models import Edge, EdgeType, ForEachNode, IfNode, Node, SwitchNode
+
+logger = logging.getLogger(__name__)
 
 
 def merge_state(left: dict, right: dict) -> dict:
@@ -60,6 +63,42 @@ def _build_loop_router(node_id: str, body_target: Optional[str], exit_target: Op
         return exit_target if exit_target else END
 
     return route_loop
+
+
+def _build_switch_router(
+    node_id: str,
+    case_targets: Dict[str, str],
+    default_target: Optional[str]
+):
+    """
+    Build routing function for SwitchNode conditional edges.
+
+    The SwitchNode runner stores the matched label in state[f"_switch_result_{node_id}"].
+    This router reads that value and returns the corresponding target node ID.
+
+    Args:
+        node_id: SwitchNode ID
+        case_targets: Map from case label to target node ID
+        default_target: Target for default case (None if no default)
+
+    Returns:
+        Router function for LangGraph conditional edges
+    """
+    def route_switch(state: dict) -> str:
+        matched_label = state.get(f"_switch_result_{node_id}")
+
+        # If a case matched, route to its target
+        if matched_label and matched_label in case_targets:
+            return case_targets[matched_label]
+
+        # No match - use default if available
+        if default_target:
+            return default_target
+
+        # No match and no default - end workflow
+        return END
+
+    return route_switch
 
 
 def _build_trigger_router(trigger_targets: Dict[str, str]):
@@ -149,6 +188,70 @@ def _add_conditional_edges_for_loop(
     graph.add_conditional_edges(node.id, router, path_map)
 
 
+# pylint: disable=too-complex  # Reason: SwitchNode edge validation requires multiple conditional checks for completeness
+def _add_conditional_edges_for_switch(
+    graph: StateGraph,
+    node: SwitchNode,
+    outgoing_edges: List[Edge],
+) -> None:
+    """
+    Add conditional edges for a SwitchNode.
+
+    Routes to different targets based on which case condition matched.
+    Validates that each case has a corresponding edge.
+    """
+
+    case_targets: Dict[str, str] = {}
+    default_target: Optional[str] = None
+
+    # Collect targets from edges
+    for edge in outgoing_edges:
+        if edge.type == EdgeType.switch_case:
+            if not edge.route:
+                raise ValueError(f"Switch case edge from {node.id} missing route label")
+            case_targets[edge.route] = edge.target
+        elif edge.type == EdgeType.switch_default:
+            default_target = edge.target
+
+    # Validate all cases have edges
+    defined_labels = {case.label for case in node.cases}
+    edge_labels = set(case_targets.keys())
+    missing_edges = defined_labels - edge_labels
+    if missing_edges:
+        raise ValueError(
+            f"SwitchNode {node.id} has cases without edges: {', '.join(missing_edges)}"
+        )
+
+    # Warn about unused edges
+    unused_edges = edge_labels - defined_labels
+    if unused_edges:
+        logger.warning(
+            "SwitchNode %s has edges for non-existent cases: %s",
+            node.id,
+            ', '.join(unused_edges)
+        )
+
+    # Warn if no default
+    if not default_target:
+        logger.warning(
+            "SwitchNode %s has no default case - workflow will end if no conditions match",
+            node.id
+        )
+
+    # Build router and path map
+    router = _build_switch_router(node.id, case_targets, default_target)
+
+    path_map: Dict[str, str] = {}
+    for target in case_targets.values():
+        path_map[target] = target
+    if default_target:
+        path_map[default_target] = default_target
+    if END not in path_map.values():
+        path_map[END] = END
+
+    graph.add_conditional_edges(node.id, router, path_map)
+
+
 def _add_regular_edges(
     graph: StateGraph,
     node: Node,
@@ -167,8 +270,9 @@ def _add_regular_edges(
         graph.add_edge(node.id, edge.target)
 
 
-# pylint: disable=too-complex,too-many-branches,unused-argument,protected-access
-# Reason: Workflow compilation to LangGraph requires branching logic for all node types; protected access for internal state
+# pylint: disable=too-complex,too-many-branches,too-many-locals,unused-argument,protected-access
+# Reason: Workflow compilation to LangGraph requires branching logic for all node types
+# and multiple local variables for graph construction; protected access for internal state
 async def emit_langgraph(
     plan: ExecutionPlan,
     runtime: NodeRuntime,
@@ -179,7 +283,8 @@ async def emit_langgraph(
     Emit a LangGraph StateGraph from the execution plan.
 
     Handles:
-    - IfNode: Conditional edges based on condition result
+    - IfNode: Conditional edges based on condition result (deprecated, converted to SwitchNode)
+    - SwitchNode: Multi-way conditional routing based on case labels
     - ForEachNode: Conditional edges for loop body vs exit
     - Other nodes: Direct edges from the edge list
     """
@@ -247,6 +352,17 @@ async def emit_langgraph(
             )
             if has_conditional:
                 _add_conditional_edges_for_if(graph, node, outgoing)
+            else:
+                _add_regular_edges(graph, node, outgoing)
+
+        elif isinstance(node, SwitchNode):
+            # Check if this node has switch edges
+            has_switch_edges = any(
+                e.type in (EdgeType.switch_case, EdgeType.switch_default)
+                for e in outgoing
+            )
+            if has_switch_edges:
+                _add_conditional_edges_for_switch(graph, node, outgoing)
             else:
                 _add_regular_edges(graph, node, outgoing)
 

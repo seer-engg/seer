@@ -7,11 +7,14 @@ edges and precomputed indices for efficient graph traversal.
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
-from seer.core.schema.models import Edge, EdgeType, ForEachNode, IfNode, Node, WorkflowSpec
+from seer.core.schema.models import Edge, EdgeType, ForEachNode, IfNode, Node, SwitchCase, SwitchNode, WorkflowSpec
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -104,19 +107,93 @@ def _find_loop_body_nodes(
     return body_nodes, terminal_nodes
 
 
+def _convert_if_to_switch(if_node: IfNode, edges: List[Edge]) -> Tuple[SwitchNode, List[Edge]]:
+    """
+    Convert deprecated IfNode to SwitchNode for unified execution.
+
+    Internal transformation applied during compilation for backward compatibility.
+
+    Args:
+        if_node: The IfNode to convert
+        edges: All edges in the workflow
+
+    Returns:
+        Tuple of (converted SwitchNode, updated edges)
+    """
+    logger.info("Converting deprecated IfNode %s to SwitchNode", if_node.id)
+
+    # Create single case for the if condition
+    switch_cases = [
+        SwitchCase(condition=if_node.condition, label="__if_true")
+    ]
+
+    # Create SwitchNode with same ID and UI metadata
+    switch_node = SwitchNode(
+        id=if_node.id,
+        type="switch",
+        cases=switch_cases,
+        ui=if_node.ui
+    )
+
+    # Convert edges
+    new_edges = []
+    for edge in edges:
+        if edge.source == if_node.id:
+            if edge.type == EdgeType.conditional_true:
+                # True branch becomes switch_case with route="__if_true"
+                new_edges.append(Edge(
+                    source=edge.source,
+                    target=edge.target,
+                    type=EdgeType.switch_case,
+                    route="__if_true",
+                    ui=edge.ui
+                ))
+            elif edge.type == EdgeType.conditional_false:
+                # False branch becomes switch_default
+                new_edges.append(Edge(
+                    source=edge.source,
+                    target=edge.target,
+                    type=EdgeType.switch_default,
+                    ui=edge.ui
+                ))
+            else:
+                new_edges.append(edge)
+        else:
+            new_edges.append(edge)
+
+    return switch_node, new_edges
+
+
 def build_execution_plan(spec: WorkflowSpec) -> ExecutionPlan:  # pylint: disable=too-complex  # Reason: control-flow lowering requires multiple phases.
     """
     Build an execution plan from the workflow spec.
 
     Computes entry node, edge indices, trigger routing, and loop body detection
     for efficient graph traversal.
+
+    Deprecated IfNodes are automatically converted to SwitchNodes for unified execution.
     """
+    # Convert deprecated IfNodes to SwitchNodes
+    nodes = list(spec.nodes)
+    edges = list(spec.edges)
+
+    converted_nodes = []
+    for node in nodes:
+        if isinstance(node, IfNode):
+            switch_node, edges = _convert_if_to_switch(node, edges)
+            converted_nodes.append(switch_node)
+        else:
+            converted_nodes.append(node)
+
+    # Use converted nodes for the rest of the execution plan
+    nodes = converted_nodes
+
     # Build edge indices
     outgoing: Dict[str, List[Edge]] = defaultdict(list)
     incoming: Dict[str, List[Edge]] = defaultdict(list)
     trigger_targets: Dict[str, str] = {}
 
-    for edge in spec.edges:
+    for edge in edges:
         if edge.type == EdgeType.trigger:
             # Trigger edge: source is trigger ID, target is node
             trigger_targets[edge.source] = edge.target
@@ -130,19 +207,19 @@ def build_execution_plan(spec: WorkflowSpec) -> ExecutionPlan:  # pylint: disabl
     entry_node_id: Optional[str] = None
     if not trigger_targets:
         # Fallback: find node with no incoming edges
-        for node in spec.nodes:
+        for node in nodes:
             if not incoming.get(node.id):
                 entry_node_id = node.id
                 break
 
     # Build node map for loop body detection
-    node_map: Dict[str, Node] = {node.id: node for node in spec.nodes}
+    node_map: Dict[str, Node] = {node.id: node for node in nodes}
 
     # Detect loop bodies for all ForEachNodes
     loop_body_nodes: Dict[str, Set[str]] = {}
     loop_terminal_nodes: Dict[str, Set[str]] = {}
 
-    for node in spec.nodes:
+    for node in nodes:
         if isinstance(node, ForEachNode):
             # Find the loop_body edge to get entry point
             loop_edges = outgoing.get(node.id, [])
@@ -165,8 +242,8 @@ def build_execution_plan(spec: WorkflowSpec) -> ExecutionPlan:  # pylint: disabl
                 loop_terminal_nodes[node.id] = terminal_nodes
 
     return ExecutionPlan(
-        nodes=list(spec.nodes),
-        edges=list(spec.edges),
+        nodes=nodes,
+        edges=edges,
         entry_node_id=entry_node_id,
         outgoing_edges=dict(outgoing),
         incoming_edges=dict(incoming),

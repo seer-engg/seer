@@ -8,6 +8,7 @@ JSON payload.
 
 from __future__ import annotations
 
+import warnings
 from enum import Enum
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
@@ -94,6 +95,8 @@ class EdgeType(str, Enum):
     loop_body = "loop_body"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
     loop_exit = "loop_exit"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
     trigger = "trigger"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
+    switch_case = "switch_case"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
+    switch_default = "switch_default"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
 
 
 class Edge(StrictModel):
@@ -103,7 +106,17 @@ class Edge(StrictModel):
     source: str = Field(min_length=1)  # Source node ID
     target: str = Field(min_length=1)  # Target node ID
     type: EdgeType = EdgeType.default
+    route: Optional[str] = None  # Label for switch_case edges
     ui: Dict[str, JSONValue] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_route_field(self) -> "Edge":
+        """Validate route field usage based on edge type."""
+        if self.type == EdgeType.switch_case and not self.route:
+            raise ValueError("switch_case edges require a route label")
+        if self.type != EdgeType.switch_case and self.route is not None:
+            raise ValueError(f"route field only allowed for switch_case edges, not {self.type}")
+        return self
 
 
 # -----------------------------
@@ -161,12 +174,66 @@ class LLMNode(NodeBase):
 
 class IfNode(NodeBase):
     """
-    Conditional node that routes to different branches based on condition.
+    [DEPRECATED] Conditional node that routes to different branches based on condition.
+
+    This node is deprecated. Use SwitchNode for multi-way conditional routing.
+    Existing workflows with IfNode will be internally converted to SwitchNode at compile time.
 
     Branch targets are defined by edges with type=conditional_true/conditional_false.
     """
     type: Literal["if"] = "if"
     condition: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _warn_deprecated(self) -> "IfNode":
+        """Emit deprecation warning when IfNode is instantiated."""
+        warnings.warn(
+            "IfNode is deprecated and will be removed in a future version. Use SwitchNode instead for conditional routing.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        return self
+
+
+class SwitchCase(StrictModel):
+    """
+    Single case in a switch node.
+
+    Evaluated in order - first matching condition determines the route.
+    """
+    condition: str = Field()  # Boolean expression using ${...}
+    label: str = Field(pattern=r"^[a-zA-Z0-9_-]+$")  # Route identifier
+
+    @model_validator(mode="after")
+    def _validate_label_not_default(self) -> "SwitchCase":
+        """Validate that case label is not the reserved 'default' keyword."""
+        # pylint: disable=no-member  # Reason: Pydantic model field access during validation
+        if isinstance(self.label, str) and self.label.lower() == "default":
+            raise ValueError('Case label cannot be "default" (reserved for default case)')
+        return self
+
+
+class SwitchNode(NodeBase):
+    """
+    Multi-way conditional routing node.
+
+    Evaluates cases in order, routes to first matching case.
+    Optional default case handles when no conditions match.
+
+    Route targets defined by edges with type=switch_case (labeled)
+    and type=switch_default (optional default).
+    """
+    type: Literal["switch"] = "switch"
+    cases: List[SwitchCase] = Field()
+
+    @model_validator(mode="after")
+    def _validate_unique_labels(self) -> "SwitchNode":
+        """Validate that all case labels are unique within the switch node."""
+        labels = [case.label for case in self.cases]
+        duplicates = [label for label in set(labels) if labels.count(label) > 1]
+        if duplicates:
+            raise ValueError(f"Duplicate case labels not allowed: {', '.join(duplicates)}")
+        return self
 
 
 class ForEachNode(NodeBase):
@@ -188,7 +255,7 @@ class ForEachNode(NodeBase):
 
 
 Node = Annotated[
-    Union[ToolNode, LLMNode, MCPNode, IfNode, ForEachNode],
+    Union[ToolNode, LLMNode, MCPNode, IfNode, ForEachNode, SwitchNode],
     Field(discriminator="type"),
 ]
 

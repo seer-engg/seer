@@ -20,7 +20,7 @@ from seer.core.expr.typecheck import (
     ensure_references_valid,
     typecheck_reference,
 )
-from seer.core.schema.models import ForEachNode, IfNode, Node, WorkflowSpec
+from seer.core.schema.models import ForEachNode, IfNode, Node, SwitchNode, WorkflowSpec
 
 
 def validate_references(spec: WorkflowSpec, type_env: TypeEnvironment) -> None:
@@ -130,6 +130,16 @@ def _validate_node(node: Node, scope: Scope, errors: List[str]) -> None:
 
     if isinstance(node, IfNode):
         _validate_value_references(node.condition, scope, errors, context=f"{node.id}.condition")
+        return
+
+    if isinstance(node, SwitchNode):
+        for idx, case in enumerate(node.cases):
+            _validate_value_references(
+                case.condition,
+                scope,
+                errors,
+                context=f"{node.id}.cases[{idx}].condition (label: {case.label})"
+            )
         return
 
     if isinstance(node, ForEachNode):
