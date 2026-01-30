@@ -42,6 +42,17 @@ def app_with_subscriptions(mock_app: FastAPI):
 
 
 @pytest.fixture
+def mock_stripe_config():
+    """Mock Stripe configuration."""
+    with patch("seer.api.subscriptions.setup_intent.config") as mock_config:
+        mock_config.stripe_publishable_key = "pk_test_123"
+        mock_config.stripe_secret_key = "sk_test_123"
+        mock_config.stripe_webhook_secret = "whsec_test_123"
+        mock_config.is_stripe_configured = True
+        yield mock_config
+
+
+@pytest.fixture
 def mock_stripe_setup_intent():
     """Mock Stripe SetupIntent.create response."""
     with patch("seer.api.subscriptions.setup_intent.stripe.SetupIntent") as mock_si:
@@ -63,7 +74,7 @@ def mock_stripe_setup_intent():
 class TestSetupIntentEndpoints:
     """Test Setup Intent API endpoints."""
 
-    async def test_create_setup_intent_success(self, app_with_subscriptions: FastAPI, test_user, mock_stripe_setup_intent):
+    async def test_create_setup_intent_success(self, app_with_subscriptions: FastAPI, test_user, mock_stripe_config, mock_stripe_setup_intent):  # pylint: disable=unused-argument # Reason: mock_stripe_config needed for fixture setup
         """Test creating a Setup Intent for payment method collection."""
         user, billing_profile = test_user
 
@@ -79,14 +90,14 @@ class TestSetupIntentEndpoints:
         assert data["stripe_customer_id"] == "cus_test123"
         mock_stripe_setup_intent.create.assert_called_once()
 
-    async def test_create_setup_intent_unauthenticated(self, app_with_subscriptions: FastAPI):
+    async def test_create_setup_intent_unauthenticated(self, app_with_subscriptions: FastAPI, mock_stripe_config):  # pylint: disable=unused-argument # Reason: mock_stripe_config needed for fixture setup
         """Test creating Setup Intent without authentication."""
         with patch("seer.api.subscriptions.setup_intent._require_user", side_effect=Exception("Authentication required")):
             async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
                 with pytest.raises(Exception):
                     await client.post("/api/subscriptions/setup-intent")
 
-    async def test_confirm_setup_intent_success(self, app_with_subscriptions: FastAPI, test_user, mock_stripe_setup_intent):
+    async def test_confirm_setup_intent_success(self, app_with_subscriptions: FastAPI, test_user, mock_stripe_config, mock_stripe_setup_intent):  # pylint: disable=unused-argument # Reason: mock_stripe_config needed for fixture setup
         """Test confirming a successful Setup Intent."""
         user, billing_profile = test_user
 
@@ -112,7 +123,7 @@ class TestSetupIntentEndpoints:
         assert billing_profile.payment_method_added_at is not None
         mock_stripe_setup_intent.retrieve.assert_called_once_with("seti_test123")
 
-    async def test_confirm_setup_intent_not_succeeded(self, app_with_subscriptions: FastAPI, test_user):
+    async def test_confirm_setup_intent_not_succeeded(self, app_with_subscriptions: FastAPI, test_user, mock_stripe_config):  # pylint: disable=unused-argument # Reason: mock_stripe_config needed for fixture setup
         """Test confirming Setup Intent that hasn't succeeded yet."""
         user, billing_profile = test_user
 
