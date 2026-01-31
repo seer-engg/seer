@@ -90,7 +90,7 @@ ONLY these top-level fields are allowed:
 
 ❌ NEVER include: input_variables, inputs, config, metadata, or ANY custom fields
 ❌ NEVER add fields not explicitly in the schema above
-✅ Access trigger data: ${trigger.data.message_id}, ${trigger.data.from}
+✅ Access trigger data: ${trigger_id.data.message_id}, ${trigger_id.data.from}
 ✅ Access node outputs: ${node_id.output_field}
 
 Example valid spec:

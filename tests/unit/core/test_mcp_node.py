@@ -77,11 +77,11 @@ def test_mcp_node_with_inputs():
         server="http://localhost:8080/mcp",
         server_type="http",
         tool="search",
-        inputs={"query": "${trigger.data.search_query}", "limit": 10, "offset": 0},
+        inputs={"query": "${search_trigger.data.search_query}", "limit": 10, "offset": 0},
     )
 
     assert len(node.inputs) == 3
-    assert node.inputs["query"] == "${trigger.data.search_query}"
+    assert node.inputs["query"] == "${search_trigger.data.search_query}"
     assert node.inputs["limit"] == 10
     assert node.inputs["offset"] == 0
 
@@ -281,14 +281,14 @@ def test_mcp_node_with_nested_input_expressions():
         tool="process",
         inputs={
             "data": {
-                "user": "${trigger.data.user}",
+                "user": "${user_trigger.data.user}",
                 "filters": {"status": "active", "limit": "${config.max_results}"},
             }
         },
     )
 
     assert isinstance(node.inputs["data"], dict)
-    assert node.inputs["data"]["user"] == "${trigger.data.user}"
+    assert node.inputs["data"]["user"] == "${user_trigger.data.user}"
     assert isinstance(node.inputs["data"]["filters"], dict)
 
 

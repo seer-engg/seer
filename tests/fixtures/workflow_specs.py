@@ -268,7 +268,7 @@ class WorkflowSpecBuilder:
         return (
             cls()
             .add_trigger("t1", "test.trigger")
-            .add_loop_node("loop_1", "${trigger.data.items}", "Process Items")
+            .add_loop_node("loop_1", "${t1.data.items}", "Process Items")
             .add_task_node("task_1", "test.process_item", {"item": "${loop.current}"}, "Process")
             .add_edge("t1", "loop_1")
             .add_edge("loop_1", "task_1")

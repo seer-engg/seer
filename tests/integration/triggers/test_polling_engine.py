@@ -431,3 +431,235 @@ async def test_subscription_ordering_by_next_poll_at(db_engine, test_workflow):
     assert leased[0].id == sub1.id  # Oldest first
     assert leased[1].id == sub2.id
     assert leased[2].id == sub3.id
+
+
+# =============================================================================
+# Auto-Selection Tests
+# =============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_runtime_auto_selection_updates_subscription(db_engine, test_workflow):
+    """Test that runtime auto-selection updates subscription with selected connection."""
+    from seer.database.models_oauth import OAuthConnection
+
+    # Create an active OAuth connection
+    oauth_connection = await OAuthConnection.create(
+        user=test_workflow.user,
+        provider="google",
+        provider_account_id="test@example.com",
+        access_token_enc="encrypted_token",
+        status="active",
+    )
+
+    # Create subscription without provider_connection_id
+    sub = await TriggerSubscription.create(
+        user=test_workflow.user,
+        workflow=test_workflow,
+        trigger_id="auto_select_test",
+        trigger_key="gmail.new_email",
+        is_polling=True,
+        enabled=True,
+        next_poll_at=utcnow() - timedelta(minutes=5),
+        poll_interval_seconds=300,
+        provider_connection_id=None,  # No connection set
+    )
+
+    mock_dispatcher = AsyncMock()
+    engine = TriggerPollEngine(
+        lock_timeout_seconds=60,
+        max_batch_size=10,
+        trigger_event_dispatcher=mock_dispatcher,
+    )
+
+    # Mock trigger definition
+    mock_definition = MagicMock()
+    mock_definition.provider = "gmail"
+    mock_definition.meta = MagicMock()
+    mock_definition.meta.requires_connection = True
+
+    with patch("seer.core.triggers.polling.engine.trigger_registry.get", return_value=mock_definition), \
+         patch("seer.core.triggers.polling.engine.get_oauth_token", return_value=(oauth_connection, "access_token")):
+
+        result = await engine._get_oauth_connection(sub, test_workflow.user)
+
+        # Verify connection was auto-selected
+        assert result is not None
+        connection, token = result
+        assert connection.id == oauth_connection.id
+        assert token == "access_token"
+
+        # Verify subscription was updated with auto-selected connection
+        await sub.refresh_from_db()
+        assert sub.provider_connection_id == oauth_connection.id
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_runtime_auto_selection_persists_to_database(db_engine, test_workflow):
+    """Test that auto-selected connection is persisted in database."""
+    from seer.database.models_oauth import OAuthConnection
+
+    # Create multiple OAuth connections (should select most recent)
+    old_connection = await OAuthConnection.create(
+        user=test_workflow.user,
+        provider="google",
+        provider_account_id="old@example.com",
+        access_token_enc="encrypted_token_old",
+        status="active",
+        created_at=utcnow() - timedelta(days=7),
+    )
+
+    new_connection = await OAuthConnection.create(
+        user=test_workflow.user,
+        provider="google",
+        provider_account_id="new@example.com",
+        access_token_enc="encrypted_token_new",
+        status="active",
+        created_at=utcnow(),  # Most recent
+    )
+
+    sub = await TriggerSubscription.create(
+        user=test_workflow.user,
+        workflow=test_workflow,
+        trigger_id="persist_test",
+        trigger_key="gmail.new_email",
+        is_polling=True,
+        enabled=True,
+        next_poll_at=utcnow() - timedelta(minutes=5),
+        poll_interval_seconds=300,
+        provider_connection_id=None,
+    )
+
+    mock_dispatcher = AsyncMock()
+    engine = TriggerPollEngine(
+        lock_timeout_seconds=60,
+        max_batch_size=10,
+        trigger_event_dispatcher=mock_dispatcher,
+    )
+
+    mock_definition = MagicMock()
+    mock_definition.provider = "gmail"
+    mock_definition.meta = MagicMock()
+    mock_definition.meta.requires_connection = True
+
+    with patch("seer.core.triggers.polling.engine.trigger_registry.get", return_value=mock_definition), \
+         patch("seer.core.triggers.polling.engine.get_oauth_token", return_value=(new_connection, "token")):
+
+        await engine._get_oauth_connection(sub, test_workflow.user)
+
+        # Verify most recent connection was selected and persisted
+        await sub.refresh_from_db()
+        assert sub.provider_connection_id == new_connection.id
+        assert sub.provider_connection_id != old_connection.id
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_runtime_auto_selection_no_connection_marks_error(db_engine, test_workflow):
+    """Test that subscription is marked as error when no connection available."""
+    # Create subscription without provider_connection_id and no OAuth connections
+    sub = await TriggerSubscription.create(
+        user=test_workflow.user,
+        workflow=test_workflow,
+        trigger_id="no_conn_test",
+        trigger_key="gmail.new_email",
+        is_polling=True,
+        enabled=True,
+        next_poll_at=utcnow() - timedelta(minutes=5),
+        poll_interval_seconds=300,
+        provider_connection_id=None,
+    )
+
+    mock_dispatcher = AsyncMock()
+    engine = TriggerPollEngine(
+        lock_timeout_seconds=60,
+        max_batch_size=10,
+        trigger_event_dispatcher=mock_dispatcher,
+    )
+
+    mock_definition = MagicMock()
+    mock_definition.provider = "gmail"
+    mock_definition.meta = MagicMock()
+    mock_definition.meta.requires_connection = True
+
+    with patch("seer.core.triggers.polling.engine.trigger_registry.get", return_value=mock_definition):
+        result = await engine._get_oauth_connection(sub, test_workflow.user)
+
+        # Should return None since no connection available
+        assert result is None
+
+        # Verify subscription was marked as error
+        await sub.refresh_from_db()
+        assert sub.poll_status == "error"
+        assert sub.poll_error_json is not None
+        assert sub.poll_error_json["reason"] == "missing_provider_connection"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_runtime_auto_selection_explicit_connection_unchanged(db_engine, test_workflow):
+    """Test that existing explicit connection is not overridden."""
+    from seer.database.models_oauth import OAuthConnection
+
+    # Create two OAuth connections
+    explicit_connection = await OAuthConnection.create(
+        user=test_workflow.user,
+        provider="google",
+        provider_account_id="explicit@example.com",
+        access_token_enc="encrypted_token_explicit",
+        status="active",
+    )
+
+    newer_connection = await OAuthConnection.create(
+        user=test_workflow.user,
+        provider="google",
+        provider_account_id="newer@example.com",
+        access_token_enc="encrypted_token_newer",
+        status="active",
+        created_at=utcnow() + timedelta(seconds=10),  # More recent
+    )
+
+    # Create subscription WITH explicit provider_connection_id
+    sub = await TriggerSubscription.create(
+        user=test_workflow.user,
+        workflow=test_workflow,
+        trigger_id="explicit_test",
+        trigger_key="gmail.new_email",
+        is_polling=True,
+        enabled=True,
+        next_poll_at=utcnow() - timedelta(minutes=5),
+        poll_interval_seconds=300,
+        provider_connection_id=explicit_connection.id,  # Explicit connection set
+    )
+
+    mock_dispatcher = AsyncMock()
+    engine = TriggerPollEngine(
+        lock_timeout_seconds=60,
+        max_batch_size=10,
+        trigger_event_dispatcher=mock_dispatcher,
+    )
+
+    mock_definition = MagicMock()
+    mock_definition.provider = "gmail"
+
+    with patch("seer.core.triggers.polling.engine.trigger_registry.get", return_value=mock_definition), \
+         patch("seer.core.triggers.polling.engine.get_oauth_token", return_value=(explicit_connection, "token")) as mock_get_token:
+
+        result = await engine._get_oauth_connection(sub, test_workflow.user)
+
+        # Should use explicit connection, not auto-select
+        assert result is not None
+        connection, token = result
+        assert connection.id == explicit_connection.id
+
+        # Verify subscription connection_id unchanged
+        await sub.refresh_from_db()
+        assert sub.provider_connection_id == explicit_connection.id
+
+        # Verify get_oauth_token was called with explicit connection
+        mock_get_token.assert_called_once_with(
+            test_workflow.user,
+            connection_id=str(explicit_connection.id)
+        )
