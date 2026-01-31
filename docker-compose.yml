@@ -81,6 +81,7 @@ services:
       UV_LINK_MODE: "copy"  # Use copy mode to avoid hardlink warnings in Docker volumes
       MLFLOW_TRACKING_URI: "http://mlflow:5000"
       MLFLOW_EXPERIMENT_NAME: "seer-workflow-agent"
+      MLFLOW_ENABLED: "${MLFLOW_ENABLED:-true}"
       FRONTEND_URL: "${FRONTEND_URL:-https://app.getseer.dev}"
       BACKEND_API_URL: "${BACKEND_API_URL:-localhost:${API_PORT:-8000}}"
       AUTO_OPEN_BROWSER: "${AUTO_OPEN_BROWSER:-true}"
@@ -111,7 +112,8 @@ services:
       REDIS_URL: "redis://valkey:6379/0"
       UV_LINK_MODE: "copy"
       MLFLOW_TRACKING_URI: "http://mlflow:5000"
-      MLFLOW_EXPERIMENT_NAME: "seer-workflow-agent"
+      MLFLOW_EXPERIMENT_NAME: "seer-worker"
+      MLFLOW_ENABLED: "${MLFLOW_ENABLED:-true}"
     volumes:
       - ./:/app
       - /app/.venv

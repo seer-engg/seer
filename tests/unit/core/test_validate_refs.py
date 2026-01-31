@@ -1066,14 +1066,12 @@ def test_multi_trigger_accepts_explicit_trigger_ids():
     validate_references(spec, type_env)
 
 
-def test_single_trigger_accepts_bare_trigger_reference():
-    """Test that single-trigger workflows accept ${trigger.X} references."""
+def test_single_trigger_rejects_bare_trigger_reference():
+    """Test that single-trigger workflows reject ${trigger.X} references."""
     type_env = TypeEnvironment()
-    # Register both explicit ID and "trigger" alias
+    # Register only explicit ID (no "trigger" alias)
     type_env.register("t1", {"type": "object", "properties": {"data": {"type": "string"}}})
     type_env.register("t1.data", {"type": "string"})
-    type_env.register("trigger", {"type": "object", "properties": {"data": {"type": "string"}}})
-    type_env.register("trigger.data", {"type": "string"})
 
     spec = WorkflowSpec(
         version="2",
@@ -1084,23 +1082,26 @@ def test_single_trigger_accepts_bare_trigger_reference():
             ToolNode(
                 id="task1",
                 type="tool", tool="test.tool",
-                inputs={"value": "${trigger.data}"}  # Valid: single-trigger convenience
+                inputs={"value": "${trigger.data}"}  # Invalid: bare "trigger" not allowed
             )
         ],
         edges=[]
     )
 
-    # Should not raise any errors
-    validate_references(spec, type_env)
+    # Should raise ValidationPhaseError with helpful message
+    with pytest.raises(ValidationPhaseError) as exc_info:
+        validate_references(spec, type_env)
+
+    error_msg = str(exc_info.value)
+    assert "Cannot use ${trigger.X} syntax" in error_msg
+    assert "${t1.X}" in error_msg
 
 
-def test_single_trigger_accepts_explicit_id_too():
-    """Test that single-trigger workflows accept both ${trigger.X} and ${trigger_id.X}."""
+def test_single_trigger_accepts_explicit_id():
+    """Test that single-trigger workflows accept ${trigger_id.X} references."""
     type_env = TypeEnvironment()
     type_env.register("email_trigger", {"type": "object", "properties": {"data": {"type": "object"}}})
     type_env.register("email_trigger.data", {"type": "object"})
-    type_env.register("trigger", {"type": "object", "properties": {"data": {"type": "object"}}})
-    type_env.register("trigger.data", {"type": "object"})
 
     spec = WorkflowSpec(
         version="2",
@@ -1111,12 +1112,7 @@ def test_single_trigger_accepts_explicit_id_too():
             ToolNode(
                 id="task1",
                 type="tool", tool="test.tool",
-                inputs={"value": "${trigger.data}"}  # Valid: convenience alias
-            ),
-            ToolNode(
-                id="task2",
-                type="tool", tool="test.tool",
-                inputs={"value": "${email_trigger.data}"}  # Also valid: explicit ID
+                inputs={"value": "${email_trigger.data}"}  # Valid: explicit ID
             )
         ],
         edges=[]

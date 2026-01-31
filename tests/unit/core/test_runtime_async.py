@@ -439,7 +439,7 @@ async def test_unknown_trigger_key_fallback() -> None:
 
 @pytest.mark.asyncio
 async def test_trigger_data_accessible_after_routing() -> None:
-    """Trigger data is accessible via ${trigger.*} expressions after routing."""
+    """Trigger data is accessible via ${trigger_id.*} expressions after routing."""
     spec = {
         "version": "2",
         "triggers": [

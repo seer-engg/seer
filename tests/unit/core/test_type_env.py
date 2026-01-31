@@ -555,8 +555,8 @@ def test_register_triggers_id_with_various_special_chars(special_char_id):
 # =============================================================================
 
 
-def test_single_trigger_registers_trigger_alias():
-    """Test that single-trigger workflows register 'trigger' symbol as convenience alias."""
+def test_single_trigger_does_not_register_trigger_alias():
+    """Test that single-trigger workflows do NOT register 'trigger' symbol."""
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
@@ -586,13 +586,9 @@ def test_single_trigger_registers_trigger_alias():
     assert "gmail_trigger" in symbols
     assert "gmail_trigger.data" in symbols
 
-    # Single-trigger convenience: "trigger" should also be registered
-    assert "trigger" in symbols
-    assert "trigger.data" in symbols
-
-    # Verify schemas match
-    assert symbols["trigger"] == symbols["gmail_trigger"]
-    assert symbols["trigger.data"] == symbols["gmail_trigger.data"]
+    # "trigger" should NOT be registered
+    assert "trigger" not in symbols
+    assert "trigger.data" not in symbols
 
 
 def test_multi_trigger_does_not_register_trigger_alias():
@@ -642,9 +638,9 @@ def test_single_trigger_with_no_properties():
 
     symbols = env.as_dict()
 
-    # Both explicit ID and "trigger" should be registered
+    # Only explicit ID should be registered
     assert "simple_trigger" in symbols
-    assert "trigger" in symbols
+    assert "trigger" not in symbols
 
     # No sub-properties should be registered (since no properties defined)
     assert "simple_trigger.data" not in symbols
@@ -674,9 +670,12 @@ def test_single_trigger_with_nested_properties():
 
     symbols = env.as_dict()
 
-    # Verify all properties registered for both trigger ID and "trigger" alias
-    for prefix in ["email_trigger", "trigger"]:
-        assert prefix in symbols
-        assert f"{prefix}.data" in symbols
-        assert f"{prefix}.id" in symbols
-        assert f"{prefix}.timestamp" in symbols
+    # Verify all properties registered for trigger ID only
+    assert "email_trigger" in symbols
+    assert "email_trigger.data" in symbols
+    assert "email_trigger.id" in symbols
+    assert "email_trigger.timestamp" in symbols
+
+    # "trigger" alias should NOT be registered
+    assert "trigger" not in symbols
+    assert "trigger.data" not in symbols

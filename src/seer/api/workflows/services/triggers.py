@@ -29,6 +29,7 @@ from seer.database import (
     TriggerSubscription,
     Workflow,
     make_workflow_public_id,
+    OAuthConnection
 )
 from seer.logger import get_logger
 from seer.observability import (
@@ -41,8 +42,45 @@ from seer.core.schema.models import (
     JsonSchema,
     WorkflowSpec,
 )
+from seer.services.integrations.auth.oauth import get_oauth_provider
 
 logger = get_logger(__name__)
+
+
+async def _auto_select_provider_connection(
+    user: User,
+    trigger_definition,
+) -> Optional[int]:
+    """
+    Auto-select an active OAuth connection for a trigger's provider.
+
+    Returns the most recently created active connection ID, or None if not found.
+    """
+
+
+    # Map trigger provider to OAuth provider (e.g., "gmail" -> "google")
+    oauth_provider = get_oauth_provider(trigger_definition.provider)
+
+    # Query for active connections, ordered by most recent first
+    connection = await OAuthConnection.filter(
+        user=user,
+        provider=oauth_provider,
+        status="active"
+    ).order_by("-created_at").first()
+
+    if connection:
+        logger.info(
+            "Auto-selected provider connection for trigger",
+            extra={
+                "user_id": user.id,
+                "trigger_key": trigger_definition.key,
+                "connection_id": connection.id,
+                "provider": oauth_provider,
+            }
+        )
+        return connection.id
+
+    return None
 
 
 def _load_trigger_definition(trigger_key: str):
@@ -577,15 +615,29 @@ async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-lo
     # Upsert declared triggers.
     for trigger_spec in spec.triggers or []:
         definition = _load_trigger_definition(trigger_spec.key)
-        if not skip_validation:
-            provider_connection_id = trigger_spec.provider_config.get("provider_connection_id")
-            if definition.meta.requires_connection and provider_connection_id is None:
-                _raise_problem(
-                    type_uri=VALIDATION_PROBLEM,
-                    title="Missing trigger connection",
-                    detail=f"Trigger '{trigger_spec.key}' requires a provider connection.",
-                    status=400,
-                )
+
+        # Extract or auto-select provider connection
+        provider_connection_id = trigger_spec.provider_config.get("provider_connection_id")
+
+        if not skip_validation and definition.meta.requires_connection:
+            if provider_connection_id is None:
+                # Attempt auto-selection
+                provider_connection_id = await _auto_select_provider_connection(user, definition)
+
+                if provider_connection_id is None:
+                    _raise_problem(
+                        type_uri=VALIDATION_PROBLEM,
+                        title="Missing trigger connection",
+                        detail=(
+                            f"Trigger '{trigger_spec.key}' requires a provider connection. "
+                            f"Please connect your {definition.provider} account first."
+                        ),
+                        status=400,
+                    )
+                else:
+                    # Store auto-selected connection for persistence
+                    trigger_spec.provider_config["provider_connection_id"] = provider_connection_id
+
         filters = dict(trigger_spec.filters or {})
         provider_config = dict(trigger_spec.provider_config or {})
 

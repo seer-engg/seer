@@ -21,7 +21,8 @@ from seer.logger import get_logger
 from seer.tools.oauth_manager import get_oauth_token
 from seer.core.registry.trigger_registry import trigger_registry
 from seer.core.triggers.events import TriggerEventEnvelopeInput, build_event_envelope, persist_event
-
+from seer.database.models_oauth import OAuthConnection
+from seer.services.integrations.auth.oauth import get_oauth_provider
 
 logger = get_logger(__name__)
 
@@ -101,20 +102,43 @@ class TriggerPollEngine:
 
     async def _get_oauth_connection(self, subscription: TriggerSubscription, user):
         """Get OAuth connection for subscription. Returns (connection, access_token) or None if error handled."""
+
         definition = trigger_registry.get(subscription.trigger_key)
+
+        # Auto-select if missing
         if subscription.provider_connection_id is None:
             if definition.meta.requires_connection:
-                logger.error(
-                    "Missing provider connection for subscription",
-                    extra={"subscription_id": subscription.id, "trigger_key": subscription.trigger_key},
-                )
-                await self._mark_error(
-                    subscription,
-                    reason="missing_provider_connection",
-                    detail={"trigger_key": subscription.trigger_key},
-                    delay_seconds=max(subscription.poll_interval_seconds, 60),
-                )
-            return None
+                # Attempt auto-selection
+                oauth_provider = get_oauth_provider(definition.provider)
+                connection = await OAuthConnection.filter(
+                    user=user,
+                    provider=oauth_provider,
+                    status="active"
+                ).order_by("-created_at").first()
+
+                if connection:
+                    # Persist auto-selected connection
+                    subscription.provider_connection_id = connection.id
+                    await subscription.save(update_fields=["provider_connection_id"])
+                    logger.info(
+                        "Auto-selected provider connection at runtime",
+                        extra={
+                            "subscription_id": subscription.id,
+                            "connection_id": connection.id,
+                        }
+                    )
+                else:
+                    logger.error(
+                        "Missing provider connection for subscription",
+                        extra={"subscription_id": subscription.id, "trigger_key": subscription.trigger_key},
+                    )
+                    await self._mark_error(
+                        subscription,
+                        reason="missing_provider_connection",
+                        detail={"trigger_key": subscription.trigger_key},
+                        delay_seconds=max(subscription.poll_interval_seconds, 60),
+                    )
+                    return None
 
         try:
             return await get_oauth_token(

@@ -103,9 +103,9 @@ _WORKFLOW_SPEC_TRIGGER_EXAMPLE: Dict[str, Any] = {
             "type": "tool",
             "tool": "gmail_create_draft",
             "inputs": {
-                "to": ["${trigger.data.record.email}"],
+                "to": ["${new_signup.data.record.email}"],
                 "subject": "Welcome!",
-                "body_text": "Hi ${trigger.data.record.name}, welcome to our platform!"
+                "body_text": "Hi ${new_signup.data.record.name}, welcome to our platform!"
             },
         }
     ],
@@ -879,8 +879,8 @@ ForEach nodes **require** specific edge patterns:
 All blocks support `${...}` expressions for dynamic data:
 
 **Trigger Data:**
-- `${trigger.data.field}` - Access trigger payload
-- `${trigger.data.nested.value}` - Nested field access
+- `${trigger_id.data.field}` - Access trigger payload
+- `${trigger_id.data.nested.value}` - Nested field access
 
 **Node Outputs:**
 - `${node_id}` - Full output of a node

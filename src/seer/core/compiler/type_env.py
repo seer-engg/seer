@@ -90,13 +90,9 @@ async def build_type_environment_async(
 
 def _register_triggers(triggers: List[TriggerSpec], env: TypeEnvironment) -> None:
     """
-    Register triggers in type environment.
+    Register triggers in type environment by their explicit IDs.
 
-    Single-trigger workflows: registers both 'trigger' and trigger.id
-    Multi-trigger workflows: only registers by trigger.id
-
-    For single-trigger workflows, allows intuitive ${trigger.data.X} syntax.
-    For multi-trigger workflows, requires explicit ${trigger_id.data.X} syntax.
+    All workflows use explicit ${trigger_id.X} syntax for consistency.
     """
     # Always register by trigger ID (explicit, works for all cases)
     for trigger in triggers:
@@ -113,22 +109,6 @@ def _register_triggers(triggers: List[TriggerSpec], env: TypeEnvironment) -> Non
         properties = event_schema.get("properties", {})
         for name, schema in properties.items():
             env.register(f"{trigger.id}.{name}", schema)
-
-    # Single-trigger convenience: also register as "trigger"
-    if len(triggers) == 1:
-        trigger = triggers[0]
-        event_schema = trigger.event_schema if trigger.event_schema else {
-            "type": "object",
-            "additionalProperties": True
-        }
-
-        # Register "trigger" as root symbol
-        env.register("trigger", event_schema)
-
-        # Register "trigger.property" for all sub-properties
-        properties = event_schema.get("properties", {})
-        for name, schema in properties.items():
-            env.register(f"trigger.{name}", schema)
 
 
 def _register_loop_variables(spec: WorkflowSpec, env: TypeEnvironment) -> None:
