@@ -309,7 +309,7 @@ def _get_existing_price(lookup_key: str, price_id: Optional[str], product_id: Op
             )
 
     try:
-        response = stripe.Price.list(lookup_keys=[lookup_key], limit=1, expand=["data.product"])
+        response = stripe.Price.list(lookup_keys=[lookup_key], active=True, limit=1, expand=["data.product"])
     except stripe.error.StripeError as exc:
         logger.error("Failed to list Stripe prices for %s: %s", lookup_key, exc)
         raise
@@ -318,6 +318,12 @@ def _get_existing_price(lookup_key: str, price_id: Optional[str], product_id: Op
     price = next(iter(data), None)
     if price and product_id:
         price_product_id = getattr(price, "product", None) or price.get("product")  # type: ignore[attr-defined]
+        # If product is expanded (a dict/object), extract the ID
+        if isinstance(price_product_id, dict):
+            price_product_id = price_product_id.get("id")
+        elif hasattr(price_product_id, "id"):
+            price_product_id = getattr(price_product_id, "id")
+
         if price_product_id and price_product_id != product_id:
             logger.warning(
                 "Stripe price %s uses product %s instead of expected %s",
@@ -387,6 +393,51 @@ def create_prices_in_stripe() -> dict[str, str]:
             price_id=None,
             product_id=product_id,
         )
+
+        # Check if existing price has the correct amount
+        if existing:
+            existing_amount = existing.get("unit_amount") or getattr(existing, "unit_amount", 0)
+            expected_amount = definition.amount * 100  # Convert to cents
+
+            if existing_amount != expected_amount:
+                logger.warning(
+                    "Price %s amount changed from $%.2f to $%.2f - archiving old price and creating new one",
+                    definition.lookup_key,
+                    existing_amount / 100,
+                    expected_amount / 100,
+                )
+                # Archive the old price and change its lookup_key to free it up for the new price
+                # Stripe doesn't allow setting lookup_key to None, so we append a timestamp suffix
+                old_price_id = existing["id"] if isinstance(existing, dict) else existing.id
+                archived_lookup_key = f"{definition.lookup_key}_archived_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+                stripe.Price.modify(
+                    old_price_id,
+                    active=False,
+                    lookup_key=archived_lookup_key,  # Change lookup_key to make it available for new price
+                )
+                existing = None  # Force creation of new price
+
+        # If no active price exists, check for inactive prices with the same lookup_key
+        # These need to be updated to free up the lookup_key
+        if not existing:
+            try:
+                # Search for ANY price (active or inactive) with this lookup_key
+                response = stripe.Price.list(lookup_keys=[definition.lookup_key], limit=10)
+                data: Iterable[dict] = response.data if hasattr(response, "data") else response.get("data", [])  # type: ignore[index]
+                inactive_prices = [p for p in data if not (p.get("active") or getattr(p, "active", True))]
+
+                if inactive_prices:
+                    for inactive_price in inactive_prices:
+                        inactive_id = inactive_price.get("id") or getattr(inactive_price, "id")
+                        logger.info(
+                            "Found inactive price %s with lookup_key %s - changing lookup_key to free it up",
+                            inactive_id,
+                            definition.lookup_key,
+                        )
+                        archived_lookup_key = f"{definition.lookup_key}_archived_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{inactive_id[-6:]}"
+                        stripe.Price.modify(inactive_id, lookup_key=archived_lookup_key)
+            except stripe.error.StripeError as exc:
+                logger.warning("Failed to check for inactive prices: %s", exc)
 
         if existing and not getattr(existing, "active", True):
             existing = stripe.Price.modify(existing["id"], active=True)
