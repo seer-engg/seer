@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from seer.database import UserPublic
 
@@ -17,6 +17,12 @@ class WorkflowCreationMode(str, Enum):
     AUTO_CREATE = "AUTO_CREATE"
     ASK_FIRST = "ASK_FIRST"
     ON_ACCEPTANCE = "ON_ACCEPTANCE"
+
+
+class QuestionType(str, Enum):
+    """Type of clarification question."""
+    SINGLE_CHOICE = "single_choice"
+    MULTI_CHOICE = "multi_choice"
 
 
 class ChatRequest(BaseModel):
@@ -84,14 +90,19 @@ class WorkflowProposalActionResponse(BaseModel):
 
 class ClarificationQuestionOption(BaseModel):
     """Option for a clarification question."""
-    value: str
-    label: str
+    value: str = Field(..., description="Machine-readable value")
+    label: str = Field(..., description="Human-readable label")
+    is_wildcard: bool = Field(default=False, description="If true, allows custom user input")
 
 
 class ClarificationQuestion(BaseModel):
-    """Clarification question during discovery."""
-    question: str
-    options: List[ClarificationQuestionOption]
+    """Clarification question during chat."""
+    question_id: str = Field(..., description="Unique identifier for this question")
+    question: str = Field(..., description="The question text")
+    question_type: QuestionType = Field(..., description="Single or multi-choice")
+    options: List[ClarificationQuestionOption] = Field(..., description="Available options")
+    min_selections: int = Field(default=1, description="Minimum selections for multi-choice")
+    max_selections: Optional[int] = Field(default=None, description="Maximum selections for multi-choice")
 
 
 class DiscoveryChatRequest(BaseModel):
@@ -107,3 +118,24 @@ class InterruptResponse(BaseModel):
     """Response model for human-in-the-loop interrupt."""
     decision: str = Field(..., description="Decision: 'approve', 'edit', or 'reject'")
     edited_args: Optional[Dict[str, Any]] = Field(default=None, description="Edited arguments if decision is 'edit'")
+
+
+class ClarificationAnswer(BaseModel):
+    """User's answer to a clarification question."""
+    question_id: str = Field(..., description="ID of the question being answered")
+    selected_values: List[str] = Field(..., description="Selected option values")
+    custom_input: Optional[str] = Field(default=None, description="Custom input if wildcard selected")
+
+
+class ChatResumeRequest(BaseModel):
+    """Request model for resuming chat after interrupt."""
+    thread_id: str = Field(..., description="Thread ID to resume")
+    answer: Optional[ClarificationAnswer] = Field(default=None, description="Answer to clarification question")
+    command: Optional[Dict[str, Any]] = Field(default=None, description="Raw Command data for other interrupt types")
+
+    @model_validator(mode="after")
+    def validate_one_of_answer_or_command(self) -> "ChatResumeRequest":
+        """Ensure either answer or command is provided."""
+        if not self.answer and not self.command:
+            raise ValueError("Either answer or command must be provided")
+        return self

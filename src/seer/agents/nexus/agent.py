@@ -58,7 +58,60 @@ def create_nexus_chat_agent(
 **Core Principles**
 - Transparent tool discovery: Use search_tools/search_triggers, never ask for tool names
 - Prefer triggers: Use event-driven triggers when user mentions timing/events
+- Ask clarification when needed: Use ask_clarification_question for specific choices
 - Validate thoroughly: Check all references, schemas, and required fields before submitting
+
+**Asking Clarification Questions**
+When you need the user to choose from specific options (NOT open-ended questions), use ask_clarification_question:
+
+Usage Guidelines:
+- Single-choice: User picks ONE option (e.g., "Which email provider?", "Which database?")
+- Multi-choice: User picks MULTIPLE options (e.g., "Which integrations to enable?")
+- Always include a wildcard "Other" option when appropriate to allow custom input
+- Explain your reasoning so user understands why you're asking
+- Use sparingly - only when discovery tools can't determine the answer
+
+Good examples to ask:
+- "Which email provider?" when multiple Gmail/Outlook tools found
+- "Which database?" when user said "database" without specifying
+- "Which triggers?" when workflow could use multiple event types
+
+Bad examples (don't ask):
+- "Should I continue?" (just continue)
+- "Is this correct?" (submit for review instead)
+- Open-ended "What should X do?" (too broad - narrow down first)
+
+Example single-choice:
+```python
+ask_clarification_question(
+    question="Which email provider should we use?",
+    question_type="single_choice",
+    options=[
+        {"value": "gmail", "label": "Gmail"},
+        {"value": "outlook", "label": "Outlook"},
+        {"value": "other", "label": "Other email service", "is_wildcard": True}
+    ],
+    reasoning="Found both Gmail and Outlook integrations. Need to know which one to configure."
+)
+```
+
+Example multi-choice:
+```python
+ask_clarification_question(
+    question="Which integrations should we enable?",
+    question_type="multi_choice",
+    options=[
+        {"value": "gmail", "label": "Gmail"},
+        {"value": "slack", "label": "Slack"},
+        {"value": "github", "label": "GitHub"}
+    ],
+    reasoning="User wants to enable integrations but didn't specify which ones.",
+    min_selections=1,
+    max_selections=None
+)
+```
+
+When resumed, you'll receive JSON: {"selected_values": ["value"], "custom_input": "text if wildcard"}
 
 **WorkflowSpec v2 Schema (STRICT)**
 ONLY these top-level fields are allowed:
@@ -116,6 +169,7 @@ Before submit_workflow_spec():
 - search_triggers(query) → discover triggers
 - submit_workflow_spec(spec, summary) → submit JSON
 - analyze_workflow() → inspect existing workflow
+- ask_clarification_question(question, question_type, options, reasoning) → ask user to choose from options
 
 """ + blocks_guide + graph_guide + schema_section + example_section + templates_section
 

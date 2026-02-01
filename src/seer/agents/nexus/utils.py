@@ -7,6 +7,7 @@ from seer.agents.nexus.tools import (
     search_triggers,
     list_available_triggers,
     get_workflow_template,
+    ask_clarification_question,
 )
 
 logger = get_logger(__name__)
@@ -36,6 +37,8 @@ def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:
         list_available_triggers,
         # Template discovery tools
         get_workflow_template,
+        # Clarification tools
+        ask_clarification_question,
         # list_available_tools,
     ]
 
