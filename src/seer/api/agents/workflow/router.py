@@ -41,11 +41,15 @@ from seer.observability.exceptions import RunCostCapExceeded
 from .chat_schema import (
     ChatMessage,
     ChatRequest,
+    ChatResumeRequest,
     ChatResponse,
     ChatSession,
     ChatSessionCreate,
     ChatSessionWithMessages,
+    ClarificationQuestion,
+    ClarificationQuestionOption,
     DiscoveryChatRequest,
+    QuestionType,
     WorkflowCreationMode,
     WorkflowProposalActionResponse,
 )
@@ -338,6 +342,24 @@ async def discovery_chat_endpoint(  # pylint: disable=too-many-locals  # Reason:
                 interrupt_required = True
                 interrupt_data = state_interrupt_data
 
+        # Transform clarification question interrupts for frontend
+        if interrupt_required and interrupt_data and interrupt_data.get("type") == "clarification_question":
+            # Build structured question object
+            question_obj = ClarificationQuestion(
+                question_id=interrupt_data["question_id"],
+                question=interrupt_data["question"],
+                question_type=QuestionType(interrupt_data["question_type"]),
+                options=[
+                    ClarificationQuestionOption(**opt)
+                    for opt in interrupt_data["options"]
+                ],
+                min_selections=interrupt_data.get("min_selections", 1),
+                max_selections=interrupt_data.get("max_selections"),
+            )
+
+            # Store structured question in interrupt_data for frontend
+            interrupt_data["clarification_question"] = question_obj.model_dump()
+
         # Extract response
         agent_messages = result.get("messages", []) if isinstance(result, dict) else []
         response_text = _extract_response_text(result)
@@ -499,6 +521,24 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
             if state_interrupt_required:
                 interrupt_required = True
                 interrupt_data = state_interrupt_data
+
+        # Transform clarification question interrupts for frontend
+        if interrupt_required and interrupt_data and interrupt_data.get("type") == "clarification_question":
+            # Build structured question object
+            question_obj = ClarificationQuestion(
+                question_id=interrupt_data["question_id"],
+                question=interrupt_data["question"],
+                question_type=QuestionType(interrupt_data["question_type"]),
+                options=[
+                    ClarificationQuestionOption(**opt)
+                    for opt in interrupt_data["options"]
+                ],
+                min_selections=interrupt_data.get("min_selections", 1),
+                max_selections=interrupt_data.get("max_selections"),
+            )
+
+            # Store structured question in interrupt_data for frontend
+            interrupt_data["clarification_question"] = question_obj.model_dump()
 
         # Extract response and messages
         agent_messages = result.get("messages", []) if isinstance(result, dict) else []
@@ -669,59 +709,38 @@ async def get_chat_session_endpoint(
     )
 
 
-@router.post("/{workflow_id}/chat/resume")
-async def resume_chat_endpoint(  # pylint: disable=too-many-locals,too-complex # Reason: Complex endpoint with resume logic, requires refactoring to service layer
+@router.post("/{workflow_id}/chat/resume", response_model=ChatResponse)
+async def resume_chat_endpoint(  # pylint: disable=too-many-locals,too-complex,too-many-statements # Reason: Complex endpoint with resume logic, requires refactoring to service layer
     request: Request,
     workflow_id: str,
-    resume_data: Dict[str, Any],
+    resume_data: ChatResumeRequest,
 ) -> ChatResponse:
     """
-    Resume a chat session after an interrupt (e.g., clarification question).
+    Resume chat after interrupt (clarification question or other interrupt type).
 
-    This endpoint handles resuming agent execution after a LangGraph interrupt.
-    The resume_data should contain a Command object with resume information.
+    For clarification questions, provide 'answer' with selected values.
+    For other interrupts, provide 'command' with raw Command data.
     """
-    logger.info("Resume request received: workflow_id=%s", workflow_id)
+    logger.info("Resume request received: workflow_id=%s, thread_id=%s", workflow_id, resume_data.thread_id)
     user = _require_user(request)
-
-    # Verify workflow exists
     workflow = await get_workflow(user, workflow_id)
-
-    # Extract thread_id and command from resume_data
-    thread_id = resume_data.get("thread_id")
-    if not thread_id:
-        raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Missing thread_id",
-            detail="thread_id is required in resume_data",
-            status=400
-        )
-
-    command_data = resume_data.get("command", {})
-    if not command_data:
-        raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Missing command",
-            detail="command is required in resume_data",
-            status=400
-        )
 
     # Get checkpointer
     checkpointer = await get_checkpointer()
 
     # Get session by thread_id
-    session = await get_chat_session_by_thread_id(thread_id, workflow)
+    session = await get_chat_session_by_thread_id(resume_data.thread_id, workflow)
     if not session:
         raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Session not found",
-            detail=f"Chat session not found for thread_id: {thread_id}",
+            detail=f"Chat session not found for thread_id: {resume_data.thread_id}",
             status=404
         )
 
     session_id = session.id
 
-    # Get current workflow state (deep copy to avoid mutating DB graph)
+    # Get current workflow state
     workflow_state = deepcopy(await workflow_state_snapshot(workflow))
 
     # Create agent
@@ -731,10 +750,74 @@ async def resume_chat_endpoint(  # pylint: disable=too-many-locals,too-complex #
         workflow_state=workflow_state,
     )
 
-    # Create Command object for resuming
-    resume_command = Command(**command_data)
+    # Build Command based on interrupt type
+    resume_value: Any = None
+    if resume_data.answer:
+        # Clarification question answer - validate answer
+        answer = resume_data.answer
 
-    # Get user settings for max steps
+        # Retrieve original question from checkpointer to validate
+        config_dict = {"configurable": {"thread_id": resume_data.thread_id}}
+        state_tuple = await checkpointer.aget_tuple(config_dict)
+
+        if state_tuple and state_tuple.checkpoint.get("channel_values", {}).get("__interrupt__"):
+            interrupt_payload = state_tuple.checkpoint.get("channel_values", {}).get("__interrupt__")[0]
+
+            if interrupt_payload.get("type") == "clarification_question":
+                # Validate selected values
+                valid_values = {opt["value"] for opt in interrupt_payload["options"]}
+                invalid_selections = [v for v in answer.selected_values if v not in valid_values]
+
+                if invalid_selections:
+                    raise_problem(
+                        type_uri=VALIDATION_PROBLEM,
+                        title="Invalid selections",
+                        detail=f"Selected values not in available options: {invalid_selections}",
+                        status=400
+                    )
+
+                # Validate wildcard custom input
+                wildcard_options = [opt for opt in interrupt_payload["options"] if opt.get("is_wildcard")]
+                wildcard_values = {opt["value"] for opt in wildcard_options}
+                has_wildcard_selection = any(v in wildcard_values for v in answer.selected_values)
+
+                if has_wildcard_selection and not answer.custom_input:
+                    raise_problem(
+                        type_uri=VALIDATION_PROBLEM,
+                        title="Custom input required",
+                        detail="Custom input is required when selecting wildcard option",
+                        status=400
+                    )
+
+        # Build resume value
+        resume_value = {
+            "selected_values": answer.selected_values,
+            "custom_input": answer.custom_input,
+        }
+
+        # Save user's answer to database
+        await save_chat_message(
+            session_id=session_id,
+            role="user",
+            content=f"Selected: {', '.join(answer.selected_values)}" +
+                    (f" (Custom: {answer.custom_input})" if answer.custom_input else ""),
+            metadata={"clarification_answer": answer.model_dump()},
+        )
+    elif resume_data.command:
+        # Other interrupt types
+        resume_value = resume_data.command.get("resume")
+    else:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Invalid resume data",
+            detail="Either answer or command must be provided",
+            status=400
+        )
+
+    # Create Command to resume
+    resume_command = Command(resume=resume_value)
+
+    # Get user settings
     try:
         user_settings = await UserSettings.get(user=user)
         max_agent_steps = user_settings.max_agent_steps or config.nexus_max_agent_steps
@@ -743,36 +826,45 @@ async def resume_chat_endpoint(  # pylint: disable=too-many-locals,too-complex #
 
     # Resume agent execution
     config_dict = {
-        "configurable": {
-            "thread_id": thread_id,
-        },
+        "configurable": {"thread_id": resume_data.thread_id},
         "recursion_limit": max_agent_steps,
     }
 
-    # Set thread_id in context variable for tools to access
-    token = None
-    if thread_id:
-        token = _current_thread_id.set(thread_id)
+    # Set thread_id in context variable
+    token = _current_thread_id.set(resume_data.thread_id)
     try:
-        # Resume the agent with the command
         result = await agent.ainvoke(resume_command, config=config_dict)
 
         # Extract response
         agent_messages = result.get("messages", [])
-        if not agent_messages:
-            response_text = "I've received your response. Let me continue..."
-        else:
-            # Get last assistant message
-            last_msg = agent_messages[-1]
-            if hasattr(last_msg, "content"):
-                response_text = last_msg.content
-            else:
-                response_text = str(last_msg)
+        response_text = _extract_response_text(result) if agent_messages else "Continuing..."
 
-        # Extract thinking steps
+        # Extract thinking
         thinking_steps = extract_thinking_from_messages(agent_messages)
 
-        proposal_payload = get_proposed_spec_for_thread(thread_id)
+        # Check for new interrupts
+        interrupt_required, interrupt_data = InterruptHandler.extract_interrupt_from_result(result)
+
+        # Transform clarification question interrupts for frontend
+        if interrupt_required and interrupt_data and interrupt_data.get("type") == "clarification_question":
+            # Build structured question object
+            question_obj = ClarificationQuestion(
+                question_id=interrupt_data["question_id"],
+                question=interrupt_data["question"],
+                question_type=QuestionType(interrupt_data["question_type"]),
+                options=[
+                    ClarificationQuestionOption(**opt)
+                    for opt in interrupt_data["options"]
+                ],
+                min_selections=interrupt_data.get("min_selections", 1),
+                max_selections=interrupt_data.get("max_selections"),
+            )
+
+            # Store structured question in interrupt_data for frontend
+            interrupt_data["clarification_question"] = question_obj.model_dump()
+
+        # Get proposal if any
+        proposal_payload = get_proposed_spec_for_thread(resume_data.thread_id)
         proposal, proposal_public, proposal_error = await _maybe_create_proposal_from_spec(
             workflow=workflow,
             session=session,
@@ -781,7 +873,7 @@ async def resume_chat_endpoint(  # pylint: disable=too-many-locals,too-complex #
             proposal_payload=proposal_payload,
         )
 
-        # Save assistant message to database
+        # Save assistant message
         await save_chat_message(
             session_id=session_id,
             role="assistant",
@@ -796,9 +888,10 @@ async def resume_chat_endpoint(  # pylint: disable=too-many-locals,too-complex #
             proposal=proposal_public,
             proposal_error=proposal_error,
             session_id=session_id,
-            thread_id=thread_id,
+            thread_id=resume_data.thread_id,
             thinking=thinking_steps if thinking_steps else None,
-            interrupt_required=False,
+            interrupt_required=interrupt_required,
+            interrupt_data=interrupt_data,
         )
     except Exception as e:  # pylint: disable=broad-exception-caught # Reason: API boundary, converting all exceptions to HTTP problem responses
         logger.error("Error resuming chat: %s", e, exc_info=True)
@@ -809,10 +902,8 @@ async def resume_chat_endpoint(  # pylint: disable=too-many-locals,too-complex #
             status=500
         )
     finally:
-        # Reset context variable
-        if token is not None:
-            _current_thread_id.reset(token)
-        clear_proposed_spec_for_thread(thread_id)
+        _current_thread_id.reset(token)
+        clear_proposed_spec_for_thread(resume_data.thread_id)
 
 
 @router.get("/{workflow_id}/proposals/{proposal_id}", response_model=WorkflowProposalPublic)
