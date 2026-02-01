@@ -6,56 +6,42 @@ _current_thread_id: ContextVar[Optional[str]] = ContextVar('_current_thread_id',
 
 if TYPE_CHECKING:
     from seer.api.user.models import User
-
-# Global workflow state context (thread-safe via thread_id key)
-_workflow_state_context: Dict[str, Dict[str, Any]] = {}
-_proposed_specs_context: Dict[str, Dict[str, Any]] = {}
-_thread_user_map: Dict[str, "User"] = {}
+    from seer.database.workflow_models import WorkflowChatSession, WorkflowDiscoveryChatSession
 
 
-def set_workflow_state_for_thread(thread_id: str, workflow_state: Dict[str, Any]) -> None:
-    """Set workflow state for a specific thread."""
-    _workflow_state_context[thread_id] = workflow_state
+async def get_workflow_state_for_thread(thread_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get workflow state for a specific thread from the database.
+
+    Looks up the WorkflowChatSession by thread_id and returns its current_workflow_state.
+    """
+    # Import here to avoid circular dependency at module load time
+    from seer.database.workflow_models import WorkflowChatSession  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
+
+    session = await WorkflowChatSession.get_or_none(thread_id=thread_id)
+    if session and session.current_workflow_state:
+        return session.current_workflow_state
+    return None
 
 
-def get_workflow_state_for_thread(thread_id: str) -> Optional[Dict[str, Any]]:
-    """Get workflow state for a specific thread."""
-    return _workflow_state_context.get(thread_id)
+async def get_user_for_thread(thread_id: str) -> Optional["User"]:
+    """
+    Retrieve User object for a thread from the database.
 
+    Looks up the thread in WorkflowChatSession or WorkflowDiscoveryChatSession
+    and returns the associated user.
+    """
+    # Import here to avoid circular dependency at module load time
+    from seer.database.workflow_models import WorkflowChatSession, WorkflowDiscoveryChatSession  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
 
-def set_proposed_spec_for_thread(thread_id: str, proposal: Dict[str, Any]) -> None:
-    """Persist the latest workflow proposal payload (spec + metadata) for a thread."""
-    if not thread_id:
-        return
-    _proposed_specs_context[thread_id] = proposal
+    # Try chat session first
+    session = await WorkflowChatSession.get_or_none(thread_id=thread_id).prefetch_related('user')
+    if session:
+        return session.user
 
+    # Try discovery session
+    discovery = await WorkflowDiscoveryChatSession.get_or_none(thread_id=thread_id).prefetch_related('user')
+    if discovery:
+        return discovery.user
 
-def get_proposed_spec_for_thread(thread_id: Optional[str], clear: bool = True) -> Optional[Dict[str, Any]]:
-    """Return the most recent workflow proposal payload for a thread."""
-    if not thread_id:
-        return None
-    if clear:
-        return _proposed_specs_context.pop(thread_id, None)
-    return _proposed_specs_context.get(thread_id)
-
-
-def clear_proposed_spec_for_thread(thread_id: Optional[str]) -> None:
-    """Remove stored workflow spec for a thread."""
-    if not thread_id:
-        return
-    _proposed_specs_context.pop(thread_id, None)
-
-
-def set_user_for_thread(thread_id: str, user: "User") -> None:
-    """Store User object for a thread."""
-    _thread_user_map[thread_id] = user
-
-
-def get_user_for_thread(thread_id: str) -> Optional["User"]:
-    """Retrieve User object for a thread."""
-    return _thread_user_map.get(thread_id)
-
-
-def clear_user_for_thread(thread_id: str) -> None:
-    """Clear User object for a thread."""
-    _thread_user_map.pop(thread_id, None)
+    return None

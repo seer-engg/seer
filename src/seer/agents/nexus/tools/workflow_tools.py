@@ -15,7 +15,6 @@ from pydantic import BaseModel, Field
 from seer.agents.nexus.context import (
     _current_thread_id,
     get_workflow_state_for_thread,
-    set_proposed_spec_for_thread,
     get_user_for_thread,
 )
 from seer.agents.nexus.schema_context import (
@@ -153,7 +152,7 @@ Provide a summary and reasoning for your design decisions."""
     return proposal
 
 
-def _resolve_workflow_state(
+async def _resolve_workflow_state(
     workflow_state: Optional[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
     """Use explicit workflow_state if provided otherwise fall back to thread context."""
@@ -161,7 +160,7 @@ def _resolve_workflow_state(
         return workflow_state
     thread_id = _current_thread_id.get()
     if thread_id:
-        return get_workflow_state_for_thread(thread_id)
+        return await get_workflow_state_for_thread(thread_id)
     return None
 
 
@@ -174,7 +173,7 @@ async def analyze_workflow(
 
     Returns a JSON string describing the workflow's blocks, connections, and configuration.
     """
-    resolved_state = _resolve_workflow_state(workflow_state)
+    resolved_state = await _resolve_workflow_state(workflow_state)
     if resolved_state is None:
         return json.dumps({"error": "Workflow state not available"})
 
@@ -241,6 +240,23 @@ def _error_response(error_type: str, message: str, hint: Optional[str] = None) -
     if hint:
         response["hint"] = hint
     return json.dumps(response)
+
+
+def _summarize_spec(spec: Dict[str, Any]) -> str:
+    """Produce a short human summary for a WorkflowSpec."""
+    if not spec:
+        return "Workflow proposal"
+    nodes = spec.get("nodes") or []
+    node_types = {}
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        node_type = node.get("type", "node")
+        node_types[node_type] = node_types.get(node_type, 0) + 1
+    if not node_types:
+        return f"{len(nodes)} nodes"
+    parts = [f"{count} {node_type}" for node_type, count in node_types.items()]
+    return ", ".join(parts)
 
 
 def _validate_thread_context() -> Optional[str]:
@@ -336,7 +352,7 @@ async def _validate_compilation(spec_dict: Dict) -> Optional[str]:
     Validates type environment, references, and compilation.
     """
     thread_id = _current_thread_id.get()
-    user = get_user_for_thread(thread_id)
+    user = await get_user_for_thread(thread_id)
     if not user:
         return _error_response("internal", "User context not available for compilation validation")
 
@@ -365,7 +381,7 @@ async def _validate_compilation(spec_dict: Dict) -> Optional[str]:
 
 
 @tool
-async def submit_workflow_spec(
+async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # Reason: Validation chain requires early returns for each validation step
     workflow_spec: Any,
     summary: Optional[str] = None,
 ) -> str:
@@ -381,6 +397,10 @@ async def submit_workflow_spec(
                        Can be provided as a dict or a JSON string.
         summary: Optional natural language rationale for the proposal.
     """
+    # Import here to avoid circular dependency at module load time
+    from seer.database.workflow_models import WorkflowChatSession  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
+    from seer.database.workflow_models import WorkflowProposal as WorkflowProposalModel  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
+
     # Validation chain - each returns early if error
     if error := _validate_thread_context():
         return error
@@ -400,18 +420,36 @@ async def submit_workflow_spec(
     if error := await _validate_compilation(spec_dict):
         return error
 
-    # All validations passed - record the spec
+    # All validations passed - create WorkflowProposal record
     thread_id = _current_thread_id.get()
     spec_payload = validated_spec.model_dump(mode="json")
-    proposal_context = {"spec": spec_payload}
-    if summary:
-        proposal_context["summary"] = summary
-    set_proposed_spec_for_thread(thread_id, proposal_context)
+
+    # Get session and workflow for this thread
+    session = await WorkflowChatSession.get_or_none(thread_id=thread_id).prefetch_related('workflow', 'user')
+    if not session:
+        return _error_response("internal", "Chat session not found for current thread")
+
+    # Get user
+    user = await get_user_for_thread(thread_id)
+    if not user:
+        return _error_response("internal", "User context not available")
+
+    # Create WorkflowProposal record
+    proposal = await WorkflowProposalModel.create(
+        workflow=session.workflow,
+        session=session,
+        created_by=user,
+        summary=summary or _summarize_spec(spec_payload),
+        spec=spec_payload,
+        status=WorkflowProposalModel.STATUS_PENDING,
+        thread_id=thread_id,
+    )
 
     response = {
         "status": "ok",
         "message": "Workflow spec recorded for review",
         "workflow_spec": spec_payload,
+        "proposal_id": proposal.id,
     }
     if summary:
         response["summary"] = summary
