@@ -23,7 +23,23 @@ async def full_app():
     This is slower than mock_app but provides complete integration testing.
     Use sparingly and prefer integration tests when possible.
     """
-    # Import here to avoid circular imports
+    import os  # pylint: disable=import-outside-toplevel  # Reason: set env before app import
+    import sys  # pylint: disable=import-outside-toplevel  # Reason: need to clear module cache
+
+    # CRITICAL: Set test environment BEFORE importing app
+    os.environ["SEER_MODE"] = "self-hosted"
+
+    # Clear modules from cache to force re-import with new env
+    modules_to_clear = [
+        "seer.api.main",
+        "seer.config",
+        "seer.api.core.middleware.auth",
+    ]
+    for module in modules_to_clear:
+        if module in sys.modules:
+            del sys.modules[module]
+
+    # Now import the app with correct environment
     from seer.api.main import app  # pylint: disable=import-outside-toplevel  # Reason: avoid circular imports in test fixtures
 
     # Temporarily disable lifespan events for testing
@@ -59,19 +75,29 @@ async def authenticated_e2e_client(  # pylint: disable=redefined-outer-name  # R
     full_app, test_user
 ) -> AsyncGenerator[AsyncClient, None]:
     """
-    Authenticated E2E client with test user injected in middleware.
+    Authenticated E2E client with test user injected via JWT token.
 
-    Bypasses Clerk authentication for testing protected endpoints.
+    Creates a JWT token containing the test user's information that will
+    be decoded by the TokenDecodeWithoutValidationMiddleware in non-cloud mode.
     """
-    # Mock authentication to inject test_user
-    from unittest.mock import patch  # pylint: disable=import-outside-toplevel  # Reason: avoid circular imports in test fixtures
+    import jwt  # pylint: disable=import-outside-toplevel  # Reason: avoid circular imports
 
-    with patch("seer.api.core.middleware.auth.get_current_user", return_value=test_user):
-        transport = ASGITransport(app=full_app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            # Add auth header (content doesn't matter since we're mocking)
-            client.headers["Authorization"] = "Bearer test_token_123"
-            yield client
+    # Create a mock JWT token with test user info
+    token_payload = {
+        "sub": test_user.user_id,
+        "email": test_user.email,
+        "first_name": test_user.first_name,
+        "last_name": test_user.last_name,
+    }
+
+    # Encode without signature (middleware decodes without verification)
+    token = jwt.encode(token_payload, "test_secret", algorithm="HS256")
+
+    transport = ASGITransport(app=full_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Add Authorization header with bearer token
+        client.headers["Authorization"] = f"Bearer {token}"
+        yield client
 
 
 # =============================================================================
@@ -99,6 +125,74 @@ def workflow_update_payload():
     return {
         "name": "Updated Workflow Name",
         "description": "Updated description",
+    }
+
+
+@pytest.fixture
+def webhook_workflow_create_payload():
+    """
+    Workflow payload with a webhook trigger for start-listening tests.
+
+    Uses webhook.generic trigger type which supports the start-listening endpoint.
+    The start_listening_for_trigger endpoint only works with webhook triggers
+    (keys starting with "webhook."), not polling triggers.
+    """
+    return {
+        "name": "Webhook Test Workflow",
+        "description": "Created via API test with webhook trigger",
+        "spec": {
+            "version": "2",
+            "triggers": [
+                {
+                    "id": "t1",
+                    "key": "webhook.generic",
+                    "mode": "webhook",
+                    "enabled": True,
+                }
+            ],
+            "nodes": [
+                {
+                    "id": "n1",
+                    "type": "task",
+                    "kind": "set",
+                    "value": {"result": "test"},
+                }
+            ],
+            "edges": [
+                {
+                    "source": "t1",
+                    "target": "n1",
+                    "type": "trigger",
+                }
+            ],
+        }
+    }
+
+
+@pytest.fixture
+def simple_workflow_create_payload():
+    """
+    Simple workflow payload without triggers for execution tests.
+
+    Workflows without triggers can be executed directly without
+    needing trigger subscription setup.
+    """
+    return {
+        "name": "Simple Test Workflow",
+        "description": "Created via API test without triggers",
+        "spec": {
+            "version": "2",
+            "triggers": [],
+            "nodes": [
+                {
+                    "id": "n1",
+                    "type": "task",
+                    "kind": "set",
+                    "value": {"result": "test"},
+                }
+            ],
+            "edges": [],
+        }
     }
 
 

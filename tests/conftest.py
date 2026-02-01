@@ -370,8 +370,10 @@ def test_environment():
     os.environ["TRIGGER_POLLER_ENABLED"] = "false"
     os.environ["TOOL_INDEX_AUTO_GENERATE"] = "false"
 
-    # Use test mode for cloud features
+    # Use test mode - DISABLE cloud/auth middleware
     os.environ["CLOUD_MODE"] = "false"
+    os.environ["IS_CLOUD_MODE"] = "false"
+    os.environ["SEER_MODE"] = "self-hosted"  # This disables Clerk auth
 
     # Set minimal database pool for tests
     os.environ["DB_MAX_CONNECTIONS"] = "5"
