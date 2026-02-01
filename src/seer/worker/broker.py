@@ -8,6 +8,10 @@ from seer.database import close_db, init_db
 from seer.logger import get_logger
 from seer.core.triggers.polling import TriggerPollScheduler  # lazy import
 from seer.worker.broker_instance import broker
+from seer.utilities.ml_flow import _ensure_mlflow_autologging
+
+if config.mlflow_enabled:
+    _ensure_mlflow_autologging()
 
 logger = get_logger(__name__)
 

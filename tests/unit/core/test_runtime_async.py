@@ -16,6 +16,28 @@ from seer.core.runtime.nodes import NodeRuntime, RuntimeServices
 from seer.core.schema.schema_registry import SchemaRegistry
 
 
+def _create_mock_tool() -> ToolDefinition:
+    """Create a mock test.tool that simply returns its input value."""
+    def handler(inputs, config, context):
+        return inputs.get("value", "")
+
+    async def async_handler(inputs, config, context):
+        return inputs.get("value", "")
+
+    return ToolDefinition(
+        name="test.tool",
+        version="v1",
+        input_schema={
+            "type": "object",
+            "properties": {"value": {"type": ["string", "array", "object", "number", "boolean", "null"]}},
+            "additionalProperties": False,
+        },
+        output_schema={"type": ["string", "array", "object", "number", "boolean", "null"]},
+        handler=handler,
+        async_handler=async_handler,
+    )
+
+
 async def _compile_workflow(spec_payload: dict, tool_defs: list[ToolDefinition]) -> CompiledWorkflow:
     schema_registry = SchemaRegistry()
     tool_registry = ToolRegistry()
@@ -182,20 +204,19 @@ async def test_for_each_body_tools_use_async_handler() -> None:
                 "title": "LoopTrigger",
                 "provider": "test",
                 "mode": "webhook",
-                "schemas": {"event": {"type": "object"}},
+                "event_schema": {
+                    "type": "object",
+                    "properties": {
+                        "items": {"type": "array"}
+                    }
+                },
             }
         ],
         "nodes": [
             {
-                "id": "items_seed",
-                "type": "task",
-                "kind": "set",
-                "value": ["alpha", "beta"],
-            },
-            {
                 "id": "loop",
                 "type": "for_each",
-                "items": "${items_seed}",
+                "items": "${loop_trigger.items}",
             },
             {
                 "id": "loop_tool",
@@ -205,22 +226,26 @@ async def test_for_each_body_tools_use_async_handler() -> None:
             },
             {
                 "id": "done",
-                "type": "task",
-                "kind": "set",
-                "value": "finished",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "finished"},
             },
         ],
         "edges": [
-            {"source": "loop_trigger", "target": "items_seed", "type": "trigger"},
-            {"source": "items_seed", "target": "loop", "type": "default"},
+            {"source": "loop_trigger", "target": "loop", "type": "trigger"},
             {"source": "loop", "target": "loop_tool", "type": "loop_body"},
             {"source": "loop_tool", "target": "loop", "type": "default"},
             {"source": "loop", "target": "done", "type": "loop_exit"},
         ],
     }
 
-    compiled = await _compile_workflow(spec, [tool_def])
-    trigger_envelope = {"trigger_key": "loop.trigger", "title": "LoopTrigger"}
+    mock_tool = _create_mock_tool()
+    compiled = await _compile_workflow(spec, [tool_def, mock_tool])
+    trigger_envelope = {
+        "trigger_id": "loop_trigger",
+        "trigger_key": "loop.trigger",
+        "items": ["alpha", "beta"]
+    }
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Verify both loop iterations ran with async handler
@@ -249,9 +274,9 @@ async def test_trigger_routes_to_correct_node() -> None:
         "nodes": [
             {
                 "id": "handler",
-                "type": "task",
-                "kind": "set",
-                "value": "webhook_handled",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "webhook_handled"},
             },
         ],
         "edges": [
@@ -259,7 +284,7 @@ async def test_trigger_routes_to_correct_node() -> None:
         ],
     }
 
-    compiled = await _compile_workflow(spec, [])
+    compiled = await _compile_workflow(spec, [_create_mock_tool()])
     trigger_envelope = {"trigger_key": "webhook.received", "title": "Webhook"}
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
@@ -292,15 +317,15 @@ async def test_multiple_triggers_route_to_different_nodes() -> None:
         "nodes": [
             {
                 "id": "handle_push",
-                "type": "task",
-                "kind": "set",
-                "value": "push_handled",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "push_handled"},
             },
             {
                 "id": "handle_pr",
-                "type": "task",
-                "kind": "set",
-                "value": "pr_handled",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "pr_handled"},
             },
         ],
         "edges": [
@@ -309,7 +334,7 @@ async def test_multiple_triggers_route_to_different_nodes() -> None:
         ],
     }
 
-    compiled = await _compile_workflow(spec, [])
+    compiled = await _compile_workflow(spec, [_create_mock_tool()])
 
     # Test push trigger routes to handle_push
     result = await compiled.ainvoke(
@@ -352,9 +377,9 @@ async def test_multiple_triggers_route_to_same_node() -> None:
         "nodes": [
             {
                 "id": "shared_handler",
-                "type": "task",
-                "kind": "set",
-                "value": "shared_executed",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "shared_executed"},
             },
         ],
         "edges": [
@@ -363,7 +388,7 @@ async def test_multiple_triggers_route_to_same_node() -> None:
         ],
     }
 
-    compiled = await _compile_workflow(spec, [])
+    compiled = await _compile_workflow(spec, [_create_mock_tool()])
 
     # Both triggers should route to the same node
     for trigger_key, title in [("trigger_a", "A"), ("trigger_b", "B")]:
@@ -392,9 +417,9 @@ async def test_unknown_trigger_key_fallback() -> None:
         "nodes": [
             {
                 "id": "handler",
-                "type": "task",
-                "kind": "set",
-                "value": "handled",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "handled"},
             },
         ],
         "edges": [
@@ -402,7 +427,7 @@ async def test_unknown_trigger_key_fallback() -> None:
         ],
     }
 
-    compiled = await _compile_workflow(spec, [])
+    compiled = await _compile_workflow(spec, [_create_mock_tool()])
 
     # Unknown trigger key should fall back to the first target
     result = await compiled.ainvoke(
@@ -414,7 +439,7 @@ async def test_unknown_trigger_key_fallback() -> None:
 
 @pytest.mark.asyncio
 async def test_trigger_data_accessible_after_routing() -> None:
-    """Trigger data is accessible via ${trigger.*} expressions after routing."""
+    """Trigger data is accessible via ${trigger_id.*} expressions after routing."""
     spec = {
         "version": "2",
         "triggers": [
@@ -442,9 +467,9 @@ async def test_trigger_data_accessible_after_routing() -> None:
         "nodes": [
             {
                 "id": "echo",
-                "type": "task",
-                "kind": "set",
-                "value": "${data_trigger.data.message}",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${data_trigger.data.message}"},
             },
         ],
         "edges": [
@@ -452,7 +477,7 @@ async def test_trigger_data_accessible_after_routing() -> None:
         ],
     }
 
-    compiled = await _compile_workflow(spec, [])
+    compiled = await _compile_workflow(spec, [_create_mock_tool()])
     result = await compiled.ainvoke(
         config=None, context=None,
         trigger={

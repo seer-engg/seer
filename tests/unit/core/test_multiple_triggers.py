@@ -15,6 +15,29 @@ from seer.core.compiler.lower_control_flow import build_execution_plan
 from seer.core.compiler.parse import parse_workflow_spec
 from seer.core.schema.models import WorkflowSpec
 from seer.core.errors import ValidationPhaseError
+from seer.core.registry.tool_registry import ToolDefinition
+
+
+def _create_mock_tool() -> ToolDefinition:
+    """Create a mock test.tool that simply returns its input value."""
+    def handler(inputs, config, context):
+        return inputs.get("value", "")
+
+    async def async_handler(inputs, config, context):
+        return inputs.get("value", "")
+
+    return ToolDefinition(
+        name="test.tool",
+        version="v1",
+        input_schema={
+            "type": "object",
+            "properties": {"value": {"type": ["string", "array", "object", "number", "boolean", "null"]}},
+            "additionalProperties": False,
+        },
+        output_schema={"type": ["string", "array", "object", "number", "boolean", "null"]},
+        handler=handler,
+        async_handler=async_handler,
+    )
 
 
 class TestMultipleTriggersSameType:
@@ -25,8 +48,8 @@ class TestMultipleTriggersSameType:
         spec_payload = {
             "version": "2",
             "nodes": [
-                {"id": "node1", "type": "task", "kind": "set", "value": "result1"},
-                {"id": "node2", "type": "task", "kind": "set", "value": "result2"},
+                {"id": "node1", "type": "tool", "tool": "test.tool", "inputs": {"value": "result1"}},
+                {"id": "node2", "type": "tool", "tool": "test.tool", "inputs": {"value": "result2"}},
             ],
             "edges": [
                 {"source": "trigger_1", "target": "node1", "type": "trigger"},
@@ -63,7 +86,7 @@ class TestMultipleTriggersSameType:
         spec_payload = {
             "version": "2",
             "nodes": [
-                {"id": "node1", "type": "task", "kind": "set", "value": "result1"},
+                {"id": "node1", "type": "tool", "tool": "test.tool", "inputs": {"value": "result1"}},
             ],
             "edges": [
                 {"source": "trigger_1", "target": "node1", "type": "trigger"},
@@ -97,7 +120,7 @@ class TestMultipleTriggersSameType:
         spec_payload = {
             "version": "2",
             "nodes": [
-                {"id": "node1", "type": "task", "kind": "set", "value": "result1"},
+                {"id": "node1", "type": "tool", "tool": "test.tool", "inputs": {"value": "result1"}},
             ],
             "edges": [
                 {"source": "nonexistent_trigger", "target": "node1", "type": "trigger"},
@@ -123,9 +146,9 @@ class TestMultipleTriggersSameType:
         spec_payload = {
             "version": "2",
             "nodes": [
-                {"id": "node1", "type": "task", "kind": "set", "value": "result1"},
-                {"id": "node2", "type": "task", "kind": "set", "value": "result2"},
-                {"id": "node3", "type": "task", "kind": "set", "value": "result3"},
+                {"id": "node1", "type": "tool", "tool": "test.tool", "inputs": {"value": "result1"}},
+                {"id": "node2", "type": "tool", "tool": "test.tool", "inputs": {"value": "result2"}},
+                {"id": "node3", "type": "tool", "tool": "test.tool", "inputs": {"value": "result3"}},
             ],
             "edges": [
                 {"source": "gmail_1", "target": "node1", "type": "trigger"},
@@ -180,8 +203,8 @@ class TestMultipleTriggersSameType:
         spec_payload = {
             "version": "2",
             "nodes": [
-                {"id": "node1", "type": "task", "kind": "set", "value": "result1"},
-                {"id": "node2", "type": "task", "kind": "set", "value": "result2"},
+                {"id": "node1", "type": "tool", "tool": "test.tool", "inputs": {"value": "result1"}},
+                {"id": "node2", "type": "tool", "tool": "test.tool", "inputs": {"value": "result2"}},
             ],
             "edges": [
                 {"source": "trigger_1", "target": "node1", "type": "trigger"},
@@ -211,7 +234,7 @@ class TestMultipleTriggersSameType:
         spec_payload = {
             "version": "2",
             "nodes": [
-                {"id": "node1", "type": "task", "kind": "set", "value": "result1"},
+                {"id": "node1", "type": "tool", "tool": "test.tool", "inputs": {"value": "result1"}},
             ],
             "edges": [],
             "triggers": [
@@ -242,9 +265,9 @@ class TestMultipleTriggersSameType:
         spec_payload = {
             "version": "2",
             "nodes": [
-                {"id": "process_inbox", "type": "task", "kind": "set", "value": "inbox processed"},
-                {"id": "process_important", "type": "task", "kind": "set", "value": "important processed"},
-                {"id": "process_sent", "type": "task", "kind": "set", "value": "sent processed"},
+                {"id": "process_inbox", "type": "tool", "tool": "test.tool", "inputs": {"value": "inbox processed"}},
+                {"id": "process_important", "type": "tool", "tool": "test.tool", "inputs": {"value": "important processed"}},
+                {"id": "process_sent", "type": "tool", "tool": "test.tool", "inputs": {"value": "sent processed"}},
             ],
             "edges": [
                 {"source": "gmail_inbox", "target": "process_inbox", "type": "trigger"},
@@ -346,9 +369,9 @@ class TestTriggerReferenceResolution:
             "nodes": [
                 {
                     "id": "echo_node",
-                    "type": "task",
-                    "kind": "set",
-                    "value": "${trigger-1.data.message}",
+                    "type": "tool",
+                    "tool": "test.tool",
+                    "inputs": {"value": "${trigger-1.data.message}"},
                 },
             ],
             "edges": [
@@ -383,6 +406,10 @@ class TestTriggerReferenceResolution:
         schema_registry = SchemaRegistry()
         tool_registry = ToolRegistry()
         model_registry = ModelRegistry()
+
+        # Register mock tool
+        mock_tool = _create_mock_tool()
+        tool_registry.register(mock_tool)
 
         spec = parse_workflow_spec(spec_payload)
         type_env = build_type_environment(

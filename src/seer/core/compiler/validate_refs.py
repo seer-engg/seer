@@ -34,13 +34,19 @@ def validate_references(spec: WorkflowSpec, type_env: TypeEnvironment) -> None:
             "Add triggers to WorkflowSpec.triggers or remove trigger references."
         )
 
-    # Check for bare "trigger" references in multi-trigger workflows
-    if len(spec.triggers) > 1 and _uses_bare_trigger_reference(spec):
+    # Check for bare "trigger" references in all workflows
+    if spec.triggers and _uses_bare_trigger_reference(spec):
         trigger_ids = [t.id for t in spec.triggers]
-        errors.append(
-            "Cannot use ${trigger.X} syntax in multi-trigger workflow. "
-            f"Use explicit trigger IDs: {', '.join(f'${{{tid}.X}}' for tid in trigger_ids)}"
-        )
+        if len(trigger_ids) == 1:
+            errors.append(
+                f"Cannot use ${{trigger.X}} syntax. "
+                f"Use explicit trigger ID: ${{{trigger_ids[0]}.X}}"
+            )
+        else:
+            errors.append(
+                "Cannot use ${trigger.X} syntax in multi-trigger workflow. "
+                f"Use explicit trigger IDs: {', '.join(f'${{{tid}.X}}' for tid in trigger_ids)}"
+            )
 
     for node in spec.nodes:
         _validate_node(node, scope, errors)

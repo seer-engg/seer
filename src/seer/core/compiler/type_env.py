@@ -19,12 +19,9 @@ from seer.core.registry.mcp_client_registry import MCPClientRegistry, MCPServerC
 from seer.core.registry.tool_registry import ToolRegistry
 from seer.core.schema.models import (
     ForEachNode,
-    JSONValue,
     LLMNode,
     MCPNode,
     Node,
-    TaskKind,
-    TaskNode,
     ToolNode,
     TriggerSpec,
     WorkflowSpec,
@@ -93,13 +90,9 @@ async def build_type_environment_async(
 
 def _register_triggers(triggers: List[TriggerSpec], env: TypeEnvironment) -> None:
     """
-    Register triggers in type environment.
+    Register triggers in type environment by their explicit IDs.
 
-    Single-trigger workflows: registers both 'trigger' and trigger.id
-    Multi-trigger workflows: only registers by trigger.id
-
-    For single-trigger workflows, allows intuitive ${trigger.data.X} syntax.
-    For multi-trigger workflows, requires explicit ${trigger_id.data.X} syntax.
+    All workflows use explicit ${trigger_id.X} syntax for consistency.
     """
     # Always register by trigger ID (explicit, works for all cases)
     for trigger in triggers:
@@ -116,22 +109,6 @@ def _register_triggers(triggers: List[TriggerSpec], env: TypeEnvironment) -> Non
         properties = event_schema.get("properties", {})
         for name, schema in properties.items():
             env.register(f"{trigger.id}.{name}", schema)
-
-    # Single-trigger convenience: also register as "trigger"
-    if len(triggers) == 1:
-        trigger = triggers[0]
-        event_schema = trigger.event_schema if trigger.event_schema else {
-            "type": "object",
-            "additionalProperties": True
-        }
-
-        # Register "trigger" as root symbol
-        env.register("trigger", event_schema)
-
-        # Register "trigger.property" for all sub-properties
-        properties = event_schema.get("properties", {})
-        for name, schema in properties.items():
-            env.register(f"trigger.{name}", schema)
 
 
 def _register_loop_variables(spec: WorkflowSpec, env: TypeEnvironment) -> None:
@@ -162,11 +139,6 @@ def _process_node_sync(
     tool_registry: ToolRegistry,
 ) -> None:
     """Process a node synchronously. MCP nodes are registered with a generic schema."""
-    if isinstance(node, TaskNode):
-        schema = _schema_for_task(node, schema_registry)
-        _register_symbol(env, node.id, schema)
-        return
-
     if isinstance(node, ToolNode):
         tool_def = tool_registry.get(node.tool)
         schema = tool_def.output_schema
@@ -248,39 +220,6 @@ async def _process_node_async(
 
     # Non-MCP nodes use the sync path
     _process_node_sync(node, env, schema_registry, tool_registry)
-
-
-def _schema_for_task(node: TaskNode, registry: SchemaRegistry) -> Optional[Dict]:
-    if node.outputs:
-        return schema_from_output_contract(node.outputs, registry)
-    if node.kind == TaskKind.set and node.value is not None:
-        return _infer_schema_from_value(node.value)
-    return None
-
-
-def _infer_schema_from_value(value: JSONValue) -> Dict:  # pylint: disable=too-many-return-statements  # Type checking requires multiple returns
-    if isinstance(value, str):
-        return {"type": "string"}
-    if isinstance(value, bool):
-        return {"type": "boolean"}
-    if isinstance(value, int):
-        return {"type": "integer"}
-    if isinstance(value, float):
-        return {"type": "number"}
-    if value is None:
-        return {"type": "null"}
-    if isinstance(value, list):
-        item_schema = None
-        if value:
-            item_schema = _infer_schema_from_value(value[0])
-        schema: Dict = {"type": "array"}
-        if item_schema:
-            schema["items"] = item_schema
-        return schema
-    if isinstance(value, dict):
-        properties = {k: _infer_schema_from_value(v) for k, v in value.items()}
-        return {"type": "object", "properties": properties, "additionalProperties": True}
-    raise TypeEnvironmentError(f"Unsupported literal type {type(value).__name__}")
 
 
 def _register_symbol(env: TypeEnvironment, symbol: str | None, schema: Dict | None) -> None:

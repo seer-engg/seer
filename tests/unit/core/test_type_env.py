@@ -10,7 +10,6 @@ import pytest
 from seer.core.compiler.type_env import (
     VALID_IDENTIFIER,
     build_type_environment,
-    _infer_schema_from_value,
     _register_triggers,
 )
 from seer.core.expr.typecheck import TypeEnvironment
@@ -20,8 +19,6 @@ from seer.core.schema.models import (
     LLMNode,
     OutputContract,
     OutputMode,
-    TaskKind,
-    TaskNode,
     TriggerSpec,
     WorkflowSpec,
 )
@@ -188,112 +185,6 @@ def test_register_triggers_various_special_char_ids(valid_id):
 
 
 # =============================================================================
-# Schema Inference Tests
-# =============================================================================
-
-
-def test_infer_schema_from_string():
-    """Test schema inference for string values."""
-    schema = _infer_schema_from_value("hello")
-    assert schema == {"type": "string"}
-
-
-def test_infer_schema_from_integer():
-    """Test schema inference for integer values."""
-    schema = _infer_schema_from_value(42)
-    assert schema == {"type": "integer"}
-
-
-def test_infer_schema_from_float():
-    """Test schema inference for float values."""
-    schema = _infer_schema_from_value(3.14)
-    assert schema == {"type": "number"}
-
-
-def test_infer_schema_from_boolean():
-    """Test schema inference for boolean values."""
-    schema = _infer_schema_from_value(True)
-    assert schema == {"type": "boolean"}
-
-
-def test_infer_schema_from_null():
-    """Test schema inference for null values."""
-    schema = _infer_schema_from_value(None)
-    assert schema == {"type": "null"}
-
-
-def test_infer_schema_from_empty_list():
-    """Test schema inference for empty list."""
-    schema = _infer_schema_from_value([])
-    assert schema == {"type": "array"}
-
-
-def test_infer_schema_from_list_with_items():
-    """Test schema inference for list with items."""
-    schema = _infer_schema_from_value([1, 2, 3])
-    assert schema == {"type": "array", "items": {"type": "integer"}}
-
-
-def test_infer_schema_from_nested_list():
-    """Test schema inference for nested list."""
-    schema = _infer_schema_from_value([["nested"]])
-    assert schema["type"] == "array"
-    assert schema["items"]["type"] == "array"
-    assert schema["items"]["items"] == {"type": "string"}
-
-
-def test_infer_schema_from_empty_object():
-    """Test schema inference for empty object."""
-    schema = _infer_schema_from_value({})
-    assert schema["type"] == "object"
-    assert schema["properties"] == {}
-    assert schema.get("additionalProperties") is True
-
-
-def test_infer_schema_from_object_with_properties():
-    """Test schema inference for object with properties."""
-    schema = _infer_schema_from_value({"name": "John", "age": 30})
-    assert schema["type"] == "object"
-    assert schema["properties"]["name"] == {"type": "string"}
-    assert schema["properties"]["age"] == {"type": "integer"}
-    assert schema.get("additionalProperties") is True
-
-
-def test_infer_schema_from_nested_object():
-    """Test schema inference for nested object."""
-    schema = _infer_schema_from_value({
-        "user": {
-            "name": "John",
-            "contact": {
-                "email": "john@example.com"
-            }
-        }
-    })
-    assert schema["type"] == "object"
-    assert schema["properties"]["user"]["type"] == "object"
-    assert schema["properties"]["user"]["properties"]["contact"]["type"] == "object"
-
-
-def test_infer_schema_from_complex_structure():
-    """Test schema inference for complex nested structure."""
-    value = {
-        "items": [
-            {"id": 1, "name": "Item 1"},
-            {"id": 2, "name": "Item 2"}
-        ],
-        "total": 2,
-        "active": True
-    }
-
-    schema = _infer_schema_from_value(value)
-    assert schema["type"] == "object"
-    assert schema["properties"]["items"]["type"] == "array"
-    assert schema["properties"]["items"]["items"]["type"] == "object"
-    assert schema["properties"]["total"] == {"type": "integer"}
-    assert schema["properties"]["active"] == {"type": "boolean"}
-
-
-# =============================================================================
 # Build Type Environment Tests
 # =============================================================================
 
@@ -333,31 +224,6 @@ def test_build_type_environment_with_trigger():
     symbols = env.as_dict()
     assert "t1" in symbols
     assert "t1.data" in symbols
-
-
-def test_build_type_environment_with_task_node():
-    """Test building type environment with task node."""
-    spec = WorkflowSpec(
-        version="2",
-        triggers=[],
-        nodes=[
-            TaskNode(
-                id="task1",
-                type="task",
-                kind=TaskKind.set,
-                value="hello world"
-            )
-        ],
-        edges=[]
-    )
-    schema_registry = SchemaRegistry()
-    tool_registry = ToolRegistry()
-
-    env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
-
-    symbols = env.as_dict()
-    assert "task1" in symbols
-    assert symbols["task1"]["type"] == "string"
 
 
 def test_build_type_environment_with_foreach_node():
@@ -415,47 +281,6 @@ def test_build_type_environment_with_llm_node():
     assert "llm1" in symbols
 
 
-def test_build_type_environment_with_multiple_nodes():
-    """Test building type environment with multiple nodes."""
-    spec = WorkflowSpec(
-        version="2",
-        triggers=[],
-        nodes=[
-            TaskNode(
-                id="task1",
-                type="task",
-                kind=TaskKind.set,
-                value=42
-            ),
-            TaskNode(
-                id="task2",
-                type="task",
-                kind=TaskKind.set,
-                value="text"
-            ),
-            TaskNode(
-                id="task3",
-                type="task",
-                kind=TaskKind.set,
-                value=True
-            )
-        ],
-        edges=[]
-    )
-    schema_registry = SchemaRegistry()
-    tool_registry = ToolRegistry()
-
-    env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
-
-    symbols = env.as_dict()
-    assert "task1" in symbols
-    assert "task2" in symbols
-    assert "task3" in symbols
-    assert symbols["task1"]["type"] == "integer"
-    assert symbols["task2"]["type"] == "string"
-    assert symbols["task3"]["type"] == "boolean"
-
-
 # =============================================================================
 # Edge Case Tests
 # =============================================================================
@@ -470,11 +295,10 @@ def test_build_type_environment_node_with_output():
         version="2",
         triggers=[],
         nodes=[
-            TaskNode(
-                id="task1",
-                type="task",
-                kind=TaskKind.set,
-                value="hello"
+            LLMNode(
+                id="llm1",
+                type="llm",
+                inputs={"model": "gpt-4", "prompt": "test"}
             )
         ],
         edges=[]
@@ -486,8 +310,8 @@ def test_build_type_environment_node_with_output():
 
     # Node ID should be registered as symbol
     symbols = env.as_dict()
-    assert "task1" in symbols
-    assert symbols["task1"]["type"] == "string"
+    assert "llm1" in symbols
+    assert symbols["llm1"]["type"] == "string"
 
 
 def test_build_type_environment_foreach_without_output():
@@ -727,136 +551,12 @@ def test_register_triggers_id_with_various_special_chars(special_char_id):
 
 
 # =============================================================================
-# Special Character Tests for Node IDs in Type Environment
-# =============================================================================
-
-
-def test_build_type_environment_node_id_with_spaces():
-    """Test that node IDs with spaces are accepted during type environment building."""
-    spec = WorkflowSpec(
-        version="2",
-        triggers=[],
-        nodes=[
-            TaskNode(
-                id="my result",  # Valid: node IDs can have spaces
-                type="task",
-                kind=TaskKind.set,
-                value="hello world"
-            )
-        ],
-        edges=[]
-    )
-    schema_registry = SchemaRegistry()
-    tool_registry = ToolRegistry()
-
-    env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
-
-    symbols = env.as_dict()
-    assert "my result" in symbols
-    assert symbols["my result"]["type"] == "string"
-
-
-def test_build_type_environment_node_id_with_hyphens():
-    """Test that node IDs with hyphens are accepted."""
-    spec = WorkflowSpec(
-        version="2",
-        triggers=[],
-        nodes=[
-            TaskNode(
-                id="task-result",  # Valid: node IDs can have hyphens
-                type="task",
-                kind=TaskKind.set,
-                value=42
-            )
-        ],
-        edges=[]
-    )
-    schema_registry = SchemaRegistry()
-    tool_registry = ToolRegistry()
-
-    env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
-
-    symbols = env.as_dict()
-    assert "task-result" in symbols
-    assert symbols["task-result"]["type"] == "integer"
-
-
-def test_build_type_environment_node_id_with_special_chars():
-    """Test that node IDs with various special characters are accepted."""
-    spec = WorkflowSpec(
-        version="2",
-        triggers=[],
-        nodes=[
-            TaskNode(
-                id="data@2024",  # Valid: node IDs can have @ character
-                type="task",
-                kind=TaskKind.set,
-                value="test"
-            ),
-            TaskNode(
-                id="result#value",  # Valid: node IDs can have # character
-                type="task",
-                kind=TaskKind.set,
-                value=100
-            ),
-            TaskNode(
-                id="flag$state",  # Valid: node IDs can have $ character
-                type="task",
-                kind=TaskKind.set,
-                value=True
-            )
-        ],
-        edges=[]
-    )
-    schema_registry = SchemaRegistry()
-    tool_registry = ToolRegistry()
-
-    env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
-
-    symbols = env.as_dict()
-    assert "data@2024" in symbols
-    assert "result#value" in symbols
-    assert "flag$state" in symbols
-
-
-def test_build_type_environment_node_id_with_unicode():
-    """Test that node IDs with Unicode characters are accepted."""
-    spec = WorkflowSpec(
-        version="2",
-        triggers=[],
-        nodes=[
-            TaskNode(
-                id="résultat",  # Valid: Unicode in node ID
-                type="task",
-                kind=TaskKind.set,
-                value="success"
-            ),
-            TaskNode(
-                id="数据",  # Valid: Chinese characters in node ID
-                type="task",
-                kind=TaskKind.set,
-                value={"data": "value"}
-            )
-        ],
-        edges=[]
-    )
-    schema_registry = SchemaRegistry()
-    tool_registry = ToolRegistry()
-
-    env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
-
-    symbols = env.as_dict()
-    assert "résultat" in symbols
-    assert "数据" in symbols
-
-
-# =============================================================================
 # Single-Trigger Alias Tests (Bug Fix: Register "trigger" for single-trigger workflows)
 # =============================================================================
 
 
-def test_single_trigger_registers_trigger_alias():
-    """Test that single-trigger workflows register 'trigger' symbol as convenience alias."""
+def test_single_trigger_does_not_register_trigger_alias():
+    """Test that single-trigger workflows do NOT register 'trigger' symbol."""
     env = TypeEnvironment()
     triggers = [
         TriggerSpec(
@@ -886,13 +586,9 @@ def test_single_trigger_registers_trigger_alias():
     assert "gmail_trigger" in symbols
     assert "gmail_trigger.data" in symbols
 
-    # Single-trigger convenience: "trigger" should also be registered
-    assert "trigger" in symbols
-    assert "trigger.data" in symbols
-
-    # Verify schemas match
-    assert symbols["trigger"] == symbols["gmail_trigger"]
-    assert symbols["trigger.data"] == symbols["gmail_trigger.data"]
+    # "trigger" should NOT be registered
+    assert "trigger" not in symbols
+    assert "trigger.data" not in symbols
 
 
 def test_multi_trigger_does_not_register_trigger_alias():
@@ -942,9 +638,9 @@ def test_single_trigger_with_no_properties():
 
     symbols = env.as_dict()
 
-    # Both explicit ID and "trigger" should be registered
+    # Only explicit ID should be registered
     assert "simple_trigger" in symbols
-    assert "trigger" in symbols
+    assert "trigger" not in symbols
 
     # No sub-properties should be registered (since no properties defined)
     assert "simple_trigger.data" not in symbols
@@ -974,9 +670,12 @@ def test_single_trigger_with_nested_properties():
 
     symbols = env.as_dict()
 
-    # Verify all properties registered for both trigger ID and "trigger" alias
-    for prefix in ["email_trigger", "trigger"]:
-        assert prefix in symbols
-        assert f"{prefix}.data" in symbols
-        assert f"{prefix}.id" in symbols
-        assert f"{prefix}.timestamp" in symbols
+    # Verify all properties registered for trigger ID only
+    assert "email_trigger" in symbols
+    assert "email_trigger.data" in symbols
+    assert "email_trigger.id" in symbols
+    assert "email_trigger.timestamp" in symbols
+
+    # "trigger" alias should NOT be registered
+    assert "trigger" not in symbols
+    assert "trigger.data" not in symbols

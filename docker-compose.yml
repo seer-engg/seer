@@ -42,6 +42,24 @@ services:
       --default-artifact-root ${MLFLOW_DEFAULT_ARTIFACT_ROOT:-/mlflow/artifacts}
       --allowed-hosts \"${MLFLOW_ALLOWED_HOSTS:-*}\""
 
+  migrations:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
+      UV_LINK_MODE: "copy"
+    volumes:
+      - ./:/app
+      - /app/.venv
+    command: ["sh", "-c", "uv run aerich upgrade"]
+    restart: "no"
+
   api:
     build:
       context: .
@@ -49,6 +67,8 @@ services:
     ports:
       - "${API_PORT:-8000}:8000"                   # change if your server uses another port
     depends_on:
+      migrations:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       valkey:
@@ -61,6 +81,7 @@ services:
       UV_LINK_MODE: "copy"  # Use copy mode to avoid hardlink warnings in Docker volumes
       MLFLOW_TRACKING_URI: "http://mlflow:5000"
       MLFLOW_EXPERIMENT_NAME: "seer-workflow-agent"
+      MLFLOW_ENABLED: "${MLFLOW_ENABLED:-true}"
       FRONTEND_URL: "${FRONTEND_URL:-https://app.getseer.dev}"
       BACKEND_API_URL: "${BACKEND_API_URL:-localhost:${API_PORT:-8000}}"
       AUTO_OPEN_BROWSER: "${AUTO_OPEN_BROWSER:-true}"
@@ -78,6 +99,8 @@ services:
       context: .
       dockerfile: Dockerfile
     depends_on:
+      migrations:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       valkey:
@@ -89,7 +112,8 @@ services:
       REDIS_URL: "redis://valkey:6379/0"
       UV_LINK_MODE: "copy"
       MLFLOW_TRACKING_URI: "http://mlflow:5000"
-      MLFLOW_EXPERIMENT_NAME: "seer-workflow-agent"
+      MLFLOW_EXPERIMENT_NAME: "seer-worker"
+      MLFLOW_ENABLED: "${MLFLOW_ENABLED:-true}"
     volumes:
       - ./:/app
       - /app/.venv

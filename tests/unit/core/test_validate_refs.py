@@ -17,8 +17,7 @@ from seer.core.expr.typecheck import TypeEnvironment
 from seer.core.schema.models import (
     ForEachNode,
     IfNode,
-    TaskKind,
-    TaskNode,
+    ToolNode,
     TriggerSpec,
     WorkflowSpec,
 )
@@ -55,10 +54,11 @@ def test_validate_references_with_valid_trigger_ref():
             )
         ],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="${t1.data}"
+                type="tool",
+                tool="test.tool",
+                inputs={"value": "${t1.data}"}
             )
         ],
         edges=[]
@@ -77,15 +77,17 @@ def test_validate_references_with_node_output_ref():
         version="2",
         triggers=[],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="hello"
+                type="tool",
+                tool="test.tool",
+                inputs={"value": "hello"}
             ),
-            TaskNode(
+            ToolNode(
                 id="task2",
-                kind=TaskKind.set,
-                value="${task1}"
+                type="tool",
+                tool="test.tool",
+                inputs={"value": "${task1}"}
             )
         ],
         edges=[]
@@ -114,15 +116,16 @@ def test_validate_references_with_multiple_refs():
             )
         ],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="${t1.x}"
+                type="tool", tool="test.tool",
+                inputs={"value": "${t1.x}"}
             ),
-            TaskNode(
+            ToolNode(
                 id="task2",
-                kind=TaskKind.set,
-                value="${task1}"
+                type="tool",
+                tool="test.tool",
+                inputs={"value": "${task1}"}
             )
         ],
         edges=[]
@@ -146,10 +149,10 @@ def test_validate_references_missing_trigger_declaration():
         version="2",
         triggers=[],  # No triggers declared
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="${MyTrigger.data}"
+                type="tool", tool="test.tool",
+                inputs={"value": "${MyTrigger.data}"}
             )
         ],
         edges=[]
@@ -168,10 +171,10 @@ def test_validate_references_undefined_symbol():
         version="2",
         triggers=[],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="${undefined_var}"
+                type="tool", tool="test.tool",
+                inputs={"value": "${undefined_var}"}
             )
         ],
         edges=[]
@@ -190,10 +193,10 @@ def test_validate_references_undefined_property():
         version="2",
         triggers=[],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task2",
-                kind=TaskKind.set,
-                value="${task1.undefined_prop}"
+                type="tool", tool="test.tool",
+                inputs={"value": "${task1.undefined_prop}"}
             )
         ],
         edges=[]
@@ -360,10 +363,10 @@ def test_validate_references_template_string():
         version="2",
         triggers=[],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="Hello ${first} ${last}!"
+                type="tool", tool="test.tool",
+                inputs={"value": "Hello ${first} ${last}!"}
             )
         ],
         edges=[]
@@ -382,10 +385,10 @@ def test_validate_references_template_string_invalid_ref():
         version="2",
         triggers=[],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="Hello ${first} ${undefined}!"
+                type="tool", tool="test.tool",
+                inputs={"value": "Hello ${first} ${undefined}!"}
             )
         ],
         edges=[]
@@ -413,10 +416,11 @@ def test_uses_trigger_references_true():
             )
         ],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="${t1.data}"
+                type="tool",
+                tool="test.tool",
+                inputs={"value": "${t1.data}"}
             )
         ],
         edges=[]
@@ -438,10 +442,10 @@ def test_uses_trigger_references_false():
             )
         ],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="static value"
+                type="tool", tool="test.tool",
+                inputs={"value": "static value"}
             )
         ],
         edges=[]
@@ -456,10 +460,10 @@ def test_uses_trigger_references_no_triggers():
         version="2",
         triggers=[],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="${other_var}"
+                type="tool", tool="test.tool",
+                inputs={"value": "${other_var}"}
             )
         ],
         edges=[]
@@ -469,11 +473,11 @@ def test_uses_trigger_references_no_triggers():
 
 
 def test_node_uses_trigger_ids_task_node():
-    """Test detection of trigger IDs in TaskNode."""
-    node = TaskNode(
+    """Test detection of trigger IDs in ToolNode."""
+    node = ToolNode(
         id="task1",
-        kind=TaskKind.set,
-        value="${t1.data}"
+        type="tool", tool="test.tool",
+        inputs={"value": "${t1.data}"}
     )
     trigger_ids = {"t1"}
 
@@ -506,10 +510,10 @@ def test_node_uses_trigger_ids_foreach_node():
 
 def test_node_uses_trigger_ids_false():
     """Test that node without trigger references returns False."""
-    node = TaskNode(
+    node = ToolNode(
         id="task1",
-        kind=TaskKind.set,
-        value="${other_var}"
+        type="tool", tool="test.tool",
+        inputs={"value": "${other_var}"}
     )
     trigger_ids = {"t1"}
 
@@ -529,15 +533,15 @@ def test_validate_references_collects_multiple_errors():
         version="2",
         triggers=[],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="${undefined1}"
+                type="tool", tool="test.tool",
+                inputs={"value": "${undefined1}"}
             ),
-            TaskNode(
+            ToolNode(
                 id="task2",
-                kind=TaskKind.set,
-                value="${undefined2}"
+                type="tool", tool="test.tool",
+                inputs={"value": "${undefined2}"}
             )
         ],
         edges=[]
@@ -564,10 +568,10 @@ def test_validate_references_empty_value():
         version="2",
         triggers=[],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value=""
+                type="tool", tool="test.tool",
+                inputs={"value": ""}
             )
         ],
         edges=[]
@@ -604,10 +608,10 @@ def test_validate_references_nested_object_access():
         version="2",
         triggers=[],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="${data.level1.level2.value}"
+                type="tool", tool="test.tool",
+                inputs={"value": "${data.level1.level2.value}"}
             )
         ],
         edges=[]
@@ -631,15 +635,16 @@ def test_validate_references_out_key_with_spaces():
         version="2",
         triggers=[],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="hello"
+                type="tool",
+                tool="test.tool",
+                inputs={"value": "hello"}
             ),
-            TaskNode(
+            ToolNode(
                 id="task2",
-                kind=TaskKind.set,
-                value="${my task}"
+                type="tool", tool="test.tool",
+                inputs={"value": "${my task}"}
             )
         ],
         edges=[]
@@ -658,15 +663,15 @@ def test_validate_references_out_key_with_hyphens():
         version="2",
         triggers=[],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value=42
+                type="tool", tool="test.tool",
+                inputs={"value": 42}
             ),
-            TaskNode(
+            ToolNode(
                 id="task2",
-                kind=TaskKind.set,
-                value="${task-result}"
+                type="tool", tool="test.tool",
+                inputs={"value": "${task-result}"}
             )
         ],
         edges=[]
@@ -693,20 +698,20 @@ def test_validate_references_out_key_with_special_chars():
         version="2",
         triggers=[],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="${task@result}"
+                type="tool", tool="test.tool",
+                inputs={"value": "${task@result}"}
             ),
-            TaskNode(
+            ToolNode(
                 id="task2",
-                kind=TaskKind.set,
-                value="${data#point}"
+                type="tool", tool="test.tool",
+                inputs={"value": "${data#point}"}
             ),
-            TaskNode(
+            ToolNode(
                 id="task3",
-                kind=TaskKind.set,
-                value="${result$value}"
+                type="tool", tool="test.tool",
+                inputs={"value": "${result$value}"}
             )
         ],
         edges=[]
@@ -726,15 +731,15 @@ def test_validate_references_out_key_with_unicode():
         version="2",
         triggers=[],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="${résultat}"
+                type="tool", tool="test.tool",
+                inputs={"value": "${résultat}"}
             ),
-            TaskNode(
+            ToolNode(
                 id="task2",
-                kind=TaskKind.set,
-                value="${数据}"
+                type="tool", tool="test.tool",
+                inputs={"value": "${数据}"}
             )
         ],
         edges=[]
@@ -761,15 +766,15 @@ def test_validate_references_out_key_with_nested_property_access():
         version="2",
         triggers=[],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="${my task.result}"
+                type="tool", tool="test.tool",
+                inputs={"value": "${my task.result}"}
             ),
-            TaskNode(
+            ToolNode(
                 id="task2",
-                kind=TaskKind.set,
-                value="${my task.count}"
+                type="tool", tool="test.tool",
+                inputs={"value": "${my task.count}"}
             )
         ],
         edges=[]
@@ -789,10 +794,10 @@ def test_validate_references_template_string_with_special_out_keys():
         version="2",
         triggers=[],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="Hello ${first-name} ${last name}!"
+                type="tool", tool="test.tool",
+                inputs={"value": "Hello ${first-name} ${last name}!"}
             )
         ],
         edges=[]
@@ -870,10 +875,11 @@ def test_validate_references_trigger_title_with_spaces():
             )
         ],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="${t1.data}"
+                type="tool",
+                tool="test.tool",
+                inputs={"value": "${t1.data}"}
             )
         ],
         edges=[]
@@ -901,10 +907,10 @@ def test_validate_references_trigger_title_with_hyphen():
             )
         ],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="${t1.value}"
+                type="tool", tool="test.tool",
+                inputs={"value": "${t1.value}"}
             )
         ],
         edges=[]
@@ -932,10 +938,11 @@ def test_validate_references_trigger_title_unicode():
             )
         ],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="${t1.data}"
+                type="tool",
+                tool="test.tool",
+                inputs={"value": "${t1.data}"}
             )
         ],
         edges=[]
@@ -958,15 +965,15 @@ def test_validate_references_complex_scenario_mixed_special_chars():
         version="2",
         triggers=[],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="${api-response.status}"
+                type="tool", tool="test.tool",
+                inputs={"value": "${api-response.status}"}
             ),
-            TaskNode(
+            ToolNode(
                 id="task2",
-                kind=TaskKind.set,
-                value="Count: ${user count}, Time: ${data@timestamp}"
+                type="tool", tool="test.tool",
+                inputs={"value": "Count: ${user count}, Time: ${data@timestamp}"}
             ),
             IfNode(
                 id="if1",
@@ -1007,10 +1014,10 @@ def test_multi_trigger_rejects_bare_trigger_reference():
             TriggerSpec(id="t2", key="trigger2.key", mode="webhook", event_schema={}),
         ],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="${trigger.data}"  # Invalid: bare "trigger" in multi-trigger workflow
+                type="tool", tool="test.tool",
+                inputs={"value": "${trigger.data}"}  # Invalid: bare "trigger" in multi-trigger workflow
             )
         ],
         edges=[]
@@ -1040,15 +1047,16 @@ def test_multi_trigger_accepts_explicit_trigger_ids():
             TriggerSpec(id="t2", key="trigger2.key", mode="webhook", event_schema={}),
         ],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="${t1.data}"  # Valid: explicit trigger ID
+                type="tool",
+                tool="test.tool",
+                inputs={"value": "${t1.data}"}  # Valid: explicit trigger ID
             ),
-            TaskNode(
+            ToolNode(
                 id="task2",
-                kind=TaskKind.set,
-                value="${t2.payload}"  # Valid: explicit trigger ID
+                type="tool", tool="test.tool",
+                inputs={"value": "${t2.payload}"}  # Valid: explicit trigger ID
             )
         ],
         edges=[]
@@ -1058,14 +1066,12 @@ def test_multi_trigger_accepts_explicit_trigger_ids():
     validate_references(spec, type_env)
 
 
-def test_single_trigger_accepts_bare_trigger_reference():
-    """Test that single-trigger workflows accept ${trigger.X} references."""
+def test_single_trigger_rejects_bare_trigger_reference():
+    """Test that single-trigger workflows reject ${trigger.X} references."""
     type_env = TypeEnvironment()
-    # Register both explicit ID and "trigger" alias
+    # Register only explicit ID (no "trigger" alias)
     type_env.register("t1", {"type": "object", "properties": {"data": {"type": "string"}}})
     type_env.register("t1.data", {"type": "string"})
-    type_env.register("trigger", {"type": "object", "properties": {"data": {"type": "string"}}})
-    type_env.register("trigger.data", {"type": "string"})
 
     spec = WorkflowSpec(
         version="2",
@@ -1073,26 +1079,29 @@ def test_single_trigger_accepts_bare_trigger_reference():
             TriggerSpec(id="t1", key="test.trigger", mode="polling", event_schema={}),
         ],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="${trigger.data}"  # Valid: single-trigger convenience
+                type="tool", tool="test.tool",
+                inputs={"value": "${trigger.data}"}  # Invalid: bare "trigger" not allowed
             )
         ],
         edges=[]
     )
 
-    # Should not raise any errors
-    validate_references(spec, type_env)
+    # Should raise ValidationPhaseError with helpful message
+    with pytest.raises(ValidationPhaseError) as exc_info:
+        validate_references(spec, type_env)
+
+    error_msg = str(exc_info.value)
+    assert "Cannot use ${trigger.X} syntax" in error_msg
+    assert "${t1.X}" in error_msg
 
 
-def test_single_trigger_accepts_explicit_id_too():
-    """Test that single-trigger workflows accept both ${trigger.X} and ${trigger_id.X}."""
+def test_single_trigger_accepts_explicit_id():
+    """Test that single-trigger workflows accept ${trigger_id.X} references."""
     type_env = TypeEnvironment()
     type_env.register("email_trigger", {"type": "object", "properties": {"data": {"type": "object"}}})
     type_env.register("email_trigger.data", {"type": "object"})
-    type_env.register("trigger", {"type": "object", "properties": {"data": {"type": "object"}}})
-    type_env.register("trigger.data", {"type": "object"})
 
     spec = WorkflowSpec(
         version="2",
@@ -1100,15 +1109,10 @@ def test_single_trigger_accepts_explicit_id_too():
             TriggerSpec(id="email_trigger", key="poll.gmail.email_received", mode="polling", event_schema={}),
         ],
         nodes=[
-            TaskNode(
+            ToolNode(
                 id="task1",
-                kind=TaskKind.set,
-                value="${trigger.data}"  # Valid: convenience alias
-            ),
-            TaskNode(
-                id="task2",
-                kind=TaskKind.set,
-                value="${email_trigger.data}"  # Also valid: explicit ID
+                type="tool", tool="test.tool",
+                inputs={"value": "${email_trigger.data}"}  # Valid: explicit ID
             )
         ],
         edges=[]

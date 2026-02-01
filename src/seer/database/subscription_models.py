@@ -46,6 +46,8 @@ class BillingProfile(models.Model):
         on_delete=fields.CASCADE,
     )
     stripe_customer_id = fields.CharField(max_length=255, unique=True, null=True)
+    has_payment_method = fields.BooleanField(default=False)
+    payment_method_added_at = fields.DatetimeField(null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 
@@ -74,6 +76,7 @@ class BillingSubscription(models.Model):
     current_period_start = fields.DatetimeField(null=True)
     current_period_end = fields.DatetimeField(null=True)
     cancel_at_period_end = fields.BooleanField(default=False)
+    is_early_adopter = fields.BooleanField(default=False)
 
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
@@ -83,6 +86,22 @@ class BillingSubscription(models.Model):
 
     def __str__(self) -> str:
         return f"BillingSubscription<profile={self.id}, tier={self.tier.value}>"
+
+
+class EarlyAdopterCounter(models.Model):
+    """Counter for early adopter slots per tier."""
+
+    id = fields.IntField(primary_key=True)
+    tier = fields.CharField(max_length=20, unique=True)
+    count = fields.IntField(default=0)
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    class Meta:
+        table = "early_adopter_counters"
+
+    def __str__(self) -> str:
+        return f"EarlyAdopterCounter<tier={self.tier}, count={self.count}>"
 
 
 class StripeWebhookEvent(models.Model):

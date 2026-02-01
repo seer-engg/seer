@@ -38,8 +38,6 @@ from seer.core.schema.models import (
     MCPNode,
     Node,
     OutputMode,
-    TaskKind,
-    TaskNode,
     ToolNode,
 )
 from seer.core.schema.schema_registry import SchemaRegistry
@@ -205,8 +203,6 @@ class NodeRuntime:
         locals_ctx: Mapping[str, Any] | None,
         context: WorkflowRuntimeContext | None,
     ) -> Dict[str, Any]:
-        if isinstance(node, TaskNode):
-            return self._run_task(node, state, config, locals_ctx=locals_ctx)
         if isinstance(node, ToolNode):
             return self._run_tool(node, state, config, locals_ctx=locals_ctx, context=context)
         if isinstance(node, MCPNode):
@@ -233,8 +229,6 @@ class NodeRuntime:
             return await self._run_tool_async(node, state, config, locals_ctx=locals_ctx, context=context)
         if isinstance(node, MCPNode):
             return await self._run_mcp_async(node, state, config, locals_ctx=locals_ctx, context=context)
-        if isinstance(node, TaskNode):
-            return self._run_task(node, state, config, locals_ctx=locals_ctx)
         if isinstance(node, LLMNode):
             await self._check_llm_credit_limit_async()
             return self._run_llm(node, state, config, locals_ctx=locals_ctx)
@@ -243,26 +237,6 @@ class NodeRuntime:
         if isinstance(node, ForEachNode):
             return await self._run_for_each_async(node, state, config, locals_ctx=locals_ctx, context=context)
         raise ExecutionError(f"Unsupported node type '{node.type}'")
-
-    def _run_task(
-        self,
-        node: TaskNode,
-        state: WorkflowState,
-        config: Mapping[str, Any],
-        *,
-        locals_ctx: Mapping[str, Any] | None,
-    ) -> Dict[str, Any]:
-        ctx = self._build_eval_context(state, config, locals_ctx)
-        # Evaluate inputs even if current TaskKind does not use them – future
-        # kinds may rely on the resolved values and we want early validation.
-        _ = {key: evaluate_value(ctx, value) for key, value in node.inputs.items()}
-
-        if node.kind == TaskKind.set:
-            result = evaluate_value(ctx, node.value)
-        else:
-            raise ExecutionError(f"Unsupported task kind '{node.kind}'")
-
-        return self._prepare_output(node.id, result)
 
     def _run_tool(
         self,
@@ -873,7 +847,7 @@ class NodeRuntime:
         if isinstance(node, LLMNode):
             return self._capture_llm_node_inputs(node, ctx)
 
-        if isinstance(node, (ToolNode, TaskNode, MCPNode)):
+        if isinstance(node, (ToolNode, MCPNode)):
             return self._evaluate_input_expressions(ctx, node.inputs)
 
         return {}

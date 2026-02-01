@@ -115,26 +115,6 @@ class NodeBase(StrictModel):
     ui: Dict[str, JSONValue] = Field(default_factory=dict)
 
 
-class TaskKind(str, Enum):
-    set = "set"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
-
-
-class TaskNode(NodeBase):
-    type: Literal["task"] = "task"
-    kind: TaskKind
-    value: Optional[JSONValue] = None
-    inputs: Dict[str, JSONValue] = Field(default_factory=dict)
-
-    # Optional: declare output contract for tasks (esp for kind=set)
-    outputs: Optional[OutputContract] = None
-
-    @model_validator(mode="after")
-    def _validate_set(self) -> "TaskNode":
-        if self.kind == TaskKind.set and self.value is None:
-            raise ValueError('task kind="set" requires "value"')
-        return self
-
-
 class ToolNode(NodeBase):
     type: Literal["tool"] = "tool"
     tool: str = Field(min_length=1)
@@ -208,7 +188,7 @@ class ForEachNode(NodeBase):
 
 
 Node = Annotated[
-    Union[TaskNode, ToolNode, LLMNode, MCPNode, IfNode, ForEachNode],
+    Union[ToolNode, LLMNode, MCPNode, IfNode, ForEachNode],
     Field(discriminator="type"),
 ]
 

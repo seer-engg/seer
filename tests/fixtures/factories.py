@@ -124,14 +124,9 @@ class WorkflowFactory:
                 "nodes": [
                     {
                         "id": "n1",
-                        "type": "task",
-                        "label": "Task",
-                        "config": {
-                            "tool_call": {
-                                "tool_id": "test.tool",
-                                "parameters": {},
-                            }
-                        },
+                        "type": "tool",
+                        "tool": "test.tool",
+                        "inputs": {},
                     }
                 ],
                 "edges": [
