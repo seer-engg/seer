@@ -47,7 +47,3 @@
 - New tool: add a `BaseTool` in `src/seer/tools/<provider>/`, register via `register_tool(...)`, and ensure the module is imported by the loader. Provide a JSON schema in `get_parameters_schema()`.
 - New trigger: add trigger definitions/subscriptions in `src/seer/api/workflows/services/triggers.py` (API surface) and polling logic in `src/seer/services/workflows/triggers.py`/`src/seer/worker/tasks/triggers.py`. Register adapters and polling intervals where appropriate.
 - New workflow node type: add executor logic in `src/seer/core/runtime/nodes.py` and validate/transform rules in `src/seer/core/compiler.py` or schema models as needed.
-
-## Commit & Pull Request Guidelines
-- Commit messages follow Conventional Commits (e.g., `fix:`, `feat:`, `chore:`) based on recent history.
-- PRs should include: a concise summary, linked issue (if any), testing notes, and screenshots for UI/doc changes.
