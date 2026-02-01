@@ -114,7 +114,18 @@ class TestClarificationFlow:
         workflow_client
     ):
         """Test resuming with valid clarification answer."""
+        from seer.database.workflow_models import WorkflowChatSession  # pylint: disable=import-outside-toplevel  # Dynamic import for test
+
         client, workflow = workflow_client
+
+        # Create chat session in database for the thread
+        thread_id = "test-thread-123"
+        session = await WorkflowChatSession.create(
+            workflow=workflow,
+            user=workflow.user,
+            thread_id=thread_id,
+            title="Test Session"
+        )
 
         # Mock checkpointer to return stored interrupt
         mock_checkpointer = AsyncMock()
@@ -132,6 +143,22 @@ class TestClarificationFlow:
             ]
         }
         mock_checkpointer.aget.return_value = mock_state
+        mock_checkpointer.aget_tuple.return_value = MagicMock(
+            checkpoint={
+                "channel_values": {
+                    "__interrupt__": [
+                        {
+                            "type": "clarification_question",
+                            "question_id": "q_test123",
+                            "options": [
+                                {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                                {"value": "outlook", "label": "Outlook", "is_wildcard": False},
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
         mock_get_checkpointer.return_value = mock_checkpointer
 
         # Mock agent to return continued response
@@ -147,7 +174,7 @@ class TestClarificationFlow:
         response = await client.post(
             f"/nexus/{workflow.workflow_id}/chat/resume",
             json={
-                "thread_id": "test-thread-123",
+                "thread_id": thread_id,
                 "answer": {
                     "question_id": "q_test123",
                     "selected_values": ["gmail"],
@@ -170,7 +197,18 @@ class TestClarificationFlow:
         workflow_client
     ):
         """Test that invalid selections are rejected."""
+        from seer.database.workflow_models import WorkflowChatSession  # pylint: disable=import-outside-toplevel  # Dynamic import for test
+
         client, workflow = workflow_client
+
+        # Create chat session in database for the thread
+        thread_id = "test-thread-123"
+        session = await WorkflowChatSession.create(
+            workflow=workflow,
+            user=workflow.user,
+            thread_id=thread_id,
+            title="Test Session"
+        )
 
         # Mock checkpointer to return stored interrupt
         mock_checkpointer = AsyncMock()
@@ -188,6 +226,22 @@ class TestClarificationFlow:
             ]
         }
         mock_checkpointer.aget.return_value = mock_state
+        mock_checkpointer.aget_tuple.return_value = MagicMock(
+            checkpoint={
+                "channel_values": {
+                    "__interrupt__": [
+                        {
+                            "type": "clarification_question",
+                            "question_id": "q_test123",
+                            "options": [
+                                {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                                {"value": "outlook", "label": "Outlook", "is_wildcard": False},
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
         mock_get_checkpointer.return_value = mock_checkpointer
 
         # Mock agent
@@ -198,7 +252,7 @@ class TestClarificationFlow:
         response = await client.post(
             f"/nexus/{workflow.workflow_id}/chat/resume",
             json={
-                "thread_id": "test-thread-123",
+                "thread_id": thread_id,
                 "answer": {
                     "question_id": "q_test123",
                     "selected_values": ["invalid_provider"],
@@ -209,7 +263,8 @@ class TestClarificationFlow:
 
         assert response.status_code == 400
         data = response.json()
-        assert "Invalid selections" in data["detail"]
+        # Check title or nested detail for error message
+        assert data.get("title") == "Invalid selections" or "Invalid selections" in str(data.get("detail", {}))
 
     @patch('seer.api.agents.workflow.router.create_nexus_chat_agent')
     @patch('seer.api.agents.workflow.router.get_checkpointer')
@@ -220,7 +275,18 @@ class TestClarificationFlow:
         workflow_client
     ):
         """Test that wildcard selection requires custom input."""
+        from seer.database.workflow_models import WorkflowChatSession  # pylint: disable=import-outside-toplevel  # Dynamic import for test
+
         client, workflow = workflow_client
+
+        # Create chat session in database for the thread
+        thread_id = "test-thread-123"
+        session = await WorkflowChatSession.create(
+            workflow=workflow,
+            user=workflow.user,
+            thread_id=thread_id,
+            title="Test Session"
+        )
 
         # Mock checkpointer to return stored interrupt with wildcard
         mock_checkpointer = AsyncMock()
@@ -238,6 +304,22 @@ class TestClarificationFlow:
             ]
         }
         mock_checkpointer.aget.return_value = mock_state
+        mock_checkpointer.aget_tuple.return_value = MagicMock(
+            checkpoint={
+                "channel_values": {
+                    "__interrupt__": [
+                        {
+                            "type": "clarification_question",
+                            "question_id": "q_test123",
+                            "options": [
+                                {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                                {"value": "other", "label": "Other", "is_wildcard": True},
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
         mock_get_checkpointer.return_value = mock_checkpointer
 
         # Mock agent
@@ -248,7 +330,7 @@ class TestClarificationFlow:
         response = await client.post(
             f"/nexus/{workflow.workflow_id}/chat/resume",
             json={
-                "thread_id": "test-thread-123",
+                "thread_id": thread_id,
                 "answer": {
                     "question_id": "q_test123",
                     "selected_values": ["other"],
@@ -259,7 +341,8 @@ class TestClarificationFlow:
 
         assert response.status_code == 400
         data = response.json()
-        assert "Custom input required" in data["detail"] or "custom input" in data["detail"].lower()
+        # Check title or nested detail for error message
+        assert data.get("title") == "Custom input required" or "custom input" in str(data.get("detail", {})).lower()
 
     @patch('seer.api.agents.workflow.router.create_nexus_chat_agent')
     @patch('seer.api.agents.workflow.router.get_checkpointer')
@@ -270,7 +353,18 @@ class TestClarificationFlow:
         workflow_client
     ):
         """Test that wildcard with custom input succeeds."""
+        from seer.database.workflow_models import WorkflowChatSession  # pylint: disable=import-outside-toplevel  # Dynamic import for test
+
         client, workflow = workflow_client
+
+        # Create chat session in database for the thread
+        thread_id = "test-thread-123"
+        session = await WorkflowChatSession.create(
+            workflow=workflow,
+            user=workflow.user,
+            thread_id=thread_id,
+            title="Test Session"
+        )
 
         # Mock checkpointer
         mock_checkpointer = AsyncMock()
@@ -288,6 +382,22 @@ class TestClarificationFlow:
             ]
         }
         mock_checkpointer.aget.return_value = mock_state
+        mock_checkpointer.aget_tuple.return_value = MagicMock(
+            checkpoint={
+                "channel_values": {
+                    "__interrupt__": [
+                        {
+                            "type": "clarification_question",
+                            "question_id": "q_test123",
+                            "options": [
+                                {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                                {"value": "other", "label": "Other", "is_wildcard": True},
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
         mock_get_checkpointer.return_value = mock_checkpointer
 
         # Mock agent
@@ -303,7 +413,7 @@ class TestClarificationFlow:
         response = await client.post(
             f"/nexus/{workflow.workflow_id}/chat/resume",
             json={
-                "thread_id": "test-thread-123",
+                "thread_id": thread_id,
                 "answer": {
                     "question_id": "q_test123",
                     "selected_values": ["other"],
