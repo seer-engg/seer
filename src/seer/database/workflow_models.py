@@ -224,6 +224,10 @@ class WorkflowChatSession(models.Model):
         null=True,
         description="Optional title for the session",
     )
+    current_workflow_state = fields.JSONField(
+        null=True,
+        description="Current workflow graph state (nodes and edges) for this session",
+    )
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 
@@ -383,6 +387,12 @@ class WorkflowProposal(models.Model):
     applied_graph = fields.JSONField(null=True)
     metadata = fields.JSONField(null=True)
     decided_at = fields.DatetimeField(null=True)
+    thread_id = fields.CharField(
+        max_length=255,
+        null=True,
+        db_index=True,
+        description="Thread ID for lookup during agent execution",
+    )
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 

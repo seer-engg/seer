@@ -15,7 +15,6 @@ from seer.database import (
     WorkflowChatMessage,
     WorkflowChatSession,
     WorkflowProposal,
-    WorkflowVersion,
     parse_workflow_public_id,
 )
 from seer.database.workflow_models import WorkflowCreationMode, WorkflowDiscoveryChatSession
@@ -88,22 +87,6 @@ async def workflow_state_snapshot(workflow: Workflow) -> Dict[str, Any]:
         return workflow_state_from_spec(draft_version.spec)
     return {"nodes": [], "edges": []}
 
-
-async def _ensure_workflow_draft(workflow: Workflow, user: User) -> WorkflowVersion:
-    """
-    Get or create the DRAFT WorkflowVersion for this workflow.
-
-    This replaces the old _ensure_workflow_draft that worked with WorkflowDraft model.
-    """
-    draft_version = await _get_draft_version(workflow, create_if_missing=True, user=user)
-
-    if draft_version is None:
-        raise HTTPException(
-            status_code=500,
-            detail="Workflow draft state not initialized",
-        )
-
-    return draft_version
 
 
 async def _get_workflow(user: User, workflow_id: str) -> Workflow:

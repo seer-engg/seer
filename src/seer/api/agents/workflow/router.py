@@ -13,13 +13,8 @@ from tortoise.exceptions import DoesNotExist
 
 from seer.agents.nexus import (
     _current_thread_id,
-    clear_proposed_spec_for_thread,
-    clear_user_for_thread,
     create_nexus_chat_agent,
     extract_thinking_from_messages,
-    get_proposed_spec_for_thread,
-    set_user_for_thread,
-    set_workflow_state_for_thread,
 )
 from seer.agents.nexus.cost_callback import (
     CostCapCallbackHandler,
@@ -32,6 +27,7 @@ from seer.config import config
 from seer.core.runtime.context import WorkflowRuntimeContext
 from seer.database import User, UserPublic
 from seer.database.models import UserSettings
+from seer.database.workflow_models import WorkflowCreationMode
 from seer.logger import get_logger
 from seer.observability import (
     increment_chat_message_count,
@@ -48,9 +44,7 @@ from .chat_schema import (
     ChatSessionWithMessages,
     ClarificationQuestion,
     ClarificationQuestionOption,
-    DiscoveryChatRequest,
     QuestionType,
-    WorkflowCreationMode,
     WorkflowProposalActionResponse,
 )
 from .chat_services import (
@@ -65,11 +59,9 @@ from .models import WorkflowProposalPublic
 from .services import (
     accept_workflow_proposal,
     create_chat_session,
-    create_discovery_chat_session,
     create_workflow_proposal,
     get_chat_session,
     get_chat_session_by_thread_id,
-    get_discovery_chat_session_by_thread_id,
     get_user_workflow_creation_mode,
     get_workflow,
     get_workflow_proposal,
@@ -95,6 +87,8 @@ def _require_user(request: Request) -> User:
             detail="Unauthorized",
             status=401
         )
+    # Type guard: raise_problem raises an exception, so this will never execute if user is None
+    assert user is not None
     return user
 
 
@@ -153,6 +147,228 @@ async def _verify_checkpoint_saved(checkpointer, thread_id: str) -> None:
         logger.error("Error verifying checkpoint for thread %s: %s", thread_id, e, exc_info=True)
 
 
+async def _get_user_settings_and_context(
+    user: User,
+    thread_id: str,
+) -> Tuple[int, WorkflowRuntimeContext]:
+    """Get user settings and create runtime context for cost tracking."""
+    try:
+        user_settings = await UserSettings.get(user=user)
+        max_agent_steps = user_settings.max_agent_steps or config.nexus_max_agent_steps
+        per_run_cost_cap_usd = user_settings.preferences.get("per_run_cost_cap_usd", 5.0)
+    except DoesNotExist:
+        max_agent_steps = config.nexus_max_agent_steps
+        per_run_cost_cap_usd = 5.0
+
+    runtime_context = WorkflowRuntimeContext(
+        user=user,
+        workflow_run_id=None,
+        thread_id=thread_id,
+        per_run_cost_cap_usd=per_run_cost_cap_usd,
+        accumulated_cost_usd=0.0,
+    )
+
+    return max_agent_steps, runtime_context
+
+
+def _transform_clarification_interrupt(interrupt_data: Dict[str, Any]) -> None:
+    """Transform clarification question interrupt data for frontend."""
+    if interrupt_data.get("type") == "clarification_question":
+        question_obj = ClarificationQuestion(
+            question_id=interrupt_data["question_id"],
+            question=interrupt_data["question"],
+            question_type=QuestionType(interrupt_data["question_type"]),
+            options=[
+                ClarificationQuestionOption(**opt)
+                for opt in interrupt_data["options"]
+            ],
+            min_selections=interrupt_data.get("min_selections", 1),
+            max_selections=interrupt_data.get("max_selections"),
+        )
+        interrupt_data["clarification_question"] = question_obj.model_dump()
+
+
+async def _save_response_and_get_proposal(
+    session_id: int,
+    thread_id: str,
+    response_text: str,
+    thinking_steps: list[str],
+    user: User,
+) -> Tuple[Optional[Any], Optional[WorkflowProposalPublic], Optional[str]]:
+    """Save assistant message and retrieve any pending proposal."""
+    from seer.database import WorkflowProposal  # pylint: disable=import-outside-toplevel # Reason: Only needed in this code path
+
+    proposal = await WorkflowProposal.get_or_none(
+        thread_id=thread_id,
+        status=WorkflowProposal.STATUS_PENDING
+    ).prefetch_related('created_by', 'workflow', 'session')
+
+    proposal_public = None
+    proposal_error = None
+    if proposal:
+        proposal_public = WorkflowProposalPublic.model_validate(proposal, from_attributes=True)
+
+    await save_chat_message(
+        session_id=session_id,
+        role="assistant",
+        content=response_text,
+        thinking="\n".join(thinking_steps) if thinking_steps else None,
+        suggested_edits=proposal.spec if proposal else None,
+        proposal=proposal,
+    )
+
+    await increment_chat_message_count(user)
+
+    return proposal, proposal_public, proposal_error
+
+
+async def _invoke_agent_with_orchestrator(
+    agent,
+    checkpointer,
+    user_msg: HumanMessage,
+    thread_id: str,
+    max_agent_steps: int,
+) -> Dict[str, Any]:
+    """Invoke agent using orchestrator with health checks."""
+    cost_callback = CostCapCallbackHandler()
+
+    config_dict = {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": max_agent_steps,
+        "callbacks": [cost_callback],
+    }
+
+    orchestrator = ChatOrchestrator(
+        agent=agent,
+        checkpointer=checkpointer,
+        health_service=CheckpointerHealthService(),
+        detector=IncompleteToolCallDetector(),
+        recovery_service=IncompleteToolCallRecoveryService(),
+        reconnect_func=_recreate_checkpointer,
+    )
+
+    return await orchestrator.invoke_with_health_checks(user_msg, config_dict)
+
+
+def _detect_and_transform_interrupts(
+    result: Dict[str, Any],
+) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    """Detect interrupts from result and transform clarification questions."""
+    interrupt_required, interrupt_data = InterruptHandler.extract_interrupt_from_result(result)
+
+    if interrupt_required and interrupt_data:
+        _transform_clarification_interrupt(interrupt_data)
+
+    return interrupt_required, interrupt_data
+
+
+async def _process_agent_result(
+    result: Dict[str, Any],
+    checkpointer,
+    thread_id: str,
+) -> Tuple[str, list[str]]:
+    """Extract response text, thinking steps, and verify checkpoint."""
+    agent_messages = result.get("messages", []) if isinstance(result, dict) else []
+    response_text = _extract_response_text(result)
+    thinking_steps = extract_thinking_from_messages(agent_messages)
+
+    logger.info(
+        "Agent completed for thread %s, response_length=%d",
+        thread_id,
+        len(response_text)
+    )
+
+    if checkpointer and thread_id:
+        await _verify_checkpoint_saved(checkpointer, thread_id)
+
+    return response_text, thinking_steps
+
+
+async def _validate_clarification_answer(
+    checkpointer,
+    thread_id: str,
+    answer,
+) -> None:
+    """Validate clarification answer against original question options."""
+    config_dict = {"configurable": {"thread_id": thread_id}}
+    state_tuple = await checkpointer.aget_tuple(config_dict)
+
+    if not state_tuple:
+        return
+
+    interrupt_payload = state_tuple.checkpoint.get("channel_values", {}).get("__interrupt__")
+    if not interrupt_payload or not interrupt_payload[0]:
+        return
+
+    interrupt_data = interrupt_payload[0]
+    if interrupt_data.get("type") != "clarification_question":
+        return
+
+    # Validate selected values
+    valid_values = {opt["value"] for opt in interrupt_data["options"]}
+    invalid_selections = [v for v in answer.selected_values if v not in valid_values]
+
+    if invalid_selections:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Invalid selections",
+            detail=f"Selected values not in available options: {invalid_selections}",
+            status=400
+        )
+
+    # Validate wildcard custom input
+    wildcard_options = [opt for opt in interrupt_data["options"] if opt.get("is_wildcard")]
+    wildcard_values = {opt["value"] for opt in wildcard_options}
+    has_wildcard_selection = any(v in wildcard_values for v in answer.selected_values)
+
+    if has_wildcard_selection and not answer.custom_input:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Custom input required",
+            detail="Custom input is required when selecting wildcard option",
+            status=400
+        )
+
+
+async def _build_resume_command(
+    resume_data: ChatResumeRequest,
+    checkpointer,
+    session_id: int,
+) -> Command:
+    """Build resume command from answer or raw command data."""
+    resume_value: Any = None
+
+    if resume_data.answer:
+        # Validate and build clarification answer
+        await _validate_clarification_answer(checkpointer, resume_data.thread_id, resume_data.answer)
+
+        resume_value = {
+            "selected_values": resume_data.answer.selected_values,
+            "custom_input": resume_data.answer.custom_input,
+        }
+
+        # Save user's answer to database
+        await save_chat_message(
+            session_id=session_id,
+            role="user",
+            content=f"Selected: {', '.join(resume_data.answer.selected_values)}" +
+                    (f" (Custom: {resume_data.answer.custom_input})" if resume_data.answer.custom_input else ""),
+            metadata={"clarification_answer": resume_data.answer.model_dump()},
+        )
+    elif resume_data.command:
+        # Other interrupt types
+        resume_value = resume_data.command.get("resume")
+    else:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Invalid resume data",
+            detail="Either answer or command must be provided",
+            status=400
+        )
+
+    return Command(resume=resume_value)
+
+
 async def _maybe_create_proposal_from_spec(
     workflow,
     session,
@@ -192,229 +408,6 @@ async def _maybe_create_proposal_from_spec(
     return proposal, proposal_public, None
 
 
-async def _get_or_create_discovery_session(
-    user: User,
-    thread_id: str | None,
-    creation_mode: WorkflowCreationMode,
-) -> Tuple[Any, str, str]:
-    """
-    Get or create discovery chat session.
-
-    Args:
-        user: User object
-        thread_id: Optional thread ID from request
-        creation_mode: Workflow creation mode
-
-    Returns:
-        Tuple of (session, thread_id, session_id)
-    """
-    if thread_id:
-        session = await get_discovery_chat_session_by_thread_id(thread_id, user)
-        if not session:
-            session = await create_discovery_chat_session(
-                user=user,
-                thread_id=thread_id,
-                workflow_creation_mode=creation_mode,
-            )
-        session_id = session.id
-    else:
-        thread_id = f"discovery-{uuid.uuid4().hex}"
-        session = await create_discovery_chat_session(
-            user=user,
-            thread_id=thread_id,
-            workflow_creation_mode=creation_mode,
-        )
-        session_id = session.id
-
-    return session, thread_id, session_id
-
-
-async def _setup_cost_tracking_context(user: User, thread_id: str) -> WorkflowRuntimeContext:
-    """
-    Setup cost tracking context for chat.
-
-    Args:
-        user: User object
-        thread_id: Thread ID for the chat
-
-    Returns:
-        WorkflowRuntimeContext configured with user settings
-    """
-    # Get user settings for cost cap
-    try:
-        user_settings = await UserSettings.get(user=user)
-        per_run_cost_cap_usd = user_settings.preferences.get("per_run_cost_cap_usd", 5.0)
-    except DoesNotExist:
-        per_run_cost_cap_usd = 5.0
-
-    # Create runtime context for cost tracking
-    runtime_context = WorkflowRuntimeContext(
-        user=user,
-        workflow_run_id=None,
-        thread_id=thread_id,
-        per_run_cost_cap_usd=per_run_cost_cap_usd,
-        accumulated_cost_usd=0.0,
-    )
-
-    # Set context for callback access
-    set_chat_runtime_context(runtime_context)
-
-    return runtime_context
-
-
-@router.post("/chat", response_model=ChatResponse)
-async def discovery_chat_endpoint(  # pylint: disable=too-many-locals  # Reason: orchestration endpoint requires multiple local vars for clarity
-    request: Request,
-    chat_request: DiscoveryChatRequest,
-) -> ChatResponse:
-    """
-    Discovery chat without a workflow (for workflow creation).
-
-    The assistant can ask clarifying questions and create workflows based on user input.
-    """
-    logger.info("Discovery chat request: message_length=%d", len(chat_request.message))
-    user = _require_user(request)
-
-    # Get workflow creation mode
-    creation_mode = (
-        chat_request.workflow_creation_mode
-        or await get_user_workflow_creation_mode(user)
-    )
-
-    model = chat_request.model or config.default_llm_model
-    checkpointer = await get_checkpointer()
-
-    # Get or create discovery session
-    _session, thread_id, session_id = await _get_or_create_discovery_session(
-        user=user,
-        thread_id=chat_request.thread_id,
-        creation_mode=creation_mode,
-    )
-
-    # Setup cost tracking context (sets global context as side effect)
-    _runtime_context = await _setup_cost_tracking_context(user=user, thread_id=thread_id)
-
-    # Set discovery mode context (no workflow state)
-    set_user_for_thread(thread_id, user)
-
-    # Create agent in discovery mode
-    agent = create_nexus_chat_agent(
-        model=model,
-        checkpointer=checkpointer,
-        workflow_state=None,  # No workflow in discovery mode
-    )
-
-    user_msg = HumanMessage(content=chat_request.message)
-
-    # Track message
-    await increment_chat_message_count(user)
-
-    try:
-        # Create cost tracking callback
-        cost_callback = CostCapCallbackHandler()
-
-        # Configure with callbacks
-        config_dict = {
-            "configurable": {"thread_id": thread_id},
-            "callbacks": [cost_callback],
-        }
-
-        # Initialize orchestrator
-        orchestrator = ChatOrchestrator(
-            agent=agent,
-            checkpointer=checkpointer,
-            health_service=CheckpointerHealthService(),
-            detector=IncompleteToolCallDetector(),
-            recovery_service=IncompleteToolCallRecoveryService(),
-            reconnect_func=_recreate_checkpointer,
-        )
-
-        # Invoke agent
-        result = await orchestrator.invoke_with_health_checks(user_msg, config_dict)
-
-        # Detect interrupts
-        interrupt_required, interrupt_data = InterruptHandler.extract_interrupt_from_result(result)
-        if not interrupt_required:
-            state_interrupt_required, state_interrupt_data = await InterruptHandler.extract_interrupt_from_state(
-                agent, config_dict
-            )
-            if state_interrupt_required:
-                interrupt_required = True
-                interrupt_data = state_interrupt_data
-
-        # Transform clarification question interrupts for frontend
-        if interrupt_required and interrupt_data and interrupt_data.get("type") == "clarification_question":
-            # Build structured question object
-            question_obj = ClarificationQuestion(
-                question_id=interrupt_data["question_id"],
-                question=interrupt_data["question"],
-                question_type=QuestionType(interrupt_data["question_type"]),
-                options=[
-                    ClarificationQuestionOption(**opt)
-                    for opt in interrupt_data["options"]
-                ],
-                min_selections=interrupt_data.get("min_selections", 1),
-                max_selections=interrupt_data.get("max_selections"),
-            )
-
-            # Store structured question in interrupt_data for frontend
-            interrupt_data["clarification_question"] = question_obj.model_dump()
-
-        # Extract response
-        agent_messages = result.get("messages", []) if isinstance(result, dict) else []
-        response_text = _extract_response_text(result)
-
-        # Verify checkpoint
-        if checkpointer and thread_id:
-            await _verify_checkpoint_saved(checkpointer, thread_id)
-
-        # Extract thinking
-        thinking_steps = extract_thinking_from_messages(agent_messages)
-
-        # Track assistant message
-        await increment_chat_message_count(user)
-
-        # Check if workflow was created (placeholder - will be implemented with agent specialist)
-        workflow_created_id = None
-
-        return ChatResponse(
-            response=response_text,
-            session_id=session_id,
-            thread_id=thread_id,
-            thinking=thinking_steps if thinking_steps else None,
-            interrupt_required=interrupt_required,
-            interrupt_data=interrupt_data,
-            workflow_created_id=workflow_created_id,
-        )
-    except RunCostCapExceeded as e:
-        logger.warning(
-            "Discovery chat cost cap exceeded",
-            extra={
-                "thread_id": thread_id,
-                "accumulated_cost": e.accumulated_cost,
-                "cost_cap": e.cost_cap,
-            },
-        )
-        raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Cost cap exceeded",
-            detail=e.to_dict(),
-            status=402,
-        )
-    except Exception as e:  # pylint: disable=broad-exception-caught # Reason: API boundary, converting all exceptions to HTTP problem responses
-        logger.error("Error in discovery chat: %s", e, exc_info=True)
-        raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Discovery chat failed",
-            detail=f"Failed to process discovery chat: {str(e)}",
-            status=500
-        )
-    finally:
-        clear_chat_runtime_context()
-        clear_proposed_spec_for_thread(thread_id)
-        clear_user_for_thread(thread_id)
-
-
 @router.post("/{workflow_id}/chat", response_model=ChatResponse)
 async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reason: Complex endpoint orchestrating multiple services, requires refactoring to service layer
     request: Request,
@@ -443,10 +436,10 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
         session_id=chat_request.session_id,
     )
 
-    # Prepare workflow state
+    # Prepare workflow state and save to session
     workflow_state = await _prepare_workflow_state(workflow, chat_request.workflow_state)
-    set_workflow_state_for_thread(thread_id, workflow_state)
-    set_user_for_thread(thread_id, user)
+    session.current_workflow_state = workflow_state
+    await session.save(update_fields=['current_workflow_state'])
 
     # Create agent
     agent = create_nexus_chat_agent(
@@ -467,111 +460,30 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
     # Track user message (global count, not per-workflow)
     await increment_chat_message_count(user)
 
-    # Get user settings for max steps and cost cap
-    try:
-        user_settings = await UserSettings.get(user=user)
-        max_agent_steps = user_settings.max_agent_steps or config.nexus_max_agent_steps
-        per_run_cost_cap_usd = user_settings.preferences.get("per_run_cost_cap_usd", 5.0)
-    except DoesNotExist:
-        max_agent_steps = config.nexus_max_agent_steps
-        per_run_cost_cap_usd = 5.0
-
-    # Create runtime context for cost tracking
-    runtime_context = WorkflowRuntimeContext(
-        user=user,
-        workflow_run_id=None,
-        thread_id=thread_id,
-        per_run_cost_cap_usd=per_run_cost_cap_usd,
-        accumulated_cost_usd=0.0,
-    )
+    # Get user settings and create runtime context
+    max_agent_steps, runtime_context = await _get_user_settings_and_context(user, thread_id)
 
     # Set context for callback access
     set_chat_runtime_context(runtime_context)
 
     try:
-        # Create cost tracking callback
-        cost_callback = CostCapCallbackHandler()
-
-        # Configure with callbacks
-        config_dict = {
-            "configurable": {"thread_id": thread_id},
-            "recursion_limit": max_agent_steps,
-            "callbacks": [cost_callback],
-        }
-
-        # Initialize orchestrator
-        orchestrator = ChatOrchestrator(
-            agent=agent,
-            checkpointer=checkpointer,
-            health_service=CheckpointerHealthService(),
-            detector=IncompleteToolCallDetector(),
-            recovery_service=IncompleteToolCallRecoveryService(),
-            reconnect_func=_recreate_checkpointer,
+        # Invoke agent and get result
+        result = await _invoke_agent_with_orchestrator(
+            agent, checkpointer, user_msg, thread_id, max_agent_steps
         )
 
-        # Invoke agent with health checks
-        result = await orchestrator.invoke_with_health_checks(user_msg, config_dict)
+        # Detect and transform interrupts
+        interrupt_required, interrupt_data = _detect_and_transform_interrupts(result)
 
-        # Detect interrupts
-        interrupt_required, interrupt_data = InterruptHandler.extract_interrupt_from_result(result)
-        if not interrupt_required:
-            state_interrupt_required, state_interrupt_data = await InterruptHandler.extract_interrupt_from_state(
-                agent, config_dict
-            )
-            if state_interrupt_required:
-                interrupt_required = True
-                interrupt_data = state_interrupt_data
-
-        # Transform clarification question interrupts for frontend
-        if interrupt_required and interrupt_data and interrupt_data.get("type") == "clarification_question":
-            # Build structured question object
-            question_obj = ClarificationQuestion(
-                question_id=interrupt_data["question_id"],
-                question=interrupt_data["question"],
-                question_type=QuestionType(interrupt_data["question_type"]),
-                options=[
-                    ClarificationQuestionOption(**opt)
-                    for opt in interrupt_data["options"]
-                ],
-                min_selections=interrupt_data.get("min_selections", 1),
-                max_selections=interrupt_data.get("max_selections"),
-            )
-
-            # Store structured question in interrupt_data for frontend
-            interrupt_data["clarification_question"] = question_obj.model_dump()
-
-        # Extract response and messages
-        agent_messages = result.get("messages", []) if isinstance(result, dict) else []
-        response_text = _extract_response_text(result)
-        logger.info("Agent completed for thread %s, response_length=%d, interrupt_required=%s", thread_id, len(response_text), interrupt_required)
-
-        # Verify checkpoint
-        if checkpointer and thread_id:
-            await _verify_checkpoint_saved(checkpointer, thread_id)
-
-        # Extract thinking and proposal
-        thinking_steps = extract_thinking_from_messages(agent_messages)
-        proposal_payload = get_proposed_spec_for_thread(thread_id)
-        proposal, proposal_public, proposal_error = await _maybe_create_proposal_from_spec(
-            workflow=workflow,
-            session=session,
-            user=user,
-            model_name=model,
-            proposal_payload=proposal_payload,
+        # Extract response and verify checkpoint
+        response_text, thinking_steps = await _process_agent_result(
+            result, checkpointer, thread_id
         )
 
-        # Save assistant message
-        await save_chat_message(
-            session_id=session_id,
-            role="assistant",
-            content=response_text,
-            thinking="\n".join(thinking_steps) if thinking_steps else None,
-            suggested_edits=proposal_payload,
-            proposal=proposal,
+        # Save response and get proposal
+        _, proposal_public, proposal_error = await _save_response_and_get_proposal(
+            session_id, thread_id, response_text, thinking_steps, user
         )
-
-        # Track assistant message (global count, not per-workflow)
-        await increment_chat_message_count(user)
 
         return ChatResponse(
             response=response_text,
@@ -596,7 +508,7 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
         raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Cost cap exceeded",
-            detail=e.to_dict(),
+            detail=str(e.to_dict()),
             status=402,
         )
     except Exception as e:  # pylint: disable=broad-exception-caught # Reason: API boundary, converting all exceptions to HTTP problem responses
@@ -610,8 +522,6 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
         )
     finally:
         clear_chat_runtime_context()
-        clear_proposed_spec_for_thread(thread_id)
-        clear_user_for_thread(thread_id)
 
 
 @router.post("/{workflow_id}/chat/sessions", response_model=ChatSession)
@@ -710,7 +620,7 @@ async def get_chat_session_endpoint(
 
 
 @router.post("/{workflow_id}/chat/resume", response_model=ChatResponse)
-async def resume_chat_endpoint(  # pylint: disable=too-many-locals,too-complex,too-many-statements # Reason: Complex endpoint with resume logic, requires refactoring to service layer
+async def resume_chat_endpoint(  # pylint: disable=too-many-locals # Reason: Complex endpoint with resume logic, requires refactoring to service layer
     request: Request,
     workflow_id: str,
     resume_data: ChatResumeRequest,
@@ -725,10 +635,8 @@ async def resume_chat_endpoint(  # pylint: disable=too-many-locals,too-complex,t
     user = _require_user(request)
     workflow = await get_workflow(user, workflow_id)
 
-    # Get checkpointer
+    # Get checkpointer and session
     checkpointer = await get_checkpointer()
-
-    # Get session by thread_id
     session = await get_chat_session_by_thread_id(resume_data.thread_id, workflow)
     if not session:
         raise_problem(
@@ -738,84 +646,20 @@ async def resume_chat_endpoint(  # pylint: disable=too-many-locals,too-complex,t
             status=404
         )
 
+    # Type guard: raise_problem raises an exception, so session is guaranteed to be not None here
+    assert session is not None
     session_id = session.id
 
-    # Get current workflow state
+    # Get current workflow state and create agent
     workflow_state = deepcopy(await workflow_state_snapshot(workflow))
-
-    # Create agent
     agent = create_nexus_chat_agent(
         model=config.default_llm_model,
         checkpointer=checkpointer,
         workflow_state=workflow_state,
     )
 
-    # Build Command based on interrupt type
-    resume_value: Any = None
-    if resume_data.answer:
-        # Clarification question answer - validate answer
-        answer = resume_data.answer
-
-        # Retrieve original question from checkpointer to validate
-        config_dict = {"configurable": {"thread_id": resume_data.thread_id}}
-        state_tuple = await checkpointer.aget_tuple(config_dict)
-
-        if state_tuple and state_tuple.checkpoint.get("channel_values", {}).get("__interrupt__"):
-            interrupt_payload = state_tuple.checkpoint.get("channel_values", {}).get("__interrupt__")[0]
-
-            if interrupt_payload.get("type") == "clarification_question":
-                # Validate selected values
-                valid_values = {opt["value"] for opt in interrupt_payload["options"]}
-                invalid_selections = [v for v in answer.selected_values if v not in valid_values]
-
-                if invalid_selections:
-                    raise_problem(
-                        type_uri=VALIDATION_PROBLEM,
-                        title="Invalid selections",
-                        detail=f"Selected values not in available options: {invalid_selections}",
-                        status=400
-                    )
-
-                # Validate wildcard custom input
-                wildcard_options = [opt for opt in interrupt_payload["options"] if opt.get("is_wildcard")]
-                wildcard_values = {opt["value"] for opt in wildcard_options}
-                has_wildcard_selection = any(v in wildcard_values for v in answer.selected_values)
-
-                if has_wildcard_selection and not answer.custom_input:
-                    raise_problem(
-                        type_uri=VALIDATION_PROBLEM,
-                        title="Custom input required",
-                        detail="Custom input is required when selecting wildcard option",
-                        status=400
-                    )
-
-        # Build resume value
-        resume_value = {
-            "selected_values": answer.selected_values,
-            "custom_input": answer.custom_input,
-        }
-
-        # Save user's answer to database
-        await save_chat_message(
-            session_id=session_id,
-            role="user",
-            content=f"Selected: {', '.join(answer.selected_values)}" +
-                    (f" (Custom: {answer.custom_input})" if answer.custom_input else ""),
-            metadata={"clarification_answer": answer.model_dump()},
-        )
-    elif resume_data.command:
-        # Other interrupt types
-        resume_value = resume_data.command.get("resume")
-    else:
-        raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Invalid resume data",
-            detail="Either answer or command must be provided",
-            status=400
-        )
-
-    # Create Command to resume
-    resume_command = Command(resume=resume_value)
+    # Build resume command
+    resume_command = await _build_resume_command(resume_data, checkpointer, session_id)
 
     # Get user settings
     try:
@@ -835,43 +679,27 @@ async def resume_chat_endpoint(  # pylint: disable=too-many-locals,too-complex,t
     try:
         result = await agent.ainvoke(resume_command, config=config_dict)
 
-        # Extract response
+        # Extract response and thinking
         agent_messages = result.get("messages", [])
         response_text = _extract_response_text(result) if agent_messages else "Continuing..."
-
-        # Extract thinking
         thinking_steps = extract_thinking_from_messages(agent_messages)
 
-        # Check for new interrupts
+        # Detect and transform interrupts
         interrupt_required, interrupt_data = InterruptHandler.extract_interrupt_from_result(result)
+        if interrupt_required and interrupt_data:
+            _transform_clarification_interrupt(interrupt_data)
 
-        # Transform clarification question interrupts for frontend
-        if interrupt_required and interrupt_data and interrupt_data.get("type") == "clarification_question":
-            # Build structured question object
-            question_obj = ClarificationQuestion(
-                question_id=interrupt_data["question_id"],
-                question=interrupt_data["question"],
-                question_type=QuestionType(interrupt_data["question_type"]),
-                options=[
-                    ClarificationQuestionOption(**opt)
-                    for opt in interrupt_data["options"]
-                ],
-                min_selections=interrupt_data.get("min_selections", 1),
-                max_selections=interrupt_data.get("max_selections"),
-            )
+        # Get proposal and save response
+        from seer.database import WorkflowProposal  # pylint: disable=import-outside-toplevel # Reason: Only needed in this code path
+        proposal = await WorkflowProposal.get_or_none(
+            thread_id=resume_data.thread_id,
+            status=WorkflowProposal.STATUS_PENDING
+        ).prefetch_related('created_by', 'workflow', 'session')
 
-            # Store structured question in interrupt_data for frontend
-            interrupt_data["clarification_question"] = question_obj.model_dump()
-
-        # Get proposal if any
-        proposal_payload = get_proposed_spec_for_thread(resume_data.thread_id)
-        proposal, proposal_public, proposal_error = await _maybe_create_proposal_from_spec(
-            workflow=workflow,
-            session=session,
-            user=user,
-            model_name=config.default_llm_model,
-            proposal_payload=proposal_payload,
-        )
+        proposal_public = None
+        proposal_error = None
+        if proposal:
+            proposal_public = WorkflowProposalPublic.model_validate(proposal, from_attributes=True)
 
         # Save assistant message
         await save_chat_message(
@@ -879,7 +707,7 @@ async def resume_chat_endpoint(  # pylint: disable=too-many-locals,too-complex,t
             role="assistant",
             content=response_text,
             thinking="\n".join(thinking_steps) if thinking_steps else None,
-            suggested_edits=proposal_payload,
+            suggested_edits=proposal.spec if proposal else None,
             proposal=proposal,
         )
 
@@ -903,7 +731,6 @@ async def resume_chat_endpoint(  # pylint: disable=too-many-locals,too-complex,t
         )
     finally:
         _current_thread_id.reset(token)
-        clear_proposed_spec_for_thread(resume_data.thread_id)
 
 
 @router.get("/{workflow_id}/proposals/{proposal_id}", response_model=WorkflowProposalPublic)
@@ -983,6 +810,7 @@ async def update_user_creation_mode_endpoint(
             status=400
         )
     try:
+        # Use database enum for the service call
         mode = WorkflowCreationMode(mode_str)
     except ValueError:
         raise_problem(
