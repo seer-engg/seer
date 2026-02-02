@@ -47,6 +47,10 @@ class ChatResponse(BaseModel):
     interrupt_data: Optional[Dict[str, Any]] = Field(default=None, description="Data for human-in-the-loop interrupt")
     workflow_created_id: Optional[str] = Field(default=None, description="Workflow ID if created during discovery chat")
 
+    # Optional fields for async mode
+    execution_status: Optional[str] = Field(default=None, description="Execution status (queued/running/completed/failed/interrupted)")
+    execution_task_id: Optional[str] = Field(default=None, description="Taskiq task ID for background execution")
+
 
 class ChatSessionCreate(BaseModel):
     """Request model for creating a chat session."""
@@ -139,3 +143,26 @@ class ChatResumeRequest(BaseModel):
         if not self.answer and not self.command:
             raise ValueError("Either answer or command must be provided")
         return self
+
+
+class ChatStatusResponse(BaseModel):
+    """Response for polling chat execution status."""
+    status: str = Field(..., description="Execution status (queued/running/completed/failed/interrupted)")
+    session_id: int = Field(..., description="Chat session ID")
+    thread_id: str = Field(..., description="LangGraph thread ID")
+
+    # Available when completed
+    response: Optional[str] = Field(default=None, description="Assistant's response text")
+    thinking: Optional[List[str]] = Field(default=None, description="Agent thinking/reasoning steps")
+    proposal: Optional[WorkflowProposalPublic] = Field(default=None, description="Workflow proposal if any")
+
+    # Available when interrupted
+    interrupt_required: bool = Field(default=False, description="Whether human input is required")
+    interrupt_data: Optional[Dict[str, Any]] = Field(default=None, description="Interrupt data (e.g., clarification question)")
+
+    # Available when failed
+    error: Optional[Dict[str, Any]] = Field(default=None, description="Error details if execution failed")
+
+    # Timing information
+    started_at: Optional[datetime] = Field(default=None, description="Execution start time")
+    finished_at: Optional[datetime] = Field(default=None, description="Execution finish time")

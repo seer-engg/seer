@@ -39,7 +39,6 @@ class TestDBContextPersistence:
     async def test_workflow_state_persistence(self, workflow_client):
         """Test that workflow state is saved to database and can be retrieved."""
         from seer.database.workflow_models import WorkflowChatSession
-        from seer.api.agents.workflow.router import create_nexus_chat_agent, get_checkpointer
         from unittest.mock import patch
 
         client, workflow = workflow_client
@@ -49,17 +48,17 @@ class TestDBContextPersistence:
             "edges": [{"id": "edge1", "source": "node1", "target": "node2"}]
         }
 
-        with patch('seer.api.agents.workflow.router.create_nexus_chat_agent') as mock_agent, \
-             patch('seer.api.agents.workflow.router.get_checkpointer') as mock_checkpointer:
+        # Mock the taskiq task's kiq method to avoid broker connection
+        mock_task_result = MagicMock()
+        mock_task_result.task_id = "mock-task-id-123"
 
-            # Mock agent response
-            mock_agent.return_value = AsyncMock()
-            mock_agent.return_value.ainvoke.return_value = {
-                "messages": [MagicMock(content="Got it!")]
-            }
+        with patch('seer.api.agents.workflow.router.get_checkpointer') as mock_checkpointer, \
+             patch('seer.worker.tasks.chat.chat_execution_task') as mock_chat_task:
+
             mock_checkpointer.return_value = AsyncMock()
+            mock_chat_task.kiq = AsyncMock(return_value=mock_task_result)
 
-            # Send chat message with workflow state
+            # Send chat message with workflow state (async mode - the default)
             response = await client.post(
                 f"/nexus/{workflow.workflow_id}/chat",
                 json={
@@ -72,7 +71,7 @@ class TestDBContextPersistence:
             data = response.json()
             thread_id = data["thread_id"]
 
-            # Verify workflow state was saved to database
+            # Verify workflow state was saved to database (happens before async task is enqueued)
             session = await WorkflowChatSession.get_or_none(thread_id=thread_id)
             assert session is not None
             assert session.current_workflow_state is not None

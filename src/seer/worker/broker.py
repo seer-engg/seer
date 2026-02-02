@@ -59,6 +59,6 @@ async def _on_worker_shutdown(_: TaskiqState) -> None:
 
 # Import task modules to register with broker
 # pylint: disable=wrong-import-position,unused-import
-from seer.worker.tasks import workflows, triggers, polling, stripe  # noqa: F401
+from seer.worker.tasks import workflows, triggers, polling, stripe, chat  # noqa: F401
 
 __all__ = ["broker"]
