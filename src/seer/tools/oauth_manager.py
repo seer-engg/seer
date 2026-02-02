@@ -116,6 +116,12 @@ async def get_oauth_token(
         raise HTTPException(status_code=400, detail="Either connection_id or provider must be provided")
 
     if connection.expires_at and connection.expires_at < datetime.now(timezone.utc):
+        if not connection.refresh_token_enc:
+            raise HTTPException(
+                status_code=401,
+                detail=f"Access token expired and no refresh token available. "
+                       f"Please reconnect your {connection.provider} account.",
+            )
         connection = await refresh_oauth_token(connection)
 
     if not connection.access_token_enc:

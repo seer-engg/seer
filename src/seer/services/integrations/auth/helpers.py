@@ -205,6 +205,15 @@ def extract_provider_account_id(oauth_provider: str, profile: Dict[str, Any]) ->
                 f"Profile keys: {list(profile.keys())}"
             )
         return provider_account_id
+    elif oauth_provider == 'linkedin':
+        # LinkedIn uses OpenID Connect, which returns 'sub' as the user identifier
+        provider_account_id = profile.get('sub')
+        if not provider_account_id:
+            raise ValueError(
+                f"LinkedIn profile missing required field 'sub'. "
+                f"Profile keys: {list(profile.keys())}"
+            )
+        return provider_account_id
     elif oauth_provider == 'github':
         provider_id = profile.get('id')
         if provider_id is None:
