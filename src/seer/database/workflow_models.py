@@ -31,6 +31,15 @@ class TriggerEventStatus(str, Enum):
     FAILED = "failed"
 
 
+class ChatExecutionStatus(str, Enum):
+    """Status of chat agent execution."""
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    INTERRUPTED = "interrupted"
+
+
 class WorkflowCreationMode(str, Enum):
     AUTO_CREATE = "AUTO_CREATE"
     ASK_FIRST = "ASK_FIRST"
@@ -230,6 +239,33 @@ class WorkflowChatSession(models.Model):
     )
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
+
+    # Execution tracking fields
+    current_execution_status = fields.CharEnumField(
+        ChatExecutionStatus,
+        max_length=20,
+        null=True,
+        description="Status of current chat execution"
+    )
+    current_execution_task_id = fields.CharField(
+        max_length=255,
+        null=True,
+        description="Taskiq task ID for current execution"
+    )
+    current_execution_started_at = fields.DatetimeField(null=True)
+    current_execution_finished_at = fields.DatetimeField(null=True)
+    current_execution_error = fields.JSONField(null=True)
+
+    # Interrupt handling fields
+    pending_interrupt_type = fields.CharField(
+        max_length=50,
+        null=True,
+        description="Type of pending interrupt (e.g., 'clarification_question')"
+    )
+    pending_interrupt_data = fields.JSONField(
+        null=True,
+        description="Interrupt data waiting for user response"
+    )
 
     class Meta:
         table = "workflow_chat_sessions"

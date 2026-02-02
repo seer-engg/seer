@@ -35,7 +35,7 @@ class GitHubResourceProvider(ResourceProvider):
     async def list_resources(  # pylint: disable=too-many-arguments  # Reason: GitHub resource provider initialization requires all parameters
         self,
         *,
-        access_token: str,
+        access_token: Optional[str] = None,
         resource_type: str,
         query: Optional[str],
         parent_id: Optional[str],
@@ -43,6 +43,7 @@ class GitHubResourceProvider(ResourceProvider):
         page_size: int,
         filter_params: Optional[Dict[str, Any]],
         depends_on_values: Optional[Dict[str, str]],
+        context: Optional[Any] = None,
     ) -> Dict[str, Any]:
         if resource_type == "github_repo":
             return await self._list_repos(access_token, query, page_token, page_size)

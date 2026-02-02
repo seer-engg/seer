@@ -1,4 +1,6 @@
-# pylint: disable=too-many-lines # Reason: Complex API router with multiple endpoints, requires architectural refactoring to split
+# pylint: disable=too-many-lines,duplicate-code
+# Reason: Complex API router with multiple endpoints, requires architectural refactoring to split;
+# shared helper functions duplicated in worker tasks for background execution
 """
 Workflow API router for CRUD and execution endpoints.
 """
@@ -42,6 +44,7 @@ from .chat_schema import (
     ChatSession,
     ChatSessionCreate,
     ChatSessionWithMessages,
+    ChatStatusResponse,
     ClarificationQuestion,
     ClarificationQuestionOption,
     QuestionType,
@@ -413,14 +416,21 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
     request: Request,
     workflow_id: str,
     chat_request: ChatRequest,
+    async_mode: bool = Query(
+        default=True,
+        description="Execute in background. Client must poll /chat/status/{session_id} for completion. Set to false for synchronous execution."
+    ),
 ) -> ChatResponse:
     """
     Chat with AI assistant about workflow.
 
     The assistant can analyze the workflow and suggest edits.
     Supports session persistence and human-in-the-loop interrupts.
+
+    When async_mode=True (default), execution runs in background and client must poll
+    /chat/status/{session_id} for results. This makes the API resilient to client disconnections.
     """
-    logger.info("Chat request received: workflow_id=%s, message_length=%d", workflow_id, len(chat_request.message))
+    logger.info("Chat request received: workflow_id=%s, message_length=%d, async_mode=%s", workflow_id, len(chat_request.message), async_mode)
     user = _require_user(request)
     workflow = await get_workflow(user, workflow_id)
 
@@ -436,21 +446,22 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
         session_id=chat_request.session_id,
     )
 
+    # Check if session already has execution in progress
+    from seer.database.workflow_models import ChatExecutionStatus  # pylint: disable=import-outside-toplevel # Reason: Only needed for async mode
+    if session.current_execution_status in [ChatExecutionStatus.QUEUED, ChatExecutionStatus.RUNNING]:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Execution already in progress",
+            detail="Cannot start new execution while another is in progress",
+            status=409
+        )
+
     # Prepare workflow state and save to session
     workflow_state = await _prepare_workflow_state(workflow, chat_request.workflow_state)
     session.current_workflow_state = workflow_state
     await session.save(update_fields=['current_workflow_state'])
 
-    # Create agent
-    agent = create_nexus_chat_agent(
-        model=model,
-        checkpointer=checkpointer,
-        workflow_state=workflow_state,
-    )
-
-    user_msg = HumanMessage(content=chat_request.message)
-
-    # Save user message
+    # Save user message first (before async execution)
     await save_chat_message(
         session_id=session_id,
         role="user",
@@ -459,6 +470,64 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
 
     # Track user message (global count, not per-workflow)
     await increment_chat_message_count(user)
+
+    # Handle async mode
+    if async_mode:
+        # Enqueue background task
+        from seer.worker.tasks.chat import chat_execution_task  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+
+        # Update session status to QUEUED
+        session.current_execution_status = ChatExecutionStatus.QUEUED
+        session.current_execution_error = None
+        session.pending_interrupt_type = None
+        session.pending_interrupt_data = None
+        await session.save(update_fields=[
+            'current_execution_status',
+            'current_execution_error',
+            'pending_interrupt_type',
+            'pending_interrupt_data',
+        ])
+
+        # Enqueue task
+        task = await chat_execution_task.kiq(
+            session_id=session_id,
+            user_id=user.id,
+            message=chat_request.message,
+            workflow_id=workflow.id,
+            workflow_state=workflow_state,
+            model=model,
+        )
+
+        # Save task ID to session
+        session.current_execution_task_id = task.task_id
+        await session.save(update_fields=['current_execution_task_id'])
+
+        logger.info(
+            "Chat execution enqueued",
+            extra={
+                "session_id": session_id,
+                "task_id": task.task_id,
+            }
+        )
+
+        # Return minimal response for async mode
+        return ChatResponse(
+            response="",
+            session_id=session_id,
+            thread_id=thread_id,
+            execution_status=ChatExecutionStatus.QUEUED.value,
+            execution_task_id=task.task_id,
+        )
+
+    # Synchronous mode (original behavior)
+    # Create agent
+    agent = create_nexus_chat_agent(
+        model=model,
+        checkpointer=checkpointer,
+        workflow_state=workflow_state,
+    )
+
+    user_msg = HumanMessage(content=chat_request.message)
 
     # Get user settings and create runtime context
     max_agent_steps, runtime_context = await _get_user_settings_and_context(user, thread_id)
@@ -522,6 +591,67 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
         )
     finally:
         clear_chat_runtime_context()
+
+
+@router.get("/{workflow_id}/chat/status/{session_id}", response_model=ChatStatusResponse)
+async def get_chat_status_endpoint(
+    request: Request,
+    workflow_id: str,
+    session_id: int,
+) -> ChatStatusResponse:
+    """
+    Poll for chat execution status.
+
+    Returns execution status and results when completed.
+    Includes interrupt data if agent requires clarification.
+    """
+    user = _require_user(request)
+    workflow = await get_workflow(user, workflow_id)
+    session = await get_chat_session(session_id, workflow)
+
+    # Get latest assistant message for completed executions
+    response_text = None
+    thinking_steps = None
+    proposal_public = None
+
+    from seer.database.workflow_models import ChatExecutionStatus  # pylint: disable=import-outside-toplevel # Reason: Only needed for status checks
+    from seer.database import WorkflowChatMessage  # pylint: disable=import-outside-toplevel # Reason: Only needed for status endpoint
+
+    if session.current_execution_status == ChatExecutionStatus.COMPLETED:
+        # Fetch latest assistant message
+        latest_message = await WorkflowChatMessage.filter(
+            session_id=session_id,
+            role="assistant"
+        ).order_by('-created_at').first().prefetch_related('proposal')
+
+        if latest_message:
+            response_text = latest_message.content
+            thinking_steps = latest_message.thinking.split("\n") if latest_message.thinking else None
+
+            # Get proposal if any
+            if latest_message.proposal:
+                await latest_message.proposal.fetch_related('created_by', 'workflow', 'session')
+                proposal_public = WorkflowProposalPublic.model_validate(latest_message.proposal, from_attributes=True)
+
+    # Transform interrupt data for frontend
+    interrupt_data = None
+    if session.pending_interrupt_data:
+        interrupt_data = session.pending_interrupt_data
+        _transform_clarification_interrupt(interrupt_data)
+
+    return ChatStatusResponse(
+        status=session.current_execution_status.value if session.current_execution_status else "unknown",
+        session_id=session_id,
+        thread_id=session.thread_id,
+        response=response_text,
+        thinking=thinking_steps,
+        proposal=proposal_public,
+        interrupt_required=session.current_execution_status == ChatExecutionStatus.INTERRUPTED,
+        interrupt_data=interrupt_data,
+        error=session.current_execution_error,
+        started_at=session.current_execution_started_at,
+        finished_at=session.current_execution_finished_at,
+    )
 
 
 @router.post("/{workflow_id}/chat/sessions", response_model=ChatSession)
@@ -624,14 +754,21 @@ async def resume_chat_endpoint(  # pylint: disable=too-many-locals # Reason: Com
     request: Request,
     workflow_id: str,
     resume_data: ChatResumeRequest,
+    async_mode: bool = Query(
+        default=True,
+        description="Execute in background. Client must poll /chat/status/{session_id} for completion. Set to false for synchronous execution."
+    ),
 ) -> ChatResponse:
     """
     Resume chat after interrupt (clarification question or other interrupt type).
 
     For clarification questions, provide 'answer' with selected values.
     For other interrupts, provide 'command' with raw Command data.
+
+    When async_mode=True (default), execution runs in background and client must poll
+    /chat/status/{session_id} for results.
     """
-    logger.info("Resume request received: workflow_id=%s, thread_id=%s", workflow_id, resume_data.thread_id)
+    logger.info("Resume request received: workflow_id=%s, thread_id=%s, async_mode=%s", workflow_id, resume_data.thread_id, async_mode)
     user = _require_user(request)
     workflow = await get_workflow(user, workflow_id)
 
@@ -650,16 +787,67 @@ async def resume_chat_endpoint(  # pylint: disable=too-many-locals # Reason: Com
     assert session is not None
     session_id = session.id
 
-    # Get current workflow state and create agent
+    # Get current workflow state
     workflow_state = deepcopy(await workflow_state_snapshot(workflow))
+
+    # Build resume command (validates answer)
+    resume_command = await _build_resume_command(resume_data, checkpointer, session_id)
+
+    # Handle async mode
+    if async_mode:
+        # Enqueue background task
+        from seer.worker.tasks.chat import chat_resume_task  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+        from seer.database.workflow_models import ChatExecutionStatus  # pylint: disable=import-outside-toplevel # Reason: Only needed for async mode
+
+        # Update session status to QUEUED
+        session.current_execution_status = ChatExecutionStatus.QUEUED
+        session.current_execution_error = None
+        session.pending_interrupt_type = None
+        session.pending_interrupt_data = None
+        await session.save(update_fields=[
+            'current_execution_status',
+            'current_execution_error',
+            'pending_interrupt_type',
+            'pending_interrupt_data',
+        ])
+
+        # Enqueue task
+        task = await chat_resume_task.kiq(
+            session_id=session_id,
+            user_id=user.id,
+            thread_id=resume_data.thread_id,
+            resume_command_data=resume_command.resume,
+            workflow_id=workflow.id,
+            workflow_state=workflow_state,
+        )
+
+        # Save task ID to session
+        session.current_execution_task_id = task.task_id
+        await session.save(update_fields=['current_execution_task_id'])
+
+        logger.info(
+            "Chat resume enqueued",
+            extra={
+                "session_id": session_id,
+                "task_id": task.task_id,
+            }
+        )
+
+        # Return minimal response for async mode
+        return ChatResponse(
+            response="",
+            session_id=session_id,
+            thread_id=resume_data.thread_id,
+            execution_status=ChatExecutionStatus.QUEUED.value,
+            execution_task_id=task.task_id,
+        )
+
+    # Synchronous mode (original behavior)
     agent = create_nexus_chat_agent(
         model=config.default_llm_model,
         checkpointer=checkpointer,
         workflow_state=workflow_state,
     )
-
-    # Build resume command
-    resume_command = await _build_resume_command(resume_data, checkpointer, session_id)
 
     # Get user settings
     try:
