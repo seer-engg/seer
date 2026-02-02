@@ -107,6 +107,12 @@ class ClarificationQuestion(BaseModel):
     options: List[ClarificationQuestionOption] = Field(..., description="Available options")
     min_selections: int = Field(default=1, description="Minimum selections for multi-choice")
     max_selections: Optional[int] = Field(default=None, description="Maximum selections for multi-choice")
+    reasoning: Optional[str] = Field(default=None, description="Why the agent is asking this question")
+
+
+class ClarificationQuestions(BaseModel):
+    """Multiple clarification questions asked at once (batch mode)."""
+    questions: List[ClarificationQuestion] = Field(..., description="List of questions to answer")
 
 
 class DiscoveryChatRequest(BaseModel):
@@ -131,17 +137,22 @@ class ClarificationAnswer(BaseModel):
     custom_input: Optional[str] = Field(default=None, description="Custom input if wildcard selected")
 
 
+class ClarificationAnswers(BaseModel):
+    """User's answers to multiple clarification questions (batch mode)."""
+    answers: List[ClarificationAnswer] = Field(..., description="List of answers, one per question")
+
+
 class ChatResumeRequest(BaseModel):
     """Request model for resuming chat after interrupt."""
     thread_id: str = Field(..., description="Thread ID to resume")
-    answer: Optional[ClarificationAnswer] = Field(default=None, description="Answer to clarification question")
+    answers: Optional[ClarificationAnswers] = Field(default=None, description="Answers to clarification questions")
     command: Optional[Dict[str, Any]] = Field(default=None, description="Raw Command data for other interrupt types")
 
     @model_validator(mode="after")
-    def validate_one_of_answer_or_command(self) -> "ChatResumeRequest":
-        """Ensure either answer or command is provided."""
-        if not self.answer and not self.command:
-            raise ValueError("Either answer or command must be provided")
+    def validate_answers_or_command(self) -> "ChatResumeRequest":
+        """Ensure either answers or command is provided."""
+        if not self.answers and not self.command:
+            raise ValueError("Either answers or command must be provided")
         return self
 
 

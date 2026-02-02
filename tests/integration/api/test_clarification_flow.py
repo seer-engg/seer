@@ -51,24 +51,29 @@ class TestClarificationFlow:
         workflow_client,
         mock_task_result
     ):
-        """Test that clarification question triggers interrupt via async task."""
+        """Test that clarification questions trigger interrupt via async task."""
         from seer.database.workflow_models import WorkflowChatSession, ChatExecutionStatus  # pylint: disable=import-outside-toplevel
 
         client, workflow = workflow_client
 
+        # Use batch format (clarification_questions) instead of single question
         interrupt_data = {
-            "type": "clarification_question",
-            "question_id": "q_test123",
-            "question": "Which email provider should we use?",
-            "question_type": "single_choice",
-            "options": [
-                {"value": "gmail", "label": "Gmail", "is_wildcard": False},
-                {"value": "outlook", "label": "Outlook", "is_wildcard": False},
-                {"value": "other", "label": "Other", "is_wildcard": True},
-            ],
-            "min_selections": 1,
-            "max_selections": None,
-            "reasoning": "Found multiple email providers"
+            "type": "clarification_questions",
+            "questions": [
+                {
+                    "question_id": "q_test123",
+                    "question": "Which email provider should we use?",
+                    "question_type": "single_choice",
+                    "options": [
+                        {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                        {"value": "outlook", "label": "Outlook", "is_wildcard": False},
+                        {"value": "other", "label": "Other", "is_wildcard": True},
+                    ],
+                    "min_selections": 1,
+                    "max_selections": None,
+                    "reasoning": "Found multiple email providers"
+                }
+            ]
         }
 
         # Mock agent to return interrupt (used by the task)
@@ -108,7 +113,6 @@ class TestClarificationFlow:
             # Verify async response
             assert data["execution_status"] == "queued"
             session_id = data["session_id"]
-            thread_id = data["thread_id"]
 
         # Verify task was enqueued with correct args
         assert "session_id" in captured_task_args
@@ -134,19 +138,20 @@ class TestClarificationFlow:
         # Now check the session state - should have interrupt
         session = await WorkflowChatSession.get(id=session_id)
         assert session.current_execution_status == ChatExecutionStatus.INTERRUPTED
-        assert session.pending_interrupt_type == "clarification_question"
+        assert session.pending_interrupt_type == "clarification_questions"
         assert session.pending_interrupt_data is not None
 
-        # Verify structured question in interrupt_data
-        question = session.pending_interrupt_data.get("clarification_question") or session.pending_interrupt_data
-        assert question.get("question_id") == "q_test123" or session.pending_interrupt_data.get("question_id") == "q_test123"
+        # Verify structured questions in interrupt_data
+        questions = session.pending_interrupt_data.get("questions", [])
+        assert len(questions) == 1
+        assert questions[0].get("question_id") == "q_test123"
 
     async def test_resume_with_valid_answer(
         self,
         workflow_client,
         mock_task_result
     ):
-        """Test resuming with valid clarification answer via async task."""
+        """Test resuming with valid clarification answers via async task."""
         from seer.database.workflow_models import WorkflowChatSession, ChatExecutionStatus  # pylint: disable=import-outside-toplevel  # Dynamic import for test
 
         client, workflow = workflow_client
@@ -167,11 +172,15 @@ class TestClarificationFlow:
                 "channel_values": {
                     "__interrupt__": [
                         {
-                            "type": "clarification_question",
-                            "question_id": "q_test123",
-                            "options": [
-                                {"value": "gmail", "label": "Gmail", "is_wildcard": False},
-                                {"value": "outlook", "label": "Outlook", "is_wildcard": False},
+                            "type": "clarification_questions",
+                            "questions": [
+                                {
+                                    "question_id": "q_test123",
+                                    "options": [
+                                        {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                                        {"value": "outlook", "label": "Outlook", "is_wildcard": False},
+                                    ]
+                                }
                             ]
                         }
                     ]
@@ -199,15 +208,19 @@ class TestClarificationFlow:
 
             mock_resume_task.kiq = AsyncMock(side_effect=capture_kiq)
 
-            # Resume with answer (async_mode=True by default)
+            # Resume with answers (batch format)
             response = await client.post(
                 f"/nexus/{workflow.workflow_id}/chat/resume",
                 json={
                     "thread_id": thread_id,
-                    "answer": {
-                        "question_id": "q_test123",
-                        "selected_values": ["gmail"],
-                        "custom_input": None
+                    "answers": {
+                        "answers": [
+                            {
+                                "question_id": "q_test123",
+                                "selected_values": ["gmail"],
+                                "custom_input": None
+                            }
+                        ]
                     }
                 }
             )
@@ -249,7 +262,7 @@ class TestClarificationFlow:
 
         # Create chat session in database for the thread
         thread_id = "test-thread-invalid"
-        session = await WorkflowChatSession.create(
+        await WorkflowChatSession.create(
             workflow=workflow,
             user=workflow.user,
             thread_id=thread_id,
@@ -263,11 +276,15 @@ class TestClarificationFlow:
                 "channel_values": {
                     "__interrupt__": [
                         {
-                            "type": "clarification_question",
-                            "question_id": "q_test123",
-                            "options": [
-                                {"value": "gmail", "label": "Gmail", "is_wildcard": False},
-                                {"value": "outlook", "label": "Outlook", "is_wildcard": False},
+                            "type": "clarification_questions",
+                            "questions": [
+                                {
+                                    "question_id": "q_test123",
+                                    "options": [
+                                        {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                                        {"value": "outlook", "label": "Outlook", "is_wildcard": False},
+                                    ]
+                                }
                             ]
                         }
                     ]
@@ -283,10 +300,14 @@ class TestClarificationFlow:
                 f"/nexus/{workflow.workflow_id}/chat/resume",
                 json={
                     "thread_id": thread_id,
-                    "answer": {
-                        "question_id": "q_test123",
-                        "selected_values": ["invalid_provider"],
-                        "custom_input": None
+                    "answers": {
+                        "answers": [
+                            {
+                                "question_id": "q_test123",
+                                "selected_values": ["invalid_provider"],
+                                "custom_input": None
+                            }
+                        ]
                     }
                 }
             )
@@ -321,11 +342,15 @@ class TestClarificationFlow:
                 "channel_values": {
                     "__interrupt__": [
                         {
-                            "type": "clarification_question",
-                            "question_id": "q_test123",
-                            "options": [
-                                {"value": "gmail", "label": "Gmail", "is_wildcard": False},
-                                {"value": "other", "label": "Other", "is_wildcard": True},
+                            "type": "clarification_questions",
+                            "questions": [
+                                {
+                                    "question_id": "q_test123",
+                                    "options": [
+                                        {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                                        {"value": "other", "label": "Other", "is_wildcard": True},
+                                    ]
+                                }
                             ]
                         }
                     ]
@@ -341,10 +366,14 @@ class TestClarificationFlow:
                 f"/nexus/{workflow.workflow_id}/chat/resume",
                 json={
                     "thread_id": thread_id,
-                    "answer": {
-                        "question_id": "q_test123",
-                        "selected_values": ["other"],
-                        "custom_input": None
+                    "answers": {
+                        "answers": [
+                            {
+                                "question_id": "q_test123",
+                                "selected_values": ["other"],
+                                "custom_input": None
+                            }
+                        ]
                     }
                 }
             )
@@ -380,11 +409,15 @@ class TestClarificationFlow:
                 "channel_values": {
                     "__interrupt__": [
                         {
-                            "type": "clarification_question",
-                            "question_id": "q_test123",
-                            "options": [
-                                {"value": "gmail", "label": "Gmail", "is_wildcard": False},
-                                {"value": "other", "label": "Other", "is_wildcard": True},
+                            "type": "clarification_questions",
+                            "questions": [
+                                {
+                                    "question_id": "q_test123",
+                                    "options": [
+                                        {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                                        {"value": "other", "label": "Other", "is_wildcard": True},
+                                    ]
+                                }
                             ]
                         }
                     ]
@@ -412,15 +445,19 @@ class TestClarificationFlow:
 
             mock_resume_task.kiq = AsyncMock(side_effect=capture_kiq)
 
-            # Resume with wildcard and custom input (async_mode=True by default)
+            # Resume with wildcard and custom input (batch format)
             response = await client.post(
                 f"/nexus/{workflow.workflow_id}/chat/resume",
                 json={
                     "thread_id": thread_id,
-                    "answer": {
-                        "question_id": "q_test123",
-                        "selected_values": ["other"],
-                        "custom_input": "ProtonMail"
+                    "answers": {
+                        "answers": [
+                            {
+                                "question_id": "q_test123",
+                                "selected_values": ["other"],
+                                "custom_input": "ProtonMail"
+                            }
+                        ]
                     }
                 }
             )
@@ -457,19 +494,24 @@ class TestClarificationFlow:
 
         client, workflow = workflow_client
 
+        # Use batch format with multi-choice question
         interrupt_data = {
-            "type": "clarification_question",
-            "question_id": "q_multi123",
-            "question": "Which integrations to enable?",
-            "question_type": "multi_choice",
-            "options": [
-                {"value": "gmail", "label": "Gmail", "is_wildcard": False},
-                {"value": "slack", "label": "Slack", "is_wildcard": False},
-                {"value": "github", "label": "GitHub", "is_wildcard": False},
-            ],
-            "min_selections": 1,
-            "max_selections": 3,
-            "reasoning": "User wants multiple integrations"
+            "type": "clarification_questions",
+            "questions": [
+                {
+                    "question_id": "q_multi123",
+                    "question": "Which integrations to enable?",
+                    "question_type": "multi_choice",
+                    "options": [
+                        {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                        {"value": "slack", "label": "Slack", "is_wildcard": False},
+                        {"value": "github", "label": "GitHub", "is_wildcard": False},
+                    ],
+                    "min_selections": 1,
+                    "max_selections": 3,
+                    "reasoning": "User wants multiple integrations"
+                }
+            ]
         }
 
         # Mock agent to return multi-choice interrupt (used by the task)
@@ -525,11 +567,175 @@ class TestClarificationFlow:
         # Verify session has multi-choice interrupt
         session = await WorkflowChatSession.get(id=session_id)
         assert session.current_execution_status == ChatExecutionStatus.INTERRUPTED
-        assert session.pending_interrupt_type == "clarification_question"
+        assert session.pending_interrupt_type == "clarification_questions"
 
         # Verify multi-choice question in interrupt data
         stored_interrupt = session.pending_interrupt_data
         assert stored_interrupt is not None
-        assert stored_interrupt.get("question_type") == "multi_choice" or \
-               (stored_interrupt.get("clarification_question") and
-                stored_interrupt["clarification_question"].get("question_type") == "multi_choice")
+        questions = stored_interrupt.get("questions", [])
+        assert len(questions) == 1
+        assert questions[0].get("question_type") == "multi_choice"
+
+    async def test_multiple_questions_at_once(
+        self,
+        workflow_client,
+        mock_task_result
+    ):
+        """Test asking multiple questions at once (batch mode)."""
+        from seer.database.workflow_models import WorkflowChatSession, ChatExecutionStatus  # pylint: disable=import-outside-toplevel
+
+        client, workflow = workflow_client
+
+        # Batch format with multiple questions
+        interrupt_data = {
+            "type": "clarification_questions",
+            "questions": [
+                {
+                    "question_id": "q_email",
+                    "question": "Which email provider?",
+                    "question_type": "single_choice",
+                    "options": [
+                        {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                        {"value": "outlook", "label": "Outlook", "is_wildcard": False},
+                    ],
+                    "min_selections": 1,
+                    "max_selections": None,
+                    "reasoning": "Need email config"
+                },
+                {
+                    "question_id": "q_notify",
+                    "question": "Which notification channels?",
+                    "question_type": "multi_choice",
+                    "options": [
+                        {"value": "slack", "label": "Slack", "is_wildcard": False},
+                        {"value": "email", "label": "Email", "is_wildcard": False},
+                    ],
+                    "min_selections": 1,
+                    "max_selections": 2,
+                    "reasoning": "Need notification config"
+                }
+            ]
+        }
+
+        # Mock agent to return batch interrupt
+        mock_agent = AsyncMock()
+        mock_agent.ainvoke.return_value = {
+            "messages": [
+                MagicMock(content="I have a couple of questions.")
+            ],
+            "__interrupt__": [interrupt_data]
+        }
+
+        captured_task_args = {}
+
+        async def capture_kiq(**kwargs):
+            captured_task_args.update(kwargs)
+            return mock_task_result
+
+        with patch('seer.api.agents.workflow.router.get_checkpointer') as mock_get_checkpointer, \
+             patch('seer.worker.tasks.chat.chat_execution_task') as mock_chat_task:
+
+            mock_get_checkpointer.return_value = AsyncMock()
+            mock_chat_task.kiq = AsyncMock(side_effect=capture_kiq)
+
+            response = await client.post(
+                f"/nexus/{workflow.workflow_id}/chat",
+                json={
+                    "message": "Set up email and notifications",
+                    "workflow_state": {"nodes": [], "edges": []}
+                }
+            )
+
+            assert response.status_code == 200
+            session_id = response.json()["session_id"]
+
+        # Simulate task execution
+        with patch('seer.worker.tasks.chat.create_nexus_chat_agent', return_value=mock_agent), \
+             patch('seer.worker.tasks.chat.get_checkpointer') as mock_task_checkpointer:
+
+            mock_task_checkpointer.return_value = AsyncMock()
+
+            from seer.worker.tasks.chat import chat_execution_task
+            await chat_execution_task(
+                session_id=session_id,
+                user_id=workflow.user_id,
+                message="Set up email and notifications",
+                workflow_id=workflow.id,
+                workflow_state={"nodes": [], "edges": []},
+            )
+
+        # Verify session has batch questions
+        session = await WorkflowChatSession.get(id=session_id)
+        assert session.current_execution_status == ChatExecutionStatus.INTERRUPTED
+        assert session.pending_interrupt_type == "clarification_questions"
+
+        questions = session.pending_interrupt_data.get("questions", [])
+        assert len(questions) == 2
+        assert questions[0]["question_id"] == "q_email"
+        assert questions[1]["question_id"] == "q_notify"
+
+        # Now test resuming with batch answers
+        mock_checkpointer = AsyncMock()
+        mock_checkpointer.aget_tuple.return_value = MagicMock(
+            checkpoint={
+                "channel_values": {
+                    "__interrupt__": [interrupt_data]
+                }
+            }
+        )
+
+        mock_agent.ainvoke.return_value = {
+            "messages": [
+                MagicMock(content="Great! Setting up Gmail and Slack notifications.")
+            ]
+        }
+
+        async def capture_resume_kiq(**kwargs):
+            captured_task_args.clear()
+            captured_task_args.update(kwargs)
+            return mock_task_result
+
+        with patch('seer.api.agents.workflow.router.get_checkpointer', return_value=mock_checkpointer), \
+             patch('seer.worker.tasks.chat.chat_resume_task') as mock_resume_task:
+
+            mock_resume_task.kiq = AsyncMock(side_effect=capture_resume_kiq)
+
+            response = await client.post(
+                f"/nexus/{workflow.workflow_id}/chat/resume",
+                json={
+                    "thread_id": session.thread_id,
+                    "answers": {
+                        "answers": [
+                            {
+                                "question_id": "q_email",
+                                "selected_values": ["gmail"],
+                                "custom_input": None
+                            },
+                            {
+                                "question_id": "q_notify",
+                                "selected_values": ["slack"],
+                                "custom_input": None
+                            }
+                        ]
+                    }
+                }
+            )
+
+            assert response.status_code == 200
+
+        # Simulate resume task
+        with patch('seer.worker.tasks.chat.create_nexus_chat_agent', return_value=mock_agent), \
+             patch('seer.worker.tasks.chat.get_checkpointer', return_value=mock_checkpointer):
+
+            from seer.worker.tasks.chat import chat_resume_task
+            await chat_resume_task(
+                session_id=session.id,
+                user_id=workflow.user_id,
+                thread_id=session.thread_id,
+                resume_command_data=captured_task_args["resume_command_data"],
+                workflow_id=workflow.id,
+                workflow_state=captured_task_args.get("workflow_state", {}),
+            )
+
+        await session.refresh_from_db()
+        assert session.current_execution_status == ChatExecutionStatus.COMPLETED
