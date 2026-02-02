@@ -18,7 +18,26 @@ if [ "$1" = 'worker' ]; then
     shift
 
     echo "Starting  Worker..."
-    exec uv run taskiq worker seer.worker.broker:broker
+    # Pass all remaining arguments ($@) to taskiq worker
+    exec uv run taskiq worker seer.worker.broker:broker "$@"
+fi
+
+# 3. WORKER WITH WATCH (for local development)
+if [ "$1" = 'worker-watch' ]; then
+    shift
+
+    echo "🔄 Starting Worker with file watching..."
+    # Use watchmedo for reliable file watching with debouncing
+    # This avoids the infinite reload loop issue with taskiq's built-in --reload
+    WATCH_DIR="${WATCH_DIR:-/app/src}"
+    DEBOUNCE="${DEBOUNCE:-2}"
+
+    exec uv run watchmedo auto-restart \
+        --directory="$WATCH_DIR" \
+        --pattern="*.py" \
+        --recursive \
+        --debounce-interval="$DEBOUNCE" \
+        -- uv run taskiq worker seer.worker.broker:broker "$@"
 fi
 
 # Fallback for other commands
