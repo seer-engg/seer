@@ -42,7 +42,7 @@ from seer.services.integrations.auth.oauth import get_oauth_provider
 from .models import ToolsStatusResponse
 logger = get_logger("api.integrations.router")
 from seer.services.integrations.auth.helpers import parse_scopes, has_required_scopes, list_connections, store_oauth_connection
-from seer.services.integrations.tool_status_service import get_tools_connection_status_for_user
+from seer.services.integrations.tool_status_service import get_tools_connection_status_for_user, PROVIDERS_WITHOUT_REFRESH_TOKENS
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 from seer.api.integrations.resource_router import router as resource_router
@@ -84,7 +84,15 @@ def _check_existing_scopes(
     redirect_to: Optional[str],
     integration_type: Optional[str],
 ):
-    if existing_connection and existing_connection.scopes and existing_connection.refresh_token_enc:
+    # Check if this provider requires refresh tokens for re-consent logic
+    requires_refresh = oauth_provider not in PROVIDERS_WITHOUT_REFRESH_TOKENS
+    has_valid_connection = (
+        existing_connection
+        and existing_connection.scopes
+        and (existing_connection.refresh_token_enc or not requires_refresh)
+    )
+
+    if has_valid_connection:
         if has_required_scopes(existing_connection.scopes, normalized_scope_list):
             logger.info(
                 "User already has all required scopes for %s. Requested=%s Granted=%s",

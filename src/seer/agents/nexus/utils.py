@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
 from seer.logger import get_logger
 from seer.agents.nexus.tools import (
     analyze_workflow,
@@ -7,7 +7,7 @@ from seer.agents.nexus.tools import (
     search_triggers,
     list_available_triggers,
     get_workflow_template,
-    ask_clarification_question,
+    ask_clarification_questions,
 )
 
 logger = get_logger(__name__)
@@ -38,7 +38,7 @@ def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:
         # Template discovery tools
         get_workflow_template,
         # Clarification tools
-        ask_clarification_question,
+        ask_clarification_questions,
         # list_available_tools,
     ]
 
