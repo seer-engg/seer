@@ -176,6 +176,13 @@ class SeerConfig(BaseSettings):
         default=None, description="Discord bot token for API calls"
     )
 
+    linkedin_client_id: Optional[str] = Field(
+        default=None, description="LinkedIn OAuth client ID"
+    )
+    linkedin_client_secret: Optional[str] = Field(
+        default=None, description="LinkedIn OAuth client secret"
+    )
+
 
     # ============================================================================
     # Feature Flags

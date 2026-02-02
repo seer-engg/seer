@@ -87,6 +87,7 @@ services:
       BACKEND_API_URL: "${BACKEND_API_URL:-localhost:${API_PORT:-8000}}"
       AUTO_OPEN_BROWSER: "${AUTO_OPEN_BROWSER:-true}"
       CHAT_MESSAGES_TOTAL_SELF_HOSTED: "${CHAT_MESSAGES_TOTAL_SELF_HOSTED:--1}"
+      redirect_uri_scheme: "http"
     dns:
       - 8.8.8.8
       - 8.8.4.4
