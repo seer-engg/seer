@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+# Import ResourceContext for type hint (avoiding circular import with Any for now)
+# from seer.services.integrations.resource_providers.base import ResourceContext
+
 import httpx
 from fastapi import HTTPException
 
@@ -63,7 +66,7 @@ class GoogleResourceProvider(ResourceProvider):
     async def list_resources(
         self,
         *,
-        access_token: str,
+        access_token: Optional[str] = None,
         resource_type: str,
         query: Optional[str],
         parent_id: Optional[str],
@@ -71,6 +74,7 @@ class GoogleResourceProvider(ResourceProvider):
         page_size: int,
         filter_params: Optional[Dict[str, Any]],
         depends_on_values: Optional[Dict[str, str]],
+        context: Optional[Any] = None,
     ) -> Dict[str, Any]:
         config = self.resource_configs.get(resource_type)
         if not config:
