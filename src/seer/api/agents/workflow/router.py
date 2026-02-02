@@ -45,11 +45,17 @@ from .chat_schema import (
     ChatSessionCreate,
     ChatSessionWithMessages,
     ChatStatusResponse,
+    ClarificationAnswer,
+    ClarificationAnswers,
     ClarificationQuestion,
     ClarificationQuestionOption,
+    ClarificationQuestions,
     QuestionType,
     WorkflowProposalActionResponse,
 )
+
+# Re-export for type hints
+__all__ = ["router"]
 from .chat_services import (
     ChatOrchestrator,
     CheckpointerHealthService,
@@ -175,20 +181,30 @@ async def _get_user_settings_and_context(
 
 
 def _transform_clarification_interrupt(interrupt_data: Dict[str, Any]) -> None:
-    """Transform clarification question interrupt data for frontend."""
-    if interrupt_data.get("type") == "clarification_question":
+    """Transform clarification questions interrupt data for frontend."""
+    if interrupt_data.get("type") != "clarification_questions":
+        return
+
+    questions_list = []
+    for q in interrupt_data.get("questions", []):
         question_obj = ClarificationQuestion(
-            question_id=interrupt_data["question_id"],
-            question=interrupt_data["question"],
-            question_type=QuestionType(interrupt_data["question_type"]),
+            question_id=q["question_id"],
+            question=q["question"],
+            question_type=QuestionType(q["question_type"]),
             options=[
                 ClarificationQuestionOption(**opt)
-                for opt in interrupt_data["options"]
+                for opt in q["options"]
             ],
-            min_selections=interrupt_data.get("min_selections", 1),
-            max_selections=interrupt_data.get("max_selections"),
+            min_selections=q.get("min_selections", 1),
+            max_selections=q.get("max_selections"),
+            reasoning=q.get("reasoning"),
         )
-        interrupt_data["clarification_question"] = question_obj.model_dump()
+        questions_list.append(question_obj.model_dump())
+
+    questions_obj = ClarificationQuestions(
+        questions=[ClarificationQuestion(**q) for q in questions_list]
+    )
+    interrupt_data["clarification_questions"] = questions_obj.model_dump()
 
 
 async def _save_response_and_get_proposal(
@@ -287,28 +303,10 @@ async def _process_agent_result(
     return response_text, thinking_steps
 
 
-async def _validate_clarification_answer(
-    checkpointer,
-    thread_id: str,
-    answer,
-) -> None:
-    """Validate clarification answer against original question options."""
-    config_dict = {"configurable": {"thread_id": thread_id}}
-    state_tuple = await checkpointer.aget_tuple(config_dict)
-
-    if not state_tuple:
-        return
-
-    interrupt_payload = state_tuple.checkpoint.get("channel_values", {}).get("__interrupt__")
-    if not interrupt_payload or not interrupt_payload[0]:
-        return
-
-    interrupt_data = interrupt_payload[0]
-    if interrupt_data.get("type") != "clarification_question":
-        return
-
+def _validate_single_answer(answer: ClarificationAnswer, question_data: Dict[str, Any]) -> None:
+    """Validate a single answer against its question options."""
     # Validate selected values
-    valid_values = {opt["value"] for opt in interrupt_data["options"]}
+    valid_values = {opt["value"] for opt in question_data["options"]}
     invalid_selections = [v for v in answer.selected_values if v not in valid_values]
 
     if invalid_selections:
@@ -320,7 +318,7 @@ async def _validate_clarification_answer(
         )
 
     # Validate wildcard custom input
-    wildcard_options = [opt for opt in interrupt_data["options"] if opt.get("is_wildcard")]
+    wildcard_options = [opt for opt in question_data["options"] if opt.get("is_wildcard")]
     wildcard_values = {opt["value"] for opt in wildcard_options}
     has_wildcard_selection = any(v in wildcard_values for v in answer.selected_values)
 
@@ -328,9 +326,59 @@ async def _validate_clarification_answer(
         raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Custom input required",
-            detail="Custom input is required when selecting wildcard option",
+            detail=f"Custom input is required when selecting wildcard option for question {answer.question_id}",
             status=400
         )
+
+
+async def _validate_clarification_answers(
+    checkpointer,
+    thread_id: str,
+    answers: ClarificationAnswers,
+) -> None:
+    """Validate clarification answers against original questions."""
+    config_dict = {"configurable": {"thread_id": thread_id}}
+    state_tuple = await checkpointer.aget_tuple(config_dict)
+
+    if not state_tuple:
+        return
+
+    interrupt_payload = state_tuple.checkpoint.get("channel_values", {}).get("__interrupt__")
+    if not interrupt_payload or not interrupt_payload[0]:
+        return
+
+    interrupt_data = interrupt_payload[0]
+    if interrupt_data.get("type") != "clarification_questions":
+        return
+
+    questions_by_id = {q["question_id"]: q for q in interrupt_data.get("questions", [])}
+
+    # Check all questions are answered
+    answered_ids = {a.question_id for a in answers.answers}
+    expected_ids = set(questions_by_id.keys())
+
+    missing_answers = expected_ids - answered_ids
+    if missing_answers:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Missing answers",
+            detail=f"Missing answers for questions: {list(missing_answers)}",
+            status=400
+        )
+
+    extra_answers = answered_ids - expected_ids
+    if extra_answers:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Invalid question IDs",
+            detail=f"Answers provided for unknown questions: {list(extra_answers)}",
+            status=400
+        )
+
+    # Validate each answer
+    for ans in answers.answers:
+        question_data = questions_by_id[ans.question_id]
+        _validate_single_answer(ans, question_data)
 
 
 async def _build_resume_command(
@@ -338,34 +386,50 @@ async def _build_resume_command(
     checkpointer,
     session_id: int,
 ) -> Command:
-    """Build resume command from answer or raw command data."""
+    """Build resume command from answers or raw command data."""
     resume_value: Any = None
 
-    if resume_data.answer:
-        # Validate and build clarification answer
-        await _validate_clarification_answer(checkpointer, resume_data.thread_id, resume_data.answer)
+    if resume_data.answers:
+        # Clarification answers
+        await _validate_clarification_answers(
+            checkpointer, resume_data.thread_id, resume_data.answers
+        )
 
-        resume_value = {
-            "selected_values": resume_data.answer.selected_values,
-            "custom_input": resume_data.answer.custom_input,
-        }
+        # Build list of answers for the agent
+        resume_value = [
+            {
+                "question_id": ans.question_id,
+                "selected_values": ans.selected_values,
+                "custom_input": ans.custom_input,
+            }
+            for ans in resume_data.answers.answers
+        ]
 
-        # Save user's answer to database
+        # Build summary for chat message
+        answer_summaries = []
+        for ans in resume_data.answers.answers:
+            summary = f"Q({ans.question_id}): {', '.join(ans.selected_values)}"
+            if ans.custom_input:
+                summary += f" (Custom: {ans.custom_input})"
+            answer_summaries.append(summary)
+
+        # Save user's answers to database
         await save_chat_message(
             session_id=session_id,
             role="user",
-            content=f"Selected: {', '.join(resume_data.answer.selected_values)}" +
-                    (f" (Custom: {resume_data.answer.custom_input})" if resume_data.answer.custom_input else ""),
-            metadata={"clarification_answer": resume_data.answer.model_dump()},
+            content=f"Answered {len(resume_data.answers.answers)} questions:\n" + "\n".join(answer_summaries),
+            metadata={"clarification_answers": resume_data.answers.model_dump()},
         )
+
     elif resume_data.command:
         # Other interrupt types
         resume_value = resume_data.command.get("resume")
+
     else:
         raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Invalid resume data",
-            detail="Either answer or command must be provided",
+            detail="Either answers or command must be provided",
             status=400
         )
 
