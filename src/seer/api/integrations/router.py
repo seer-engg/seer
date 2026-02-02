@@ -40,6 +40,7 @@ from .services import (
 )
 from seer.services.integrations.auth.oauth import get_oauth_provider
 from .models import ToolsStatusResponse
+from .metadata_models import IntegrationMetadataResponse
 logger = get_logger("api.integrations.router")
 from seer.services.integrations.auth.helpers import parse_scopes, has_required_scopes, list_connections, store_oauth_connection
 from seer.services.integrations.tool_status_service import get_tools_connection_status_for_user, PROVIDERS_WITHOUT_REFRESH_TOKENS
@@ -229,6 +230,26 @@ async def get_tools_connection_status(request: Request):
     user: User = request.state.db_user
     results = await get_tools_connection_status_for_user(user)
     return {"tools": results}
+
+
+@router.get("/metadata", response_model=IntegrationMetadataResponse)
+async def get_integration_metadata():
+    """
+    Get metadata for all available integrations.
+
+    Returns integration configurations including display names, icons, OAuth providers,
+    available scopes, and detection patterns. This allows the frontend to render
+    integrations dynamically without hardcoded configurations.
+
+    The response includes:
+    - integrations: List of all integration types with their metadata
+    - provider_to_types: Mapping from OAuth providers to integration types
+
+    This endpoint does not require authentication as the data is static configuration.
+    """
+    from seer.services.integrations.metadata import get_all_integration_metadata  # pylint: disable=import-outside-toplevel  # Reason: Lazy import to avoid circular dependency with tools module
+
+    return get_all_integration_metadata()
 
 
 # =============================================================================
