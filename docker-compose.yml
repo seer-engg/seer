@@ -120,7 +120,8 @@ services:
     volumes:
       - ./:/app
       - /app/.venv
-    command: ["worker"]
+    # Use worker-watch for hot-reloading in development (uses watchmedo with debouncing)
+    command: ["worker-watch"]
 
 volumes:
   postgres_data:
