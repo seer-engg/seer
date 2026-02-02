@@ -1,11 +1,11 @@
 """Cost cap callback handler for Nexus chat agents."""
-import asyncio
 from contextvars import ContextVar
 from typing import Any
 
 from langchain_core.callbacks.base import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 
+from seer.core.event_loop import schedule_async_task
 from seer.core.runtime.context import WorkflowRuntimeContext
 from seer.observability.exceptions import RunCostCapExceeded
 from seer.observability.llm import extract_usage_metadata
@@ -131,27 +131,37 @@ class CostCapCallbackHandler(BaseCallbackHandler):
             logger.warning("No usage metadata available in LLM response")
             return
 
-        try:
-            # Delegate to shared cost tracking utility
-            asyncio.create_task(
-                CostTracker.track_and_enforce_cap(
+        # Define async tracking coroutine
+        async def do_track():
+            try:
+                await CostTracker.track_and_enforce_cap(
                     usage_metadata=usage_metadata,
                     context=context,
                     operation="chat_message",
                 )
-            )
-        except RunCostCapExceeded:
-            # Re-raise cost cap exception immediately
-            raise
-        except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Don't fail chat for tracking errors
-            # Log but don't fail chat for tracking errors
-            logger.error(
-                "Failed to track chat LLM usage: %s",
-                str(e),
-                exc_info=True,
-                extra={
-                    "user_id": context.user.user_id,
-                    "thread_id": context.thread_id,
-                    "model": usage_metadata.get("model") if usage_metadata else None,
-                },
-            )
+            except RunCostCapExceeded:
+                logger.error(
+                    "Chat cost cap exceeded for user %s in thread %s",
+                    context.user.user_id,
+                    context.thread_id,
+                    exc_info=True,
+                )
+                raise
+            except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Don't fail chat for tracking errors
+                logger.error(
+                    "Failed to track chat LLM usage: %s",
+                    str(e),
+                    exc_info=True,
+                    extra={
+                        "user_id": context.user.user_id,
+                        "thread_id": context.thread_id,
+                        "model": usage_metadata.get("model") if usage_metadata else None,
+                    },
+                )
+
+        # Schedule tracking with cross-thread-safe async handling
+        schedule_async_task(
+            coro=do_track(),
+            logger=logger,
+            error_message="Failed to schedule chat LLM usage tracking",
+        )

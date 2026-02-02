@@ -7,11 +7,9 @@ Provides shared functionality for:
 - Per-run cost cap enforcement
 - Async usage tracking with cross-thread event loop handling
 """
-import asyncio
-import threading
 from typing import Any, Dict
 
-from seer.core.event_loop import get_main_event_loop
+from seer.core.event_loop import schedule_async_task
 from seer.core.runtime.context import WorkflowRuntimeContext
 from seer.observability.credit_calculator import calculate_cost
 from seer.observability.exceptions import RunCostCapExceeded
@@ -42,7 +40,7 @@ class CostTracker:
     """Centralized cost tracking with cap enforcement and async persistence."""
 
     @staticmethod
-    async def track_and_enforce_cap(  # pylint: disable=too-complex  # Reason: complexity from cross-thread event loop handling, essential for correctness
+    async def track_and_enforce_cap(
         usage_metadata: Dict[str, Any],
         context: WorkflowRuntimeContext,
         operation: str = "workflow_execution",
@@ -126,29 +124,12 @@ class CostTracker:
             except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: tracking failures should not break workflow execution
                 logger.error("Failed to track LLM usage to database: %s", e, exc_info=True)
 
-        # Schedule tracking with cross-thread-safe event loop handling
-        try:
-            # Try to get running loop (will raise RuntimeError if not in async context)
-            try:
-                loop = asyncio.get_running_loop()
-                # We're in async context - schedule task normally
-                asyncio.create_task(do_track())
-            except RuntimeError:
-                # Not in async context - check if we're in main thread or thread pool
-                if threading.current_thread() is threading.main_thread():
-                    # Main thread - get or create event loop and run synchronously
-                    loop = asyncio.get_event_loop()
-                    loop.run_until_complete(do_track())
-                else:
-                    # Thread pool executor - schedule on main loop
-                    main_loop = get_main_event_loop()
-                    if main_loop is not None:
-                        # Use run_coroutine_threadsafe to schedule on main loop from thread pool
-                        asyncio.run_coroutine_threadsafe(do_track(), main_loop)
-                    else:
-                        logger.error("Main event loop not available - cannot track LLM usage from thread pool")
-        except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: scheduling failures should not break workflow execution
-            logger.error("Failed to schedule LLM usage tracking: %s", e, exc_info=True)
+        # Schedule tracking with cross-thread-safe async handling
+        schedule_async_task(
+            coro=do_track(),
+            logger=logger,
+            error_message="Failed to schedule LLM usage tracking",
+        )
 
         logger.debug(
             "LLM usage: model=%s, input=%d, output=%d, cost=$%.6f, accumulated=$%.6f",

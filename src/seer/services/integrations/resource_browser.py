@@ -12,6 +12,7 @@ from seer.services.integrations.resource_providers import (
     get_all_resource_configs,
     get_resource_provider,
 )
+from seer.services.integrations.resource_providers.base import ResourceContext
 from seer.logger import get_logger
 
 logger = get_logger(__name__)
@@ -34,13 +35,35 @@ class ResourceBrowser:
     Responsibilities:
     - Validate resource types and provider support.
     - Pass call context (paging/search params) to provider implementations.
+    - Support multiple authentication types via ResourceContext.
     """
 
-    def __init__(self, access_token: str, provider: str):
-        self.access_token = access_token
-        self.provider = provider
+    def __init__(
+        self,
+        access_token: Optional[str] = None,
+        provider: Optional[str] = None,
+        context: Optional[ResourceContext] = None
+    ):
+        """
+        Initialize ResourceBrowser.
+
+        Args:
+            access_token: (Deprecated) OAuth access token - use context instead
+            provider: Provider name (required if access_token is used)
+            context: (Preferred) ResourceContext with user and auth information
+        """
+        if context:
+            self.context = context
+            self.provider = provider or getattr(context, 'provider', None)
+            self.access_token = context.access_token
+        else:
+            self.access_token = access_token
+            self.provider = provider
+            self.context = None
 
     def _get_provider(self):
+        if not self.provider:
+            raise HTTPException(status_code=400, detail="Provider name is required")
         provider_impl = get_resource_provider(self.provider)
         if not provider_impl:
             raise HTTPException(status_code=400, detail=f"Provider '{self.provider}' is not configured")
@@ -73,6 +96,7 @@ class ResourceBrowser:
             page_size=resolved_options.page_size,
             filter_params=resolved_options.filter_params,
             depends_on_values=resolved_options.depends_on_values,
+            context=self.context,
         )
 
     @classmethod
