@@ -81,14 +81,17 @@ def get_oauth_provider(integration_type: str) -> str:
     Multiple integration types can share the same OAuth provider.
 
     Args:
-        integration_type: Integration type (gmail, googlesheets, googledrive, etc.)
+        integration_type: Integration type (gmail, google_sheets, google_drive, etc.)
 
     Returns:
         OAuth provider name (google, github, etc.)
     """
-    google_integrations = ['gmail', 'googlesheets', 'googledrive', 'google']
+    google_integrations = ['gmail', 'googlesheets', 'googledrive', 'google', 'google_sheets', 'google_drive']
     if integration_type in google_integrations:
         return 'google'
+    github_integrations = ['github', 'pull_request']
+    if integration_type in github_integrations:
+        return 'github'
     if integration_type in ['supabase', 'supabase_mgmt']:
         return SUPABASE_OAUTH_PROVIDER
     if integration_type == 'discord':
