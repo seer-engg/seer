@@ -105,12 +105,12 @@ jobs:
             --force-new-deployment
 
 
-      - name: Wait for ECS services to be stable
-        run: |
-          aws ecs wait services-stable \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --services ${{ env.ECS_API_SERVICE }}
+      # - name: Wait for ECS services to be stable
+      #   run: |
+      #     aws ecs wait services-stable \
+      #       --cluster ${{ env.ECS_CLUSTER }} \
+      #       --services ${{ env.ECS_API_SERVICE }}
 
-          aws ecs wait services-stable \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --services ${{ env.ECS_WORKER_SERVICE }}
+      #     aws ecs wait services-stable \
+      #       --cluster ${{ env.ECS_CLUSTER }} \
+      #       --services ${{ env.ECS_WORKER_SERVICE }}
