@@ -63,6 +63,8 @@ def schedule_async_task(
                 if main_loop is not None:
                     asyncio.run_coroutine_threadsafe(coro, main_loop)
                 else:
+                    # Close the coroutine to prevent "never awaited" warning
+                    coro.close()
                     logger.error(
                         "%s: Main event loop not available - cannot schedule from thread pool",
                         error_message

@@ -38,10 +38,13 @@ jobs:
             -e POSTGRES_PASSWORD=test \
             -e POSTGRES_DB=seer_test \
             -p 5432:5432 \
-            postgres:16-alpine
+            pgvector/pgvector:pg16
 
-          # Wait for postgres
+          # Wait for postgres to be ready
           sleep 5
+
+          # Enable pgvector extension
+          docker exec test-postgres psql -U test -d seer_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
           # Run migrations
           export DATABASE_URL="postgresql://test:test@localhost:5432/seer_test"
