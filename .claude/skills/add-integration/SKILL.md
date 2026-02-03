@@ -13,6 +13,8 @@ Guides you through adding a new external integration to seer, supporting both OA
 Integrations follow a modular pattern with clear separation of concerns:
 
 ```
+Integration Metadata (frontend display config)
+    ↓
 OAuth Flow
     ↓
 IntegrationProvider (authorization logic)
@@ -24,9 +26,75 @@ ResourceBrowser (optional - UI resource picker)
 Tools (execute actions using credentials)
 ```
 
+**Important**: The frontend is fully dynamic - adding integration metadata in the backend is sufficient for UI rendering. No frontend code changes needed for new integrations.
+
 ## Key Components
 
-### 1. Integration Provider (`src/seer/services/integrations/providers/`)
+### 1. Integration Metadata (`src/seer/services/integrations/metadata.py`)
+
+**Purpose**: Configure frontend display properties (icons, names, scopes, colors) for the integration. This enables the frontend to render integrations dynamically without hardcoded configurations.
+
+**Add Configuration to `INTEGRATION_CONFIGS`**:
+```python
+# In src/seer/services/integrations/metadata.py
+
+INTEGRATION_CONFIGS: Dict[str, Dict[str, Any]] = {
+    # ... existing integrations ...
+
+    "myservice": {
+        "display_name": "My Service",           # Human-readable name for UI
+        "oauth_provider": "myservice",          # OAuth provider name (must match provider registration)
+        "requires_oauth": True,                 # True for OAuth, False for API key only
+        "icon": {
+            "type": "url",                      # Icon type: "url", "lucide", or "svg"
+            "value": "https://img.logo.dev/myservice.com?token=pk_Ovp4v2MYQDqQ0D6xdN7OJA"
+        },
+        "brand_color": "#1DA1F2",              # Brand color in hex (optional)
+        "default_scopes": ["read", "write"],    # Default scopes to request
+        "scopes": [
+            {
+                "value": "read",
+                "display_name": "Read access",
+                "description": "View your MyService data"
+            },
+            {
+                "value": "write",
+                "display_name": "Write access",
+                "description": "Create and modify content on your behalf"
+            },
+            {
+                "value": "admin",
+                "display_name": "Admin access",
+                "description": "Full administrative control"
+            },
+        ],
+        "detection_patterns": {                 # Patterns to match tools to this integration
+            "tool_name_patterns": ["myservice_"],
+            "scope_keywords": ["myservice"]
+        }
+    },
+}
+```
+
+**Icon Options**:
+- **URL (recommended)**: Use Logo.dev or CDN-hosted icons: `{"type": "url", "value": "https://img.logo.dev/example.com?token=..."}`
+- **Lucide**: Use Lucide icon name: `{"type": "lucide", "value": "Mail"}`
+- **SVG**: Inline SVG string: `{"type": "svg", "value": "<svg>...</svg>"}`
+
+**Update OAuth Provider Mapping** (`src/seer/services/integrations/auth/oauth.py`):
+```python
+def get_oauth_provider(integration_type: str) -> str:
+    """Map integration type to OAuth provider."""
+    # Add your integration to the appropriate group
+    myservice_integrations = ['myservice', 'myservice_messages']
+    if integration_type in myservice_integrations:
+        return 'myservice'
+    # ... existing mappings ...
+```
+
+**API Endpoint**: The metadata is served via `GET /api/integrations/metadata` which the frontend calls on startup. This endpoint returns all integration configurations including icons, scopes, and display names.
+
+### 2. Integration Provider (`src/seer/services/integrations/providers/`)
 
 **Purpose**: Handle authentication flow (OAuth or API key)
 
@@ -127,7 +195,7 @@ class MyServiceProvider(IntegrationProvider):
             return resp.json()
 ```
 
-### 2. OAuth Configuration (`src/seer/config.py`)
+### 3. OAuth Configuration (`src/seer/config.py`)
 
 **Add OAuth Client Credentials**:
 ```python
@@ -162,7 +230,7 @@ def _get_oauth_config() -> Dict[str, Dict[str, Any]]:
     }
 ```
 
-### 3. Provider Registration
+### 4. Provider Registration
 
 **Register in `src/seer/services/integrations/providers/__init__.py`**:
 ```python
@@ -173,7 +241,7 @@ _registry = ProviderRegistry()
 _registry.register(MyServiceProvider())
 ```
 
-### 4. Resource Browsing (Optional)
+### 5. Resource Browsing (Optional)
 
 **If your integration needs a resource picker UI** (e.g., file selector, repo picker):
 
@@ -256,7 +324,7 @@ RESOURCE_TYPE_INFO: Dict[str, Dict[str, Any]] = {
 }
 ```
 
-### 5. Tools Implementation
+### 6. Tools Implementation
 
 **Create tools in `src/seer/tools/myservice/`**:
 
@@ -332,7 +400,7 @@ register_tool(MyServiceSendMessage)
 import seer.tools.myservice.send_message  # noqa: F401
 ```
 
-### 6. Database Models
+### 7. Database Models
 
 **OAuth connections are handled automatically** via existing models:
 - `OAuthConnection` - Stores access/refresh tokens
@@ -389,7 +457,16 @@ async def bind_resource(
 
 When adding a new integration:
 
-### Phase 1: Provider Setup
+### Phase 1: Integration Metadata (Frontend Config)
+- [ ] Add integration config to `INTEGRATION_CONFIGS` in `src/seer/services/integrations/metadata.py`
+- [ ] Configure display_name, oauth_provider, requires_oauth
+- [ ] Add icon URL (use Logo.dev: `https://img.logo.dev/<domain>?token=pk_Ovp4v2MYQDqQ0D6xdN7OJA`)
+- [ ] Set brand_color (optional)
+- [ ] Define default_scopes and available scopes with display names
+- [ ] Add detection_patterns for tool matching
+- [ ] Update `get_oauth_provider()` in `auth/oauth.py` to map integration type to provider
+
+### Phase 2: Provider Setup
 - [ ] Create provider class in `src/seer/services/integrations/providers/myservice.py`
 - [ ] Extend `IntegrationProvider` base class
 - [ ] Implement OAuth lifecycle methods (or skip for API key-based)
@@ -397,29 +474,32 @@ When adding a new integration:
 - [ ] Configure OAuth client in `auth/oauth.py`
 - [ ] Register provider in `providers/__init__.py`
 
-### Phase 2: Resource Browsing (Optional)
+### Phase 3: Resource Browsing (Optional)
 - [ ] Add resource type handlers in `resource_browser.py`
 - [ ] Add resource type info/metadata
 - [ ] Test resource listing endpoints
 - [ ] Add resource browsing route in `resource_router.py` (if custom)
 
-### Phase 3: Tools
+### Phase 4: Tools
 - [ ] Create tool directory `src/seer/tools/myservice/`
 - [ ] Implement tool classes extending `BaseTool`
+- [ ] Set `integration_type` and `provider` attributes on tools
 - [ ] Define parameter schemas with `get_parameters_schema()`
 - [ ] Implement `execute()` method with API calls
 - [ ] Register tools in `tools/__init__.py`
 - [ ] Test tool execution with valid credentials
 
-### Phase 4: Testing
+### Phase 5: Testing
+- [ ] Verify integration appears in `GET /api/integrations/metadata` response
 - [ ] Add OAuth flow tests (authorization, callback, token refresh)
 - [ ] Add resource browsing tests (if applicable)
 - [ ] Add tool execution tests
 - [ ] Test error handling (missing tokens, invalid scopes, API errors)
 - [ ] Test scope validation and upgrade flows
+- [ ] Add unit tests for metadata configuration
 - [ ] Integration tests with real API (if possible)
 
-### Phase 5: Documentation
+### Phase 6: Documentation
 - [ ] Update integration README with provider details
 - [ ] Document required scopes for each tool
 - [ ] Document resource types and capabilities
@@ -578,12 +658,20 @@ uv run pytest tests/api/integrations/test_oauth_flow.py -k myservice
 
 **Manual testing checklist**:
 1. Start dev server: `uv run python -m seer.api.main`
-2. Initiate OAuth: `GET /v1/integrations/myservice/connect?scope=read`
-3. Complete authorization in browser
-4. Verify connection: `GET /v1/integrations/`
-5. Test tool execution via workflow or API
-6. Test token refresh (wait for expiry or force refresh)
-7. Test scope upgrade (request additional scopes)
+2. Verify metadata: `GET /api/integrations/metadata` - check your integration appears with correct icon/scopes
+3. Initiate OAuth: `GET /api/integrations/myservice/connect?scope=read`
+4. Complete authorization in browser
+5. Verify connection: `GET /api/integrations/`
+6. Check tool status: `GET /api/integrations/tools/status` - verify tools show as connected
+7. Test tool execution via workflow or API
+8. Test token refresh (wait for expiry or force refresh)
+9. Test scope upgrade (request additional scopes)
+
+**Quick metadata verification**:
+```bash
+# Check your integration appears in metadata
+curl http://localhost:8000/api/integrations/metadata | jq '.integrations[] | select(.type == "myservice")'
+```
 
 ## Reference Implementation
 
@@ -595,10 +683,17 @@ uv run pytest tests/api/integrations/test_oauth_flow.py -k myservice
 
 ## Common Issues
 
+### Integration not appearing in frontend
+- Check `INTEGRATION_CONFIGS` in `src/seer/services/integrations/metadata.py` has your integration
+- Verify integration type matches what tools use (`tool.integration_type`)
+- Verify `GET /api/integrations/metadata` returns your integration
+- Check icon URL is accessible (test in browser)
+
 ### "Provider not configured"
 - Check provider is registered in `providers/__init__.py`
 - Verify OAuth config in `auth/oauth.py`
 - Ensure environment variables are set
+- Verify `get_oauth_provider()` maps your integration type correctly
 
 ### "Missing required scopes"
 - Check tool `required_scopes` matches OAuth config
@@ -619,12 +714,14 @@ uv run pytest tests/api/integrations/test_oauth_flow.py -k myservice
 
 | File | Purpose |
 |------|---------|
+| `src/seer/services/integrations/metadata.py` | **Integration metadata config** (display names, icons, scopes) |
+| `src/seer/api/integrations/metadata_models.py` | Pydantic models for metadata API response |
 | `src/seer/services/integrations/providers/base.py` | Base classes and protocols |
 | `src/seer/services/integrations/providers/<provider>.py` | Provider implementation |
 | `src/seer/services/integrations/providers/__init__.py` | Provider registration |
-| `src/seer/services/integrations/auth/oauth.py` | OAuth client configuration |
+| `src/seer/services/integrations/auth/oauth.py` | OAuth client configuration + provider mapping |
 | `src/seer/services/integrations/resource_browser.py` | Resource browsing logic |
-| `src/seer/api/integrations/router.py` | OAuth flow endpoints |
+| `src/seer/api/integrations/router.py` | OAuth flow endpoints + metadata endpoint |
 | `src/seer/api/integrations/resource_router.py` | Resource browsing endpoints |
 | `src/seer/tools/<provider>/` | Tool implementations |
 | `src/seer/config.py` | Configuration and env vars |
@@ -632,11 +729,14 @@ uv run pytest tests/api/integrations/test_oauth_flow.py -k myservice
 
 ## Best Practices
 
-1. **Fail fast with clear errors**: Provide actionable error messages
-2. **Handle token refresh gracefully**: Use existing `get_oauth_token()` helper
-3. **Validate scopes early**: Check scopes before making API calls
-4. **Support incremental authorization**: Allow adding scopes to existing connections
-5. **Log API errors**: Include provider name, status code, and error details
-6. **Test with real APIs**: Use test accounts and sandbox environments
-7. **Document required scopes**: Make it clear what permissions each tool needs
-8. **Use type hints**: Enable better IDE support and catch errors early
+1. **Configure metadata first**: Add integration to `metadata.py` before implementing provider/tools
+2. **Use consistent naming**: Match `integration_type` across metadata config, tools, and provider
+3. **Use Logo.dev for icons**: Provides consistent, high-quality icons: `https://img.logo.dev/<domain>?token=pk_Ovp4v2MYQDqQ0D6xdN7OJA`
+4. **Document all scopes**: Add display_name and description for each scope in metadata
+5. **Fail fast with clear errors**: Provide actionable error messages
+6. **Handle token refresh gracefully**: Use existing `get_oauth_token()` helper
+7. **Validate scopes early**: Check scopes before making API calls
+8. **Support incremental authorization**: Allow adding scopes to existing connections
+9. **Log API errors**: Include provider name, status code, and error details
+10. **Test with real APIs**: Use test accounts and sandbox environments
+11. **Use type hints**: Enable better IDE support and catch errors early
