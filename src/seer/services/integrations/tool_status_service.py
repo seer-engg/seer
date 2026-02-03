@@ -91,7 +91,7 @@ def determine_tool_auth_requirements(tool: Any) -> Dict[str, Any]:
         "requires_secrets": requires_secrets,
         "supports_tokenless_auth": supports_tokenless_auth,
         "auth_mode": auth_mode,
-        "supports_oauth": True,
+        "supports_oauth": requires_oauth,
         "supports_manual_secrets": requires_secrets,
     }
 
