@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 from tortoise import fields, models
@@ -138,61 +138,6 @@ class KnowledgeBasePublic(BaseModel):
         )
 
 
-class KnowledgeDocumentPublic(BaseModel):
-    """Pydantic model for KnowledgeDocument API responses."""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    doc_id: str
-    kb_id: str
-    name: str
-    mime_type: str
-    file_size: int
-    chunk_count: int
-    processing_status: str
-    processing_error: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
-    created_at: datetime
-    updated_at: datetime
-
-    @classmethod
-    def from_orm(cls, doc: KnowledgeDocument, kb_id: str) -> "KnowledgeDocumentPublic":  # pylint: disable=arguments-differ
-        # Reason: Custom factory method requires additional kb_id parameter
-        """Create from ORM model."""
-        return cls(
-            doc_id=doc.public_id,
-            kb_id=kb_id,
-            name=doc.name,
-            mime_type=doc.mime_type,
-            file_size=doc.file_size,
-            chunk_count=doc.chunk_count,
-            processing_status=doc.processing_status,
-            processing_error=doc.processing_error,
-            metadata=doc.metadata,
-            created_at=doc.created_at,
-            updated_at=doc.updated_at,
-        )
-
-
-class QueryResultItem(BaseModel):
-    """Single result from semantic search."""
-
-    chunk_id: int
-    doc_id: str
-    doc_name: str
-    content: str
-    score: float
-    metadata: Optional[Dict[str, Any]] = None
-
-
-class QueryResponse(BaseModel):
-    """Response from knowledge base query."""
-
-    results: List[QueryResultItem]
-    query: str
-    kb_id: str
-
-
 __all__ = [
     "KB_ID_PREFIX",
     "DOC_ID_PREFIX",
@@ -200,7 +145,4 @@ __all__ = [
     "KnowledgeDocument",
     "KnowledgeChunk",
     "KnowledgeBasePublic",
-    "KnowledgeDocumentPublic",
-    "QueryResultItem",
-    "QueryResponse",
 ]
