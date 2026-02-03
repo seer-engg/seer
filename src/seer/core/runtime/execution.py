@@ -12,6 +12,7 @@ from seer.core.runtime.context import WorkflowRuntimeContext
 from seer.core.runtime.nodes import NodeRuntime
 from seer.core.runtime.state import INTERNAL_STATE_PREFIX
 from seer.core.schema.models import JsonSchema, WorkflowSpec
+from seer.utilities.langfuse_tracing import merge_workflow_langfuse_callbacks
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ class CompiledWorkflow:
         self.runtime.bind_trigger(trigger)
         self.runtime.bind_context(context)
         effective_config = dict(config or {})
+        effective_config = merge_workflow_langfuse_callbacks(effective_config)
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "CompiledWorkflow.invoke graph config_keys=%s context_present=%s",
@@ -57,6 +59,7 @@ class CompiledWorkflow:
         self.runtime.bind_trigger(trigger)
         self.runtime.bind_context(context)
         effective_config = dict(config or {})
+        effective_config = merge_workflow_langfuse_callbacks(effective_config)
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "CompiledWorkflow.ainvoke graph config_keys=%s context_present=%s",

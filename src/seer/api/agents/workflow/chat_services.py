@@ -9,6 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from seer.api.core.errors import VALIDATION_PROBLEM, raise_problem
 from seer.logger import get_logger
+from seer.utilities.langfuse_tracing import merge_nexus_langfuse_callbacks
 
 from .services import (
     create_chat_session,
@@ -363,9 +364,11 @@ class ChatOrchestrator:
         recursion_limit = config_dict.get("recursion_limit", 25)
         logger.info("Invoking agent thread=%s recursion_limit=%d timeout=%ds", thread_id or 'unknown', recursion_limit, int(timeout))
 
+        config_with_langfuse = merge_nexus_langfuse_callbacks(config_dict)
+
         try:
             return await asyncio.wait_for(
-                self.agent.ainvoke(messages, config=config_dict),
+                self.agent.ainvoke(messages, config=config_with_langfuse),
                 timeout=timeout,
             )
         except asyncio.TimeoutError:

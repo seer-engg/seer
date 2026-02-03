@@ -49,6 +49,7 @@ dependencies = [
     "RestrictedPython>=7.0",  # Required for RLM tool sandbox
     "stripe>=10.0.0",  # Stripe payment processing for subscriptions
     "boto3>=1.42.34",
+    "langfuse>=3.12.1",
 ]
 
 [tool.hatch.version]

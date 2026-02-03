@@ -293,6 +293,30 @@ class SeerConfig(BaseSettings):
     )
 
     # ============================================================================
+    # Langfuse Configuration
+    # ============================================================================
+    langfuse_enabled: bool = Field(
+        default=False, description="Enable Langfuse tracing for LangChain/LangGraph"
+    )
+    langfuse_host: Optional[str] = Field(
+        default=None, description="Langfuse host URL (e.g., https://cloud.langfuse.com)"
+    )
+    # Nexus Agent tracing (separate project)
+    langfuse_nexus_public_key: Optional[str] = Field(
+        default=None, description="Langfuse public key for Nexus agent project (pk-lf-...)"
+    )
+    langfuse_nexus_secret_key: Optional[str] = Field(
+        default=None, description="Langfuse secret key for Nexus agent project (sk-lf-...)"
+    )
+    # Workflow/Compiler tracing (separate project)
+    langfuse_workflow_public_key: Optional[str] = Field(
+        default=None, description="Langfuse public key for Workflow project (pk-lf-...)"
+    )
+    langfuse_workflow_secret_key: Optional[str] = Field(
+        default=None, description="Langfuse secret key for Workflow project (sk-lf-...)"
+    )
+
+    # ============================================================================
     # Computed Properties
     # ============================================================================
 
@@ -325,6 +349,39 @@ class SeerConfig(BaseSettings):
         return (
             self.slack_bot_token is not None
             and self.slack_error_channel_id is not None
+        )
+
+    @property
+    def is_langfuse_configured(self) -> bool:
+        """Check if Langfuse is configured (at least one project has credentials)."""
+        if not self.langfuse_enabled:
+            return False
+        nexus_configured = (
+            self.langfuse_nexus_public_key is not None
+            and self.langfuse_nexus_secret_key is not None
+        )
+        workflow_configured = (
+            self.langfuse_workflow_public_key is not None
+            and self.langfuse_workflow_secret_key is not None
+        )
+        return nexus_configured or workflow_configured
+
+    @property
+    def is_langfuse_nexus_configured(self) -> bool:
+        """Check if Langfuse is configured for Nexus agent tracing."""
+        return (
+            self.langfuse_enabled
+            and self.langfuse_nexus_public_key is not None
+            and self.langfuse_nexus_secret_key is not None
+        )
+
+    @property
+    def is_langfuse_workflow_configured(self) -> bool:
+        """Check if Langfuse is configured for Workflow tracing."""
+        return (
+            self.langfuse_enabled
+            and self.langfuse_workflow_public_key is not None
+            and self.langfuse_workflow_secret_key is not None
         )
 
     @classmethod
