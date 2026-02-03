@@ -49,6 +49,7 @@ dependencies = [
     "RestrictedPython>=7.0",  # Required for RLM tool sandbox
     "stripe>=10.0.0",  # Stripe payment processing for subscriptions
     "boto3>=1.42.34",
+    "langfuse>=3.12.1",
     "pgvector>=0.3.0",  # PostgreSQL vector similarity search
     "pypdf>=4.0.0",  # PDF text extraction
     "python-docx>=1.1.0",  # DOCX text extraction
