@@ -26,7 +26,7 @@ def webhook_controller():
     with patch("seer.api.subscriptions.stripe_webhook_controller.config") as mock_config:
         mock_config.stripe_secret_key = "sk_test_123"
         from seer.api.subscriptions.stripe_webhook_controller import StripeWebhookController
-        return StripeWebhookController()
+        yield StripeWebhookController()
 
 
 @pytest.fixture
