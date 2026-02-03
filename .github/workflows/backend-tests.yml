@@ -38,7 +38,7 @@ jobs:
             -e POSTGRES_PASSWORD=test \
             -e POSTGRES_DB=seer_test \
             -p 5432:5432 \
-            postgres:16-alpine
+            pgvector/pgvector:pg16
 
           # Wait for postgres
           sleep 5
