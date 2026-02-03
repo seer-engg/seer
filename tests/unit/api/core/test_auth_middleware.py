@@ -1,0 +1,597 @@
+"""
+Unit tests for Clerk authentication middleware.
+
+Tests:
+- ClerkAuthMiddleware.dispatch: JWT verification flow
+- _verify_token: Token validation
+- _create_auth_user: User construction from claims
+- _check_access_gates: Trial/payment gates
+- Token extraction from headers and query params
+- Public path handling
+"""
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from seer.api.core.middleware.auth import AuthenticatedUser, ClerkAuthMiddleware
+
+
+# =============================================================================
+# Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def mock_request():
+    """Create a mock FastAPI request."""
+    request = MagicMock()
+    request.method = "GET"
+    request.url.path = "/api/v1/workflows"
+    request.scope = {"path": "/api/v1/workflows"}
+    request.headers = {}
+    request.query_params = {}
+    request.state = MagicMock()
+    return request
+
+
+@pytest.fixture
+def mock_jwks_client():
+    """Create a mock JWKS client."""
+    client = MagicMock()
+    signing_key = MagicMock()
+    signing_key.key = "test_key"
+    client.get_signing_key_from_jwt.return_value = signing_key
+    return client
+
+
+@pytest.fixture
+def valid_claims():
+    """Sample valid JWT claims."""
+    return {
+        "sub": "user_123",
+        "email": "test@example.com",
+        "first_name": "Test",
+        "last_name": "User",
+        "iss": "https://clerk.example.com",
+        "aud": ["test_audience"],
+        "exp": 9999999999,
+        "iat": 1000000000,
+    }
+
+
+@pytest.fixture
+def mock_db_user():
+    """Create a mock database user."""
+    from seer.database import User
+    user = MagicMock(spec=User)
+    user.id = 1
+    user.user_id = "user_123"
+    user.email = "test@example.com"
+    return user
+
+
+# =============================================================================
+# AuthenticatedUser Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestAuthenticatedUser:
+    """Tests for AuthenticatedUser dataclass."""
+
+    def test_authenticated_user_creation(self, valid_claims):
+        """Test creating AuthenticatedUser from claims."""
+        user = AuthenticatedUser(
+            user_id="user_123",
+            email="test@example.com",
+            first_name="Test",
+            last_name="User",
+            claims=valid_claims,
+        )
+
+        assert user.user_id == "user_123"
+        assert user.email == "test@example.com"
+        assert user.first_name == "Test"
+        assert user.last_name == "User"
+
+    def test_authenticated_user_optional_fields(self, valid_claims):
+        """Test AuthenticatedUser with optional fields None."""
+        user = AuthenticatedUser(
+            user_id="user_123",
+            email="test@example.com",
+            first_name=None,
+            last_name=None,
+            claims=valid_claims,
+        )
+
+        assert user.first_name is None
+        assert user.last_name is None
+
+
+# =============================================================================
+# ClerkAuthMiddleware Initialization Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestClerkAuthMiddlewareInit:
+    """Tests for ClerkAuthMiddleware initialization."""
+
+    def test_init_requires_jwks_url(self):
+        """Test that initialization requires jwks_url."""
+        with pytest.raises(ValueError) as exc_info:
+            ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="",
+                issuer="https://clerk.example.com",
+            )
+
+        assert "jwks_url is required" in str(exc_info.value)
+
+    def test_init_requires_issuer(self):
+        """Test that initialization requires issuer."""
+        with pytest.raises(ValueError) as exc_info:
+            ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="https://clerk.example.com/.well-known/jwks.json",
+                issuer="",
+            )
+
+        assert "issuer is required" in str(exc_info.value)
+
+    def test_init_with_valid_params(self):
+        """Test successful initialization with valid params."""
+        with patch("seer.api.core.middleware.auth.PyJWKClient"):
+            middleware = ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="https://clerk.example.com/.well-known/jwks.json",
+                issuer="https://clerk.example.com",
+                audience=["test_audience"],
+            )
+
+            assert middleware._issuer == "https://clerk.example.com"
+            assert middleware._audience == ["test_audience"]
+
+
+# =============================================================================
+# Extract Token Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestExtractToken:
+    """Tests for token extraction from request."""
+
+    def test_extract_token_from_authorization_header(self, mock_request):
+        """Test extracting token from Authorization header."""
+        mock_request.headers = {"Authorization": "Bearer valid_token_123"}
+
+        with patch("seer.api.core.middleware.auth.PyJWKClient"):
+            middleware = ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="https://clerk.example.com/.well-known/jwks.json",
+                issuer="https://clerk.example.com",
+            )
+
+            token = middleware._extract_token(mock_request)
+
+            assert token == "valid_token_123"
+
+    def test_extract_token_from_query_param(self, mock_request):
+        """Test extracting token from query parameter."""
+        mock_request.headers = {}
+        mock_request.query_params = {"token": "query_token_456"}
+
+        with patch("seer.api.core.middleware.auth.PyJWKClient"):
+            middleware = ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="https://clerk.example.com/.well-known/jwks.json",
+                issuer="https://clerk.example.com",
+            )
+
+            token = middleware._extract_token(mock_request)
+
+            assert token == "query_token_456"
+
+    def test_extract_token_prefers_header_over_query(self, mock_request):
+        """Test that Authorization header is preferred over query param."""
+        mock_request.headers = {"Authorization": "Bearer header_token"}
+        mock_request.query_params = {"token": "query_token"}
+
+        with patch("seer.api.core.middleware.auth.PyJWKClient"):
+            middleware = ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="https://clerk.example.com/.well-known/jwks.json",
+                issuer="https://clerk.example.com",
+            )
+
+            token = middleware._extract_token(mock_request)
+
+            assert token == "header_token"
+
+    def test_extract_token_no_token_returns_none(self, mock_request):
+        """Test that missing token returns None."""
+        mock_request.headers = {}
+        mock_request.query_params = {}
+
+        with patch("seer.api.core.middleware.auth.PyJWKClient"):
+            middleware = ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="https://clerk.example.com/.well-known/jwks.json",
+                issuer="https://clerk.example.com",
+            )
+
+            token = middleware._extract_token(mock_request)
+
+            assert token is None
+
+    def test_extract_token_invalid_bearer_format(self, mock_request):
+        """Test handling invalid Bearer format."""
+        mock_request.headers = {"Authorization": "Basic invalid_token"}
+        mock_request.query_params = {}
+
+        with patch("seer.api.core.middleware.auth.PyJWKClient"):
+            middleware = ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="https://clerk.example.com/.well-known/jwks.json",
+                issuer="https://clerk.example.com",
+            )
+
+            token = middleware._extract_token(mock_request)
+
+            assert token is None
+
+
+# =============================================================================
+# Should Skip Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestShouldSkip:
+    """Tests for request skip logic."""
+
+    def test_should_skip_options_request(self, mock_request):
+        """Test that OPTIONS requests are skipped."""
+        mock_request.method = "OPTIONS"
+
+        with patch("seer.api.core.middleware.auth.PyJWKClient"):
+            middleware = ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="https://clerk.example.com/.well-known/jwks.json",
+                issuer="https://clerk.example.com",
+            )
+
+            assert middleware._should_skip(mock_request) is True
+
+    def test_should_skip_public_path(self, mock_request):
+        """Test that public paths are skipped."""
+        mock_request.method = "GET"
+        mock_request.scope = {"path": "/health"}
+
+        with patch("seer.api.core.middleware.auth.PyJWKClient"), \
+             patch("seer.api.core.middleware.auth.is_public_path") as mock_is_public:
+            mock_is_public.return_value = True
+
+            middleware = ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="https://clerk.example.com/.well-known/jwks.json",
+                issuer="https://clerk.example.com",
+            )
+
+            assert middleware._should_skip(mock_request) is True
+
+    def test_should_not_skip_protected_path(self, mock_request):
+        """Test that protected paths are not skipped."""
+        mock_request.method = "GET"
+        mock_request.scope = {"path": "/api/v1/workflows"}
+
+        with patch("seer.api.core.middleware.auth.PyJWKClient"), \
+             patch("seer.api.core.middleware.auth.is_public_path") as mock_is_public:
+            mock_is_public.return_value = False
+
+            middleware = ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="https://clerk.example.com/.well-known/jwks.json",
+                issuer="https://clerk.example.com",
+            )
+
+            assert middleware._should_skip(mock_request) is False
+
+
+# =============================================================================
+# Extract User ID Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestExtractUserId:
+    """Tests for user ID extraction from claims."""
+
+    def test_extract_user_id_from_sub(self):
+        """Test extracting user ID from 'sub' claim."""
+        claims = {"sub": "user_123"}
+
+        result = ClerkAuthMiddleware._extract_user_id(claims)
+
+        assert result == "user_123"
+
+    def test_extract_user_id_from_user_id_claim(self):
+        """Test extracting user ID from 'user_id' claim."""
+        claims = {"user_id": "user_456"}
+
+        result = ClerkAuthMiddleware._extract_user_id(claims)
+
+        assert result == "user_456"
+
+    def test_extract_user_id_from_sid(self):
+        """Test extracting user ID from 'sid' claim."""
+        claims = {"sid": "session_789"}
+
+        result = ClerkAuthMiddleware._extract_user_id(claims)
+
+        assert result == "session_789"
+
+    def test_extract_user_id_prefers_sub(self):
+        """Test that 'sub' is preferred over other claims."""
+        claims = {
+            "sub": "sub_user",
+            "user_id": "uid_user",
+            "sid": "sid_user",
+        }
+
+        result = ClerkAuthMiddleware._extract_user_id(claims)
+
+        assert result == "sub_user"
+
+    def test_extract_user_id_missing_raises_error(self):
+        """Test that missing user ID raises InvalidTokenError."""
+        from jwt.exceptions import InvalidTokenError
+
+        claims = {"email": "test@example.com"}
+
+        with pytest.raises(InvalidTokenError) as exc_info:
+            ClerkAuthMiddleware._extract_user_id(claims)
+
+        assert "missing subject identifier" in str(exc_info.value)
+
+
+# =============================================================================
+# Create Auth User Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestCreateAuthUser:
+    """Tests for _create_auth_user method."""
+
+    def test_create_auth_user_full_claims(self, valid_claims):
+        """Test creating auth user from full claims."""
+        with patch("seer.api.core.middleware.auth.PyJWKClient"):
+            middleware = ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="https://clerk.example.com/.well-known/jwks.json",
+                issuer="https://clerk.example.com",
+            )
+
+            user = middleware._create_auth_user(valid_claims)
+
+            assert user.user_id == "user_123"
+            assert user.email == "test@example.com"
+            assert user.first_name == "Test"
+            assert user.last_name == "User"
+
+    def test_create_auth_user_minimal_claims(self):
+        """Test creating auth user from minimal claims."""
+        minimal_claims = {"sub": "user_minimal"}
+
+        with patch("seer.api.core.middleware.auth.PyJWKClient"):
+            middleware = ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="https://clerk.example.com/.well-known/jwks.json",
+                issuer="https://clerk.example.com",
+            )
+
+            user = middleware._create_auth_user(minimal_claims)
+
+            assert user.user_id == "user_minimal"
+            assert user.email is None
+            assert user.first_name is None
+            assert user.last_name is None
+
+
+# =============================================================================
+# Verify Token Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestVerifyToken:
+    """Tests for _verify_token method."""
+
+    def test_verify_token_success(self, mock_jwks_client, valid_claims):
+        """Test successful token verification."""
+        with patch("seer.api.core.middleware.auth.PyJWKClient") as MockJWKClient, \
+             patch("seer.api.core.middleware.auth.jwt") as mock_jwt:
+            MockJWKClient.return_value = mock_jwks_client
+            mock_jwt.decode.return_value = valid_claims
+
+            middleware = ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="https://clerk.example.com/.well-known/jwks.json",
+                issuer="https://clerk.example.com",
+            )
+
+            result = middleware._verify_token("valid_token")
+
+            assert result == valid_claims
+
+    def test_verify_token_invalid_token_error(self, mock_jwks_client):
+        """Test handling of InvalidTokenError."""
+        from jwt.exceptions import InvalidTokenError
+
+        with patch("seer.api.core.middleware.auth.PyJWKClient") as MockJWKClient, \
+             patch("seer.api.core.middleware.auth.jwt") as mock_jwt:
+            MockJWKClient.return_value = mock_jwks_client
+            mock_jwt.decode.side_effect = InvalidTokenError("Token expired")
+
+            middleware = ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="https://clerk.example.com/.well-known/jwks.json",
+                issuer="https://clerk.example.com",
+            )
+
+            result = middleware._verify_token("expired_token")
+
+            # Should return JSONResponse
+            assert result.status_code == 401
+
+    def test_verify_token_generic_exception(self, mock_jwks_client):
+        """Test handling of generic exceptions."""
+        with patch("seer.api.core.middleware.auth.PyJWKClient") as MockJWKClient, \
+             patch("seer.api.core.middleware.auth.jwt") as mock_jwt:
+            MockJWKClient.return_value = mock_jwks_client
+            mock_jwt.decode.side_effect = Exception("Unknown error")
+
+            middleware = ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="https://clerk.example.com/.well-known/jwks.json",
+                issuer="https://clerk.example.com",
+            )
+
+            result = middleware._verify_token("token")
+
+            assert result.status_code == 401
+            assert "Authentication failed" in str(result.body)
+
+
+# =============================================================================
+# Check Access Gates Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestCheckAccessGates:
+    """Tests for _check_access_gates method."""
+
+    @pytest.mark.asyncio
+    async def test_check_access_gates_trial_expired(self, mock_request, mock_db_user):
+        """Test that expired trial returns 402."""
+        with patch("seer.api.core.middleware.auth.PyJWKClient"), \
+             patch("seer.api.core.middleware.auth.is_trial_expired") as mock_trial, \
+             patch("seer.api.core.middleware.auth.get_account_age_days") as mock_age:
+            mock_trial.return_value = True
+            mock_age.return_value = 35
+
+            middleware = ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="https://clerk.example.com/.well-known/jwks.json",
+                issuer="https://clerk.example.com",
+            )
+
+            result = await middleware._check_access_gates(mock_request, mock_db_user)
+
+            assert result is not None
+            assert result.status_code == 402
+
+    @pytest.mark.asyncio
+    async def test_check_access_gates_no_trial_expired(self, mock_request, mock_db_user):
+        """Test that valid trial returns None."""
+        with patch("seer.api.core.middleware.auth.PyJWKClient"), \
+             patch("seer.api.core.middleware.auth.is_trial_expired") as mock_trial, \
+             patch("seer.api.core.middleware.auth.config") as mock_config:
+            mock_trial.return_value = False
+            mock_config.is_self_hosted = True  # Skip payment method gate
+
+            middleware = ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="https://clerk.example.com/.well-known/jwks.json",
+                issuer="https://clerk.example.com",
+            )
+
+            result = await middleware._check_access_gates(mock_request, mock_db_user)
+
+            assert result is None
+
+
+# =============================================================================
+# Dispatch Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestDispatch:
+    """Tests for dispatch method."""
+
+    @pytest.mark.asyncio
+    async def test_dispatch_skips_public_path(self, mock_request):
+        """Test that public paths are passed through."""
+        mock_request.method = "GET"
+        mock_request.scope = {"path": "/health"}
+
+        call_next = AsyncMock(return_value=MagicMock())
+
+        with patch("seer.api.core.middleware.auth.PyJWKClient"), \
+             patch("seer.api.core.middleware.auth.is_public_path") as mock_is_public:
+            mock_is_public.return_value = True
+
+            middleware = ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="https://clerk.example.com/.well-known/jwks.json",
+                issuer="https://clerk.example.com",
+            )
+
+            await middleware.dispatch(mock_request, call_next)
+
+            call_next.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_dispatch_missing_token_returns_401(self, mock_request):
+        """Test that missing token returns 401."""
+        mock_request.headers = {}
+        mock_request.query_params = {}
+
+        with patch("seer.api.core.middleware.auth.PyJWKClient"), \
+             patch("seer.api.core.middleware.auth.is_public_path") as mock_is_public:
+            mock_is_public.return_value = False
+
+            middleware = ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="https://clerk.example.com/.well-known/jwks.json",
+                issuer="https://clerk.example.com",
+            )
+
+            result = await middleware.dispatch(mock_request, AsyncMock())
+
+            assert result.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_dispatch_sets_user_on_success(self, mock_request, mock_jwks_client, valid_claims, mock_db_user):
+        """Test that successful auth sets user on request state."""
+        mock_request.headers = {"Authorization": "Bearer valid_token"}
+        call_next = AsyncMock(return_value=MagicMock())
+
+        with patch("seer.api.core.middleware.auth.PyJWKClient") as MockJWKClient, \
+             patch("seer.api.core.middleware.auth.jwt") as mock_jwt, \
+             patch("seer.api.core.middleware.auth.is_public_path") as mock_is_public, \
+             patch("seer.api.core.middleware.auth.User") as MockUser, \
+             patch("seer.api.core.middleware.auth.is_trial_expired") as mock_trial, \
+             patch("seer.api.core.middleware.auth.config") as mock_config:
+
+            MockJWKClient.return_value = mock_jwks_client
+            mock_jwt.decode.return_value = valid_claims
+            mock_is_public.return_value = False
+            MockUser.get_or_create_from_auth = AsyncMock(return_value=mock_db_user)
+            mock_trial.return_value = False
+            mock_config.is_self_hosted = True
+
+            middleware = ClerkAuthMiddleware(
+                app=MagicMock(),
+                jwks_url="https://clerk.example.com/.well-known/jwks.json",
+                issuer="https://clerk.example.com",
+            )
+
+            await middleware.dispatch(mock_request, call_next)
+
+            assert mock_request.state.user is not None
+            assert mock_request.state.db_user == mock_db_user
