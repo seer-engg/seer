@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from taskiq.events import TaskiqEvents
 from taskiq.state import TaskiqState
 
@@ -37,8 +39,13 @@ async def _on_worker_startup(_: TaskiqState) -> None:
     """Initialize shared resources before processing tasks."""
     # pylint: disable=import-outside-toplevel,global-statement
     from seer.worker.trigger_dispatcher import dispatch_trigger_event  # noqa: F401
+    from seer.core.event_loop import set_main_event_loop
 
     global _poll_scheduler
+
+    # Capture main event loop for cross-thread async operations (same as API)
+    set_main_event_loop(asyncio.get_running_loop())
+    logger.info("Main event loop captured for cross-thread scheduling")
 
     logger.info("Initializing Taskiq worker")
     await init_db()
