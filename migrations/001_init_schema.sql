@@ -1,2 +1,2 @@
--- Create the app schema if it doesn't exist
-CREATE SCHEMA IF NOT EXISTS app;
+CREATE SCHEMA IF NOT EXISTS seer;
+CREATE EXTENSION IF NOT EXISTS vector;
