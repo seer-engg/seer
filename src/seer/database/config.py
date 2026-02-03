@@ -80,6 +80,7 @@ TORTOISE_ORM: Dict[str, Any] = {
                 "seer.database.workflow_models",
                 "seer.database.subscription_models",
                 "seer.database.usage_models",
+                "seer.database.knowledge_models",
                 "aerich.models",  # Required for Aerich migrations
             ],
             "default_connection": "default",
