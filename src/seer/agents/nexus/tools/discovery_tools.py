@@ -214,7 +214,8 @@ async def search_tools(
             "integration": top_tool.get("integration_type", "").title(),
             "confidence": top_tool.get("confidence_score", 0),
             "description": top_tool.get("description", ""),
-            "parameters": top_tool.get("parameters", {})
+            "parameters": top_tool.get("parameters", {}),
+            "resource_pickers": top_tool.get("resource_pickers", {})  # Include resource pickers for UI
         }
 
         # Format alternatives (tools 2-5)

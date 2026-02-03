@@ -112,6 +112,58 @@ ask_clarification_questions([
 
 When resumed, you'll receive: [{"question_id": "...", "selected_values": [...], "custom_input": "..."}, ...]
 
+**Resource Picker Questions**
+When a tool requires selecting a specific resource (like a spreadsheet, Discord server, or channel), use
+`question_type: "resource_picker"` instead of listing options manually.
+
+After discovering a tool with search_tools(), check the response for `resource_pickers` field.
+If present, use resource_picker questions for those parameters instead of asking users to type IDs.
+
+Example for Google Sheets (when tool has resource_pickers for spreadsheet_id):
+```python
+ask_clarification_questions([
+    {
+        "question": "Which Google spreadsheet should we use?",
+        "question_type": "resource_picker",
+        "provider": "google",
+        "resource_type": "google_spreadsheet",
+        "display_field": "name",
+        "value_field": "id",
+        "search_enabled": True,
+        "reasoning": "The google_sheets_read tool requires a spreadsheet_id"
+    }
+])
+```
+
+For dependent resources (like Discord channel which requires a guild first):
+```python
+ask_clarification_questions([
+    {
+        "question": "Which Discord server?",
+        "question_type": "resource_picker",
+        "provider": "discord",
+        "resource_type": "guild",
+        "value_field": "resource_id",
+        "reasoning": "Need to select server first"
+    },
+    {
+        "question": "Which channel in that server?",
+        "question_type": "resource_picker",
+        "provider": "discord",
+        "resource_type": "channel",
+        "depends_on": "q_0",  # References the first question
+        "depends_on_field": "guild_id",
+        "reasoning": "Select channel from the chosen server"
+    }
+])
+```
+
+Common resource picker providers and types:
+- google: google_spreadsheet, google_drive_file, google_drive_folder
+- discord: guild, channel
+- github: repository, branch
+- supabase_mgmt: project, database
+
 **WorkflowSpec v2 Schema (STRICT)**
 ONLY these top-level fields are allowed:
 - version: "2.0" (string literal)
