@@ -23,6 +23,7 @@ class QuestionType(str, Enum):
     """Type of clarification question."""
     SINGLE_CHOICE = "single_choice"
     MULTI_CHOICE = "multi_choice"
+    RESOURCE_PICKER = "resource_picker"
 
 
 class ChatRequest(BaseModel):
@@ -103,11 +104,21 @@ class ClarificationQuestion(BaseModel):
     """Clarification question during chat."""
     question_id: str = Field(..., description="Unique identifier for this question")
     question: str = Field(..., description="The question text")
-    question_type: QuestionType = Field(..., description="Single or multi-choice")
-    options: List[ClarificationQuestionOption] = Field(..., description="Available options")
+    question_type: QuestionType = Field(..., description="Single, multi-choice, or resource_picker")
+    options: List[ClarificationQuestionOption] = Field(default_factory=list, description="Available options (for choice types)")
     min_selections: int = Field(default=1, description="Minimum selections for multi-choice")
     max_selections: Optional[int] = Field(default=None, description="Maximum selections for multi-choice")
     reasoning: Optional[str] = Field(default=None, description="Why the agent is asking this question")
+
+    # Resource picker specific fields (only used when question_type is resource_picker)
+    provider: Optional[str] = Field(default=None, description="OAuth provider (google, github, discord, supabase_mgmt)")
+    resource_type: Optional[str] = Field(default=None, description="Type of resource (google_spreadsheet, guild, channel, etc.)")
+    display_field: Optional[str] = Field(default="name", description="Field to display in picker")
+    value_field: Optional[str] = Field(default="id", description="Field to use as value")
+    search_enabled: Optional[bool] = Field(default=True, description="Whether search is supported")
+    hierarchy: Optional[bool] = Field(default=False, description="Whether folder navigation is supported")
+    depends_on: Optional[str] = Field(default=None, description="Question ID this depends on (for cascading pickers)")
+    depends_on_field: Optional[str] = Field(default=None, description="Field name from the dependent resource")
 
 
 class ClarificationQuestions(BaseModel):
