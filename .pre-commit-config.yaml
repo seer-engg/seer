@@ -1,6 +1,8 @@
 # Pre-commit hooks for code quality enforcement
 # Install: pip install pre-commit && pre-commit install
 
+exclude: ^uv\.lock$
+
 repos:
   # Import validation - Catch circular imports and missing dependencies
   # - repo: local
