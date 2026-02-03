@@ -44,7 +44,7 @@ Your browser will automatically open and connect the cloud frontend to your loca
 - `src/seer/api/` – FastAPI routers, middleware, API models (workflows, tools, integrations, triggers, agents).
 - `src/seer/services/` – business logic used by API/worker (workflow execution, triggers, integrations).
 - `src/seer/core/` – workflow compiler/runtime, schema models, global compiler singleton.
-- `src/seer/tools/` – tool registry, executor, credential resolver, provider implementations; `src/seer/tool_hub/` for tool index/search.
+- `src/seer/tools/` – tool registry, executor, credential resolver, provider implementations.
 - `src/seer/worker/` – Taskiq worker, background tasks, trigger polling.
 - `src/seer/agents/` – agent orchestration (LangGraph-based workflow agent).
 - `src/seer/database/` – Tortoise ORM models/config; migrations live in `/migrations`.

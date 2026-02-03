@@ -137,14 +137,6 @@ class SeerConfig(BaseSettings):
         description="Valkey/Redis connection string for Taskiq broker and result backend. Use 'rediss://' for TLS/SSL connections.",
     )
 
-    # Tool index configuration
-    tool_index_path: str = Field(
-        default="./data/tool_index", description="Path to store tool vector index"
-    )
-    tool_index_auto_generate: bool = Field(
-        default=True, description="Auto-generate tool index on startup if missing"
-    )
-
     google_client_id: str = Field(default="", description="Google OAuth client ID")
     google_client_secret: str = Field(default="", description="Google OAuth client secret")
 

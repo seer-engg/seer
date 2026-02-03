@@ -5,7 +5,6 @@
 - `src/seer/services/`: business logic used by API/worker (workflows, integrations, triggers).
 - `src/seer/core/`: workflow compiler, runtime, schema models, and global compiler singleton.
 - `src/seer/tools/`: tool registry, executor, credential resolution, and provider tool implementations.
-- `src/seer/tool_hub/`: tool index/search helpers for discovery.
 - `src/seer/agents/`: agent-specific orchestration (LangGraph-based workflow agent).
 - `src/seer/worker/`: Taskiq background worker and polling tasks.
 - `src/seer/database/`: Tortoise ORM models/configuration; migrations live in `/migrations`.
@@ -15,7 +14,7 @@
 
 ## Core Systems (Compiler, Tools, Triggers)
 - Workflow compiler: `src/seer/core/` validates workflow specs, builds LangGraph graphs, and hosts runtime node executors; API/services/worker call into it via the global compiler singleton.
-- Tool registry: `src/seer/tools/` provides `BaseTool`, registry helpers, executor, and credential resolution; discovery is powered by `src/seer/tool_hub/`.
+- Tool registry: `src/seer/tools/` provides `BaseTool`, registry helpers, executor, and credential resolution.
 - Trigger polling: trigger catalog + subscription management lives under `src/seer/api/workflows/services` and `src/seer/services/workflows/triggers.py`; Taskiq worker (`src/seer/worker/`) polls and dispatches runs.
 
 
