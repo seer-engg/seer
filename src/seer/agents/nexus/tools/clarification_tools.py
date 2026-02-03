@@ -1,5 +1,8 @@
 """
 Clarification question tools for agent interaction.
+
+Provides batch question support to reduce API round-trips when the agent
+needs to gather multiple pieces of information from the user.
 """
 
 from __future__ import annotations
@@ -7,11 +10,11 @@ from __future__ import annotations
 import json
 import uuid
 from enum import Enum
-from typing import List, Optional
+from typing import List
 
 from langchain_core.tools import tool
 from langgraph.types import interrupt
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from seer.logger import get_logger
 
@@ -31,92 +34,97 @@ class QuestionOption(BaseModel):
     is_wildcard: bool = False
 
 
-class AskClarificationInput(BaseModel):
-    """Input schema for asking clarification questions."""
-    question: str = Field(..., description="The question to ask")
-    question_type: QuestionType = Field(..., description="Type of question")
-    options: List[QuestionOption] = Field(..., description="Available options")
-    reasoning: str = Field(..., description="Why you're asking this question")
-    min_selections: int = Field(default=1)
-    max_selections: Optional[int] = Field(default=None)
-
-
 @tool
-def ask_clarification_question(
-    question: str,
-    question_type: QuestionType,
-    options: List[QuestionOption],
-    reasoning: str,
-    *,
-    min_selections: int = 1,
-    max_selections: Optional[int] = None,
+def ask_clarification_questions(
+    questions: List[dict],
 ) -> str:
     """
-    Ask the user a structured clarification question.
+    Ask the user multiple clarification questions at once.
 
-    Use this when you need the user to choose from specific options to proceed.
-    The question will interrupt the workflow and wait for user response.
+    Use this when you need to gather multiple pieces of information from the user.
+    This is more efficient than asking questions one at a time, as it reduces
+    the number of API round-trips.
 
     Args:
-        question: The question text to display
-        question_type: "single_choice" or "multi_choice"
-        options: List of options with value, label, and optional is_wildcard
-        reasoning: Explain why you're asking this question
-        min_selections: Minimum number of selections (for multi-choice)
-        max_selections: Maximum number of selections (for multi-choice)
+        questions: List of question objects, each containing:
+            - question: The question text to display
+            - question_type: "single_choice" or "multi_choice"
+            - options: List of options with value, label, and optional is_wildcard
+            - reasoning: Explain why you're asking this question
+            - min_selections: Minimum number of selections (for multi-choice, default 1)
+            - max_selections: Maximum number of selections (for multi-choice, optional)
 
     Returns:
-        The user's answer as a JSON string with selected values and optional custom input
+        JSON string containing list of answers, one per question in the same order.
+        Each answer has: {"question_id": "...", "selected_values": [...], "custom_input": "..."}
 
-    Examples:
-        Single-choice with wildcard:
-        ask_clarification_question(
-            question="Which email provider should we use?",
-            question_type="single_choice",
-            options=[
-                {"value": "gmail", "label": "Gmail"},
-                {"value": "outlook", "label": "Outlook"},
-                {"value": "other", "label": "Other (specify)", "is_wildcard": True}
-            ],
-            reasoning="Need to know which email integration to configure"
-        )
-
-        Multi-choice:
-        ask_clarification_question(
-            question="Which integrations should we enable?",
-            question_type="multi_choice",
-            options=[
-                {"value": "gmail", "label": "Gmail"},
-                {"value": "slack", "label": "Slack"},
-                {"value": "github", "label": "GitHub"}
-            ],
-            reasoning="User wants multiple integrations but didn't specify which ones",
-            min_selections=1,
-            max_selections=3
-        )
+    Example:
+        ask_clarification_questions([
+            {
+                "question": "Which email provider should we use?",
+                "question_type": "single_choice",
+                "options": [
+                    {"value": "gmail", "label": "Gmail"},
+                    {"value": "outlook", "label": "Outlook"},
+                    {"value": "other", "label": "Other", "is_wildcard": True}
+                ],
+                "reasoning": "Need to know which email service to configure"
+            },
+            {
+                "question": "Which notification channels should we enable?",
+                "question_type": "multi_choice",
+                "options": [
+                    {"value": "slack", "label": "Slack"},
+                    {"value": "email", "label": "Email"},
+                    {"value": "sms", "label": "SMS"}
+                ],
+                "reasoning": "Need to know where to send notifications",
+                "min_selections": 1
+            }
+        ])
     """
-    # Generate unique question ID
-    question_id = f"q_{uuid.uuid4().hex[:8]}"
+    if not questions:
+        raise ValueError("At least one question is required")
 
-    # Build interrupt payload
+    if len(questions) > 10:
+        raise ValueError("Maximum 10 questions allowed per batch")
+
+    # Build questions with unique IDs
+    questions_payload = []
+    for q in questions:
+        question_id = f"q_{uuid.uuid4().hex[:8]}"
+        options = q.get("options", [])
+
+        questions_payload.append({
+            "question_id": question_id,
+            "question": q.get("question", ""),
+            "question_type": q.get("question_type", "single_choice"),
+            "options": [
+                opt.model_dump() if hasattr(opt, 'model_dump') else opt
+                for opt in options
+            ],
+            "min_selections": q.get("min_selections", 1),
+            "max_selections": q.get("max_selections"),
+            "reasoning": q.get("reasoning", ""),
+        })
+
+    # Build interrupt payload for batch questions
     interrupt_payload = {
-        "type": "clarification_question",
-        "question_id": question_id,
-        "question": question,
-        "question_type": question_type,
-        "options": [opt.model_dump() if hasattr(opt, 'model_dump') else opt for opt in options],
-        "min_selections": min_selections,
-        "max_selections": max_selections,
-        "reasoning": reasoning,
+        "type": "clarification_questions",  # Note: plural
+        "questions": questions_payload,
     }
 
-    logger.info("Agent asking clarification question: question_id=%s, type=%s", question_id, question_type)
+    logger.info(
+        "Agent asking %d clarification questions: question_ids=%s",
+        len(questions_payload),
+        [q["question_id"] for q in questions_payload]
+    )
 
     # Trigger LangGraph interrupt - execution pauses here until resumed
-    answer = interrupt(interrupt_payload)
+    answers = interrupt(interrupt_payload)
 
-    logger.info("Clarification question answered: question_id=%s, answer=%s", question_id, answer)
+    logger.info("Clarification questions answered: %d answers received", len(answers) if answers else 0)
 
-    # When resumed, answer contains user's response
-    # Format: {"selected_values": ["value1", "value2"], "custom_input": "..."}
-    return json.dumps(answer)
+    # When resumed, answers contains list of user responses
+    # Format: [{"question_id": "...", "selected_values": [...], "custom_input": "..."}, ...]
+    return json.dumps(answers)

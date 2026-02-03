@@ -44,6 +44,7 @@ dependencies = [
     "pytz>=2024.1",
     "taskiq>=0.12.1",
     "taskiq-redis>=1.2.1",
+    "watchfiles>=1.0.0",  # Required for taskiq worker --reload in local development
     "psycopg[binary]>=3.1.0",  # Required by langgraph-checkpoint-postgres
     "RestrictedPython>=7.0",  # Required for RLM tool sandbox
     "stripe>=10.0.0",  # Stripe payment processing for subscriptions

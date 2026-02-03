@@ -14,6 +14,10 @@ from seer.services.integrations.auth.oauth import get_oauth_provider
 
 logger = get_logger(__name__)
 
+# Providers that don't require refresh tokens for "connected" status
+# LinkedIn: Non-MDP partners don't get refresh tokens, but 60-day access tokens are sufficient
+PROVIDERS_WITHOUT_REFRESH_TOKENS = {"linkedin"}
+
 
 def build_provider_connections_map(connections: List[OAuthConnection]) -> Dict[str, Dict[str, Any]]:
     """
@@ -134,7 +138,17 @@ def build_tool_status(
             ]
         else:
             missing_scopes = required_scopes
-        oauth_connected = bool(conn_info and has_refresh_token and has_scopes)
+
+        # Check if this provider requires refresh tokens for connected status
+        requires_refresh_token = provider not in PROVIDERS_WITHOUT_REFRESH_TOKENS
+
+        if requires_refresh_token:
+            # Standard providers (Google, GitHub, etc.) need refresh tokens
+            oauth_connected = bool(conn_info and has_refresh_token and has_scopes)
+        else:
+            # Providers without refresh tokens (LinkedIn) only need scopes
+            oauth_connected = bool(conn_info and has_scopes)
+
         if conn_info:
             connection_id = conn_info.get("connection_id")
             provider_account_id = conn_info.get("provider_account_id")

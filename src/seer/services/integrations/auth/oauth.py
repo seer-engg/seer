@@ -60,6 +60,19 @@ if config.discord_client_id and config.discord_client_secret:
         client_kwargs={'scope': 'bot'},
     )
 
+# LinkedIn OAuth
+# Scopes are controlled by frontend - minimal default for identity only
+if config.linkedin_client_id and config.linkedin_client_secret:
+    oauth.register(
+        name='linkedin',
+        client_id=config.linkedin_client_id,
+        client_secret=config.linkedin_client_secret,
+        authorize_url='https://www.linkedin.com/oauth/v2/authorization',
+        access_token_url='https://www.linkedin.com/oauth/v2/accessToken',
+        api_base_url='https://api.linkedin.com/',
+        client_kwargs={'scope': 'openid profile email'},  # Minimal default - frontend will override with specific scopes
+    )
+
 
 
 def get_oauth_provider(integration_type: str) -> str:
@@ -68,17 +81,22 @@ def get_oauth_provider(integration_type: str) -> str:
     Multiple integration types can share the same OAuth provider.
 
     Args:
-        integration_type: Integration type (gmail, googlesheets, googledrive, etc.)
+        integration_type: Integration type (gmail, google_sheets, google_drive, etc.)
 
     Returns:
         OAuth provider name (google, github, etc.)
     """
-    google_integrations = ['gmail', 'googlesheets', 'googledrive', 'google']
+    google_integrations = ['gmail', 'googlesheets', 'googledrive', 'google', 'google_sheets', 'google_drive']
     if integration_type in google_integrations:
         return 'google'
+    github_integrations = ['github', 'pull_request']
+    if integration_type in github_integrations:
+        return 'github'
     if integration_type in ['supabase', 'supabase_mgmt']:
         return SUPABASE_OAUTH_PROVIDER
     if integration_type == 'discord':
         return 'discord'
+    if integration_type == 'linkedin':
+        return 'linkedin'
     # For other providers, the integration type is the same as the provider
     return integration_type

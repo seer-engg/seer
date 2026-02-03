@@ -40,9 +40,10 @@ from .services import (
 )
 from seer.services.integrations.auth.oauth import get_oauth_provider
 from .models import ToolsStatusResponse
+from .metadata_models import IntegrationMetadataResponse
 logger = get_logger("api.integrations.router")
 from seer.services.integrations.auth.helpers import parse_scopes, has_required_scopes, list_connections, store_oauth_connection
-from seer.services.integrations.tool_status_service import get_tools_connection_status_for_user
+from seer.services.integrations.tool_status_service import get_tools_connection_status_for_user, PROVIDERS_WITHOUT_REFRESH_TOKENS
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 from seer.api.integrations.resource_router import router as resource_router
@@ -84,7 +85,15 @@ def _check_existing_scopes(
     redirect_to: Optional[str],
     integration_type: Optional[str],
 ):
-    if existing_connection and existing_connection.scopes and existing_connection.refresh_token_enc:
+    # Check if this provider requires refresh tokens for re-consent logic
+    requires_refresh = oauth_provider not in PROVIDERS_WITHOUT_REFRESH_TOKENS
+    has_valid_connection = (
+        existing_connection
+        and existing_connection.scopes
+        and (existing_connection.refresh_token_enc or not requires_refresh)
+    )
+
+    if has_valid_connection:
         if has_required_scopes(existing_connection.scopes, normalized_scope_list):
             logger.info(
                 "User already has all required scopes for %s. Requested=%s Granted=%s",
@@ -221,6 +230,26 @@ async def get_tools_connection_status(request: Request):
     user: User = request.state.db_user
     results = await get_tools_connection_status_for_user(user)
     return {"tools": results}
+
+
+@router.get("/metadata", response_model=IntegrationMetadataResponse)
+async def get_integration_metadata():
+    """
+    Get metadata for all available integrations.
+
+    Returns integration configurations including display names, icons, OAuth providers,
+    available scopes, and detection patterns. This allows the frontend to render
+    integrations dynamically without hardcoded configurations.
+
+    The response includes:
+    - integrations: List of all integration types with their metadata
+    - provider_to_types: Mapping from OAuth providers to integration types
+
+    This endpoint does not require authentication as the data is static configuration.
+    """
+    from seer.services.integrations.metadata import get_all_integration_metadata  # pylint: disable=import-outside-toplevel  # Reason: Lazy import to avoid circular dependency with tools module
+
+    return get_all_integration_metadata()
 
 
 # =============================================================================
