@@ -364,3 +364,86 @@ class TestPersistEvent:
                     event_hash=None,  # No dedupe key
                     raw=None,
                 )
+
+    @pytest.mark.asyncio
+    async def test_persist_event_allows_same_event_for_different_subscriptions(self, sample_envelope):
+        """Test that multiple subscriptions can create events for the same provider_event_id.
+
+        This verifies the fix for the multi-workflow trigger bug where only
+        the first subscription to process an event would trigger.
+        """
+        from seer.core.triggers.events import persist_event
+
+        # Create two different subscriptions on the same account
+        subscription_a = MagicMock()
+        subscription_a.id = 100
+        subscription_a.trigger_key = "gmail.email_received"
+        subscription_a.provider_connection_id = 50  # Same Gmail account
+
+        subscription_b = MagicMock()
+        subscription_b.id = 200  # Different subscription
+        subscription_b.trigger_key = "gmail.email_received"
+        subscription_b.provider_connection_id = 50  # Same Gmail account
+
+        mock_event_a = MagicMock()
+        mock_event_a.id = 1
+        mock_event_b = MagicMock()
+        mock_event_b.id = 2
+
+        with patch("seer.core.triggers.events.TriggerEvent") as MockTriggerEvent:
+            # Both creates should succeed (no IntegrityError)
+            MockTriggerEvent.create = AsyncMock(side_effect=[mock_event_a, mock_event_b])
+
+            # Subscription A creates event for email msg_123
+            event_a, created_a = await persist_event(
+                subscription=subscription_a,
+                envelope=sample_envelope,
+                provider_event_id="gmail_msg_123",
+                event_hash=None,
+                raw=None,
+            )
+
+            # Subscription B should also be able to create event for the SAME email
+            event_b, created_b = await persist_event(
+                subscription=subscription_b,
+                envelope=sample_envelope,
+                provider_event_id="gmail_msg_123",  # Same email
+                event_hash=None,
+                raw=None,
+            )
+
+        # Both should report created=True
+        assert created_a is True
+        assert created_b is True
+        # Both should be different events
+        assert event_a.id != event_b.id
+        # TriggerEvent.create should have been called twice
+        assert MockTriggerEvent.create.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_persist_event_dedup_includes_subscription_id(self, mock_subscription, sample_envelope):
+        """Test that dedup lookup includes subscription_id in the filter."""
+        from tortoise.exceptions import IntegrityError
+        from seer.core.triggers.events import persist_event
+
+        existing_event = MagicMock()
+        existing_event.id = 555
+
+        with patch("seer.core.triggers.events.TriggerEvent") as MockTriggerEvent:
+            MockTriggerEvent.create = AsyncMock(side_effect=IntegrityError("Duplicate"))
+            MockTriggerEvent.get = AsyncMock(return_value=existing_event)
+
+            await persist_event(
+                subscription=mock_subscription,
+                envelope=sample_envelope,
+                provider_event_id="dup_event_id",
+                event_hash=None,
+                raw=None,
+            )
+
+        # Verify that the get call includes subscription_id
+        call_kwargs = MockTriggerEvent.get.call_args[1]
+        assert call_kwargs["subscription_id"] == mock_subscription.id
+        assert call_kwargs["trigger_key"] == mock_subscription.trigger_key
+        assert call_kwargs["provider_connection_id"] == mock_subscription.provider_connection_id
+        assert call_kwargs["provider_event_id"] == "dup_event_id"
