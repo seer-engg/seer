@@ -247,6 +247,36 @@ def extract_config_fields(spec: Dict[str, Any]) -> List[api_models.TemplateConfi
 # ===== Internal Helper Functions =====
 
 
+def _build_template_fields(template: WorkflowTemplate) -> Dict[str, Any]:
+    """Build common template field mappings for API responses."""
+    config_fields = extract_config_fields(template.spec or {})
+    return {
+        "template_id": make_template_public_id(template.id),
+        "slug": template.slug,
+        "name": template.name,
+        "description": template.description,
+        "category": template.category.value if isinstance(template.category, TemplateCategory) else template.category,
+        "tags": template.tags or [],
+        "icon": template.icon,
+        "is_featured": template.is_featured,
+        "usage_count": template.usage_count,
+        "required_integrations": [
+            api_models.RequiredIntegration(
+                provider=r.get("provider", ""),
+                integration_type=r.get("integration_type", ""),
+                reason=r.get("reason", ""),
+            )
+            for r in (template.required_integrations or [])
+        ],
+        "spec": template.spec or {},
+        "config_fields": config_fields,
+        "preview_image_url": template.preview_image_url,
+        "source": template.source.value if hasattr(template.source, "value") else template.source,
+        "created_at": template.created_at,
+        "updated_at": template.updated_at,
+    }
+
+
 def _to_summary(template: WorkflowTemplate) -> api_models.TemplateSummary:
     """Convert a template to a summary response."""
     return api_models.TemplateSummary(
@@ -272,33 +302,7 @@ def _to_summary(template: WorkflowTemplate) -> api_models.TemplateSummary:
 
 def _to_detail(template: WorkflowTemplate) -> api_models.TemplateDetailResponse:
     """Convert a template to a detail response."""
-    config_fields = extract_config_fields(template.spec or {})
-
-    return api_models.TemplateDetailResponse(
-        template_id=make_template_public_id(template.id),
-        slug=template.slug,
-        name=template.name,
-        description=template.description,
-        category=template.category.value if isinstance(template.category, TemplateCategory) else template.category,
-        tags=template.tags or [],
-        icon=template.icon,
-        is_featured=template.is_featured,
-        usage_count=template.usage_count,
-        required_integrations=[
-            api_models.RequiredIntegration(
-                provider=r.get("provider", ""),
-                integration_type=r.get("integration_type", ""),
-                reason=r.get("reason", ""),
-            )
-            for r in (template.required_integrations or [])
-        ],
-        spec=template.spec or {},
-        config_fields=config_fields,
-        preview_image_url=template.preview_image_url,
-        source=template.source.value if hasattr(template.source, "value") else template.source,
-        created_at=template.created_at,
-        updated_at=template.updated_at,
-    )
+    return api_models.TemplateDetailResponse(**_build_template_fields(template))
 
 
 def _resolve_placeholders(spec: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
@@ -381,4 +385,5 @@ __all__ = [
     "check_requirements",
     "instantiate_template",
     "extract_config_fields",
+    "_build_template_fields",
 ]

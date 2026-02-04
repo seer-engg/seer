@@ -8,7 +8,7 @@ from fastapi import HTTPException, status
 from tortoise.exceptions import IntegrityError
 
 from seer.api.templates import models as api_models
-from seer.api.templates.services import extract_config_fields
+from seer.api.templates.services import _build_template_fields
 from seer.database import (
     User,
     Workflow,
@@ -17,7 +17,6 @@ from seer.database import (
     WorkflowTemplate,
     TemplateCategory,
     TemplateSource,
-    make_template_public_id,
     parse_workflow_public_id,
 )
 
@@ -347,34 +346,9 @@ async def toggle_publish(
 
 def _to_admin_response(template: WorkflowTemplate) -> api_models.TemplateAdminResponse:
     """Convert a template to an admin response."""
-    config_fields = extract_config_fields(template.spec or {})
-
-    return api_models.TemplateAdminResponse(
-        template_id=make_template_public_id(template.id),
-        slug=template.slug,
-        name=template.name,
-        description=template.description,
-        category=template.category.value if isinstance(template.category, TemplateCategory) else template.category,
-        tags=template.tags or [],
-        icon=template.icon,
-        is_featured=template.is_featured,
-        is_published=template.is_published,
-        usage_count=template.usage_count,
-        required_integrations=[
-            api_models.RequiredIntegration(
-                provider=r.get("provider", ""),
-                integration_type=r.get("integration_type", ""),
-                reason=r.get("reason", ""),
-            )
-            for r in (template.required_integrations or [])
-        ],
-        spec=template.spec or {},
-        config_fields=config_fields,
-        preview_image_url=template.preview_image_url,
-        source=template.source.value if hasattr(template.source, "value") else template.source,
-        created_at=template.created_at,
-        updated_at=template.updated_at,
-    )
+    fields = _build_template_fields(template)
+    fields["is_published"] = template.is_published
+    return api_models.TemplateAdminResponse(**fields)
 
 
 __all__ = [
