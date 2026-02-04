@@ -294,17 +294,19 @@ async def test_create_trigger_event(db_engine):
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_trigger_event_unique_constraint_provider_id(db_engine):
-    """Test unique constraint on (trigger_key, provider_connection_id, provider_event_id)."""
+    """Test unique constraint on (subscription_id, trigger_key, provider_connection_id, provider_event_id)."""
     await TriggerEvent.create(
+        subscription_id=100,
         trigger_key="gmail.new_email",
         provider_connection_id=123,
         provider_event_id="unique_event",
         event={"data": "first"},
     )
 
-    # Attempt to create duplicate event
+    # Attempt to create duplicate event with same subscription_id
     with pytest.raises(IntegrityError):
         await TriggerEvent.create(
+            subscription_id=100,  # Same subscription
             trigger_key="gmail.new_email",
             provider_connection_id=123,
             provider_event_id="unique_event",  # Duplicate!
@@ -315,22 +317,56 @@ async def test_trigger_event_unique_constraint_provider_id(db_engine):
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_trigger_event_unique_constraint_event_hash(db_engine):
-    """Test unique constraint on (trigger_key, provider_connection_id, event_hash)."""
+    """Test unique constraint on (subscription_id, trigger_key, provider_connection_id, event_hash)."""
     await TriggerEvent.create(
+        subscription_id=200,
         trigger_key="webhook.github",
         provider_connection_id=456,
         event_hash="hash_abc123",
         event={"data": "first"},
     )
 
-    # Attempt to create duplicate with same hash
+    # Attempt to create duplicate with same hash and subscription_id
     with pytest.raises(IntegrityError):
         await TriggerEvent.create(
+            subscription_id=200,  # Same subscription
             trigger_key="webhook.github",
             provider_connection_id=456,
             event_hash="hash_abc123",  # Duplicate!
             event={"data": "second"},
         )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_trigger_event_different_subscriptions_same_event(db_engine):
+    """Test that different subscriptions can create events for the same provider_event_id.
+
+    This verifies the multi-workflow trigger fix: when multiple workflows
+    subscribe to the same Gmail account, each should receive the same email.
+    """
+    # Subscription A creates event for email msg_123
+    event_a = await TriggerEvent.create(
+        subscription_id=100,
+        trigger_key="gmail.new_email",
+        provider_connection_id=123,  # Same Gmail account
+        provider_event_id="gmail_msg_123",
+        event={"subject": "Test Email"},
+    )
+
+    # Subscription B can also create event for the SAME email
+    event_b = await TriggerEvent.create(
+        subscription_id=200,  # Different subscription!
+        trigger_key="gmail.new_email",
+        provider_connection_id=123,  # Same Gmail account
+        provider_event_id="gmail_msg_123",  # Same event
+        event={"subject": "Test Email"},
+    )
+
+    # Both events should exist
+    assert event_a.id is not None
+    assert event_b.id is not None
+    assert event_a.id != event_b.id
 
 
 @pytest.mark.integration
