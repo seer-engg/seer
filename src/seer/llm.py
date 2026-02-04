@@ -1,4 +1,5 @@
 """Shared LLM utilities"""
+import logging
 from typing import Literal, Optional
 
 from dotenv import load_dotenv
@@ -10,36 +11,37 @@ from seer.config import config
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
 
-def _detect_provider(model: str) -> Literal["openai", "anthropic"]:
+
+def _detect_provider(model: str) -> Literal["openai", "anthropic", "openrouter"]:
     """Detect provider from model name."""
-    if model.startswith(("gpt-", "o3-")):
-        return "openai"
     if model.startswith("claude-"):
         return "anthropic"
-    # Default to OpenAI for backward compatibility
-    return "openai"
+    if model.startswith(("moonshot/", "moonshotai/", "openrouter/")):
+        return "openrouter"
+    # Default to OpenRouter for other models
+    return "openrouter"
 
 
 def get_llm(
     model: str = config.default_llm_model,
     temperature: float = 0.2,
-    reasoning_effort: str = "minimal",
     api_key: Optional[str] = None,
 ) -> BaseChatModel:
     """
-    Get a configured LLM instance for OpenAI or Anthropic models.
+    Get a configured LLM instance for OpenRouter or Anthropic models.
 
     Args:
-        model: Model name (e.g., "gpt-5.2", "claude-opus-4-5")
+        model: Model name (e.g., "moonshotai/kimi-k2.5", "claude-opus-4-5")
         temperature: Temperature setting
-        reasoning_effort: Reasoning effort level (only used for models that support it)
         api_key: Optional API key override (provider-specific)
 
     Returns:
-        Configured ChatOpenAI or ChatAnthropic instance
+        Configured ChatOpenAI, ChatAnthropic, or OpenRouter instance
     """
     provider = _detect_provider(model)
+    logger.info("🤖 Initializing LLM | Model: %s | Provider: %s | Temperature: %s", model, provider, temperature)
 
     if provider == "openai":
         if api_key is None:
@@ -55,16 +57,22 @@ def get_llm(
             "temperature": temperature,
         }
 
-        # Only include reasoning parameter for models that support it
-        # o3 models support reasoning effort
-        if model.startswith("o3-"):
-            kwargs["reasoning"] = {"effort": reasoning_effort}
-        # GPT-5.1 and GPT-5 (but not mini/nano variants) support reasoning effort
-        elif model.startswith(("gpt-5.1", "gpt-5")) and not model.startswith("gpt-5-mini") and not model.startswith("gpt-5-nano"):
-            kwargs["reasoning"] = {"effort": reasoning_effort}
-        # Don't pass reasoning parameter for other models
-
         return ChatOpenAI(**kwargs)
+
+    if provider == "openrouter":
+        if api_key is None:
+            api_key = config.openrouter_api_key
+        if api_key is None or api_key == "":
+            raise ValueError("OPENROUTER_API_KEY not found in environment")
+
+        logger.info("🌐 Using OpenRouter API | Model: %s | Base URL: https://openrouter.ai/api/v1", model)
+        return ChatOpenAI(
+            model=model,
+            api_key=api_key,
+            base_url="https://openrouter.ai/api/v1",
+            temperature=temperature,
+            use_responses_api=False,
+        )
 
     if provider == "anthropic":
         if api_key is None:

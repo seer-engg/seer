@@ -6,7 +6,7 @@ from langchain.agents.middleware import (
 
 from seer.config import config
 from seer.logger import get_logger
-from seer.llm import get_llm_without_responses_api
+from seer.llm import get_llm
 from seer.agents.nexus.utils import get_workflow_tools
 from seer.agents.nexus.schema_context import (
     get_workflow_spec_example_text,
@@ -25,7 +25,7 @@ if config.mlflow_enabled:
     _ensure_mlflow_autologging()
 
 def create_nexus_chat_agent(
-    model: str = "gpt-4o-mini",
+    model: str = "moonshotai/kimi-k2.5",
     checkpointer: Optional[Any] = None,
     workflow_state: Optional[Dict[str, Any]] = None,
 ) -> Any:
@@ -36,7 +36,7 @@ def create_nexus_chat_agent(
     and human-in-the-loop capabilities.
 
     Args:
-        model: Model name to use (e.g., 'gpt-5.2', 'gpt-5-mini')
+        model: Model name to use (e.g., 'moonshotai/kimi-k2.5', 'moonshotai/kimi-k2-thinking')
         checkpointer: Optional LangGraph checkpointer for persistence
 
     Returns:
@@ -44,7 +44,7 @@ def create_nexus_chat_agent(
     """
 
 
-    llm = get_llm_without_responses_api(model=model, temperature=0, api_key=None)
+    llm = get_llm(model=model, temperature=0)
 
     # System prompt for the workflow assistant
     schema_section = f"\n\nWorkflowSpec schema excerpt (trimmed):\n{WORKFLOW_SPEC_SCHEMA}"
@@ -112,6 +112,58 @@ ask_clarification_questions([
 
 When resumed, you'll receive: [{"question_id": "...", "selected_values": [...], "custom_input": "..."}, ...]
 
+**Resource Picker Questions**
+When a tool requires selecting a specific resource (like a spreadsheet, Discord server, or channel), use
+`question_type: "resource_picker"` instead of listing options manually.
+
+After discovering a tool with search_tools(), check the response for `resource_pickers` field.
+If present, use resource_picker questions for those parameters instead of asking users to type IDs.
+
+Example for Google Sheets (when tool has resource_pickers for spreadsheet_id):
+```python
+ask_clarification_questions([
+    {
+        "question": "Which Google spreadsheet should we use?",
+        "question_type": "resource_picker",
+        "provider": "google",
+        "resource_type": "google_spreadsheet",
+        "display_field": "name",
+        "value_field": "id",
+        "search_enabled": True,
+        "reasoning": "The google_sheets_read tool requires a spreadsheet_id"
+    }
+])
+```
+
+For dependent resources (like Discord channel which requires a guild first):
+```python
+ask_clarification_questions([
+    {
+        "question": "Which Discord server?",
+        "question_type": "resource_picker",
+        "provider": "discord",
+        "resource_type": "guild",
+        "value_field": "resource_id",
+        "reasoning": "Need to select server first"
+    },
+    {
+        "question": "Which channel in that server?",
+        "question_type": "resource_picker",
+        "provider": "discord",
+        "resource_type": "channel",
+        "depends_on": "q_0",  # References the first question
+        "depends_on_field": "guild_id",
+        "reasoning": "Select channel from the chosen server"
+    }
+])
+```
+
+Common resource picker providers and types:
+- google: google_spreadsheet, google_drive_file, google_drive_folder
+- discord: guild, channel
+- github: repository, branch
+- supabase_mgmt: project, database
+
 **WorkflowSpec v2 Schema (STRICT)**
 ONLY these top-level fields are allowed:
 - version: "2.0" (string literal)
@@ -176,10 +228,9 @@ Before submit_workflow_spec():
     tools = get_workflow_tools(workflow_state=workflow_state)
 
     # Create summarization model (use same model with lower max tokens)
-    summarization_model = get_llm_without_responses_api(
+    summarization_model = get_llm(
         model=model,
         temperature=0,
-        api_key=None,
     )
 
     # Build middleware list

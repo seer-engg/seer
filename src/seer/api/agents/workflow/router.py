@@ -187,18 +187,38 @@ def _transform_clarification_interrupt(interrupt_data: Dict[str, Any]) -> None:
 
     questions_list = []
     for q in interrupt_data.get("questions", []):
-        question_obj = ClarificationQuestion(
-            question_id=q["question_id"],
-            question=q["question"],
-            question_type=QuestionType(q["question_type"]),
-            options=[
+        question_type = QuestionType(q["question_type"])
+
+        # Build base question object
+        question_kwargs = {
+            "question_id": q["question_id"],
+            "question": q["question"],
+            "question_type": question_type,
+            "reasoning": q.get("reasoning"),
+        }
+
+        if question_type == QuestionType.RESOURCE_PICKER:
+            # Resource picker specific fields
+            question_kwargs["provider"] = q.get("provider")
+            question_kwargs["resource_type"] = q.get("resource_type")
+            question_kwargs["display_field"] = q.get("display_field", "name")
+            question_kwargs["value_field"] = q.get("value_field", "id")
+            question_kwargs["search_enabled"] = q.get("search_enabled", True)
+            question_kwargs["hierarchy"] = q.get("hierarchy", False)
+            question_kwargs["depends_on"] = q.get("depends_on")
+            question_kwargs["depends_on_field"] = q.get("depends_on_field")
+            # Resource pickers don't have traditional options
+            question_kwargs["options"] = []
+        else:
+            # Choice type specific fields
+            question_kwargs["options"] = [
                 ClarificationQuestionOption(**opt)
-                for opt in q["options"]
-            ],
-            min_selections=q.get("min_selections", 1),
-            max_selections=q.get("max_selections"),
-            reasoning=q.get("reasoning"),
-        )
+                for opt in q.get("options", [])
+            ]
+            question_kwargs["min_selections"] = q.get("min_selections", 1)
+            question_kwargs["max_selections"] = q.get("max_selections")
+
+        question_obj = ClarificationQuestion(**question_kwargs)
         questions_list.append(question_obj.model_dump())
 
     questions_obj = ClarificationQuestions(
@@ -305,8 +325,22 @@ async def _process_agent_result(
 
 def _validate_single_answer(answer: ClarificationAnswer, question_data: Dict[str, Any]) -> None:
     """Validate a single answer against its question options."""
-    # Validate selected values
-    valid_values = {opt["value"] for opt in question_data["options"]}
+    question_type = question_data.get("question_type", "single_choice")
+
+    # Resource picker answers don't have predefined options to validate against
+    if question_type == QuestionType.RESOURCE_PICKER.value:
+        # Just ensure at least one value is selected
+        if not answer.selected_values:
+            raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Selection required",
+                detail=f"At least one resource must be selected for question {answer.question_id}",
+                status=400
+            )
+        return
+
+    # Validate selected values for choice questions
+    valid_values = {opt["value"] for opt in question_data.get("options", [])}
     invalid_selections = [v for v in answer.selected_values if v not in valid_values]
 
     if invalid_selections:
@@ -318,7 +352,7 @@ def _validate_single_answer(answer: ClarificationAnswer, question_data: Dict[str
         )
 
     # Validate wildcard custom input
-    wildcard_options = [opt for opt in question_data["options"] if opt.get("is_wildcard")]
+    wildcard_options = [opt for opt in question_data.get("options", []) if opt.get("is_wildcard")]
     wildcard_values = {opt["value"] for opt in wildcard_options}
     has_wildcard_selection = any(v in wildcard_values for v in answer.selected_values)
 

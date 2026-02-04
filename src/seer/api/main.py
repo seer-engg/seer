@@ -35,34 +35,6 @@ from seer.observability.exceptions import ChatDisabledError, UsageLimitError
 logger = get_logger("api.main")
 
 
-async def initialize_tool_index(fastapi_app: FastAPI) -> None:
-    """Initialize tool index in background if enabled."""
-    if not config.tool_index_auto_generate:
-        return
-
-    try:
-        from seer.tool_hub.index_manager import ensure_tool_index_exists  # pylint: disable=import-outside-toplevel # Reason: Conditional import to avoid loading heavy dependencies when disabled
-
-        async def init_tool_index():
-            try:
-                toolhub = await ensure_tool_index_exists(
-                    auto_generate=config.tool_index_auto_generate
-                )
-                if toolhub:
-                    from seer.tool_hub.singleton import set_toolhub_instance  # pylint: disable=import-outside-toplevel # Reason: Conditional import only when toolhub exists
-                    set_toolhub_instance(toolhub)
-                    logger.info("✅ Tool index initialized")
-                else:
-                    logger.warning("⚠️ Tool index initialization skipped or failed")
-            except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Background task should never crash server
-                logger.error("Error initializing tool index: %s", e, exc_info=True)
-
-        task = asyncio.create_task(init_tool_index())
-        fastapi_app.state.tool_index_init_task = task
-    except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Server startup should continue even if tool index fails
-        logger.warning("Could not initialize tool index: %s. Tool search may not work.", e)
-
-
 async def open_frontend_after_startup() -> None:
     """Launch frontend pointing at local backend."""
     if config.is_cloud_mode or not config.auto_open_browser:
@@ -109,7 +81,6 @@ async def lifespan(fastapi_app: FastAPI):
             trigger_status = "enabled – handled by Taskiq worker" if config.trigger_poller_enabled else "disabled via configuration"
             logger.info("Trigger poller %s", trigger_status)
 
-            await initialize_tool_index(fastapi_app)
             asyncio.create_task(open_frontend_after_startup())
 
             try:

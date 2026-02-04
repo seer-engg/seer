@@ -13,8 +13,11 @@ import pytest
 from seer.core.schema.models import (
     Edge,
     EdgeType,
+    InlineSchema,
     LLMNode,
     Node,
+    OutputContract,
+    OutputMode,
     ToolNode,
     WorkflowSpec,
 )
@@ -31,6 +34,8 @@ from seer.api.workflows.services.history import (
     _snapshot_to_dict,
     _parse_workflow_spec,
     _build_history_response,
+    _get_error_traces_from_database,
+    _merge_checkpoint_and_database_traces,
 )
 
 
@@ -143,46 +148,52 @@ class TestEnrichWithToolNode:
 
     def test_enrich_with_tool_node_basic(self):
         """Test enriching dict with ToolNode metadata."""
-        # Create a mock node with the attributes the function expects
-        node = MagicMock()
-        node.tool = "github.create_issue"
-        node.out = "issue_result"
-        node.expect_output = None
+        # Create a real ToolNode instance
+        node = ToolNode(
+            id="tool-1",
+            tool="github.create_issue",
+            inputs={},
+            expect_outputs=None
+        )
 
         enriched = {}
         _enrich_with_tool_node(enriched, node)
 
         assert enriched["tool_name"] == "github.create_issue"
-        assert enriched["output_key"] == "issue_result"
-        assert "expect_output" not in enriched
+        assert "expect_outputs" not in enriched
 
     def test_enrich_with_tool_node_with_expect_output(self):
-        """Test enriching with expect_output present."""
-        node = MagicMock()
-        node.tool = "test.tool"
-        node.out = "result"
-        node.expect_output = MagicMock()
-        node.expect_output.model_dump.return_value = {"mode": "json", "schema": {"type": "object"}}
+        """Test enriching with expect_outputs present."""
+        node = ToolNode(
+            id="tool-1",
+            tool="test.tool",
+            inputs={},
+            expect_outputs=OutputContract(
+                mode=OutputMode.json,
+                schema=InlineSchema(schema={"type": "object", "properties": {"result": {"type": "string"}}})
+            )
+        )
 
         enriched = {}
         _enrich_with_tool_node(enriched, node)
 
         assert enriched["tool_name"] == "test.tool"
-        assert enriched["output_key"] == "result"
-        assert enriched["expect_output"] == {"mode": "json", "schema": {"type": "object"}}
+        assert "expect_outputs" in enriched
+        assert enriched["expect_outputs"]["mode"] == "json"
 
-    def test_enrich_with_tool_node_none_out(self):
-        """Test enriching when out is None."""
-        node = MagicMock()
-        node.tool = "test.tool"
-        node.out = None
-        node.expect_output = None
+    def test_enrich_with_tool_node_none_expect_outputs(self):
+        """Test enriching when expect_outputs is None."""
+        node = ToolNode(
+            id="tool-1",
+            tool="test.tool",
+            inputs={}
+        )
 
         enriched = {}
         _enrich_with_tool_node(enriched, node)
 
         assert enriched["tool_name"] == "test.tool"
-        assert enriched["output_key"] is None
+        assert "expect_outputs" not in enriched
 
 
 @pytest.mark.unit
@@ -191,55 +202,61 @@ class TestEnrichWithLLMNode:
 
     def test_enrich_with_llm_node_basic(self):
         """Test enriching dict with LLMNode metadata."""
-        node = MagicMock()
-        node.model = "gpt-4"
-        node.out = "response"
-        node.prompt = "You are a helpful assistant"
-        node.temperature = 0.7
-        node.output = None
+        node = LLMNode(
+            id="llm-1",
+            inputs={
+                "model": "moonshotai/kimi-k2.5",
+                "prompt": "You are a helpful assistant",
+                "temperature": 0.7
+            },
+            outputs=OutputContract(mode=OutputMode.text)
+        )
 
         enriched = {}
         _enrich_with_llm_node(enriched, node)
 
-        assert enriched["model"] == "gpt-4"
-        assert enriched["output_key"] == "response"
+        assert enriched["model"] == "moonshotai/kimi-k2.5"
         assert enriched["prompt_template"] == "You are a helpful assistant"
         assert enriched["temperature"] == 0.7
-        assert "output_schema" not in enriched
+        assert "output_schema" in enriched
 
     def test_enrich_with_llm_node_with_output_schema(self):
         """Test enriching with output schema present."""
-        node = MagicMock()
-        node.model = "gpt-4"
-        node.out = "result"
-        node.prompt = "Test"
-        node.temperature = None
-        node.output = MagicMock()
-        node.output.model_dump.return_value = {"mode": "json", "schema": {"type": "string"}}
+        node = LLMNode(
+            id="llm-1",
+            inputs={
+                "model": "moonshotai/kimi-k2.5",
+                "prompt": "Test"
+            },
+            outputs=OutputContract(
+                mode=OutputMode.json,
+                schema=InlineSchema(schema={"type": "object", "properties": {"analysis": {"type": "string"}}})
+            )
+        )
 
         enriched = {}
         _enrich_with_llm_node(enriched, node)
 
-        assert enriched["model"] == "gpt-4"
-        assert enriched["output_schema"] == {"mode": "json", "schema": {"type": "string"}}
+        assert enriched["model"] == "moonshotai/kimi-k2.5"
+        assert "output_schema" in enriched
+        assert enriched["output_schema"]["mode"] == "json"
         assert "temperature" not in enriched
 
     def test_enrich_with_llm_node_minimal(self):
         """Test enriching LLM node with minimal data."""
-        node = MagicMock()
-        node.model = "claude-3"
-        node.out = None
-        node.prompt = None
-        node.temperature = None
-        node.output = None
+        node = LLMNode(
+            id="llm-1",
+            inputs={"model": "claude-sonnet-4.5", "prompt": "Minimal prompt"},
+            outputs=OutputContract(mode=OutputMode.text)
+        )
 
         enriched = {}
         _enrich_with_llm_node(enriched, node)
 
-        assert enriched["model"] == "claude-3"
-        assert enriched["output_key"] is None
-        assert "prompt_template" not in enriched
+        assert enriched["model"] == "claude-sonnet-4.5"
+        assert enriched["prompt_template"] == "Minimal prompt"
         assert "temperature" not in enriched
+        assert "output_schema" in enriched
 
 
 @pytest.mark.unit
@@ -805,28 +822,26 @@ class TestHistoryWorkflowIntegration:
         mock_tool_node = MagicMock()
         mock_tool_node.id = "fetch_data"
         mock_tool_node.tool = "api.fetch"
-        mock_tool_node.out = "result"
-        mock_tool_node.expect_output = None
+        mock_tool_node.expect_outputs = None
 
         mock_llm_node = MagicMock()
         mock_llm_node.id = "analyze"
-        mock_llm_node.model = "gpt-4"
-        mock_llm_node.out = "analysis"
-        mock_llm_node.prompt = "Analyze the data"
-        mock_llm_node.temperature = 0.7
-        mock_llm_node.output = None
+        mock_llm_node.inputs = {
+            "model": "gpt-4",
+            "prompt": "Analyze the data",
+            "temperature": 0.7
+        }
+        mock_llm_node.outputs = None
 
         # Test tool node enrichment
         tool_enriched = {}
         _enrich_with_tool_node(tool_enriched, mock_tool_node)
         assert tool_enriched["tool_name"] == "api.fetch"
-        assert tool_enriched["output_key"] == "result"
 
         # Test LLM node enrichment
         llm_enriched = {}
         _enrich_with_llm_node(llm_enriched, mock_llm_node)
         assert llm_enriched["model"] == "gpt-4"
-        assert llm_enriched["output_key"] == "analysis"
         assert llm_enriched["prompt_template"] == "Analyze the data"
         assert llm_enriched["temperature"] == 0.7
 
@@ -896,3 +911,235 @@ class TestHistoryWorkflowIntegration:
         # Verify execution_graph structure
         assert "nodes" in response[0]["execution_graph"]
         assert "edges" in response[0]["execution_graph"]
+
+
+# =============================================================================
+# Database Error Trace Extraction Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestGetErrorTracesFromDatabase:
+    """Tests for _get_error_traces_from_database function."""
+
+    def test_get_error_traces_no_node_traces(self):
+        """Test handling when node_traces is None."""
+        run = MagicMock()
+        run.node_traces = None
+
+        traces = _get_error_traces_from_database(run)
+
+        assert traces == []
+
+    def test_get_error_traces_empty_dict(self):
+        """Test handling when node_traces is empty dict."""
+        run = MagicMock()
+        run.node_traces = {}
+
+        traces = _get_error_traces_from_database(run)
+
+        assert traces == []
+
+    def test_get_error_traces_single_trace_with_node_id(self):
+        """Test extracting single trace when node_traces has node_id key."""
+        run = MagicMock()
+        run.node_traces = {
+            "node_id": "kb_query-1",
+            "node_type": "tool",
+            "status": "failed",
+            "error": {"type": "KeyError", "message": "'kb_id'"},
+            "inputs": {"query": "test"},
+            "timestamp": "2024-01-01T00:00:00Z",
+        }
+
+        traces = _get_error_traces_from_database(run)
+
+        assert len(traces) == 1
+        assert traces[0]["node_id"] == "kb_query-1"
+        assert traces[0]["status"] == "failed"
+
+    def test_get_error_traces_collection_of_traces(self):
+        """Test extracting traces from collection keyed by trace_key."""
+        run = MagicMock()
+        run.node_traces = {
+            "_trace_kb_query-1": {
+                "node_id": "kb_query-1",
+                "node_type": "tool",
+                "status": "failed",
+                "error": {"type": "KeyError", "message": "'kb_id'"},
+            },
+            "_trace_llm-1": {
+                "node_id": "llm-1",
+                "node_type": "llm",
+                "status": "succeeded",  # Should be excluded
+                "output": "Hello",
+            },
+        }
+
+        traces = _get_error_traces_from_database(run)
+
+        # Only failed traces should be included
+        assert len(traces) == 1
+        assert traces[0]["node_id"] == "kb_query-1"
+        assert traces[0]["status"] == "failed"
+
+    def test_get_error_traces_multiple_failed(self):
+        """Test extracting multiple failed traces."""
+        run = MagicMock()
+        run.node_traces = {
+            "_trace_node1": {
+                "node_id": "node1",
+                "status": "failed",
+                "error": {"type": "Error1"},
+            },
+            "_trace_node2": {
+                "node_id": "node2",
+                "status": "failed",
+                "error": {"type": "Error2"},
+            },
+        }
+
+        traces = _get_error_traces_from_database(run)
+
+        assert len(traces) == 2
+        node_ids = {t["node_id"] for t in traces}
+        assert node_ids == {"node1", "node2"}
+
+    def test_get_error_traces_ignores_non_dict_values(self):
+        """Test that non-dict values in node_traces are ignored."""
+        run = MagicMock()
+        run.node_traces = {
+            "_trace_valid": {
+                "node_id": "valid",
+                "status": "failed",
+            },
+            "_trace_invalid": "not a dict",  # Should be ignored
+        }
+
+        traces = _get_error_traces_from_database(run)
+
+        assert len(traces) == 1
+        assert traces[0]["node_id"] == "valid"
+
+
+# =============================================================================
+# Trace Merging Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestMergeCheckpointAndDatabaseTraces:
+    """Tests for _merge_checkpoint_and_database_traces function."""
+
+    def test_merge_empty_lists(self):
+        """Test merging two empty lists."""
+        result = _merge_checkpoint_and_database_traces([], [])
+        assert result == []
+
+    def test_merge_only_checkpoint_traces(self):
+        """Test when only checkpoint traces exist."""
+        checkpoint_traces = [
+            {"node_id": "llm-1", "status": "succeeded", "output": "Hello"},
+            {"node_id": "tool-1", "status": "succeeded", "output": {"data": 1}},
+        ]
+
+        result = _merge_checkpoint_and_database_traces(checkpoint_traces, [])
+
+        assert len(result) == 2
+        assert result == checkpoint_traces
+
+    def test_merge_only_database_traces(self):
+        """Test when only database traces exist."""
+        db_traces = [
+            {"node_id": "kb_query-1", "status": "failed", "error": {"type": "KeyError"}},
+        ]
+
+        result = _merge_checkpoint_and_database_traces([], db_traces)
+
+        assert len(result) == 1
+        assert result[0]["node_id"] == "kb_query-1"
+
+    def test_merge_no_overlap(self):
+        """Test merging when checkpoint and db traces have different nodes."""
+        checkpoint_traces = [
+            {"node_id": "llm-1", "status": "succeeded", "output": "Hello"},
+        ]
+        db_traces = [
+            {"node_id": "kb_query-1", "status": "failed", "error": {"type": "KeyError"}},
+        ]
+
+        result = _merge_checkpoint_and_database_traces(checkpoint_traces, db_traces)
+
+        assert len(result) == 2
+        node_ids = {t["node_id"] for t in result}
+        assert node_ids == {"llm-1", "kb_query-1"}
+
+    def test_merge_with_overlap_prefers_checkpoint(self):
+        """Test that checkpoint traces take precedence over database traces."""
+        checkpoint_traces = [
+            {"node_id": "node-1", "status": "succeeded", "output": "from_checkpoint"},
+        ]
+        db_traces = [
+            {"node_id": "node-1", "status": "failed", "error": {"type": "Error"}},
+        ]
+
+        result = _merge_checkpoint_and_database_traces(checkpoint_traces, db_traces)
+
+        # Only checkpoint trace should be present
+        assert len(result) == 1
+        assert result[0]["status"] == "succeeded"
+        assert result[0]["output"] == "from_checkpoint"
+
+    def test_merge_mixed_scenario(self):
+        """Test realistic scenario with checkpoint success and db failure."""
+        checkpoint_traces = [
+            {"node_id": "llm-1", "status": "succeeded", "output": "Hi!"},
+        ]
+        db_traces = [
+            {"node_id": "kb_query-1", "status": "failed", "error": {"type": "KeyError", "message": "'kb_id'"}},
+        ]
+
+        result = _merge_checkpoint_and_database_traces(checkpoint_traces, db_traces)
+
+        assert len(result) == 2
+
+        # Find each trace
+        llm_trace = next(t for t in result if t["node_id"] == "llm-1")
+        kb_trace = next(t for t in result if t["node_id"] == "kb_query-1")
+
+        assert llm_trace["status"] == "succeeded"
+        assert kb_trace["status"] == "failed"
+        assert kb_trace["error"]["type"] == "KeyError"
+
+    def test_merge_preserves_order(self):
+        """Test that checkpoint traces come before database traces."""
+        checkpoint_traces = [
+            {"node_id": "node-1", "status": "succeeded"},
+            {"node_id": "node-2", "status": "succeeded"},
+        ]
+        db_traces = [
+            {"node_id": "node-3", "status": "failed"},
+        ]
+
+        result = _merge_checkpoint_and_database_traces(checkpoint_traces, db_traces)
+
+        assert result[0]["node_id"] == "node-1"
+        assert result[1]["node_id"] == "node-2"
+        assert result[2]["node_id"] == "node-3"
+
+    def test_merge_handles_missing_node_id(self):
+        """Test handling of traces without node_id (should be ignored from db)."""
+        checkpoint_traces = [
+            {"node_id": "valid-1", "status": "succeeded"},
+        ]
+        db_traces = [
+            {"status": "failed"},  # Missing node_id
+            {"node_id": "valid-2", "status": "failed"},
+        ]
+
+        result = _merge_checkpoint_and_database_traces(checkpoint_traces, db_traces)
+
+        # Only traces with node_id should be included
+        assert len(result) == 2
+        node_ids = {t.get("node_id") for t in result}
+        assert node_ids == {"valid-1", "valid-2"}

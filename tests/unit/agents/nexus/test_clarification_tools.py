@@ -273,3 +273,196 @@ class TestAskClarificationQuestions:
         # Check defaults
         assert q["min_selections"] == 1
         assert q["max_selections"] is None
+
+
+class TestResourcePickerQuestions:
+    """Test resource picker question type."""
+
+    @patch('seer.agents.nexus.tools.clarification_tools.interrupt')
+    @patch('seer.agents.nexus.tools.clarification_tools.uuid.uuid4')
+    def test_resource_picker_question(self, mock_uuid, mock_interrupt):
+        """Test asking a resource picker question."""
+        mock_uuid.return_value = MagicMock(hex="rp001234")
+
+        mock_interrupt.return_value = [
+            {"question_id": "q_rp001234", "selected_values": ["spreadsheet_123"], "custom_input": None},
+        ]
+
+        questions = [
+            {
+                "question": "Which Google spreadsheet should we use?",
+                "question_type": "resource_picker",
+                "provider": "google",
+                "resource_type": "google_spreadsheet",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+                "hierarchy": False,
+                "reasoning": "The google_sheets_read tool requires a spreadsheet_id"
+            }
+        ]
+
+        result = ask_clarification_questions.invoke({"questions": questions})
+
+        mock_interrupt.assert_called_once()
+        call_args = mock_interrupt.call_args[0][0]
+
+        assert call_args["type"] == "clarification_questions"
+        assert len(call_args["questions"]) == 1
+
+        q = call_args["questions"][0]
+        assert q["question_id"] == "q_rp001234"
+        assert q["question_type"] == "resource_picker"
+        assert q["provider"] == "google"
+        assert q["resource_type"] == "google_spreadsheet"
+        assert q["display_field"] == "name"
+        assert q["value_field"] == "id"
+        assert q["search_enabled"] is True
+        assert q["hierarchy"] is False
+        assert q["options"] == []  # Resource pickers don't have traditional options
+
+        result_data = json.loads(result)
+        assert len(result_data) == 1
+        assert result_data[0]["selected_values"] == ["spreadsheet_123"]
+
+    @patch('seer.agents.nexus.tools.clarification_tools.interrupt')
+    @patch('seer.agents.nexus.tools.clarification_tools.uuid.uuid4')
+    def test_resource_picker_default_values(self, mock_uuid, mock_interrupt):
+        """Test resource picker question with default values."""
+        mock_uuid.return_value = MagicMock(hex="rpdef001")
+
+        mock_interrupt.return_value = [
+            {"question_id": "q_rpdef001", "selected_values": ["guild_456"], "custom_input": None},
+        ]
+
+        questions = [
+            {
+                "question": "Which Discord server?",
+                "question_type": "resource_picker",
+                "provider": "discord",
+                "resource_type": "guild",
+                "reasoning": "Need to select server"
+                # Note: display_field, value_field, search_enabled, hierarchy not provided
+            }
+        ]
+
+        result = ask_clarification_questions.invoke({"questions": questions})
+
+        call_args = mock_interrupt.call_args[0][0]
+        q = call_args["questions"][0]
+
+        # Check defaults for resource picker
+        assert q["display_field"] == "name"
+        assert q["value_field"] == "id"
+        assert q["search_enabled"] is True
+        assert q["hierarchy"] is False
+
+    @patch('seer.agents.nexus.tools.clarification_tools.interrupt')
+    @patch('seer.agents.nexus.tools.clarification_tools.uuid.uuid4')
+    def test_dependent_resource_pickers(self, mock_uuid, mock_interrupt):
+        """Test dependent resource pickers (e.g., Discord channel depends on guild)."""
+        mock_uuid.side_effect = [
+            MagicMock(hex="guild001"),
+            MagicMock(hex="channel01"),
+        ]
+
+        mock_interrupt.return_value = [
+            {"question_id": "q_guild001", "selected_values": ["guild_123"], "custom_input": None},
+            {"question_id": "q_channel01", "selected_values": ["channel_456"], "custom_input": None},
+        ]
+
+        questions = [
+            {
+                "question": "Which Discord server?",
+                "question_type": "resource_picker",
+                "provider": "discord",
+                "resource_type": "guild",
+                "value_field": "resource_id",
+                "reasoning": "Need to select server first"
+            },
+            {
+                "question": "Which channel in that server?",
+                "question_type": "resource_picker",
+                "provider": "discord",
+                "resource_type": "channel",
+                "depends_on": "q_0",  # References the first question by index
+                "depends_on_field": "guild_id",
+                "reasoning": "Select channel from the chosen server"
+            }
+        ]
+
+        result = ask_clarification_questions.invoke({"questions": questions})
+
+        call_args = mock_interrupt.call_args[0][0]
+
+        assert len(call_args["questions"]) == 2
+
+        q1 = call_args["questions"][0]
+        assert q1["question_type"] == "resource_picker"
+        assert q1["resource_type"] == "guild"
+
+        q2 = call_args["questions"][1]
+        assert q2["question_type"] == "resource_picker"
+        assert q2["resource_type"] == "channel"
+        assert q2["depends_on"] == "q_guild001"  # Should be resolved to actual question ID
+        assert q2["depends_on_field"] == "guild_id"
+
+        result_data = json.loads(result)
+        assert len(result_data) == 2
+
+    @patch('seer.agents.nexus.tools.clarification_tools.interrupt')
+    @patch('seer.agents.nexus.tools.clarification_tools.uuid.uuid4')
+    def test_mixed_question_types_batch(self, mock_uuid, mock_interrupt):
+        """Test batch with mixed question types (regular + resource picker)."""
+        mock_uuid.side_effect = [
+            MagicMock(hex="choice01"),
+            MagicMock(hex="picker01"),
+        ]
+
+        mock_interrupt.return_value = [
+            {"question_id": "q_choice01", "selected_values": ["daily"], "custom_input": None},
+            {"question_id": "q_picker01", "selected_values": ["sheet_abc"], "custom_input": None},
+        ]
+
+        questions = [
+            {
+                "question": "How often should this run?",
+                "question_type": "single_choice",
+                "options": [
+                    {"value": "hourly", "label": "Every hour"},
+                    {"value": "daily", "label": "Once a day"},
+                    {"value": "weekly", "label": "Once a week"},
+                ],
+                "reasoning": "Need to know the schedule frequency"
+            },
+            {
+                "question": "Which spreadsheet to update?",
+                "question_type": "resource_picker",
+                "provider": "google",
+                "resource_type": "google_spreadsheet",
+                "reasoning": "Need target spreadsheet"
+            }
+        ]
+
+        result = ask_clarification_questions.invoke({"questions": questions})
+
+        call_args = mock_interrupt.call_args[0][0]
+
+        assert len(call_args["questions"]) == 2
+
+        # First question is single_choice
+        q1 = call_args["questions"][0]
+        assert q1["question_type"] == "single_choice"
+        assert len(q1["options"]) == 3
+        assert q1["min_selections"] == 1
+
+        # Second question is resource_picker
+        q2 = call_args["questions"][1]
+        assert q2["question_type"] == "resource_picker"
+        assert q2["provider"] == "google"
+        assert q2["resource_type"] == "google_spreadsheet"
+        assert q2["options"] == []
+
+        result_data = json.loads(result)
+        assert result_data[0]["selected_values"] == ["daily"]
+        assert result_data[1]["selected_values"] == ["sheet_abc"]

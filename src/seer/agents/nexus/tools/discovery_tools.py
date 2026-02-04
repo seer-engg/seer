@@ -214,7 +214,8 @@ async def search_tools(
             "integration": top_tool.get("integration_type", "").title(),
             "confidence": top_tool.get("confidence_score", 0),
             "description": top_tool.get("description", ""),
-            "parameters": top_tool.get("parameters", {})
+            "parameters": top_tool.get("parameters", {}),
+            "resource_pickers": top_tool.get("resource_pickers", {})  # Include resource pickers for UI
         }
 
         # Format alternatives (tools 2-5)
@@ -360,6 +361,7 @@ async def search_triggers(
                 "mode": trigger.mode,
                 "description": trigger.description or f"{trigger.title} trigger",
                 "config_schema": trigger.schemas.config if trigger.schemas.config else None,
+                "event_schema": trigger.schemas.event if trigger.schemas.event else None,
                 "sample_event": trigger.meta.sample_event if trigger.meta.sample_event else None,
                 "requires_connection": trigger.meta.requires_connection
             }
@@ -412,6 +414,7 @@ async def list_available_triggers(provider: Optional[str] = None) -> str:
                 "mode": trigger.mode,
                 "description": trigger.description or f"{trigger.title} trigger",
                 "requires_connection": trigger.meta.requires_connection,
+                "event_schema": trigger.schemas.event if trigger.schemas.event else None,
                 "sample_event": trigger.meta.sample_event if trigger.meta.sample_event else None
             }
             triggers_list.append(trigger_data)

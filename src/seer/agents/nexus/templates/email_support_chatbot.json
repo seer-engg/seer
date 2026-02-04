@@ -51,7 +51,7 @@
         "id": "extract_thread_context",
         "type": "llm",
         "inputs": {
-          "model": "gpt-5-mini",
+          "model": "moonshotai/kimi-k2.5",
           "temperature": 0.3,
           "prompt": "Analyze this email thread and extract the key context:\n\nThread messages:\n${thread.messages}\n\nExtract:\n1. Customer's main issue or question\n2. Key topics and keywords for knowledge base search\n3. Conversation history summary\n4. Previous responses (if any)\n5. Current sentiment\n\nProvide 2-4 search keywords that would help find relevant KB articles."
         },
@@ -122,7 +122,7 @@
         "id": "generate_kb_response",
         "type": "llm",
         "inputs": {
-          "model": "gpt-5",
+          "model": "moonshotai/kimi-k2.5",
           "temperature": 0.7,
           "prompt": "Generate a helpful response to this support email using the knowledge base articles:\n\n**Customer Issue:**\n${context.customer_issue}\n\n**Thread History:**\n${context.conversation_summary}\n\n**Customer Sentiment:** ${context.sentiment}\n**Is Follow-up:** ${context.is_followup}\n\n**Relevant KB Articles:**\n${kb_results}\n\n**Instructions:**\n1. Reference the KB articles naturally in your response\n2. Provide step-by-step guidance if needed\n3. Match the customer's sentiment (be empathetic if frustrated, enthusiastic if positive)\n4. Keep the response concise but complete\n5. Include relevant links or article titles\n6. If this is a follow-up, acknowledge previous messages\n\nGenerate a professional, helpful response."
         },
@@ -196,7 +196,7 @@
         "id": "generate_general_response",
         "type": "llm",
         "inputs": {
-          "model": "gpt-5",
+          "model": "moonshotai/kimi-k2.5",
           "temperature": 0.7,
           "prompt": "Generate a helpful response to this support email (no specific KB articles found):\n\n**Customer Issue:**\n${context.customer_issue}\n\n**Thread History:**\n${context.conversation_summary}\n\n**Customer Sentiment:** ${context.sentiment}\n**Is Follow-up:** ${context.is_followup}\n\n**Instructions:**\n1. Provide the best general guidance you can\n2. Be honest if you're not certain about something\n3. Suggest escalation to human support if the issue is complex\n4. Match the customer's sentiment appropriately\n5. If this is a follow-up, acknowledge previous messages\n6. Keep the response professional and helpful\n\nGenerate a thoughtful response."
         },

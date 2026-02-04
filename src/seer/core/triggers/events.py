@@ -74,6 +74,7 @@ async def persist_event(
         return event, True
     except IntegrityError:
         dedupe_filters = {
+            "subscription_id": subscription.id,
             "trigger_key": subscription.trigger_key,
             "provider_connection_id": subscription.provider_connection_id,
         }

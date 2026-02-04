@@ -53,6 +53,9 @@ class SeerConfig(BaseSettings):
     anthropic_api_key: Optional[str] = Field(
         default=None, description="Anthropic API key for Claude models"
     )
+    openrouter_api_key: Optional[str] = Field(
+        default=None, description="OpenRouter API key for multi-provider LLM access"
+    )
 
     # ============================================================================
     # LangGraph Checkpointer Configuration
@@ -129,20 +132,12 @@ class SeerConfig(BaseSettings):
 
 
 
-    default_llm_model: str = Field(default="gpt-5-mini", description="Default LLM model")
+    default_llm_model: str = Field(default="moonshotai/kimi-k2.5", description="Default LLM model")
 
     # Taskiq / Valkey configuration
     redis_url: str = Field(
         default="redis://localhost:6379/0",
         description="Valkey/Redis connection string for Taskiq broker and result backend. Use 'rediss://' for TLS/SSL connections.",
-    )
-
-    # Tool index configuration
-    tool_index_path: str = Field(
-        default="./data/tool_index", description="Path to store tool vector index"
-    )
-    tool_index_auto_generate: bool = Field(
-        default=True, description="Auto-generate tool index on startup if missing"
     )
 
     google_client_id: str = Field(default="", description="Google OAuth client ID")

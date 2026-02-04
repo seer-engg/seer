@@ -80,8 +80,9 @@ NODE_TYPE_DESCRIPTORS = api_models.NodeTypeResponse(
 )
 
 DEFAULT_MODEL_REGISTRY = [
-    api_models.ModelDescriptor(id="gpt-4.1-mini", title="GPT-4.1 mini", supports_json_schema=True),
-    api_models.ModelDescriptor(id="gpt-4o-mini", title="GPT-4o mini", supports_json_schema=True),
+    # OpenRouter - Kimi models
+    api_models.ModelDescriptor(id="moonshotai/kimi-k2.5", title="Kimi K2.5", supports_json_schema=True),
+    api_models.ModelDescriptor(id="moonshotai/kimi-k2-thinking", title="Kimi K2 Thinking", supports_json_schema=True),
 ]
 
 
@@ -212,7 +213,7 @@ Respond with JSON in this exact format:
 Generate appropriate title and description:"""
 
     try:
-        llm = get_llm(model="gpt-4.1-mini", temperature=0.3)
+        llm = get_llm(model="moonshotai/kimi-k2.5", temperature=0.3)
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt)
