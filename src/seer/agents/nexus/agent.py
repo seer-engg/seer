@@ -6,7 +6,7 @@ from langchain.agents.middleware import (
 
 from seer.config import config
 from seer.logger import get_logger
-from seer.llm import get_llm_without_responses_api
+from seer.llm import get_llm
 from seer.agents.nexus.utils import get_workflow_tools
 from seer.agents.nexus.schema_context import (
     get_workflow_spec_example_text,
@@ -25,7 +25,7 @@ if config.mlflow_enabled:
     _ensure_mlflow_autologging()
 
 def create_nexus_chat_agent(
-    model: str = "gpt-4o-mini",
+    model: str = "moonshotai/kimi-k2.5",
     checkpointer: Optional[Any] = None,
     workflow_state: Optional[Dict[str, Any]] = None,
 ) -> Any:
@@ -36,7 +36,7 @@ def create_nexus_chat_agent(
     and human-in-the-loop capabilities.
 
     Args:
-        model: Model name to use (e.g., 'gpt-5.2', 'gpt-5-mini')
+        model: Model name to use (e.g., 'moonshotai/kimi-k2.5', 'moonshotai/kimi-k2-thinking')
         checkpointer: Optional LangGraph checkpointer for persistence
 
     Returns:
@@ -44,7 +44,7 @@ def create_nexus_chat_agent(
     """
 
 
-    llm = get_llm_without_responses_api(model=model, temperature=0, api_key=None)
+    llm = get_llm(model=model, temperature=0)
 
     # System prompt for the workflow assistant
     schema_section = f"\n\nWorkflowSpec schema excerpt (trimmed):\n{WORKFLOW_SPEC_SCHEMA}"
@@ -228,10 +228,9 @@ Before submit_workflow_spec():
     tools = get_workflow_tools(workflow_state=workflow_state)
 
     # Create summarization model (use same model with lower max tokens)
-    summarization_model = get_llm_without_responses_api(
+    summarization_model = get_llm(
         model=model,
         temperature=0,
-        api_key=None,
     )
 
     # Build middleware list

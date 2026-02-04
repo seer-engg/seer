@@ -46,7 +46,7 @@
         "id": "score_lead_quality",
         "type": "llm",
         "inputs": {
-          "model": "gpt-5-mini",
+          "model": "moonshotai/kimi-k2.5",
           "temperature": 0.3,
           "prompt": "Analyze this lead submission and score its quality:\n\nName: ${lead.name}\nEmail: ${lead.email}\nCompany: ${lead.company}\nMessage: ${lead.message}\n\nScore from 1-10 based on:\n1. Company legitimacy (domain quality, known company)\n2. Message specificity and intent (clear need vs generic inquiry)\n3. Buyer signals (mentions team size, budget, timeline, pain points)\n4. Professional tone and detail level\n5. Email domain quality (corporate vs free email)\n\nClassify as:\n- high: 8-10 (strong buyer signals, clear need, legitimate company)\n- medium: 5-7 (some buyer signals, moderate detail)\n- low: 1-4 (generic inquiry, minimal detail, unclear intent)\n\nProvide reasoning for the score."
         },

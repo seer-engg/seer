@@ -43,7 +43,7 @@ _WORKFLOW_SPEC_EXAMPLE: Dict[str, Any] = {
             "id": "summarize",
             "type": "llm",
             "inputs": {
-                "model": "gpt-4o-mini",
+                "model": "moonshotai/kimi-k2.5",
                 "prompt": "Summarize the top 3 recent articles. Use bullet points with source names.",
                 "articles": "${fetch_news}",
             },

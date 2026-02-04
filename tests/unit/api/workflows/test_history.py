@@ -13,8 +13,11 @@ import pytest
 from seer.core.schema.models import (
     Edge,
     EdgeType,
+    InlineSchema,
     LLMNode,
     Node,
+    OutputContract,
+    OutputMode,
     ToolNode,
     WorkflowSpec,
 )
@@ -143,46 +146,52 @@ class TestEnrichWithToolNode:
 
     def test_enrich_with_tool_node_basic(self):
         """Test enriching dict with ToolNode metadata."""
-        # Create a mock node with the attributes the function expects
-        node = MagicMock()
-        node.tool = "github.create_issue"
-        node.out = "issue_result"
-        node.expect_output = None
+        # Create a real ToolNode instance
+        node = ToolNode(
+            id="tool-1",
+            tool="github.create_issue",
+            inputs={},
+            expect_outputs=None
+        )
 
         enriched = {}
         _enrich_with_tool_node(enriched, node)
 
         assert enriched["tool_name"] == "github.create_issue"
-        assert enriched["output_key"] == "issue_result"
-        assert "expect_output" not in enriched
+        assert "expect_outputs" not in enriched
 
     def test_enrich_with_tool_node_with_expect_output(self):
-        """Test enriching with expect_output present."""
-        node = MagicMock()
-        node.tool = "test.tool"
-        node.out = "result"
-        node.expect_output = MagicMock()
-        node.expect_output.model_dump.return_value = {"mode": "json", "schema": {"type": "object"}}
+        """Test enriching with expect_outputs present."""
+        node = ToolNode(
+            id="tool-1",
+            tool="test.tool",
+            inputs={},
+            expect_outputs=OutputContract(
+                mode=OutputMode.json,
+                schema=InlineSchema(schema={"type": "object", "properties": {"result": {"type": "string"}}})
+            )
+        )
 
         enriched = {}
         _enrich_with_tool_node(enriched, node)
 
         assert enriched["tool_name"] == "test.tool"
-        assert enriched["output_key"] == "result"
-        assert enriched["expect_output"] == {"mode": "json", "schema": {"type": "object"}}
+        assert "expect_outputs" in enriched
+        assert enriched["expect_outputs"]["mode"] == "json"
 
-    def test_enrich_with_tool_node_none_out(self):
-        """Test enriching when out is None."""
-        node = MagicMock()
-        node.tool = "test.tool"
-        node.out = None
-        node.expect_output = None
+    def test_enrich_with_tool_node_none_expect_outputs(self):
+        """Test enriching when expect_outputs is None."""
+        node = ToolNode(
+            id="tool-1",
+            tool="test.tool",
+            inputs={}
+        )
 
         enriched = {}
         _enrich_with_tool_node(enriched, node)
 
         assert enriched["tool_name"] == "test.tool"
-        assert enriched["output_key"] is None
+        assert "expect_outputs" not in enriched
 
 
 @pytest.mark.unit
@@ -191,55 +200,61 @@ class TestEnrichWithLLMNode:
 
     def test_enrich_with_llm_node_basic(self):
         """Test enriching dict with LLMNode metadata."""
-        node = MagicMock()
-        node.model = "gpt-4"
-        node.out = "response"
-        node.prompt = "You are a helpful assistant"
-        node.temperature = 0.7
-        node.output = None
+        node = LLMNode(
+            id="llm-1",
+            inputs={
+                "model": "moonshotai/kimi-k2.5",
+                "prompt": "You are a helpful assistant",
+                "temperature": 0.7
+            },
+            outputs=OutputContract(mode=OutputMode.text)
+        )
 
         enriched = {}
         _enrich_with_llm_node(enriched, node)
 
-        assert enriched["model"] == "gpt-4"
-        assert enriched["output_key"] == "response"
+        assert enriched["model"] == "moonshotai/kimi-k2.5"
         assert enriched["prompt_template"] == "You are a helpful assistant"
         assert enriched["temperature"] == 0.7
-        assert "output_schema" not in enriched
+        assert "output_schema" in enriched
 
     def test_enrich_with_llm_node_with_output_schema(self):
         """Test enriching with output schema present."""
-        node = MagicMock()
-        node.model = "gpt-4"
-        node.out = "result"
-        node.prompt = "Test"
-        node.temperature = None
-        node.output = MagicMock()
-        node.output.model_dump.return_value = {"mode": "json", "schema": {"type": "string"}}
+        node = LLMNode(
+            id="llm-1",
+            inputs={
+                "model": "moonshotai/kimi-k2.5",
+                "prompt": "Test"
+            },
+            outputs=OutputContract(
+                mode=OutputMode.json,
+                schema=InlineSchema(schema={"type": "object", "properties": {"analysis": {"type": "string"}}})
+            )
+        )
 
         enriched = {}
         _enrich_with_llm_node(enriched, node)
 
-        assert enriched["model"] == "gpt-4"
-        assert enriched["output_schema"] == {"mode": "json", "schema": {"type": "string"}}
+        assert enriched["model"] == "moonshotai/kimi-k2.5"
+        assert "output_schema" in enriched
+        assert enriched["output_schema"]["mode"] == "json"
         assert "temperature" not in enriched
 
     def test_enrich_with_llm_node_minimal(self):
         """Test enriching LLM node with minimal data."""
-        node = MagicMock()
-        node.model = "claude-3"
-        node.out = None
-        node.prompt = None
-        node.temperature = None
-        node.output = None
+        node = LLMNode(
+            id="llm-1",
+            inputs={"model": "claude-sonnet-4.5", "prompt": "Minimal prompt"},
+            outputs=OutputContract(mode=OutputMode.text)
+        )
 
         enriched = {}
         _enrich_with_llm_node(enriched, node)
 
-        assert enriched["model"] == "claude-3"
-        assert enriched["output_key"] is None
-        assert "prompt_template" not in enriched
+        assert enriched["model"] == "claude-sonnet-4.5"
+        assert enriched["prompt_template"] == "Minimal prompt"
         assert "temperature" not in enriched
+        assert "output_schema" in enriched
 
 
 @pytest.mark.unit
@@ -805,28 +820,26 @@ class TestHistoryWorkflowIntegration:
         mock_tool_node = MagicMock()
         mock_tool_node.id = "fetch_data"
         mock_tool_node.tool = "api.fetch"
-        mock_tool_node.out = "result"
-        mock_tool_node.expect_output = None
+        mock_tool_node.expect_outputs = None
 
         mock_llm_node = MagicMock()
         mock_llm_node.id = "analyze"
-        mock_llm_node.model = "gpt-4"
-        mock_llm_node.out = "analysis"
-        mock_llm_node.prompt = "Analyze the data"
-        mock_llm_node.temperature = 0.7
-        mock_llm_node.output = None
+        mock_llm_node.inputs = {
+            "model": "gpt-4",
+            "prompt": "Analyze the data",
+            "temperature": 0.7
+        }
+        mock_llm_node.outputs = None
 
         # Test tool node enrichment
         tool_enriched = {}
         _enrich_with_tool_node(tool_enriched, mock_tool_node)
         assert tool_enriched["tool_name"] == "api.fetch"
-        assert tool_enriched["output_key"] == "result"
 
         # Test LLM node enrichment
         llm_enriched = {}
         _enrich_with_llm_node(llm_enriched, mock_llm_node)
         assert llm_enriched["model"] == "gpt-4"
-        assert llm_enriched["output_key"] == "analysis"
         assert llm_enriched["prompt_template"] == "Analyze the data"
         assert llm_enriched["temperature"] == 0.7
 
