@@ -13,6 +13,7 @@ import pytest
 from seer.core.schema.models import (
     Edge,
     EdgeType,
+    InlineSchema,
     LLMNode,
     Node,
     OutputContract,
@@ -165,7 +166,10 @@ class TestEnrichWithToolNode:
             id="tool-1",
             tool="test.tool",
             inputs={},
-            expect_outputs=OutputContract(mode=OutputMode.json)
+            expect_outputs=OutputContract(
+                mode=OutputMode.json,
+                schema=InlineSchema(schema={"type": "object", "properties": {"result": {"type": "string"}}})
+            )
         )
 
         enriched = {}
@@ -222,7 +226,10 @@ class TestEnrichWithLLMNode:
                 "model": "moonshotai/kimi-k2.5",
                 "prompt": "Test"
             },
-            outputs=OutputContract(mode=OutputMode.json)
+            outputs=OutputContract(
+                mode=OutputMode.json,
+                schema=InlineSchema(schema={"type": "object", "properties": {"analysis": {"type": "string"}}})
+            )
         )
 
         enriched = {}
@@ -237,7 +244,7 @@ class TestEnrichWithLLMNode:
         """Test enriching LLM node with minimal data."""
         node = LLMNode(
             id="llm-1",
-            inputs={"model": "claude-sonnet-4.5"},
+            inputs={"model": "claude-sonnet-4.5", "prompt": "Minimal prompt"},
             outputs=OutputContract(mode=OutputMode.text)
         )
 
@@ -245,7 +252,7 @@ class TestEnrichWithLLMNode:
         _enrich_with_llm_node(enriched, node)
 
         assert enriched["model"] == "claude-sonnet-4.5"
-        assert "prompt_template" not in enriched
+        assert enriched["prompt_template"] == "Minimal prompt"
         assert "temperature" not in enriched
         assert "output_schema" in enriched
 
@@ -813,28 +820,26 @@ class TestHistoryWorkflowIntegration:
         mock_tool_node = MagicMock()
         mock_tool_node.id = "fetch_data"
         mock_tool_node.tool = "api.fetch"
-        mock_tool_node.out = "result"
-        mock_tool_node.expect_output = None
+        mock_tool_node.expect_outputs = None
 
         mock_llm_node = MagicMock()
         mock_llm_node.id = "analyze"
-        mock_llm_node.model = "gpt-4"
-        mock_llm_node.out = "analysis"
-        mock_llm_node.prompt = "Analyze the data"
-        mock_llm_node.temperature = 0.7
-        mock_llm_node.output = None
+        mock_llm_node.inputs = {
+            "model": "gpt-4",
+            "prompt": "Analyze the data",
+            "temperature": 0.7
+        }
+        mock_llm_node.outputs = None
 
         # Test tool node enrichment
         tool_enriched = {}
         _enrich_with_tool_node(tool_enriched, mock_tool_node)
         assert tool_enriched["tool_name"] == "api.fetch"
-        assert tool_enriched["output_key"] == "result"
 
         # Test LLM node enrichment
         llm_enriched = {}
         _enrich_with_llm_node(llm_enriched, mock_llm_node)
         assert llm_enriched["model"] == "gpt-4"
-        assert llm_enriched["output_key"] == "analysis"
         assert llm_enriched["prompt_template"] == "Analyze the data"
         assert llm_enriched["temperature"] == 0.7
 

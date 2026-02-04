@@ -53,6 +53,32 @@ MODEL_PRICING: Dict[str, ModelPricing] = {
         input_per_1m=Decimal("0.25"),
         output_per_1m=Decimal("1.25"),
     ),
+    # OpenAI GPT-4 series
+    "gpt-4o": ModelPricing(
+        input_per_1m=Decimal("2.50"),
+        output_per_1m=Decimal("10.00"),
+    ),
+    "gpt-4o-mini": ModelPricing(
+        input_per_1m=Decimal("0.150"),
+        output_per_1m=Decimal("0.600"),
+    ),
+    "gpt-4-turbo": ModelPricing(
+        input_per_1m=Decimal("10.00"),
+        output_per_1m=Decimal("30.00"),
+    ),
+    "gpt-4": ModelPricing(
+        input_per_1m=Decimal("30.00"),
+        output_per_1m=Decimal("60.00"),
+    ),
+    # OpenAI o3 reasoning models
+    "o3-mini": ModelPricing(
+        input_per_1m=Decimal("1.10"),
+        output_per_1m=Decimal("4.40"),
+    ),
+    "o3": ModelPricing(
+        input_per_1m=Decimal("2.00"),
+        output_per_1m=Decimal("8.00"),
+    ),
     # OpenRouter - Kimi models
     "moonshotai/kimi-k2.5": ModelPricing(
         input_per_1m=Decimal("1.00"),
@@ -76,7 +102,7 @@ def calculate_cost(
     Calculate USD cost for an LLM API call.
 
     Args:
-        model: Model name (e.g., "moonshotai/kimi-k2.5", "claude-sonnet-4.5")
+        model: Model name (e.g., "moonshotai/kimi-k2.5", "gpt-4o", "claude-sonnet-4.5")
         input_tokens: Number of input tokens
         output_tokens: Number of output tokens
         reasoning_tokens: Number of reasoning tokens (Claude extended thinking, Kimi thinking)

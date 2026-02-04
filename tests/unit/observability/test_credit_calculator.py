@@ -63,9 +63,9 @@ def test_o3_mini_reasoning_tokens():
 
 
 def test_unknown_model_fallback():
-    """Unknown models should use gpt-4o pricing."""
+    """Unknown models should use Kimi pricing as fallback."""
     cost = calculate_cost("unknown-model", input_tokens=1000, output_tokens=500)
-    expected = calculate_cost("gpt-4o", input_tokens=1000, output_tokens=500)
+    expected = calculate_cost("moonshotai/kimi-k2.5", input_tokens=1000, output_tokens=500)
     assert cost == expected
 
 
