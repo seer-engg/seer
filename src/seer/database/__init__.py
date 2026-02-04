@@ -40,6 +40,14 @@ from seer.database.subscription_models import (
     StripeWebhookEvent,
     StripeWebhookEventStatus,
 )
+from seer.database.template_models import (
+    TemplateCategory,
+    TemplateSource,
+    WorkflowTemplate,
+    WorkflowTemplatePublic,
+    make_template_public_id,
+    parse_template_public_id,
+)
 from seer.logger import get_logger
 
 logger = get_logger("shared.database")
@@ -106,4 +114,11 @@ __all__ = [
     "SubscriptionStatus",
     "StripeWebhookEvent",
     "StripeWebhookEventStatus",
+    # Template domain
+    "WorkflowTemplate",
+    "WorkflowTemplatePublic",
+    "TemplateCategory",
+    "TemplateSource",
+    "make_template_public_id",
+    "parse_template_public_id",
 ]
