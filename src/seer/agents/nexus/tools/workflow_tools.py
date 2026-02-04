@@ -17,6 +17,7 @@ from seer.agents.nexus.context import (
     get_workflow_state_for_thread,
     get_user_for_thread,
 )
+from seer.agents.nexus.tools.trigger_schema_fix import fix_trigger_event_schemas
 from seer.agents.nexus.schema_context import (
     get_workflow_templates,
     generate_node_type_reference,
@@ -417,11 +418,16 @@ async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # 
     if error := _validate_tools_and_triggers(spec_dict):
         return error
 
+    # Auto-fix trigger event_schemas with canonical schemas from registry
+    spec_dict, schema_fixes = fix_trigger_event_schemas(spec_dict)
+
     if error := await _validate_compilation(spec_dict):
         return error
 
     # All validations passed - create WorkflowProposal record
     thread_id = _current_thread_id.get()
+    # Re-parse to get Pydantic model with the auto-fixed schemas
+    validated_spec = parse_workflow_spec(spec_dict)
     spec_payload = validated_spec.model_dump(mode="json")
 
     # Get session and workflow for this thread
@@ -451,6 +457,17 @@ async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # 
         "workflow_spec": spec_payload,
         "proposal_id": proposal.id,
     }
+
+    if schema_fixes:
+        response["auto_fixes"] = {
+            "trigger_schemas_updated": schema_fixes,
+            "recommendation": (
+                "Event schemas were auto-corrected to use canonical schemas from the registry. "
+                "If you have expressions referencing trigger data (e.g., ${trigger.data.subject}), "
+                "verify they use correct field paths from the 'available_fields' shown above."
+            )
+        }
+
     if summary:
         response["summary"] = summary
 
