@@ -44,7 +44,7 @@ class KnowledgeBaseQueryTool(BaseTool):
                 "min_score": {
                     "type": "number",
                     "description": "Minimum similarity score threshold (0-1). Higher values return more relevant results.",
-                    "default": 0.7,
+                    "default": 0.3,
                     "minimum": 0.0,
                     "maximum": 1.0,
                 },
@@ -87,7 +87,7 @@ class KnowledgeBaseQueryTool(BaseTool):
         kb_id = arguments["kb_id"]
         query = arguments["query"]
         top_k = arguments.get("top_k", 5)
-        min_score = arguments.get("min_score", 0.7)
+        min_score = arguments.get("min_score", 0.3)
 
         # Parse KB ID
         try:
