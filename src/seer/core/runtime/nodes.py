@@ -251,19 +251,26 @@ class NodeRuntime:
         inputs = self._capture_node_inputs(node, state, config, locals_ctx)
 
         # STEP 2: Execute tool (existing logic)
-        tool_def = self.services.tool_registry.get(node.tool)
-        runtime_context = context or self._current_context
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "Running tool node '%s' (tool='%s') with config_keys=%s user_in_context=%s config_type=%s configurable_keys=%s",
-                node.id,
-                node.tool,
-                sorted(config.keys()),
-                bool(getattr(runtime_context, "user", None)),
-                type(config).__name__,
-                sorted((config.get("configurable") or {}).keys()),
-            )
-        result = tool_def.handler(inputs, dict(config), runtime_context)
+        try:
+            tool_def = self.services.tool_registry.get(node.tool)
+            runtime_context = context or self._current_context
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "Running tool node '%s' (tool='%s') with config_keys=%s user_in_context=%s config_type=%s configurable_keys=%s",
+                    node.id,
+                    node.tool,
+                    sorted(config.keys()),
+                    bool(getattr(runtime_context, "user", None)),
+                    type(config).__name__,
+                    sorted((config.get("configurable") or {}).keys()),
+                )
+            result = tool_def.handler(inputs, dict(config), runtime_context)
+        except Exception as exc:
+            error_trace = self._write_error_trace(node, state, inputs, exc=exc, node_type='tool')
+            # CRITICAL: Update state with error trace BEFORE raising
+            # This ensures the trace is persisted to checkpoints even when node fails
+            state.update(error_trace)  # type: ignore[arg-type]  # WorkflowState is TypedDict with total=False, allows any keys
+            raise ExecutionError(f"Tool '{node.tool}' failed: {exc}", trace_data=error_trace) from exc
 
         # STEP 3: Prepare output (existing logic)
         output = self._prepare_output(node.id, result)
@@ -278,6 +285,7 @@ class NodeRuntime:
             'output': result,  # Raw tool result (before prepare_output)
             'output_key': node.id,
             'timestamp': datetime.now(timezone.utc).isoformat(),
+            'status': 'succeeded',
         }
 
         # Diagnostic logging: Verify trace key is in output
@@ -302,13 +310,20 @@ class NodeRuntime:
         inputs = self._capture_node_inputs(node, state, config, locals_ctx)
 
         # STEP 2: Execute tool (existing logic)
-        tool_def = self.services.tool_registry.get(node.tool)
-        runtime_context = context or self._current_context
-        handler = getattr(tool_def, "async_handler", None)
-        if handler is None:
-            result = await asyncio.to_thread(tool_def.handler, inputs, dict(config), runtime_context)
-        else:
-            result = await handler(inputs, dict(config), runtime_context)
+        try:
+            tool_def = self.services.tool_registry.get(node.tool)
+            runtime_context = context or self._current_context
+            handler = getattr(tool_def, "async_handler", None)
+            if handler is None:
+                result = await asyncio.to_thread(tool_def.handler, inputs, dict(config), runtime_context)
+            else:
+                result = await handler(inputs, dict(config), runtime_context)
+        except Exception as exc:
+            error_trace = self._write_error_trace(node, state, inputs, exc=exc, node_type='tool')
+            # CRITICAL: Update state with error trace BEFORE raising
+            # This ensures the trace is persisted to checkpoints even when node fails
+            state.update(error_trace)  # type: ignore[arg-type]  # WorkflowState is TypedDict with total=False, allows any keys
+            raise ExecutionError(f"Tool '{node.tool}' failed: {exc}", trace_data=error_trace) from exc
 
         # STEP 3: Prepare output (existing logic)
         output = self._prepare_output(node.id, result)
@@ -323,6 +338,7 @@ class NodeRuntime:
             'output': result,  # Raw tool result (before prepare_output)
             'output_key': node.id,
             'timestamp': datetime.now(timezone.utc).isoformat(),
+            'status': 'succeeded',
         }
 
         # Diagnostic logging: Verify trace key is in output
@@ -376,7 +392,14 @@ class NodeRuntime:
             auth=resolved_auth,
         )
 
-        result = await self._invoke_mcp_tool(server_config, node, inputs)
+        try:
+            result = await self._invoke_mcp_tool(server_config, node, inputs)
+        except Exception as exc:
+            error_trace = self._write_error_trace(node, state, inputs, exc=exc, node_type='mcp')
+            # CRITICAL: Update state with error trace BEFORE raising
+            # This ensures the trace is persisted to checkpoints even when node fails
+            state.update(error_trace)  # type: ignore[arg-type]  # WorkflowState is TypedDict with total=False, allows any keys
+            raise ExecutionError(f"MCP tool '{node.tool}' failed: {exc}", trace_data=error_trace) from exc
 
         if node.expect_outputs:
             schema = self._type_schemas.get(node.id)
@@ -454,6 +477,7 @@ class NodeRuntime:
             "inputs": inputs,
             "output": result,
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "status": "succeeded",
         }
 
         if logger.isEnabledFor(logging.DEBUG):
@@ -519,25 +543,35 @@ class NodeRuntime:
         }
 
         usage_metadata = {}
-        if node.outputs.mode == OutputMode.text:
-            if model_def.text_handler is None:
-                raise ExecutionError(f"Model '{model}' does not support text responses")
-            # Handler now returns tuple
-            result, usage_metadata = model_def.text_handler(invocation)
-            if not isinstance(result, str):
-                raise ExecutionError(f"LLM node '{node.id}' expected text response")
-        elif node.outputs.mode == OutputMode.json:
-            schema = self._type_schemas.get(node.id)
-            if schema is None:
-                raise ExecutionError(f"No schema recorded for '{node.id}'")
-            if model_def.json_handler is None:
-                raise ExecutionError(f"Model '{model}' does not support structured responses")
-            # Handler now returns tuple
-            result, usage_metadata = model_def.json_handler(invocation, schema)
-            if not isinstance(result, dict):
-                raise ExecutionError(f"LLM node '{node.id}' expected JSON response")
-        else:
-            raise ExecutionError(f"Unsupported output mode '{node.outputs.mode}' for node '{node.id}'")
+        try:
+            if node.outputs.mode == OutputMode.text:
+                if model_def.text_handler is None:
+                    raise ExecutionError(f"Model '{model}' does not support text responses")
+                # Handler now returns tuple
+                result, usage_metadata = model_def.text_handler(invocation)
+                if not isinstance(result, str):
+                    raise ExecutionError(f"LLM node '{node.id}' expected text response")
+            elif node.outputs.mode == OutputMode.json:
+                schema = self._type_schemas.get(node.id)
+                if schema is None:
+                    raise ExecutionError(f"No schema recorded for '{node.id}'")
+                if model_def.json_handler is None:
+                    raise ExecutionError(f"Model '{model}' does not support structured responses")
+                # Handler now returns tuple
+                result, usage_metadata = model_def.json_handler(invocation, schema)
+                if not isinstance(result, dict):
+                    raise ExecutionError(f"LLM node '{node.id}' expected JSON response")
+            else:
+                raise ExecutionError(f"Unsupported output mode '{node.outputs.mode}' for node '{node.id}'")
+        except ExecutionError:
+            # Re-raise ExecutionError without wrapping (includes validation errors)
+            raise
+        except Exception as exc:
+            error_trace = self._write_error_trace(node, state, inputs, exc=exc, node_type='llm')
+            # CRITICAL: Update state with error trace BEFORE raising
+            # This ensures the trace is persisted to checkpoints even when node fails
+            state.update(error_trace)  # type: ignore[arg-type]  # WorkflowState is TypedDict with total=False, allows any keys
+            raise ExecutionError(f"LLM node '{node.id}' failed: {exc}", trace_data=error_trace) from exc
 
         # STEP 2.5: Track usage asynchronously (fire and forget)
         if usage_metadata:
@@ -556,6 +590,7 @@ class NodeRuntime:
             'output': result,  # Raw LLM response
             'output_key': node.id,
             'timestamp': datetime.now(timezone.utc).isoformat(),
+            'status': 'succeeded',
             # Add usage metadata to trace
             'usage': {
                 'model': usage_metadata.get('model', model),
@@ -851,6 +886,32 @@ class NodeRuntime:
             return self._evaluate_input_expressions(ctx, node.inputs)
 
         return {}
+
+    def _write_error_trace(
+        self,
+        node: Node,
+        state: WorkflowState,
+        inputs: Dict[str, Any],
+        *,
+        exc: Exception,
+        node_type: str,
+    ) -> Dict[str, Any]:
+        """Write a partial trace with error info when node execution fails."""
+        trace_key = self._get_trace_key(node.id, state)
+
+        return {
+            trace_key: {
+                'node_id': node.id,
+                'node_type': node_type,
+                'inputs': inputs,
+                'error': {
+                    'type': exc.__class__.__name__,
+                    'message': str(exc),
+                },
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'status': 'failed',
+            }
+        }
 
     def _capture_node_output(
         self,

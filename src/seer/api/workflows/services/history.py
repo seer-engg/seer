@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from seer.api.agents.checkpointer import get_checkpointer
 from seer.api.workflows import models as api_models
 
-from seer.services.workflows.execution import _build_run_config, _compile_workflow
+from seer.services.workflows.execution import _build_run_config
 from seer.api.core.errors import RUN_PROBLEM, VALIDATION_PROBLEM, raise_problem
 from seer.config import config as shared_config
 from seer.database import (
@@ -182,97 +182,50 @@ async def _fetch_checkpoint_state(
     return state_tuple
 
 
-async def _extract_node_traces_from_graph(
-    user: User,
-    run: WorkflowRun,
-    checkpointer: Any,
-    config: Dict[str, Any],
-    workflow_spec: Optional[WorkflowSpec],
-) -> List[Dict[str, Any]]:
-    """Extract node traces from compiled graph state."""
-    nodes = []
-    trace_keys_found = set()
+def _extract_node_id_from_trace_key(key: str) -> tuple[str, str]:
+    """
+    Extract node_id from trace key.
 
-    logger.info(
-        "Compiling workflow to access full state for thread_id '%s'",
-        config.get('configurable', {}).get('thread_id'),
-        extra={"run_id": run.run_id}
-    )
+    Returns:
+        Tuple of (node_id, unique_trace_id)
+    """
+    # Handle both _trace_{node_id} and _trace_{node_id}_iter_{N}
+    if "_iter_" in key:
+        # Loop iteration trace: _trace_{node_id}_iter_{N}
+        node_id = key.replace("_trace_", "").split("_iter_")[0]
+        # For loop iterations, use full key as unique identifier
+        unique_trace_id = key
+    else:
+        # Regular trace: _trace_{node_id}
+        node_id = key.replace("_trace_", "")
+        unique_trace_id = node_id
+    return node_id, unique_trace_id
 
-    compiled = await _compile_workflow(user, run.spec, checkpointer=checkpointer)
 
-    graph_state = await compiled.workflow.graph.aget_state(config)
+def _build_node_trace_from_value(value: Dict[str, Any], node_id: str) -> Dict[str, Any]:
+    """Build node trace dict from checkpoint value."""
+    node_trace = {
+        "node_id": node_id,
+        "node_type": value.get("node_type", "unknown"),
+        "inputs": value.get("inputs", {}),
+        "output": value.get("output"),
+        "timestamp": value.get("timestamp"),
+        "output_key": value.get("output_key"),
+    }
 
-    if not graph_state or not graph_state.values:
-        logger.warning(
-            "No state values found from graph.aget_state() for run '%s'",
-            run.run_id,
-            extra={"run_id": run.run_id}
-        )
-        return nodes
+    # Include status if present (succeeded/failed from error trace implementation)
+    if "status" in value:
+        node_trace["status"] = value["status"]
 
-    state_values = graph_state.values
-    logger.info(
-        "Retrieved full state from graph with %s keys",
-        len(state_values),
-        extra={"run_id": run.run_id, "state_keys": list(state_values.keys())[:20]}
-    )
+    # Include error info if present (for failed nodes)
+    if "error" in value:
+        node_trace["error"] = value["error"]
 
-    # Extract trace keys from full state
-    # Support both regular traces (_trace_{node_id}) and loop iteration traces (_trace_{node_id}_iter_{N})
-    for key, value in state_values.items():
-        if not key.startswith("_trace_"):
-            continue
+    # Include LLM usage data if present
+    if "usage" in value:
+        node_trace["usage"] = value["usage"]
 
-        # Extract node_id from trace key
-        # Handle both _trace_{node_id} and _trace_{node_id}_iter_{N}
-        if "_iter_" in key:
-            # Loop iteration trace: _trace_{node_id}_iter_{N}
-            node_id = key.replace("_trace_", "").split("_iter_")[0]
-            # For loop iterations, use full key as unique identifier
-            unique_trace_id = key
-        else:
-            # Regular trace: _trace_{node_id}
-            node_id = key.replace("_trace_", "")
-            unique_trace_id = node_id
-
-        # Skip if we already processed this exact trace
-        if unique_trace_id in trace_keys_found:
-            continue
-
-        trace_keys_found.add(unique_trace_id)
-        if not isinstance(value, dict):
-            continue
-
-        node_trace = {
-            "node_id": node_id,
-            "node_type": value.get("node_type", "unknown"),
-            "inputs": value.get("inputs", {}),
-            "output": value.get("output"),
-            "timestamp": value.get("timestamp"),
-            "output_key": value.get("output_key"),
-        }
-
-        try:
-            enriched_node = _enrich_node_with_spec(node_trace, node_id, workflow_spec)
-            nodes.append(enriched_node)
-            logger.info(
-                "Found trace data for node '%s' (trace_key='%s') in graph state",
-                node_id,
-                key,
-                extra={"run_id": run.run_id, "node_id": node_id}
-            )
-        except Exception as enrich_exc:
-            logger.warning(
-                "Failed to enrich node '%s' with spec metadata: %s",
-                node_id,
-                enrich_exc,
-                exc_info=True,
-                extra={"run_id": run.run_id, "node_id": node_id}
-            )
-            nodes.append(node_trace)
-
-    return nodes
+    return node_trace
 
 
 async def _extract_node_traces_from_checkpoints(
@@ -281,7 +234,7 @@ async def _extract_node_traces_from_checkpoints(
     run: WorkflowRun,
     workflow_spec: Optional[WorkflowSpec],
 ) -> List[Dict[str, Any]]:
-    """Fallback: Extract node traces from checkpoint channel_values."""
+    """Extract node traces from checkpoint channel_values."""
     nodes = []
     trace_keys_found = set()
 
@@ -289,26 +242,26 @@ async def _extract_node_traces_from_checkpoints(
         checkpoint = checkpoint_tuple.checkpoint
         channel_values = checkpoint.get("channel_values", {})
 
-        for key, value in channel_values.items():
+        # CRITICAL FIX: LangGraph stores state in __root__ channel for Dict[str, Any] schema
+        # Traces are at: checkpoint["channel_values"]["__root__"]["_trace_*"]
+        # Not at: checkpoint["channel_values"]["_trace_*"]
+        state_dict = channel_values.get("__root__", channel_values)
+
+        for key, value in state_dict.items():
             if not key.startswith("_trace_"):
                 continue
 
-            node_id = key.replace("_trace_", "")
-            if node_id in trace_keys_found:
+            node_id, unique_trace_id = _extract_node_id_from_trace_key(key)
+
+            # Skip if we already processed this exact trace
+            if unique_trace_id in trace_keys_found:
                 continue
 
-            trace_keys_found.add(node_id)
+            trace_keys_found.add(unique_trace_id)
             if not isinstance(value, dict):
                 continue
 
-            node_trace = {
-                "node_id": node_id,
-                "node_type": value.get("node_type", "unknown"),
-                "inputs": value.get("inputs", {}),
-                "output": value.get("output"),
-                "timestamp": value.get("timestamp"),
-                "output_key": value.get("output_key"),
-            }
+            node_trace = _build_node_trace_from_value(value, node_id)
 
             try:
                 enriched_node = _enrich_node_with_spec(node_trace, node_id, workflow_spec)
@@ -324,6 +277,62 @@ async def _extract_node_traces_from_checkpoints(
                 nodes.append(node_trace)
 
     return nodes
+
+
+def _get_error_traces_from_database(run: WorkflowRun) -> List[Dict[str, Any]]:
+    """
+    Extract error traces from the database (node_traces column).
+
+    Failed nodes don't get checkpointed by LangGraph since the exception is raised
+    before the node can return. Instead, we persist error traces directly to the
+    database when ExecutionError is raised.
+
+    Returns:
+        List of error trace dicts from database, empty if none available.
+    """
+    if not run.node_traces:
+        return []
+
+    db_traces = []
+    # node_traces can be a dict like {"_trace_node_id": {trace_data}} or just trace_data directly
+    if isinstance(run.node_traces, dict):
+        # Check if it's a single trace (has 'node_id' key) or a collection of traces
+        if 'node_id' in run.node_traces:
+            # Single trace dict
+            db_traces.append(run.node_traces)
+        else:
+            # Collection of traces keyed by trace_key
+            for trace in run.node_traces.values():
+                if isinstance(trace, dict) and trace.get('status') == 'failed':
+                    db_traces.append(trace)
+
+    return db_traces
+
+
+def _merge_checkpoint_and_database_traces(
+    checkpoint_traces: List[Dict[str, Any]],
+    db_traces: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Merge traces from checkpoints (successful nodes) with database traces (failed nodes).
+
+    Checkpoint traces are authoritative for successful executions.
+    Database traces fill in the gaps for failed nodes that weren't checkpointed.
+
+    Returns:
+        Merged list of all node traces, with duplicates resolved by preferring checkpoint data.
+    """
+    # Build set of node IDs already in checkpoint traces
+    checkpoint_node_ids = {t.get('node_id') for t in checkpoint_traces if t.get('node_id')}
+
+    # Add database traces for nodes not in checkpoint traces
+    merged = list(checkpoint_traces)
+    for trace in db_traces:
+        node_id = trace.get('node_id')
+        if node_id and node_id not in checkpoint_node_ids:
+            merged.append(trace)
+
+    return merged
 
 
 async def _validate_history_prerequisites() -> None:
@@ -356,39 +365,6 @@ def _parse_workflow_spec(run: WorkflowRun) -> Optional[WorkflowSpec]:
         return WorkflowSpec.model_validate(run.spec)
     except Exception:
         return None
-
-
-async def _extract_node_traces_with_fallback(
-    user: User,
-    run: WorkflowRun,
-    checkpointer: Any,
-    config: Dict[str, Any],
-    workflow_spec: Optional[WorkflowSpec],
-) -> List[Dict[str, Any]]:
-    """Extract node traces from graph with fallback to checkpoints."""
-    try:
-        return await _extract_node_traces_from_graph(
-            user, run, checkpointer, config, workflow_spec
-        )
-    except Exception as graph_exc:
-        logger.warning(
-            "Error accessing graph state, falling back to checkpoint channel_values: %s",
-            graph_exc,
-            exc_info=True,
-            extra={"run_id": run.run_id}
-        )
-        try:
-            return await _extract_node_traces_from_checkpoints(
-                checkpointer, config, run, workflow_spec
-            )
-        except Exception as list_exc:
-            logger.error(
-                "Error in fallback checkpoint iteration: %s",
-                list_exc,
-                exc_info=True,
-                extra={"run_id": run.run_id}
-            )
-            return []
 
 
 def _build_history_response(
@@ -475,15 +451,29 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
                 status=404,
             )
 
-        nodes = await _extract_node_traces_with_fallback(
-            user, run, checkpointer, config, workflow_spec
+        checkpoint_traces = await _extract_node_traces_from_checkpoints(
+            checkpointer, config, run, workflow_spec
         )
 
+        # Get error traces from database (for failed nodes that weren't checkpointed)
+        db_traces = _get_error_traces_from_database(run)
+
+        # Merge checkpoint traces (successful nodes) with database traces (failed nodes)
+        nodes = _merge_checkpoint_and_database_traces(checkpoint_traces, db_traces)
+
         logger.info(
-            "Found %s node trace(s) for run '%s'",
+            "Found %s node trace(s) for run '%s' (checkpoint: %s, database: %s)",
             len(nodes),
             run.run_id,
-            extra={"run_id": run.run_id, "node_count": len(nodes), "node_ids": [n.get("node_id") for n in nodes]}
+            len(checkpoint_traces),
+            len(db_traces),
+            extra={
+                "run_id": run.run_id,
+                "node_count": len(nodes),
+                "checkpoint_trace_count": len(checkpoint_traces),
+                "db_trace_count": len(db_traces),
+                "node_ids": [n.get("node_id") for n in nodes],
+            }
         )
 
         history = _build_history_response(run, nodes, workflow_spec)

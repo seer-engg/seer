@@ -21,3 +21,7 @@ class LoweringError(WorkflowCompilerError):
 
 class ExecutionError(WorkflowCompilerError):
     """Raised for runtime execution issues (tool failures, invalid outputs, etc)."""
+
+    def __init__(self, message: str, trace_data: dict | None = None):
+        super().__init__(message)
+        self.trace_data = trace_data

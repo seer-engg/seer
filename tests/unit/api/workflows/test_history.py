@@ -34,6 +34,8 @@ from seer.api.workflows.services.history import (
     _snapshot_to_dict,
     _parse_workflow_spec,
     _build_history_response,
+    _get_error_traces_from_database,
+    _merge_checkpoint_and_database_traces,
 )
 
 
@@ -909,3 +911,235 @@ class TestHistoryWorkflowIntegration:
         # Verify execution_graph structure
         assert "nodes" in response[0]["execution_graph"]
         assert "edges" in response[0]["execution_graph"]
+
+
+# =============================================================================
+# Database Error Trace Extraction Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestGetErrorTracesFromDatabase:
+    """Tests for _get_error_traces_from_database function."""
+
+    def test_get_error_traces_no_node_traces(self):
+        """Test handling when node_traces is None."""
+        run = MagicMock()
+        run.node_traces = None
+
+        traces = _get_error_traces_from_database(run)
+
+        assert traces == []
+
+    def test_get_error_traces_empty_dict(self):
+        """Test handling when node_traces is empty dict."""
+        run = MagicMock()
+        run.node_traces = {}
+
+        traces = _get_error_traces_from_database(run)
+
+        assert traces == []
+
+    def test_get_error_traces_single_trace_with_node_id(self):
+        """Test extracting single trace when node_traces has node_id key."""
+        run = MagicMock()
+        run.node_traces = {
+            "node_id": "kb_query-1",
+            "node_type": "tool",
+            "status": "failed",
+            "error": {"type": "KeyError", "message": "'kb_id'"},
+            "inputs": {"query": "test"},
+            "timestamp": "2024-01-01T00:00:00Z",
+        }
+
+        traces = _get_error_traces_from_database(run)
+
+        assert len(traces) == 1
+        assert traces[0]["node_id"] == "kb_query-1"
+        assert traces[0]["status"] == "failed"
+
+    def test_get_error_traces_collection_of_traces(self):
+        """Test extracting traces from collection keyed by trace_key."""
+        run = MagicMock()
+        run.node_traces = {
+            "_trace_kb_query-1": {
+                "node_id": "kb_query-1",
+                "node_type": "tool",
+                "status": "failed",
+                "error": {"type": "KeyError", "message": "'kb_id'"},
+            },
+            "_trace_llm-1": {
+                "node_id": "llm-1",
+                "node_type": "llm",
+                "status": "succeeded",  # Should be excluded
+                "output": "Hello",
+            },
+        }
+
+        traces = _get_error_traces_from_database(run)
+
+        # Only failed traces should be included
+        assert len(traces) == 1
+        assert traces[0]["node_id"] == "kb_query-1"
+        assert traces[0]["status"] == "failed"
+
+    def test_get_error_traces_multiple_failed(self):
+        """Test extracting multiple failed traces."""
+        run = MagicMock()
+        run.node_traces = {
+            "_trace_node1": {
+                "node_id": "node1",
+                "status": "failed",
+                "error": {"type": "Error1"},
+            },
+            "_trace_node2": {
+                "node_id": "node2",
+                "status": "failed",
+                "error": {"type": "Error2"},
+            },
+        }
+
+        traces = _get_error_traces_from_database(run)
+
+        assert len(traces) == 2
+        node_ids = {t["node_id"] for t in traces}
+        assert node_ids == {"node1", "node2"}
+
+    def test_get_error_traces_ignores_non_dict_values(self):
+        """Test that non-dict values in node_traces are ignored."""
+        run = MagicMock()
+        run.node_traces = {
+            "_trace_valid": {
+                "node_id": "valid",
+                "status": "failed",
+            },
+            "_trace_invalid": "not a dict",  # Should be ignored
+        }
+
+        traces = _get_error_traces_from_database(run)
+
+        assert len(traces) == 1
+        assert traces[0]["node_id"] == "valid"
+
+
+# =============================================================================
+# Trace Merging Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestMergeCheckpointAndDatabaseTraces:
+    """Tests for _merge_checkpoint_and_database_traces function."""
+
+    def test_merge_empty_lists(self):
+        """Test merging two empty lists."""
+        result = _merge_checkpoint_and_database_traces([], [])
+        assert result == []
+
+    def test_merge_only_checkpoint_traces(self):
+        """Test when only checkpoint traces exist."""
+        checkpoint_traces = [
+            {"node_id": "llm-1", "status": "succeeded", "output": "Hello"},
+            {"node_id": "tool-1", "status": "succeeded", "output": {"data": 1}},
+        ]
+
+        result = _merge_checkpoint_and_database_traces(checkpoint_traces, [])
+
+        assert len(result) == 2
+        assert result == checkpoint_traces
+
+    def test_merge_only_database_traces(self):
+        """Test when only database traces exist."""
+        db_traces = [
+            {"node_id": "kb_query-1", "status": "failed", "error": {"type": "KeyError"}},
+        ]
+
+        result = _merge_checkpoint_and_database_traces([], db_traces)
+
+        assert len(result) == 1
+        assert result[0]["node_id"] == "kb_query-1"
+
+    def test_merge_no_overlap(self):
+        """Test merging when checkpoint and db traces have different nodes."""
+        checkpoint_traces = [
+            {"node_id": "llm-1", "status": "succeeded", "output": "Hello"},
+        ]
+        db_traces = [
+            {"node_id": "kb_query-1", "status": "failed", "error": {"type": "KeyError"}},
+        ]
+
+        result = _merge_checkpoint_and_database_traces(checkpoint_traces, db_traces)
+
+        assert len(result) == 2
+        node_ids = {t["node_id"] for t in result}
+        assert node_ids == {"llm-1", "kb_query-1"}
+
+    def test_merge_with_overlap_prefers_checkpoint(self):
+        """Test that checkpoint traces take precedence over database traces."""
+        checkpoint_traces = [
+            {"node_id": "node-1", "status": "succeeded", "output": "from_checkpoint"},
+        ]
+        db_traces = [
+            {"node_id": "node-1", "status": "failed", "error": {"type": "Error"}},
+        ]
+
+        result = _merge_checkpoint_and_database_traces(checkpoint_traces, db_traces)
+
+        # Only checkpoint trace should be present
+        assert len(result) == 1
+        assert result[0]["status"] == "succeeded"
+        assert result[0]["output"] == "from_checkpoint"
+
+    def test_merge_mixed_scenario(self):
+        """Test realistic scenario with checkpoint success and db failure."""
+        checkpoint_traces = [
+            {"node_id": "llm-1", "status": "succeeded", "output": "Hi!"},
+        ]
+        db_traces = [
+            {"node_id": "kb_query-1", "status": "failed", "error": {"type": "KeyError", "message": "'kb_id'"}},
+        ]
+
+        result = _merge_checkpoint_and_database_traces(checkpoint_traces, db_traces)
+
+        assert len(result) == 2
+
+        # Find each trace
+        llm_trace = next(t for t in result if t["node_id"] == "llm-1")
+        kb_trace = next(t for t in result if t["node_id"] == "kb_query-1")
+
+        assert llm_trace["status"] == "succeeded"
+        assert kb_trace["status"] == "failed"
+        assert kb_trace["error"]["type"] == "KeyError"
+
+    def test_merge_preserves_order(self):
+        """Test that checkpoint traces come before database traces."""
+        checkpoint_traces = [
+            {"node_id": "node-1", "status": "succeeded"},
+            {"node_id": "node-2", "status": "succeeded"},
+        ]
+        db_traces = [
+            {"node_id": "node-3", "status": "failed"},
+        ]
+
+        result = _merge_checkpoint_and_database_traces(checkpoint_traces, db_traces)
+
+        assert result[0]["node_id"] == "node-1"
+        assert result[1]["node_id"] == "node-2"
+        assert result[2]["node_id"] == "node-3"
+
+    def test_merge_handles_missing_node_id(self):
+        """Test handling of traces without node_id (should be ignored from db)."""
+        checkpoint_traces = [
+            {"node_id": "valid-1", "status": "succeeded"},
+        ]
+        db_traces = [
+            {"status": "failed"},  # Missing node_id
+            {"node_id": "valid-2", "status": "failed"},
+        ]
+
+        result = _merge_checkpoint_and_database_traces(checkpoint_traces, db_traces)
+
+        # Only traces with node_id should be included
+        assert len(result) == 2
+        node_ids = {t.get("node_id") for t in result}
+        assert node_ids == {"valid-1", "valid-2"}
