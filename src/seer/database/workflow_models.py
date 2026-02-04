@@ -368,8 +368,8 @@ class TriggerEvent(models.Model):
     class Meta:
         table = "trigger_events"
         unique_together = (
-            ("trigger_key", "provider_connection_id", "provider_event_id"),
-            ("trigger_key", "provider_connection_id", "event_hash"),
+            ("subscription_id", "trigger_key", "provider_connection_id", "provider_event_id"),
+            ("subscription_id", "trigger_key", "provider_connection_id", "event_hash"),
         )
         indexes = (
             ("status", "received_at"),
