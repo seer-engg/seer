@@ -361,6 +361,7 @@ async def search_triggers(
                 "mode": trigger.mode,
                 "description": trigger.description or f"{trigger.title} trigger",
                 "config_schema": trigger.schemas.config if trigger.schemas.config else None,
+                "event_schema": trigger.schemas.event if trigger.schemas.event else None,
                 "sample_event": trigger.meta.sample_event if trigger.meta.sample_event else None,
                 "requires_connection": trigger.meta.requires_connection
             }
@@ -413,6 +414,7 @@ async def list_available_triggers(provider: Optional[str] = None) -> str:
                 "mode": trigger.mode,
                 "description": trigger.description or f"{trigger.title} trigger",
                 "requires_connection": trigger.meta.requires_connection,
+                "event_schema": trigger.schemas.event if trigger.schemas.event else None,
                 "sample_event": trigger.meta.sample_event if trigger.meta.sample_event else None
             }
             triggers_list.append(trigger_data)
