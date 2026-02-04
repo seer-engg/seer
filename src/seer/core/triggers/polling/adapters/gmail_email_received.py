@@ -89,7 +89,7 @@ class GmailEmailReceivedAdapter(PollAdapter):
                     msg_resp = await client.get(
                         f"{GMAIL_API_BASE}/messages/{msg_id}",
                         headers=headers,
-                        params={"format": "metadata", "metadataHeaders": "From,To,Subject,Date"},
+                        params={"format": "metadata", "metadataHeaders": ["From", "To", "Subject", "Date"]},
                     )
                     await self._raise_for_status(msg_resp)
                     msg_data = msg_resp.json()
