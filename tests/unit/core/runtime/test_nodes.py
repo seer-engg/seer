@@ -5,7 +5,6 @@ Tests NodeRuntime class, node execution, and trace key generation.
 """
 # pylint: disable=redefined-outer-name
 # Reason: pytest fixture pattern requires name reuse
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -435,3 +434,469 @@ class TestTrackLlmUsage:
             node_runtime._track_llm_usage_async({"model": "gpt-4", "input_tokens": 100})
 
         mock_logger.warning.assert_called()
+
+
+# =============================================================================
+# Error Trace Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestErrorTraceCapture:
+    """Tests for error trace capture when node execution fails."""
+
+    def test_write_error_trace_creates_proper_structure(self, node_runtime):
+        """Test _write_error_trace creates proper trace structure."""
+        from seer.core.schema.models import ToolNode
+
+        node = ToolNode(id="test_node", tool="test.tool")
+        state = {}
+        inputs = {"param1": "value1", "param2": 42}
+        exc = ValueError("Something went wrong")
+
+        result = node_runtime._write_error_trace(node, state, inputs, exc=exc, node_type="tool")
+
+        assert "_trace_test_node" in result
+        trace = result["_trace_test_node"]
+        assert trace["node_id"] == "test_node"
+        assert trace["node_type"] == "tool"
+        assert trace["inputs"] == inputs
+        assert trace["error"]["type"] == "ValueError"
+        assert trace["error"]["message"] == "Something went wrong"
+        assert trace["status"] == "failed"
+        assert "timestamp" in trace
+
+    def test_tool_node_failure_writes_error_trace(self, node_runtime, mock_services):
+        """Test that tool node failures include error trace in exception."""
+        from seer.core.errors import ExecutionError
+        from seer.core.schema.models import ToolNode
+
+        node = ToolNode(id="failing_tool", tool="test.fail_tool", inputs={"key": "value"})
+        state = {}
+
+        # Setup mock tool that raises an exception
+        mock_tool_def = MagicMock()
+        mock_tool_def.handler.side_effect = RuntimeError("Tool execution failed")
+        mock_services.tool_registry.get.return_value = mock_tool_def
+
+        with pytest.raises(ExecutionError) as exc_info:
+            node_runtime._run_tool(node, state, {}, locals_ctx=None, context=None)
+
+        # Verify error trace is attached
+        assert exc_info.value.trace_data is not None
+        trace_key = "_trace_failing_tool"
+        assert trace_key in exc_info.value.trace_data
+        trace = exc_info.value.trace_data[trace_key]
+        assert trace["node_id"] == "failing_tool"
+        assert trace["node_type"] == "tool"
+        assert trace["status"] == "failed"
+        assert trace["error"]["type"] == "RuntimeError"
+        assert "Tool execution failed" in trace["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_tool_node_async_failure_writes_error_trace(self, node_runtime, mock_services):
+        """Test that async tool node failures include error trace in exception."""
+        from seer.core.errors import ExecutionError
+        from seer.core.schema.models import ToolNode
+
+        node = ToolNode(id="async_failing_tool", tool="test.async_fail", inputs={"data": 123})
+        state = {}
+
+        # Setup mock tool with async handler that raises
+        mock_tool_def = MagicMock()
+        mock_tool_def.async_handler = AsyncMock(side_effect=ConnectionError("Connection lost"))
+        mock_services.tool_registry.get.return_value = mock_tool_def
+
+        with pytest.raises(ExecutionError) as exc_info:
+            await node_runtime._run_tool_async(node, state, {}, locals_ctx=None, context=None)
+
+        # Verify error trace is attached
+        assert exc_info.value.trace_data is not None
+        trace_key = "_trace_async_failing_tool"
+        assert trace_key in exc_info.value.trace_data
+        trace = exc_info.value.trace_data[trace_key]
+        assert trace["node_id"] == "async_failing_tool"
+        assert trace["node_type"] == "tool"
+        assert trace["status"] == "failed"
+        assert trace["error"]["type"] == "ConnectionError"
+
+    @pytest.mark.asyncio
+    async def test_mcp_node_failure_writes_error_trace(self, mock_services):
+        """Test that MCP node failures include error trace in exception."""
+        from seer.core.errors import ExecutionError
+        from seer.core.runtime.nodes import NodeRuntime, RuntimeServices
+        from seer.core.schema.models import MCPNode
+
+        # Create NodeRuntime with MCP registry
+        mock_mcp_registry = MagicMock()
+        mock_mcp_registry.invoke_tool = AsyncMock(side_effect=TimeoutError("MCP server timeout"))
+
+        services = RuntimeServices(
+            schema_registry=mock_services.schema_registry,
+            tool_registry=mock_services.tool_registry,
+            model_registry=mock_services.model_registry,
+            type_env=mock_services.type_env,
+            mcp_client_registry=mock_mcp_registry,
+        )
+        node_runtime = NodeRuntime(services)
+
+        node = MCPNode(
+            id="mcp_fail",
+            tool="mcp_tool",
+            server="http://test-server",
+            server_type="http",
+            inputs={"query": "test"},
+        )
+        state = {}
+
+        with pytest.raises(ExecutionError) as exc_info:
+            await node_runtime._run_mcp_async(node, state, {}, locals_ctx=None, context=None)
+
+        # Verify error trace is attached
+        assert exc_info.value.trace_data is not None
+        trace_key = "_trace_mcp_fail"
+        assert trace_key in exc_info.value.trace_data
+        trace = exc_info.value.trace_data[trace_key]
+        assert trace["node_id"] == "mcp_fail"
+        assert trace["node_type"] == "mcp"
+        assert trace["status"] == "failed"
+
+    def test_tool_node_success_has_status_succeeded(self, node_runtime, mock_services):
+        """Test that successful tool execution includes status: succeeded."""
+        from seer.core.schema.models import ToolNode
+
+        node = ToolNode(id="success_tool", tool="test.success", inputs={"x": 1})
+        state = {}
+
+        # Setup mock tool that succeeds
+        mock_tool_def = MagicMock()
+        mock_tool_def.handler.return_value = {"result": "success"}
+        mock_services.tool_registry.get.return_value = mock_tool_def
+
+        result = node_runtime._run_tool(node, state, {}, locals_ctx=None, context=None)
+
+        # Verify success trace has status
+        trace_key = "_trace_success_tool"
+        assert trace_key in result
+        assert result[trace_key]["status"] == "succeeded"
+        assert "error" not in result[trace_key]
+
+    @pytest.mark.asyncio
+    async def test_tool_node_async_success_has_status_succeeded(self, node_runtime, mock_services):
+        """Test that async successful tool execution includes status: succeeded."""
+        from seer.core.schema.models import ToolNode
+
+        node = ToolNode(id="async_success", tool="test.async_ok", inputs={"y": 2})
+        state = {}
+
+        # Setup mock tool with async handler that succeeds
+        mock_tool_def = MagicMock()
+        mock_tool_def.async_handler = AsyncMock(return_value={"async_result": "done"})
+        mock_services.tool_registry.get.return_value = mock_tool_def
+
+        result = await node_runtime._run_tool_async(node, state, {}, locals_ctx=None, context=None)
+
+        # Verify success trace has status
+        trace_key = "_trace_async_success"
+        assert trace_key in result
+        assert result[trace_key]["status"] == "succeeded"
+
+    def test_llm_node_failure_writes_error_trace(self, node_runtime, mock_services):
+        """Test that LLM node failures include error trace in exception."""
+        from seer.core.errors import ExecutionError
+        from seer.core.schema.models import LLMNode, OutputContract, OutputMode
+
+        node = LLMNode(
+            id="llm_fail",
+            inputs={"model": "gpt-4", "prompt": "Hello ${user}"},
+            outputs=OutputContract(mode=OutputMode.text),
+        )
+        state = {"user": "Alice"}
+
+        # Setup mock model that raises
+        mock_model_def = MagicMock()
+        mock_model_def.text_handler = MagicMock(side_effect=RuntimeError("API rate limit exceeded"))
+        mock_services.model_registry.get.return_value = mock_model_def
+
+        with pytest.raises(ExecutionError) as exc_info:
+            node_runtime._run_llm(node, state, {}, locals_ctx=None)
+
+        # Verify error trace is attached
+        assert exc_info.value.trace_data is not None
+        trace_key = "_trace_llm_fail"
+        assert trace_key in exc_info.value.trace_data
+        trace = exc_info.value.trace_data[trace_key]
+        assert trace["node_id"] == "llm_fail"
+        assert trace["node_type"] == "llm"
+        assert trace["status"] == "failed"
+        assert trace["error"]["type"] == "RuntimeError"
+        assert "API rate limit exceeded" in trace["error"]["message"]
+
+    def test_llm_node_success_has_status_succeeded(self, node_runtime, mock_services):
+        """Test that successful LLM execution includes status: succeeded."""
+        from seer.core.schema.models import LLMNode, OutputContract, OutputMode
+
+        node = LLMNode(
+            id="llm_success",
+            inputs={"model": "gpt-4", "prompt": "Hello"},
+            outputs=OutputContract(mode=OutputMode.text),
+        )
+        state = {}
+
+        # Setup mock model that succeeds
+        mock_model_def = MagicMock()
+        mock_model_def.text_handler = MagicMock(return_value=("Hello response", {"input_tokens": 10, "output_tokens": 5}))
+        mock_services.model_registry.get.return_value = mock_model_def
+
+        result = node_runtime._run_llm(node, state, {}, locals_ctx=None)
+
+        # Verify success trace has status
+        trace_key = "_trace_llm_success"
+        assert trace_key in result
+        assert result[trace_key]["status"] == "succeeded"
+        assert "error" not in result[trace_key]
+
+    def test_error_trace_in_loop_includes_iteration(self, node_runtime, mock_services):
+        """Test that error trace in loop includes iteration index."""
+        from seer.core.errors import ExecutionError
+        from seer.core.schema.models import ToolNode
+
+        node = ToolNode(id="loop_tool", tool="test.loop_fail", inputs={})
+
+        # Set up loop context
+        node_runtime.set_loop_body_map({"loop_tool": "my_loop"})
+        state = {"_loop_my_loop": {"current_index": 2, "items": [1, 2, 3]}}
+
+        # Setup mock tool that raises
+        mock_tool_def = MagicMock()
+        mock_tool_def.handler.side_effect = ValueError("Failed at index 2")
+        mock_services.tool_registry.get.return_value = mock_tool_def
+
+        with pytest.raises(ExecutionError) as exc_info:
+            node_runtime._run_tool(node, state, {}, locals_ctx=None, context=None)
+
+        # Verify trace key includes iteration
+        assert exc_info.value.trace_data is not None
+        trace_key = "_trace_loop_tool_iter_2"
+        assert trace_key in exc_info.value.trace_data
+
+
+# =============================================================================
+# Error Trace State Persistence Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestErrorTraceStatePersistence:
+    """Test that error traces are persisted to state dict before raising exceptions.
+
+    This ensures failed nodes appear in workflow history API responses.
+    """
+
+    def test_tool_failure_updates_state_with_error_trace(self, node_runtime, mock_services):
+        """Verify tool node failures write error trace to state before raising."""
+        from seer.core.errors import ExecutionError
+        from seer.core.schema.models import ToolNode
+
+        node = ToolNode(
+            id='failing_tool',
+            tool='mock_tool',
+            inputs={'param': 'value'},
+        )
+        state = {}
+
+        # Setup mock tool that raises
+        mock_tool_def = MagicMock()
+        mock_tool_def.handler.side_effect = KeyError("missing_key")
+        mock_services.tool_registry.get.return_value = mock_tool_def
+
+        with pytest.raises(ExecutionError) as exc_info:
+            node_runtime._run_tool(node, state, {}, locals_ctx=None, context=None)
+
+        # VERIFY: State dict was updated with error trace
+        assert '_trace_failing_tool' in state, "Error trace key missing from state"
+        trace = state['_trace_failing_tool']
+
+        assert trace['node_id'] == 'failing_tool'
+        assert trace['node_type'] == 'tool'
+        assert trace['status'] == 'failed'
+        assert 'error' in trace
+        assert trace['error']['type'] == 'KeyError'
+        assert 'missing_key' in trace['error']['message']
+        assert 'timestamp' in trace
+        assert trace['inputs'] == {'param': 'value'}
+
+        # VERIFY: Exception also contains trace_data (backward compatibility)
+        assert exc_info.value.trace_data is not None
+        assert '_trace_failing_tool' in exc_info.value.trace_data
+
+    @pytest.mark.asyncio
+    async def test_tool_async_failure_updates_state_with_error_trace(self, node_runtime, mock_services):
+        """Verify async tool node failures write error trace to state before raising."""
+        from seer.core.errors import ExecutionError
+        from seer.core.schema.models import ToolNode
+
+        node = ToolNode(
+            id='failing_async_tool',
+            tool='mock_async_tool',
+            inputs={'param': 'value'},
+        )
+        state = {}
+
+        # Setup mock tool that raises
+        mock_tool_def = MagicMock()
+        mock_tool_def.async_handler = AsyncMock(side_effect=ValueError("async error"))
+        mock_services.tool_registry.get.return_value = mock_tool_def
+
+        with pytest.raises(ExecutionError) as exc_info:
+            await node_runtime._run_tool_async(node, state, {}, locals_ctx=None, context=None)
+
+        # VERIFY: State dict was updated with error trace
+        assert '_trace_failing_async_tool' in state
+        trace = state['_trace_failing_async_tool']
+
+        assert trace['status'] == 'failed'
+        assert 'error' in trace
+        assert trace['error']['type'] == 'ValueError'
+        assert 'async error' in trace['error']['message']
+
+    def test_llm_failure_updates_state_with_error_trace(self, node_runtime, mock_services):
+        """Verify LLM node failures write error trace to state before raising."""
+        from seer.core.errors import ExecutionError
+        from seer.core.schema.models import LLMNode, OutputContract, OutputMode
+
+        node = LLMNode(
+            id='failing_llm',
+            inputs={'prompt': 'test prompt', 'model': 'gpt-4'},
+            outputs=OutputContract(mode=OutputMode.text),
+        )
+        state = {}
+
+        # Setup mock model that raises (text_handler returns tuple, so we raise during the call)
+        mock_model_def = MagicMock()
+        mock_model_def.text_handler = MagicMock(side_effect=RuntimeError("Model unavailable"))
+        mock_services.model_registry.get.return_value = mock_model_def
+
+        with pytest.raises(ExecutionError) as exc_info:
+            node_runtime._run_llm(node, state, {}, locals_ctx=None)
+
+        # VERIFY: State dict was updated with error trace
+        assert '_trace_failing_llm' in state
+        trace = state['_trace_failing_llm']
+
+        assert trace['node_id'] == 'failing_llm'
+        assert trace['node_type'] == 'llm'
+        assert trace['status'] == 'failed'
+        assert 'error' in trace
+        assert trace['error']['type'] == 'RuntimeError'
+        assert 'Model unavailable' in trace['error']['message']
+        assert 'timestamp' in trace
+        assert 'prompt_template' in trace['inputs']  # LLM uses prompt_template key
+
+    @pytest.mark.asyncio
+    async def test_mcp_failure_updates_state_with_error_trace(self):
+        """Verify MCP node failures write error trace to state before raising."""
+        from seer.core.errors import ExecutionError
+        from seer.core.runtime.nodes import NodeRuntime, RuntimeServices
+        from seer.core.schema.models import MCPNode
+
+        # Create services with MCP registry included
+        mock_mcp_registry = MagicMock()
+        mock_services = RuntimeServices(
+            schema_registry=MagicMock(),
+            tool_registry=MagicMock(),
+            model_registry=MagicMock(),
+            type_env=MagicMock(),
+            mcp_client_registry=mock_mcp_registry,
+        )
+        node_runtime = NodeRuntime(mock_services)
+
+        node = MCPNode(
+            id='failing_mcp',
+            tool='mcp_mock_tool',
+            inputs={'param': 'value'},
+            server='test_mcp_server',
+            server_type='stdio',
+        )
+        state = {}
+
+        # Mock _invoke_mcp_tool to raise an error
+        with patch.object(node_runtime, '_invoke_mcp_tool', side_effect=ConnectionError("MCP server unreachable")):
+            with pytest.raises(ExecutionError):
+                await node_runtime._run_mcp_async(node, state, {}, locals_ctx=None, context=None)
+
+        # VERIFY: State dict was updated with error trace
+        assert '_trace_failing_mcp' in state
+        trace = state['_trace_failing_mcp']
+
+        assert trace['node_id'] == 'failing_mcp'
+        assert trace['node_type'] == 'mcp'
+        assert trace['status'] == 'failed'
+        assert 'error' in trace
+        assert trace['error']['type'] == 'ConnectionError'
+        assert 'MCP server unreachable' in trace['error']['message']
+
+    def test_error_trace_state_persistence_in_loop(self, node_runtime, mock_services):
+        """Verify error traces in loops are persisted with iteration index."""
+        from seer.core.errors import ExecutionError
+        from seer.core.schema.models import ToolNode
+
+        node = ToolNode(
+            id='loop_failing_tool',
+            tool='test.loop_fail',
+            inputs={},
+        )
+
+        # Set up loop context for iteration 3
+        node_runtime.set_loop_body_map({"loop_failing_tool": "my_loop"})
+        state = {"_loop_my_loop": {"current_index": 3, "items": [1, 2, 3, 4, 5]}}
+
+        # Setup mock tool that raises
+        mock_tool_def = MagicMock()
+        mock_tool_def.handler.side_effect = ValueError("Failed at index 3")
+        mock_services.tool_registry.get.return_value = mock_tool_def
+
+        with pytest.raises(ExecutionError):
+            node_runtime._run_tool(node, state, {}, locals_ctx=None, context=None)
+
+        # VERIFY: State dict was updated with error trace including iteration
+        trace_key = "_trace_loop_failing_tool_iter_3"
+        assert trace_key in state, f"Expected {trace_key} in state keys: {list(state.keys())}"
+
+        trace = state[trace_key]
+        assert trace['status'] == 'failed'
+        assert 'error' in trace
+        assert '3' in trace['error']['message'] or 'index 3' in trace['error']['message']
+
+    def test_multiple_failures_all_persisted_to_state(self, node_runtime, mock_services):
+        """Verify multiple failed nodes all persist their traces to state."""
+        from seer.core.errors import ExecutionError
+        from seer.core.schema.models import ToolNode
+
+        state = {}
+
+        # First failure
+        node1 = ToolNode(id='fail_1', tool='tool_1', inputs={})
+        mock_tool_def_1 = MagicMock()
+        mock_tool_def_1.handler.side_effect = KeyError("error_1")
+        mock_services.tool_registry.get.return_value = mock_tool_def_1
+
+        with pytest.raises(ExecutionError):
+            node_runtime._run_tool(node1, state, {}, locals_ctx=None, context=None)
+
+        # Second failure
+        node2 = ToolNode(id='fail_2', tool='tool_2', inputs={})
+        mock_tool_def_2 = MagicMock()
+        mock_tool_def_2.handler.side_effect = ValueError("error_2")
+        mock_services.tool_registry.get.return_value = mock_tool_def_2
+
+        with pytest.raises(ExecutionError):
+            node_runtime._run_tool(node2, state, {}, locals_ctx=None, context=None)
+
+        # VERIFY: Both error traces are in state
+        assert '_trace_fail_1' in state
+        assert '_trace_fail_2' in state
+        assert state['_trace_fail_1']['status'] == 'failed'
+        assert state['_trace_fail_2']['status'] == 'failed'
+        assert 'error_1' in state['_trace_fail_1']['error']['message']
+        assert 'error_2' in state['_trace_fail_2']['error']['message']

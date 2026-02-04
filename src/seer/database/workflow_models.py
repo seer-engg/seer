@@ -198,6 +198,7 @@ class WorkflowRun(models.Model):
     )
     output = fields.JSONField(null=True)
     error = fields.TextField(null=True)
+    node_traces = fields.JSONField(null=True)  # Per-node execution traces (including error traces for failed nodes)
     thread_id = fields.CharField(max_length=255, null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     started_at = fields.DatetimeField(null=True)

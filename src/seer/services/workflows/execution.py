@@ -5,7 +5,7 @@ from fastapi import HTTPException
 
 
 from seer.api.agents.checkpointer import get_checkpointer
-from seer.core.errors import WorkflowCompilerError
+from seer.core.errors import ExecutionError, WorkflowCompilerError
 from seer.database import WorkflowRun, User, WorkflowRunStatus
 from seer.database.models import UserSettings
 from seer.core.runtime.context import WorkflowRuntimeContext
@@ -146,10 +146,19 @@ async def _execute_run(
 
         # Handle other exceptions
         print(f"{traceback.format_exc()}")
+
+        # Extract error trace from ExecutionError if available
+        # This allows persisting node-level error traces to the database
+        # even when LangGraph checkpoints are not written (due to exception)
+        node_traces = None
+        if isinstance(exc, ExecutionError) and exc.trace_data:  # pylint: disable=no-member  # Reason: ExecutionError adds trace_data attribute in __init__
+            node_traces = exc.trace_data  # pylint: disable=no-member  # Reason: ExecutionError adds trace_data attribute in __init__
+
         await WorkflowRun.filter(id=run.id).update(
             status=WorkflowRunStatus.FAILED,
             finished_at=_now(),
             error=str(exc),
+            node_traces=node_traces,
         )
         raise
 
