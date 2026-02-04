@@ -43,7 +43,7 @@ async def close_tortoise():
     await Tortoise.close_connections()
 
 TOOL_NAME = "gmail_read_emails"
-MODEL_ID = "gpt-5-nano"
+MODEL_ID = "moonshotai/kimi-k2.5"
 
 
 def register_demo_components(service: GmailDemoService) -> None:
@@ -64,7 +64,7 @@ def register_demo_components(service: GmailDemoService) -> None:
 
     try:
         llm = ChatOpenAI(
-            model=os.getenv("OPENAI_MODEL", "gpt-5-nano"),
+            model=os.getenv("OPENAI_MODEL", "moonshotai/kimi-k2.5"),
             temperature=0.3,
         )
     except Exception as exc:  # pragma: no cover - depends on env configuration

@@ -53,6 +53,9 @@ class SeerConfig(BaseSettings):
     anthropic_api_key: Optional[str] = Field(
         default=None, description="Anthropic API key for Claude models"
     )
+    openrouter_api_key: Optional[str] = Field(
+        default=None, description="OpenRouter API key for multi-provider LLM access"
+    )
 
     # ============================================================================
     # LangGraph Checkpointer Configuration
@@ -129,7 +132,7 @@ class SeerConfig(BaseSettings):
 
 
 
-    default_llm_model: str = Field(default="gpt-5-mini", description="Default LLM model")
+    default_llm_model: str = Field(default="moonshotai/kimi-k2.5", description="Default LLM model")
 
     # Taskiq / Valkey configuration
     redis_url: str = Field(

@@ -1,0 +1,21 @@
+{
+  "model": "claude-sonnet-4-5-20250929",
+  "env": {
+    "PROJECT_ROOT": "/workspace/backend",
+    "SOURCE_DIR": "src/seer"
+  },
+  "permissions": {
+    "allow": [
+      "Read(**)",
+      "Edit(src/**)",
+      "Edit(tests/**)",
+      "Edit(migrations/**)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledPlugins": {
+    "pyright-lsp@claude-plugins-official": true,
+    "context7@claude-plugins-official": true
+  },
+  "outputStyle": "Explanatory"
+}

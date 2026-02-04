@@ -20,11 +20,16 @@ async def list_models():
     """
     models = []
 
-    # Only OpenAI models - limited to gpt-5.2 and gpt-5-mini
-    if config.openai_api_key:
+    if config.anthropic_api_key:
         models.extend([
-            ModelInfo(id="gpt-5.2", provider="openai", name="GPT-5.2", available=True),
-            ModelInfo(id="gpt-5-mini", provider="openai", name="GPT-5 Mini", available=True),
+            ModelInfo(id="claude-sonnet-4.5", provider="anthropic", name="Claude Sonnet 4.5", available=True),
+            ModelInfo(id="claude-opus-4.5", provider="anthropic", name="Claude Opus 4.5", available=True),
+        ])
+
+    if config.openrouter_api_key:
+        models.extend([
+            ModelInfo(id="moonshotai/kimi-k2.5", provider="openrouter", name="Kimi K2.5", available=True),
+            ModelInfo(id="moonshotai/kimi-k2-thinking", provider="openrouter", name="Kimi K2 Thinking", available=True),
         ])
 
     return models

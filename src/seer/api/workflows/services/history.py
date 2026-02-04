@@ -62,21 +62,20 @@ def _find_node_in_spec(nodes: List[Node], target_id: str) -> Optional[Node]:
 def _enrich_with_tool_node(enriched: Dict[str, Any], node: ToolNode) -> None:
     """Enrich trace data with ToolNode metadata."""
     enriched["tool_name"] = node.tool
-    enriched["output_key"] = node.out
-    if node.expect_output:
-        enriched["expect_output"] = node.expect_output.model_dump() if hasattr(node.expect_output, "model_dump") else node.expect_output
+    if node.expect_outputs:
+        enriched["expect_outputs"] = node.expect_outputs.model_dump() if hasattr(node.expect_outputs, "model_dump") else node.expect_outputs
 
 
 def _enrich_with_llm_node(enriched: Dict[str, Any], node: LLMNode) -> None:
     """Enrich trace data with LLMNode metadata."""
-    enriched["model"] = node.model
-    enriched["output_key"] = node.out
-    if node.prompt:
-        enriched["prompt_template"] = node.prompt
-    if node.temperature is not None:
-        enriched["temperature"] = node.temperature
-    if node.output:
-        enriched["output_schema"] = node.output.model_dump() if hasattr(node.output, "model_dump") else node.output
+    if "model" in node.inputs:
+        enriched["model"] = node.inputs["model"]
+    if "prompt" in node.inputs:
+        enriched["prompt_template"] = node.inputs["prompt"]
+    if "temperature" in node.inputs:
+        enriched["temperature"] = node.inputs["temperature"]
+    if node.outputs:
+        enriched["output_schema"] = node.outputs.model_dump() if hasattr(node.outputs, "model_dump") else node.outputs
 
 
 def _enrich_node_with_spec(

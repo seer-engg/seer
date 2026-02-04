@@ -88,7 +88,7 @@ def register_demo_components(service: GmailDemoService) -> None:
 
     try:
         llm = ChatOpenAI(
-            model='gpt-5-nano',
+            model='moonshotai/kimi-k2.5',
             temperature=0.2,
         )
     except Exception as exc:  # pragma: no cover - depends on env configuration

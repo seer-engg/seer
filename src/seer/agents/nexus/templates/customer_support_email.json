@@ -48,7 +48,7 @@
         "id": "classify_email",
         "type": "llm",
         "inputs": {
-          "model": "gpt-5-mini",
+          "model": "moonshotai/kimi-k2.5",
           "temperature": 0.3,
           "prompt": "Analyze this support email and classify it:\n\nFrom: ${full_email.from.email}\nSubject: ${full_email.subject}\nBody: ${full_email.body}\n\nClassify by:\n1. Urgency (urgent/normal) - Is this a critical issue requiring immediate attention?\n2. Category (billing/technical/general/account) - What type of support request?\n3. Sentiment (positive/neutral/negative/frustrated) - Customer's emotional tone\n4. Auto-response capability (true/false) - Can this be answered with a standard FAQ response?\n\nProvide reasoning for urgency classification."
         },
@@ -165,7 +165,7 @@
         "id": "generate_auto_response",
         "type": "llm",
         "inputs": {
-          "model": "gpt-5",
+          "model": "moonshotai/kimi-k2.5",
           "temperature": 0.7,
           "prompt": "Generate a helpful, professional auto-response for this support email:\n\nFrom: ${full_email.from.email}\nName: ${full_email.from.name}\nSubject: ${full_email.subject}\nBody: ${full_email.body}\nCategory: ${classification.category}\nSentiment: ${classification.sentiment}\n\nProvide a complete, accurate response that addresses their question. Include relevant links or instructions if needed. Be empathetic and professional."
         },
