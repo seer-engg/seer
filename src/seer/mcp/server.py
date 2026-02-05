@@ -112,7 +112,7 @@ def create_combined_mcp_app():
     Create a combined MCP Starlette app for mounting into FastAPI.
 
     This creates a single app that handles both SSE (/sse) and HTTP (/mcp) transports.
-    The app does NOT include CORS or auth middleware since the parent FastAPI app handles those.
+    Includes MCP-specific auth middleware if Clerk is configured.
 
     Returns:
         tuple: (app, lifespan_cm) where app is the Starlette app and lifespan_cm is the
@@ -135,7 +135,20 @@ def create_combined_mcp_app():
             async with mcp_http_app.lifespan(app):
                 yield
 
-    starlette_app = Starlette(routes=combined_routes, lifespan=combined_lifespan)
+    # Build middleware list - MCP auth if Clerk is configured
+    middleware_list = []
+    auth_middleware = _create_auth_middleware()
+    if auth_middleware:
+        middleware_list.append(auth_middleware)
+        logger.info("MCP combined app using Clerk JWT authentication")
+    else:
+        logger.info("MCP combined app running without authentication")
+
+    starlette_app = Starlette(
+        routes=combined_routes,
+        lifespan=combined_lifespan,
+        middleware=middleware_list,
+    )
 
     # Return both the app and the lifespan for the parent to use
     return starlette_app, combined_lifespan
