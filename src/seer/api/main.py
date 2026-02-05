@@ -119,10 +119,10 @@ app.include_router(router)
 app.include_router(tools_router)
 
 # =============================================================================
-# MCP Server Integration
+# MCP Server Integration (setup - mount happens after all routes are defined)
 # =============================================================================
-# Mount MCP app if enabled. This combines the FastAPI server with FastMCP
-# into a single deployable service.
+# Create MCP app if enabled. The actual mount happens at the end of this file
+# to ensure it doesn't catch requests meant for other routes.
 if config.mcp_enabled:
     # Create combined MCP app that handles both SSE (/sse) and HTTP (/mcp) transports
     mcp_app, mcp_lifespan = create_combined_mcp_app()
@@ -130,10 +130,7 @@ if config.mcp_enabled:
     # Store in app.state for lifespan access
     app.state.mcp_app = mcp_app
     app.state.mcp_lifespan = mcp_lifespan
-
-    # Mount at root - the MCP app has internal routes at /sse and /mcp
-    app.mount("", mcp_app)
-    logger.info("📡 MCP endpoints configured at /sse and /mcp")
+    logger.info("📡 MCP app created (will be mounted after routes)")
 
 # Correlation middleware - add correlation IDs to all requests
 from seer.api.core.middleware.correlation import CorrelationMiddleware  # pylint: disable=wrong-import-position,ungrouped-imports # Reason: Import after app creation
@@ -306,6 +303,16 @@ async def root_redirect():
     logger.info("Root path accessed, redirecting to: %s", redirect_url)
 
     return RedirectResponse(url=redirect_url, status_code=302)
+
+
+# =============================================================================
+# MCP Mount (must be AFTER all routes to avoid catching /health, /api/*, etc.)
+# =============================================================================
+# Mount MCP app at root - it has internal routes at /sse and /mcp
+# This must be done last because a root mount acts as a catch-all
+if config.mcp_enabled:
+    app.mount("", mcp_app)
+    logger.info("📡 MCP endpoints mounted at /sse and /mcp")
 
 
 # =============================================================================
