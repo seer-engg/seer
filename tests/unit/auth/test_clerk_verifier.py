@@ -1,12 +1,13 @@
 """
-Unit tests for ClerkJWTVerifier.
+Unit tests for ClerkJWTVerifier and ClerkOpaqueTokenVerifier.
 """
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+import httpx
 from jwt.exceptions import InvalidTokenError
 
-from seer.auth.clerk_verifier import ClerkJWTVerifier, VerifiedClerkToken
+from seer.auth.clerk_verifier import ClerkJWTVerifier, ClerkOpaqueTokenVerifier, VerifiedClerkToken
 
 
 class TestVerifiedClerkToken:
@@ -270,3 +271,225 @@ class TestClerkJWTVerifier:
         call_kwargs = mock_decode.call_args[1]
         assert call_kwargs["audience"] is None
         assert call_kwargs["options"]["verify_aud"] is False
+
+
+class TestClerkOpaqueTokenVerifier:
+    """Tests for ClerkOpaqueTokenVerifier."""
+
+    def test_init_requires_userinfo_url(self):
+        """Test that userinfo_url is required."""
+        with pytest.raises(ValueError, match="userinfo_url is required"):
+            ClerkOpaqueTokenVerifier(userinfo_url="")
+
+    def test_init_accepts_custom_timeout(self):
+        """Test custom timeout parameter."""
+        verifier = ClerkOpaqueTokenVerifier(
+            userinfo_url="https://clerk.example.com/oauth/userinfo",
+            timeout=5.0,
+        )
+        assert verifier._timeout == 5.0
+
+    @pytest.mark.asyncio
+    async def test_verify_valid_token(self):
+        """Test successful token verification."""
+        mock_userinfo = {
+            "user_id": "user_opaque_123",
+            "email": "opaque@example.com",
+            "email_verified": True,
+            "given_name": "Opaque",
+            "family_name": "User",
+            "picture": "https://example.com/photo.jpg",
+        }
+
+        with patch("seer.auth.clerk_verifier.httpx.AsyncClient") as mock_client_class:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = mock_userinfo
+            mock_response.raise_for_status = MagicMock()
+
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client_class.return_value = mock_client
+
+            verifier = ClerkOpaqueTokenVerifier(
+                userinfo_url="https://clerk.example.com/oauth/userinfo"
+            )
+
+            result = await verifier.verify_token("valid-opaque-token")
+
+            assert result is not None
+            assert result.user_id == "user_opaque_123"
+            assert result.email == "opaque@example.com"
+            assert result.first_name == "Opaque"
+            assert result.last_name == "User"
+            assert result.claims["picture"] == "https://example.com/photo.jpg"
+
+    @pytest.mark.asyncio
+    async def test_verify_token_with_sub_claim(self):
+        """Test that 'sub' claim is used when 'user_id' is missing."""
+        mock_userinfo = {
+            "sub": "user_from_sub",
+            "email": "test@example.com",
+        }
+
+        with patch("seer.auth.clerk_verifier.httpx.AsyncClient") as mock_client_class:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = mock_userinfo
+            mock_response.raise_for_status = MagicMock()
+
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client_class.return_value = mock_client
+
+            verifier = ClerkOpaqueTokenVerifier(
+                userinfo_url="https://clerk.example.com/oauth/userinfo"
+            )
+
+            result = await verifier.verify_token("token")
+            assert result.user_id == "user_from_sub"
+
+    @pytest.mark.asyncio
+    async def test_verify_invalid_token_401(self):
+        """Test handling of 401 response (invalid/expired token)."""
+        with patch("seer.auth.clerk_verifier.httpx.AsyncClient") as mock_client_class:
+            mock_response = MagicMock()
+            mock_response.status_code = 401
+
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client_class.return_value = mock_client
+
+            verifier = ClerkOpaqueTokenVerifier(
+                userinfo_url="https://clerk.example.com/oauth/userinfo"
+            )
+
+            result, error = await verifier.verify_token_with_error("invalid-token")
+
+            assert result is None
+            assert "invalid or expired" in error.lower()
+
+    @pytest.mark.asyncio
+    async def test_verify_forbidden_403(self):
+        """Test handling of 403 response (insufficient permissions)."""
+        with patch("seer.auth.clerk_verifier.httpx.AsyncClient") as mock_client_class:
+            mock_response = MagicMock()
+            mock_response.status_code = 403
+
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client_class.return_value = mock_client
+
+            verifier = ClerkOpaqueTokenVerifier(
+                userinfo_url="https://clerk.example.com/oauth/userinfo"
+            )
+
+            result, error = await verifier.verify_token_with_error("forbidden-token")
+
+            assert result is None
+            assert "insufficient permissions" in error.lower()
+
+    @pytest.mark.asyncio
+    async def test_verify_timeout(self):
+        """Test handling of timeout."""
+        with patch("seer.auth.clerk_verifier.httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get.side_effect = httpx.TimeoutException("Connection timed out")
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client_class.return_value = mock_client
+
+            verifier = ClerkOpaqueTokenVerifier(
+                userinfo_url="https://clerk.example.com/oauth/userinfo"
+            )
+
+            result, error = await verifier.verify_token_with_error("some-token")
+
+            assert result is None
+            assert "timed out" in error.lower()
+
+    @pytest.mark.asyncio
+    async def test_verify_network_error(self):
+        """Test handling of network errors."""
+        with patch("seer.auth.clerk_verifier.httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get.side_effect = httpx.ConnectError("Connection refused")
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client_class.return_value = mock_client
+
+            verifier = ClerkOpaqueTokenVerifier(
+                userinfo_url="https://clerk.example.com/oauth/userinfo"
+            )
+
+            result, error = await verifier.verify_token_with_error("some-token")
+
+            assert result is None
+            assert error is not None
+            assert "error" in error.lower()
+
+    @pytest.mark.asyncio
+    async def test_verify_missing_user_id(self):
+        """Test handling of response missing user_id."""
+        mock_userinfo = {
+            "email": "test@example.com",
+            # No user_id or sub
+        }
+
+        with patch("seer.auth.clerk_verifier.httpx.AsyncClient") as mock_client_class:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = mock_userinfo
+            mock_response.raise_for_status = MagicMock()
+
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client_class.return_value = mock_client
+
+            verifier = ClerkOpaqueTokenVerifier(
+                userinfo_url="https://clerk.example.com/oauth/userinfo"
+            )
+
+            result, error = await verifier.verify_token_with_error("token")
+
+            assert result is None
+            assert error is not None
+
+    @pytest.mark.asyncio
+    async def test_verify_sends_bearer_token(self):
+        """Test that Bearer token is sent in Authorization header."""
+        mock_userinfo = {"user_id": "user_123"}
+
+        with patch("seer.auth.clerk_verifier.httpx.AsyncClient") as mock_client_class:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = mock_userinfo
+            mock_response.raise_for_status = MagicMock()
+
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client_class.return_value = mock_client
+
+            verifier = ClerkOpaqueTokenVerifier(
+                userinfo_url="https://clerk.example.com/oauth/userinfo"
+            )
+
+            await verifier.verify_token("my-opaque-token")
+
+            # Verify the GET request was made with correct headers
+            mock_client.get.assert_called_once_with(
+                "https://clerk.example.com/oauth/userinfo",
+                headers={"Authorization": "Bearer my-opaque-token"},
+            )
