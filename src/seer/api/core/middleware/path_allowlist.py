@@ -9,7 +9,8 @@ DEFAULT_PUBLIC_PATHS = {
     "/api/subscriptions/webhooks/stripe",
     "/api/integrations/google/callback",
     "/api/integrations/github/callback",
-    "/api/integrations/supabase_mgmt/callback"
+    "/api/integrations/supabase_mgmt/callback",
+    "/.well-known/oauth-protected-resource",
 }
 
 DEFAULT_DOCS_PATHS = {
@@ -20,7 +21,9 @@ DEFAULT_DOCS_PATHS = {
 # Prefixes that represent collections of public endpoints.
 DEFAULT_PUBLIC_PREFIXES = (
     "/api/v1/webhooks",
-    "/api/forms"
+    "/api/forms",
+    "/sse",  # MCP SSE transport (has its own auth)
+    "/mcp",  # MCP HTTP transport (has its own auth)
 )
 
 
