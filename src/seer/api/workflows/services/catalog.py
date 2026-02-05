@@ -74,6 +74,18 @@ NODE_TYPE_DESCRIPTORS = api_models.NodeTypeResponse(
                 api_models.NodeFieldDescriptor(name="expect_outputs", kind="output_contract"),
             ],
         ),
+        api_models.NodeTypeDescriptor(
+            type="hitl",
+            title="Human Input",
+            fields=[
+                api_models.NodeFieldDescriptor(name="id", kind="string", required=True),
+                api_models.NodeFieldDescriptor(name="title", kind="string", required=True),
+                api_models.NodeFieldDescriptor(name="description", kind="textarea"),
+                api_models.NodeFieldDescriptor(name="display", kind="hitl_display"),
+                api_models.NodeFieldDescriptor(name="inputs", kind="hitl_inputs"),
+                api_models.NodeFieldDescriptor(name="timeout_seconds", kind="number"),
+            ],
+        ),
         # Note: 'task' node type is not supported in the frontend builder UI
         # It's only used internally in workflow specs
     ]
