@@ -187,8 +187,83 @@ class ForEachNode(NodeBase):
     outputs: Optional[OutputContract] = None
 
 
+# -----------------------------
+# HITL (Human-In-The-Loop) Node
+# -----------------------------
+class HITLInputType(str, Enum):
+    """Input types for HITL node user input collection."""
+    single_choice = "single_choice"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
+    multi_choice = "multi_choice"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
+    text = "text"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
+    number = "number"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
+    boolean = "boolean"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
+
+
+class HITLInputOption(StrictModel):
+    """Option for choice-based HITL inputs."""
+    value: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    requires_text: bool = False  # If true, selecting this option prompts for additional text input
+
+
+class HITLDisplayItem(StrictModel):
+    """Display item shown to user during HITL interrupt."""
+    label: str = ""
+    value: str = ""  # Expression like ${node.field}
+
+
+class HITLInputField(StrictModel):
+    """Input field definition for collecting user responses."""
+    id: str = Field(min_length=1)
+    question: str = Field(min_length=1)
+    input_type: HITLInputType
+    options: Optional[List[HITLInputOption]] = None  # Required for choice types
+    required: bool = True
+    placeholder: Optional[str] = None
+    default_value: Optional[JSONValue] = None
+
+    @model_validator(mode="after")
+    def _validate_options(self) -> "HITLInputField":
+        """Validate that choice types have options defined."""
+        if self.input_type in (HITLInputType.single_choice, HITLInputType.multi_choice):
+            if not self.options or len(self.options) < 2:
+                raise ValueError(f"HITLInputField with input_type={self.input_type.value} requires at least 2 options")
+        elif self.options:
+            raise ValueError(f"HITLInputField with input_type={self.input_type.value} should not have options")
+        return self
+
+
+class HITLNode(NodeBase):
+    """
+    Human-In-The-Loop node that pauses workflow execution to collect user input.
+
+    Uses LangGraph's interrupt() mechanism to pause execution and wait for
+    user response before continuing.
+    """
+    type: Literal["hitl"] = "hitl"
+    title: str = Field(min_length=1)
+    description: Optional[str] = None
+    display: List[HITLDisplayItem] = Field(default_factory=list)
+    inputs: List[HITLInputField] = Field(default_factory=list)
+    timeout_seconds: Optional[int] = None  # null or 0 = indefinite wait
+
+    @model_validator(mode="after")
+    def _validate_inputs(self) -> "HITLNode":
+        """Validate unique input IDs."""
+        seen_ids = set()
+        duplicate_ids = []
+        for input_field in self.inputs:
+            if input_field.id in seen_ids:
+                duplicate_ids.append(input_field.id)
+            seen_ids.add(input_field.id)
+        if duplicate_ids:
+            dup_list = ", ".join(sorted(set(duplicate_ids)))
+            raise ValueError(f"HITLNode has duplicate input IDs: {dup_list}")
+        return self
+
+
 Node = Annotated[
-    Union[ToolNode, LLMNode, MCPNode, IfNode, ForEachNode],
+    Union[ToolNode, LLMNode, MCPNode, IfNode, ForEachNode, HITLNode],
     Field(discriminator="type"),
 ]
 

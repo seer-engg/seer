@@ -19,6 +19,8 @@ from seer.core.registry.mcp_client_registry import MCPClientRegistry, MCPServerC
 from seer.core.registry.tool_registry import ToolRegistry
 from seer.core.schema.models import (
     ForEachNode,
+    HITLInputType,
+    HITLNode,
     LLMNode,
     MCPNode,
     Node,
@@ -132,6 +134,58 @@ def _register_loop_variables(spec: WorkflowSpec, env: TypeEnvironment) -> None:
         env.register(node.index_var, {"type": "integer"})
 
 
+def _build_hitl_output_schema(node: HITLNode) -> Dict:
+    """
+    Build output schema dynamically from HITL input field definitions.
+
+    Each input field becomes a property in the output schema with the appropriate type.
+    """
+    properties: Dict = {}
+    required: List[str] = []
+
+    for input_field in node.inputs:
+        field_schema: Dict = {}
+
+        if input_field.input_type == HITLInputType.text:
+            field_schema = {"type": "string"}
+        elif input_field.input_type == HITLInputType.number:
+            field_schema = {"type": "number"}
+        elif input_field.input_type == HITLInputType.boolean:
+            field_schema = {"type": "boolean"}
+        elif input_field.input_type == HITLInputType.single_choice:
+            # Single choice returns the selected value as a string
+            if input_field.options:
+                field_schema = {
+                    "type": "string",
+                    "enum": [opt.value for opt in input_field.options],
+                }
+            else:
+                field_schema = {"type": "string"}
+        elif input_field.input_type == HITLInputType.multi_choice:
+            # Multi choice returns an array of selected values
+            if input_field.options:
+                field_schema = {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [opt.value for opt in input_field.options],
+                    },
+                }
+            else:
+                field_schema = {"type": "array", "items": {"type": "string"}}
+
+        properties[input_field.id] = field_schema
+        if input_field.required:
+            required.append(input_field.id)
+
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": False,
+    }
+
+
 def _process_node_sync(
     node: Node,
     env: TypeEnvironment,
@@ -169,6 +223,12 @@ def _process_node_sync(
         else:
             loop_schema = {"type": "array"}
         _register_symbol(env, node.id, loop_schema)
+        return
+
+    if isinstance(node, HITLNode):
+        # Build output schema dynamically from input field definitions
+        schema = _build_hitl_output_schema(node)
+        _register_symbol(env, node.id, schema)
         return
 
     # IfNode doesn't produce output directly (branches do)

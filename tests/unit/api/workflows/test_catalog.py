@@ -67,6 +67,25 @@ class TestListNodeTypes:
         assert "mcp" in types
 
     @pytest.mark.asyncio
+    async def test_list_node_types_includes_hitl_type(self):
+        """Test HITL (Human-In-The-Loop) node type is included in response."""
+        result = await catalog.list_node_types()
+
+        types = [nt.type for nt in result.node_types]
+        assert "hitl" in types
+
+        hitl_descriptor = next(nt for nt in result.node_types if nt.type == "hitl")
+        assert hitl_descriptor.title == "Human Input"
+
+        field_names = [f.name for f in hitl_descriptor.fields]
+        assert "id" in field_names
+        assert "title" in field_names
+        assert "description" in field_names
+        assert "display" in field_names
+        assert "inputs" in field_names
+        assert "timeout_seconds" in field_names
+
+    @pytest.mark.asyncio
     async def test_list_node_types_field_descriptors_have_required_fields(self):
         """Test node type descriptors have properly structured fields."""
         result = await catalog.list_node_types()

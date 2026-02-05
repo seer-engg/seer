@@ -28,6 +28,10 @@ from seer.database import (
     make_workflow_public_id,
 )
 from seer.worker.tasks.workflows import workflow_execution_task
+from seer.services.workflows.execution import (
+    get_workflow_run_interrupt as _get_workflow_run_interrupt,
+    resume_workflow_run as _resume_workflow_run,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -377,3 +381,34 @@ async def run_saved_workflow(  # pylint: disable=too-complex # Reason: Complex w
             status=500,
         )
     return _serialize_run(run)
+
+
+async def resume_workflow_run(
+    user: User,
+    run_id: str,
+    responses: Dict[str, Any],
+) -> api_models.RunResponse:
+    """
+    Resume a workflow run that is paused at an HITL interrupt.
+
+    Delegates to the core service and returns API response.
+    """
+    await _resume_workflow_run(user, run_id, responses)
+
+    # Fetch the updated run for response
+    from seer.database.workflow_models import parse_run_public_id  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import
+    run_pk = parse_run_public_id(run_id)
+    run = await WorkflowRun.get(id=run_pk)
+    return _serialize_run(run)
+
+
+async def get_workflow_run_interrupt(
+    user: User,
+    run_id: str,
+) -> Optional[Dict[str, Any]]:
+    """
+    Get pending HITL interrupt data for a workflow run.
+
+    Returns interrupt data if run is interrupted, None otherwise.
+    """
+    return await _get_workflow_run_interrupt(user, run_id)
