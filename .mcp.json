@@ -1,0 +1,8 @@
+{
+"mcpServers": {
+    "seer": {
+    "command": "seer-mcp",
+    "args": ["--transport", "stdio"]
+    }
+}
+}

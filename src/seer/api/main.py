@@ -27,6 +27,10 @@ from seer.database import db_lifespan
 from seer.logger import get_logger
 from seer.observability.exceptions import ChatDisabledError, UsageLimitError
 
+# MCP imports for combined server
+if config.mcp_enabled:
+    from seer.mcp.server import create_combined_mcp_app, oauth_protected_resource_metadata
+
 # Middleware order is important:
 # Think of middleware as layers wrapping your core application (the route handler).
 # The first middleware you add forms the innermost layer,
@@ -83,11 +87,23 @@ async def lifespan(fastapi_app: FastAPI):
 
             asyncio.create_task(open_frontend_after_startup())
 
-            try:
-                yield
-            finally:
-                if hasattr(fastapi_app.state, "checkpointer"):
-                    delattr(fastapi_app.state, "checkpointer")
+            # Nest MCP lifespan if MCP is enabled
+            # The MCP lifespan initializes the session manager for MCP transports
+            if config.mcp_enabled:
+                mcp_lifespan_cm = fastapi_app.state.mcp_lifespan
+                async with mcp_lifespan_cm(fastapi_app):
+                    logger.info("✅ MCP endpoints enabled at /sse and /mcp")
+                    try:
+                        yield
+                    finally:
+                        if hasattr(fastapi_app.state, "checkpointer"):
+                            delattr(fastapi_app.state, "checkpointer")
+            else:
+                try:
+                    yield
+                finally:
+                    if hasattr(fastapi_app.state, "checkpointer"):
+                        delattr(fastapi_app.state, "checkpointer")
 
     logger.info("👋 Seer API server shutting down...")
 
@@ -101,6 +117,23 @@ app = FastAPI(
 
 app.include_router(router)
 app.include_router(tools_router)
+
+# =============================================================================
+# MCP Server Integration
+# =============================================================================
+# Mount MCP app if enabled. This combines the FastAPI server with FastMCP
+# into a single deployable service.
+if config.mcp_enabled:
+    # Create combined MCP app that handles both SSE (/sse) and HTTP (/mcp) transports
+    mcp_app, mcp_lifespan = create_combined_mcp_app()
+
+    # Store in app.state for lifespan access
+    app.state.mcp_app = mcp_app
+    app.state.mcp_lifespan = mcp_lifespan
+
+    # Mount at root - the MCP app has internal routes at /sse and /mcp
+    app.mount("", mcp_app)
+    logger.info("📡 MCP endpoints configured at /sse and /mcp")
 
 # Correlation middleware - add correlation IDs to all requests
 from seer.api.core.middleware.correlation import CorrelationMiddleware  # pylint: disable=wrong-import-position,ungrouped-imports # Reason: Import after app creation
@@ -227,6 +260,19 @@ async def global_exception_handler(request: Request, exc: Exception):
 # =============================================================================
 # Health & Info Endpoints
 # =============================================================================
+
+# OAuth discovery endpoint for MCP clients (must be at well-known path)
+if config.mcp_enabled:
+    @app.get("/.well-known/oauth-protected-resource", tags=["OAuth"])
+    async def oauth_discovery(request: Request):
+        """
+        OAuth Protected Resource Metadata for MCP clients.
+
+        This endpoint tells MCP clients (like ChatGPT) where to authenticate.
+        See: https://datatracker.ietf.org/doc/html/rfc9728
+        """
+        return await oauth_protected_resource_metadata(request)
+
 
 @app.get("/health", tags=["System"])
 async def health_check():
