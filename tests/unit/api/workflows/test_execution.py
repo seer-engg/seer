@@ -121,9 +121,13 @@ class TestWorkflowRunStatus:
         """Test CANCELLED status value."""
         assert WorkflowRunStatus.CANCELLED.value == "cancelled"
 
+    def test_interrupted_status_value(self):
+        """Test INTERRUPTED status value."""
+        assert WorkflowRunStatus.INTERRUPTED.value == "interrupted"
+
     def test_all_status_values_exist(self):
         """Test all expected status values exist."""
-        expected = {"queued", "running", "succeeded", "failed", "cancelled"}
+        expected = {"queued", "running", "succeeded", "failed", "cancelled", "interrupted"}
         actual = {s.value for s in WorkflowRunStatus}
         assert actual == expected
 

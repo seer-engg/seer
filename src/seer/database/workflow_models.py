@@ -17,6 +17,7 @@ class WorkflowRunStatus(str, Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    INTERRUPTED = "interrupted"  # HITL: workflow paused waiting for user input
 
 
 class WorkflowRunSource(str, Enum):
@@ -204,6 +205,21 @@ class WorkflowRun(models.Model):
     started_at = fields.DatetimeField(null=True)
     finished_at = fields.DatetimeField(null=True)
     metrics = fields.JSONField(null=True)
+
+    # HITL interrupt fields
+    pending_interrupt_node_id = fields.CharField(
+        max_length=255,
+        null=True,
+        description="Node ID where workflow is waiting for user input",
+    )
+    pending_interrupt_data = fields.JSONField(
+        null=True,
+        description="HITL interrupt payload waiting for user response",
+    )
+    interrupt_expires_at = fields.DatetimeField(
+        null=True,
+        description="When the HITL interrupt times out (null = indefinite)",
+    )
 
     class Meta:
         table = "workflow_runs"

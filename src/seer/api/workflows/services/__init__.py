@@ -20,7 +20,9 @@ from .catalog import (
 # Import from execution module
 from .execution import (
     _create_run_record,
+    get_workflow_run_interrupt,
     list_workflow_runs,
+    resume_workflow_run,
     run_saved_workflow,
 )
 
@@ -86,6 +88,8 @@ __all__ = [
     "import_workflow",
     "typecheck_expression",
     "run_saved_workflow",
+    "resume_workflow_run",
+    "get_workflow_run_interrupt",
     "list_workflow_runs",
     "get_run_status",
     "get_run_history",

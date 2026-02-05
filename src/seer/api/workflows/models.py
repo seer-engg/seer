@@ -390,6 +390,48 @@ class WorkflowExportResponse(BaseModel):
     metadata: Dict[str, Any]
 
 
+# -----------------------------
+# HITL (Human-In-The-Loop) Models
+# -----------------------------
+class HITLResumeRequest(BaseModel):
+    """Request payload to resume a workflow from an HITL interrupt."""
+    responses: Dict[str, Any] = Field(
+        ...,
+        description="User responses keyed by input field ID"
+    )
+
+
+class HITLInterruptDisplayItem(BaseModel):
+    """Display item with evaluated value."""
+    label: str
+    value: Any
+
+
+class HITLInterruptInputField(BaseModel):
+    """Input field definition for HITL collection."""
+    id: str
+    question: str
+    input_type: str
+    options: Optional[List[Dict[str, Any]]] = None
+    required: bool = True
+    placeholder: Optional[str] = None
+    default_value: Optional[Any] = None
+
+
+class HITLInterruptResponse(BaseModel):
+    """Response containing HITL interrupt data for a run."""
+    run_id: str
+    status: str
+    node_id: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    display: List[HITLInterruptDisplayItem] = Field(default_factory=list)
+    inputs: List[HITLInterruptInputField] = Field(default_factory=list)
+    timeout_seconds: Optional[int] = None
+    expires_at: Optional[str] = None
+    is_expired: bool = False
+
+
 __all__ = [
     "ProblemDetails",
     "ProblemError",
@@ -448,4 +490,8 @@ __all__ = [
     "ExpressionSuggestion",
     "WorkflowImportRequest",
     "WorkflowExportResponse",
+    "HITLResumeRequest",
+    "HITLInterruptDisplayItem",
+    "HITLInterruptInputField",
+    "HITLInterruptResponse",
 ]

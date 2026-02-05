@@ -1,8 +1,9 @@
 from typing import Dict, Any, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import traceback
 from fastapi import HTTPException
 
+from langgraph.types import Command
 
 from seer.api.agents.checkpointer import get_checkpointer
 from seer.core.errors import ExecutionError, WorkflowCompilerError
@@ -19,6 +20,37 @@ logger = get_logger(__name__)
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _extract_hitl_interrupt(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Extract HITL interrupt data from workflow execution result.
+
+    LangGraph stores interrupt data in the result's __interrupt__ key when
+    the workflow pauses due to an interrupt() call.
+
+    Returns the interrupt payload if this is an HITL interrupt, None otherwise.
+    """
+    # Check for LangGraph interrupt in result
+    interrupts = result.get("__interrupt__")
+    if not interrupts:
+        return None
+
+    # interrupts is a tuple of Interrupt objects
+    for interrupt_obj in interrupts:
+        # Get the value from the Interrupt object
+        interrupt_value = getattr(interrupt_obj, "value", None)
+        if isinstance(interrupt_value, dict) and interrupt_value.get("type") == "hitl":
+            return interrupt_value
+
+    return None
+
+
+def _calculate_interrupt_expiry(timeout_seconds: Optional[int]) -> Optional[datetime]:
+    """Calculate when the interrupt should expire based on timeout_seconds."""
+    if not timeout_seconds or timeout_seconds <= 0:
+        return None  # Indefinite wait
+    return _now() + timedelta(seconds=timeout_seconds)
 
 async def _compile_workflow(
     user: User,
@@ -122,6 +154,32 @@ async def _execute_run(
         result = await compiled.ainvoke(
             config=effective_config, context=runtime_context, trigger=trigger_envelope
         )
+
+        # Check for HITL interrupt
+        hitl_interrupt = _extract_hitl_interrupt(result)
+        if hitl_interrupt:
+            logger.info(
+                "HITL interrupt detected for run '%s' at node '%s'",
+                run.run_id,
+                hitl_interrupt.get("node_id"),
+                extra={
+                    "run_id": run.run_id,
+                    "node_id": hitl_interrupt.get("node_id"),
+                    "title": hitl_interrupt.get("title"),
+                },
+            )
+            timeout_seconds = hitl_interrupt.get("timeout_seconds")
+            expires_at = _calculate_interrupt_expiry(timeout_seconds)
+
+            await WorkflowRun.filter(id=run.id).update(
+                status=WorkflowRunStatus.INTERRUPTED,
+                pending_interrupt_node_id=hitl_interrupt.get("node_id"),
+                pending_interrupt_data=hitl_interrupt,
+                interrupt_expires_at=expires_at,
+            )
+            # Return result with interrupt flag for caller awareness
+            return {"__interrupted__": True, "__interrupt_data__": hitl_interrupt, **result}
+
     except Exception as exc:
         # Conditional import here to avoid circular dependency during module initialization
         from seer.observability.exceptions import RunCostCapExceeded  # pylint: disable=import-outside-toplevel  # Reason: circular dependency
@@ -202,6 +260,15 @@ async def execute_saved_workflow_run(
             config_payload=config_payload,
             trigger_envelope=trigger_envelope,
         )
+        # Check if workflow was interrupted (HITL)
+        if output.get("__interrupted__"):
+            logger.info(
+                "Workflow run '%s' interrupted at HITL node",
+                run.run_id,
+                extra={"run_id": run.run_id},
+            )
+            # Run is already marked as INTERRUPTED by _execute_run
+            return
         await _mark_run_succeeded(run, output)
     except HTTPException:
         logger.exception(
@@ -215,3 +282,231 @@ async def execute_saved_workflow_run(
             extra={"run_id": run.run_id, "workflow_id": getattr(run.workflow, "workflow_id", None)},
         )
         raise
+
+
+async def _validate_resume_request(
+    user: User,
+    run: WorkflowRun,
+) -> None:
+    """Validate that resume request is valid."""
+    # Verify ownership
+    if run.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to resume this run")
+
+    # Verify run is in INTERRUPTED state
+    if run.status != WorkflowRunStatus.INTERRUPTED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Run is not in INTERRUPTED state (current: {run.status})"
+        )
+
+    # Check if interrupt has expired
+    if run.interrupt_expires_at and run.interrupt_expires_at < _now():
+        await WorkflowRun.filter(id=run.id).update(
+            status=WorkflowRunStatus.FAILED,
+            finished_at=_now(),
+            error="HITL interrupt timed out",
+            pending_interrupt_node_id=None,
+            pending_interrupt_data=None,
+            interrupt_expires_at=None,
+        )
+        raise HTTPException(status_code=408, detail="HITL interrupt has timed out")
+
+
+async def _execute_resume(
+    run: WorkflowRun,
+    user: User,
+    compiled: Any,
+    responses: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Execute the resume operation and handle result."""
+    run_config = dict(run.config or {})
+    effective_config = _build_run_config(run, run_config)
+
+    # Fetch user settings for cost cap
+    user_settings, _ = await UserSettings.get_or_create(user=user)
+    per_run_cost_cap_usd = user_settings.preferences.get("per_run_cost_cap_usd", 5.0)
+
+    runtime_context = WorkflowRuntimeContext(
+        user=user,
+        workflow_run_id=run.run_id,
+        thread_id=None,
+        per_run_cost_cap_usd=per_run_cost_cap_usd,
+        accumulated_cost_usd=0.0,
+    )
+
+    # Resume with user responses using LangGraph's Command
+    resume_command = Command(resume=responses)
+    result = await compiled.ainvoke(
+        resume_command,
+        config=effective_config,
+        context=runtime_context,
+    )
+
+    # Check for another HITL interrupt
+    hitl_interrupt = _extract_hitl_interrupt(result)
+    if hitl_interrupt:
+        logger.info(
+            "Another HITL interrupt detected for run '%s' at node '%s'",
+            run.run_id,
+            hitl_interrupt.get("node_id"),
+        )
+        timeout_seconds = hitl_interrupt.get("timeout_seconds")
+        expires_at = _calculate_interrupt_expiry(timeout_seconds)
+
+        await WorkflowRun.filter(id=run.id).update(
+            status=WorkflowRunStatus.INTERRUPTED,
+            pending_interrupt_node_id=hitl_interrupt.get("node_id"),
+            pending_interrupt_data=hitl_interrupt,
+            interrupt_expires_at=expires_at,
+        )
+        return {"__interrupted__": True, "__interrupt_data__": hitl_interrupt, **result}
+
+    # Workflow completed successfully
+    await WorkflowRun.filter(id=run.id).update(
+        status=WorkflowRunStatus.SUCCEEDED,
+        finished_at=_now(),
+        output=result,
+    )
+    return result
+
+
+async def resume_workflow_run(
+    user: User,
+    run_id: str,
+    responses: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Resume a workflow run that is paused at an HITL interrupt.
+
+    Args:
+        user: The user resuming the run
+        run_id: Public run ID (run_XXX format)
+        responses: User responses keyed by input field ID
+
+    Returns:
+        Execution result or new interrupt data if another HITL node is reached
+
+    Raises:
+        HTTPException: If run is not found, not owned by user, or not in INTERRUPTED state
+    """
+    from seer.database.workflow_models import parse_run_public_id  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import
+
+    # Parse and fetch the run
+    try:
+        run_pk = parse_run_public_id(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid run_id format: {run_id}") from exc
+
+    run = await WorkflowRun.get_or_none(id=run_pk)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+
+    await run.fetch_related("user", "workflow")
+
+    # Validate resume request
+    await _validate_resume_request(user, run)
+
+    logger.info(
+        "Resuming workflow run '%s' with responses for node '%s'",
+        run.run_id,
+        run.pending_interrupt_node_id,
+        extra={
+            "run_id": run.run_id,
+            "node_id": run.pending_interrupt_node_id,
+            "response_keys": list(responses.keys()),
+        },
+    )
+
+    # Mark run as running again
+    await WorkflowRun.filter(id=run.id).update(
+        status=WorkflowRunStatus.RUNNING,
+        pending_interrupt_node_id=None,
+        pending_interrupt_data=None,
+        interrupt_expires_at=None,
+    )
+
+    # Compile workflow
+    checkpointer = await get_checkpointer()
+    try:
+        compiled = await _compile_workflow(user, run.spec, checkpointer=checkpointer)
+    except WorkflowCompilerError as exc:
+        logger.error("Workflow compilation failed during resume", exc_info=True)
+        await WorkflowRun.filter(id=run.id).update(
+            status=WorkflowRunStatus.FAILED,
+            finished_at=_now(),
+            error=str(exc),
+        )
+        raise HTTPException(status_code=500, detail=f"Compilation failed: {exc}") from exc
+
+    # Execute resume
+    try:
+        return await _execute_resume(run, user, compiled, responses)
+    except Exception as exc:
+        from seer.observability.exceptions import RunCostCapExceeded  # pylint: disable=import-outside-toplevel  # Reason: circular dependency
+
+        if isinstance(exc, RunCostCapExceeded):
+            logger.warning("Run cost cap exceeded during resume for '%s'", run.run_id)
+            await WorkflowRun.filter(id=run.id).update(
+                status=WorkflowRunStatus.FAILED,
+                finished_at=_now(),
+                error=exc.to_dict(),
+            )
+            raise HTTPException(status_code=402, detail=exc.to_dict()) from exc
+
+        logger.exception("Error during workflow resume", extra={"run_id": run.run_id})
+        await WorkflowRun.filter(id=run.id).update(
+            status=WorkflowRunStatus.FAILED,
+            finished_at=_now(),
+            error=str(exc),
+        )
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+async def get_workflow_run_interrupt(
+    user: User,
+    run_id: str,
+) -> Optional[Dict[str, Any]]:
+    """
+    Get pending HITL interrupt data for a workflow run.
+
+    Args:
+        user: The user requesting interrupt data
+        run_id: Public run ID (run_XXX format)
+
+    Returns:
+        Interrupt data dict if run is interrupted, None otherwise
+
+    Raises:
+        HTTPException: If run is not found or not owned by user
+    """
+    from seer.database.workflow_models import parse_run_public_id  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import
+
+    try:
+        run_pk = parse_run_public_id(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid run_id format: {run_id}") from exc
+
+    run = await WorkflowRun.get_or_none(id=run_pk)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+
+    await run.fetch_related("user")
+
+    if run.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to view this run")
+
+    if run.status != WorkflowRunStatus.INTERRUPTED:
+        return None
+
+    # Check if expired
+    is_expired = run.interrupt_expires_at and run.interrupt_expires_at < _now()
+
+    return {
+        "run_id": run.run_id,
+        "status": run.status.value,
+        "node_id": run.pending_interrupt_node_id,
+        "interrupt_data": run.pending_interrupt_data,
+        "expires_at": run.interrupt_expires_at.isoformat() if run.interrupt_expires_at else None,
+        "is_expired": is_expired,
+    }

@@ -20,7 +20,7 @@ from seer.core.expr.typecheck import (
     ensure_references_valid,
     typecheck_reference,
 )
-from seer.core.schema.models import ForEachNode, IfNode, Node, WorkflowSpec
+from seer.core.schema.models import ForEachNode, HITLNode, IfNode, Node, WorkflowSpec
 
 
 def validate_references(spec: WorkflowSpec, type_env: TypeEnvironment) -> None:
@@ -142,6 +142,10 @@ def _validate_node(node: Node, scope: Scope, errors: List[str]) -> None:
         _validate_for_each(node, scope, errors)
         return
 
+    if isinstance(node, HITLNode):
+        _validate_hitl(node, scope, errors)
+        return
+
 
 def _validate_for_each(node: ForEachNode, scope: Scope, errors: List[str]) -> None:
     """
@@ -157,6 +161,22 @@ def _validate_for_each(node: ForEachNode, scope: Scope, errors: List[str]) -> No
             raise TypeCheckError("for_each items expression must resolve to an array schema")
     except (TypeCheckError, ValidationPhaseError) as exc:
         errors.append(f"{node.id}.items: {exc}")
+
+
+def _validate_hitl(node: HITLNode, scope: Scope, errors: List[str]) -> None:
+    """
+    Validate display expressions in an HITLNode.
+
+    Display items have value fields that can contain ${...} expressions.
+    These expressions must reference valid symbols in scope.
+    """
+    for idx, display_item in enumerate(node.display):
+        _validate_value_references(
+            display_item.value,
+            scope,
+            errors,
+            context=f"{node.id}.display[{idx}].value",
+        )
 
 
 def _single_reference(expression: str) -> ReferenceExpr:

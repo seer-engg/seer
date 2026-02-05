@@ -260,4 +260,52 @@ async def get_run_history(request: Request, run_id: str):
     return await services.get_run_history(user, run_id)
 
 
+@router.get("/runs/{run_id}/interrupt", response_model=api_models.HITLInterruptResponse)
+async def get_run_interrupt(request: Request, run_id: str):
+    """
+    Get pending HITL interrupt data for a workflow run.
+
+    Returns 404 if run is not found or not in INTERRUPTED state.
+    """
+    user = _require_user(request)
+    interrupt_data = await services.get_workflow_run_interrupt(user, run_id)
+    if interrupt_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No pending interrupt for this run"
+        )
+
+    # Transform interrupt data to response model
+    interrupt_payload = interrupt_data.get("interrupt_data") or {}
+    return api_models.HITLInterruptResponse(
+        run_id=interrupt_data.get("run_id", run_id),
+        status=interrupt_data.get("status", "interrupted"),
+        node_id=interrupt_data.get("node_id"),
+        title=interrupt_payload.get("title"),
+        description=interrupt_payload.get("description"),
+        display=[
+            api_models.HITLInterruptDisplayItem(**item)
+            for item in interrupt_payload.get("display", [])
+        ],
+        inputs=[
+            api_models.HITLInterruptInputField(**field)
+            for field in interrupt_payload.get("inputs", [])
+        ],
+        timeout_seconds=interrupt_payload.get("timeout_seconds"),
+        expires_at=interrupt_data.get("expires_at"),
+        is_expired=interrupt_data.get("is_expired", False),
+    )
+
+
+@router.post("/runs/{run_id}/resume", response_model=api_models.RunResponse)
+async def resume_run(request: Request, run_id: str, payload: api_models.HITLResumeRequest):
+    """
+    Resume a workflow run that is paused at an HITL interrupt.
+
+    Provides user responses to continue workflow execution.
+    """
+    user = _require_user(request)
+    return await services.resume_workflow_run(user, run_id, payload.responses)
+
+
 __all__ = ["router"]
