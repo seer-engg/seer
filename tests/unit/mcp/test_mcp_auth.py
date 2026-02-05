@@ -68,29 +68,43 @@ class TestExtractBearerToken:
 class TestWwwAuthenticateResponse:
     """Tests for www_authenticate_response function."""
 
-    def test_returns_401_status(self):
+    @pytest.fixture
+    def mock_request(self):
+        """Create a mock request with URL info for constructing resource_metadata."""
+        request = MagicMock(spec=Request)
+        # Mock URL with netloc for constructing the resource_metadata URL
+        mock_url = MagicMock()
+        mock_url.netloc = "api.example.com"
+        request.url = mock_url
+        return request
+
+    def test_returns_401_status(self, mock_request):
         """Test that response has 401 status code."""
-        response = www_authenticate_response("Test error")
+        response = www_authenticate_response(mock_request, "Test error")
         assert response.status_code == 401
 
-    def test_includes_www_authenticate_header(self):
-        """Test that WWW-Authenticate header is included."""
-        response = www_authenticate_response("Token expired")
+    def test_includes_www_authenticate_header_with_resource_metadata(self, mock_request):
+        """Test that WWW-Authenticate header includes resource_metadata for OAuth discovery."""
+        response = www_authenticate_response(mock_request, "Token expired")
         assert "WWW-Authenticate" in response.headers
-        assert 'Bearer realm="seer"' in response.headers["WWW-Authenticate"]
-        assert "Token expired" in response.headers["WWW-Authenticate"]
+        header = response.headers["WWW-Authenticate"]
+        # Check for resource_metadata URL (scheme comes from config, defaults to http)
+        assert 'resource_metadata="http://api.example.com/.well-known/oauth-protected-resource"' in header
+        assert "Token expired" in header
 
-    def test_includes_mcp_meta(self):
+    def test_includes_mcp_meta(self, mock_request):
         """Test that _meta with mcp/www_authenticate is included in body."""
-        response = www_authenticate_response("Test error")
+        response = www_authenticate_response(mock_request, "Test error")
         # The body contains JSON with _meta
         body = response.body.decode()
         assert "mcp/www_authenticate" in body
         assert "authentication_required" in body
+        # Also verify resource_metadata is in the meta
+        assert ".well-known/oauth-protected-resource" in body
 
-    def test_custom_error_code(self):
+    def test_custom_error_code(self, mock_request):
         """Test custom error code in response."""
-        response = www_authenticate_response("Missing scope", error="insufficient_scope")
+        response = www_authenticate_response(mock_request, "Missing scope", error="insufficient_scope")
         header = response.headers["WWW-Authenticate"]
         assert 'error="insufficient_scope"' in header
 
