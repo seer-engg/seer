@@ -15,6 +15,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from seer.auth.clerk_verifier import ClerkJWTVerifier, VerifiedClerkToken
+from seer.config import config
 from seer.logger import get_logger
 
 logger = get_logger(__name__)
@@ -25,28 +26,37 @@ mcp_authenticated_user: ContextVar[Optional[VerifiedClerkToken]] = ContextVar(
 )
 
 
-def www_authenticate_response(error_description: str, error: str = "invalid_token") -> JSONResponse:
+def www_authenticate_response(request: Request, error_description: str, error: str = "invalid_token") -> JSONResponse:
     """
     Create a 401 response with WWW-Authenticate header per RFC 6750.
+    Includes resource_metadata for OAuth discovery.
 
     Args:
+        request: The incoming request (used to construct resource_metadata URL)
         error_description: Human-readable description of the error
         error: OAuth error code (invalid_token, invalid_request, insufficient_scope)
 
     Returns:
         JSONResponse with 401 status and WWW-Authenticate header
     """
+    # Construct base URL from request (same pattern as oauth_protected_resource_metadata)
+    scheme = config.redirect_uri_scheme
+    resource_url = f"{scheme}://{request.url.netloc}"
+    resource_metadata_url = f"{resource_url}/.well-known/oauth-protected-resource"
+
+    www_auth_value = f'Bearer resource_metadata="{resource_metadata_url}", error="{error}", error_description="{error_description}"'
+
     return JSONResponse(
         status_code=401,
         content={
             "error": "authentication_required",
             "message": error_description,
             "_meta": {
-                "mcp/www_authenticate": f'Bearer realm="seer", error="{error}", error_description="{error_description}"'
+                "mcp/www_authenticate": www_auth_value
             }
         },
         headers={
-            "WWW-Authenticate": f'Bearer realm="seer", error="{error}", error_description="{error_description}"'
+            "WWW-Authenticate": www_auth_value
         }
     )
 
@@ -108,13 +118,13 @@ class MCPAuthMiddleware(BaseHTTPMiddleware):
         token = extract_bearer_token(request)
         if not token:
             logger.debug("MCP request missing Authorization header: %s", path)
-            return www_authenticate_response("Missing or invalid Authorization header", "invalid_request")
+            return www_authenticate_response(request, "Missing or invalid Authorization header", "invalid_request")
 
         # Verify the token
         result, error = self._verifier.verify_token_with_error(token)
         if result is None:
             logger.debug("MCP token verification failed: %s", error)
-            return www_authenticate_response(error or "Invalid token")
+            return www_authenticate_response(request, error or "Invalid token")
 
         # Propagate authenticated user to tool handlers via context variable
         ctx_token = mcp_authenticated_user.set(result)
