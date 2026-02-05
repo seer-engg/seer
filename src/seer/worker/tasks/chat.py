@@ -31,6 +31,7 @@ from seer.api.agents.workflow.chat_services import (
     IncompleteToolCallRecoveryService,
     InterruptHandler,
 )
+from seer.utilities.langfuse_tracing import merge_nexus_langfuse_callbacks
 from seer.api.agents.workflow.services import (
     save_chat_message,
 )
@@ -356,23 +357,25 @@ async def chat_resume_task(
         # Build resume command
         resume_command = Command(resume=resume_command_data)
 
-        # Get user settings
-        try:
-            user_settings = await UserSettings.get(user=user)
-            max_agent_steps = user_settings.max_agent_steps or config.nexus_max_agent_steps
-        except DoesNotExist:
-            max_agent_steps = config.nexus_max_agent_steps
+        # Get user settings and create runtime context for cost tracking
+        max_agent_steps, runtime_context = await _get_user_settings_and_context(user, thread_id)
 
-        # Resume agent execution
+        # Set context for callback access
+        set_chat_runtime_context(runtime_context)
+
+        # Resume agent execution with cost callback
+        cost_callback = CostCapCallbackHandler()
         config_dict = {
             "configurable": {"thread_id": thread_id},
             "recursion_limit": max_agent_steps,
+            "callbacks": [cost_callback],
         }
+        config_with_langfuse = merge_nexus_langfuse_callbacks(config_dict)
 
         # Set thread_id in context variable
         token = _current_thread_id.set(thread_id)
         try:
-            result = await agent.ainvoke(resume_command, config=config_dict)
+            result = await agent.ainvoke(resume_command, config=config_with_langfuse)
 
             # Detect interrupts
             interrupt_required, interrupt_data = InterruptHandler.extract_interrupt_from_result(result)
@@ -445,6 +448,7 @@ async def chat_resume_task(
 
         finally:
             _current_thread_id.reset(token)
+            clear_chat_runtime_context()
 
     except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Background task must catch all exceptions to avoid worker crash
         logger.error(
