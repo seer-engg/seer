@@ -48,9 +48,10 @@ async def oauth_protected_resource_metadata(request):
     """
     # Get the server URL from config or construct from request
     resource_url = config.mcp_server_url
+    scheme = config.redirect_uri_scheme
     if not resource_url:
         # Fallback: construct from request
-        resource_url = f"{request.url.scheme}://{request.url.netloc}"
+        resource_url = f"{scheme}://{request.url.netloc}"
 
     # pylint: disable=no-member # Reason: Pydantic resolves Optional[str] at runtime, not FieldInfo
     scopes = [s.strip() for s in config.mcp_oauth_scopes.split(",") if s.strip()]
