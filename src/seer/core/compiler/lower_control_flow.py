@@ -11,7 +11,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
-from seer.core.schema.models import Edge, EdgeType, ForEachNode, IfNode, Node, WorkflowSpec
+from seer.core.schema.models import Edge, EdgeType, ForEachNode, Node, WorkflowSpec
 
 
 @dataclass(frozen=True)
@@ -39,6 +39,35 @@ class ExecutionPlan:  # pylint: disable=too-many-instance-attributes  # Reason: 
     loop_terminal_nodes: Dict[str, Set[str]] = field(default_factory=dict)  # loop_id -> terminal_node_ids
 
 
+# =============================================================================
+# BUG FIX: Loop Body Node Detection (2024-02 RCA - Trace Key Collision)
+# =============================================================================
+# PROBLEM: In a for_each loop, nodes AFTER an IfNode were not being detected
+#   as part of the loop body. This caused trace key collision:
+#   - All iterations wrote to `_trace_log_sent_status` (same key)
+#   - Instead of `_trace_log_sent_status_iter_0`, `_trace_log_sent_status_iter_1`
+#
+# ROOT CAUSE: The original traversal ONLY followed EdgeType.default edges.
+#   When encountering an IfNode or nested ForEachNode, it would:
+#   1. Add the control flow node to body_nodes
+#   2. Mark it as terminal and STOP (because no `default` edges from IfNode)
+#   3. Miss all nodes connected via conditional_true/conditional_false/loop_exit
+#
+# ORIGINAL (BUGGY) CODE:
+#   default_edges = [e for e in edges_out if e.type == EdgeType.default]
+#   if isinstance(target_node, (ForEachNode, IfNode)):
+#       terminal_nodes.add(current_id)  # WRONG: Treated control flow as terminal
+#       continue
+#
+# WHY NOT CAUGHT: Test cases only covered simple linear loops (A -> B -> C).
+#   No tests for loops containing if/else branches or nested loops.
+#
+# FIX: Traverse ALL control flow edge types, not just `default`:
+#   - conditional_true: Edges from IfNode to "then" branch
+#   - conditional_false: Edges from IfNode to "else" branch
+#   - loop_body: Edges from ForEachNode to iteration body
+#   - loop_exit: Edges from ForEachNode to nodes after loop completes
+# =============================================================================
 def _find_loop_body_nodes(
     loop_node_id: str,
     body_entry_id: str,
@@ -48,10 +77,16 @@ def _find_loop_body_nodes(
     """
     Detect all nodes in the loop body and identify terminal nodes.
 
-    Starting from the body entry node, follow default edges until we reach:
+    Starting from the body entry node, follow all edge types to find nodes
+    that are part of the loop body. This includes:
+    - Regular nodes connected by default edges
+    - Nested control flow nodes (IfNode, ForEachNode) and their children
+    - Nodes after nested control flow (connected via on_complete, true_branch, false_branch)
+
+    Traversal stops when we reach:
     - A node with an edge back to the loop node (already handled)
-    - A node with no outgoing default edges (terminal)
-    - Another control flow node (IfNode/ForEachNode) - don't traverse into it
+    - A node with no outgoing edges (terminal)
+    - A node outside the loop (not reachable without going through the loop node)
 
     Args:
         loop_node_id: ID of the ForEachNode
@@ -67,6 +102,21 @@ def _find_loop_body_nodes(
     visited: Set[str] = set()
     queue: List[str] = [body_entry_id]
 
+    # -------------------------------------------------------------------------
+    # CRITICAL: Must include ALL edge types that represent loop body control flow
+    # -------------------------------------------------------------------------
+    # The original bug only traversed `default` edges, missing:
+    #   - Nodes after if/else (connected via conditional_true/conditional_false)
+    #   - Nodes after nested loops (connected via loop_exit)
+    # -------------------------------------------------------------------------
+    body_edge_types = {
+        EdgeType.default,           # Regular sequential edges: A -> B
+        EdgeType.conditional_true,  # From IfNode to "then" branch
+        EdgeType.conditional_false, # From IfNode to "else" branch
+        EdgeType.loop_body,         # From ForEachNode to iteration body
+        EdgeType.loop_exit,         # From ForEachNode to nodes after loop
+    }
+
     while queue:
         current_id = queue.pop(0)
         if current_id in visited:
@@ -75,31 +125,31 @@ def _find_loop_body_nodes(
         body_nodes.add(current_id)
 
         edges_out = outgoing_edges.get(current_id, [])
-        default_edges = [e for e in edges_out if e.type == EdgeType.default]
 
-        # Check for edge back to loop
-        has_loop_back = any(e.target == loop_node_id for e in default_edges)
+        # Get all edges that lead to body nodes (not just default edges)
+        body_edges = [e for e in edges_out if e.type in body_edge_types]
+
+        # Check for edge back to loop (on any edge type)
+        has_loop_back = any(e.target == loop_node_id for e in body_edges)
         if has_loop_back:
             # Already has explicit back-edge, don't mark as terminal
             continue
 
-        # Check if this is a terminal node (no outgoing default edges)
-        if not default_edges:
+        # Check if this is a terminal node (no outgoing body edges)
+        if not body_edges:
             terminal_nodes.add(current_id)
             continue
 
-        # Add next nodes to queue, but stop at nested control flow
-        for edge in default_edges:
-            target_node = node_map.get(edge.target)
+        # Add all reachable nodes to queue
+        for edge in body_edges:
+            target_id = edge.target
+            # Don't loop back to the parent loop node
+            if target_id == loop_node_id:
+                continue
+            target_node = node_map.get(target_id)
             if not target_node:
                 continue
-
-            # Stop at nested control flow nodes (don't traverse into them)
-            if isinstance(target_node, (ForEachNode, IfNode)):
-                terminal_nodes.add(current_id)
-                continue
-
-            queue.append(edge.target)
+            queue.append(target_id)
 
     return body_nodes, terminal_nodes
 
