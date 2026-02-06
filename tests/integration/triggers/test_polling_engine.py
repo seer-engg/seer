@@ -663,3 +663,167 @@ async def test_runtime_auto_selection_explicit_connection_unchanged(db_engine, t
             test_workflow.user,
             connection_id=str(explicit_connection.id)
         )
+
+
+# =============================================================================
+# Missing Workflow Tests
+# =============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_handle_events_disables_subscription_when_workflow_missing(db_engine, test_workflow):
+    """Test that subscription is disabled when workflow is deleted.
+
+    Regression test: Previously, _handle_events() would set poll_status='disabled'
+    but then _mark_success() would overwrite it to 'ok', causing infinite loops.
+    """
+    past_time = utcnow() - timedelta(minutes=5)
+
+    # Create subscription
+    sub = await TriggerSubscription.create(
+        user=test_workflow.user,
+        workflow=test_workflow,
+        trigger_id="missing_workflow_test",
+        trigger_key="test.trigger",
+        is_polling=True,
+        enabled=True,
+        next_poll_at=past_time,
+        poll_interval_seconds=300,
+    )
+
+    mock_dispatcher = AsyncMock()
+    engine = TriggerPollEngine(
+        lock_timeout_seconds=60,
+        max_batch_size=10,
+        trigger_event_dispatcher=mock_dispatcher,
+    )
+
+    # Mock events to simulate having events to process
+    mock_event = MagicMock()
+    mock_event.payload = {"test": "data"}
+    mock_event.raw = {}
+    mock_event.occurred_at = utcnow()
+    mock_event.provider_event_id = "test-event-id"
+    events = [mock_event]
+
+    # Set workflow to None to simulate deleted workflow
+    sub.workflow = None
+
+    # Call _handle_events - should disable and return True
+    disabled = await engine._handle_events(sub, events)
+
+    assert disabled is True
+    await sub.refresh_from_db()
+    assert sub.poll_status == "disabled"
+    assert sub.poll_error_json is not None
+    assert sub.poll_error_json["reason"] == "missing_workflow"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_process_subscription_skips_mark_success_when_workflow_missing(db_engine, test_workflow):
+    """Test that _mark_success is NOT called when subscription is disabled due to missing workflow.
+
+    This is the key test for the regression - previously mark_success would overwrite
+    the 'disabled' status back to 'ok'.
+    """
+    past_time = utcnow() - timedelta(minutes=5)
+
+    # Create subscription
+    sub = await TriggerSubscription.create(
+        user=test_workflow.user,
+        workflow=test_workflow,
+        trigger_id="skip_mark_success_test",
+        trigger_key="gmail.new_email",
+        is_polling=True,
+        enabled=True,
+        next_poll_at=past_time,
+        poll_interval_seconds=300,
+    )
+
+    mock_dispatcher = AsyncMock()
+    engine = TriggerPollEngine(
+        lock_timeout_seconds=60,
+        max_batch_size=10,
+        trigger_event_dispatcher=mock_dispatcher,
+    )
+
+    # Mock adapter that returns events
+    mock_adapter = MagicMock()
+    mock_poll_result = MagicMock()
+    mock_poll_result.events = [MagicMock(payload={}, raw={}, occurred_at=utcnow(), provider_event_id="evt-1")]
+    mock_poll_result.cursor = {"test": "cursor"}
+    mock_poll_result.has_more = False
+    mock_poll_result.rate_limit_hint = None
+    mock_adapter.poll = AsyncMock(return_value=mock_poll_result)
+    mock_adapter.bootstrap_cursor = AsyncMock(return_value={})
+
+    # Mock trigger definition
+    mock_definition = MagicMock()
+    mock_definition.provider = "gmail"
+    mock_definition.meta = MagicMock()
+    mock_definition.meta.requires_connection = False
+
+    # Mock _handle_events to simulate workflow being missing (returns True = disabled)
+    # This avoids the cascade delete issue when actually deleting the workflow
+    async def mock_handle_events(subscription, events):
+        subscription.poll_status = "disabled"
+        subscription.poll_error_json = {"reason": "missing_workflow", "detail": None}
+        subscription.poll_lock_owner = None
+        subscription.poll_lock_expires_at = None
+        await subscription.save(
+            update_fields=["poll_status", "poll_error_json", "poll_lock_owner", "poll_lock_expires_at"]
+        )
+        return True  # Signal that subscription was disabled
+
+    with patch("seer.core.triggers.polling.engine.adapter_registry.get", return_value=mock_adapter), \
+         patch("seer.core.triggers.polling.engine.trigger_registry.get", return_value=mock_definition), \
+         patch.object(engine, "_handle_events", side_effect=mock_handle_events) as mock_handle, \
+         patch.object(engine, "_mark_success") as mock_mark_success:
+
+        await engine._process_subscription(sub)
+
+        # Verify _handle_events was called
+        mock_handle.assert_called_once()
+
+        # Verify _mark_success was NOT called (this is the key assertion)
+        mock_mark_success.assert_not_called()
+
+        # Verify subscription is disabled
+        await sub.refresh_from_db()
+        assert sub.poll_status == "disabled"
+        assert sub.poll_error_json["reason"] == "missing_workflow"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_disabled_subscription_not_leased_again(db_engine, test_workflow):
+    """Test that a disabled subscription is never picked up for polling again."""
+    past_time = utcnow() - timedelta(minutes=5)
+
+    # Create a disabled subscription
+    sub = await TriggerSubscription.create(
+        user=test_workflow.user,
+        workflow=test_workflow,
+        trigger_id="disabled_poll_status_test",
+        trigger_key="test.trigger",
+        is_polling=True,
+        enabled=True,  # Still enabled flag
+        next_poll_at=past_time,
+        poll_interval_seconds=300,
+        poll_status="disabled",  # But poll_status is disabled
+        poll_error_json={"reason": "missing_workflow"},
+    )
+
+    mock_dispatcher = AsyncMock()
+    engine = TriggerPollEngine(
+        lock_timeout_seconds=60,
+        max_batch_size=10,
+        trigger_event_dispatcher=mock_dispatcher,
+    )
+
+    leased = await engine._lease_due_subscriptions(limit=10)
+
+    # Should NOT lease disabled subscription
+    assert len(leased) == 0
