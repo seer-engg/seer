@@ -863,3 +863,279 @@ class TestRunResponseModel:
 
         assert len(response.runs) == 1
         assert response.runs[0].trigger_title == "Gmail Inbox"
+
+
+# =============================================================================
+# _validate_workflow_spec Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestValidateWorkflowSpec:
+    """Tests for _validate_workflow_spec function."""
+
+    @pytest.mark.asyncio
+    async def test_validate_workflow_spec_valid_workflow(self, mock_user):
+        """Test that valid workflow passes validation."""
+        from seer.api.workflows.services.execution import _validate_workflow_spec
+        from seer.core.schema.models import WorkflowSpec
+
+        valid_spec = WorkflowSpec(
+            version="2",
+            nodes=[],
+            edges=[],
+            triggers=[]
+        )
+
+        with patch("seer.api.workflows.services.execution.WorkflowCompilerSingleton") as mock_singleton, \
+             patch("seer.api.workflows.services.execution.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer:
+
+            mock_compiler = MagicMock()
+            mock_compiler.compile = AsyncMock(return_value=MagicMock())
+            mock_singleton.instance.return_value = mock_compiler
+            mock_checkpointer.return_value = None
+
+            # Should not raise any exception
+            await _validate_workflow_spec(mock_user, valid_spec)
+
+            mock_compiler.compile.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_validate_workflow_spec_invalid_expression_raises_400(self, mock_user):
+        """Test that invalid expression reference raises HTTP 400."""
+        from seer.api.workflows.services.execution import _validate_workflow_spec
+        from seer.core.schema.models import WorkflowSpec
+        from seer.core.errors import WorkflowCompilerError
+        from fastapi import HTTPException
+
+        invalid_spec = WorkflowSpec(
+            version="2",
+            nodes=[],
+            edges=[],
+            triggers=[]
+        )
+
+        with patch("seer.api.workflows.services.execution.WorkflowCompilerSingleton") as mock_singleton, \
+             patch("seer.api.workflows.services.execution.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer, \
+             patch("seer.api.workflows.services.execution.raise_problem") as mock_raise_problem:
+
+            mock_compiler = MagicMock()
+            mock_compiler.compile = AsyncMock(
+                side_effect=WorkflowCompilerError("llm-2.inputs: Reference 'llm-1.data' is invalid: Cannot access property 'data' on string")
+            )
+            mock_singleton.instance.return_value = mock_compiler
+            mock_checkpointer.return_value = None
+            mock_raise_problem.side_effect = HTTPException(status_code=400, detail="Validation failed")
+
+            with pytest.raises(HTTPException) as exc_info:
+                await _validate_workflow_spec(mock_user, invalid_spec)
+
+            assert exc_info.value.status_code == 400
+            mock_raise_problem.assert_called_once()
+            call_kwargs = mock_raise_problem.call_args[1]
+            assert call_kwargs["status"] == 400
+            assert "Cannot access property 'data' on string" in call_kwargs["detail"]
+
+    @pytest.mark.asyncio
+    async def test_validate_workflow_spec_type_environment_error_raises_400(self, mock_user):
+        """Test that type environment error raises HTTP 400."""
+        from seer.api.workflows.services.execution import _validate_workflow_spec
+        from seer.core.schema.models import WorkflowSpec
+        from seer.core.errors import TypeEnvironmentError
+        from fastapi import HTTPException
+
+        spec = WorkflowSpec(
+            version="2",
+            nodes=[],
+            edges=[],
+            triggers=[]
+        )
+
+        with patch("seer.api.workflows.services.execution.WorkflowCompilerSingleton") as mock_singleton, \
+             patch("seer.api.workflows.services.execution.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer, \
+             patch("seer.api.workflows.services.execution.raise_problem") as mock_raise_problem:
+
+            mock_compiler = MagicMock()
+            mock_compiler.compile = AsyncMock(
+                side_effect=TypeEnvironmentError("Unknown model: fake-model")
+            )
+            mock_singleton.instance.return_value = mock_compiler
+            mock_checkpointer.return_value = None
+            mock_raise_problem.side_effect = HTTPException(status_code=400, detail="Validation failed")
+
+            with pytest.raises(HTTPException) as exc_info:
+                await _validate_workflow_spec(mock_user, spec)
+
+            assert exc_info.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_validate_workflow_spec_validation_phase_error_raises_400(self, mock_user):
+        """Test that validation phase error raises HTTP 400."""
+        from seer.api.workflows.services.execution import _validate_workflow_spec
+        from seer.core.schema.models import WorkflowSpec
+        from seer.core.errors import ValidationPhaseError
+        from fastapi import HTTPException
+
+        spec = WorkflowSpec(
+            version="2",
+            nodes=[],
+            edges=[],
+            triggers=[]
+        )
+
+        with patch("seer.api.workflows.services.execution.WorkflowCompilerSingleton") as mock_singleton, \
+             patch("seer.api.workflows.services.execution.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer, \
+             patch("seer.api.workflows.services.execution.raise_problem") as mock_raise_problem:
+
+            mock_compiler = MagicMock()
+            mock_compiler.compile = AsyncMock(
+                side_effect=ValidationPhaseError("Workflow spec validation failed")
+            )
+            mock_singleton.instance.return_value = mock_compiler
+            mock_checkpointer.return_value = None
+            mock_raise_problem.side_effect = HTTPException(status_code=400, detail="Validation failed")
+
+            with pytest.raises(HTTPException) as exc_info:
+                await _validate_workflow_spec(mock_user, spec)
+
+            assert exc_info.value.status_code == 400
+
+
+# =============================================================================
+# Early Validation in run_saved_workflow Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestRunSavedWorkflowValidation:
+    """Tests for early validation in run_saved_workflow function."""
+
+    @pytest.mark.asyncio
+    async def test_run_saved_workflow_validates_before_creating_run(self, mock_user, mock_workflow, mock_workflow_version):
+        """Test that validation happens before run record is created."""
+        from seer.api.workflows.services.execution import run_saved_workflow
+        from seer.api.workflows.models import RunFromWorkflowRequest
+        from seer.core.errors import WorkflowCompilerError
+        from fastapi import HTTPException
+
+        payload = RunFromWorkflowRequest(inputs={}, config={})
+
+        with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
+             patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
+             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
+             patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock) as mock_create_run, \
+             patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class:
+
+            mock_get_wf.return_value = mock_workflow
+            mock_get_draft.return_value = mock_workflow_version
+            mock_spec_class.model_validate.return_value = MagicMock(triggers=[])
+            mock_validate.side_effect = HTTPException(status_code=400, detail="Validation failed")
+
+            with pytest.raises(HTTPException) as exc_info:
+                await run_saved_workflow(mock_user, "wf_1", payload)
+
+            assert exc_info.value.status_code == 400
+            # Verify validation was called
+            mock_validate.assert_called_once()
+            # Verify run record was NOT created (validation failed first)
+            mock_create_run.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_run_saved_workflow_invalid_expression_returns_400(self, mock_user, mock_workflow, mock_workflow_version):
+        """Test that invalid expression in workflow returns 400 without creating a run."""
+        from seer.api.workflows.services.execution import run_saved_workflow
+        from seer.api.workflows.models import RunFromWorkflowRequest
+        from fastapi import HTTPException
+
+        payload = RunFromWorkflowRequest(inputs={}, config={})
+
+        with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
+             patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
+             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
+             patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock) as mock_create_run, \
+             patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class:
+
+            mock_get_wf.return_value = mock_workflow
+            mock_get_draft.return_value = mock_workflow_version
+            mock_spec_class.model_validate.return_value = MagicMock(triggers=[])
+            mock_validate.side_effect = HTTPException(
+                status_code=400,
+                detail="llm-2.inputs: Reference 'llm-1.data' is invalid: Cannot access property 'data' on string"
+            )
+
+            with pytest.raises(HTTPException) as exc_info:
+                await run_saved_workflow(mock_user, "wf_1", payload)
+
+            assert exc_info.value.status_code == 400
+            assert "Cannot access property 'data' on string" in str(exc_info.value.detail)
+            # No run should be created
+            mock_create_run.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_run_saved_workflow_valid_workflow_creates_run(self, mock_user, mock_workflow, mock_workflow_version, mock_workflow_run):
+        """Test that valid workflow passes validation and creates run."""
+        from seer.api.workflows.services.execution import run_saved_workflow
+        from seer.api.workflows.models import RunFromWorkflowRequest
+
+        payload = RunFromWorkflowRequest(inputs={}, config={})
+
+        with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
+             patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
+             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
+             patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock) as mock_create_run, \
+             patch("seer.api.workflows.services.execution.workflow_execution_task") as mock_task, \
+             patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class:
+
+            mock_get_wf.return_value = mock_workflow
+            mock_get_draft.return_value = mock_workflow_version
+            mock_spec_class.model_validate.return_value = MagicMock(triggers=[])
+            mock_validate.return_value = None  # Validation passes
+            mock_create_run.return_value = mock_workflow_run
+            mock_task.kiq = AsyncMock()
+
+            result = await run_saved_workflow(mock_user, "wf_1", payload)
+
+            # Verify validation was called
+            mock_validate.assert_called_once()
+            # Verify run was created after validation passed
+            mock_create_run.assert_called_once()
+            assert result.run_id == "run_123"
+
+    @pytest.mark.asyncio
+    async def test_run_saved_workflow_validation_before_triggers(self, mock_user, mock_workflow, mock_workflow_version):
+        """Test that validation happens before trigger processing."""
+        from seer.api.workflows.services.execution import run_saved_workflow
+        from seer.api.workflows.models import RunFromWorkflowRequest
+        from seer.core.schema.models import TriggerSpec
+        from fastapi import HTTPException
+
+        payload = RunFromWorkflowRequest(inputs={}, config={})
+
+        mock_trigger = MagicMock(spec=TriggerSpec)
+        mock_trigger.id = "trigger_1"
+        mock_trigger.key = "webhook.generic"
+        mock_trigger.ui_meta = {"title": "Webhook"}
+
+        with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
+             patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
+             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
+             patch("seer.api.workflows.services.execution._generate_sample_trigger_envelope", new_callable=AsyncMock) as mock_gen_envelope, \
+             patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock) as mock_create_run, \
+             patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class, \
+             patch("seer.api.workflows.services.triggers.sync_trigger_subscriptions", new_callable=AsyncMock) as mock_sync_triggers:
+
+            mock_get_wf.return_value = mock_workflow
+            mock_get_draft.return_value = mock_workflow_version
+            mock_spec_class.model_validate.return_value = MagicMock(triggers=[mock_trigger])
+            mock_validate.side_effect = HTTPException(status_code=400, detail="Invalid workflow")
+
+            with pytest.raises(HTTPException) as exc_info:
+                await run_saved_workflow(mock_user, "wf_1", payload)
+
+            assert exc_info.value.status_code == 400
+            # Validation should be called
+            mock_validate.assert_called_once()
+            # Trigger envelope generation should NOT be called (validation failed first)
+            mock_gen_envelope.assert_not_called()
+            # Run record should NOT be created
+            mock_create_run.assert_not_called()
