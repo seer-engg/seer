@@ -35,6 +35,7 @@ from seer.observability import (
     increment_chat_message_count,
 )
 from seer.observability.exceptions import RunCostCapExceeded
+from seer.utilities.langfuse_tracing import merge_nexus_langfuse_callbacks
 
 from .chat_schema import (
     ChatMessage,
@@ -947,23 +948,25 @@ async def resume_chat_endpoint(  # pylint: disable=too-many-locals # Reason: Com
         workflow_state=workflow_state,
     )
 
-    # Get user settings
-    try:
-        user_settings = await UserSettings.get(user=user)
-        max_agent_steps = user_settings.max_agent_steps or config.nexus_max_agent_steps
-    except DoesNotExist:
-        max_agent_steps = config.nexus_max_agent_steps
+    # Get user settings and create runtime context for cost tracking
+    max_agent_steps, runtime_context = await _get_user_settings_and_context(user, resume_data.thread_id)
 
-    # Resume agent execution
+    # Set context for callback access
+    set_chat_runtime_context(runtime_context)
+
+    # Resume agent execution with cost callback
+    cost_callback = CostCapCallbackHandler()
     config_dict = {
         "configurable": {"thread_id": resume_data.thread_id},
         "recursion_limit": max_agent_steps,
+        "callbacks": [cost_callback],
     }
+    config_with_langfuse = merge_nexus_langfuse_callbacks(config_dict)
 
     # Set thread_id in context variable
     token = _current_thread_id.set(resume_data.thread_id)
     try:
-        result = await agent.ainvoke(resume_command, config=config_dict)
+        result = await agent.ainvoke(resume_command, config=config_with_langfuse)
 
         # Extract response and thinking
         agent_messages = result.get("messages", [])
@@ -1017,6 +1020,7 @@ async def resume_chat_endpoint(  # pylint: disable=too-many-locals # Reason: Com
         )
     finally:
         _current_thread_id.reset(token)
+        clear_chat_runtime_context()
 
 
 @router.get("/{workflow_id}/proposals/{proposal_id}", response_model=WorkflowProposalPublic)

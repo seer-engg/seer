@@ -33,6 +33,7 @@ from seer.core.runtime.state import INTERNAL_STATE_PREFIX, WorkflowState
 from seer.core.runtime.validate_output import validate_against_schema
 from seer.core.schema.models import (
     ForEachNode,
+    HITLNode,
     IfNode,
     LLMNode,
     MCPNode,
@@ -214,6 +215,8 @@ class NodeRuntime:
             return self._run_if(node, state, config, locals_ctx=locals_ctx, context=context)
         if isinstance(node, ForEachNode):
             return self._run_for_each(node, state, config, locals_ctx=locals_ctx, context=context)
+        if isinstance(node, HITLNode):
+            return self._run_hitl(node, state, config, locals_ctx=locals_ctx, context=context)
         raise ExecutionError(f"Unsupported node type '{node.type}'")
 
     async def _run_node_async(
@@ -236,6 +239,8 @@ class NodeRuntime:
             return await self._run_if_async(node, state, config, locals_ctx=locals_ctx, context=context)
         if isinstance(node, ForEachNode):
             return await self._run_for_each_async(node, state, config, locals_ctx=locals_ctx, context=context)
+        if isinstance(node, HITLNode):
+            return await self._run_hitl_async(node, state, config, locals_ctx=locals_ctx, context=context)
         raise ExecutionError(f"Unsupported node type '{node.type}'")
 
     def _run_tool(
@@ -755,6 +760,128 @@ class NodeRuntime:
             updates[node.index_var] = idx
 
         return updates
+
+    def _run_hitl(
+        self,
+        node: HITLNode,
+        state: WorkflowState,
+        config: Mapping[str, Any],
+        *,
+        locals_ctx: Mapping[str, Any] | None,
+        context: WorkflowRuntimeContext | None,
+    ) -> Dict[str, Any]:
+        """
+        Execute HITL node - pause workflow for user input collection.
+
+        Uses LangGraph's interrupt() to pause execution. The workflow resumes
+        when user provides responses via the resume API.
+        """
+        from langgraph.types import interrupt  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import
+
+        # Evaluate display expressions
+        ctx = self._build_eval_context(state, config, locals_ctx)
+        display_data = []
+        for item in node.display:
+            try:
+                evaluated_value = evaluate_value(ctx, item.value)
+            except Exception as exc:  # noqa: BLE001 - capture evaluation errors for display
+                evaluated_value = f"<error: {exc}>"
+            display_data.append({
+                "label": item.label,
+                "value": evaluated_value,
+            })
+
+        # Build interrupt payload
+        interrupt_payload = {
+            "type": "hitl",
+            "node_id": node.id,
+            "title": node.title,
+            "description": node.description,
+            "display": display_data,
+            "inputs": [field.model_dump() for field in node.inputs],
+            "timeout_seconds": node.timeout_seconds,
+        }
+
+        # Trigger interrupt - execution pauses here until resumed
+        user_responses = interrupt(interrupt_payload)
+
+        # Build output from user responses
+        output: Dict[str, Any] = {node.id: user_responses or {}}
+
+        # Store trace data
+        trace_key = self._get_trace_key(node.id, state)
+        output[trace_key] = {
+            "node_id": node.id,
+            "node_type": "hitl",
+            "title": node.title,
+            "display": display_data,
+            "inputs": [field.model_dump() for field in node.inputs],
+            "output": user_responses,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+        return output
+
+    async def _run_hitl_async(
+        self,
+        node: HITLNode,
+        state: WorkflowState,
+        config: Mapping[str, Any],
+        *,
+        locals_ctx: Mapping[str, Any] | None,
+        context: WorkflowRuntimeContext | None,
+    ) -> Dict[str, Any]:
+        """
+        Execute HITL node asynchronously - pause workflow for user input collection.
+
+        Uses LangGraph's interrupt() to pause execution. The workflow resumes
+        when user provides responses via the resume API.
+        """
+        from langgraph.types import interrupt  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import
+
+        # Evaluate display expressions
+        ctx = self._build_eval_context(state, config, locals_ctx)
+        display_data = []
+        for item in node.display:
+            try:
+                evaluated_value = evaluate_value(ctx, item.value)
+            except Exception as exc:  # noqa: BLE001 - capture evaluation errors for display
+                evaluated_value = f"<error: {exc}>"
+            display_data.append({
+                "label": item.label,
+                "value": evaluated_value,
+            })
+
+        # Build interrupt payload
+        interrupt_payload = {
+            "type": "hitl",
+            "node_id": node.id,
+            "title": node.title,
+            "description": node.description,
+            "display": display_data,
+            "inputs": [field.model_dump() for field in node.inputs],
+            "timeout_seconds": node.timeout_seconds,
+        }
+
+        # Trigger interrupt - execution pauses here until resumed
+        user_responses = interrupt(interrupt_payload)
+
+        # Build output from user responses
+        output: Dict[str, Any] = {node.id: user_responses or {}}
+
+        # Store trace data
+        trace_key = self._get_trace_key(node.id, state)
+        output[trace_key] = {
+            "node_id": node.id,
+            "node_type": "hitl",
+            "title": node.title,
+            "display": display_data,
+            "inputs": [field.model_dump() for field in node.inputs],
+            "output": user_responses,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+        return output
 
     # ------------------------------------------------------------------
     # Helpers

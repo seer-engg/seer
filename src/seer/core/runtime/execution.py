@@ -26,6 +26,7 @@ class CompiledWorkflow:
 
     def invoke(
         self,
+        workflow_input: Any = None,
         config: Mapping[str, Any] | None = None,
         context: WorkflowRuntimeContext | None = None,
         trigger: Mapping[str, Any] | None = None,
@@ -43,15 +44,18 @@ class CompiledWorkflow:
         invoke_kwargs = {"config": effective_config}
         if context is not None:
             invoke_kwargs["context"] = context
-        final_state = self.graph.invoke({}, **invoke_kwargs)
+        # Use provided input (e.g., Command for resume) or empty dict for fresh start
+        graph_input = workflow_input if workflow_input is not None else {}
+        final_state = self.graph.invoke(graph_input, **invoke_kwargs)
         return {
             key: value
             for key, value in final_state.items()
-            if not key.startswith(INTERNAL_STATE_PREFIX)
+            if not key.startswith(INTERNAL_STATE_PREFIX) or key == "__interrupt__"
         }
 
     async def ainvoke(
         self,
+        workflow_input: Any = None,
         config: Mapping[str, Any] | None = None,
         context: WorkflowRuntimeContext | None = None,
         trigger: Mapping[str, Any] | None = None,
@@ -69,9 +73,11 @@ class CompiledWorkflow:
         invoke_kwargs = {"config": effective_config}
         if context is not None:
             invoke_kwargs["context"] = context
-        final_state = await self.graph.ainvoke({}, **invoke_kwargs)
+        # Use provided input (e.g., Command for resume) or empty dict for fresh start
+        graph_input = workflow_input if workflow_input is not None else {}
+        final_state = await self.graph.ainvoke(graph_input, **invoke_kwargs)
         return {
             key: value
             for key, value in final_state.items()
-            if not key.startswith(INTERNAL_STATE_PREFIX)
+            if not key.startswith(INTERNAL_STATE_PREFIX) or key == "__interrupt__"
         }

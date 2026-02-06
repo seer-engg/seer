@@ -288,6 +288,31 @@ class SeerConfig(BaseSettings):
     )
 
     # ============================================================================
+    # MCP Server OAuth Configuration (for ChatGPT integration)
+    # ============================================================================
+
+    mcp_server_url: Optional[str] = Field(
+        default=None,
+        description="Base URL of the MCP server (e.g., https://mcp.getseer.dev)"
+    )
+    mcp_oauth_authorization_server: str = Field(
+        default="https://nice-ram-42.clerk.accounts.dev",
+        description="Clerk authorization server URL for MCP OAuth"
+    )
+    mcp_oauth_scopes: str = Field(
+        default="profile,email",
+        description="Comma-separated list of OAuth scopes supported by MCP server"
+    )
+    mcp_resource_documentation: Optional[str] = Field(
+        default=None,
+        description="URL to MCP server documentation"
+    )
+    mcp_enabled: bool = Field(
+        default=True,
+        description="Enable MCP endpoints (/sse, /mcp) in the main API server"
+    )
+
+    # ============================================================================
     # Langfuse Configuration
     # ============================================================================
     langfuse_enabled: bool = Field(

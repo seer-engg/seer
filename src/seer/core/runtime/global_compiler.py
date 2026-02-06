@@ -51,6 +51,7 @@ class UserBoundCompiledWorkflow:
 
     def invoke(
         self,
+        workflow_input: Any = None,
         config: Mapping[str, Any] | None = None,
         context: WorkflowRuntimeContext | None = None,
         trigger: Mapping[str, Any] | None = None,
@@ -67,11 +68,12 @@ class UserBoundCompiledWorkflow:
                 sorted(merged_config.keys()),
             )
         return self.workflow.invoke(
-            config=merged_config, context=runtime_context, trigger=trigger
+            workflow_input=workflow_input, config=merged_config, context=runtime_context, trigger=trigger
         )
 
     async def ainvoke(
         self,
+        workflow_input: Any = None,
         config: Mapping[str, Any] | None = None,
         context: WorkflowRuntimeContext | None = None,
         trigger: Mapping[str, Any] | None = None,
@@ -88,7 +90,7 @@ class UserBoundCompiledWorkflow:
                 sorted(merged_config.keys()),
             )
         return await self.workflow.ainvoke(
-            config=merged_config, context=runtime_context, trigger=trigger
+            workflow_input=workflow_input, config=merged_config, context=runtime_context, trigger=trigger
         )
 
 
