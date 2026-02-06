@@ -309,6 +309,32 @@ def _get_error_traces_from_database(run: WorkflowRun) -> List[Dict[str, Any]]:
     return db_traces
 
 
+# =============================================================================
+# BUG FIX: History Trace Merge - Show Failed Traces (2024-02 RCA)
+# =============================================================================
+# PROBLEM: When debugging workflow failures, the history API only showed the
+#   successful trace, hiding the failed trace that caused the actual error.
+#   User saw "google_sheets_write succeeded" but logs showed it failed.
+#
+# ROOT CAUSE: The original merge logic preferred checkpoint data over database
+#   traces. If a node succeeded in ANY execution, the success trace would hide
+#   the failure trace from previous attempts:
+#
+# ORIGINAL (BUGGY) CODE:
+#   checkpoint_node_ids = {t.get('node_id') for t in checkpoint_traces}
+#   for trace in db_traces:
+#       if node_id not in checkpoint_node_ids:  # <-- Skipped if success existed!
+#           merged.append(trace)
+#
+# WHY NOT CAUGHT: Tests focused on the "happy path" - either all succeed or all
+#   fail. No tests for partial success scenarios (succeed then fail, or vice versa).
+#
+# FIX: Always include failed traces, regardless of whether a success exists.
+#   This is essential for debugging:
+#   - Loop iterations where node fails on some iterations but succeeds on others
+#   - Retry scenarios where earlier attempts failed but later succeeded
+#   - Race conditions in parallel execution
+# =============================================================================
 def _merge_checkpoint_and_database_traces(
     checkpoint_traces: List[Dict[str, Any]],
     db_traces: List[Dict[str, Any]],
@@ -319,18 +345,33 @@ def _merge_checkpoint_and_database_traces(
     Checkpoint traces are authoritative for successful executions.
     Database traces fill in the gaps for failed nodes that weren't checkpointed.
 
-    Returns:
-        Merged list of all node traces, with duplicates resolved by preferring checkpoint data.
-    """
-    # Build set of node IDs already in checkpoint traces
-    checkpoint_node_ids = {t.get('node_id') for t in checkpoint_traces if t.get('node_id')}
+    IMPORTANT: Failed traces are ALWAYS included, even if a successful trace exists
+    for the same node. This is critical for debugging loop iterations where the same
+    node may succeed on some iterations but fail on others.
 
-    # Add database traces for nodes not in checkpoint traces
+    Returns:
+        Merged list of all node traces, including both successful and failed attempts.
+    """
     merged = list(checkpoint_traces)
+
+    # -------------------------------------------------------------------------
+    # CRITICAL: Always include failed traces for debugging visibility
+    # -------------------------------------------------------------------------
+    # Without this, users see confusing output like:
+    #   "log_sent_status succeeded" (from checkpoint)
+    # But the actual run failed because a DIFFERENT iteration's log_sent_status
+    # failed with RemoteProtocolError (stored in database only).
+    # -------------------------------------------------------------------------
     for trace in db_traces:
-        node_id = trace.get('node_id')
-        if node_id and node_id not in checkpoint_node_ids:
+        if trace.get('status') == 'failed':
+            # Always include failed traces for debugging
             merged.append(trace)
+        else:
+            # For non-failed db traces, only add if not already in checkpoint traces
+            node_id = trace.get('node_id')
+            checkpoint_node_ids = {t.get('node_id') for t in checkpoint_traces if t.get('node_id')}
+            if node_id and node_id not in checkpoint_node_ids:
+                merged.append(trace)
 
     return merged
 

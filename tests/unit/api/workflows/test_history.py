@@ -1074,8 +1074,12 @@ class TestMergeCheckpointAndDatabaseTraces:
         node_ids = {t["node_id"] for t in result}
         assert node_ids == {"llm-1", "kb_query-1"}
 
-    def test_merge_with_overlap_prefers_checkpoint(self):
-        """Test that checkpoint traces take precedence over database traces."""
+    def test_merge_with_overlap_includes_failed_for_debugging(self):
+        """Test that failed db traces are included even when checkpoint success exists.
+
+        This behavior change is intentional: we now include failed traces for debugging
+        purposes, even when a successful trace exists for the same node.
+        """
         checkpoint_traces = [
             {"node_id": "node-1", "status": "succeeded", "output": "from_checkpoint"},
         ]
@@ -1085,10 +1089,13 @@ class TestMergeCheckpointAndDatabaseTraces:
 
         result = _merge_checkpoint_and_database_traces(checkpoint_traces, db_traces)
 
-        # Only checkpoint trace should be present
-        assert len(result) == 1
+        # Both traces should be present (success + failure for debugging)
+        assert len(result) == 2
+        # Checkpoint trace should come first
         assert result[0]["status"] == "succeeded"
         assert result[0]["output"] == "from_checkpoint"
+        # Failed trace should be included for debugging
+        assert result[1]["status"] == "failed"
 
     def test_merge_mixed_scenario(self):
         """Test realistic scenario with checkpoint success and db failure."""
@@ -1128,18 +1135,95 @@ class TestMergeCheckpointAndDatabaseTraces:
         assert result[2]["node_id"] == "node-3"
 
     def test_merge_handles_missing_node_id(self):
-        """Test handling of traces without node_id (should be ignored from db)."""
+        """Test handling of traces without node_id.
+
+        Note: The current implementation includes failed traces regardless of
+        whether they have a node_id. This is intentional to capture all errors
+        for debugging.
+        """
         checkpoint_traces = [
             {"node_id": "valid-1", "status": "succeeded"},
         ]
         db_traces = [
-            {"status": "failed"},  # Missing node_id
+            {"status": "failed"},  # Missing node_id - still included since failed
             {"node_id": "valid-2", "status": "failed"},
         ]
 
         result = _merge_checkpoint_and_database_traces(checkpoint_traces, db_traces)
 
-        # Only traces with node_id should be included
+        # All failed traces are included for debugging
+        assert len(result) == 3
+        assert result[0]["node_id"] == "valid-1"
+        assert result[1]["status"] == "failed"  # Missing node_id but included
+        assert result[2]["node_id"] == "valid-2"
+
+    def test_merge_includes_failed_trace_when_success_exists(self):
+        """Test that failed traces are included even when success exists for same node.
+
+        This is critical for debugging loop iteration issues where the same node
+        may succeed on some iterations but fail on others.
+        """
+        checkpoint_traces = [
+            {"node_id": "log_sent_status", "status": "succeeded", "output": "E3", "timestamp": "2024-01-01T18:11:34Z"},
+        ]
+        db_traces = [
+            {"node_id": "log_sent_status", "status": "failed", "error": {"type": "RemoteProtocolError"}, "timestamp": "2024-01-01T18:11:51Z"},
+        ]
+
+        result = _merge_checkpoint_and_database_traces(checkpoint_traces, db_traces)
+
+        # BOTH traces should be included for debugging
         assert len(result) == 2
-        node_ids = {t.get("node_id") for t in result}
-        assert node_ids == {"valid-1", "valid-2"}
+
+        # Verify we have both success and failure
+        statuses = {t["status"] for t in result}
+        assert statuses == {"succeeded", "failed"}
+
+        # Verify both are for the same node
+        node_ids = {t["node_id"] for t in result}
+        assert node_ids == {"log_sent_status"}
+
+    def test_merge_includes_multiple_failed_traces_for_same_node(self):
+        """Test that multiple failed traces for the same node are all included."""
+        checkpoint_traces = [
+            {"node_id": "api_call", "status": "succeeded", "output": "ok"},
+        ]
+        db_traces = [
+            {"node_id": "api_call", "status": "failed", "error": {"type": "Error1"}, "timestamp": "T1"},
+            {"node_id": "api_call", "status": "failed", "error": {"type": "Error2"}, "timestamp": "T2"},
+        ]
+
+        result = _merge_checkpoint_and_database_traces(checkpoint_traces, db_traces)
+
+        # All 3 traces should be included
+        assert len(result) == 3
+
+        # Verify 1 success and 2 failures
+        succeeded = [t for t in result if t["status"] == "succeeded"]
+        failed = [t for t in result if t["status"] == "failed"]
+        assert len(succeeded) == 1
+        assert len(failed) == 2
+
+    def test_merge_loop_iteration_scenario(self):
+        """Test realistic loop iteration scenario with mixed success/failure.
+
+        Simulates a for_each loop where node succeeds on some iterations
+        but fails on others.
+        """
+        # Checkpoint has successful traces from iteration 0 and 1
+        checkpoint_traces = [
+            {"node_id": "process", "status": "succeeded", "output": "done_0", "iteration": 0},
+            {"node_id": "process", "status": "succeeded", "output": "done_1", "iteration": 1},
+        ]
+        # Database has failed trace from iteration 2
+        db_traces = [
+            {"node_id": "process", "status": "failed", "error": {"type": "NetworkError"}, "iteration": 2},
+        ]
+
+        result = _merge_checkpoint_and_database_traces(checkpoint_traces, db_traces)
+
+        # All 3 traces should be included (2 successes + 1 failure)
+        assert len(result) == 3
+
+        iterations = [t.get("iteration") for t in result]
+        assert set(iterations) == {0, 1, 2}
