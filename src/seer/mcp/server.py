@@ -77,6 +77,7 @@ def _register_tools() -> None:
     from seer.mcp.tools import workflows
     from seer.mcp.tools import execution
     from seer.mcp.tools import templates
+    from seer.mcp.tools import guides
 
 
 def _create_auth_middleware():

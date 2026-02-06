@@ -8,7 +8,6 @@ Delegates to existing workflow lifecycle services.
 from __future__ import annotations
 
 import json
-import os
 from typing import Any, Dict, Optional
 
 from seer.mcp.server import mcp
@@ -17,11 +16,16 @@ from seer.database import User, init_db
 from seer.core.compiler.parse import parse_workflow_spec
 from seer.core.errors import ValidationPhaseError
 from seer.logger import get_logger
+from seer.tools.workflow_validation import (
+    validate_tools_and_triggers,
+    validate_compilation,
+    detect_extra_fields,
+)
 
 logger = get_logger(__name__)
 
-# Service user ID for MCP operations (configurable via environment)
-MCP_SERVICE_USER_ID = os.environ.get("SEER_MCP_USER_ID", "mcp-service-user")
+# System user ID in the database (Postgres primary key)
+SYSTEM_USER_ID = 1
 
 
 async def _ensure_db() -> None:
@@ -36,33 +40,27 @@ async def _ensure_db() -> None:
         logger.warning("Database initialization check failed: %s", e)
 
 
-async def _get_service_user() -> User:
+async def _get_system_user() -> User:
     """
-    Get or create the MCP service user for workflow operations.
+    Get the system user for MCP operations.
 
     Used as fallback when no authenticated user is available (e.g., stdio transport).
+    The system user is the pre-seeded user with database ID 1.
     """
     await _ensure_db()
 
-    user, created = await User.get_or_create(
-        user_id=MCP_SERVICE_USER_ID,
-        defaults={
-            "email": "mcp@seer.local",
-            "first_name": "MCP",
-            "last_name": "Service",
-        }
-    )
-    if created:
-        logger.info("Created MCP service user: %s", MCP_SERVICE_USER_ID)
+    user = await User.get_or_none(id=SYSTEM_USER_ID)
+    if user is None:
+        raise RuntimeError(f"System user (id={SYSTEM_USER_ID}) not found in database. Ensure the database is properly seeded.")
     return user
 
 
 async def _get_mcp_user() -> User:
     """
-    Get the authenticated user or fall back to service user.
+    Get the authenticated user or fall back to system user.
 
     For HTTP transport with Clerk auth: Returns the authenticated Clerk user.
-    For stdio transport or when auth is not configured: Returns the service user.
+    For stdio transport or when auth is not configured: Returns the system user (id=1).
     """
     await _ensure_db()
 
@@ -83,62 +81,8 @@ async def _get_mcp_user() -> User:
             logger.info("Created user from MCP auth: %s", verified_token.user_id)
         return user
 
-    # Fall back to service user (stdio transport or no auth configured)
-    return await _get_service_user()
-
-
-@mcp.tool()
-async def create_workflow(
-    name: str,
-    spec: Dict[str, Any],
-) -> str:
-    """
-    Create a new workflow with the given name and specification.
-
-    The workflow is created in draft status. Use publish_workflow to make it active.
-
-    Args:
-        name: Name for the workflow (e.g., "Welcome Email on Signup")
-        spec: Workflow specification as a JSON object with version, nodes, edges, and triggers
-
-    Returns:
-        JSON with workflow_id, name, spec, and timestamps
-    """
-    try:
-        # Validate spec first
-        try:
-            validated_spec = parse_workflow_spec(spec)
-        except ValidationPhaseError as exc:
-            return json.dumps({
-                "error": "validation_failed",
-                "message": str(exc),
-                "hint": "Check that your spec follows the workflow schema"
-            })
-
-        user = await _get_mcp_user()
-
-        # Import here to avoid circular imports
-        # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
-        from seer.api.workflows.services.lifecycle import create_workflow as create_workflow_service
-        from seer.api.workflows.models import WorkflowCreateRequest
-
-        request = WorkflowCreateRequest(name=name, spec=validated_spec)
-        response = await create_workflow_service(user, request)
-
-        return json.dumps({
-            "workflow_id": response.workflow_id,
-            "name": response.name,
-            "spec": response.spec.model_dump(mode="json"),
-            "created_at": response.created_at.isoformat(),
-            "updated_at": response.updated_at.isoformat(),
-        }, indent=2)
-
-    except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Return friendly JSON error
-        logger.exception("Error creating workflow: %s", e)
-        return json.dumps({
-            "error": "create_failed",
-            "message": str(e)
-        })
+    # Fall back to system user (stdio transport or no auth configured)
+    return await _get_system_user()
 
 
 @mcp.tool()
@@ -226,50 +170,6 @@ async def get_workflow(workflow_id: str) -> str:
         })
 
 
-def _validate_tool_references(validated_spec) -> list[str]:
-    """Check that tool nodes reference valid tools in the registry."""
-    # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
-    from seer.tools.base import get_tool
-
-    errors = []
-    for node in validated_spec.nodes:
-        if node.type == "tool":
-            tool_name = getattr(node, "tool", None)
-            if tool_name and not get_tool(tool_name):
-                errors.append(f"Tool '{tool_name}' not found in registry")
-    return errors
-
-
-def _validate_trigger_references(validated_spec) -> list[str]:
-    """Check that triggers reference valid trigger keys in the registry."""
-    # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
-    from seer.core.registry.trigger_registry import trigger_registry
-
-    errors = []
-    if validated_spec.triggers:
-        for trigger in validated_spec.triggers:
-            if not trigger_registry.maybe_get(trigger.key):
-                errors.append(f"Trigger '{trigger.key}' not found in registry")
-    return errors
-
-
-async def _validate_compilation(user, spec: Dict[str, Any]) -> Optional[str]:
-    """
-    Run full compilation validation.
-
-    Returns error message if compilation fails, None if successful.
-    """
-    # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
-    from seer.core.runtime.global_compiler import WorkflowCompilerSingleton
-
-    try:
-        compiler = WorkflowCompilerSingleton.instance()
-        await compiler.compile(user, spec, checkpointer=None)
-        return None
-    except Exception as compile_error:  # pylint: disable=broad-exception-caught # Reason: Catch all compilation errors
-        return str(compile_error)
-
-
 @mcp.tool()
 async def validate_workflow(spec: Dict[str, Any]) -> str:
     """
@@ -279,7 +179,11 @@ async def validate_workflow(spec: Dict[str, Any]) -> str:
     Returns validation errors if the spec is invalid.
 
     Args:
-        spec: Workflow specification as a JSON object
+        spec: Workflow specification as a JSON object with:
+              - version: Must be string "2" (NOT "1.0", NOT "2.0", exactly "2")
+              - nodes: Array of node objects (required)
+              - edges: Array of edge objects (optional)
+              - triggers: Array of trigger objects (optional)
 
     Returns:
         JSON with validation result (ok: true/false) and any errors
@@ -289,35 +193,35 @@ async def validate_workflow(spec: Dict[str, Any]) -> str:
         try:
             validated_spec = parse_workflow_spec(spec)
         except ValidationPhaseError as exc:
+            error_msg = str(exc)
+            hint = detect_extra_fields(spec, error_msg) or "Check that your spec follows the workflow schema"
             return json.dumps({
                 "ok": False,
                 "error_type": "schema_validation",
-                "message": str(exc),
-                "hint": "Check that your spec follows the workflow schema"
+                "message": error_msg,
+                "hint": hint
             })
 
-        # Check tools and triggers exist
-        tool_errors = _validate_tool_references(validated_spec)
-        trigger_errors = _validate_trigger_references(validated_spec)
-        all_errors = tool_errors + trigger_errors
+        # Check tools and triggers exist (using shared validation)
+        validation_errors = validate_tools_and_triggers(validated_spec)
 
-        if all_errors:
+        if validation_errors:
             return json.dumps({
                 "ok": False,
                 "error_type": "reference_validation",
-                "errors": all_errors,
+                "errors": validation_errors,
                 "hint": "Use search_tools() and list_triggers() to find valid names"
             })
 
-        # Full compilation validation
+        # Full compilation validation (using shared validation)
         user = await _get_mcp_user()
-        compile_error = await _validate_compilation(user, spec)
+        compilation_error = await validate_compilation(user, spec, detailed_errors=False)
 
-        if compile_error:
+        if compilation_error:
             return json.dumps({
                 "ok": False,
                 "error_type": "compilation",
-                "message": compile_error,
+                "message": compilation_error.message,
             })
 
         return json.dumps({
@@ -331,58 +235,6 @@ async def validate_workflow(spec: Dict[str, Any]) -> str:
         return json.dumps({
             "ok": False,
             "error": str(e)
-        })
-
-
-@mcp.tool()
-async def update_workflow_draft(
-    workflow_id: str,
-    spec: Dict[str, Any],
-) -> str:
-    """
-    Update the draft version of a workflow with a new specification.
-
-    This updates the draft spec without publishing it.
-    Use publish_workflow to make changes active.
-
-    Args:
-        workflow_id: The workflow ID to update
-        spec: New workflow specification
-
-    Returns:
-        JSON with updated workflow details
-    """
-    try:
-        # Validate spec first
-        try:
-            validated_spec = parse_workflow_spec(spec)
-        except ValidationPhaseError as exc:
-            return json.dumps({
-                "error": "validation_failed",
-                "message": str(exc),
-            })
-
-        user = await _get_mcp_user()
-
-        # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
-        from seer.api.workflows.services.lifecycle import patch_workflow_draft
-        from seer.api.workflows.models import WorkflowDraftPatchRequest
-
-        request = WorkflowDraftPatchRequest(spec=validated_spec)
-        response = await patch_workflow_draft(user, workflow_id, request)
-
-        return json.dumps({
-            "workflow_id": response.workflow_id,
-            "name": response.name,
-            "spec": response.spec.model_dump(mode="json"),
-            "updated_at": response.updated_at.isoformat(),
-        }, indent=2)
-
-    except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Return friendly JSON error
-        logger.exception("Error updating workflow draft: %s", e)
-        return json.dumps({
-            "error": "update_failed",
-            "message": str(e)
         })
 
 
@@ -421,6 +273,196 @@ async def publish_workflow(workflow_id: str) -> str:
         logger.exception("Error publishing workflow: %s", e)
         return json.dumps({
             "error": "publish_failed",
+            "message": str(e)
+        })
+
+
+def _run_schema_validation(spec: Dict[str, Any]) -> tuple[Optional[Any], Optional[str]]:
+    """Run schema and reference validation. Returns (validated_spec, error_json) tuple."""
+    try:
+        validated_spec = parse_workflow_spec(spec)
+    except ValidationPhaseError as exc:
+        error_msg = str(exc)
+        hint = detect_extra_fields(spec, error_msg) or "Check that your spec follows the workflow schema"
+        return None, json.dumps({
+            "status": "error", "error_type": "schema_validation", "message": error_msg, "hint": hint
+        })
+
+    validation_errors = validate_tools_and_triggers(validated_spec)
+    if validation_errors:
+        return None, json.dumps({
+            "status": "error", "error_type": "reference_validation",
+            "errors": validation_errors, "hint": "Use search_tools() and list_triggers() to find valid names"
+        })
+    return validated_spec, None
+
+
+def _build_auto_fix_info(schema_fixes: list) -> Dict[str, Any]:
+    """Build auto-fix information for response."""
+    return {
+        "trigger_schemas_updated": schema_fixes,
+        "recommendation": (
+            "Event schemas were auto-corrected to use canonical schemas from the registry. "
+            "If you have expressions referencing trigger data (e.g., ${trigger.data.subject}), "
+            "verify they use correct field paths from the 'available_fields' shown above."
+        )
+    }
+
+
+@mcp.tool()
+async def validate_and_upsert_workflow(
+    name: str,
+    spec: Dict[str, Any],
+    workflow_id: Optional[str] = None,
+    summary: Optional[str] = None,
+) -> str:
+    """
+    Validate and create or update a workflow with comprehensive validation.
+
+    If workflow_id is provided, updates the existing workflow's draft.
+    If workflow_id is not provided, creates a new workflow.
+
+    Performs comprehensive validation chain before persisting:
+    1. Pydantic schema validation
+    2. Tool existence check against registry
+    3. Trigger key validation against trigger registry
+    4. Auto-fix trigger event_schemas with canonical schemas from registry
+    5. Full compilation validation
+
+    The workflow is created/updated in draft status. Use publish_workflow to make it active.
+
+    Args:
+        name: Name for the workflow (e.g., "Welcome Email on Signup")
+        spec: Workflow specification as a JSON object with:
+              - version: Must be string "2" (NOT "1.0", NOT "2.0", exactly "2")
+              - nodes: Array of node objects (required)
+              - edges: Array of edge objects (optional)
+              - triggers: Array of trigger objects (optional)
+        workflow_id: Optional workflow ID to update. If not provided, creates a new workflow.
+        summary: Optional natural language description of what the workflow does
+
+    Returns:
+        JSON with status, message, validated spec, workflow_id, and any auto-fixes applied
+    """
+    try:
+        # 1-2. Schema and reference validation
+        _, error_json = _run_schema_validation(spec)
+        if error_json:
+            return error_json
+
+        # 3. Auto-fix trigger event_schemas with canonical schemas from registry
+        # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+        from seer.tools.trigger_schema_fix import fix_trigger_event_schemas
+        fixed_spec, schema_fixes = fix_trigger_event_schemas(spec)
+
+        # 4. Full compilation validation (using shared validation)
+        user = await _get_mcp_user()
+        compilation_error = await validate_compilation(user, fixed_spec, detailed_errors=True)
+        if compilation_error:
+            return json.dumps({
+                "status": "error", "error_type": compilation_error.error_type,
+                "message": compilation_error.message,
+                "hint": compilation_error.hint or "Check that output schemas match input expectations and ${...} references are valid"
+            })
+
+        # 5. All validations passed - create or update workflow
+        # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+        from seer.api.workflows.services import lifecycle as wf_lifecycle
+        from seer.api.workflows.models import WorkflowCreateRequest, WorkflowDraftPatchRequest
+
+        final_spec = parse_workflow_spec(fixed_spec)
+
+        if workflow_id:
+            response = await wf_lifecycle.patch_workflow_draft(user, workflow_id, WorkflowDraftPatchRequest(spec=final_spec))
+            result = {"status": "ok", "message": "Workflow updated successfully", "workflow_id": response.workflow_id,
+                      "name": response.name, "spec": response.spec.model_dump(mode="json"), "updated_at": response.updated_at.isoformat()}
+        else:
+            response = await wf_lifecycle.create_workflow(user, WorkflowCreateRequest(name=name, spec=final_spec))
+            result = {"status": "ok", "message": "Workflow created successfully", "workflow_id": response.workflow_id,
+                      "name": response.name, "spec": response.spec.model_dump(mode="json"), "created_at": response.created_at.isoformat()}
+
+        if schema_fixes:
+            result["auto_fixes"] = _build_auto_fix_info(schema_fixes)
+        if summary:
+            result["summary"] = summary
+
+        return json.dumps(result, indent=2)
+
+    except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Return friendly JSON error
+        logger.exception("Error upserting workflow: %s", e)
+        return json.dumps({"status": "error", "message": str(e)})
+
+
+@mcp.tool()
+async def analyze_workflow(workflow_id: str) -> str:
+    """
+    Analyze the structure and composition of a workflow.
+
+    Returns a JSON string describing the workflow's blocks, connections, and configuration.
+    Useful for understanding workflow complexity and debugging.
+
+    Args:
+        workflow_id: The workflow ID to analyze (e.g., "wf_abc123")
+
+    Returns:
+        JSON with total_blocks, total_connections, block_types breakdown, blocks array, connections array
+    """
+    try:
+        user = await _get_mcp_user()
+
+        # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+        from seer.api.workflows.services.lifecycle import get_workflow as get_workflow_service
+
+        response = await get_workflow_service(user, workflow_id)
+        spec = response.spec
+
+        nodes = spec.nodes
+        edges = spec.edges or []
+
+        analysis = {
+            "workflow_id": workflow_id,
+            "workflow_name": response.name,
+            "total_blocks": len(nodes),
+            "total_connections": len(edges),
+            "block_types": {},
+            "blocks": [],
+            "connections": [],
+        }
+
+        # Analyze nodes
+        for node in nodes:
+            block_type = node.type
+            analysis["block_types"][block_type] = analysis["block_types"].get(block_type, 0) + 1
+            analysis["blocks"].append({
+                "id": node.id,
+                "type": block_type,
+                "config": node.model_dump(mode="json", exclude={"id", "type"}),
+            })
+
+        # Analyze edges
+        for edge in edges:
+            analysis["connections"].append({
+                "source": edge.source,
+                "target": edge.target,
+                "type": edge.type,
+            })
+
+        # Include triggers if present
+        if spec.triggers:
+            analysis["triggers"] = [
+                {
+                    "id": t.id,
+                    "key": t.key,
+                }
+                for t in spec.triggers
+            ]
+
+        return json.dumps(analysis, indent=2)
+
+    except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Return friendly JSON error
+        logger.exception("Error analyzing workflow: %s", e)
+        return json.dumps({
+            "error": "analysis_failed",
             "message": str(e)
         })
 

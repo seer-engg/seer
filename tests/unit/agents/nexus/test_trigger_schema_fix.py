@@ -8,7 +8,7 @@ import pytest
 from copy import deepcopy
 from unittest.mock import patch, MagicMock
 
-from seer.agents.nexus.tools.trigger_schema_fix import (
+from seer.tools.trigger_schema_fix import (
     _schemas_differ,
     _extract_available_fields,
     _build_example_expressions,
@@ -205,7 +205,7 @@ class TestFixTriggerEventSchemas:
             ]
         }
 
-        with patch("seer.agents.nexus.tools.trigger_schema_fix.trigger_registry") as mock_registry:
+        with patch("seer.tools.trigger_schema_fix.trigger_registry") as mock_registry:
             mock_registry.maybe_get.return_value = mock_trigger_definition
 
             result_spec, fixes = fix_trigger_event_schemas(spec_dict)
@@ -237,7 +237,7 @@ class TestFixTriggerEventSchemas:
             ]
         }
 
-        with patch("seer.agents.nexus.tools.trigger_schema_fix.trigger_registry") as mock_registry:
+        with patch("seer.tools.trigger_schema_fix.trigger_registry") as mock_registry:
             mock_registry.maybe_get.return_value = mock_trigger_definition
 
             result_spec, fixes = fix_trigger_event_schemas(spec_dict)
@@ -259,7 +259,7 @@ class TestFixTriggerEventSchemas:
             ]
         }
 
-        with patch("seer.agents.nexus.tools.trigger_schema_fix.trigger_registry") as mock_registry:
+        with patch("seer.tools.trigger_schema_fix.trigger_registry") as mock_registry:
             mock_registry.maybe_get.return_value = mock_trigger_definition
 
             result_spec, fixes = fix_trigger_event_schemas(spec_dict)
@@ -282,7 +282,7 @@ class TestFixTriggerEventSchemas:
             ]
         }
 
-        with patch("seer.agents.nexus.tools.trigger_schema_fix.trigger_registry") as mock_registry:
+        with patch("seer.tools.trigger_schema_fix.trigger_registry") as mock_registry:
             mock_registry.maybe_get.side_effect = lambda key: {
                 "poll.gmail.email_received": mock_gmail,
                 "webhook.generic": mock_webhook
@@ -302,7 +302,7 @@ class TestFixTriggerEventSchemas:
             ]
         }
 
-        with patch("seer.agents.nexus.tools.trigger_schema_fix.trigger_registry") as mock_registry:
+        with patch("seer.tools.trigger_schema_fix.trigger_registry") as mock_registry:
             mock_registry.maybe_get.return_value = None
 
             result_spec, fixes = fix_trigger_event_schemas(spec_dict)
@@ -321,7 +321,7 @@ class TestFixTriggerEventSchemas:
             ]
         }
 
-        with patch("seer.agents.nexus.tools.trigger_schema_fix.trigger_registry") as mock_registry:
+        with patch("seer.tools.trigger_schema_fix.trigger_registry") as mock_registry:
             mock_registry.maybe_get.return_value = mock_def
 
             result_spec, fixes = fix_trigger_event_schemas(spec_dict)
@@ -345,7 +345,7 @@ class TestFixTriggerEventSchemas:
             ]
         }
 
-        with patch("seer.agents.nexus.tools.trigger_schema_fix.trigger_registry") as mock_registry:
+        with patch("seer.tools.trigger_schema_fix.trigger_registry") as mock_registry:
             mock_registry.maybe_get.return_value = mock_trigger_definition
 
             _, fixes = fix_trigger_event_schemas(spec_dict)
@@ -362,7 +362,7 @@ class TestFixTriggerEventSchemas:
             ]
         }
 
-        with patch("seer.agents.nexus.tools.trigger_schema_fix.trigger_registry") as mock_registry:
+        with patch("seer.tools.trigger_schema_fix.trigger_registry") as mock_registry:
             mock_registry.maybe_get.return_value = mock_trigger_definition
 
             _, fixes = fix_trigger_event_schemas(spec_dict)

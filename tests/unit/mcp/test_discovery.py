@@ -6,9 +6,9 @@ import json
 import pytest
 from unittest.mock import patch, MagicMock
 
-from seer.mcp.tools.discovery import (
-    _tokenize,
-    _search_tools_intent,
+from seer.tools.discovery_shared import (
+    tokenize as _tokenize,
+    search_tools_intent as _search_tools_intent,
 )
 
 
@@ -45,7 +45,7 @@ class TestTokenize:
 class TestSearchToolsIntent:
     """Tests for _search_tools_intent function."""
 
-    @patch("seer.mcp.tools.discovery.get_tools_by_integration")
+    @patch("seer.tools.discovery_shared.get_tools_by_integration")
     def test_search_returns_matching_tools(self, mock_get_tools):
         """Test that search returns tools matching the query."""
         mock_get_tools.return_value = [
@@ -67,7 +67,7 @@ class TestSearchToolsIntent:
         # Gmail tool should match "create draft"
         assert any("gmail" in r.get("name", "").lower() for r in results)
 
-    @patch("seer.mcp.tools.discovery.get_tools_by_integration")
+    @patch("seer.tools.discovery_shared.get_tools_by_integration")
     def test_search_respects_integration_filter(self, mock_get_tools):
         """Test that integration filter boosts matching tools."""
         mock_get_tools.return_value = [
@@ -92,7 +92,7 @@ class TestSearchToolsIntent:
             assert "slack" in top_result.get("name", "").lower() or \
                    "slack" in top_result.get("integration", "").lower()
 
-    @patch("seer.mcp.tools.discovery.get_tools_by_integration")
+    @patch("seer.tools.discovery_shared.get_tools_by_integration")
     def test_search_returns_empty_for_no_match(self, mock_get_tools):
         """Test that search returns empty list when nothing matches."""
         mock_get_tools.return_value = [
@@ -112,7 +112,7 @@ class TestSearchToolsMCP:
     """Tests for search_tools MCP tool - accessing underlying function."""
 
     @pytest.mark.asyncio
-    @patch("seer.mcp.tools.discovery.get_tools_by_integration")
+    @patch("seer.tools.discovery_shared.get_tools_by_integration")
     async def test_search_tools_returns_json(self, mock_get_tools):
         """Test that search_tools returns valid JSON."""
         mock_get_tools.return_value = [
@@ -133,7 +133,7 @@ class TestSearchToolsMCP:
         assert data["query"] == "create draft"
 
     @pytest.mark.asyncio
-    @patch("seer.mcp.tools.discovery.get_tools_by_integration")
+    @patch("seer.tools.discovery_shared.get_tools_by_integration")
     async def test_search_tools_handles_no_results(self, mock_get_tools):
         """Test that search_tools handles no results gracefully."""
         mock_get_tools.return_value = []
@@ -150,7 +150,7 @@ class TestListToolsMCP:
     """Tests for list_tools MCP tool."""
 
     @pytest.mark.asyncio
-    @patch("seer.mcp.tools.discovery.get_tools_by_integration")
+    @patch("seer.tools.discovery_shared.get_tools_by_integration")
     async def test_list_tools_returns_all_tools(self, mock_get_tools):
         """Test that list_tools returns all available tools."""
         mock_get_tools.return_value = [
@@ -178,7 +178,7 @@ class TestListToolsMCP:
         assert data["total"] == 2
 
     @pytest.mark.asyncio
-    @patch("seer.mcp.tools.discovery.get_tools_by_integration")
+    @patch("seer.tools.discovery_shared.get_tools_by_integration")
     async def test_list_tools_filters_by_integration(self, mock_get_tools):
         """Test that list_tools filters by integration type."""
         mock_get_tools.return_value = [
@@ -195,7 +195,9 @@ class TestListToolsMCP:
         result = await list_tools.fn(integration_type="gmail")
         data = json.loads(result)
 
-        mock_get_tools.assert_called_with(integration_type="gmail")
+        # Verify the filter was passed (shared module calls get_tools_by_integration twice)
+        calls = mock_get_tools.call_args_list
+        assert any(call.kwargs.get("integration_type") == "gmail" for call in calls)
         assert data["integration_filter"] == "gmail"
 
 
@@ -203,7 +205,7 @@ class TestSearchTriggersMCP:
     """Tests for search_triggers MCP tool."""
 
     @pytest.mark.asyncio
-    @patch("seer.mcp.tools.discovery.trigger_registry")
+    @patch("seer.tools.discovery_shared.trigger_registry")
     async def test_search_triggers_returns_json(self, mock_registry):
         """Test that search_triggers returns valid JSON."""
         # Create mock trigger
@@ -215,6 +217,7 @@ class TestSearchTriggersMCP:
         mock_trigger.description = "Triggered when new email arrives"
         mock_trigger.schemas = MagicMock()
         mock_trigger.schemas.config = None
+        mock_trigger.schemas.event = None
         mock_trigger.meta = MagicMock()
         mock_trigger.meta.sample_event = None
         mock_trigger.meta.requires_connection = True
@@ -234,7 +237,7 @@ class TestListTriggersMCP:
     """Tests for list_triggers MCP tool."""
 
     @pytest.mark.asyncio
-    @patch("seer.mcp.tools.discovery.trigger_registry")
+    @patch("seer.tools.discovery_shared.trigger_registry")
     async def test_list_triggers_returns_all(self, mock_registry):
         """Test that list_triggers returns all triggers."""
         mock_trigger1 = MagicMock()
@@ -243,6 +246,8 @@ class TestListTriggersMCP:
         mock_trigger1.provider = "webhook"
         mock_trigger1.mode = "webhook"
         mock_trigger1.description = "Generic webhook trigger"
+        mock_trigger1.schemas = MagicMock()
+        mock_trigger1.schemas.event = None
         mock_trigger1.meta = MagicMock()
         mock_trigger1.meta.requires_connection = False
         mock_trigger1.meta.sample_event = None
@@ -253,6 +258,8 @@ class TestListTriggersMCP:
         mock_trigger2.provider = "schedule"
         mock_trigger2.mode = "polling"
         mock_trigger2.description = "Cron-based schedule"
+        mock_trigger2.schemas = MagicMock()
+        mock_trigger2.schemas.event = None
         mock_trigger2.meta = MagicMock()
         mock_trigger2.meta.requires_connection = False
         mock_trigger2.meta.sample_event = None

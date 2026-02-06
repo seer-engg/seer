@@ -1,8 +1,8 @@
 {
-"mcpServers": {
+  "mcpServers": {
     "seer": {
-    "command": "seer-mcp",
-    "args": ["--transport", "stdio"]
+      "command": "uv",
+      "args": ["run", "--directory", "/home/lokesh/second/seer", "seer-mcp", "--transport", "stdio"]
     }
-}
+  }
 }
