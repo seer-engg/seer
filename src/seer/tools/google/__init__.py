@@ -31,6 +31,13 @@ from seer.tools.google.gmail import (
 )
 from seer.tools.google.gsheets import (
     GoogleSheetsAppendTool,
+    GoogleSheetsBatchReadTool,
+    GoogleSheetsBatchUpdateSpreadsheetTool,
+    GoogleSheetsBatchWriteTool,
+    GoogleSheetsClearTool,
+    GoogleSheetsCreateSpreadsheetTool,
+    GoogleSheetsGetSpreadsheetTool,
+    GoogleSheetsReadTool,
     GoogleSheetsWriteTool,
 )
 
@@ -63,7 +70,16 @@ def register_google_tools():
     register_tool(GmailCreateLabelTool())
     register_tool(GmailDeleteLabelTool())
     register_tool(GmailGetAttachmentTool())
+    # Google Sheets - write operations
     register_tool(GoogleSheetsWriteTool())
+    register_tool(GoogleSheetsClearTool())
+    register_tool(GoogleSheetsBatchWriteTool())
+    register_tool(GoogleSheetsCreateSpreadsheetTool())
+    register_tool(GoogleSheetsBatchUpdateSpreadsheetTool())
+    # Google Sheets - read operations
+    register_tool(GoogleSheetsReadTool())
+    register_tool(GoogleSheetsBatchReadTool())
+    register_tool(GoogleSheetsGetSpreadsheetTool())
 
 
 __all__ = [
