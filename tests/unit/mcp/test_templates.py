@@ -1,5 +1,8 @@
 """
 Unit tests for MCP template tools.
+
+Tests the MCP tool wrappers that use shared template search logic from
+seer.tools.template_shared.
 """
 
 import json
@@ -11,7 +14,7 @@ class TestGetWorkflowTemplate:
     """Tests for get_workflow_template MCP tool."""
 
     @pytest.mark.asyncio
-    @patch("seer.mcp.tools.templates.get_workflow_templates")
+    @patch("seer.tools.template_shared.get_workflow_templates")
     async def test_get_template_finds_matching(self, mock_get_templates):
         """Test that get_workflow_template finds matching templates."""
         mock_get_templates.return_value = [
@@ -40,7 +43,7 @@ class TestGetWorkflowTemplate:
         assert "gmail" in data["matches"][0]["name"].lower()
 
     @pytest.mark.asyncio
-    @patch("seer.mcp.tools.templates.get_workflow_templates")
+    @patch("seer.tools.template_shared.get_workflow_templates")
     async def test_get_template_no_matches(self, mock_get_templates):
         """Test that get_workflow_template handles no matches."""
         mock_get_templates.return_value = [
@@ -65,7 +68,7 @@ class TestListWorkflowTemplates:
     """Tests for list_workflow_templates MCP tool."""
 
     @pytest.mark.asyncio
-    @patch("seer.mcp.tools.templates.get_workflow_templates")
+    @patch("seer.tools.template_shared.get_workflow_templates")
     async def test_list_templates_returns_all(self, mock_get_templates):
         """Test that list_workflow_templates returns all templates."""
         mock_get_templates.return_value = [
@@ -81,7 +84,7 @@ class TestListWorkflowTemplates:
         assert len(data["templates"]) == 2
 
     @pytest.mark.asyncio
-    @patch("seer.mcp.tools.templates.get_workflow_templates")
+    @patch("seer.tools.template_shared.get_workflow_templates")
     async def test_list_templates_empty(self, mock_get_templates):
         """Test that list_workflow_templates handles empty list."""
         mock_get_templates.return_value = []

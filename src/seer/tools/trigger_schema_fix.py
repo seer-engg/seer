@@ -4,6 +4,8 @@ Auto-fix trigger event_schemas by replacing with canonical schemas from the regi
 This module provides functions to detect and fix incorrect trigger event_schemas
 in workflow specs, ensuring they match the canonical schemas defined in the
 trigger registry.
+
+Used by both Nexus agent tools and MCP tools for workflow validation.
 """
 
 from copy import deepcopy
