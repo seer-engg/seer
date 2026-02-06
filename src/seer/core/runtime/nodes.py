@@ -24,6 +24,28 @@ from seer.core.expr.evaluator import (
     evaluate_value,
     render_template,
 )
+# =============================================================================
+# BUG FIX: Schema-Driven Coercion in Workflow Runtime (2024-02 RCA)
+# =============================================================================
+# PROBLEM: Google Sheets API failed with:
+#   "Unable to parse range: Sheet1!'E3'" (note the quotes around E3)
+#   The LLM output 'E3' (with quotes) instead of E3 (without quotes).
+#
+# ROOT CAUSE: Two separate code paths execute tools:
+#   1. executor.py (API calls) - HAD coercion via coerce_arguments()
+#   2. nodes.py (workflow runtime) - MISSING coercion
+#
+#   Coercion was added to executor.py for API-level tool execution, but
+#   workflow execution uses nodes.py which bypasses executor.py entirely.
+#
+# WHY NOT CAUGHT: LLM output is inconsistent - sometimes it returns "E2"
+#   (correct), sometimes "'E3'" (incorrect with quotes). The bug only
+#   manifested on certain iterations, making it hard to reproduce.
+#
+# FIX: Import and apply coerce_arguments() in both _run_tool() and
+#   _run_tool_async() before passing inputs to the tool handler.
+# =============================================================================
+from seer.tools.coercion import coerce_arguments
 from seer.core.expr.typecheck import TypeEnvironment
 from seer.core.registry.mcp_client_registry import MCPClientRegistry
 from seer.core.registry.model_registry import ModelRegistry
@@ -259,6 +281,22 @@ class NodeRuntime:
         try:
             tool_def = self.services.tool_registry.get(node.tool)
             runtime_context = context or self._current_context
+
+            # -----------------------------------------------------------------
+            # STEP 1.5: Apply schema-driven coercion to inputs
+            # -----------------------------------------------------------------
+            # This is the FIX for the 2024-02 RCA bug where LLM outputs like
+            # "'E3'" (quoted string) were passed directly to Google Sheets API,
+            # causing "Unable to parse range: Sheet1!'E3'" errors.
+            #
+            # Coercion handles common LLM output quirks:
+            #   - Quoted strings: 'E3' or "E3" -> E3
+            #   - Stringified numbers: "42" -> 42
+            #   - Stringified booleans: "true" -> true
+            #   - JSON-stringified arrays: "[1, 2]" -> [1, 2]
+            # -----------------------------------------------------------------
+            inputs = coerce_arguments(inputs, tool_def.input_schema)
+
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(
                     "Running tool node '%s' (tool='%s') with config_keys=%s user_in_context=%s config_type=%s configurable_keys=%s",
@@ -318,6 +356,16 @@ class NodeRuntime:
         try:
             tool_def = self.services.tool_registry.get(node.tool)
             runtime_context = context or self._current_context
+
+            # -----------------------------------------------------------------
+            # STEP 1.5: Apply schema-driven coercion to inputs (async version)
+            # -----------------------------------------------------------------
+            # Same fix as _run_tool - see detailed comment there.
+            # Both sync and async paths need coercion because LLM outputs
+            # can contain quoted strings that tools don't expect.
+            # -----------------------------------------------------------------
+            inputs = coerce_arguments(inputs, tool_def.input_schema)
+
             handler = getattr(tool_def, "async_handler", None)
             if handler is None:
                 result = await asyncio.to_thread(tool_def.handler, inputs, dict(config), runtime_context)

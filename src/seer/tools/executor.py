@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from seer.database import User
 from seer.logger import get_logger
 from seer.tools.base import get_tool
+from seer.tools.coercion import coerce_arguments
 from seer.tools.credential_resolver import CredentialResolver, ResolvedCredentials
 
 logger = get_logger("shared.tools.executor")
@@ -43,6 +44,10 @@ async def execute_tool(
             status_code=404,
             detail=f"Tool '{tool_name}' not found"
         )
+
+    # Schema-driven coercion: parse LLM outputs based on parameter types
+    schema = tool.get_parameters_schema()
+    arguments = coerce_arguments(arguments, schema)
 
     resolver = CredentialResolver(user=user, tool=tool, connection_id=connection_id)
     try:
