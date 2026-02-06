@@ -55,23 +55,26 @@ class TestValidateWorkflow:
         assert "reference_validation" in data.get("error_type", "")
 
 
-class TestCreateWorkflow:
-    """Tests for create_workflow MCP tool."""
+class TestValidateAndUpsertWorkflow:
+    """Tests for validate_and_upsert_workflow MCP tool."""
 
     @pytest.mark.asyncio
-    @patch("seer.mcp.tools.workflows._get_mcp_user")
-    @patch("seer.mcp.tools.workflows.parse_workflow_spec")
-    async def test_create_validates_spec_first(self, mock_parse, mock_get_user):
-        """Test that create_workflow validates spec before creating."""
-        from seer.core.errors import ValidationPhaseError
-        mock_parse.side_effect = ValidationPhaseError("Invalid spec")
+    @patch("seer.mcp.tools.workflows._run_schema_validation")
+    async def test_upsert_validates_spec_first(self, mock_validation):
+        """Test that validate_and_upsert_workflow validates spec before creating."""
+        # Mock validation failure
+        mock_validation.return_value = (None, json.dumps({
+            "status": "error",
+            "error_type": "schema_validation",
+            "message": "Invalid spec"
+        }))
 
-        from seer.mcp.tools.workflows import create_workflow
-        result = await create_workflow.fn("Test Workflow", {"invalid": "spec"})
+        from seer.mcp.tools.workflows import validate_and_upsert_workflow
+        result = await validate_and_upsert_workflow.fn("Test Workflow", {"invalid": "spec"})
         data = json.loads(result)
 
-        assert "error" in data
-        assert data["error"] == "validation_failed"
+        assert data["status"] == "error"
+        assert data["error_type"] == "schema_validation"
 
 
 class TestListWorkflows:
