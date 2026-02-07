@@ -298,11 +298,12 @@ class TestProcessTriggerEvent:
 
     @pytest.mark.asyncio
     async def test_process_trigger_event_no_published_version(self, mock_subscription, mock_event):
-        """Test process_trigger_event handles workflow without published version."""
+        """Test process_trigger_event handles workflow without published version and disables subscription."""
         from seer.services.workflows.triggers import process_trigger_event
 
         with patch("seer.services.workflows.triggers.TriggerSubscription") as MockSub:
             MockSub.get = AsyncMock(return_value=mock_subscription)
+            MockSub.filter = MagicMock(return_value=MagicMock(update=AsyncMock()))
             with patch("seer.services.workflows.triggers.TriggerEvent") as MockEvent:
                 MockEvent.get = AsyncMock(return_value=mock_event)
                 MockEvent.filter = MagicMock(return_value=MagicMock(update=AsyncMock()))
@@ -311,6 +312,9 @@ class TestProcessTriggerEvent:
 
         # Should update event as failed
         MockEvent.filter.return_value.update.assert_called()
+        # Should disable the subscription
+        MockSub.filter.assert_called_with(id=1)
+        MockSub.filter.return_value.update.assert_called_with(enabled=False)
 
     @pytest.mark.asyncio
     async def test_process_trigger_event_success(self, mock_subscription, mock_event):
