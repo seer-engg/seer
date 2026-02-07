@@ -634,6 +634,45 @@ class TestGenerateSampleTriggerEnvelope:
             assert result is None
 
     @pytest.mark.asyncio
+    async def test_generate_envelope_fallback_to_registry_sample_event(self):
+        """Test TriggerSpec falls back to registry's sample_event when spec has none."""
+        from seer.api.workflows.services.execution import _generate_sample_trigger_envelope
+        from seer.core.schema.models import TriggerSpec
+
+        # TriggerSpec with NO sample_event in meta
+        trigger_spec = TriggerSpec(
+            id="trigger_gmail",
+            key="poll.gmail.email_received",
+            mode="polling",
+            ui_meta={"title": "Gmail Inbox"},
+            provider_config={"provider_connection_id": 123},
+            meta={}  # No sample_event in spec
+        )
+
+        # Registry definition HAS sample_event
+        mock_definition = MagicMock()
+        mock_definition.provider = "gmail"
+        mock_definition.meta.sample_event = {"data": {"subject": "Test Email", "from": "test@example.com"}}
+
+        with patch("seer.core.registry.trigger_registry.trigger_registry") as mock_registry, \
+             patch("seer.core.triggers.events.build_event_envelope") as mock_build:
+
+            mock_registry.maybe_get.return_value = mock_definition
+            mock_build.return_value = {
+                "trigger_id": "trigger_gmail",
+                "trigger_key": "poll.gmail.email_received",
+                "payload": {"subject": "Test Email", "from": "test@example.com"}
+            }
+
+            result = await _generate_sample_trigger_envelope(trigger_spec)
+
+            # Should succeed by falling back to registry's sample_event
+            assert result is not None
+            assert result["trigger_id"] == "trigger_gmail"
+            mock_registry.maybe_get.assert_called_once_with("poll.gmail.email_received")
+            mock_build.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_generate_envelope_from_subscription(self):
         """Test generating envelope from TriggerSubscription."""
         from seer.api.workflows.services.execution import _generate_sample_trigger_envelope
