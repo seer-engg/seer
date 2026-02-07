@@ -15,6 +15,8 @@ from seer.core.compiler.validate_refs import (
 from seer.core.errors import ValidationPhaseError
 from seer.core.expr.typecheck import TypeEnvironment
 from seer.core.schema.models import (
+    Edge,
+    EdgeType,
     ForEachNode,
     IfNode,
     ToolNode,
@@ -61,7 +63,9 @@ def test_validate_references_with_valid_trigger_ref():
                 inputs={"value": "${t1.data}"}
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="t1", target="task1", type=EdgeType.trigger)
+        ]
     )
 
     # Should not raise any errors
@@ -128,7 +132,10 @@ def test_validate_references_with_multiple_refs():
                 inputs={"value": "${task1}"}
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="t1", target="task1", type=EdgeType.trigger),
+            Edge(source="task1", target="task2", type=EdgeType.default)
+        ]
     )
 
     # Should not raise any errors
@@ -423,7 +430,9 @@ def test_uses_trigger_references_true():
                 inputs={"value": "${t1.data}"}
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="t1", target="task1", type=EdgeType.trigger)
+        ]
     )
 
     assert _uses_trigger_references(spec) is True
@@ -448,7 +457,9 @@ def test_uses_trigger_references_false():
                 inputs={"value": "static value"}
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="t1", target="task1", type=EdgeType.trigger)
+        ]
     )
 
     assert _uses_trigger_references(spec) is False
@@ -882,7 +893,9 @@ def test_validate_references_trigger_title_with_spaces():
                 inputs={"value": "${t1.data}"}
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="t1", target="task1", type=EdgeType.trigger)
+        ]
     )
 
     # Reference validation uses trigger ID, not title
@@ -913,7 +926,9 @@ def test_validate_references_trigger_title_with_hyphen():
                 inputs={"value": "${t1.value}"}
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="t1", target="task1", type=EdgeType.trigger)
+        ]
     )
 
     # Reference validation uses trigger ID
@@ -945,7 +960,9 @@ def test_validate_references_trigger_title_unicode():
                 inputs={"value": "${t1.data}"}
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="t1", target="task1", type=EdgeType.trigger)
+        ]
     )
 
     # Reference validation uses trigger ID
@@ -1020,7 +1037,10 @@ def test_multi_trigger_rejects_bare_trigger_reference():
                 inputs={"value": "${trigger.data}"}  # Invalid: bare "trigger" in multi-trigger workflow
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="t1", target="task1", type=EdgeType.trigger),
+            Edge(source="t2", target="task1", type=EdgeType.trigger),
+        ]
     )
 
     # Should raise ValidationPhaseError with helpful message
@@ -1059,7 +1079,10 @@ def test_multi_trigger_accepts_explicit_trigger_ids():
                 inputs={"value": "${t2.payload}"}  # Valid: explicit trigger ID
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="t1", target="task1", type=EdgeType.trigger),
+            Edge(source="t2", target="task2", type=EdgeType.trigger),
+        ]
     )
 
     # Should not raise any errors
@@ -1085,7 +1108,9 @@ def test_single_trigger_rejects_bare_trigger_reference():
                 inputs={"value": "${trigger.data}"}  # Invalid: bare "trigger" not allowed
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="t1", target="task1", type=EdgeType.trigger)
+        ]
     )
 
     # Should raise ValidationPhaseError with helpful message
@@ -1115,7 +1140,9 @@ def test_single_trigger_accepts_explicit_id():
                 inputs={"value": "${email_trigger.data}"}  # Valid: explicit ID
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="email_trigger", target="task1", type=EdgeType.trigger)
+        ]
     )
 
     # Should not raise any errors
