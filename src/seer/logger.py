@@ -267,6 +267,17 @@ class SlackHandler(logging.Handler):
                 message = f"[{correlation_id[:8]}] {message}"
             parts.append(f"Message: {message}")
 
+            # Extract and include extra fields (same logic as ColoredFormatter)
+            extras = {
+                k: v for k, v in record.__dict__.items()
+                if k not in ColoredFormatter.RESERVED_ATTRS and not k.startswith('_')
+            }
+            if extras:
+                parts.append("")  # Empty line for visual separation
+                parts.append("Extra Context:")
+                for k, v in extras.items():
+                    parts.append(f"  • {k}: {v}")
+
             # Format timestamp
             try:
                 if not record.asctime:
