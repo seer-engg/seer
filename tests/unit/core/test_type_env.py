@@ -98,12 +98,13 @@ def test_register_triggers_with_default_schema():
 
     _register_triggers(triggers, env)
 
-    # Should use default schema with additionalProperties: True
+    # Should use default schema with additionalProperties: {} (dict, not boolean)
+    # This allows property access on the trigger in expressions like ${t1.anyProperty}
     symbols = env.as_dict()
     assert "t1" in symbols
     schema = symbols["t1"]
     assert schema["type"] == "object"
-    assert schema.get("additionalProperties") is True
+    assert schema.get("additionalProperties") == {}
 
 
 def test_register_triggers_duplicate_id_allowed_different_titles():
@@ -679,3 +680,355 @@ def test_single_trigger_with_nested_properties():
     # "trigger" alias should NOT be registered
     assert "trigger" not in symbols
     assert "trigger.data" not in symbols
+
+
+# =============================================================================
+# Loop Variable Type Inference Tests
+# =============================================================================
+
+
+def test_for_each_loop_variable_infers_type_from_typed_array():
+    """Test that for_each loop variables inherit type from source array's items schema.
+
+    When the items expression references an array with a defined items schema,
+    the loop variable should inherit that schema for proper type-safe property access.
+    """
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[
+            TriggerSpec(
+                id="trigger1",
+                key="test.trigger",
+                mode="polling",
+                event_schema={
+                    "type": "object",
+                    "properties": {
+                        "organizations": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "contacts": {"type": "array"},
+                                    "id": {"type": "integer"}
+                                }
+                            }
+                        }
+                    }
+                },
+            )
+        ],
+        nodes=[
+            ForEachNode(
+                id="loop_orgs",
+                type="for_each",
+                items="${trigger1.organizations}",
+                item_var="org",
+                index_var="idx"
+            )
+        ],
+        edges=[]
+    )
+    schema_registry = SchemaRegistry()
+    tool_registry = ToolRegistry()
+
+    env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
+
+    symbols = env.as_dict()
+
+    # Loop variable should have inferred schema from array items
+    assert "org" in symbols
+    org_schema = symbols["org"]
+    assert org_schema["type"] == "object"
+    assert "properties" in org_schema
+    assert "name" in org_schema["properties"]
+    assert "contacts" in org_schema["properties"]
+    assert "id" in org_schema["properties"]
+
+    # Property types should be preserved
+    assert org_schema["properties"]["name"]["type"] == "string"
+    assert org_schema["properties"]["contacts"]["type"] == "array"
+    assert org_schema["properties"]["id"]["type"] == "integer"
+
+    # Index variable should be integer
+    assert "idx" in symbols
+    assert symbols["idx"]["type"] == "integer"
+
+
+def test_for_each_loop_variable_uses_permissive_fallback_when_no_items_schema():
+    """Test that loop variables use permissive schema when source has no items schema.
+
+    When the source array doesn't have an items schema defined, the loop variable
+    should use a permissive schema that allows any property access.
+    """
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[
+            TriggerSpec(
+                id="trigger1",
+                key="test.trigger",
+                mode="polling",
+                event_schema={
+                    "type": "object",
+                    "properties": {
+                        "items": {"type": "array"}  # Array without items schema
+                    }
+                },
+            )
+        ],
+        nodes=[
+            ForEachNode(
+                id="loop1",
+                type="for_each",
+                items="${trigger1.items}",
+                item_var="item",
+                index_var="index"
+            )
+        ],
+        edges=[]
+    )
+    schema_registry = SchemaRegistry()
+    tool_registry = ToolRegistry()
+
+    env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
+
+    symbols = env.as_dict()
+
+    # Loop variable should have permissive schema (dict additionalProperties)
+    assert "item" in symbols
+    item_schema = symbols["item"]
+    assert item_schema["type"] == "object"
+    # additionalProperties should be {} (empty dict) to allow any property access
+    assert item_schema.get("additionalProperties") == {}
+
+
+def test_for_each_loop_variable_uses_permissive_fallback_for_unknown_source():
+    """Test that loop variables use permissive schema when source is unknown.
+
+    When the items expression references an unknown symbol, the loop variable
+    should still use a permissive schema.
+    """
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            ForEachNode(
+                id="loop1",
+                type="for_each",
+                items="${unknown_items}",  # References unknown symbol
+                item_var="item",
+                index_var="index"
+            )
+        ],
+        edges=[]
+    )
+    schema_registry = SchemaRegistry()
+    tool_registry = ToolRegistry()
+
+    env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
+
+    symbols = env.as_dict()
+
+    # Loop variable should have permissive schema as fallback
+    assert "item" in symbols
+    item_schema = symbols["item"]
+    assert item_schema["type"] == "object"
+    assert item_schema.get("additionalProperties") == {}
+
+
+def test_for_each_loop_variable_infers_type_from_llm_node_output():
+    """Test that for_each loop variables inherit type from LLM node's JSON output schema.
+
+    This is the key use case from the developer review - when an LLM node outputs
+    a structured JSON array, loop variables should be able to access its properties.
+    """
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            LLMNode(
+                id="prepare_data",
+                type="llm",
+                inputs={"model": "gpt-4", "prompt": "Generate organizations"},
+                outputs=OutputContract(
+                    mode=OutputMode.json,
+                    schema={
+                        "json_schema": {
+                            "type": "object",
+                            "properties": {
+                                "organizations": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "name": {"type": "string"},
+                                            "email": {"type": "string"},
+                                            "active": {"type": "boolean"}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                )
+            ),
+            ForEachNode(
+                id="loop_orgs",
+                type="for_each",
+                items="${prepare_data.organizations}",
+                item_var="org",
+                index_var="i"
+            )
+        ],
+        edges=[]
+    )
+    schema_registry = SchemaRegistry()
+    tool_registry = ToolRegistry()
+
+    env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
+
+    symbols = env.as_dict()
+
+    # Loop variable should have inferred schema from LLM output
+    assert "org" in symbols
+    org_schema = symbols["org"]
+    assert org_schema["type"] == "object"
+    assert "properties" in org_schema
+    assert "name" in org_schema["properties"]
+    assert "email" in org_schema["properties"]
+    assert "active" in org_schema["properties"]
+
+    # Property types should be preserved
+    assert org_schema["properties"]["name"]["type"] == "string"
+    assert org_schema["properties"]["email"]["type"] == "string"
+    assert org_schema["properties"]["active"]["type"] == "boolean"
+
+
+def test_for_each_loop_variable_infers_type_from_nested_property():
+    """Test type inference works for nested property paths like ${node.data.items}."""
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[
+            TriggerSpec(
+                id="webhook",
+                key="test.trigger",
+                mode="webhook",
+                event_schema={
+                    "type": "object",
+                    "properties": {
+                        "response": {
+                            "type": "object",
+                            "properties": {
+                                "data": {
+                                    "type": "object",
+                                    "properties": {
+                                        "users": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "username": {"type": "string"},
+                                                    "age": {"type": "number"}
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+            )
+        ],
+        nodes=[
+            ForEachNode(
+                id="loop_users",
+                type="for_each",
+                items="${webhook.response.data.users}",
+                item_var="user",
+                index_var="idx"
+            )
+        ],
+        edges=[]
+    )
+    schema_registry = SchemaRegistry()
+    tool_registry = ToolRegistry()
+
+    env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
+
+    symbols = env.as_dict()
+
+    # Loop variable should have inferred schema from deeply nested path
+    assert "user" in symbols
+    user_schema = symbols["user"]
+    assert user_schema["type"] == "object"
+    assert "properties" in user_schema
+    assert "username" in user_schema["properties"]
+    assert "age" in user_schema["properties"]
+    assert user_schema["properties"]["username"]["type"] == "string"
+    assert user_schema["properties"]["age"]["type"] == "number"
+
+
+def test_for_each_multiple_loops_with_different_item_types():
+    """Test that multiple for_each loops can have different inferred types."""
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[
+            TriggerSpec(
+                id="trigger1",
+                key="test.trigger",
+                mode="polling",
+                event_schema={
+                    "type": "object",
+                    "properties": {
+                        "users": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {"name": {"type": "string"}}
+                            }
+                        },
+                        "products": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {"price": {"type": "number"}}
+                            }
+                        }
+                    }
+                },
+            )
+        ],
+        nodes=[
+            ForEachNode(
+                id="loop_users",
+                type="for_each",
+                items="${trigger1.users}",
+                item_var="user",
+                index_var="user_idx"
+            ),
+            ForEachNode(
+                id="loop_products",
+                type="for_each",
+                items="${trigger1.products}",
+                item_var="product",
+                index_var="product_idx"
+            )
+        ],
+        edges=[]
+    )
+    schema_registry = SchemaRegistry()
+    tool_registry = ToolRegistry()
+
+    env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
+
+    symbols = env.as_dict()
+
+    # Each loop variable should have its own inferred schema
+    assert "user" in symbols
+    assert symbols["user"]["properties"]["name"]["type"] == "string"
+    assert "price" not in symbols["user"].get("properties", {})
+
+    assert "product" in symbols
+    assert symbols["product"]["properties"]["price"]["type"] == "number"
+    assert "name" not in symbols["product"].get("properties", {})

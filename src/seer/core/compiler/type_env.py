@@ -11,6 +11,7 @@ import re
 from typing import Dict, List, Optional
 
 from seer.core.errors import TypeEnvironmentError
+from seer.core.expr.parser import parse_reference_string, REFERENCE_PATTERN, PathSegment, PropertySegment, IndexSegment
 from seer.core.expr.typecheck import (
     TypeEnvironment,
     schema_from_output_contract,
@@ -100,9 +101,11 @@ def _register_triggers(triggers: List[TriggerSpec], env: TypeEnvironment) -> Non
     # Always register by trigger ID (explicit, works for all cases)
     for trigger in triggers:
         # Get event schema
+        # Note: Using {} as additionalProperties (not True) because the typecheck code
+        # at _resolve_property() requires additionalProperties to be a dict for property access
         event_schema = trigger.event_schema if trigger.event_schema else {
             "type": "object",
-            "additionalProperties": True
+            "additionalProperties": {}
         }
 
         # Register ID as symbol
@@ -114,12 +117,93 @@ def _register_triggers(triggers: List[TriggerSpec], env: TypeEnvironment) -> Non
             env.register(f"{trigger.id}.{name}", schema)
 
 
+def _navigate_schema_by_segment(current: Dict, segment: PathSegment) -> Dict | None:
+    """
+    Navigate a JSON schema by a single path segment.
+
+    Returns the resulting schema after navigating, or None if navigation fails.
+    """
+    if isinstance(segment, PropertySegment):
+        return _navigate_property_segment(current, segment.key)
+
+    if isinstance(segment, IndexSegment):
+        return _navigate_index_segment(current, segment.index)
+
+    return None
+
+
+def _navigate_property_segment(schema: Dict, key: str) -> Dict | None:
+    """Navigate into an object schema by property name."""
+    properties = schema.get("properties", {})
+    if key in properties:
+        return properties[key]
+    additional = schema.get("additionalProperties")
+    return additional if isinstance(additional, dict) else None
+
+
+def _navigate_index_segment(schema: Dict, index: int | str) -> Dict | None:
+    """Navigate into a schema by index (numeric for arrays, string for objects)."""
+    if isinstance(index, int):
+        items = schema.get("items")
+        return items if isinstance(items, dict) else None
+    # String index on object
+    properties = schema.get("properties", {})
+    if index in properties:
+        return properties[index]
+    additional = schema.get("additionalProperties")
+    return additional if isinstance(additional, dict) else None
+
+
+def _infer_item_schema_from_items_expression(items_expr: str, env: TypeEnvironment) -> Dict | None:
+    """
+    Attempt to infer the item schema from a for_each items expression.
+
+    Given an expression like "${prepare_data}" where prepare_data is an array with
+    a defined items schema, extract and return that items schema.
+
+    Returns None if inference fails (e.g., expression is not a simple reference,
+    source schema is not an array, or array has no items schema).
+    """
+    # Check if this is a bare ${...} reference
+    match = REFERENCE_PATTERN.fullmatch(items_expr.strip())
+    if not match:
+        return None
+
+    try:
+        ref = parse_reference_string(match.group(1))
+    except ValueError:
+        return None
+
+    # Resolve the root symbol's schema
+    source_schema = env.get(ref.root)
+    if source_schema is None:
+        return None
+
+    # Apply path segments to navigate the schema
+    current = source_schema
+    for segment in ref.segments:
+        current = _navigate_schema_by_segment(current, segment)
+        if current is None:
+            return None
+
+    # The resolved schema should be an array type with items
+    if current.get("type") != "array":
+        return None
+
+    items_schema = current.get("items")
+    return items_schema if isinstance(items_schema, dict) else None
+
+
 def _register_loop_variables(spec: WorkflowSpec, env: TypeEnvironment) -> None:
     """
     Register loop variable symbols (item_var, index_var) for ForEachNodes.
 
     With edge-based control flow, loop variables are written to state and need
     to be registered as symbols for body nodes to access via ${item}, ${index}.
+
+    Type inference: When the items expression references an array with a defined
+    items schema, we propagate that schema to the loop variable. This allows
+    property access like ${item.name} to be validated correctly.
     """
     # Build a map of ForEachNode by id
     for_each_nodes = {n.id: n for n in spec.nodes if isinstance(n, ForEachNode)}
@@ -127,11 +211,23 @@ def _register_loop_variables(spec: WorkflowSpec, env: TypeEnvironment) -> None:
     if not for_each_nodes:
         return
 
+    # Permissive fallback schema that allows any property access
+    # Note: Using {} as additionalProperties (not True) because the typecheck code
+    # at _resolve_property() requires additionalProperties to be a dict, not a boolean
+    permissive_schema: Dict = {"type": "object", "additionalProperties": {}}
+
     # For each ForEachNode, register its loop variables
     for node in for_each_nodes.values():
-        # Register item_var with a permissive schema (actual type depends on items)
-        # The schema could be inferred from the items expression, but for now we use "any"
-        env.register(node.item_var, {"type": "object", "additionalProperties": True})
+        # Try to infer item schema from the items expression
+        inferred_schema = _infer_item_schema_from_items_expression(node.items, env)
+
+        if inferred_schema is not None:
+            # Use the inferred schema for type-safe property access
+            env.register(node.item_var, inferred_schema)
+        else:
+            # Fallback to permissive schema that allows any property access
+            env.register(node.item_var, permissive_schema)
+
         env.register(node.index_var, {"type": "integer"})
 
 
@@ -211,7 +307,9 @@ def _process_mcp_node_sync(
     if node.expect_outputs:
         schema = schema_from_output_contract(node.expect_outputs, schema_registry)
     else:
-        schema = {"type": "object", "additionalProperties": True}
+        # Note: Using {} as additionalProperties (not True) because the typecheck code
+        # at _resolve_property() requires additionalProperties to be a dict for property access
+        schema = {"type": "object", "additionalProperties": {}}
     _register_symbol(env, node.id, schema)
 
 
@@ -296,7 +394,9 @@ async def _process_node_async(
         try:
             await mcp_client_registry.validate_tool(server_config, node.tool)
             # MCP tools don't typically have output schemas, so we use a generic object schema
-            output_schema = {"type": "object", "additionalProperties": True}
+            # Note: Using {} as additionalProperties (not True) because the typecheck code
+            # at _resolve_property() requires additionalProperties to be a dict for property access
+            output_schema = {"type": "object", "additionalProperties": {}}
         except ConnectionError as exc:
             raise TypeEnvironmentError(
                 f"MCP connection failed for server '{node.server}': {exc}"
