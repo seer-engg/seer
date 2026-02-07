@@ -4,7 +4,7 @@ Base class for Google API tools.
 
 Provides shared functionality for all Google API integrations:
 - HTTP client with OAuth token management
-- Consistent error handling
+- Consistent error handling with retry for transient failures
 - Pagination utilities
 - Common response parsing
 
@@ -17,12 +17,44 @@ from typing import Any, AsyncIterator, Dict, Optional
 
 import httpx
 from fastapi import HTTPException
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from seer.logger import get_logger
 from seer.tools.base import BaseTool
 from seer.tools.credential_resolver import ResolvedCredentials
 
 logger = get_logger("shared.tools.google.base")
+
+# =============================================================================
+# BUG FIX: Transient Network Error Retry (2024-02 RCA)
+# =============================================================================
+# PROBLEM: Google Sheets workflow failed with:
+#   "RemoteProtocolError: Server disconnected without sending a response"
+#   This is a transient network issue that should not crash the workflow.
+#
+# ROOT CAUSE: No retry logic existed for network-level errors. When Google's
+#   servers dropped connections (common under load), the request failed immediately.
+#
+# WHY NOT CAUGHT: The original implementation only handled HTTP-level errors
+#   (4xx/5xx status codes) but not network-level errors that occur BEFORE
+#   receiving any HTTP response.
+#
+# FIX: Added automatic retry with exponential backoff for transient errors.
+#   - RemoteProtocolError: Server closed connection unexpectedly
+#   - ConnectError: Failed to establish connection
+#   - ConnectTimeout: Connection attempt timed out
+#   After 3 failed attempts, returns 503 (Service Unavailable) instead of 500.
+# =============================================================================
+TRANSIENT_ERRORS = (
+    httpx.RemoteProtocolError,
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+)
 
 
 class GoogleAPIClient(BaseTool, ABC):
@@ -111,6 +143,7 @@ class GoogleAPIClient(BaseTool, ABC):
         - Token validation
         - Header construction
         - Timeout management
+        - Automatic retry for transient network errors (RemoteProtocolError, ConnectError, ConnectTimeout)
         - Error translation to HTTPException
 
         Args:
@@ -158,21 +191,16 @@ class GoogleAPIClient(BaseTool, ABC):
         timeout_value = timeout or self.default_timeout
 
         try:
-            async with httpx.AsyncClient(timeout=timeout_value) as client:
-                resp = await client.request(
-                    method,
-                    url,
-                    headers=headers,
-                    params=params,
-                    json=json_body,
-                    content=content
-                )
-
-                if resp.is_error:
-                    raise self._handle_api_error(resp)
-
-                return resp
-
+            # Use retry wrapper for the actual HTTP request
+            return await self._execute_request_with_retry(
+                method=method,
+                url=url,
+                headers=headers,
+                params=params,
+                json_body=json_body,
+                content=content,
+                timeout_value=timeout_value,
+            )
         except httpx.TimeoutException as exc:
             raise HTTPException(
                 status_code=504,
@@ -180,12 +208,92 @@ class GoogleAPIClient(BaseTool, ABC):
             ) from exc
         except HTTPException:
             raise
+        except TRANSIENT_ERRORS as exc:
+            # If retry exhausted and still getting transient error, convert to HTTPException
+            logger.warning(
+                "Transient error in %s after retries: %s",
+                self.name,
+                str(exc),
+                extra={"tool": self.name, "error_type": type(exc).__name__}
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=f"{self.name} network error after retries: {str(exc)}"
+            ) from exc
         except Exception as exc:
             logger.exception("Unexpected error in %s", self.name)
             raise HTTPException(
                 status_code=500,
                 detail=f"{self.name} error: {str(exc)}"
             ) from exc
+
+    # -------------------------------------------------------------------------
+    # RETRY DECORATOR: Automatically retry on transient network errors
+    # -------------------------------------------------------------------------
+    # Retry strategy:
+    #   - Max 3 attempts (1 initial + 2 retries)
+    #   - Exponential backoff: 1s, 2s, 4s (capped at 10s)
+    #   - Only retries for TRANSIENT_ERRORS (network-level issues)
+    #   - Does NOT retry for HTTP errors (4xx/5xx) - those are API-level
+    # -------------------------------------------------------------------------
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type(TRANSIENT_ERRORS),
+        reraise=True,
+    )
+    async def _execute_request_with_retry(  # pylint: disable=too-many-arguments,too-many-positional-arguments  # Reason: HTTP request requires all parameters; refactoring to dict would reduce clarity
+        self,
+        method: str,
+        url: str,
+        headers: Dict[str, str],
+        params: Optional[Dict[str, Any]],
+        json_body: Optional[Dict[str, Any]],
+        content: Optional[bytes],
+        timeout_value: float,
+    ) -> httpx.Response:
+        """
+        Execute HTTP request with automatic retry for transient network errors.
+
+        This method was added as part of the 2024-02 RCA fix for transient
+        Google API failures. It wraps the actual HTTP call with tenacity retry
+        logic to handle network-level issues gracefully.
+
+        Retries up to 3 times with exponential backoff (1s, 2s, 4s) for:
+        - RemoteProtocolError: Server closed connection unexpectedly
+        - ConnectError: Failed to establish connection
+        - ConnectTimeout: Connection attempt timed out
+
+        Args:
+            method: HTTP method
+            url: Request URL
+            headers: Request headers
+            params: Query parameters
+            json_body: JSON body
+            content: Raw bytes content
+            timeout_value: Request timeout
+
+        Returns:
+            httpx.Response object
+
+        Raises:
+            TRANSIENT_ERRORS: If all retries exhausted
+            HTTPException: For API errors (4xx, 5xx responses)
+        """
+        async with httpx.AsyncClient(timeout=timeout_value) as client:
+            resp = await client.request(
+                method,
+                url,
+                headers=headers,
+                params=params,
+                json=json_body,
+                content=content
+            )
+
+            if resp.is_error:
+                raise self._handle_api_error(resp)
+
+            return resp
 
     def _handle_api_error(self, response: httpx.Response) -> HTTPException:
         """

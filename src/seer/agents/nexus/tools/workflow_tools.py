@@ -17,9 +17,8 @@ from seer.agents.nexus.context import (
     get_workflow_state_for_thread,
     get_user_for_thread,
 )
-from seer.agents.nexus.tools.trigger_schema_fix import fix_trigger_event_schemas
+from seer.tools.trigger_schema_fix import fix_trigger_event_schemas
 from seer.agents.nexus.schema_context import (
-    get_workflow_templates,
     generate_node_type_reference,
     generate_validation_checklist_from_model,
     generate_trigger_reference,
@@ -27,16 +26,14 @@ from seer.agents.nexus.schema_context import (
     get_workflow_spec_example_text,
 )
 from seer.logger import get_logger
-from seer.tools.base import get_tool
 from seer.core.compiler.parse import parse_workflow_spec
-from seer.core.errors import (
-    ValidationPhaseError,
-    TypeEnvironmentError,
-    WorkflowCompilerError,
-)
-from seer.core.registry.trigger_registry import trigger_registry
-from seer.core.runtime.global_compiler import WorkflowCompilerSingleton
+from seer.core.errors import ValidationPhaseError
 from seer.core.schema.models import WorkflowSpec
+from seer.tools.workflow_validation import (
+    validate_tools_and_triggers,
+    validate_compilation,
+    detect_extra_fields,
+)
 
 logger = get_logger(__name__)
 
@@ -289,96 +286,11 @@ def _validate_pydantic(spec_dict: Dict) -> tuple[Optional[Any], Optional[str]]:
         logger.warning("Workflow spec validation failed", exc_info=exc)
         error_msg = str(exc)
 
-        # Detect extra fields error and provide helpful hint
-        if "extra_forbidden" in error_msg or "Extra inputs" in error_msg.lower():
-            # Extract invalid field names if possible
-            invalid_fields = []
-            for key in spec_dict.keys():
-                if key not in ["version", "nodes", "edges", "triggers"]:
-                    invalid_fields.append(key)
-
-            hint = (
-                "WorkflowSpec v2 schema ONLY allows: version, nodes, edges, triggers. "
-                f"Invalid fields: {invalid_fields}. "
-                "Remove: input_variables, inputs, config, metadata, or custom fields. "
-                "Access trigger data via: ${trigger.data.field_name}"
-            )
-            return None, _error_response("parsing", f"Workflow spec validation failed: {exc}", hint)
-
-        return None, _error_response("parsing", f"Workflow spec validation failed: {exc}")
+        # Use shared helper to detect extra fields and generate hint
+        hint = detect_extra_fields(spec_dict, error_msg)
+        return None, _error_response("parsing", f"Workflow spec validation failed: {exc}", hint)
 
 
-def _validate_tools_and_triggers(spec_dict: Dict) -> Optional[str]:
-    """
-    Validate that all referenced tools and triggers exist.
-    Returns error message if validation fails, None if valid.
-    """
-    errors = []
-
-    # Check that all tool nodes reference registered tools
-    nodes = spec_dict.get("nodes", [])
-    for node in nodes:
-        if node.get("type") == "tool":
-            tool_name = node.get("tool")
-            if tool_name and not get_tool(tool_name):
-                errors.append(
-                    f"Tool '{tool_name}' not found. Use search_tools('{tool_name.split('_')[0]}') to find the correct tool name."
-                )
-
-    # Check that all triggers reference registered trigger keys
-    triggers = spec_dict.get("triggers", [])
-    for trigger in triggers:
-        trigger_key = trigger.get("key")
-        if trigger_key and not trigger_registry.maybe_get(trigger_key):
-            available_triggers = [t.key for t in trigger_registry.all()]
-            errors.append(
-                f"Trigger '{trigger_key}' not found. Available triggers: {', '.join(available_triggers)}. "
-                f"Use search_triggers() to find the correct trigger key."
-            )
-
-    if errors:
-        return _error_response(
-            "tool_trigger_validation",
-            "Workflow references non-existent tools or triggers",
-            "\n".join(errors)
-        )
-
-    return None
-
-
-async def _validate_compilation(spec_dict: Dict) -> Optional[str]:
-    """
-    Run full compilation validation. Returns error message if invalid, None if valid.
-
-    Validates type environment, references, and compilation.
-    """
-    thread_id = _current_thread_id.get()
-    user = await get_user_for_thread(thread_id)
-    if not user:
-        return _error_response("internal", "User context not available for compilation validation")
-
-    try:
-        compiler = WorkflowCompilerSingleton.instance()
-        await compiler.compile(user, spec_dict, checkpointer=None)
-        return None
-    except TypeEnvironmentError as exc:
-        logger.warning("Workflow type environment validation failed", exc_info=exc)
-        return _error_response(
-            "type_environment",
-            f"Type validation failed: {exc}",
-            "Check that output schemas match input expectations. "
-            "Common issue: field name mismatches like 'threadId' vs 'thread_id'.",
-        )
-    except ValidationPhaseError as exc:
-        logger.warning("Workflow reference validation failed", exc_info=exc)
-        return _error_response(
-            "validation",
-            f"Validation failed: {exc}",
-            "Check that all ${...} references point to valid variables."
-        )
-    except WorkflowCompilerError as exc:
-        logger.warning("Workflow compilation failed", exc_info=exc)
-        return _error_response("compilation", f"Compilation failed: {exc}")
 
 
 @tool
@@ -414,18 +326,34 @@ async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # 
     if error:
         return error
 
-    # Validate tools and triggers exist before compilation
-    if error := _validate_tools_and_triggers(spec_dict):
-        return error
+    # Validate tools and triggers exist before compilation (using shared validation)
+    validation_errors = validate_tools_and_triggers(spec_dict)
+    if validation_errors:
+        return _error_response(
+            "tool_trigger_validation",
+            "Workflow references non-existent tools or triggers",
+            "\n".join(validation_errors)
+        )
 
     # Auto-fix trigger event_schemas with canonical schemas from registry
     spec_dict, schema_fixes = fix_trigger_event_schemas(spec_dict)
 
-    if error := await _validate_compilation(spec_dict):
-        return error
+    # Get user for compilation validation
+    thread_id = _current_thread_id.get()
+    user = await get_user_for_thread(thread_id)
+    if not user:
+        return _error_response("internal", "User context not available for compilation validation")
+
+    # Run compilation validation (using shared validation)
+    compilation_error = await validate_compilation(user, spec_dict, detailed_errors=True)
+    if compilation_error:
+        return _error_response(
+            compilation_error.error_type,
+            compilation_error.message,
+            compilation_error.hint
+        )
 
     # All validations passed - create WorkflowProposal record
-    thread_id = _current_thread_id.get()
     # Re-parse to get Pydantic model with the auto-fixed schemas
     validated_spec = parse_workflow_spec(spec_dict)
     spec_payload = validated_spec.model_dump(mode="json")
@@ -434,11 +362,6 @@ async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # 
     session = await WorkflowChatSession.get_or_none(thread_id=thread_id).prefetch_related('workflow', 'user')
     if not session:
         return _error_response("internal", "Chat session not found for current thread")
-
-    # Get user
-    user = await get_user_for_thread(thread_id)
-    if not user:
-        return _error_response("internal", "User context not available")
 
     # Create WorkflowProposal record
     proposal = await WorkflowProposalModel.create(
@@ -475,9 +398,7 @@ async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # 
 
 
 @tool
-async def get_workflow_template(
-    query: str,
-) -> str:
+async def get_workflow_template(query: str) -> str:
     """
     Retrieve a workflow template by name or tags to use as a starting point.
 
@@ -491,54 +412,13 @@ async def get_workflow_template(
     Returns:
         JSON with matching template(s) including full spec that can be customized
     """
+    # Import here to avoid circular imports at module load time
+    from seer.tools.template_shared import search_templates  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
+
     try:
-        templates = get_workflow_templates()
-        query_lower = query.lower()
-
-        matches = []
-        for template in templates:
-            name = template.get("name", "").lower()
-            tags = [t.lower() for t in template.get("tags", [])]
-            description = template.get("description", "").lower()
-
-            # Match if query appears in name, tags, or description
-            if (query_lower in name or
-                any(query_lower in tag for tag in tags) or
-                query_lower in description):
-                matches.append(template)
-
-        if not matches:
-            available_templates = [
-                {"name": t.get("name"), "tags": t.get("tags", [])}
-                for t in templates
-            ]
-            return json.dumps({
-                "query": query,
-                "matches": [],
-                "message": f"No templates found matching '{query}'",
-                "available_templates": available_templates,
-                "suggestion": "Try searching with integration names (gmail, supabase, slack) or action words (welcome, notification, report)"
-            })
-
-        # Return matches with full specs
-        results = []
-        for match in matches:
-            results.append({
-                "name": match.get("name"),
-                "description": match.get("description"),
-                "tags": match.get("tags"),
-                "customization_guide": match.get("customization_guide"),
-                "spec": match.get("spec")
-            })
-
-        return json.dumps({
-            "query": query,
-            "matches": results,
-            "count": len(results),
-            "message": f"Found {len(results)} template(s) matching '{query}'"
-        }, indent=2)
-
-    except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Catch all to return friendly JSON error
+        result = search_templates(query)
+        return json.dumps(result, indent=2)
+    except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Return friendly JSON error
         logger.exception("Error retrieving template: %s", e)
         return json.dumps({
             "query": query,

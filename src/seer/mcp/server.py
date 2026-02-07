@@ -77,35 +77,36 @@ def _register_tools() -> None:
     from seer.mcp.tools import workflows
     from seer.mcp.tools import execution
     from seer.mcp.tools import templates
+    from seer.mcp.tools import guides
 
 
 def _create_auth_middleware():
     """
-    Create auth middleware if Clerk is configured.
+    Create auth middleware for MCP using opaque token validation.
+
+    MCP clients (like ChatGPT) receive Clerk OAuth opaque tokens that must
+    be validated via the /oauth/userinfo endpoint, not via local JWT verification.
 
     Returns:
-        Middleware instance or None if Clerk is not configured
+        Middleware instance or None if OAuth authorization server is not configured
     """
-    if not config.is_clerk_configured:
-        logger.info("MCP server running without authentication (Clerk not configured)")
+    if not config.mcp_oauth_authorization_server:
+        logger.info("MCP server running without authentication (mcp_oauth_authorization_server not configured)")
         return None
 
-    # Type narrowing - these are guaranteed to be set when is_clerk_configured is True
-    assert config.clerk_jwks_url is not None
-    assert config.clerk_issuer is not None
-
     # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
-    from seer.auth.clerk_verifier import ClerkJWTVerifier
-    from seer.mcp.auth import MCPAuthMiddleware
+    from seer.auth.clerk_verifier import ClerkOpaqueTokenVerifier
+    from seer.mcp.auth import MCPOpaqueAuthMiddleware
 
-    verifier = ClerkJWTVerifier(
-        jwks_url=config.clerk_jwks_url,
-        issuer=config.clerk_issuer,
-        # pylint: disable-next=no-member # Reason: Pydantic resolves Optional[str] at runtime, not FieldInfo
-        audience=config.clerk_audience.split(",") if config.clerk_audience else None,
+    # Construct userinfo URL from the authorization server
+    userinfo_url = f"{config.mcp_oauth_authorization_server}/oauth/userinfo"
+
+    verifier = ClerkOpaqueTokenVerifier(
+        userinfo_url=userinfo_url,
+        timeout=10.0,
     )
-    logger.info("MCP server using Clerk JWT authentication")
-    return Middleware(MCPAuthMiddleware, verifier=verifier)
+    logger.info("MCP server using Clerk opaque token authentication via %s", userinfo_url)
+    return Middleware(MCPOpaqueAuthMiddleware, verifier=verifier)
 
 
 def create_combined_mcp_app():

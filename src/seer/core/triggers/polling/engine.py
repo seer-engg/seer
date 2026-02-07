@@ -218,7 +218,10 @@ class TriggerPollEngine:
             )
             return
 
-        await self._handle_events(subscription, result.events)
+        disabled = await self._handle_events(subscription, result.events)
+        if disabled:
+            return
+
         await self._mark_success(
             subscription,
             cursor=result.cursor,
@@ -226,10 +229,11 @@ class TriggerPollEngine:
             rate_limit_hint=result.rate_limit_hint,
         )
 
-    async def _handle_events(self, subscription: TriggerSubscription, events) -> None:
+    async def _handle_events(self, subscription: TriggerSubscription, events) -> bool:
+        """Handle events for subscription. Returns True if subscription was disabled."""
         if not events:
             logger.info("No events to handle for subscription %s", subscription.id)
-            return
+            return False
 
         # Verify workflow exists before dispatching events
         await subscription.fetch_related("workflow")
@@ -239,7 +243,7 @@ class TriggerPollEngine:
                 extra={"subscription_id": subscription.id, "trigger_key": subscription.trigger_key},
             )
             await self._disable_subscription(subscription, reason="missing_workflow")
-            return
+            return True
 
         provider = trigger_registry.get(subscription.trigger_key).provider
         logger.info("Loading trigger provider for subscription %s", subscription.id)
@@ -277,6 +281,7 @@ class TriggerPollEngine:
             if created:
                 logger.info("Dispatching trigger event for subscription %s", subscription.id)
                 await self.trigger_event_dispatcher(subscription, event, envelope)
+        return False
 
     async def _mark_success(
         self,

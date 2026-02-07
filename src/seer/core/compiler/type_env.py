@@ -24,6 +24,7 @@ from seer.core.schema.models import (
     LLMNode,
     MCPNode,
     Node,
+    OutputMode,
     ToolNode,
     TriggerSpec,
     WorkflowSpec,
@@ -186,6 +187,75 @@ def _build_hitl_output_schema(node: HITLNode) -> Dict:
     }
 
 
+def _process_tool_node(
+    node: ToolNode,
+    env: TypeEnvironment,
+    schema_registry: SchemaRegistry,
+    tool_registry: ToolRegistry,
+) -> None:
+    """Process a ToolNode and register its output schema."""
+    tool_def = tool_registry.get(node.tool)
+    schema = tool_def.output_schema
+    if node.expect_outputs is not None:
+        expected = schema_from_output_contract(node.expect_outputs, schema_registry)
+        _ensure_schema_match(schema, expected, symbol=node.id)
+    _register_symbol(env, node.id, schema)
+
+
+def _process_mcp_node_sync(
+    node: MCPNode,
+    env: TypeEnvironment,
+    schema_registry: SchemaRegistry,
+) -> None:
+    """Process an MCPNode synchronously with user-declared or generic schema."""
+    if node.expect_outputs:
+        schema = schema_from_output_contract(node.expect_outputs, schema_registry)
+    else:
+        schema = {"type": "object", "additionalProperties": True}
+    _register_symbol(env, node.id, schema)
+
+
+def _process_llm_node(
+    node: LLMNode,
+    env: TypeEnvironment,
+    schema_registry: SchemaRegistry,
+) -> None:
+    """Process an LLMNode and validate structured output constraints."""
+    schema = schema_from_output_contract(node.outputs, schema_registry)
+
+    # Validate: OpenAI structured outputs require root type to be "object"
+    if node.outputs.mode == OutputMode.json:
+        root_type = schema.get("type")
+        if root_type == "array":
+            raise TypeEnvironmentError(
+                f"LLM node '{node.id}': JSON output schema must have root type 'object', "
+                f"not 'array'. OpenAI structured outputs do not support array root types. "
+                f"Wrap your array in an object property, e.g.: "
+                f'{{"type": "object", "properties": {{"items": <your-array-schema>}}}}'
+            )
+
+    _register_symbol(env, node.id, schema)
+
+
+def _process_for_each_node(
+    node: ForEachNode,
+    env: TypeEnvironment,
+    schema_registry: SchemaRegistry,
+) -> None:
+    """Process a ForEachNode and register its loop output schema."""
+    if node.outputs:
+        loop_schema = schema_from_output_contract(node.outputs, schema_registry)
+    else:
+        loop_schema = {"type": "array"}
+    _register_symbol(env, node.id, loop_schema)
+
+
+def _process_hitl_node(node: HITLNode, env: TypeEnvironment) -> None:
+    """Process an HITLNode and register its dynamically-built output schema."""
+    schema = _build_hitl_output_schema(node)
+    _register_symbol(env, node.id, schema)
+
+
 def _process_node_sync(
     node: Node,
     env: TypeEnvironment,
@@ -194,45 +264,16 @@ def _process_node_sync(
 ) -> None:
     """Process a node synchronously. MCP nodes are registered with a generic schema."""
     if isinstance(node, ToolNode):
-        tool_def = tool_registry.get(node.tool)
-        schema = tool_def.output_schema
-        if node.expect_outputs is not None:
-            expected = schema_from_output_contract(node.expect_outputs, schema_registry)
-            _ensure_schema_match(schema, expected, symbol=node.id)
-        _register_symbol(env, node.id, schema)
-        return
-
-    if isinstance(node, MCPNode):
-        # Sync path: register with user-declared schema or generic fallback
-        if node.expect_outputs:
-            schema = schema_from_output_contract(node.expect_outputs, schema_registry)
-        else:
-            schema = {"type": "object", "additionalProperties": True}
-        _register_symbol(env, node.id, schema)
-        return
-
-    if isinstance(node, LLMNode):
-        schema = schema_from_output_contract(node.outputs, schema_registry)
-        _register_symbol(env, node.id, schema)
-        return
-
-    if isinstance(node, ForEachNode):
-        # Register loop output schema using node ID
-        if node.outputs:
-            loop_schema = schema_from_output_contract(node.outputs, schema_registry)
-        else:
-            loop_schema = {"type": "array"}
-        _register_symbol(env, node.id, loop_schema)
-        return
-
-    if isinstance(node, HITLNode):
-        # Build output schema dynamically from input field definitions
-        schema = _build_hitl_output_schema(node)
-        _register_symbol(env, node.id, schema)
-        return
-
+        _process_tool_node(node, env, schema_registry, tool_registry)
+    elif isinstance(node, MCPNode):
+        _process_mcp_node_sync(node, env, schema_registry)
+    elif isinstance(node, LLMNode):
+        _process_llm_node(node, env, schema_registry)
+    elif isinstance(node, ForEachNode):
+        _process_for_each_node(node, env, schema_registry)
+    elif isinstance(node, HITLNode):
+        _process_hitl_node(node, env)
     # IfNode doesn't produce output directly (branches do)
-    # No special handling needed
 
 
 async def _process_node_async(
