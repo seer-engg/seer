@@ -913,3 +913,164 @@ async def test_for_each_multi_node_body_without_back_edge() -> None:
     loop_state = result["_loop_loop"]
     assert loop_state["current_index"] == 3
     assert loop_state["has_more_iterations"] is False
+
+
+@pytest.mark.asyncio
+async def test_for_each_property_access_on_typed_array_items() -> None:
+    """Test property access on loop variables when iterating over typed array items.
+
+    This is the key regression test for type inference in loop variables.
+    When an array has a defined items schema, the loop variable should allow
+    property access like ${user.name} without validation errors.
+    """
+    spec = {
+        "version": "2",
+        "triggers": [
+            {
+                "id": "test_trigger",
+                "key": "test.trigger",
+                "mode": "webhook",
+                "event_schema": {
+                    "type": "object",
+                    "properties": {
+                        "users": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "email": {"type": "string"},
+                                    "age": {"type": "integer"}
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+        ],
+        "nodes": [
+            {
+                "id": "loop_users",
+                "type": "for_each",
+                "items": "${test_trigger.users}",
+                "item_var": "user",
+            },
+            {
+                # Access individual properties on the typed loop variable
+                "id": "get_name",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${user.name}"},
+            },
+            {
+                "id": "get_email",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${user.email}"},
+            },
+            {
+                "id": "done",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "complete"},
+            },
+        ],
+        "edges": [
+            {"source": "test_trigger", "target": "loop_users", "type": "trigger"},
+            {"source": "loop_users", "target": "get_name", "type": "loop_body"},
+            {"source": "get_name", "target": "get_email", "type": "default"},
+            {"source": "get_email", "target": "loop_users", "type": "default"},
+            {"source": "loop_users", "target": "done", "type": "loop_exit"},
+        ],
+    }
+
+    mock_tool = _create_mock_tool()
+    compiled = await _compile_workflow(spec, [mock_tool])
+    trigger_envelope = {
+        "trigger_id": "test_trigger",
+        "trigger_key": "test.trigger",
+        "users": [
+            {"name": "Alice", "email": "alice@example.com", "age": 30},
+            {"name": "Bob", "email": "bob@example.com", "age": 25},
+            {"name": "Charlie", "email": "charlie@example.com", "age": 35},
+        ]
+    }
+    result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
+
+    # Verify loop completed
+    assert result["done"] == "complete"
+
+    # Verify property access worked correctly for the last iteration
+    assert result["get_name"] == "Charlie"
+    assert result["get_email"] == "charlie@example.com"
+
+
+@pytest.mark.asyncio
+async def test_for_each_property_access_on_untyped_array_items() -> None:
+    """Test property access on loop variables when iterating over untyped array items.
+
+    When an array doesn't have a defined items schema, the loop variable should
+    use a permissive schema that still allows property access at runtime.
+    """
+    spec = {
+        "version": "2",
+        "triggers": [
+            {
+                "id": "test_trigger",
+                "key": "test.trigger",
+                "mode": "webhook",
+                "event_schema": {
+                    "type": "object",
+                    "properties": {
+                        "items": {"type": "array"}  # No items schema defined
+                    }
+                },
+            }
+        ],
+        "nodes": [
+            {
+                "id": "loop",
+                "type": "for_each",
+                "items": "${test_trigger.items}",
+                "item_var": "data",
+            },
+            {
+                # Access properties on untyped loop variable (should work with permissive schema)
+                "id": "get_value",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "${data.value}"},
+            },
+            {
+                "id": "done",
+                "type": "tool",
+                "tool": "test.tool",
+                "inputs": {"value": "finished"},
+            },
+        ],
+        "edges": [
+            {"source": "test_trigger", "target": "loop", "type": "trigger"},
+            {"source": "loop", "target": "get_value", "type": "loop_body"},
+            {"source": "get_value", "target": "loop", "type": "default"},
+            {"source": "loop", "target": "done", "type": "loop_exit"},
+        ],
+    }
+
+    mock_tool = _create_mock_tool()
+    compiled = await _compile_workflow(spec, [mock_tool])
+    trigger_envelope = {
+        "trigger_id": "test_trigger",
+        "trigger_key": "test.trigger",
+        "items": [
+            {"value": "first"},
+            {"value": "second"},
+            {"value": "third"},
+        ]
+    }
+    result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
+
+    # Verify loop completed
+    assert result["done"] == "finished"
+
+    # Verify property access worked at runtime
+    assert result["get_value"] == "third"

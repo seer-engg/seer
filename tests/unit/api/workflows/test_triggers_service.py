@@ -464,3 +464,83 @@ class TestEvaluateBindings:
 
         assert _evaluate_bindings({}, {"data": {}}) == {}
         assert _evaluate_bindings(None, {"data": {}}) == {}
+
+
+# =============================================================================
+# Sync Trigger Subscriptions Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestSyncTriggerSubscriptions:
+    """Tests for sync_trigger_subscriptions function."""
+
+    @pytest.fixture
+    def mock_user(self):
+        """Create a mock user."""
+        user = MagicMock()
+        user.id = 1
+        user.user_id = "test_user_123"
+        return user
+
+    @pytest.fixture
+    def mock_workflow(self):
+        """Create a mock workflow."""
+        workflow = MagicMock()
+        workflow.id = 100
+        return workflow
+
+    @pytest.fixture
+    def mock_spec(self):
+        """Create a mock workflow spec with a trigger."""
+        spec = MagicMock()
+        trigger = MagicMock()
+        trigger.id = "trigger_1"
+        trigger.key = "webhook.generic"
+        trigger.filters = {}
+        trigger.provider_config = {}
+        trigger.ui_meta = None
+        spec.triggers = [trigger]
+        return spec
+
+    @pytest.mark.asyncio
+    async def test_sync_reenables_disabled_subscription(self, mock_user, mock_workflow, mock_spec):
+        """
+        Test that sync_trigger_subscriptions re-enables a previously disabled subscription.
+
+        This is important for the "no published version" -> publish flow:
+        1. Trigger fails with "no published version" and gets disabled
+        2. User publishes workflow
+        3. sync_trigger_subscriptions should re-enable the trigger
+        """
+        from seer.api.workflows.services.triggers import sync_trigger_subscriptions
+
+        # Create a mock disabled subscription
+        mock_subscription = MagicMock()
+        mock_subscription.id = 1
+        mock_subscription.trigger_id = "trigger_1"
+        mock_subscription.trigger_key = "webhook.generic"
+        mock_subscription.enabled = False  # Previously disabled due to no published version
+        mock_subscription.secret_token = "existing_secret"
+        mock_subscription.save = AsyncMock()
+
+        # Mock trigger definition
+        mock_definition = MagicMock()
+        mock_definition.title = "Generic Webhook"
+        mock_definition.meta.requires_connection = False
+        mock_definition.schemas.filter = None
+
+        with patch("seer.api.workflows.services.triggers.TriggerSubscription") as MockSub:
+            # Return the disabled subscription as existing
+            MockSub.filter = MagicMock(return_value=AsyncMock(return_value=[mock_subscription])())
+
+            with patch("seer.api.workflows.services.triggers._load_trigger_definition", return_value=mock_definition):
+                with patch("seer.api.workflows.services.triggers._validate_and_adjust_poll_interval", new_callable=AsyncMock, return_value=(60, None)):
+                    with patch("seer.api.workflows.services.triggers.delete_trigger_subscription", new_callable=AsyncMock):
+                        await sync_trigger_subscriptions(
+                            mock_user, mock_workflow, mock_spec, skip_validation=True
+                        )
+
+        # Verify subscription was re-enabled
+        assert mock_subscription.enabled is True
+        mock_subscription.save.assert_called_once()

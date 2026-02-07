@@ -128,6 +128,46 @@ Each block is a node in the workflow graph, connected by edges that define execu
 }
 ```
 
+**⚠️ CRITICAL: Root Schema Must Be `object`**
+OpenAI structured outputs require the root schema to have `"type": "object"`. **Array root types are NOT supported** and will fail at compile time.
+
+❌ **WRONG** - Array at root:
+```json
+{
+  "outputs": {
+    "mode": "json",
+    "schema": {
+      "json_schema": {
+        "type": "array",
+        "items": {"type": "object", "properties": {"name": {"type": "string"}}}
+      }
+    }
+  }
+}
+```
+
+✅ **CORRECT** - Wrap array in object property:
+```json
+{
+  "outputs": {
+    "mode": "json",
+    "schema": {
+      "json_schema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {"type": "object", "properties": {"name": {"type": "string"}}}
+          }
+        },
+        "required": ["items"]
+      }
+    }
+  }
+}
+```
+Then access the array via `${node_id.items}` in downstream nodes.
+
 **Example:**
 ```json
 {
@@ -334,44 +374,13 @@ If nodes **require** two edges:
 - `index_var` (string): Variable name for current index (default: `"index"`)
 - `outputs` (object): Schema for aggregated results
 
-**⚠️ Type Inference Limitation:**
-Loop variables (`item_var`) receive a permissive object schema at compile time because the actual item type cannot always be inferred. This means:
-- ✅ Object property access works: `${item.name}`, `${item.email}`
-- ⚠️ Array indexing may fail: `${item[0]}` - only works if the compiler knows `item` is an array type
-
-**If iterating over array-of-arrays (e.g., spreadsheet rows):**
-Each `item` is `["col1", "col2", "col3"]` but may be typed as object, not array.
-
-**Recommended workaround - use LLM to extract values:**
-```json
-{
-  "id": "parse_row",
-  "type": "llm",
-  "inputs": {
-    "model": "gpt-5-mini",
-    "prompt": "Extract from this spreadsheet row: ${item}. Expected columns: Name (index 0), Email (index 1), Status (index 2). Return as JSON with name, email, status fields."
-  },
-  "outputs": {
-    "mode": "json",
-    "schema": {
-      "json_schema": {
-        "type": "object",
-        "properties": {
-          "name": {"type": "string"},
-          "email": {"type": "string"},
-          "status": {"type": "string"}
-        },
-        "required": ["name", "email", "status"]
-      }
-    }
-  }
-}
-```
-
 **Best Practice:** Design your data structures so items are objects with named properties (`{name: "...", email: "..."}`) rather than arrays requiring index access (`["...", "..."]`).
 
 **Edge Configuration:**
-ForEach nodes **require** specific edge patterns:
+ForEach nodes use two edge types:
+- `loop_body`: Points to the first node in the loop body
+- `loop_exit`: Points to the node executed after all iterations complete
+
 ```json
 {
   "source": "loop_id",
@@ -379,16 +388,13 @@ ForEach nodes **require** specific edge patterns:
   "type": "loop_body"
 },
 {
-  "source": "process_item",
-  "target": "loop_id",
-  "type": "default"
-},
-{
   "source": "loop_id",
   "target": "next_node",
   "type": "loop_exit"
 }
 ```
+
+**Note:** Back-edges from the last node in the loop body to the for_each node are **optional**. The compiler automatically adds implicit back-edges from terminal nodes (nodes with no outgoing edges in the loop body) back to the loop. You can add explicit back-edges if you prefer, but they are not required.
 
 **Accessing Loop Variables:**
 - Current item: `${item_var}` (or custom name)
@@ -429,7 +435,6 @@ ForEach nodes **require** specific edge patterns:
   ],
   "edges": [
     {"source": "loop_emails", "target": "send_email", "type": "loop_body"},
-    {"source": "send_email", "target": "loop_emails", "type": "default"},
     {"source": "loop_emails", "target": "notify_complete", "type": "loop_exit"}
   ]
 }
@@ -581,7 +586,6 @@ Arithmetic works in `if` conditions!
   "edges": [
     {"source": "fetch_list", "target": "loop"},
     {"source": "loop", "target": "process", "type": "loop_body"},
-    {"source": "process", "target": "loop"},
     {"source": "loop", "target": "complete", "type": "loop_exit"}
   ]
 }

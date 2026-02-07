@@ -159,6 +159,7 @@ Before submit_workflow_spec():
 - [ ] References: ${inputs.x}, ${node_id.out}, ${trigger.data.x}
 - [ ] Triggers have valid titles (snake_case identifiers)
 - [ ] Omit expect_output (avoid schema mismatch errors)
+- [ ] LLM JSON schemas: root must be `type: "object"` (NOT array - wrap arrays in object property)
 
 **Tools**
 - search_tools(query) → discover tools

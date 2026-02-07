@@ -137,9 +137,8 @@ async def _generate_sample_trigger_envelope(
         trigger_key = trigger.key
         title = trigger.ui_meta.get("title", trigger.key)
         provider_connection_id = trigger.provider_config.get("provider_connection_id")
-        sample_event = trigger.meta.sample_event
 
-        # Get provider from registry
+        # Get definition from registry FIRST (needed for fallback and provider)
         definition = trigger_registry.maybe_get(trigger_key)
         if definition is None:
             logger.warning(
@@ -150,7 +149,10 @@ async def _generate_sample_trigger_envelope(
                 }
             )
             return None
+
         provider = definition.provider
+        # Fallback to registry's sample_event if spec doesn't have one
+        sample_event = trigger.meta.sample_event or definition.meta.sample_event
     else:
         # TriggerSubscription
         trigger_id = trigger.trigger_id

@@ -507,3 +507,142 @@ async def test_multiple_llm_nodes_in_sequence() -> None:
     assert call_order == ["llm1", "llm2"]
     assert result["llm_first"] == "first result"
     assert result["llm_second"] == "second result based on: Process: first result"
+
+
+@pytest.mark.asyncio
+async def test_llm_node_array_schema_rejected() -> None:
+    """Test that LLM nodes with array root type schemas are rejected at compile time.
+
+    OpenAI structured outputs require root type to be 'object'. Array root types
+    should fail with a clear error message during workflow compilation.
+    """
+    from seer.core.errors import TypeEnvironmentError
+
+    spec = {
+        "version": "2",
+        "triggers": [
+            {
+                "id": "array_trigger",
+                "key": "test.array",
+                "title": "ArrayTest",
+                "provider": "test",
+                "mode": "webhook",
+                "schemas": {"event": {"type": "object"}},
+            }
+        ],
+        "nodes": [
+            {
+                "id": "llm-array",
+                "type": "llm",
+                "inputs": {
+                    "model": "gpt-5-mini",
+                    "prompt": "Generate a list of items"
+                },
+                "outputs": {
+                    "mode": "json",
+                    "schema": {
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        ],
+        "edges": [
+            {"source": "array_trigger", "target": "llm-array", "type": "trigger"},
+        ],
+    }
+
+    # Should fail at compile time with TypeEnvironmentError
+    with pytest.raises(TypeEnvironmentError) as exc_info:
+        schema_registry = SchemaRegistry()
+        tool_registry = ToolRegistry()
+        parsed_spec = parse_workflow_spec(spec)
+        build_type_environment(
+            parsed_spec,
+            schema_registry=schema_registry,
+            tool_registry=tool_registry,
+        )
+
+    # Verify error message is helpful
+    error_message = str(exc_info.value)
+    assert "llm-array" in error_message
+    assert "array" in error_message.lower()
+    assert "object" in error_message.lower()
+
+
+@pytest.mark.asyncio
+async def test_llm_node_object_with_array_property_allowed() -> None:
+    """Test that LLM nodes with object root type containing array properties work fine.
+
+    Arrays are only forbidden at the root level. Objects containing array properties
+    should compile and execute successfully.
+    """
+
+    def mock_json_handler(invocation, schema):
+        return {"items": [{"name": "Item1"}, {"name": "Item2"}]}, {}
+
+    model_def = ModelDefinition(
+        model_id="gpt-5-mini",
+        json_handler=mock_json_handler,
+    )
+
+    spec = {
+        "version": "2",
+        "triggers": [
+            {
+                "id": "obj_array_trigger",
+                "key": "test.obj_array",
+                "title": "ObjArrayTest",
+                "provider": "test",
+                "mode": "webhook",
+                "schemas": {"event": {"type": "object"}},
+            }
+        ],
+        "nodes": [
+            {
+                "id": "llm-obj-array",
+                "type": "llm",
+                "inputs": {
+                    "model": "gpt-5-mini",
+                    "prompt": "Generate a list of items"
+                },
+                "outputs": {
+                    "mode": "json",
+                    "schema": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "name": {"type": "string"}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        ],
+        "edges": [
+            {"source": "obj_array_trigger", "target": "llm-obj-array", "type": "trigger"},
+        ],
+    }
+
+    # Should compile and execute successfully
+    compiled = await _compile_workflow_with_models(spec, [model_def])
+    trigger_envelope = {"trigger_key": "test.obj_array", "title": "ObjArrayTest"}
+    result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
+
+    assert "llm-obj-array" in result
+    assert result["llm-obj-array"]["items"] == [{"name": "Item1"}, {"name": "Item2"}]
