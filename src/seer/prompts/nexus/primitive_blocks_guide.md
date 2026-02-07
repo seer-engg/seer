@@ -128,6 +128,46 @@ Each block is a node in the workflow graph, connected by edges that define execu
 }
 ```
 
+**⚠️ CRITICAL: Root Schema Must Be `object`**
+OpenAI structured outputs require the root schema to have `"type": "object"`. **Array root types are NOT supported** and will fail at compile time.
+
+❌ **WRONG** - Array at root:
+```json
+{
+  "outputs": {
+    "mode": "json",
+    "schema": {
+      "json_schema": {
+        "type": "array",
+        "items": {"type": "object", "properties": {"name": {"type": "string"}}}
+      }
+    }
+  }
+}
+```
+
+✅ **CORRECT** - Wrap array in object property:
+```json
+{
+  "outputs": {
+    "mode": "json",
+    "schema": {
+      "json_schema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {"type": "object", "properties": {"name": {"type": "string"}}}
+          }
+        },
+        "required": ["items"]
+      }
+    }
+  }
+}
+```
+Then access the array via `${node_id.items}` in downstream nodes.
+
 **Example:**
 ```json
 {
