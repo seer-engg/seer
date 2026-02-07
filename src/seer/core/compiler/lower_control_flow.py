@@ -28,6 +28,7 @@ class ExecutionPlan:  # pylint: disable=too-many-instance-attributes  # Reason: 
         trigger_targets: Map from trigger_id to target node_id for routing
         loop_body_nodes: Map from loop_id to set of node_ids in the loop body
         loop_terminal_nodes: Map from loop_id to set of node_ids that are terminal in the loop body
+        nested_loop_parents: Map from inner_loop_id to outer_loop_id for nested loops
     """
     nodes: List[Node]
     edges: List[Edge]
@@ -37,6 +38,7 @@ class ExecutionPlan:  # pylint: disable=too-many-instance-attributes  # Reason: 
     trigger_targets: Dict[str, str] = field(default_factory=dict)  # trigger_id -> node_id
     loop_body_nodes: Dict[str, Set[str]] = field(default_factory=dict)  # loop_id -> body_node_ids
     loop_terminal_nodes: Dict[str, Set[str]] = field(default_factory=dict)  # loop_id -> terminal_node_ids
+    nested_loop_parents: Dict[str, str] = field(default_factory=dict)  # inner_loop_id -> outer_loop_id
 
 
 # =============================================================================
@@ -214,6 +216,31 @@ def build_execution_plan(spec: WorkflowSpec) -> ExecutionPlan:  # pylint: disabl
                 loop_body_nodes[node.id] = body_nodes
                 loop_terminal_nodes[node.id] = terminal_nodes
 
+    # -------------------------------------------------------------------------
+    # BUG FIX: Nested Loop State Isolation (2024-02 RCA)
+    # -------------------------------------------------------------------------
+    # PROBLEM: When running nested for_each loops, only the first outer iteration
+    #   processed all inner iterations. Subsequent outer iterations skipped the
+    #   inner loop entirely because inner loop state persisted with
+    #   `has_more_iterations=False`.
+    #
+    # SOLUTION: Track which loops are nested inside other loops. At runtime,
+    #   inner loops check if their parent's iteration index has changed and
+    #   reset themselves when entering a new parent iteration.
+    #
+    # Example: For outer_loop containing inner_loop:
+    #   nested_loop_parents = {"inner_loop": "outer_loop"}
+    #
+    # This mapping is used by NodeRuntime._run_for_each() to detect when an
+    # inner loop needs to reset its state for a new parent iteration.
+    # -------------------------------------------------------------------------
+    nested_loop_parents: Dict[str, str] = {}
+    for outer_loop_id, body_nodes in loop_body_nodes.items():
+        for node_id in body_nodes:
+            node = node_map.get(node_id)
+            if isinstance(node, ForEachNode):
+                nested_loop_parents[node_id] = outer_loop_id
+
     return ExecutionPlan(
         nodes=list(spec.nodes),
         edges=list(spec.edges),
@@ -223,4 +250,5 @@ def build_execution_plan(spec: WorkflowSpec) -> ExecutionPlan:  # pylint: disabl
         trigger_targets=trigger_targets,
         loop_body_nodes=loop_body_nodes,
         loop_terminal_nodes=loop_terminal_nodes,
+        nested_loop_parents=nested_loop_parents,
     )
