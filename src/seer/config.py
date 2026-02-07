@@ -178,6 +178,12 @@ class SeerConfig(BaseSettings):
         default=None, description="LinkedIn OAuth client secret"
     )
 
+    slack_client_id: Optional[str] = Field(
+        default=None, description="Slack OAuth client ID"
+    )
+    slack_client_secret: Optional[str] = Field(
+        default=None, description="Slack OAuth client secret"
+    )
 
     # ============================================================================
     # Feature Flags

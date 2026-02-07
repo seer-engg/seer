@@ -6,6 +6,7 @@ from .base import ResourceProvider, ResourceProviderRegistry
 from .discord import DiscordResourceProvider
 from .github import GitHubResourceProvider
 from .google import GoogleResourceProvider
+from .slack import SlackResourceProvider
 from .supabase import SupabaseResourceProvider
 
 _registry = ResourceProviderRegistry()
@@ -13,6 +14,7 @@ _registry.register(GoogleResourceProvider())
 _registry.register(GitHubResourceProvider())
 _registry.register(SupabaseResourceProvider())
 _registry.register(DiscordResourceProvider())
+_registry.register(SlackResourceProvider())
 
 
 def register_provider(provider: ResourceProvider) -> None:
