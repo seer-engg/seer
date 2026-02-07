@@ -451,10 +451,6 @@ async def test_for_each_with_if_iteration_traces() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    reason="BUG: Nested loops trace key generation has off-by-one or iteration counting issue",
-    strict=True  # Must fail; remove xfail when bug is fixed
-)
 async def test_nested_loops_trace_keys() -> None:
     """Test trace keys for nested loop scenarios.
 
@@ -530,11 +526,16 @@ async def test_nested_loops_trace_keys() -> None:
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Inner loop iterations should have iteration-specific traces
-    assert "_trace_process_inner_iter_0" in result
-    assert "_trace_process_inner_iter_1" in result
+    # With nested loops, trace keys include both outer and inner iteration indices
+    # Format: _trace_{node_id}_iter_{outer_idx}_iter_{inner_idx}
+    assert "_trace_process_inner_iter_0_iter_0" in result  # outer=0 (A), inner=0 (x)
+    assert "_trace_process_inner_iter_0_iter_1" in result  # outer=0 (A), inner=1 (y)
+    assert "_trace_process_inner_iter_1_iter_0" in result  # outer=1 (B), inner=0 (x)
+    assert "_trace_process_inner_iter_1_iter_1" in result  # outer=1 (B), inner=1 (y)
 
-    # After-inner node is in outer loop body, should have outer loop iteration
-    assert "_trace_after_inner_iter_0" in result or "_trace_after_inner" in result
+    # After-inner node is in outer loop body only, should have outer loop iteration
+    assert "_trace_after_inner_iter_0" in result  # after A's inner loop
+    assert "_trace_after_inner_iter_1" in result  # after B's inner loop
 
     # Done node is outside both loops
     assert "_trace_done" in result

@@ -167,6 +167,72 @@ def _add_regular_edges(
         graph.add_edge(node.id, edge.target)
 
 
+def _is_terminal_of_nested_loop(
+    terminal_node_id: str,
+    loop_id: str,
+    plan: ExecutionPlan,
+) -> bool:
+    """
+    Check if a terminal node belongs to a nested inner loop of the given loop.
+
+    This is used to avoid adding duplicate back-edges when a node is terminal
+    for both an inner and outer loop.
+    """
+    for inner_loop_id, outer_loop_id in plan.nested_loop_parents.items():
+        if outer_loop_id == loop_id:
+            inner_terminal_nodes = plan.loop_terminal_nodes.get(inner_loop_id, set())
+            if terminal_node_id in inner_terminal_nodes:
+                return True
+    return False
+
+
+def _add_implicit_loop_back_edges(
+    graph: StateGraph,
+    plan: ExecutionPlan,
+) -> None:
+    """
+    Add implicit back-edges from loop terminal nodes to their ForEachNode.
+
+    BUG FIX: Nested Loop Terminal Node Handling (2024-02 RCA)
+    ---------------------------------------------------------
+    PROBLEM: When detecting terminal nodes for outer loops, nodes inside
+      nested inner loops were incorrectly marked as terminals of BOTH loops.
+      This caused duplicate back-edges to be added:
+        - process -> inner_loop (correct)
+        - process -> outer_loop (WRONG - causes routing chaos)
+
+    EXAMPLE: For outer_loop -> inner_loop -> process:
+      - process is terminal of inner_loop (correct)
+      - process is ALSO detected as terminal of outer_loop (incorrect)
+      - Without this fix, LangGraph would add edges to both loops
+
+    SOLUTION: Before adding an implicit back-edge from a terminal node to
+      an outer loop, check if the terminal is ALSO a terminal of any nested
+      inner loop. If so, skip adding the edge to the outer loop - the inner
+      loop's back-edge will handle returning control correctly.
+    """
+    for node in plan.nodes:
+        if not isinstance(node, ForEachNode):
+            continue
+
+        terminal_nodes = plan.loop_terminal_nodes.get(node.id, set())
+        for terminal_node_id in terminal_nodes:
+            # Skip if this terminal node belongs to a nested inner loop
+            if _is_terminal_of_nested_loop(terminal_node_id, node.id, plan):
+                continue
+
+            # Check if explicit edge already exists
+            existing_edges = plan.outgoing_edges.get(terminal_node_id, [])
+            has_explicit_loop_back = any(
+                e.target == node.id and e.type == EdgeType.default
+                for e in existing_edges
+            )
+
+            if not has_explicit_loop_back:
+                # Add implicit edge from terminal node back to loop
+                graph.add_edge(terminal_node_id, node.id)
+
+
 # pylint: disable=too-complex,too-many-branches,unused-argument,protected-access
 # Reason: Workflow compilation to LangGraph requires branching logic for all node types; protected access for internal state
 async def emit_langgraph(
@@ -199,6 +265,9 @@ async def emit_langgraph(
 
     # Set loop body map in runtime for trace key generation
     runtime.set_loop_body_map(loop_body_map)
+
+    # Set nested loop parents in runtime for state isolation
+    runtime.set_nested_loop_parents(plan.nested_loop_parents)
 
     # Add all nodes to the graph
     node_map: Dict[str, Node] = {}
@@ -264,21 +333,8 @@ async def emit_langgraph(
         else:
             _add_regular_edges(graph, node, outgoing)
 
-    # Add implicit edges from loop terminal nodes back to loop nodes
-    for node in plan.nodes:
-        if isinstance(node, ForEachNode):
-            terminal_nodes = plan.loop_terminal_nodes.get(node.id, set())
-            for terminal_node_id in terminal_nodes:
-                # Check if explicit edge already exists
-                existing_edges = plan.outgoing_edges.get(terminal_node_id, [])
-                has_explicit_loop_back = any(
-                    e.target == node.id and e.type == EdgeType.default
-                    for e in existing_edges
-                )
-
-                if not has_explicit_loop_back:
-                    # Add implicit edge from terminal node back to loop
-                    graph.add_edge(terminal_node_id, node.id)
+    # Add implicit back-edges for loop terminal nodes
+    _add_implicit_loop_back_edges(graph, plan)
 
     if checkpointer:
         return graph.compile(checkpointer=checkpointer)
