@@ -20,12 +20,15 @@ from seer.core.expr.typecheck import (
     ensure_references_valid,
     typecheck_reference,
 )
-from seer.core.schema.models import ForEachNode, HITLNode, IfNode, Node, WorkflowSpec
+from seer.core.schema.models import EdgeType, ForEachNode, HITLNode, IfNode, Node, WorkflowSpec
 
 
 def validate_references(spec: WorkflowSpec, type_env: TypeEnvironment) -> None:
     scope = Scope(env=type_env)
     errors: List[str] = []
+
+    # Check for orphaned triggers (triggers without edges)
+    _validate_orphaned_triggers(spec, errors)
 
     # Check if workflow uses trigger references without triggers declared
     if _uses_trigger_references(spec) and not spec.triggers:
@@ -53,6 +56,24 @@ def validate_references(spec: WorkflowSpec, type_env: TypeEnvironment) -> None:
 
     if errors:
         raise ValidationPhaseError("\n".join(errors))
+
+
+def _validate_orphaned_triggers(spec: WorkflowSpec, errors: List[str]) -> None:
+    """Validate that every trigger has at least one edge connecting it to a node."""
+    if not spec.triggers:
+        return
+
+    trigger_ids = {t.id for t in spec.triggers}
+    connected_trigger_ids = {edge.source for edge in spec.edges if edge.type == EdgeType.trigger}
+    orphaned_triggers = trigger_ids - connected_trigger_ids
+
+    if orphaned_triggers:
+        orphan_list = ", ".join(sorted(orphaned_triggers))
+        errors.append(
+            f"Orphaned triggers without edges are not allowed. "
+            f"The following triggers are not connected to any node: {orphan_list}. "
+            f"Add trigger edges with type='trigger' to connect these triggers to nodes."
+        )
 
 
 def _uses_trigger_references(spec: WorkflowSpec) -> bool:
