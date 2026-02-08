@@ -660,12 +660,8 @@ async def test_if_false_branch_contains_for_each() -> None:
 async def test_for_each_containing_if_containing_for_each() -> None:
     """Test 3 levels of nesting: loop -> if -> loop.
 
-    CRITICAL: This was NOT TESTED AT ALL (0% coverage for 3+ levels).
-
-    KNOWN BUG: This test exposes a state isolation issue where inner loop
-    item/index variables are not properly isolated between outer loop iterations.
-    When outer_idx=0 (A), the inner loop should process ['x', 'y'], but due to
-    the bug, the inner loop state from one outer iteration leaks into the next.
+    This validates that nested loops within conditionals work correctly,
+    with proper state isolation between outer loop iterations.
     """
     call_tracker: list = []
     tracking_tool = _create_tracking_tool(call_tracker)
@@ -967,9 +963,8 @@ async def test_loop_variables_available_in_both_if_branches() -> None:
 async def test_nested_loops_variable_isolation() -> None:
     """Test that inner and outer loop variables don't conflict.
 
-    KNOWN BUG: The inner loop only executes once per outer iteration instead of
-    the full number of items. This appears to be related to how the inner loop
-    state (_loop_inner_loop) is reset between outer loop iterations.
+    Verifies that nested loops properly reset and execute all iterations,
+    with inner loop state correctly isolated from outer loop iterations.
     """
     call_tracker: list = []
     tracking_tool = _create_tracking_tool(call_tracker)
@@ -1254,9 +1249,6 @@ async def test_n_level_nested_loops(nesting_depth: int) -> None:
 
     This test dynamically generates workflows with 2-5 levels of nesting
     and verifies that all expected item combinations are processed.
-
-    KNOWN BUG: For nesting_depth >= 2, inner loops don't complete all
-    iterations due to state isolation issues between loop levels.
     """
     call_tracker: list = []
     tracking_tool = _create_tracking_tool(call_tracker)
@@ -1301,9 +1293,6 @@ async def test_n_level_trace_key_uniqueness(nesting_depth: int) -> None:
         _trace_process_iter_0_iter_1  (L0_0, L1_1)
         _trace_process_iter_1_iter_0  (L0_1, L1_0)
         _trace_process_iter_1_iter_1  (L0_1, L1_1)
-
-    KNOWN BUG: Trace keys are not correctly generated for nested loops,
-    causing collisions and data overwrites.
     """
     call_tracker: list = []
     tracking_tool = _create_tracking_tool(call_tracker)
@@ -1548,9 +1537,6 @@ async def test_n_level_loop_with_conditional_filter(nesting_depth: int) -> None:
     - Index 0 (even): processes inner loops
     - Index 1 (odd): skipped
     - Index 2 (even): processes inner loops
-
-    KNOWN BUG: For nesting_depth >= 2, the combination of conditionals and
-    nested loops causes state isolation issues.
     """
     call_tracker: list = []
     tracking_tool = _create_tracking_tool(call_tracker)
