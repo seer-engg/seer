@@ -84,6 +84,7 @@ class NodeRuntime:
         self._current_trigger: Mapping[str, Any] | None = None
         self._current_context: WorkflowRuntimeContext | None = None
         self._loop_body_map: Dict[str, str] = {}  # node_id -> parent_loop_id
+        self._nested_loop_parents: Dict[str, str] = {}  # inner_loop_id -> outer_loop_id
 
     def build_runner(self, node: Node) -> RunnableCallable:
         def runner(
@@ -113,27 +114,62 @@ class NodeRuntime:
         """Set mapping from node_id to parent loop_id for nodes inside loops."""
         self._loop_body_map = loop_body_map
 
+    def set_nested_loop_parents(self, nested_loop_parents: Dict[str, str]) -> None:
+        """Set mapping from inner_loop_id to outer_loop_id for nested loops.
+
+        This mapping is used for:
+        1. Resetting inner loop state when parent iteration changes
+        2. Building full iteration paths for trace keys
+        """
+        self._nested_loop_parents = nested_loop_parents
+
+    # -------------------------------------------------------------------------
+    # BUG FIX: Multi-Level Trace Keys for Nested Loops (2024-02 RCA)
+    # -------------------------------------------------------------------------
+    # PROBLEM: Original trace key generation only added ONE iteration suffix
+    #   from the immediate parent loop. For nested loops, this caused collisions:
+    #     - outer_loop idx=0, inner_loop idx=0 → _trace_process_iter_0
+    #     - outer_loop idx=1, inner_loop idx=0 → _trace_process_iter_0 (COLLISION!)
+    #
+    # SOLUTION: Build full iteration path from outermost to innermost loop:
+    #     - outer_loop idx=0, inner_loop idx=0 → _trace_process_iter_0_iter_0
+    #     - outer_loop idx=0, inner_loop idx=1 → _trace_process_iter_0_iter_1
+    #     - outer_loop idx=1, inner_loop idx=0 → _trace_process_iter_1_iter_0
+    #     - outer_loop idx=1, inner_loop idx=1 → _trace_process_iter_1_iter_1
+    # -------------------------------------------------------------------------
     def _get_trace_key(self, node_id: str, state: WorkflowState) -> str:
         """
-        Generate trace key for a node, including loop iteration if inside a loop.
+        Generate trace key for a node, including loop iteration path if inside nested loops.
 
         Returns:
             - `_trace_{node_id}` if not in a loop
-            - `_trace_{node_id}_iter_{N}` if in a loop (where N is the current iteration)
+            - `_trace_{node_id}_iter_{N}` if in a single loop
+            - `_trace_{node_id}_iter_{N}_iter_{M}...` if in nested loops (outermost first)
         """
         # Check if this node is inside a loop
         parent_loop_id = self._loop_body_map.get(node_id)
         if not parent_loop_id:
             return f"_trace_{node_id}"
 
-        # Get the current loop iteration
-        loop_state_key = f"_loop_{parent_loop_id}"
-        loop_state = state.get(loop_state_key)
-        if not loop_state or not isinstance(loop_state, dict):
-            return f"_trace_{node_id}"
+        # Build full iteration path from innermost to outermost loop
+        # We traverse from innermost (parent_loop_id) up the nesting chain
+        iteration_suffixes: list[str] = []
+        current_loop_id = parent_loop_id
 
-        current_index = loop_state.get("current_index", 0)
-        return f"_trace_{node_id}_iter_{current_index}"
+        while current_loop_id:
+            loop_state_key = f"_loop_{current_loop_id}"
+            loop_state = state.get(loop_state_key)
+            if loop_state and isinstance(loop_state, dict):
+                current_index = loop_state.get("current_index", 0)
+                iteration_suffixes.append(f"_iter_{current_index}")
+
+            # Walk up to the parent loop (if this loop is nested)
+            current_loop_id = self._nested_loop_parents.get(current_loop_id)
+
+        # Reverse to get outermost first (e.g., _iter_0_iter_1 for outer=0, inner=1)
+        iteration_suffixes.reverse()
+
+        return f"_trace_{node_id}{''.join(iteration_suffixes)}"
 
     def _check_llm_credit_limit_sync(self) -> None:
         """
@@ -708,6 +744,29 @@ class NodeRuntime:
         # Store condition result for the router
         return {f"_if_result_{node.id}": condition_result}
 
+    # -------------------------------------------------------------------------
+    # BUG FIX: Nested Loop State Isolation (2024-02 RCA)
+    # -------------------------------------------------------------------------
+    # PROBLEM: When running nested for_each loops, only the first outer
+    #   iteration processed all inner iterations. Example:
+    #     - 3 organizations × 2 contacts = 6 emails expected
+    #     - Only 2 emails sent (both from first organization)
+    #
+    # ROOT CAUSE: Inner loop state (_loop_inner_loop) persisted between outer
+    #   loop iterations. When outer loop advanced, inner loop found stale state
+    #   with `has_more_iterations=False` and exited immediately.
+    #
+    # SOLUTION: Track the parent loop's current_index when initializing.
+    #   On re-entry, if parent's current_index has changed, reset the inner
+    #   loop to start fresh for the new parent iteration.
+    #
+    # EXAMPLE FLOW (outer=["A","B"], inner=["x","y"]):
+    #   1. outer idx=0: inner initializes with _parent_iteration_idx=0
+    #   2. inner idx=0,1: processes "A-x", "A-y"
+    #   3. outer idx=1: inner re-enters, sees parent idx changed (0→1)
+    #   4. inner RESETS with _parent_iteration_idx=1
+    #   5. inner idx=0,1: processes "B-x", "B-y"
+    # -------------------------------------------------------------------------
     def _run_for_each(
         self,
         node: ForEachNode,
@@ -722,6 +781,7 @@ class NodeRuntime:
 
         On first call: Evaluate items and initialize loop state.
         On subsequent calls: Advance the index.
+        On nested loop re-entry after parent iteration: Reset the loop state.
 
         Loop body execution is handled by LangGraph graph traversal.
         The router reads _loop_{node_id} to determine body vs exit.
@@ -729,18 +789,42 @@ class NodeRuntime:
         loop_key = f"_loop_{node.id}"
         existing_loop_state = state.get(loop_key)
 
-        if existing_loop_state is None:
-            # First invocation - initialize loop state
+        # =====================================================================
+        # NESTED LOOP RESET DETECTION
+        # =====================================================================
+        # For nested loops, check if the parent loop has advanced to a new
+        # iteration. If so, we need to reset this inner loop to start fresh.
+        # =====================================================================
+        should_reset = False
+        parent_loop_id = self._nested_loop_parents.get(node.id)
+        parent_state = state.get(f"_loop_{parent_loop_id}") if parent_loop_id else None
+
+        if existing_loop_state and parent_state:
+            # Compare stored parent index with current parent index
+            stored_parent_idx = existing_loop_state.get("_parent_iteration_idx")
+            current_parent_idx = parent_state.get("current_index", 0)
+            if stored_parent_idx != current_parent_idx:
+                # Parent has advanced - reset this inner loop
+                should_reset = True
+
+        if existing_loop_state is None or should_reset:
+            # First invocation OR nested loop reset - initialize loop state
             ctx = self._build_eval_context(state, config, locals_ctx)
             items_value = evaluate_value(ctx, node.items)
             if not isinstance(items_value, list):
                 raise ExecutionError(f"for_each node '{node.id}' items expression must produce a list")
+
+            # _run_id tracks how many times this loop has been reset (for debugging)
+            new_run_id = (existing_loop_state.get("_run_id", -1) + 1) if existing_loop_state else 0
 
             loop_state = {
                 "items": items_value,
                 "current_index": 0,
                 "has_more_iterations": len(items_value) > 0,
                 "results": [],
+                "_run_id": new_run_id,
+                # Store parent's current index to detect when parent advances
+                "_parent_iteration_idx": parent_state.get("current_index", 0) if parent_state else None,
             }
         else:
             # Subsequent invocation - advance to next iteration
@@ -773,24 +857,54 @@ class NodeRuntime:
 
         On first call: Evaluate items and initialize loop state.
         On subsequent calls: Advance the index.
+        On nested loop re-entry after parent iteration: Reset the loop state.
 
         Loop body execution is handled by LangGraph graph traversal.
+        The router reads _loop_{node_id} to determine body vs exit.
         """
         loop_key = f"_loop_{node.id}"
         existing_loop_state = state.get(loop_key)
 
-        if existing_loop_state is None:
-            # First invocation - initialize loop state
+        # =====================================================================
+        # NESTED LOOP RESET DETECTION
+        # =====================================================================
+        # For nested loops, check if the parent loop has advanced to a new
+        # iteration. If so, we need to reset this inner loop to start fresh.
+        #
+        # The fix uses `_parent_iteration_idx` to track the parent's index
+        # when this loop was initialized. On re-entry, if parent's current_index
+        # has changed, the inner loop resets for the new parent iteration.
+        # =====================================================================
+        should_reset = False
+        parent_loop_id = self._nested_loop_parents.get(node.id)
+        parent_state = state.get(f"_loop_{parent_loop_id}") if parent_loop_id else None
+
+        if existing_loop_state and parent_state:
+            # Compare stored parent index with current parent index
+            stored_parent_idx = existing_loop_state.get("_parent_iteration_idx")
+            current_parent_idx = parent_state.get("current_index", 0)
+            if stored_parent_idx != current_parent_idx:
+                # Parent has advanced - reset this inner loop
+                should_reset = True
+
+        if existing_loop_state is None or should_reset:
+            # First invocation OR nested loop reset - initialize loop state
             ctx = self._build_eval_context(state, config, locals_ctx)
             items_value = evaluate_value(ctx, node.items)
             if not isinstance(items_value, list):
                 raise ExecutionError(f"for_each node '{node.id}' items expression must produce a list")
+
+            # _run_id tracks how many times this loop has been reset (for debugging)
+            new_run_id = (existing_loop_state.get("_run_id", -1) + 1) if existing_loop_state else 0
 
             loop_state = {
                 "items": items_value,
                 "current_index": 0,
                 "has_more_iterations": len(items_value) > 0,
                 "results": [],
+                "_run_id": new_run_id,
+                # Store parent's current index to detect when parent advances
+                "_parent_iteration_idx": parent_state.get("current_index", 0) if parent_state else None,
             }
         else:
             # Subsequent invocation - advance to next iteration
