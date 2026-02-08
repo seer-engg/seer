@@ -454,9 +454,8 @@ async def test_for_each_with_if_iteration_traces() -> None:
 async def test_nested_loops_trace_keys() -> None:
     """Test trace keys for nested loop scenarios.
 
-    KNOWN BUG: The outer loop iteration indices in trace keys appear to be off.
-    Expected _trace_after_inner_iter_0 and _trace_after_inner_iter_1, but
-    actual keys start from _iter_1 and _iter_2. Related to state isolation bug.
+    Verifies that nested loops generate correct multi-level iteration trace keys
+    (e.g., _trace_process_inner_iter_0_iter_0 for outer=0, inner=0).
     """
     spec = {
         "version": "2",
