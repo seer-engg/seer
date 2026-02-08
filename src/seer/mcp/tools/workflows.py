@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional
 
 from seer.mcp.server import mcp
 from seer.mcp.auth import get_mcp_authenticated_user
+from seer.mcp.tracking import track_mcp_tool
 from seer.database import User, init_db
 from seer.core.compiler.parse import parse_workflow_spec
 from seer.core.errors import ValidationPhaseError
@@ -86,6 +87,7 @@ async def _get_mcp_user() -> User:
 
 
 @mcp.tool()
+@track_mcp_tool("list_workflows")
 async def list_workflows(
     limit: int = 50,
     cursor: Optional[str] = None,
@@ -134,6 +136,7 @@ async def list_workflows(
 
 
 @mcp.tool()
+@track_mcp_tool("get_workflow")
 async def get_workflow(workflow_id: str) -> str:
     """
     Get a workflow by its ID.
@@ -171,6 +174,7 @@ async def get_workflow(workflow_id: str) -> str:
 
 
 @mcp.tool()
+@track_mcp_tool("validate_workflow")
 async def validate_workflow(spec: Dict[str, Any]) -> str:
     """
     Validate a workflow specification without creating it.
@@ -239,6 +243,7 @@ async def validate_workflow(spec: Dict[str, Any]) -> str:
 
 
 @mcp.tool()
+@track_mcp_tool("publish_workflow")
 async def publish_workflow(workflow_id: str) -> str:
     """
     Publish the draft version of a workflow, making it active.
@@ -310,6 +315,7 @@ def _build_auto_fix_info(schema_fixes: list) -> Dict[str, Any]:
 
 
 @mcp.tool()
+@track_mcp_tool("validate_and_upsert_workflow")
 async def validate_and_upsert_workflow(
     name: str,
     spec: Dict[str, Any],
@@ -394,6 +400,7 @@ async def validate_and_upsert_workflow(
 
 
 @mcp.tool()
+@track_mcp_tool("analyze_workflow")
 async def analyze_workflow(workflow_id: str) -> str:
     """
     Analyze the structure and composition of a workflow.
@@ -468,6 +475,7 @@ async def analyze_workflow(workflow_id: str) -> str:
 
 
 @mcp.tool()
+@track_mcp_tool("delete_workflow")
 async def delete_workflow(workflow_id: str) -> str:
     """
     Delete a workflow and all its versions.

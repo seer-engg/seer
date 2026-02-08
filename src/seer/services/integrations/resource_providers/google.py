@@ -1,5 +1,6 @@
-# pylint: disable=too-many-arguments,logging-fstring-interpolation,broad-exception-caught
-# Reason: Resource provider list_resources has many filter parameters; legacy f-string logging; broad exception for API errors
+# pylint: disable=too-many-arguments,logging-fstring-interpolation,broad-exception-caught,too-many-return-statements
+# Reason: Resource provider list_resources has many filter parameters and one return per resource type;
+#  legacy f-string logging; broad exception for API errors
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
@@ -18,7 +19,7 @@ logger = get_logger(__name__)
 
 class GoogleResourceProvider(ResourceProvider):
     provider = "google"
-    aliases = {"gmail", "googlesheets", "googledrive"}
+    aliases = {"gmail", "googlesheets", "googledrive", "googledocs"}
     resource_configs: Dict[str, Dict[str, Any]] = {
         "google_drive_file": {
             "list_endpoint": "https://www.googleapis.com/drive/v3/files",
@@ -34,6 +35,15 @@ class GoogleResourceProvider(ResourceProvider):
             "value_field": "id",
             "default_fields": "nextPageToken,files(id,name,mimeType,modifiedTime,iconLink,webViewLink)",
             "default_query": "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false",
+            "supports_hierarchy": False,
+            "supports_search": True,
+        },
+        "google_document": {
+            "list_endpoint": "https://www.googleapis.com/drive/v3/files",
+            "display_field": "name",
+            "value_field": "id",
+            "default_fields": "nextPageToken,files(id,name,mimeType,modifiedTime,iconLink,webViewLink)",
+            "default_query": "mimeType='application/vnd.google-apps.document' and trashed=false",
             "supports_hierarchy": False,
             "supports_search": True,
         },
@@ -90,6 +100,17 @@ class GoogleResourceProvider(ResourceProvider):
                 page_token=page_token,
                 page_size=page_size,
                 mime_type="application/vnd.google-apps.spreadsheet",
+            )
+        if resource_type == "google_document":
+            logger.info(f"Listing Google Documents for parent_id: {parent_id}")
+            return await self._list_drive_files(
+                access_token,
+                config,
+                query=query,
+                parent_id=parent_id,
+                page_token=page_token,
+                page_size=page_size,
+                mime_type="application/vnd.google-apps.document",
             )
         if resource_type == "google_drive_file":
             mime_type = (filter_params or {}).get("mimeType")

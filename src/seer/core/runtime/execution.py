@@ -24,35 +24,6 @@ class CompiledWorkflow:
     graph: Any
     runtime: NodeRuntime
 
-    def invoke(
-        self,
-        workflow_input: Any = None,
-        config: Mapping[str, Any] | None = None,
-        context: WorkflowRuntimeContext | None = None,
-        trigger: Mapping[str, Any] | None = None,
-    ) -> Mapping[str, Any]:
-        self.runtime.bind_trigger(trigger)
-        self.runtime.bind_context(context)
-        effective_config = dict(config or {})
-        effective_config = merge_workflow_langfuse_callbacks(effective_config)
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "CompiledWorkflow.invoke graph config_keys=%s context_present=%s",
-                sorted(effective_config.keys()),
-                context is not None,
-            )
-        invoke_kwargs = {"config": effective_config}
-        if context is not None:
-            invoke_kwargs["context"] = context
-        # Use provided input (e.g., Command for resume) or empty dict for fresh start
-        graph_input = workflow_input if workflow_input is not None else {}
-        final_state = self.graph.invoke(graph_input, **invoke_kwargs)
-        return {
-            key: value
-            for key, value in final_state.items()
-            if not key.startswith(INTERNAL_STATE_PREFIX) or key == "__interrupt__"
-        }
-
     async def ainvoke(
         self,
         workflow_input: Any = None,

@@ -190,13 +190,13 @@ def build_workflow_spec() -> Dict[str, Any]:
     }
 
 
-def main() -> None:
+async def main() -> None:
     register_demo_components()
     compiler = WorkflowCompilerSingleton.instance()
     demo_user = User(id=0, user_id="demo-basic-user")
     spec = build_workflow_spec()
-    compiled = compiler.compile(demo_user, spec)
-    result = compiled.invoke(
+    compiled = await compiler.compile(demo_user, spec)
+    result = await compiled.ainvoke(
         trigger={
             "trigger_key": "manual.trigger",
             "data": {
@@ -211,4 +211,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())

@@ -182,9 +182,9 @@ def build_workflow_spec(reply_schema: JsonSchema, read_schema: JsonSchema, draft
     }
 
 
-def main() -> None:
+async def main() -> None:
     user_id = 1
-    credentials = asyncio.run(fetch_oauth_credentials(user_id))
+    credentials = await fetch_oauth_credentials(user_id)
     service = GmailDemoService(credentials)
 
     reply_schema, read_schema, draft_schema = get_gmail_reply_schemas(service)
@@ -193,8 +193,8 @@ def main() -> None:
     register_demo_components(service)
     compiler = WorkflowCompilerSingleton.instance()
     demo_user = User(id=0, user_id="demo-gmail-reply")
-    compiled = compiler.compile(demo_user, workflow_spec)
-    result = compiled.invoke(trigger={"trigger_key": "manual.trigger", "data": {"user_id": user_id}})
+    compiled = await compiler.compile(demo_user, workflow_spec)
+    result = await compiled.ainvoke(trigger={"trigger_key": "manual.trigger", "data": {"user_id": user_id}})
 
     print("Workflow execution complete. Draft payload:")
     for key, value in result.items():
@@ -202,4 +202,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

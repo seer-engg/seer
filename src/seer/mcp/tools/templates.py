@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 
 from seer.mcp.server import mcp
+from seer.mcp.tracking import track_mcp_tool
 from seer.tools.template_shared import search_templates, list_all_templates
 from seer.logger import get_logger
 
@@ -17,6 +18,7 @@ logger = get_logger(__name__)
 
 
 @mcp.tool()
+@track_mcp_tool("get_workflow_template")
 async def get_workflow_template(query: str) -> str:
     """
     Retrieve workflow templates by name or tags to use as starting points.
@@ -43,6 +45,7 @@ async def get_workflow_template(query: str) -> str:
 
 
 @mcp.tool()
+@track_mcp_tool("list_workflow_templates")
 async def list_workflow_templates() -> str:
     """
     List all available workflow templates.
