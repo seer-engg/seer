@@ -87,13 +87,6 @@ class NodeRuntime:
         self._nested_loop_parents: Dict[str, str] = {}  # inner_loop_id -> outer_loop_id
 
     def build_runner(self, node: Node) -> RunnableCallable:
-        def runner(
-            state: WorkflowState,
-            config: Mapping[str, Any] | None = None,
-            context: WorkflowRuntimeContext | None = None,
-        ) -> Dict[str, Any]:
-            return self._run_node(node, state, config or {}, locals_ctx=None, context=context)
-
         async def runner_async(
             state: WorkflowState,
             config: Mapping[str, Any] | None = None,
@@ -101,7 +94,7 @@ class NodeRuntime:
         ) -> Dict[str, Any]:
             return await self._run_node_async(node, state, config or {}, locals_ctx=None, context=context)
 
-        return RunnableCallable(func=runner, afunc=runner_async, name=f"node:{node.id}")
+        return RunnableCallable(func=None, afunc=runner_async, name=f"node:{node.id}")
 
     def bind_trigger(self, trigger: Mapping[str, Any] | None) -> None:
         """Bind trigger event envelope for ${trigger.*} resolution."""
@@ -171,22 +164,6 @@ class NodeRuntime:
 
         return f"_trace_{node_id}{''.join(iteration_suffixes)}"
 
-    def _check_llm_credit_limit_sync(self) -> None:
-        """
-        Run the credit gate in synchronous contexts before an LLM call.
-        """
-        if not self._current_context or not self._current_context.user:
-            return
-
-        from seer.observability.credit_gate import check_credit_limit
-
-        try:
-            asyncio.run(check_credit_limit(self._current_context.user))
-        except Exception as exc:  # noqa: BLE001 - propagate credit failures, log others
-            if exc.__class__.__name__ == "CreditLimitExceeded":
-                raise
-            logger.error("Credit limit check failed: %s", exc)
-
     async def _check_llm_credit_limit_async(self) -> None:
         """
         Run the credit gate in async contexts before an LLM call.
@@ -253,30 +230,6 @@ class NodeRuntime:
     # ------------------------------------------------------------------
     # Node handlers
     # ------------------------------------------------------------------
-    def _run_node(
-        self,
-        node: Node,
-        state: WorkflowState,
-        config: Mapping[str, Any],
-        *,
-        locals_ctx: Mapping[str, Any] | None,
-        context: WorkflowRuntimeContext | None,
-    ) -> Dict[str, Any]:
-        if isinstance(node, ToolNode):
-            return self._run_tool(node, state, config, locals_ctx=locals_ctx, context=context)
-        if isinstance(node, MCPNode):
-            return self._run_mcp(node, state, config, locals_ctx=locals_ctx, context=context)
-        if isinstance(node, LLMNode):
-            self._check_llm_credit_limit_sync()
-            return self._run_llm(node, state, config, locals_ctx=locals_ctx)
-        if isinstance(node, IfNode):
-            return self._run_if(node, state, config, locals_ctx=locals_ctx, context=context)
-        if isinstance(node, ForEachNode):
-            return self._run_for_each(node, state, config, locals_ctx=locals_ctx, context=context)
-        if isinstance(node, HITLNode):
-            return self._run_hitl(node, state, config, locals_ctx=locals_ctx, context=context)
-        raise ExecutionError(f"Unsupported node type '{node.type}'")
-
     async def _run_node_async(
         self,
         node: Node,
@@ -300,81 +253,6 @@ class NodeRuntime:
         if isinstance(node, HITLNode):
             return await self._run_hitl_async(node, state, config, locals_ctx=locals_ctx, context=context)
         raise ExecutionError(f"Unsupported node type '{node.type}'")
-
-    def _run_tool(
-        self,
-        node: ToolNode,
-        state: WorkflowState,
-        config: Mapping[str, Any],
-        *,
-        locals_ctx: Mapping[str, Any] | None,
-        context: WorkflowRuntimeContext | None,
-    ) -> Dict[str, Any]:
-        # STEP 1: Capture inputs (AFTER evaluation, BEFORE execution)
-        inputs = self._capture_node_inputs(node, state, config, locals_ctx)
-
-        # STEP 2: Execute tool (existing logic)
-        try:
-            tool_def = self.services.tool_registry.get(node.tool)
-            runtime_context = context or self._current_context
-
-            # -----------------------------------------------------------------
-            # STEP 1.5: Apply schema-driven coercion to inputs
-            # -----------------------------------------------------------------
-            # This is the FIX for the 2024-02 RCA bug where LLM outputs like
-            # "'E3'" (quoted string) were passed directly to Google Sheets API,
-            # causing "Unable to parse range: Sheet1!'E3'" errors.
-            #
-            # Coercion handles common LLM output quirks:
-            #   - Quoted strings: 'E3' or "E3" -> E3
-            #   - Stringified numbers: "42" -> 42
-            #   - Stringified booleans: "true" -> true
-            #   - JSON-stringified arrays: "[1, 2]" -> [1, 2]
-            # -----------------------------------------------------------------
-            inputs = coerce_arguments(inputs, tool_def.input_schema)
-
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(
-                    "Running tool node '%s' (tool='%s') with config_keys=%s user_in_context=%s config_type=%s configurable_keys=%s",
-                    node.id,
-                    node.tool,
-                    sorted(config.keys()),
-                    bool(getattr(runtime_context, "user", None)),
-                    type(config).__name__,
-                    sorted((config.get("configurable") or {}).keys()),
-                )
-            result = tool_def.handler(inputs, dict(config), runtime_context)
-        except Exception as exc:
-            error_trace = self._write_error_trace(node, state, inputs, exc=exc, node_type='tool')
-            # CRITICAL: Update state with error trace BEFORE raising
-            # This ensures the trace is persisted to checkpoints even when node fails
-            state.update(error_trace)  # type: ignore[arg-type]  # WorkflowState is TypedDict with total=False, allows any keys
-            raise ExecutionError(f"Tool '{node.tool}' failed: {exc}", trace_data=error_trace) from exc
-
-        # STEP 3: Prepare output (existing logic)
-        output = self._prepare_output(node.id, result)
-
-        # STEP 4: Store trace data
-        # Use single underscore prefix to avoid LangGraph filtering double-underscore keys
-        trace_key = self._get_trace_key(node.id, state)
-        output[trace_key] = {
-            'node_id': node.id,
-            'node_type': 'tool',
-            'inputs': inputs,  # Actual runtime inputs
-            'output': result,  # Raw tool result (before prepare_output)
-            'output_key': node.id,
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-            'status': 'succeeded',
-        }
-
-        # Diagnostic logging: Verify trace key is in output
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "Tool node '%s' output keys: %s, trace_key present: %s", node.id, list(output.keys()), trace_key in output,
-                extra={"node_id": node.id, "output_keys": list(output.keys()), "trace_key": trace_key}
-            )
-
-        return output
 
     async def _run_tool_async(
         self,
@@ -402,11 +280,9 @@ class NodeRuntime:
             # -----------------------------------------------------------------
             inputs = coerce_arguments(inputs, tool_def.input_schema)
 
-            handler = getattr(tool_def, "async_handler", None)
-            if handler is None:
-                result = await asyncio.to_thread(tool_def.handler, inputs, dict(config), runtime_context)
-            else:
-                result = await handler(inputs, dict(config), runtime_context)
+            if tool_def.async_handler is None:
+                raise ExecutionError(f"Tool '{node.tool}' has no async handler registered")
+            result = await tool_def.async_handler(inputs, dict(config), runtime_context)
         except Exception as exc:
             error_trace = self._write_error_trace(node, state, inputs, exc=exc, node_type='tool')
             # CRITICAL: Update state with error trace BEFORE raising
@@ -438,20 +314,6 @@ class NodeRuntime:
             )
 
         return output
-
-    def _run_mcp(
-        self,
-        node: MCPNode,
-        state: WorkflowState,
-        config: Mapping[str, Any],
-        *,
-        locals_ctx: Mapping[str, Any] | None,
-        context: WorkflowRuntimeContext | None,
-    ) -> Dict[str, Any]:
-        """Execute MCP node synchronously (delegates to async implementation)."""
-        return asyncio.run(
-            self._run_mcp_async(node, state, config, locals_ctx=locals_ctx, context=context)
-        )
 
     async def _run_mcp_async(
         self,
@@ -703,27 +565,6 @@ class NodeRuntime:
 
         return output
 
-    def _run_if(
-        self,
-        node: IfNode,
-        state: WorkflowState,
-        config: Mapping[str, Any],
-        *,
-        locals_ctx: Mapping[str, Any] | None,
-        context: WorkflowRuntimeContext | None,
-    ) -> Dict[str, Any]:
-        """
-        Evaluate the condition and store the result in state.
-
-        Branch selection is handled by LangGraph conditional edges.
-        The router reads _if_result_{node_id} to determine which branch to take.
-        """
-        ctx = self._build_eval_context(state, config, locals_ctx)
-        condition_result = evaluate_condition(ctx, node.condition)
-
-        # Store condition result for the router
-        return {f"_if_result_{node.id}": condition_result}
-
     async def _run_if_async(
         self,
         node: IfNode,
@@ -743,105 +584,6 @@ class NodeRuntime:
 
         # Store condition result for the router
         return {f"_if_result_{node.id}": condition_result}
-
-    # -------------------------------------------------------------------------
-    # BUG FIX: Nested Loop State Isolation (2024-02 RCA)
-    # -------------------------------------------------------------------------
-    # PROBLEM: When running nested for_each loops, only the first outer
-    #   iteration processed all inner iterations. Example:
-    #     - 3 organizations × 2 contacts = 6 emails expected
-    #     - Only 2 emails sent (both from first organization)
-    #
-    # ROOT CAUSE: Inner loop state (_loop_inner_loop) persisted between outer
-    #   loop iterations. When outer loop advanced, inner loop found stale state
-    #   with `has_more_iterations=False` and exited immediately.
-    #
-    # SOLUTION: Track the parent loop's current_index when initializing.
-    #   On re-entry, if parent's current_index has changed, reset the inner
-    #   loop to start fresh for the new parent iteration.
-    #
-    # EXAMPLE FLOW (outer=["A","B"], inner=["x","y"]):
-    #   1. outer idx=0: inner initializes with _parent_iteration_idx=0
-    #   2. inner idx=0,1: processes "A-x", "A-y"
-    #   3. outer idx=1: inner re-enters, sees parent idx changed (0→1)
-    #   4. inner RESETS with _parent_iteration_idx=1
-    #   5. inner idx=0,1: processes "B-x", "B-y"
-    # -------------------------------------------------------------------------
-    def _run_for_each(
-        self,
-        node: ForEachNode,
-        state: WorkflowState,
-        config: Mapping[str, Any],
-        *,
-        locals_ctx: Mapping[str, Any] | None,
-        context: WorkflowRuntimeContext | None,
-    ) -> Dict[str, Any]:
-        """
-        Initialize or advance loop iteration state.
-
-        On first call: Evaluate items and initialize loop state.
-        On subsequent calls: Advance the index.
-        On nested loop re-entry after parent iteration: Reset the loop state.
-
-        Loop body execution is handled by LangGraph graph traversal.
-        The router reads _loop_{node_id} to determine body vs exit.
-        """
-        loop_key = f"_loop_{node.id}"
-        existing_loop_state = state.get(loop_key)
-
-        # =====================================================================
-        # NESTED LOOP RESET DETECTION
-        # =====================================================================
-        # For nested loops, check if the parent loop has advanced to a new
-        # iteration. If so, we need to reset this inner loop to start fresh.
-        # =====================================================================
-        should_reset = False
-        parent_loop_id = self._nested_loop_parents.get(node.id)
-        parent_state = state.get(f"_loop_{parent_loop_id}") if parent_loop_id else None
-
-        if existing_loop_state and parent_state:
-            # Compare stored parent index with current parent index
-            stored_parent_idx = existing_loop_state.get("_parent_iteration_idx")
-            current_parent_idx = parent_state.get("current_index", 0)
-            if stored_parent_idx != current_parent_idx:
-                # Parent has advanced - reset this inner loop
-                should_reset = True
-
-        if existing_loop_state is None or should_reset:
-            # First invocation OR nested loop reset - initialize loop state
-            ctx = self._build_eval_context(state, config, locals_ctx)
-            items_value = evaluate_value(ctx, node.items)
-            if not isinstance(items_value, list):
-                raise ExecutionError(f"for_each node '{node.id}' items expression must produce a list")
-
-            # _run_id tracks how many times this loop has been reset (for debugging)
-            new_run_id = (existing_loop_state.get("_run_id", -1) + 1) if existing_loop_state else 0
-
-            loop_state = {
-                "items": items_value,
-                "current_index": 0,
-                "has_more_iterations": len(items_value) > 0,
-                "results": [],
-                "_run_id": new_run_id,
-                # Store parent's current index to detect when parent advances
-                "_parent_iteration_idx": parent_state.get("current_index", 0) if parent_state else None,
-            }
-        else:
-            # Subsequent invocation - advance to next iteration
-            loop_state = dict(existing_loop_state)
-            loop_state["current_index"] += 1
-            loop_state["has_more_iterations"] = loop_state["current_index"] < len(loop_state["items"])
-
-        # Build updates
-        updates: Dict[str, Any] = {loop_key: loop_state}
-
-        # Set current item and index in state for body nodes to access
-        if loop_state["has_more_iterations"]:
-            idx = loop_state["current_index"]
-            updates[node.item_var] = loop_state["items"][idx]
-            updates[node.index_var] = idx
-
-        return updates
 
     async def _run_for_each_async(
         self,
@@ -923,67 +665,6 @@ class NodeRuntime:
 
         return updates
 
-    def _run_hitl(
-        self,
-        node: HITLNode,
-        state: WorkflowState,
-        config: Mapping[str, Any],
-        *,
-        locals_ctx: Mapping[str, Any] | None,
-        context: WorkflowRuntimeContext | None,
-    ) -> Dict[str, Any]:
-        """
-        Execute HITL node - pause workflow for user input collection.
-
-        Uses LangGraph's interrupt() to pause execution. The workflow resumes
-        when user provides responses via the resume API.
-        """
-        from langgraph.types import interrupt  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import
-
-        # Evaluate display expressions
-        ctx = self._build_eval_context(state, config, locals_ctx)
-        display_data = []
-        for item in node.display:
-            try:
-                evaluated_value = evaluate_value(ctx, item.value)
-            except Exception as exc:  # noqa: BLE001 - capture evaluation errors for display
-                evaluated_value = f"<error: {exc}>"
-            display_data.append({
-                "label": item.label,
-                "value": evaluated_value,
-            })
-
-        # Build interrupt payload
-        interrupt_payload = {
-            "type": "hitl",
-            "node_id": node.id,
-            "title": node.title,
-            "description": node.description,
-            "display": display_data,
-            "inputs": [field.model_dump() for field in node.inputs],
-            "timeout_seconds": node.timeout_seconds,
-        }
-
-        # Trigger interrupt - execution pauses here until resumed
-        user_responses = interrupt(interrupt_payload)
-
-        # Build output from user responses
-        output: Dict[str, Any] = {node.id: user_responses or {}}
-
-        # Store trace data
-        trace_key = self._get_trace_key(node.id, state)
-        output[trace_key] = {
-            "node_id": node.id,
-            "node_type": "hitl",
-            "title": node.title,
-            "display": display_data,
-            "inputs": [field.model_dump() for field in node.inputs],
-            "output": user_responses,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-
-        return output
-
     async def _run_hitl_async(
         self,
         node: HITLNode,
@@ -1048,24 +729,6 @@ class NodeRuntime:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-    def _execute_sequence(
-        self,
-        nodes: Sequence[Node],
-        state: WorkflowState,
-        config: Mapping[str, Any],
-        *,
-        locals_ctx: Mapping[str, Any] | None,
-        context: WorkflowRuntimeContext | None,
-    ) -> Dict[str, Any]:
-        sequence_state: WorkflowState = dict(state)
-        accumulator: Dict[str, Any] = {}
-        for child in nodes:
-            updates = self._run_node(child, sequence_state, config, locals_ctx=locals_ctx, context=context)
-            if updates:
-                sequence_state.update(updates)
-                accumulator.update(updates)
-        return accumulator
-
     async def _execute_sequence_async(
         self,
         nodes: Sequence[Node],

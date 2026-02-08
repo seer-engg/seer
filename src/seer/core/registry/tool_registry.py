@@ -42,7 +42,7 @@ class ToolDefinition:
     version: str
     input_schema: JsonSchema
     output_schema: JsonSchema
-    handler: ToolCallable
+    handler: ToolCallable | None = None
     async_handler: ToolAsyncCallable | None = None
 
 
