@@ -83,7 +83,7 @@ def capture_event(
 
     async def do_capture():
         try:
-            posthog.capture(
+            posthog.capture(  # pylint: disable=no-member  # Reason: posthog SDK exposes capture() via dynamic import
                 distinct_id=distinct_id,
                 event=event,
                 properties=properties or {},
@@ -115,7 +115,7 @@ def identify_user(
 
     async def do_identify():
         try:
-            posthog.identify(
+            posthog.identify(  # pylint: disable=no-member  # Reason: posthog SDK exposes identify() via dynamic import
                 distinct_id=distinct_id,
                 properties=properties or {},
             )

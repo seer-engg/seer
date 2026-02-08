@@ -412,7 +412,7 @@ class SeerConfig(BaseSettings):
         default=None, description="PostHog API key for analytics"
     )
     posthog_host: str = Field(
-        default="https://app.posthog.com", description="PostHog instance host URL"
+        default="https://us.i.posthog.com", description="PostHog instance host URL"
     )
     posthog_enabled: bool = Field(
         default=False, description="Enable/disable PostHog analytics"
