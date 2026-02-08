@@ -184,19 +184,19 @@ class TestPostHogMiddleware:
 
     def test_should_skip_health_endpoint(self):
         """Should skip tracking for /health endpoint."""
-        from seer.api.core.middleware.posthog import PostHogMiddleware, EXCLUDED_PATHS
+        from seer.api.core.middleware.posthog_middleware import PostHogMiddleware, EXCLUDED_PATHS
 
         assert "/health" in EXCLUDED_PATHS
 
     def test_should_skip_docs_endpoint(self):
         """Should skip tracking for /docs endpoint."""
-        from seer.api.core.middleware.posthog import EXCLUDED_PATHS
+        from seer.api.core.middleware.posthog_middleware import EXCLUDED_PATHS
 
         assert "/docs" in EXCLUDED_PATHS
 
     def test_should_skip_options_requests(self, mock_request):
         """Should skip tracking for OPTIONS requests (CORS preflight)."""
-        from seer.api.core.middleware.posthog import PostHogMiddleware
+        from seer.api.core.middleware.posthog_middleware import PostHogMiddleware
 
         middleware = PostHogMiddleware(app=MagicMock())
         mock_request.method = "OPTIONS"
@@ -207,7 +207,7 @@ class TestPostHogMiddleware:
 
     def test_should_not_skip_regular_requests(self, mock_request):
         """Should not skip tracking for regular API requests."""
-        from seer.api.core.middleware.posthog import PostHogMiddleware
+        from seer.api.core.middleware.posthog_middleware import PostHogMiddleware
 
         middleware = PostHogMiddleware(app=MagicMock())
         mock_request.method = "GET"
@@ -218,12 +218,12 @@ class TestPostHogMiddleware:
 
     def test_track_request_captures_event(self, mock_request, mock_response):
         """Should capture event with correct properties."""
-        with patch("seer.api.core.middleware.posthog.capture_event") as mock_capture, \
-             patch("seer.api.core.middleware.posthog.identify_user") as mock_identify, \
-             patch("seer.api.core.middleware.posthog.config") as mock_config:
+        with patch("seer.api.core.middleware.posthog_middleware.capture_event") as mock_capture, \
+             patch("seer.api.core.middleware.posthog_middleware.identify_user") as mock_identify, \
+             patch("seer.api.core.middleware.posthog_middleware.config") as mock_config:
             mock_config.seer_mode = "cloud"
 
-            from seer.api.core.middleware.posthog import PostHogMiddleware
+            from seer.api.core.middleware.posthog_middleware import PostHogMiddleware
 
             middleware = PostHogMiddleware(app=MagicMock())
             middleware._track_request(mock_request, mock_response, latency_ms=50.5)
@@ -247,11 +247,11 @@ class TestPostHogMiddleware:
         """Should use 'anonymous' distinct_id when user not authenticated."""
         mock_request.state.user = None
 
-        with patch("seer.api.core.middleware.posthog.capture_event") as mock_capture, \
-             patch("seer.api.core.middleware.posthog.config") as mock_config:
+        with patch("seer.api.core.middleware.posthog_middleware.capture_event") as mock_capture, \
+             patch("seer.api.core.middleware.posthog_middleware.config") as mock_config:
             mock_config.seer_mode = "self-hosted"
 
-            from seer.api.core.middleware.posthog import PostHogMiddleware
+            from seer.api.core.middleware.posthog_middleware import PostHogMiddleware
 
             middleware = PostHogMiddleware(app=MagicMock())
             middleware._track_request(mock_request, mock_response, latency_ms=25.0)

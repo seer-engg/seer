@@ -143,7 +143,7 @@ app.add_middleware(CorrelationMiddleware)
 
 # PostHog analytics middleware - track API requests (non-blocking)
 if config.is_posthog_configured:
-    from seer.api.core.middleware.posthog import PostHogMiddleware  # pylint: disable=wrong-import-position,ungrouped-imports # Reason: Conditional import after config check
+    from seer.api.core.middleware.posthog_middleware import PostHogMiddleware  # pylint: disable=wrong-import-position,ungrouped-imports # Reason: Conditional import after config check
     app.add_middleware(PostHogMiddleware)
     logger.info("📊 PostHog analytics middleware enabled")
 
