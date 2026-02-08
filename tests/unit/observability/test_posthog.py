@@ -20,9 +20,9 @@ class TestPostHogClient:
         """Reset PostHog module state between tests."""
         # Reset the module-level initialization flag
         import seer.observability.posthog_client as client
-        client._posthog_initialized = False
+        client.POSTHOG_INITIALIZED = False
         yield
-        client._posthog_initialized = False
+        client.POSTHOG_INITIALIZED = False
 
     def test_capture_event_noop_when_not_configured(self):
         """Should silently no-op when PostHog is not configured."""
@@ -130,7 +130,7 @@ class TestPostHogClient:
     def test_shutdown_flushes_and_closes(self):
         """Should flush and shutdown PostHog client."""
         import seer.observability.posthog_client as client
-        client._posthog_initialized = True
+        client.POSTHOG_INITIALIZED = True
 
         with patch("seer.observability.posthog_client.posthog") as mock_posthog:
             from seer.observability.posthog_client import shutdown
@@ -143,7 +143,7 @@ class TestPostHogClient:
     def test_shutdown_handles_errors_gracefully(self):
         """Should log but not raise on shutdown errors."""
         import seer.observability.posthog_client as client
-        client._posthog_initialized = True
+        client.POSTHOG_INITIALIZED = True
 
         with patch("seer.observability.posthog_client.posthog") as mock_posthog:
             mock_posthog.flush.side_effect = Exception("Shutdown error")
