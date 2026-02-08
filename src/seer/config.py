@@ -404,6 +404,25 @@ class SeerConfig(BaseSettings):
             and self.langfuse_workflow_secret_key is not None
         )
 
+    # ============================================================================
+    # PostHog Analytics Configuration
+    # ============================================================================
+
+    posthog_api_key: Optional[str] = Field(
+        default=None, description="PostHog API key for analytics"
+    )
+    posthog_host: str = Field(
+        default="https://app.posthog.com", description="PostHog instance host URL"
+    )
+    posthog_enabled: bool = Field(
+        default=False, description="Enable/disable PostHog analytics"
+    )
+
+    @property
+    def is_posthog_configured(self) -> bool:
+        """Check if PostHog analytics is configured and enabled."""
+        return self.posthog_enabled and self.posthog_api_key is not None
+
     @classmethod
     def settings_customise_sources(  # pylint: disable=too-many-positional-arguments  # Reason: Method signature is defined by Pydantic's BaseSettings API and cannot be modified
         cls,

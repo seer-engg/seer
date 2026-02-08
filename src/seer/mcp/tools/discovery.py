@@ -11,6 +11,7 @@ import json
 from typing import Optional
 
 from seer.mcp.server import mcp
+from seer.mcp.tracking import track_mcp_tool
 from seer.tools.discovery_shared import (
     search_tools_intent,
     search_triggers_intent,
@@ -25,6 +26,7 @@ logger = get_logger(__name__)
 
 
 @mcp.tool()
+@track_mcp_tool("search_tools")
 async def search_tools(
     query: str,
     integration_filter: Optional[str] = None,
@@ -99,6 +101,7 @@ async def search_tools(
 
 
 @mcp.tool()
+@track_mcp_tool("list_tools")
 async def list_tools(integration_type: Optional[str] = None) -> str:
     """
     List all available workflow tools from the registry.
@@ -125,6 +128,7 @@ async def list_tools(integration_type: Optional[str] = None) -> str:
 
 
 @mcp.tool()
+@track_mcp_tool("search_triggers")
 async def search_triggers(
     query: str,
     provider_filter: Optional[str] = None
@@ -172,6 +176,7 @@ async def search_triggers(
 
 
 @mcp.tool()
+@track_mcp_tool("list_triggers")
 async def list_triggers(provider: Optional[str] = None) -> str:
     """
     List all available workflow triggers from the registry.
