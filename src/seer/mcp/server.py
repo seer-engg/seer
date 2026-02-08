@@ -214,6 +214,12 @@ def create_http_app(transport: str = "sse") -> Starlette:
 
 def main() -> None:
     """CLI entry point for seer-mcp command."""
+    # Initialize Sentry for standalone MCP server mode
+    if config.is_sentry_configured:
+        from seer.observability.sentry_client import init_sentry  # pylint: disable=import-outside-toplevel  # Reason: lazy import for optional dependency
+        if init_sentry():
+            logger.info("Sentry error monitoring initialized for MCP server")
+
     parser = argparse.ArgumentParser(
         description="Seer MCP Server - Workflow management via Model Context Protocol"
     )
