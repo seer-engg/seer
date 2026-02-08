@@ -1,4 +1,9 @@
 from seer.tools.base import register_tool
+from seer.tools.google.gdocs import (
+    GoogleDocsCreateTool,
+    GoogleDocsReadTool,
+    GoogleDocsWriteTool,
+)
 from seer.tools.google.gdrive import (
     GoogleDriveAboutGetTool,
     GoogleDriveCreateFolderTool,
@@ -46,6 +51,10 @@ def register_google_tools():
     register_tool(GmailReadTool())
     register_tool(GoogleSheetsAppendTool())
     register_tool(GoogleDriveListFilesTool())
+    # Google Docs
+    register_tool(GoogleDocsReadTool())
+    register_tool(GoogleDocsWriteTool())
+    register_tool(GoogleDocsCreateTool())
     register_tool(GoogleDriveGetFileMetadataTool())
     register_tool(GoogleDriveDownloadFileTool())
     register_tool(GoogleDriveUploadFileTool())

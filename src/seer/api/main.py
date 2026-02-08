@@ -105,6 +105,11 @@ async def lifespan(fastapi_app: FastAPI):
                     if hasattr(fastapi_app.state, "checkpointer"):
                         delattr(fastapi_app.state, "checkpointer")
 
+    # Shutdown PostHog client (flush pending events)
+    if config.is_posthog_configured:
+        from seer.observability.posthog_client import shutdown as posthog_shutdown  # pylint: disable=import-outside-toplevel  # Reason: conditional import during shutdown
+        posthog_shutdown()
+
     logger.info("👋 Seer API server shutting down...")
 
 
@@ -135,6 +140,12 @@ if config.mcp_enabled:
 # Correlation middleware - add correlation IDs to all requests
 from seer.api.core.middleware.correlation import CorrelationMiddleware  # pylint: disable=wrong-import-position,ungrouped-imports # Reason: Import after app creation
 app.add_middleware(CorrelationMiddleware)
+
+# PostHog analytics middleware - track API requests (non-blocking)
+if config.is_posthog_configured:
+    from seer.api.core.middleware.posthog_middleware import PostHogMiddleware  # pylint: disable=wrong-import-position,ungrouped-imports # Reason: Conditional import after config check
+    app.add_middleware(PostHogMiddleware)
+    logger.info("📊 PostHog analytics middleware enabled")
 
 # Usage limit middleware - enforce subscription limits centrally
 # must be AFTER auth middleware to have user info

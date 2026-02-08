@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Optional
 
 from seer.mcp.server import mcp
+from seer.mcp.tracking import track_mcp_tool
 from seer.prompts import (
     get_primitive_blocks_guide,
     get_graph_structure_guide,
@@ -39,6 +40,7 @@ def _get_integration_guide(integration: str) -> str:
 
 
 @mcp.tool()
+@track_mcp_tool("get_workflow_guide")
 async def get_workflow_guide(
     section: Optional[str] = None,
     integration: Optional[str] = None,

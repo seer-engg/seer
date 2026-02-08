@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -48,28 +47,6 @@ class UserBoundCompiledWorkflow:
 
     workflow: CompiledWorkflow
     user: User
-
-    def invoke(
-        self,
-        workflow_input: Any = None,
-        config: Mapping[str, Any] | None = None,
-        context: WorkflowRuntimeContext | None = None,
-        trigger: Mapping[str, Any] | None = None,
-    ) -> Mapping[str, Any]:
-        merged_config = dict(config or {})
-        runtime_context = context or WorkflowRuntimeContext(user=self.user)
-        user_before = merged_config.get("user")
-        merged_config.pop("user", None)
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "UserBoundCompiledWorkflow.invoke user_in_config_before=%s context_user=%s config_keys=%s",
-                bool(user_before),
-                getattr(runtime_context.user, "id", None),
-                sorted(merged_config.keys()),
-            )
-        return self.workflow.invoke(
-            workflow_input=workflow_input, config=merged_config, context=runtime_context, trigger=trigger
-        )
 
     async def ainvoke(
         self,
@@ -321,21 +298,7 @@ class WorkflowCompilerSingleton:
                 arguments=inputs or {},
             )
 
-        def sync_handler(
-            inputs: Dict[str, Any],
-            config: Dict[str, Any] | None,
-            context: WorkflowRuntimeContext | None = None,
-        ) -> Any:
-            try:
-                asyncio.get_running_loop()
-            except RuntimeError:
-                return asyncio.run(async_handler(inputs, config, context))
-            raise ExecutionError(
-                "Synchronous workflow execution cannot run tools from an active event loop. "
-                "Use 'compiled.ainvoke(...)' instead."
-            )
-
-        return sync_handler, async_handler
+        return None, async_handler
 
     @staticmethod
     def _inject_structured_inputs(prompt: str, inputs_block: Dict[str, Any] | None) -> str:

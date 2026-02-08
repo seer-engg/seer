@@ -135,9 +135,9 @@ def build_workflow_spec(
     }
 
 
-def main() -> None:
+async def main() -> None:
     user_id = 1
-    credentials = asyncio.run(fetch_oauth_credentials(user_id))
+    credentials = await fetch_oauth_credentials(user_id)
     service = GmailDemoService(credentials)
 
     reply_schema, read_schema, draft_schema = get_gmail_reply_schemas(service)
@@ -147,8 +147,8 @@ def main() -> None:
     demo_user = User(id=0, user_id="demo-gmail-multi-reply")
 
     workflow_spec = build_workflow_spec(reply_schema, read_schema, draft_schema)
-    compiled = compiler.compile(demo_user, workflow_spec)
-    result = compiled.invoke(trigger={"trigger_key": "manual.trigger", "data": {"user_id": user_id}})
+    compiled = await compiler.compile(demo_user, workflow_spec)
+    result = await compiled.ainvoke(trigger={"trigger_key": "manual.trigger", "data": {"user_id": user_id}})
 
     drafts = result.get("drafts", [])
     print(f"Created {len(drafts)} draft(s).")
@@ -158,4 +158,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
