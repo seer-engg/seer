@@ -432,6 +432,50 @@ class HITLInterruptResponse(BaseModel):
     is_expired: bool = False
 
 
+# ============================================================================
+# Workflow File Models
+# ============================================================================
+
+
+class WorkflowFileItem(BaseModel):
+    """File metadata for a workflow run file."""
+    file_id: str
+    filename: str
+    mime_type: str
+    size_bytes: int
+    size_human: str
+    source_node_id: Optional[str] = None
+    source_tool: Optional[str] = None
+    created_at: datetime
+
+
+class WorkflowFileListResponse(BaseModel):
+    """Response containing list of files for a workflow run."""
+    run_id: str
+    files: List[WorkflowFileItem]
+    total_count: int
+    total_size_bytes: int
+
+
+class WorkflowFileResponse(BaseModel):
+    """Response containing single file metadata."""
+    file: WorkflowFileItem
+
+
+class WorkflowFileDownloadResponse(BaseModel):
+    """Response containing presigned download URL."""
+    file_id: str
+    filename: str
+    download_url: str
+    expires_in_seconds: int
+
+
+class WorkflowFileDeleteResponse(BaseModel):
+    """Response confirming file deletion."""
+    file_id: str
+    deleted: bool
+
+
 __all__ = [
     "ProblemDetails",
     "ProblemError",
@@ -494,4 +538,10 @@ __all__ = [
     "HITLInterruptDisplayItem",
     "HITLInterruptInputField",
     "HITLInterruptResponse",
+    # Workflow Files
+    "WorkflowFileItem",
+    "WorkflowFileListResponse",
+    "WorkflowFileResponse",
+    "WorkflowFileDownloadResponse",
+    "WorkflowFileDeleteResponse",
 ]
