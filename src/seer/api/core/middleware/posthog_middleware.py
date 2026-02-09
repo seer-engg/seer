@@ -30,6 +30,13 @@ EXCLUDED_PATHS: Set[str] = {
     "/.well-known/oauth-protected-resource",
 }
 
+# Prefixes to exclude from tracking (endpoints with their own tracking)
+# MCP endpoints have dedicated tracking via @track_mcp_tool() in src/seer/mcp/tracking.py
+EXCLUDED_PREFIXES: tuple[str, ...] = (
+    "/mcp",  # MCP HTTP transport
+    "/sse",  # MCP SSE transport
+)
+
 
 class PostHogMiddleware(BaseHTTPMiddleware):
     """
@@ -72,6 +79,11 @@ class PostHogMiddleware(BaseHTTPMiddleware):
         # Skip excluded paths
         if path in EXCLUDED_PATHS:
             return True
+
+        # Skip MCP endpoints (they have their own tracking via @track_mcp_tool)
+        for prefix in EXCLUDED_PREFIXES:
+            if path == prefix or path.startswith(f"{prefix}/"):
+                return True
 
         return False
 
