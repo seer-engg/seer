@@ -53,7 +53,11 @@ class GoogleSheetsReadTool(GoogleAPIClient):
     def get_output_schema(self) -> Dict[str, Any]:
         return _value_range_output_schema()
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Any:
         spreadsheet_id = arguments.get("spreadsheet_id")
         range_name = arguments.get("range", "Sheet1")
 
@@ -72,7 +76,7 @@ class GoogleSheetsReadTool(GoogleAPIClient):
             "GET",
             f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{range_name}",
             access_token,
-            params=params
+            params=params,
         )
         return resp.json()
 
@@ -112,7 +116,11 @@ class GoogleSheetsBatchReadTool(GoogleAPIClient):
     def get_output_schema(self) -> Dict[str, Any]:
         return _batch_get_values_response_output_schema()
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Any:
         spreadsheet_id = arguments.get("spreadsheet_id")
         ranges = arguments.get("ranges", [])
 
@@ -130,7 +138,7 @@ class GoogleSheetsBatchReadTool(GoogleAPIClient):
             "GET",
             f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values:batchGet",
             access_token,
-            params=params
+            params=params,
         )
         return resp.json()
 
@@ -168,7 +176,11 @@ class GoogleSheetsGetSpreadsheetTool(GoogleAPIClient):
     def get_output_schema(self) -> Dict[str, Any]:
         return _spreadsheet_output_schema()
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Any:
         spreadsheet_id = arguments.get("spreadsheet_id")
         if not spreadsheet_id:
             raise HTTPException(status_code=400, detail="spreadsheet_id is required")
@@ -184,6 +196,6 @@ class GoogleSheetsGetSpreadsheetTool(GoogleAPIClient):
             "GET",
             f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}",
             access_token,
-            params=params
+            params=params,
         )
         return resp.json()
