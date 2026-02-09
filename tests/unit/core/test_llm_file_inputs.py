@@ -55,22 +55,23 @@ def _create_mock_runtime_services() -> RuntimeServices:
     )
 
 
-def _create_mock_context_with_file_system() -> WorkflowRuntimeContext:
+def _create_mock_context_with_file_system() -> MagicMock:
     """Create a mock workflow context with file system."""
     mock_user = MagicMock(spec=User)
     mock_user.user_id = "usr_test"
 
-    context = WorkflowRuntimeContext(
-        user=mock_user,
-        workflow_run_id="run_test123",
-    )
+    # Create mock context (must be MagicMock to allow property mocking)
+    context = MagicMock(spec=WorkflowRuntimeContext)
+    context.user = mock_user
+    context.workflow_run_id = "run_test123"
 
     # Mock the file system
     mock_fs = AsyncMock()
     mock_fs.get_file_content = AsyncMock(return_value=b"file content bytes")
+    context.file_system = mock_fs
 
-    # Patch has_file_system to return True
-    context._file_system = mock_fs
+    # has_file_system must return True for file resolution to work
+    context.has_file_system = True
 
     return context
 

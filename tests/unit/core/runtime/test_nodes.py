@@ -278,7 +278,7 @@ class TestRunNodeAsyncDispatch:
         state = {}
 
         with patch.object(node_runtime, "_check_llm_credit_limit_async", new_callable=AsyncMock) as mock_credit:
-            with patch.object(node_runtime, "_run_llm", return_value={"llm_output": "response"}) as mock_run:
+            with patch.object(node_runtime, "_run_llm_async", new_callable=AsyncMock, return_value={"llm_output": "response"}) as mock_run:
                 result = await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
 
         mock_credit.assert_called_once()
@@ -524,7 +524,8 @@ class TestErrorTraceCapture:
         assert trace_key in result
         assert result[trace_key]["status"] == "succeeded"
 
-    def test_llm_node_failure_writes_error_trace(self, node_runtime, mock_services):
+    @pytest.mark.asyncio
+    async def test_llm_node_failure_writes_error_trace(self, node_runtime, mock_services):
         """Test that LLM node failures include error trace in exception."""
         from seer.core.errors import ExecutionError
         from seer.core.schema.models import LLMNode, OutputContract, OutputMode
@@ -542,7 +543,7 @@ class TestErrorTraceCapture:
         mock_services.model_registry.get.return_value = mock_model_def
 
         with pytest.raises(ExecutionError) as exc_info:
-            node_runtime._run_llm(node, state, {}, locals_ctx=None)
+            await node_runtime._run_llm_async(node, state, {}, locals_ctx=None, context=None)
 
         # Verify error trace is attached
         assert exc_info.value.trace_data is not None
@@ -555,7 +556,8 @@ class TestErrorTraceCapture:
         assert trace["error"]["type"] == "RuntimeError"
         assert "API rate limit exceeded" in trace["error"]["message"]
 
-    def test_llm_node_success_has_status_succeeded(self, node_runtime, mock_services):
+    @pytest.mark.asyncio
+    async def test_llm_node_success_has_status_succeeded(self, node_runtime, mock_services):
         """Test that successful LLM execution includes status: succeeded."""
         from seer.core.schema.models import LLMNode, OutputContract, OutputMode
 
@@ -571,7 +573,7 @@ class TestErrorTraceCapture:
         mock_model_def.text_handler = MagicMock(return_value=("Hello response", {"input_tokens": 10, "output_tokens": 5}))
         mock_services.model_registry.get.return_value = mock_model_def
 
-        result = node_runtime._run_llm(node, state, {}, locals_ctx=None)
+        result = await node_runtime._run_llm_async(node, state, {}, locals_ctx=None, context=None)
 
         # Verify success trace has status
         trace_key = "_trace_llm_success"
@@ -685,7 +687,8 @@ class TestErrorTraceStatePersistence:
         assert trace['error']['type'] == 'ValueError'
         assert 'async error' in trace['error']['message']
 
-    def test_llm_failure_updates_state_with_error_trace(self, node_runtime, mock_services):
+    @pytest.mark.asyncio
+    async def test_llm_failure_updates_state_with_error_trace(self, node_runtime, mock_services):
         """Verify LLM node failures write error trace to state before raising."""
         from seer.core.errors import ExecutionError
         from seer.core.schema.models import LLMNode, OutputContract, OutputMode
@@ -702,8 +705,8 @@ class TestErrorTraceStatePersistence:
         mock_model_def.text_handler = MagicMock(side_effect=RuntimeError("Model unavailable"))
         mock_services.model_registry.get.return_value = mock_model_def
 
-        with pytest.raises(ExecutionError) as exc_info:
-            node_runtime._run_llm(node, state, {}, locals_ctx=None)
+        with pytest.raises(ExecutionError):
+            await node_runtime._run_llm_async(node, state, {}, locals_ctx=None, context=None)
 
         # VERIFY: State dict was updated with error trace
         assert '_trace_failing_llm' in state
