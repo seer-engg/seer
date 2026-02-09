@@ -89,8 +89,8 @@ class TestWwwAuthenticateResponse:
         response = www_authenticate_response(mock_request, "Token expired")
         assert "WWW-Authenticate" in response.headers
         header = response.headers["WWW-Authenticate"]
-        # Check for resource_metadata URL (scheme comes from config, defaults to http)
-        assert 'resource_metadata="http://api.example.com/.well-known/oauth-protected-resource"' in header
+        # Check for resource_metadata URL (scheme comes from config, defaults to https)
+        assert 'resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"' in header
         assert "Token expired" in header
 
     def test_includes_mcp_meta(self, mock_request):
