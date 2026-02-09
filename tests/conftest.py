@@ -367,6 +367,7 @@ def test_environment():
 
     # Disable external services during tests
     os.environ["POSTHOG_ENABLED"] = "false"
+    os.environ["SENTRY_ENABLED"] = "false"
     os.environ["TRIGGER_POLLER_ENABLED"] = "false"
     os.environ["TOOL_INDEX_AUTO_GENERATE"] = "false"
 
