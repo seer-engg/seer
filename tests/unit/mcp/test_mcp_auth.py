@@ -86,12 +86,16 @@ class TestWwwAuthenticateResponse:
 
     def test_includes_www_authenticate_header_with_resource_metadata(self, mock_request):
         """Test that WWW-Authenticate header includes resource_metadata for OAuth discovery."""
-        response = www_authenticate_response(mock_request, "Token expired")
-        assert "WWW-Authenticate" in response.headers
-        header = response.headers["WWW-Authenticate"]
-        # Check for resource_metadata URL (scheme comes from config, defaults to https)
-        assert 'resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"' in header
-        assert "Token expired" in header
+        from unittest.mock import patch
+        # Mock config to ensure deterministic scheme
+        with patch("seer.mcp.auth.config") as mock_config:
+            mock_config.redirect_uri_scheme = "https"
+            response = www_authenticate_response(mock_request, "Token expired")
+            assert "WWW-Authenticate" in response.headers
+            header = response.headers["WWW-Authenticate"]
+            # Check for resource_metadata URL (scheme from mocked config)
+            assert 'resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"' in header
+            assert "Token expired" in header
 
     def test_includes_mcp_meta(self, mock_request):
         """Test that _meta with mcp/www_authenticate is included in body."""
