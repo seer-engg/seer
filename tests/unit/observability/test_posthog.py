@@ -216,6 +216,25 @@ class TestPostHogMiddleware:
 
         assert result is False
 
+    def test_should_skip_mcp_endpoints(self, mock_request):
+        """Should skip tracking for MCP endpoints (they have their own tracking)."""
+        from seer.api.core.middleware.posthog_middleware import PostHogMiddleware, EXCLUDED_PREFIXES
+
+        # Verify MCP prefixes are in EXCLUDED_PREFIXES
+        assert "/mcp" in EXCLUDED_PREFIXES
+        assert "/sse" in EXCLUDED_PREFIXES
+
+        middleware = PostHogMiddleware(app=MagicMock())
+        mock_request.method = "POST"
+
+        # Test exact path match
+        assert middleware._should_skip(mock_request, "/mcp") is True
+        assert middleware._should_skip(mock_request, "/sse") is True
+
+        # Test path with suffix
+        assert middleware._should_skip(mock_request, "/mcp/messages") is True
+        assert middleware._should_skip(mock_request, "/sse/init") is True
+
     def test_track_request_captures_event(self, mock_request, mock_response):
         """Should capture event with correct properties."""
         with patch("seer.api.core.middleware.posthog_middleware.capture_event") as mock_capture, \
