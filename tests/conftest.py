@@ -11,6 +11,21 @@ Provides core fixtures for:
 - FastAPI test client
 - Sample workflow specifications
 """
+# =============================================================================
+# IMPORTANT: Set environment variables BEFORE any seer imports to ensure
+# the config singleton is initialized with test values.
+# =============================================================================
+import os
+os.environ["POSTHOG_ENABLED"] = "false"
+os.environ["SENTRY_ENABLED"] = "false"
+os.environ["TRIGGER_POLLER_ENABLED"] = "false"
+os.environ["TOOL_INDEX_AUTO_GENERATE"] = "false"
+os.environ["CLOUD_MODE"] = "false"
+os.environ["IS_CLOUD_MODE"] = "false"
+os.environ["SEER_MODE"] = "self-hosted"
+os.environ["DB_MAX_CONNECTIONS"] = "5"
+os.environ["DB_MIN_CONNECTIONS"] = "1"
+
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, patch
 
@@ -359,26 +374,106 @@ def mock_posthog():
 @pytest.fixture(scope="session", autouse=True)
 def test_environment():
     """
-    Set up test environment variables.
+    Test environment verification fixture.
 
-    Runs once per session and applies to all tests.
+    NOTE: Environment variables are set at the TOP of this conftest.py file
+    (before any seer imports) to ensure the config singleton is properly
+    initialized with test values. This fixture exists primarily as a marker
+    to document this and could be used for additional session-level setup.
     """
+    # Verify critical test environment settings are in place
     import os
-
-    # Disable external services during tests
-    os.environ["POSTHOG_ENABLED"] = "false"
-    os.environ["TRIGGER_POLLER_ENABLED"] = "false"
-    os.environ["TOOL_INDEX_AUTO_GENERATE"] = "false"
-
-    # Use test mode - DISABLE cloud/auth middleware
-    os.environ["CLOUD_MODE"] = "false"
-    os.environ["IS_CLOUD_MODE"] = "false"
-    os.environ["SEER_MODE"] = "self-hosted"  # This disables Clerk auth
-
-    # Set minimal database pool for tests
-    os.environ["DB_MAX_CONNECTIONS"] = "5"
-    os.environ["DB_MIN_CONNECTIONS"] = "1"
+    assert os.environ.get("POSTHOG_ENABLED") == "false", "POSTHOG_ENABLED not set correctly"
+    assert os.environ.get("SENTRY_ENABLED") == "false", "SENTRY_ENABLED not set correctly"
 
     yield
 
-    # Cleanup not needed for environment variables
+
+def pytest_sessionfinish(session, exitstatus):
+    """Cleanup resources at end of test session to ensure process exits cleanly."""
+    global _test_exit_code
+    _test_exit_code = exitstatus
+
+    import threading
+    import asyncio
+
+    # Shutdown posthog if it was initialized
+    try:
+        import posthog
+        posthog.shutdown()
+    except Exception:
+        pass
+
+    # Reset sentry state
+    try:
+        import seer.observability.sentry_client as sentry_client
+        sentry_client.SENTRY_INITIALIZED = False
+    except Exception:
+        pass
+
+    # Reset posthog state
+    try:
+        import seer.observability.posthog_client as posthog_client
+        posthog_client.POSTHOG_INITIALIZED = False
+    except Exception:
+        pass
+
+    # Reset event loop reference
+    try:
+        import seer.core.event_loop as event_loop_module
+        event_loop_module._MAIN_EVENT_LOOP = None
+    except Exception:
+        pass
+
+    # Close the PostgreSQL checkpointer connection pool - this is crucial!
+    # The AsyncConnectionPool creates a non-daemon worker thread that blocks process exit.
+    try:
+        from seer.api.agents.checkpointer import _checkpointer_cm, close_checkpointer
+        import seer.api.agents.checkpointer as checkpointer_module
+
+        if checkpointer_module._checkpointer_cm is not None:
+            # Need to run async cleanup in an event loop
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # Schedule cleanup as a task if loop is running
+                    asyncio.ensure_future(close_checkpointer())
+                else:
+                    loop.run_until_complete(close_checkpointer())
+            except RuntimeError:
+                # No event loop - create a new one
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(close_checkpointer())
+                finally:
+                    loop.close()
+    except Exception:
+        pass
+
+
+_test_exit_code = 0  # Global to track actual exit code from pytest_sessionfinish
+
+
+def pytest_unconfigure(config):
+    """
+    Final cleanup hook - runs after pytest_sessionfinish and all reporting.
+
+    Forces process exit if there are non-daemon threads that would hang forever.
+    This handles cases where connection pools create non-daemon worker threads
+    that don't get properly cleaned up.
+    """
+    import threading
+    import os
+    import time
+
+    # Small delay to allow normal cleanup
+    time.sleep(0.1)
+
+    threads = threading.enumerate()
+    blocking_threads = [t for t in threads if t.name != "MainThread" and t.is_alive() and not t.daemon]
+
+    if blocking_threads:
+        # Force exit - blocking threads would hang forever
+        # Use the actual test exit code to preserve pass/fail status
+        os._exit(_test_exit_code)

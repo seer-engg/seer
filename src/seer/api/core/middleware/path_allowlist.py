@@ -11,6 +11,7 @@ DEFAULT_PUBLIC_PATHS = {
     "/api/integrations/github/callback",
     "/api/integrations/supabase_mgmt/callback",
     "/.well-known/oauth-protected-resource",
+    "/sentry-debug",  # For testing Sentry integration; not included in DEFAULT_DOCS_PATHS since it's not a documented API endpoint.
 }
 
 DEFAULT_DOCS_PATHS = {
