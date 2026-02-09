@@ -38,6 +38,13 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION=0.1.4
 # Dependencies are installed in the image, so they're available even with volume mounts
 RUN uv sync
 
+# Install Playwright browser for browser automation node
+# 1. Install system dependencies (fonts, graphics libraries) required by Chromium
+# 2. Install Chromium browser binary (~280MB)
+# Note: Only Chromium is installed to minimize image size; add firefox/webkit if needed
+RUN uv run playwright install-deps chromium && \
+    uv run playwright install chromium
+
 # Expose the default API port
 EXPOSE 8000
 

@@ -262,8 +262,47 @@ class HITLNode(NodeBase):
         return self
 
 
+# -----------------------------
+# Browser Automation Node
+# -----------------------------
+class BrowserNode(NodeBase):
+    """
+    Browser automation node using natural language task descriptions.
+
+    Executes browser automation tasks via BrowserUse Agent. Users manage
+    browser profiles separately (with saved login sessions), and workflows
+    reference profiles by ID for authenticated automation.
+
+    Example:
+        {
+            "id": "scrape_data",
+            "type": "browser",
+            "task": "Go to Slack and get the last 10 messages from #general",
+            "browser_profile_id": "uuid-of-profile"
+        }
+    """
+    type: Literal["browser"] = "browser"
+
+    # Natural language task description (supports ${expressions})
+    task: str = Field(min_length=1)
+
+    # Additional context data passed to the browser agent
+    inputs: Dict[str, JSONValue] = Field(default_factory=dict)
+
+    # Reference to user's browser profile with saved login sessions
+    # Profiles are managed via /browser/profiles API endpoints
+    browser_profile_id: Optional[str] = None
+
+    # Execution limits
+    max_steps: int = Field(default=25, ge=1, le=100)
+    timeout_seconds: int = Field(default=300, ge=30, le=1800)
+
+    # Optional output contract for structured output validation
+    expect_outputs: Optional[OutputContract] = None
+
+
 Node = Annotated[
-    Union[ToolNode, LLMNode, MCPNode, IfNode, ForEachNode, HITLNode],
+    Union[ToolNode, LLMNode, MCPNode, IfNode, ForEachNode, HITLNode, BrowserNode],
     Field(discriminator="type"),
 ]
 
