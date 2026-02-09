@@ -18,7 +18,7 @@ cd seer
 docker compose up
 ```
 
-2) Run database migrations:
+2) Run database migration:
 ```bash
 docker compose exec api uv run aerich upgrade
 ```
