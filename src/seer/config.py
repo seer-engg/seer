@@ -423,6 +423,31 @@ class SeerConfig(BaseSettings):
         """Check if PostHog analytics is configured and enabled."""
         return self.posthog_enabled and self.posthog_api_key is not None
 
+    # ============================================================================
+    # Sentry Error Monitoring Configuration
+    # ============================================================================
+
+    sentry_dsn: Optional[str] = Field(
+        default=None, description="Sentry DSN for error monitoring"
+    )
+    sentry_environment: Optional[str] = Field(
+        default=None, description="Sentry environment tag (defaults to env if not set)"
+    )
+    sentry_traces_sample_rate: float = Field(
+        default=0.1, description="Sentry performance trace sampling rate (0.0-1.0)"
+    )
+    sentry_profiles_sample_rate: float = Field(
+        default=0.1, description="Sentry profile sampling rate (0.0-1.0)"
+    )
+    sentry_enabled: bool = Field(
+        default=True, description="Enable Sentry (requires DSN to be set)"
+    )
+
+    @property
+    def is_sentry_configured(self) -> bool:
+        """Check if Sentry error monitoring is configured and enabled."""
+        return self.sentry_enabled and self.sentry_dsn is not None
+
     @classmethod
     def settings_customise_sources(  # pylint: disable=too-many-positional-arguments  # Reason: Method signature is defined by Pydantic's BaseSettings API and cannot be modified
         cls,
