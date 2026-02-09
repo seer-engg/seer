@@ -308,4 +308,51 @@ async def resume_run(request: Request, run_id: str, payload: api_models.HITLResu
     return await services.resume_workflow_run(user, run_id, payload.responses)
 
 
+# ============================================================================
+# Workflow File Endpoints
+# ============================================================================
+
+
+@router.get("/runs/{run_id}/files", response_model=api_models.WorkflowFileListResponse)
+async def list_run_files(request: Request, run_id: str):
+    """
+    List all files created during a workflow run.
+
+    Returns file metadata including size, type, and creation time.
+    """
+    user = _require_user(request)
+    return await services.list_run_files(user, run_id)
+
+
+@router.get("/runs/{run_id}/files/{file_id}", response_model=api_models.WorkflowFileResponse)
+async def get_run_file(request: Request, run_id: str, file_id: str):
+    """
+    Get metadata for a specific file in a workflow run.
+    """
+    user = _require_user(request)
+    return await services.get_run_file(user, run_id, file_id)
+
+
+@router.get("/runs/{run_id}/files/{file_id}/download", response_model=api_models.WorkflowFileDownloadResponse)
+async def download_run_file(request: Request, run_id: str, file_id: str):
+    """
+    Get a presigned URL to download a file from a workflow run.
+
+    The URL is valid for 1 hour.
+    """
+    user = _require_user(request)
+    return await services.get_run_file_download_url(user, run_id, file_id)
+
+
+@router.delete("/runs/{run_id}/files/{file_id}", response_model=api_models.WorkflowFileDeleteResponse)
+async def delete_run_file(request: Request, run_id: str, file_id: str):
+    """
+    Delete a file from a workflow run.
+
+    This removes both the file from storage and its metadata.
+    """
+    user = _require_user(request)
+    return await services.delete_run_file(user, run_id, file_id)
+
+
 __all__ = ["router"]

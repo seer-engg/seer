@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import httpx
 from fastapi import HTTPException
@@ -20,17 +20,29 @@ class LinkedInProvider(IntegrationProvider):
     """
     provider = "linkedin"
 
+    # Always require OpenID Connect scopes for user identification via /v2/userinfo endpoint.
+    # LinkedIn requires openid + at least one of (profile, email) for the userinfo endpoint.
+    # Without these, the userinfo endpoint returns 403 and OAuth callback fails.
+    _required_openid_scopes = ["openid", "profile"]
+
     def get_oauth_scope(self, context: OAuthAuthorizeContext) -> str:
         """
         LinkedIn scopes are space-separated.
+        Always includes 'openid' scope for user identification.
 
         Common scopes:
-        - openid: Required for OpenID Connect
+        - openid: Required for OpenID Connect and /v2/userinfo endpoint
         - profile: Access to basic profile info
         - email: Access to email address
         - w_member_social: Share content on behalf of user
         """
-        return " ".join(context.requested_scopes)
+        # Preserve order and remove duplicates
+        scopes: List[str] = list(dict.fromkeys(context.requested_scopes))
+        # Ensure required scopes are always present
+        for item in self._required_openid_scopes:
+            if item not in scopes:
+                scopes.append(item)
+        return " ".join(scopes)
 
     def build_authorize_kwargs(
         self,

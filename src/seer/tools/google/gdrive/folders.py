@@ -37,7 +37,11 @@ class GoogleDriveCreateFolderTool(GoogleDriveFileScopeTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return _drive_file_schema()
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Any:
         name = arguments.get("name")
         if not name:
             raise HTTPException(status_code=400, detail="name is required")
@@ -59,7 +63,7 @@ class GoogleDriveCreateFolderTool(GoogleDriveFileScopeTool):
             "https://www.googleapis.com/drive/v3/files",
             access_token,
             params=params,
-            json_body=metadata
+            json_body=metadata,
         )
         return resp.json()
 
@@ -83,7 +87,11 @@ class GoogleDriveDeleteFileTool(GoogleDriveFileScopeTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return _empty_object_schema("File deleted successfully")
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Any:
         file_id = arguments.get("file_id")
         if not file_id:
             raise HTTPException(status_code=400, detail="file_id is required")
@@ -94,6 +102,6 @@ class GoogleDriveDeleteFileTool(GoogleDriveFileScopeTool):
             "DELETE",
             f"https://www.googleapis.com/drive/v3/files/{file_id}",
             access_token,
-            params=params
+            params=params,
         )
         return {"status": "deleted", "file_id": file_id}

@@ -2,7 +2,7 @@
 Tool executor for running registered tools with unified credential resolution.
 """
 
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fastapi import HTTPException
 
@@ -12,6 +12,9 @@ from seer.tools.base import get_tool
 from seer.tools.coercion import coerce_arguments
 from seer.tools.credential_resolver import CredentialResolver, ResolvedCredentials
 
+if TYPE_CHECKING:
+    from seer.core.runtime.context import WorkflowRuntimeContext
+
 logger = get_logger("shared.tools.executor")
 
 
@@ -19,7 +22,8 @@ async def execute_tool(
     tool_name: str,
     user: User,
     connection_id: Optional[str] = None,
-    arguments: Optional[Dict[str, Any]] = None
+    arguments: Optional[Dict[str, Any]] = None,
+    context: Optional["WorkflowRuntimeContext"] = None,
 ) -> Any:
     """
     Execute a tool with OAuth token management.
@@ -60,7 +64,7 @@ async def execute_tool(
 
     try:
         logger.info("Executing tool '%s' for user {user.user_id}", tool_name)
-        result = await _execute_with_optional_credentials(tool, resolved, arguments or {})
+        result = await _execute_with_optional_credentials(tool, resolved, arguments or {}, context)
         logger.info("Tool '%s' executed successfully", tool_name)
         return result
     except HTTPException:
@@ -78,12 +82,28 @@ async def _execute_with_optional_credentials(
     tool,
     resolved: ResolvedCredentials,
     arguments: Dict[str, Any],
+    context: Optional["WorkflowRuntimeContext"] = None,
 ) -> Any:
+    """
+    Execute tool with credentials and optional runtime context.
+
+    Tries to pass both credentials and context kwargs; falls back to simpler
+    signatures for backward compatibility with older tools.
+    """
     try:
-        return await tool.execute(resolved.access_token, arguments, credentials=resolved)
+        return await tool.execute(resolved.access_token, arguments, credentials=resolved, context=context)
     except TypeError as exc:
-        # Backwards compatibility for tools that haven't added the credentials kwarg yet
         message = str(exc)
+        # Try without context kwarg
+        if "context" in message and "unexpected keyword argument" in message:
+            try:
+                return await tool.execute(resolved.access_token, arguments, credentials=resolved)
+            except TypeError as inner_exc:
+                inner_message = str(inner_exc)
+                if "credentials" in inner_message and "unexpected keyword argument" in inner_message:
+                    return await tool.execute(resolved.access_token, arguments)
+                raise
+        # Try without credentials kwarg
         if "credentials" in message and "unexpected keyword argument" in message:
             return await tool.execute(resolved.access_token, arguments)
         raise

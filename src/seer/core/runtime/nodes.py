@@ -65,6 +65,7 @@ from seer.core.schema.models import (
     ToolNode,
 )
 from seer.core.schema.schema_registry import SchemaRegistry
+from seer.core.files.models import is_file_ref, parse_file_ref
 
 logger = logging.getLogger(__name__)
 
@@ -246,7 +247,7 @@ class NodeRuntime:
             return await self._run_mcp_async(node, state, config, locals_ctx=locals_ctx, context=context)
         if isinstance(node, LLMNode):
             await self._check_llm_credit_limit_async()
-            return self._run_llm(node, state, config, locals_ctx=locals_ctx)
+            return await self._run_llm_async(node, state, config, locals_ctx=locals_ctx, context=context)
         if isinstance(node, IfNode):
             return await self._run_if_async(node, state, config, locals_ctx=locals_ctx, context=context)
         if isinstance(node, ForEachNode):
@@ -445,15 +446,84 @@ class NodeRuntime:
                 extra={"node_id": node.id, "output_keys": list(output.keys()), "trace_key": trace_key},
             )
 
+    async def _resolve_llm_file_inputs(
+        self,
+        auxiliary: Dict[str, Any],
+        context: WorkflowRuntimeContext | None,
+    ) -> tuple[Dict[str, Any], list[Dict[str, Any]]]:
+        """
+        Scan auxiliary inputs for file references and resolve to content.
+
+        File references (WorkflowFileRef) in the inputs are detected using the
+        is_file_ref() function and resolved via the WorkflowFileSystem. The
+        resolved content is returned separately for processing by the LLM handler.
+
+        Args:
+            auxiliary: Auxiliary inputs (non-reserved LLM inputs like 'document', 'image')
+            context: Workflow runtime context (provides access to file system)
+
+        Returns:
+            Tuple of (resolved_inputs, file_contents):
+            - resolved_inputs: inputs with file refs replaced by metadata (for trace)
+            - file_contents: list of resolved file data for LLM processing
+        """
+        if not context or not context.has_file_system:
+            return auxiliary, []
+
+        file_contents: list[Dict[str, Any]] = []
+        resolved: Dict[str, Any] = {}
+
+        for key, value in auxiliary.items():
+            if is_file_ref(value):
+                file_ref = parse_file_ref(value)
+                content = await context.file_system.get_file_content(file_ref)
+                file_contents.append({
+                    "key": key,
+                    "mime_type": file_ref.mime_type,
+                    "filename": file_ref.filename,
+                    "content": content,
+                })
+                # Replace with metadata for trace (don't store bytes in trace)
+                resolved[key] = {
+                    "_resolved_file": file_ref.filename,
+                    "mime_type": file_ref.mime_type,
+                    "size_bytes": file_ref.size_bytes,
+                }
+            elif isinstance(value, list):
+                # Handle list of file refs (e.g., attachments: [...])
+                resolved_list = []
+                for item in value:
+                    if is_file_ref(item):
+                        file_ref = parse_file_ref(item)
+                        content = await context.file_system.get_file_content(file_ref)
+                        file_contents.append({
+                            "key": key,
+                            "mime_type": file_ref.mime_type,
+                            "filename": file_ref.filename,
+                            "content": content,
+                        })
+                        resolved_list.append({
+                            "_resolved_file": file_ref.filename,
+                            "mime_type": file_ref.mime_type,
+                        })
+                    else:
+                        resolved_list.append(item)
+                resolved[key] = resolved_list
+            else:
+                resolved[key] = value
+
+        return resolved, file_contents
+
     # pylint: disable=too-complex,too-many-locals
     # Reason: LLM node execution inherently complex with prompt construction, model invocation, and usage tracking
-    def _run_llm(
+    async def _run_llm_async(
         self,
         node: LLMNode,
         state: WorkflowState,
         config: Mapping[str, Any],
         *,
         locals_ctx: Mapping[str, Any] | None,
+        context: WorkflowRuntimeContext | None,
     ) -> Dict[str, Any]:
         # STEP 1: Capture inputs
         inputs = self._capture_node_inputs(node, state, config, locals_ctx)
@@ -481,13 +551,19 @@ class NodeRuntime:
             if key not in reserved_keys
         }
 
+        # STEP 2.5: Resolve file references in auxiliary inputs
+        # Use bound context as fallback (same pattern as _run_tool_async)
+        runtime_context = context or self._current_context
+        resolved_auxiliary, file_contents = await self._resolve_llm_file_inputs(auxiliary, runtime_context)
+
         # Render prompt and lookup model
         prompt = render_template(ctx, prompt_template)
         model_def = self.services.model_registry.get(model)
 
         invocation = {
             "prompt": prompt,
-            "inputs": auxiliary,
+            "inputs": resolved_auxiliary,
+            "file_contents": file_contents,  # Resolved file data for multimodal processing
             "config": dict(config),
             "parameters": {
                 "temperature": temperature,

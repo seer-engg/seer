@@ -111,7 +111,11 @@ class GmailSendEmailTool(GoogleAPIClient):
             "required": ["to", "subject", "body_text"],
         }
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Dict[str, Any]:
         to = _coerce_str_list(arguments.get("to"), [])
         if not to:
             raise HTTPException(status_code=400, detail="Parameter 'to' must be a non-empty list")
@@ -156,7 +160,7 @@ class GmailSendEmailTool(GoogleAPIClient):
             "POST",
             f"{GMAIL_API_BASE}/messages/send",
             access_token,
-            json_body=body
+            json_body=body,
         )
 
         return resp.json()

@@ -64,7 +64,11 @@ class GoogleSheetsWriteTool(GoogleAPIClient):
     def get_output_schema(self) -> Dict[str, Any]:
         return _update_values_response_output_schema()
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Any:
         spreadsheet_id = arguments.get("spreadsheet_id")
         range_name = arguments.get("range", "Sheet1!A1")
         values = arguments.get("values")
@@ -89,7 +93,7 @@ class GoogleSheetsWriteTool(GoogleAPIClient):
             f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{range_name}",
             access_token,
             params=params,
-            json_body=body
+            json_body=body,
         )
         return resp.json()
 
@@ -133,7 +137,11 @@ class GoogleSheetsAppendTool(GoogleAPIClient):
     def get_output_schema(self) -> Dict[str, Any]:
         return _append_values_response_output_schema()
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Any:
         spreadsheet_id = arguments.get("spreadsheet_id")
         range_name = arguments.get("range", "Sheet1")
         values = arguments.get("values")
@@ -152,7 +160,7 @@ class GoogleSheetsAppendTool(GoogleAPIClient):
             f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{range_name}:append",
             access_token,
             params=params,
-            json_body=body
+            json_body=body,
         )
         return resp.json()
 
@@ -178,7 +186,11 @@ class GoogleSheetsClearTool(GoogleAPIClient):
     def get_output_schema(self) -> Dict[str, Any]:
         return _clear_values_response_output_schema()
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Any:
         spreadsheet_id = arguments.get("spreadsheet_id")
         range_name = arguments.get("range")
 
@@ -188,7 +200,7 @@ class GoogleSheetsClearTool(GoogleAPIClient):
         resp = await self._make_request(
             "POST",
             f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{range_name}:clear",
-            access_token
+            access_token,
         )
         return resp.json()
 
@@ -224,7 +236,11 @@ class GoogleSheetsBatchWriteTool(GoogleAPIClient):
     def get_output_schema(self) -> Dict[str, Any]:
         return _batch_update_values_response_output_schema()
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Any:
         spreadsheet_id = arguments.get("spreadsheet_id")
         data = arguments.get("data")
 
@@ -240,7 +256,7 @@ class GoogleSheetsBatchWriteTool(GoogleAPIClient):
             "POST",
             f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values:batchUpdate",
             access_token,
-            json_body=body
+            json_body=body,
         )
         return resp.json()
 
@@ -270,7 +286,11 @@ class GoogleSheetsCreateSpreadsheetTool(GoogleAPIClient):
     def get_output_schema(self) -> Dict[str, Any]:
         return _spreadsheet_output_schema()
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Any:
         title = arguments.get("title")
         if not title:
             raise HTTPException(status_code=400, detail="title is required")
@@ -283,7 +303,7 @@ class GoogleSheetsCreateSpreadsheetTool(GoogleAPIClient):
             "POST",
             "https://sheets.googleapis.com/v4/spreadsheets",
             access_token,
-            json_body=body
+            json_body=body,
         )
         return resp.json()
 
@@ -314,7 +334,11 @@ class GoogleSheetsBatchUpdateSpreadsheetTool(GoogleAPIClient):
     def get_output_schema(self) -> Dict[str, Any]:
         return _batch_update_spreadsheet_response_output_schema()
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Any:
         spreadsheet_id = arguments.get("spreadsheet_id")
         requests = arguments.get("requests")
 
@@ -330,6 +354,6 @@ class GoogleSheetsBatchUpdateSpreadsheetTool(GoogleAPIClient):
             "POST",
             f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}:batchUpdate",
             access_token,
-            json_body=body
+            json_body=body,
         )
         return resp.json()
