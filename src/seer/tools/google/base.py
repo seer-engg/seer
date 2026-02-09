@@ -323,10 +323,19 @@ class GoogleAPIClient(BaseTool, ABC):
             )
 
         if response.status_code == 403:
-            return HTTPException(
-                status_code=403,
-                detail=f"{self.name}: Permission denied. Check OAuth scopes."
-            )
+            # Parse Google's error response for more detailed information
+            # This helps distinguish between scope issues and file-level permission issues
+            try:
+                error_data = response.json()
+                google_error = error_data.get("error", {})
+                error_message = google_error.get("message", "") if isinstance(google_error, dict) else ""
+                if error_message:
+                    detail = f"{self.name}: Permission denied - {error_message}"
+                else:
+                    detail = f"{self.name}: Permission denied. Check OAuth scopes or file permissions."
+            except Exception:  # pylint: disable=broad-exception-caught  # Reason: fallback for malformed error responses
+                detail = f"{self.name}: Permission denied. Check OAuth scopes or file permissions."
+            return HTTPException(status_code=403, detail=detail)
 
         if response.status_code == 404:
             return HTTPException(

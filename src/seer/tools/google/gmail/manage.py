@@ -57,7 +57,11 @@ class GmailModifyMessageLabelsTool(GoogleAPIClient):
             "required": ["message_id"],
         }
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) ->Dict[str, Any]:
         message_id = str(arguments.get("message_id") or "").strip()
         if not message_id:
             raise HTTPException(status_code=400, detail="Parameter 'message_id' is required")
@@ -71,7 +75,7 @@ class GmailModifyMessageLabelsTool(GoogleAPIClient):
             "POST",
             f"{GMAIL_API_BASE}/messages/{message_id}/modify",
             access_token,
-            json_body=body
+            json_body=body,
         )
         return resp.json()
 
@@ -96,7 +100,11 @@ class GmailTrashMessageTool(GoogleAPIClient):
             "required": ["message_id"]
         }
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) ->Dict[str, Any]:
         message_id = str(arguments.get("message_id") or "").strip()
         if not message_id:
             raise HTTPException(status_code=400, detail="Parameter 'message_id' is required")
@@ -104,7 +112,7 @@ class GmailTrashMessageTool(GoogleAPIClient):
         resp = await self._make_request(
             "POST",
             f"{GMAIL_API_BASE}/messages/{message_id}/trash",
-            access_token
+            access_token,
         )
         return resp.json()
 
@@ -137,7 +145,11 @@ class GmailDeleteMessageTool(GoogleAPIClient):
             "required": ["message_id"]
         }
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) ->Dict[str, Any]:
         message_id = str(arguments.get("message_id") or "").strip()
         if not message_id:
             raise HTTPException(status_code=400, detail="Parameter 'message_id' is required")
@@ -145,7 +157,7 @@ class GmailDeleteMessageTool(GoogleAPIClient):
         await self._make_request(
             "DELETE",
             f"{GMAIL_API_BASE}/messages/{message_id}",
-            access_token
+            access_token,
         )
         return {"status": "deleted", "message_id": message_id}
 
@@ -167,11 +179,15 @@ class GmailListLabelsTool(GoogleAPIClient):
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {"type": "object", "properties": {}, "required": []}
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],  # pylint: disable=unused-argument  # Reason: Required by base class signature
+    ) ->List[Dict[str, Any]]:
         resp = await self._make_request(
             "GET",
             f"{GMAIL_API_BASE}/labels",
-            access_token
+            access_token,
         )
         return resp.json().get("labels", []) or []
 
@@ -209,7 +225,11 @@ class GmailCreateLabelTool(GoogleAPIClient):
             "required": ["name"],
         }
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) ->Dict[str, Any]:
         name = str(arguments.get("name") or "").strip()
         if not name:
             raise HTTPException(status_code=400, detail="Parameter 'name' is required")
@@ -224,7 +244,7 @@ class GmailCreateLabelTool(GoogleAPIClient):
             "POST",
             f"{GMAIL_API_BASE}/labels",
             access_token,
-            json_body=body
+            json_body=body,
         )
         return resp.json()
 
@@ -257,7 +277,11 @@ class GmailDeleteLabelTool(GoogleAPIClient):
             "required": ["label_id"]
         }
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) ->Dict[str, Any]:
         label_id = str(arguments.get("label_id") or "").strip()
         if not label_id:
             raise HTTPException(status_code=400, detail="Parameter 'label_id' is required")
@@ -265,6 +289,6 @@ class GmailDeleteLabelTool(GoogleAPIClient):
         await self._make_request(
             "DELETE",
             f"{GMAIL_API_BASE}/labels/{label_id}",
-            access_token
+            access_token,
         )
         return {"status": "deleted", "label_id": label_id}

@@ -81,7 +81,11 @@ class GmailReadTool(GoogleAPIClient):
             "required": []
         }
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
         max_results = _coerce_int(arguments.get("max_results", 10), 10, min_value=1, max_value=100)
         label_ids = arguments.get("label_ids", ["INBOX"])
         query = arguments.get("q")
@@ -96,7 +100,7 @@ class GmailReadTool(GoogleAPIClient):
             "GET",
             f"{GMAIL_API_BASE}/messages",
             access_token,
-            params=params
+            params=params,
         )
         messages = list_resp.json().get("messages", [])
 
@@ -119,7 +123,7 @@ class GmailReadTool(GoogleAPIClient):
                     "GET",
                     f"{GMAIL_API_BASE}/messages/{msg['id']}",
                     access_token,
-                    params=msg_params
+                    params=msg_params,
                 )
                 msg_data = msg_resp.json()
 
@@ -196,7 +200,11 @@ class GmailGetMessageTool(GoogleAPIClient):
             "required": ["message_id"]
         }
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Dict[str, Any]:
         message_id = arguments.get("message_id")
         if not message_id:
             raise ValueError("message_id is required")
@@ -208,7 +216,7 @@ class GmailGetMessageTool(GoogleAPIClient):
             "GET",
             f"{GMAIL_API_BASE}/messages/{message_id}",
             access_token,
-            params=params
+            params=params,
         )
         msg_data = resp.json()
 
@@ -277,7 +285,11 @@ class GmailListThreadsTool(GoogleAPIClient):
             "required": []
         }
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Dict[str, Any]:
         max_results = _coerce_int(arguments.get("max_results", 10), 10, min_value=1, max_value=100)
         label_ids = arguments.get("label_ids")
         query = arguments.get("q")
@@ -288,7 +300,7 @@ class GmailListThreadsTool(GoogleAPIClient):
             "GET",
             f"{GMAIL_API_BASE}/threads",
             access_token,
-            params=params
+            params=params,
         )
         return resp.json()
 
@@ -322,7 +334,11 @@ class GmailGetThreadTool(GoogleAPIClient):
             "required": ["thread_id"]
         }
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Dict[str, Any]:
         thread_id = arguments.get("thread_id")
         if not thread_id:
             raise ValueError("thread_id is required")
@@ -334,7 +350,7 @@ class GmailGetThreadTool(GoogleAPIClient):
             "GET",
             f"{GMAIL_API_BASE}/threads/{thread_id}",
             access_token,
-            params=params
+            params=params,
         )
         return resp.json()
 
@@ -371,7 +387,11 @@ class GmailGetAttachmentTool(GoogleAPIClient):
             "required": ["message_id", "attachment_id"]
         }
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Dict[str, Any]:
         message_id = arguments.get("message_id")
         attachment_id = arguments.get("attachment_id")
         decode_bytes = arguments.get("decode_bytes", False)
@@ -382,7 +402,7 @@ class GmailGetAttachmentTool(GoogleAPIClient):
         resp = await self._make_request(
             "GET",
             f"{GMAIL_API_BASE}/messages/{message_id}/attachments/{attachment_id}",
-            access_token
+            access_token,
         )
         data = resp.json()
 

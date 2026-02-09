@@ -57,7 +57,11 @@ class GoogleDriveListFilesTool(GoogleDriveMetadataScopeTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return _drive_file_list_schema()
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Any:
         params: Dict[str, Any] = {
             "q": arguments.get("q", "trashed=false"),
             "pageSize": arguments.get("page_size", 100),
@@ -81,7 +85,7 @@ class GoogleDriveListFilesTool(GoogleDriveMetadataScopeTool):
             "GET",
             "https://www.googleapis.com/drive/v3/files",
             access_token,
-            params=params
+            params=params,
         )
         return resp.json()
 
@@ -110,7 +114,11 @@ class GoogleDriveGetFileMetadataTool(GoogleDriveMetadataScopeTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return _drive_file_schema()
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Any:
         file_id = arguments.get("file_id")
         if not file_id:
             raise HTTPException(status_code=400, detail="file_id is required")
@@ -124,16 +132,26 @@ class GoogleDriveGetFileMetadataTool(GoogleDriveMetadataScopeTool):
             "GET",
             f"https://www.googleapis.com/drive/v3/files/{file_id}",
             access_token,
-            params=params
+            params=params,
         )
         return resp.json()
+
+
+# Google Workspace MIME types that require export instead of download
+GOOGLE_WORKSPACE_MIME_TYPES = {
+    "application/vnd.google-apps.document": "application/pdf",
+    "application/vnd.google-apps.spreadsheet": "application/pdf",
+    "application/vnd.google-apps.presentation": "application/pdf",
+    "application/vnd.google-apps.drawing": "application/pdf",
+}
 
 
 class GoogleDriveDownloadFileTool(GoogleDriveReadonlyScopeTool):
     """Download Google Drive file content."""
 
     name = "google_drive_download_file"
-    description = "Download Google Drive file content (binary data returned as base64)."
+    description = "Download Google Drive file content (binary data returned as base64)." \
+    " Google Workspace files (Docs, Sheets, Slides) are auto-exported to PDF."
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -142,7 +160,7 @@ class GoogleDriveDownloadFileTool(GoogleDriveReadonlyScopeTool):
                 "file_id": {"type": "string", "description": "Drive file ID"},
                 "mime_type": {
                     "type": "string",
-                    "description": "For Google Docs export, specify target MIME type"
+                    "description": "For Google Docs export, specify target MIME type (auto-detected if not provided)"
                 },
                 "supports_all_drives": {"type": "boolean", "default": True},
             },
@@ -155,10 +173,16 @@ class GoogleDriveDownloadFileTool(GoogleDriveReadonlyScopeTool):
             "properties": {
                 "content_base64": {"type": "string", "description": "File content as base64"},
                 "size_bytes": {"type": "integer"},
+                "exported": {"type": "boolean", "description": "True if file was exported (Google Workspace file)"},
+                "export_mime_type": {"type": "string", "description": "MIME type used for export (if exported)"},
             }
         }
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Any:
         file_id = arguments.get("file_id")
         if not file_id:
             raise HTTPException(status_code=400, detail="file_id is required")
@@ -166,11 +190,31 @@ class GoogleDriveDownloadFileTool(GoogleDriveReadonlyScopeTool):
         mime_type = arguments.get("mime_type")
         supports_all_drives = arguments.get("supports_all_drives", True)
 
+        # If no mime_type specified, fetch metadata to detect Google Workspace files
+        file_mime_type = None
+        if not mime_type:
+            metadata_resp = await self._make_request(
+                "GET",
+                f"https://www.googleapis.com/drive/v3/files/{file_id}",
+                access_token,
+                params={"fields": "mimeType", "supportsAllDrives": supports_all_drives},
+            )
+            file_mime_type = metadata_resp.json().get("mimeType")
+
+            # Auto-select export format for Google Workspace files
+            if file_mime_type in GOOGLE_WORKSPACE_MIME_TYPES:
+                mime_type = GOOGLE_WORKSPACE_MIME_TYPES[file_mime_type]
+                logger.info("Auto-exporting Google Workspace file %s (type: %s) to %s", file_id, file_mime_type, mime_type)
+
         # Determine if export or download
+        exported = False
+        export_mime_type = None
         if mime_type:
             # Google Docs export
             url = f"https://www.googleapis.com/drive/v3/files/{file_id}/export"
             params = {"mimeType": mime_type}
+            exported = True
+            export_mime_type = mime_type
         else:
             # Regular download
             url = f"https://www.googleapis.com/drive/v3/files/{file_id}"
@@ -179,10 +223,15 @@ class GoogleDriveDownloadFileTool(GoogleDriveReadonlyScopeTool):
         resp = await self._make_request("GET", url, access_token, params=params)
 
         content = resp.content
-        return {
+        result = {
             "content_base64": base64.b64encode(content).decode("utf-8"),
-            "size_bytes": len(content)
+            "size_bytes": len(content),
+            "exported": exported,
         }
+        if export_mime_type:
+            result["export_mime_type"] = export_mime_type
+
+        return result
 
 
 class GoogleDriveUploadFileTool(GoogleDriveFileScopeTool):
@@ -208,7 +257,11 @@ class GoogleDriveUploadFileTool(GoogleDriveFileScopeTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return _drive_file_schema()
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Any:
         name = arguments.get("name")
         content_b64 = arguments.get("content_base64")
 
@@ -301,8 +354,8 @@ class GoogleDriveUpdateFileTool(GoogleDriveFileScopeTool):
         return params
 
     async def _update_with_content(
-        self, file_id: str, access_token: str, *, metadata: Dict[str, Any],
-        params: Dict[str, Any], content_b64: str, arguments: Dict[str, Any]
+        self, file_id: str, access_token: Optional[str], *, metadata: Dict[str, Any],
+        params: Dict[str, Any], content_b64: str, arguments: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Handle multipart file content update."""
         try:
@@ -329,7 +382,11 @@ class GoogleDriveUpdateFileTool(GoogleDriveFileScopeTool):
                 raise self._handle_api_error(resp)
         return resp.json()
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Any:
         file_id = arguments.get("file_id")
         if not file_id:
             raise HTTPException(status_code=400, detail="file_id is required")
@@ -341,7 +398,7 @@ class GoogleDriveUpdateFileTool(GoogleDriveFileScopeTool):
         if content_b64:
             return await self._update_with_content(
                 file_id, access_token, metadata=metadata, params=params,
-                content_b64=content_b64, arguments=arguments
+                content_b64=content_b64, arguments=arguments,
             )
 
         # Metadata-only update
@@ -350,6 +407,6 @@ class GoogleDriveUpdateFileTool(GoogleDriveFileScopeTool):
             f"https://www.googleapis.com/drive/v3/files/{file_id}",
             access_token,
             params=params,
-            json_body=metadata
+            json_body=metadata,
         )
         return resp.json()
