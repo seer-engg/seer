@@ -296,6 +296,7 @@ class WorkflowCompilerSingleton:
                 user=user,
                 connection_id=connection_id,
                 arguments=inputs or {},
+                context=context,
             )
 
         return None, async_handler

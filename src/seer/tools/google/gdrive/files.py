@@ -2,8 +2,10 @@
 Google Drive file operations - list, get, download, upload, update.
 """
 
+from __future__ import annotations
+
 import base64
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import httpx
 from fastapi import HTTPException
@@ -19,6 +21,10 @@ from seer.tools.google.gdrive.helpers import (
     _drive_file_schema,
     _encode_multipart_related,
 )
+
+if TYPE_CHECKING:
+    from seer.core.runtime.context import WorkflowRuntimeContext
+    from seer.tools.credential_resolver import ResolvedCredentials
 
 logger = get_logger("shared.tools.gdrive.files")
 
@@ -150,8 +156,10 @@ class GoogleDriveDownloadFileTool(GoogleDriveReadonlyScopeTool):
     """Download Google Drive file content."""
 
     name = "google_drive_download_file"
-    description = "Download Google Drive file content (binary data returned as base64)." \
-    " Google Workspace files (Docs, Sheets, Slides) are auto-exported to PDF."
+    description = (
+        "Download Google Drive file content. Returns a file reference for efficient "
+        "handling in workflows. Google Workspace files (Docs, Sheets, Slides) are auto-exported to PDF."
+    )
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -171,17 +179,35 @@ class GoogleDriveDownloadFileTool(GoogleDriveReadonlyScopeTool):
         return {
             "type": "object",
             "properties": {
-                "content_base64": {"type": "string", "description": "File content as base64"},
+                "file": {
+                    "type": "object",
+                    "description": "File reference for use in other tools",
+                    "properties": {
+                        "_type": {"type": "string", "const": "workflow_file_ref"},
+                        "file_id": {"type": "string"},
+                        "filename": {"type": "string"},
+                        "mime_type": {"type": "string"},
+                        "size_bytes": {"type": "integer"},
+                    }
+                },
+                "content_base64": {
+                    "type": "string",
+                    "description": "File content as base64 (included when not in workflow context)"
+                },
                 "size_bytes": {"type": "integer"},
                 "exported": {"type": "boolean", "description": "True if file was exported (Google Workspace file)"},
                 "export_mime_type": {"type": "string", "description": "MIME type used for export (if exported)"},
             }
         }
 
+    # pylint: disable=too-many-locals,too-complex  # File download requires tracking multiple state variables and conditions
     async def execute(
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,  # pylint: disable=unused-argument  # Part of tool interface
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Any:
         file_id = arguments.get("file_id")
         if not file_id:
@@ -191,15 +217,17 @@ class GoogleDriveDownloadFileTool(GoogleDriveReadonlyScopeTool):
         supports_all_drives = arguments.get("supports_all_drives", True)
 
         # If no mime_type specified, fetch metadata to detect Google Workspace files
+        file_metadata = None
         file_mime_type = None
         if not mime_type:
             metadata_resp = await self._make_request(
                 "GET",
                 f"https://www.googleapis.com/drive/v3/files/{file_id}",
                 access_token,
-                params={"fields": "mimeType", "supportsAllDrives": supports_all_drives},
+                params={"fields": "name,mimeType", "supportsAllDrives": supports_all_drives},
             )
-            file_mime_type = metadata_resp.json().get("mimeType")
+            file_metadata = metadata_resp.json()
+            file_mime_type = file_metadata.get("mimeType")
 
             # Auto-select export format for Google Workspace files
             if file_mime_type in GOOGLE_WORKSPACE_MIME_TYPES:
@@ -221,8 +249,41 @@ class GoogleDriveDownloadFileTool(GoogleDriveReadonlyScopeTool):
             params = {"alt": "media", "supportsAllDrives": supports_all_drives}
 
         resp = await self._make_request("GET", url, access_token, params=params)
-
         content = resp.content
+
+        # Determine filename
+        filename = (file_metadata or {}).get("name", f"file_{file_id}")
+        if exported and export_mime_type:
+            # Adjust extension for exported files
+            filename = _adjust_filename_for_export(filename, export_mime_type)
+
+        # Determine effective mime type
+        effective_mime_type = export_mime_type or file_mime_type or "application/octet-stream"
+
+        # If running in workflow context with file system available, store file and return reference
+        if context and context.workflow_run_id and context.has_file_system:
+            try:
+                file_ref = await context.file_system.store_file(
+                    user_id=context.user.user_id,
+                    run_id=context.workflow_run_id,
+                    filename=filename,
+                    data=content,
+                    mime_type=effective_mime_type,
+                )
+                logger.info("Stored file %s in workflow file system: %s", filename, file_ref.file_id)
+
+                result = {
+                    "file": file_ref.to_dict(),
+                    "size_bytes": len(content),
+                    "exported": exported,
+                }
+                if export_mime_type:
+                    result["export_mime_type"] = export_mime_type
+                return result
+            except OSError as e:
+                logger.warning("Failed to store file in workflow file system, falling back to base64: %s", e)
+
+        # Fallback: return base64 encoded content (for non-workflow contexts or if storage fails)
         result = {
             "content_base64": base64.b64encode(content).decode("utf-8"),
             "size_bytes": len(content),
@@ -234,24 +295,62 @@ class GoogleDriveDownloadFileTool(GoogleDriveReadonlyScopeTool):
         return result
 
 
+def _adjust_filename_for_export(filename: str, mime_type: str) -> str:
+    """Adjust filename extension based on export MIME type."""
+    mime_to_ext = {
+        "application/pdf": ".pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+        "text/plain": ".txt",
+        "text/csv": ".csv",
+        "text/html": ".html",
+    }
+    ext = mime_to_ext.get(mime_type)
+    if ext and not filename.lower().endswith(ext):
+        # Remove Google Docs extensions and add new one
+        base = filename
+        for g_ext in [".gdoc", ".gsheet", ".gslides", ".gdraw"]:
+            if base.lower().endswith(g_ext):
+                base = base[:-len(g_ext)]
+                break
+        # Remove any existing extension if it's a common doc type
+        for common_ext in [".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"]:
+            if base.lower().endswith(common_ext):
+                base = base[:-len(common_ext)]
+                break
+        return base + ext
+    return filename
+
+
 class GoogleDriveUploadFileTool(GoogleDriveFileScopeTool):
     """Upload file to Google Drive."""
 
     name = "google_drive_upload_file"
-    description = "Upload a file to Google Drive using multipart upload."
+    description = (
+        "Upload a file to Google Drive using multipart upload. "
+        "Accepts either a file reference from another tool or base64-encoded content."
+    )
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
                 "name": {"type": "string", "description": "File name"},
-                "content_base64": {"type": "string", "description": "File content as base64"},
+                "file": {
+                    "type": "object",
+                    "description": "File reference from another tool (e.g., google_drive_download_file)"
+                },
+                "content_base64": {
+                    "type": "string",
+                    "description": "File content as base64 (use 'file' instead if available)"
+                },
                 "mime_type": {"type": "string", "description": "File MIME type", "default": "application/octet-stream"},
                 "parent_folder_id": {"type": "string", "description": "Parent folder ID"},
                 "description": {"type": "string"},
                 "supports_all_drives": {"type": "boolean", "default": True},
             },
-            "required": ["name", "content_base64"]
+            "required": ["name"]
         }
 
     def get_output_schema(self) -> Dict[str, Any]:
@@ -261,19 +360,23 @@ class GoogleDriveUploadFileTool(GoogleDriveFileScopeTool):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,  # pylint: disable=unused-argument  # Part of tool interface
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Any:
         name = arguments.get("name")
+        file_ref_data = arguments.get("file")
         content_b64 = arguments.get("content_base64")
 
-        if not name or not content_b64:
-            raise HTTPException(status_code=400, detail="name and content_base64 are required")
+        if not name:
+            raise HTTPException(status_code=400, detail="name is required")
 
-        try:
-            content_bytes = base64.b64decode(content_b64)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid base64 content: {str(e)}") from e
+        # Resolve file content from file reference or base64
+        content_bytes, resolved_mime_type = await self._resolve_file_content(
+            file_ref_data, content_b64, context
+        )
 
-        mime_type = arguments.get("mime_type", "application/octet-stream")
+        mime_type = arguments.get("mime_type") or resolved_mime_type or "application/octet-stream"
         metadata = {"name": name, "mimeType": mime_type}
 
         if arguments.get("parent_folder_id"):
@@ -306,6 +409,42 @@ class GoogleDriveUploadFileTool(GoogleDriveFileScopeTool):
                 raise self._handle_api_error(resp)
 
         return resp.json()
+
+    async def _resolve_file_content(
+        self,
+        file_ref_data: Optional[Dict[str, Any]],
+        content_b64: Optional[str],
+        context: Optional["WorkflowRuntimeContext"],
+    ) -> tuple[bytes, Optional[str]]:
+        """
+        Resolve file content from either a file reference or base64 data.
+
+        Returns:
+            Tuple of (content_bytes, mime_type)
+        """
+        # pylint: disable=import-outside-toplevel  # Avoid circular imports with files module
+        from seer.core.files.models import is_file_ref
+
+        # Try file reference first
+        if file_ref_data and is_file_ref(file_ref_data):
+            if context and context.has_file_system:
+                file_ref = context.file_system.parse_file_ref(file_ref_data)
+                content_bytes = await context.file_system.get_file_content(file_ref)
+                logger.info("Resolved file from workflow file system: %s", file_ref.file_id)
+                return content_bytes, file_ref.mime_type
+            raise HTTPException(
+                status_code=400,
+                detail="File reference provided but workflow file system not available"
+            )
+
+        # Fall back to base64
+        if content_b64:
+            try:
+                return base64.b64decode(content_b64), None
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid base64 content: {str(e)}") from e
+
+        raise HTTPException(status_code=400, detail="Either 'file' or 'content_base64' is required")
 
 
 class GoogleDriveUpdateFileTool(GoogleDriveFileScopeTool):

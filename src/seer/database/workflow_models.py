@@ -503,3 +503,78 @@ class WorkflowDiscoveryChatSession(models.Model):
 
     def __str__(self) -> str:
         return f"WorkflowDiscoveryChatSession<{self.id}:{self.thread_id}>"
+
+
+class WorkflowFile(models.Model):
+    """
+    Tracks files created during workflow execution.
+
+    Files are stored in S3-compatible storage (S3/R2) and this table tracks
+    metadata for management, debugging, and API access.
+    """
+
+    id = fields.IntField(primary_key=True)
+    file_id = fields.CharField(
+        max_length=36,
+        unique=True,
+        db_index=True,
+        description="UUID for the file (used in file references)",
+    )
+    workflow_run = fields.ForeignKeyField(
+        "models.WorkflowRun",
+        related_name="files",
+        on_delete=fields.CASCADE,
+        description="Workflow run that created this file",
+    )
+    storage_path = fields.CharField(
+        max_length=512,
+        description="Full storage path (e.g., s3://bucket/path/to/file)",
+    )
+    filename = fields.CharField(
+        max_length=255,
+        description="Original filename",
+    )
+    mime_type = fields.CharField(
+        max_length=128,
+        description="MIME type of the file",
+    )
+    size_bytes = fields.BigIntField(
+        description="File size in bytes",
+    )
+    md5_hash = fields.CharField(
+        max_length=32,
+        null=True,
+        description="MD5 hash for integrity verification",
+    )
+    source_node_id = fields.CharField(
+        max_length=255,
+        null=True,
+        description="Node ID that created this file",
+    )
+    source_tool = fields.CharField(
+        max_length=255,
+        null=True,
+        description="Tool name that created this file (e.g., google_drive_download_file)",
+    )
+    created_at = fields.DatetimeField(auto_now_add=True)
+
+    class Meta:
+        table = "workflow_files"
+        ordering = ("-created_at",)
+        indexes = (
+            ("workflow_run_id",),
+            ("file_id",),
+        )
+
+    def __str__(self) -> str:
+        return f"WorkflowFile<{self.file_id}:{self.filename}>"
+
+    @property
+    def size_human(self) -> str:
+        """Get human-readable file size."""
+        size = self.size_bytes
+        for unit in ["B", "KB", "MB", "GB", "TB"]:
+            if size < 1024:
+                return f"{size:.1f} {unit}" if unit != "B" else f"{size} {unit}"
+            size /= 1024
+        return f"{size:.1f} PB"
