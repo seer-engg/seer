@@ -55,7 +55,11 @@ class GoogleDriveCreatePermissionTool(GoogleDriveFileScopeTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return _drive_permission_schema()
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Any:
         file_id = arguments.get("file_id")
         if not file_id:
             raise HTTPException(status_code=400, detail="file_id is required")
@@ -92,7 +96,7 @@ class GoogleDriveCreatePermissionTool(GoogleDriveFileScopeTool):
             f"https://www.googleapis.com/drive/v3/files/{file_id}/permissions",
             access_token,
             params=params,
-            json_body=permission
+            json_body=permission,
         )
         return resp.json()
 
@@ -119,7 +123,11 @@ class GoogleDriveAboutGetTool(GoogleDriveMetadataScopeTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return _drive_about_schema()
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Any:
         params = {
             "fields": arguments.get("fields", "user,storageQuota,importFormats,exportFormats,maxUploadSize,canCreateDrives")
         }
@@ -128,6 +136,6 @@ class GoogleDriveAboutGetTool(GoogleDriveMetadataScopeTool):
             "GET",
             "https://www.googleapis.com/drive/v3/about",
             access_token,
-            params=params
+            params=params,
         )
         return resp.json()

@@ -64,6 +64,14 @@ from .triggers import (
     sync_trigger_subscriptions,
 )
 
+# Import from files module
+from .files import (
+    list_run_files,
+    get_run_file,
+    get_run_file_download_url,
+    delete_run_file,
+)
+
 __all__ = [
     "list_node_types",
     "list_tools",
@@ -101,4 +109,9 @@ __all__ = [
     "start_listening_for_trigger",
     "get_pending_events",
     "_create_run_record",
+    # File management
+    "list_run_files",
+    "get_run_file",
+    "get_run_file_download_url",
+    "delete_run_file",
 ]

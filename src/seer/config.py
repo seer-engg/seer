@@ -214,6 +214,38 @@ class SeerConfig(BaseSettings):
     )
 
     # ============================================================================
+    # Workflow File System (S3/R2)
+    # ============================================================================
+    workflow_file_s3_bucket: Optional[str] = Field(
+        default=None,
+        description="S3 bucket name for workflow file storage",
+    )
+    workflow_file_s3_region: str = Field(
+        default="us-east-1",
+        description="AWS region for S3 bucket",
+    )
+    workflow_file_s3_endpoint_url: Optional[str] = Field(
+        default=None,
+        description="Custom endpoint URL for S3-compatible storage (Cloudflare R2, MinIO, etc.)",
+    )
+    workflow_file_s3_access_key: Optional[str] = Field(
+        default=None,
+        description="AWS access key ID for S3 (uses default credentials if not set)",
+    )
+    workflow_file_s3_secret_key: Optional[str] = Field(
+        default=None,
+        description="AWS secret access key for S3 (uses default credentials if not set)",
+    )
+    workflow_file_max_size_mb: int = Field(
+        default=100,
+        description="Maximum file size in MB for workflow files",
+    )
+    workflow_file_presigned_url_expiry_seconds: int = Field(
+        default=3600,
+        description="Default expiry time for presigned URLs in seconds",
+    )
+
+    # ============================================================================
     # Request Profiling
     # ============================================================================
     request_profiling_enabled: bool = Field(
@@ -447,6 +479,11 @@ class SeerConfig(BaseSettings):
     def is_sentry_configured(self) -> bool:
         """Check if Sentry error monitoring is configured and enabled."""
         return self.sentry_enabled and self.sentry_dsn is not None
+
+    @property
+    def is_workflow_file_system_configured(self) -> bool:
+        """Check if the workflow file system (S3/R2) is configured."""
+        return self.workflow_file_s3_bucket is not None
 
     @classmethod
     def settings_customise_sources(  # pylint: disable=too-many-positional-arguments  # Reason: Method signature is defined by Pydantic's BaseSettings API and cannot be modified

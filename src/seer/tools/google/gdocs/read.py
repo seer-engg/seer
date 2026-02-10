@@ -59,7 +59,11 @@ class GoogleDocsReadTool(GoogleAPIClient):
     def get_output_schema(self) -> Dict[str, Any]:
         return _document_output_schema()
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Any:
         document_id = arguments.get("document_id")
 
         if not document_id:
