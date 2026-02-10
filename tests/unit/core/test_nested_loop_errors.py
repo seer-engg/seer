@@ -26,6 +26,8 @@ from seer.core.runtime.execution import CompiledWorkflow
 from seer.core.runtime.nodes import NodeRuntime, RuntimeServices
 from seer.core.schema.schema_registry import SchemaRegistry
 
+pytestmark = pytest.mark.unit
+
 
 def _create_failing_tool(fail_on_values: list[str]) -> ToolDefinition:
     """Create a tool that fails when input value matches any in fail_on_values."""

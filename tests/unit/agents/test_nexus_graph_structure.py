@@ -2,7 +2,11 @@
 Tests for Nexus agent graph structure documentation.
 """
 
+import pytest
+
 from src.seer.agents.nexus.schema_context import generate_graph_structure_guide
+
+pytestmark = pytest.mark.unit
 
 
 def test_graph_structure_guide_generation():

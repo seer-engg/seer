@@ -12,6 +12,7 @@ from seer.tools.google.gdocs import (
 )
 
 
+@pytest.mark.unit
 class TestGoogleDocsReadTool:
     """Tests for GoogleDocsReadTool."""
 
@@ -112,6 +113,7 @@ class TestGoogleDocsReadTool:
             assert params["suggestionsViewMode"] == "PREVIEW_WITHOUT_SUGGESTIONS"
 
 
+@pytest.mark.unit
 class TestGoogleDocsWriteTool:
     """Tests for GoogleDocsWriteTool."""
 
@@ -199,6 +201,7 @@ class TestGoogleDocsWriteTool:
             assert json_body["requests"] == requests
 
 
+@pytest.mark.unit
 class TestGoogleDocsCreateTool:
     """Tests for GoogleDocsCreateTool."""
 

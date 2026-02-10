@@ -12,6 +12,8 @@ from seer.core.compiler.parse import parse_workflow_spec
 from seer.core.errors import ValidationPhaseError
 from seer.core.schema.models import WorkflowSpec
 
+pytestmark = pytest.mark.unit
+
 
 # =============================================================================
 # Valid Workflow Parsing Tests

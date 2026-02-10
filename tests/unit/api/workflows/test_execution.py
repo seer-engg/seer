@@ -3,7 +3,6 @@ Unit tests for workflow execution operations logic.
 
 Tests the actual execution service functions with mocked database operations.
 """
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,49 +13,15 @@ from seer.database import (
     make_run_public_id,
     make_workflow_public_id,
 )
+from tests.unit.helpers import utcnow
 
-
-def utcnow():
-    """Get current UTC time."""
-    return datetime.now(timezone.utc)
+# Note: mock_user, mock_workflow, mock_workflow_version fixtures are
+# provided by tests/unit/conftest.py
 
 
 # =============================================================================
 # Test Fixtures
 # =============================================================================
-
-
-@pytest.fixture
-def mock_user():
-    """Create a mock user object."""
-    user = MagicMock()
-    user.id = 1
-    return user
-
-
-@pytest.fixture
-def mock_workflow():
-    """Create a mock workflow object."""
-    workflow = MagicMock()
-    workflow.id = 1
-    workflow.workflow_id = "wf_1"
-    workflow.name = "Test Workflow"
-    return workflow
-
-
-@pytest.fixture
-def mock_workflow_version():
-    """Create a mock workflow version object."""
-    version = MagicMock()
-    version.id = 1
-    version.version_number = 1
-    version.spec = {
-        "version": "2",
-        "nodes": [{"id": "n1", "type": "tool"}],
-        "edges": [],
-        "triggers": []
-    }
-    return version
 
 
 @pytest.fixture
@@ -101,29 +66,17 @@ def mock_workflow_spec():
 class TestWorkflowRunStatus:
     """Tests for WorkflowRunStatus enum values."""
 
-    def test_queued_status_value(self):
-        """Test QUEUED status value."""
-        assert WorkflowRunStatus.QUEUED.value == "queued"
-
-    def test_running_status_value(self):
-        """Test RUNNING status value."""
-        assert WorkflowRunStatus.RUNNING.value == "running"
-
-    def test_succeeded_status_value(self):
-        """Test SUCCEEDED status value."""
-        assert WorkflowRunStatus.SUCCEEDED.value == "succeeded"
-
-    def test_failed_status_value(self):
-        """Test FAILED status value."""
-        assert WorkflowRunStatus.FAILED.value == "failed"
-
-    def test_cancelled_status_value(self):
-        """Test CANCELLED status value."""
-        assert WorkflowRunStatus.CANCELLED.value == "cancelled"
-
-    def test_interrupted_status_value(self):
-        """Test INTERRUPTED status value."""
-        assert WorkflowRunStatus.INTERRUPTED.value == "interrupted"
+    @pytest.mark.parametrize("enum_member,expected_value", [
+        (WorkflowRunStatus.QUEUED, "queued"),
+        (WorkflowRunStatus.RUNNING, "running"),
+        (WorkflowRunStatus.SUCCEEDED, "succeeded"),
+        (WorkflowRunStatus.FAILED, "failed"),
+        (WorkflowRunStatus.CANCELLED, "cancelled"),
+        (WorkflowRunStatus.INTERRUPTED, "interrupted"),
+    ])
+    def test_status_values(self, enum_member, expected_value):
+        """Test each WorkflowRunStatus enum has correct string value."""
+        assert enum_member.value == expected_value
 
     def test_all_status_values_exist(self):
         """Test all expected status values exist."""
@@ -141,13 +94,13 @@ class TestWorkflowRunStatus:
 class TestWorkflowRunSource:
     """Tests for WorkflowRunSource enum values."""
 
-    def test_manual_source_value(self):
-        """Test MANUAL source value."""
-        assert WorkflowRunSource.MANUAL.value == "manual"
-
-    def test_trigger_source_value(self):
-        """Test TRIGGER source value."""
-        assert WorkflowRunSource.TRIGGER.value == "trigger"
+    @pytest.mark.parametrize("enum_member,expected_value", [
+        (WorkflowRunSource.MANUAL, "manual"),
+        (WorkflowRunSource.TRIGGER, "trigger"),
+    ])
+    def test_source_values(self, enum_member, expected_value):
+        """Test each WorkflowRunSource enum has correct string value."""
+        assert enum_member.value == expected_value
 
 
 # =============================================================================
@@ -328,8 +281,15 @@ class TestListWorkflowRuns:
             assert result.runs[0].run_id == "run_123"
 
     @pytest.mark.asyncio
-    async def test_list_workflow_runs_respects_limit(self, mock_user, mock_workflow, mock_workflow_run):
-        """Test that limit is applied correctly."""
+    @pytest.mark.parametrize("input_limit,expected_limit", [
+        (25, 25),    # Normal value passes through
+        (0, 1),      # Below minimum, clamp to 1
+        (500, 100),  # Above maximum, clamp to 100
+        (1, 1),      # Minimum boundary
+        (100, 100),  # Maximum boundary
+    ])
+    async def test_list_workflow_runs_limit_clamping(self, mock_user, mock_workflow, input_limit, expected_limit):
+        """Test that limit is clamped to valid range [1, 100]."""
         from seer.api.workflows.services.execution import list_workflow_runs
 
         with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
@@ -342,49 +302,9 @@ class TestListWorkflowRuns:
             mock_order_by.limit = AsyncMock(return_value=[])
             mock_run_model.filter.return_value = mock_filter
 
-            await list_workflow_runs(mock_user, "wf_1", limit=25)
+            await list_workflow_runs(mock_user, "wf_1", limit=input_limit)
 
-            mock_order_by.limit.assert_called_once_with(25)
-
-    @pytest.mark.asyncio
-    async def test_list_workflow_runs_limit_clamped_min(self, mock_user, mock_workflow):
-        """Test limit is clamped to minimum of 1."""
-        from seer.api.workflows.services.execution import list_workflow_runs
-
-        with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
-             patch("seer.api.workflows.services.execution.WorkflowRun") as mock_run_model:
-
-            mock_get_wf.return_value = mock_workflow
-            mock_filter = MagicMock()
-            mock_order_by = MagicMock()
-            mock_filter.order_by.return_value = mock_order_by
-            mock_order_by.limit = AsyncMock(return_value=[])
-            mock_run_model.filter.return_value = mock_filter
-
-            await list_workflow_runs(mock_user, "wf_1", limit=0)
-
-            # Limit should be clamped to 1
-            mock_order_by.limit.assert_called_once_with(1)
-
-    @pytest.mark.asyncio
-    async def test_list_workflow_runs_limit_clamped_max(self, mock_user, mock_workflow):
-        """Test limit is clamped to maximum of 100."""
-        from seer.api.workflows.services.execution import list_workflow_runs
-
-        with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
-             patch("seer.api.workflows.services.execution.WorkflowRun") as mock_run_model:
-
-            mock_get_wf.return_value = mock_workflow
-            mock_filter = MagicMock()
-            mock_order_by = MagicMock()
-            mock_filter.order_by.return_value = mock_order_by
-            mock_order_by.limit = AsyncMock(return_value=[])
-            mock_run_model.filter.return_value = mock_filter
-
-            await list_workflow_runs(mock_user, "wf_1", limit=500)
-
-            # Limit should be clamped to 100
-            mock_order_by.limit.assert_called_once_with(100)
+            mock_order_by.limit.assert_called_once_with(expected_limit)
 
     @pytest.mark.asyncio
     async def test_list_workflow_runs_empty_result(self, mock_user, mock_workflow):

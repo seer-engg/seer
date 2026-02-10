@@ -44,6 +44,7 @@ def adapter():
     return DiscordMessageReceivedAdapter()
 
 
+@pytest.mark.unit
 class TestBootstrapCursorWithExistingMessages:
     """Test bootstrap_cursor when channel has existing messages."""
 
@@ -130,6 +131,7 @@ class TestBootstrapCursorWithExistingMessages:
                 )
 
 
+@pytest.mark.unit
 class TestBootstrapCursorWithEmptyChannel:
     """Test bootstrap_cursor when channel has no messages."""
 
@@ -162,6 +164,7 @@ class TestBootstrapCursorWithEmptyChannel:
                 assert cursor == {"last_message_id": None}
 
 
+@pytest.mark.unit
 class TestBootstrapCursorErrorHandling:
     """Test bootstrap_cursor error handling and fallback behavior."""
 
@@ -250,6 +253,7 @@ class TestBootstrapCursorErrorHandling:
                     assert cursor == {"last_message_id": None}
 
 
+@pytest.mark.unit
 class TestBootstrapCursorEdgeCases:
     """Test bootstrap_cursor edge cases and malformed data."""
 
@@ -311,6 +315,7 @@ class TestBootstrapCursorEdgeCases:
                 assert cursor == {"last_message_id": "1234567890123456789"}
 
 
+@pytest.mark.unit
 class TestBootstrapIntegrationWithPollLifecycle:
     """Test how bootstrap_cursor integrates with the polling lifecycle."""
 

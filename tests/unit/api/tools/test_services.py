@@ -94,12 +94,7 @@ class TestListTools:
 class TestExecuteToolService:
     """Tests for execute_tool_service function."""
 
-    @pytest.fixture
-    def mock_user(self):
-        """Create a mock user."""
-        user = MagicMock()
-        user.user_id = "test_user_123"
-        return user
+    # Note: mock_user fixture is provided by tests/unit/conftest.py
 
     @pytest.mark.asyncio
     async def test_execute_tool_success(self, mock_user):

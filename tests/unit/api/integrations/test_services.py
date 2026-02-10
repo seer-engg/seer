@@ -42,14 +42,7 @@ from seer.services.integrations.auth.oauth import get_oauth_provider
 # Fixtures
 # =============================================================================
 
-
-@pytest.fixture
-def mock_user():
-    """Create a mock user for testing."""
-    user = MagicMock()
-    user.id = 1
-    user.user_id = "user_123"
-    return user
+# Note: mock_user fixture is provided by tests/unit/conftest.py
 
 
 @pytest.fixture

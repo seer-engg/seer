@@ -13,6 +13,8 @@ from seer.core.event_loop import (
     set_main_event_loop,
 )
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def mock_logger():
