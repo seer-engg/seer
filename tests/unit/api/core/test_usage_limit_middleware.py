@@ -29,16 +29,7 @@ def mock_request():
     request.state = MagicMock()
     return request
 
-
-@pytest.fixture
-def mock_user():
-    """Create a mock database user."""
-    from seer.database import User
-    user = MagicMock(spec=User)
-    user.id = 1
-    user.user_id = "user_123"
-    user.email = "test@example.com"
-    return user
+# Note: mock_user fixture is provided by tests/unit/conftest.py
 
 
 @pytest.fixture

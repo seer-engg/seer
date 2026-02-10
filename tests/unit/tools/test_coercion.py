@@ -19,6 +19,7 @@ from seer.tools.coercion import (
 )
 
 
+@pytest.mark.unit
 class TestStripOuterQuotes:
     """Tests for the _strip_outer_quotes helper function."""
 
@@ -74,6 +75,7 @@ class TestStripOuterQuotes:
         assert _strip_outer_quotes("hello 'world'") == "hello 'world'"
 
 
+@pytest.mark.unit
 class TestCoerceString:
     """Tests for string coercion."""
 
@@ -100,6 +102,7 @@ class TestCoerceString:
         assert _coerce_string("'Sheet1!E3'", "range") == "Sheet1!E3"
 
 
+@pytest.mark.unit
 class TestCoerceInteger:
     """Tests for integer coercion."""
 
@@ -142,6 +145,7 @@ class TestCoerceInteger:
             _coerce_integer("not a number", "field", {})
 
 
+@pytest.mark.unit
 class TestCoerceNumber:
     """Tests for number (float) coercion."""
 
@@ -168,6 +172,7 @@ class TestCoerceNumber:
             _coerce_number("not a number", "field", {})
 
 
+@pytest.mark.unit
 class TestCoerceBoolean:
     """Tests for boolean coercion."""
 
@@ -230,6 +235,7 @@ class TestCoerceBoolean:
             _coerce_boolean("maybe", "field")
 
 
+@pytest.mark.unit
 class TestCoerceArray:
     """Tests for array coercion."""
 
@@ -282,6 +288,7 @@ class TestCoerceArray:
         assert result == ["user@example.com", "other@example.com"]
 
 
+@pytest.mark.unit
 class TestCoerceObject:
     """Tests for object/dict coercion."""
 
@@ -324,6 +331,7 @@ class TestCoerceObject:
             _coerce_object("[1, 2, 3]", "field", {})
 
 
+@pytest.mark.unit
 class TestCoerceArguments:
     """Tests for the main coerce_arguments function."""
 

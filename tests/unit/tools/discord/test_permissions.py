@@ -11,6 +11,7 @@ from seer.tools.discord.permissions import (
 )
 
 
+@pytest.mark.unit
 class TestDiscordPermission:
     """Test DiscordPermission IntFlag enum."""
 
@@ -38,6 +39,7 @@ class TestDiscordPermission:
         assert combined_three == 3136  # 1024 + 2048 + 64
 
 
+@pytest.mark.unit
 class TestCalculatePermissions:
     """Test calculate_permissions function."""
 
@@ -93,6 +95,7 @@ class TestCalculatePermissions:
         assert perms == 3072
 
 
+@pytest.mark.unit
 class TestGetPermissionNames:
     """Test get_permission_names function."""
 
@@ -134,6 +137,7 @@ class TestGetPermissionNames:
         assert "ATTACH_FILES" in names
 
 
+@pytest.mark.unit
 class TestHasPermission:
     """Test has_permission function."""
 
@@ -176,6 +180,7 @@ class TestHasPermission:
         assert has_permission(granted, 64) is False   # Doesn't have ADD_REACTIONS
 
 
+@pytest.mark.unit
 class TestToolPermissionsMap:
     """Test TOOL_PERMISSIONS_MAP configuration."""
 
@@ -204,6 +209,7 @@ class TestToolPermissionsMap:
         assert perms == 1024  # VIEW_CHANNEL
 
 
+@pytest.mark.unit
 class TestEdgeCases:
     """Test edge cases and special scenarios."""
 

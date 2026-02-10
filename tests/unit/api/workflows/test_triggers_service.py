@@ -19,13 +19,7 @@ import pytest
 class TestAutoSelectProviderConnection:
     """Tests for _auto_select_provider_connection function."""
 
-    @pytest.fixture
-    def mock_user(self):
-        """Create a mock user."""
-        user = MagicMock()
-        user.id = 1
-        user.user_id = "test_user_123"
-        return user
+    # Note: mock_user fixture is provided by tests/unit/conftest.py
 
     @pytest.fixture
     def mock_trigger_definition(self):
@@ -475,20 +469,7 @@ class TestEvaluateBindings:
 class TestSyncTriggerSubscriptions:
     """Tests for sync_trigger_subscriptions function."""
 
-    @pytest.fixture
-    def mock_user(self):
-        """Create a mock user."""
-        user = MagicMock()
-        user.id = 1
-        user.user_id = "test_user_123"
-        return user
-
-    @pytest.fixture
-    def mock_workflow(self):
-        """Create a mock workflow."""
-        workflow = MagicMock()
-        workflow.id = 100
-        return workflow
+    # Note: mock_user and mock_workflow fixtures are provided by tests/unit/conftest.py
 
     @pytest.fixture
     def mock_spec(self):

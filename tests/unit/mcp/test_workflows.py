@@ -7,6 +7,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 
+@pytest.mark.unit
 class TestValidateWorkflow:
     """Tests for validate_workflow MCP tool."""
 
@@ -55,6 +56,7 @@ class TestValidateWorkflow:
         assert "reference_validation" in data.get("error_type", "")
 
 
+@pytest.mark.unit
 class TestValidateAndUpsertWorkflow:
     """Tests for validate_and_upsert_workflow MCP tool."""
 
@@ -77,6 +79,7 @@ class TestValidateAndUpsertWorkflow:
         assert data["error_type"] == "schema_validation"
 
 
+@pytest.mark.unit
 class TestListWorkflows:
     """Tests for list_workflows MCP tool."""
 
@@ -95,6 +98,7 @@ class TestListWorkflows:
         assert "error" in data
 
 
+@pytest.mark.unit
 class TestDeleteWorkflow:
     """Tests for delete_workflow MCP tool."""
 

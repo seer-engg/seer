@@ -27,6 +27,8 @@ from seer.core.schema.models import (
 )
 from seer.core.schema.schema_registry import SchemaRegistry
 
+pytestmark = pytest.mark.unit
+
 
 # =============================================================================
 # Schema Validation Tests

@@ -17,6 +17,8 @@ from seer.core.expr.parser import (
     collect_unique_references,
 )
 
+pytestmark = pytest.mark.unit
+
 
 # =============================================================================
 # Reference String Parsing Tests

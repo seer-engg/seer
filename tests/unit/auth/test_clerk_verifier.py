@@ -10,6 +10,7 @@ from jwt.exceptions import InvalidTokenError
 from seer.auth.clerk_verifier import ClerkJWTVerifier, ClerkOpaqueTokenVerifier, VerifiedClerkToken
 
 
+@pytest.mark.unit
 class TestVerifiedClerkToken:
     """Tests for VerifiedClerkToken dataclass."""
 
@@ -58,6 +59,7 @@ class TestVerifiedClerkToken:
         assert token.scopes == []
 
 
+@pytest.mark.unit
 class TestClerkJWTVerifier:
     """Tests for ClerkJWTVerifier."""
 
@@ -273,6 +275,7 @@ class TestClerkJWTVerifier:
         assert call_kwargs["options"]["verify_aud"] is False
 
 
+@pytest.mark.unit
 class TestClerkOpaqueTokenVerifier:
     """Tests for ClerkOpaqueTokenVerifier."""
 

@@ -15,15 +15,7 @@ import pytest
 # Fixtures
 # =============================================================================
 
-
-@pytest.fixture
-def mock_user():
-    """Create a mock user for testing."""
-    from seer.database import User
-    user = MagicMock(spec=User)
-    user.id = 1
-    user.user_id = "user_123"
-    return user
+# Note: mock_user fixture is provided by tests/unit/conftest.py
 
 
 @pytest.fixture
