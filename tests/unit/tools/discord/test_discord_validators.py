@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from seer.tools.discord.validators import validate_discord_permissions
 
 
+@pytest.mark.unit
 class TestValidateDiscordPermissions:
     """Test validate_discord_permissions function."""
 
@@ -164,6 +165,7 @@ class TestValidateDiscordPermissions:
         assert exc_info.value.status_code == 403
 
 
+@pytest.mark.unit
 class TestValidationErrorDetails:
     """Test error message details and structure."""
 
@@ -213,6 +215,7 @@ class TestValidationErrorDetails:
         assert "reconnect" in exc_info.value.detail.lower()
 
 
+@pytest.mark.unit
 class TestEdgeCases:
     """Test edge cases and boundary conditions."""
 

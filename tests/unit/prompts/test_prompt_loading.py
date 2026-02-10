@@ -20,6 +20,7 @@ from seer.prompts import (
 )
 
 
+@pytest.mark.unit
 class TestPromptLoading:
     """Tests for the load_prompt function."""
 
@@ -55,6 +56,7 @@ class TestPromptLoading:
         assert cache_info.hits >= 1
 
 
+@pytest.mark.unit
 class TestNexusPrompts:
     """Tests for Nexus-specific prompt loaders."""
 
@@ -95,6 +97,7 @@ class TestNexusPrompts:
         assert "Loop Body Detection" in guide
 
 
+@pytest.mark.unit
 class TestSkillGuides:
     """Tests for skill guide loading."""
 
@@ -130,6 +133,7 @@ class TestSkillGuides:
         assert "gmail" in skills
 
 
+@pytest.mark.unit
 class TestPromptDirectory:
     """Tests for prompt directory structure."""
 
@@ -155,6 +159,7 @@ class TestPromptDirectory:
         assert skills_dir.is_dir()
 
 
+@pytest.mark.unit
 class TestCacheManagement:
     """Tests for cache management."""
 

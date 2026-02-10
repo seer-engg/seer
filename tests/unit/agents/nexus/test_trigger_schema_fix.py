@@ -16,6 +16,7 @@ from seer.tools.trigger_schema_fix import (
 )
 
 
+@pytest.mark.unit
 class TestSchemasDiffer:
     """Test _schemas_differ function."""
 
@@ -41,6 +42,7 @@ class TestSchemasDiffer:
         assert _schemas_differ(spec_schema, canonical_schema) is True
 
 
+@pytest.mark.unit
 class TestExtractAvailableFields:
     """Test _extract_available_fields function."""
 
@@ -86,6 +88,7 @@ class TestExtractAvailableFields:
         assert result["data"] == []
 
 
+@pytest.mark.unit
 class TestBuildExampleExpressions:
     """Test _build_example_expressions function."""
 
@@ -156,6 +159,7 @@ class TestBuildExampleExpressions:
         assert result == []
 
 
+@pytest.mark.unit
 class TestFixTriggerEventSchemas:
     """Test fix_trigger_event_schemas function."""
 

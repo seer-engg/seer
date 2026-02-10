@@ -14,6 +14,7 @@ from seer.agents.nexus.tools.clarification_tools import (
 )
 
 
+@pytest.mark.unit
 class TestQuestionOption:
     """Test QuestionOption model validation."""
 
@@ -51,6 +52,7 @@ class TestQuestionOption:
         assert option.is_wildcard is False
 
 
+@pytest.mark.unit
 class TestAskClarificationQuestions:
     """Test ask_clarification_questions batch tool."""
 

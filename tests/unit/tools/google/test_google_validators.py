@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from seer.tools.google.validators import validate_google_scopes
 
 
+@pytest.mark.unit
 class TestValidateGoogleScopes:
     """Test validate_google_scopes function."""
 
@@ -160,6 +161,7 @@ class TestValidateGoogleScopes:
             mock.assert_called()
 
 
+@pytest.mark.unit
 class TestValidationErrorDetails:
     """Test error message details and structure."""
 
@@ -232,6 +234,7 @@ class TestValidationErrorDetails:
         assert "Google OAuth scopes" in exc_info.value.detail
 
 
+@pytest.mark.unit
 class TestEdgeCases:
     """Test edge cases and boundary conditions."""
 

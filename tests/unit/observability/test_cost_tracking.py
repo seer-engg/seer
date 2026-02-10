@@ -12,6 +12,7 @@ from seer.observability.cost_tracking import CostTracker, detect_provider_from_m
 from seer.observability.exceptions import RunCostCapExceeded
 
 
+@pytest.mark.unit
 class TestDetectProviderFromModel:
     """Tests for provider detection from model names."""
 
@@ -46,6 +47,7 @@ class TestDetectProviderFromModel:
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 class TestCostTracker:
     """Tests for CostTracker.track_and_enforce_cap."""
 

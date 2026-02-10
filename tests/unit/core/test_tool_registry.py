@@ -20,6 +20,8 @@ from seer.tools.base import (
     clear_registry,
 )
 
+pytestmark = pytest.mark.unit
+
 
 # =============================================================================
 # Test Tool Implementations

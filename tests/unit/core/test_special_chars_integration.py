@@ -21,6 +21,8 @@ from seer.core.runtime.execution import CompiledWorkflow
 from seer.core.runtime.nodes import NodeRuntime, RuntimeServices
 from seer.core.schema.schema_registry import SchemaRegistry
 
+pytestmark = pytest.mark.unit
+
 
 def _create_mock_tool() -> ToolDefinition:
     """Create a mock test.tool that simply returns its input value."""

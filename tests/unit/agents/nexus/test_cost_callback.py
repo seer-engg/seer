@@ -15,6 +15,8 @@ from seer.agents.nexus.cost_callback import (
 from seer.core.runtime.context import WorkflowRuntimeContext
 from seer.database.models import User
 
+pytestmark = pytest.mark.unit
+
 
 # Note: mock_user fixture is provided by tests/unit/conftest.py
 

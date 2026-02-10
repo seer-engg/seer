@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+@pytest.mark.unit
 class TestSentryClient:
     """Tests for Sentry client module."""
 
@@ -98,6 +99,7 @@ class TestSentryClient:
                 assert result is False
 
 
+@pytest.mark.unit
 class TestBeforeSend:
     """Tests for the _before_send filter function."""
 
@@ -207,6 +209,7 @@ class TestBeforeSend:
         assert result["level"] == "error"
 
 
+@pytest.mark.unit
 class TestTracesSampler:
     """Tests for the _traces_sampler function."""
 
@@ -250,6 +253,7 @@ class TestTracesSampler:
             assert result == 0.5
 
 
+@pytest.mark.unit
 class TestCaptureFunctions:
     """Tests for capture and context functions."""
 
@@ -419,6 +423,7 @@ class TestCaptureFunctions:
             )
 
 
+@pytest.mark.unit
 class TestSentryMiddleware:
     """Tests for Sentry FastAPI middleware."""
 

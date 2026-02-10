@@ -12,6 +12,7 @@ from seer.tools.discovery_shared import (
 )
 
 
+@pytest.mark.unit
 class TestTokenize:
     """Tests for _tokenize helper function."""
 
@@ -42,6 +43,7 @@ class TestTokenize:
         assert _tokenize(None) == set()
 
 
+@pytest.mark.unit
 class TestSearchToolsIntent:
     """Tests for _search_tools_intent function."""
 
@@ -108,6 +110,7 @@ class TestSearchToolsIntent:
         assert results == []
 
 
+@pytest.mark.unit
 class TestSearchToolsMCP:
     """Tests for search_tools MCP tool - accessing underlying function."""
 
@@ -146,6 +149,7 @@ class TestSearchToolsMCP:
         assert "message" in data or "alternatives" in data
 
 
+@pytest.mark.unit
 class TestListToolsMCP:
     """Tests for list_tools MCP tool."""
 
@@ -201,6 +205,7 @@ class TestListToolsMCP:
         assert data["integration_filter"] == "gmail"
 
 
+@pytest.mark.unit
 class TestSearchTriggersMCP:
     """Tests for search_triggers MCP tool."""
 
@@ -233,6 +238,7 @@ class TestSearchTriggersMCP:
         assert data["triggers"][0]["key"] == "poll.gmail.email_received"
 
 
+@pytest.mark.unit
 class TestListTriggersMCP:
     """Tests for list_triggers MCP tool."""
 

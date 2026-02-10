@@ -1,6 +1,8 @@
 """
 Unit tests for integration metadata API endpoint.
 """
+import pytest
+
 from seer.api.integrations.metadata_models import (
     IntegrationMetadata,
     IntegrationIcon,
@@ -15,6 +17,7 @@ from seer.services.integrations.metadata import (
 )
 
 
+@pytest.mark.unit
 class TestIntegrationMetadataModels:
     """Test Pydantic models for integration metadata."""
 
@@ -50,6 +53,7 @@ class TestIntegrationMetadataModels:
         assert metadata.oauth_provider == "google"
 
 
+@pytest.mark.unit
 class TestIntegrationMetadataService:
     """Test integration metadata service functions."""
 
@@ -132,6 +136,7 @@ class TestIntegrationMetadataService:
         assert get_oauth_provider("unknown") is None
 
 
+@pytest.mark.unit
 class TestIntegrationConfigs:
     """Test static integration configurations."""
 
