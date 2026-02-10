@@ -59,6 +59,10 @@ class SentryContextMiddleware(BaseHTTPMiddleware):
                 email=getattr(user, "email", None),
                 username=f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip() or None,
             )
+            # Set user tags for indexed searching in Sentry
+            set_tag("user_id", user.user_id)
+            if getattr(user, "email", None):
+                set_tag("user_email", user.email)
 
         # Set rich request context (not indexed, but visible in error details)
         request_context = {

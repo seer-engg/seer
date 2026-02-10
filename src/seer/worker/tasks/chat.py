@@ -48,9 +48,46 @@ from seer.database.workflow_models import (
 from seer.logger import get_logger
 from seer.observability import increment_chat_message_count
 from seer.observability.exceptions import RunCostCapExceeded
+from seer.observability.sentry_client import set_user_context, set_tag, set_context
 from seer.worker.broker_instance import broker
 
 logger = get_logger(__name__)
+
+
+def _set_sentry_context_for_chat(
+    user: User,
+    session_id: int,
+    workflow_id: int,
+    thread_id: Optional[str] = None,
+) -> None:
+    """
+    Set Sentry context for chat execution error tracking.
+
+    Sets user context (id, email, username) and chat session context.
+    All operations are non-blocking and fail silently.
+    """
+    set_tag("task_type", "chat_execution")
+    set_tag("session_id", str(session_id))
+    set_tag("workflow_id", str(workflow_id))
+
+    try:
+        set_user_context(
+            user_id=user.user_id,
+            email=getattr(user, "email", None),
+            username=f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip() or None,
+        )
+        # Set user tags for indexed searching in Sentry
+        set_tag("user_id", user.user_id)
+        if getattr(user, "email", None):
+            set_tag("user_email", user.email)
+
+        set_context("chat_session", {
+            "session_id": session_id,
+            "workflow_id": workflow_id,
+            "thread_id": thread_id,
+        })
+    except Exception:  # pylint: disable=broad-exception-caught  # Reason: Sentry context setup must never block task execution
+        logger.debug("Failed to set Sentry context for chat", exc_info=True)
 
 
 def _extract_response_text(result: Dict[str, Any]) -> str:
@@ -160,6 +197,9 @@ async def chat_execution_task(
         await Workflow.get(id=workflow_id)  # Verify workflow exists
         checkpointer = await get_checkpointer()
         thread_id = session.thread_id
+
+        # Set Sentry context for error tracking
+        _set_sentry_context_for_chat(user, session_id, workflow_id, thread_id)
 
         # Create agent
         agent = create_nexus_chat_agent(
@@ -346,6 +386,9 @@ async def chat_resume_task(
         user = await User.get(id=user_id)
         await Workflow.get(id=workflow_id)  # Verify workflow exists
         checkpointer = await get_checkpointer()
+
+        # Set Sentry context for error tracking
+        _set_sentry_context_for_chat(user, session_id, workflow_id, thread_id)
 
         # Create agent
         agent = create_nexus_chat_agent(
