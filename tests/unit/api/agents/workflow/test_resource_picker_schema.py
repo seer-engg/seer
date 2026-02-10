@@ -12,6 +12,7 @@ from seer.api.agents.workflow.chat_schema import (
 )
 
 
+@pytest.mark.unit
 class TestClarificationQuestionResourcePicker:
     """Test ClarificationQuestion model with resource picker type."""
 

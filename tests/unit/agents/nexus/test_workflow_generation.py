@@ -13,6 +13,7 @@ from seer.agents.nexus.tools.workflow_tools import (
 from seer.core.schema.models import WorkflowSpec
 
 
+@pytest.mark.unit
 class TestWorkflowProposal:
     """Test WorkflowProposal model validation."""
 
@@ -84,6 +85,7 @@ class TestWorkflowProposal:
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 class TestCreateWorkflowSpecStructured:
     """Test create_workflow_spec_structured function with real LLM."""
 

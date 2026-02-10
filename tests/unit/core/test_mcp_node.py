@@ -8,6 +8,8 @@ from pydantic import ValidationError
 
 from seer.core.schema.models import MCPNode, OutputContract, OutputMode
 
+pytestmark = pytest.mark.unit
+
 
 # =============================================================================
 # Schema Validation Tests

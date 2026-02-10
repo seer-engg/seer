@@ -24,6 +24,8 @@ from seer.core.schema.models import (
     WorkflowSpec,
 )
 
+pytestmark = pytest.mark.unit
+
 
 # =============================================================================
 # Valid Reference Tests

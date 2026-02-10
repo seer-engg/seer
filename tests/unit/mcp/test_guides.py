@@ -9,6 +9,7 @@ import pytest
 from unittest.mock import patch
 
 
+@pytest.mark.unit
 class TestGetWorkflowGuide:
     """Tests for get_workflow_guide MCP tool."""
 

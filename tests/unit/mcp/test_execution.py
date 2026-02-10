@@ -8,6 +8,7 @@ from unittest.mock import patch, MagicMock
 from datetime import datetime
 
 
+@pytest.mark.unit
 class TestRunWorkflow:
     """Tests for run_workflow MCP tool."""
 
@@ -27,6 +28,7 @@ class TestRunWorkflow:
         assert data["error"] == "execution_failed"
 
 
+@pytest.mark.unit
 class TestGetRunStatus:
     """Tests for get_run_status MCP tool."""
 
@@ -45,6 +47,7 @@ class TestGetRunStatus:
         assert "error" in data
 
 
+@pytest.mark.unit
 class TestListRuns:
     """Tests for list_runs MCP tool."""
 
@@ -65,6 +68,7 @@ class TestListRuns:
         assert "error" in data
 
 
+@pytest.mark.unit
 class TestGetRunHistory:
     """Tests for get_run_history MCP tool."""
 

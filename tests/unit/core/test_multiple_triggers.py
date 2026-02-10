@@ -42,6 +42,7 @@ def _create_mock_tool() -> ToolDefinition:
     )
 
 
+@pytest.mark.unit
 class TestMultipleTriggersSameType:
     """Test suite for multiple triggers of the same type."""
 
@@ -324,6 +325,7 @@ class TestMultipleTriggersSameType:
         assert len(set(trigger_ids)) == 3  # All different IDs
 
 
+@pytest.mark.unit
 class TestTriggerEventEnvelope:
     """Test trigger event envelope includes both trigger_id and trigger_key."""
 
@@ -351,6 +353,7 @@ class TestTriggerEventEnvelope:
         assert envelope["data"]["subject"] == "Test email"
 
 
+@pytest.mark.unit
 class TestTriggerReferenceResolution:
     """Test trigger reference resolution with realistic envelope structure."""
 
@@ -459,6 +462,7 @@ class TestTriggerReferenceResolution:
         assert result["echo_node"] == "hello from trigger"
 
 
+@pytest.mark.unit
 class TestOrphanedTriggerValidation:
     """Test suite for orphaned trigger detection (compile-time validation)."""
 

@@ -5,6 +5,7 @@ import pytest
 from seer.services.knowledge.chunking_service import ChunkingService, create_chunking_service
 
 
+@pytest.mark.unit
 class TestChunkingService:
     """Test ChunkingService text splitting functionality."""
 
@@ -81,6 +82,7 @@ class TestChunkingService:
         assert len(small_chunks) > len(large_chunks)
 
 
+@pytest.mark.unit
 class TestCreateChunkingService:
     """Test create_chunking_service factory function."""
 

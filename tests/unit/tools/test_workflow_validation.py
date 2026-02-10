@@ -16,6 +16,7 @@ from seer.tools.workflow_validation import (
 )
 
 
+@pytest.mark.unit
 class TestValidationError:
     """Tests for ValidationError class."""
 
@@ -37,6 +38,7 @@ class TestValidationError:
         }
 
 
+@pytest.mark.unit
 class TestGetAttrOrKey:
     """Tests for _get_attr_or_key helper."""
 
@@ -59,6 +61,7 @@ class TestGetAttrOrKey:
         assert _get_attr_or_key(obj, "name") is None
 
 
+@pytest.mark.unit
 class TestValidateToolReferences:
     """Tests for validate_tool_references."""
 
@@ -101,6 +104,7 @@ class TestValidateToolReferences:
         mock_get_tool.assert_not_called()
 
 
+@pytest.mark.unit
 class TestValidateTriggerReferences:
     """Tests for validate_trigger_references."""
 
@@ -140,6 +144,7 @@ class TestValidateTriggerReferences:
         mock_registry.maybe_get.assert_not_called()
 
 
+@pytest.mark.unit
 class TestValidateToolsAndTriggers:
     """Tests for validate_tools_and_triggers convenience function."""
 
@@ -153,6 +158,7 @@ class TestValidateToolsAndTriggers:
         assert errors == ["Tool error", "Trigger error"]
 
 
+@pytest.mark.unit
 class TestDetectExtraFields:
     """Tests for detect_extra_fields."""
 
@@ -184,6 +190,7 @@ class TestDetectExtraFields:
         assert hint is None
 
 
+@pytest.mark.unit
 class TestFormatValidationErrors:
     """Tests for format_validation_errors."""
 

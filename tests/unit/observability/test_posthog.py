@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
+@pytest.mark.unit
 class TestPostHogClient:
     """Tests for PostHog client module."""
 
@@ -154,6 +155,7 @@ class TestPostHogClient:
             shutdown()
 
 
+@pytest.mark.unit
 class TestPostHogMiddleware:
     """Tests for PostHog FastAPI middleware."""
 
@@ -280,6 +282,7 @@ class TestPostHogMiddleware:
             assert call_args.kwargs["properties"]["authenticated"] is False
 
 
+@pytest.mark.unit
 class TestMCPTrackingDecorator:
     """Tests for MCP tool tracking decorator."""
 

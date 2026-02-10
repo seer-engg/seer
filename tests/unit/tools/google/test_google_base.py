@@ -22,6 +22,7 @@ class MockGoogleTool(GoogleAPIClient):
         return {"result": "success"}
 
 
+@pytest.mark.unit
 class TestTransientErrors:
     """Tests for transient error configuration."""
 
@@ -39,6 +40,7 @@ class TestTransientErrors:
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 class TestMakeRequestRetry:
     """Tests for _make_request retry behavior."""
 
@@ -147,6 +149,7 @@ class TestMakeRequestRetry:
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 class TestExecuteRequestWithRetry:
     """Tests for _execute_request_with_retry method."""
 

@@ -9,7 +9,7 @@ Tests:
 - Skip validation mode bypasses auto-selection
 - Non-required triggers skip auto-selection
 """
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,11 +21,7 @@ from seer.core.schema.models import (
     TriggerDefinition,
 )
 from seer.database import User
-
-
-def utcnow():
-    """Get current UTC time."""
-    return datetime.now(timezone.utc)
+from tests.unit.helpers import utcnow
 
 
 # =============================================================================

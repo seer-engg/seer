@@ -15,13 +15,10 @@ from seer.agents.nexus.cost_callback import (
 from seer.core.runtime.context import WorkflowRuntimeContext
 from seer.database.models import User
 
+pytestmark = pytest.mark.unit
 
-@pytest.fixture
-def mock_user():
-    """Fixture providing a mock user."""
-    user = MagicMock(spec=User)
-    user.user_id = "test_user_123"
-    return user
+
+# Note: mock_user fixture is provided by tests/unit/conftest.py
 
 
 @pytest.fixture

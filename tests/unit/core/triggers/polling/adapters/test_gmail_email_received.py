@@ -43,6 +43,7 @@ def adapter():
     return GmailEmailReceivedAdapter()
 
 
+@pytest.mark.unit
 class TestMetadataHeadersParameter:
     """Test that metadataHeaders is passed correctly as a list for repeated query params."""
 
@@ -176,6 +177,7 @@ class TestMetadataHeadersParameter:
         assert len(event.raw["payload"]["headers"]) == 4
 
 
+@pytest.mark.unit
 class TestNormalizeMessage:
     """Test the _normalize_message method."""
 
@@ -234,6 +236,7 @@ class TestNormalizeMessage:
         assert result["to"] == []
 
 
+@pytest.mark.unit
 class TestAddressParsingHelpers:
     """Test the address parsing helper functions."""
 
@@ -281,6 +284,7 @@ class TestAddressParsingHelpers:
         assert result == []
 
 
+@pytest.mark.unit
 class TestBootstrapCursor:
     """Test the bootstrap_cursor method."""
 
@@ -303,6 +307,7 @@ class TestBootstrapCursor:
         assert cursor["overlap_ms"] == 600000
 
 
+@pytest.mark.unit
 class TestRaiseForStatus:
     """Test the _raise_for_status method directly."""
 
@@ -356,6 +361,7 @@ class TestRaiseForStatus:
         await adapter._raise_for_status(response)
 
 
+@pytest.mark.unit
 class TestPollWithEmptyMessages:
     """Test poll method with empty message list."""
 

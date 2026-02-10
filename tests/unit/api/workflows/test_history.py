@@ -37,11 +37,7 @@ from seer.api.workflows.services.history import (
     _get_error_traces_from_database,
     _merge_checkpoint_and_database_traces,
 )
-
-
-def utcnow():
-    """Get current UTC time."""
-    return datetime.now(timezone.utc)
+from tests.unit.helpers import utcnow
 
 
 # =============================================================================
