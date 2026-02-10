@@ -49,14 +49,7 @@ class TestDetectProviderFromModel:
 class TestCostTracker:
     """Tests for CostTracker.track_and_enforce_cap."""
 
-    @pytest.fixture
-    def mock_user(self):
-        """Create mock user."""
-        user = MagicMock(spec=User)
-        user.user_id = "test-user-123"
-        # Add _saved_in_db attribute for Tortoise ORM compatibility
-        user._saved_in_db = True
-        return user
+    # Note: mock_user fixture is provided by tests/unit/conftest.py
 
     @pytest.fixture
     def runtime_context(self, mock_user):

@@ -21,28 +21,7 @@ from fastapi import HTTPException
 # Fixtures
 # =============================================================================
 
-
-@pytest.fixture
-def mock_user():
-    """Create a mock user for testing."""
-    from seer.database import User
-    user = MagicMock(spec=User)
-    user.id = 1
-    user.user_id = "user_123"
-    user.default_workflow_creation_mode = None
-    user.save = AsyncMock()
-    return user
-
-
-@pytest.fixture
-def mock_workflow():
-    """Create a mock workflow for testing."""
-    from seer.database import Workflow
-    workflow = MagicMock(spec=Workflow)
-    workflow.id = 1
-    workflow.workflow_id = "wf_1"
-    workflow.name = "Test Workflow"
-    return workflow
+# Note: mock_user and mock_workflow fixtures are provided by tests/unit/conftest.py
 
 
 @pytest.fixture
