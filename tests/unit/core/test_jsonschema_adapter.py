@@ -9,6 +9,8 @@ from seer.core.schema.jsonschema_adapter import (
     validate_instance,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def test_get_validator_caches_by_schema_id() -> None:
     """Test that get_validator creates validator instances (no caching currently)."""

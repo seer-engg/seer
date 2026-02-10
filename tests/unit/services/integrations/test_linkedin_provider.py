@@ -9,6 +9,7 @@ from seer.services.integrations.providers.linkedin import LinkedInProvider
 from seer.services.integrations.providers.base import OAuthAuthorizeContext
 
 
+@pytest.mark.unit
 class TestLinkedInProviderScopeHandling:
     """Test LinkedInProvider.get_oauth_scope()."""
 
@@ -91,6 +92,7 @@ class TestLinkedInProviderScopeHandling:
         assert "profile" in scope_list
 
 
+@pytest.mark.unit
 class TestLinkedInProviderUserProfile:
     """Test LinkedInProvider.fetch_user_profile()."""
 
@@ -178,6 +180,7 @@ class TestLinkedInProviderUserProfile:
             assert "401" in str(exc_info.value) or "failed" in str(exc_info.value).lower()
 
 
+@pytest.mark.unit
 class TestLinkedInProviderProperties:
     """Test LinkedInProvider basic properties."""
 

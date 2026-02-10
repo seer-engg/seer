@@ -10,6 +10,7 @@ import pytest
 from unittest.mock import patch
 
 
+@pytest.mark.unit
 class TestGetWorkflowTemplate:
     """Tests for get_workflow_template MCP tool."""
 
@@ -64,6 +65,7 @@ class TestGetWorkflowTemplate:
         assert "available_templates" in data
 
 
+@pytest.mark.unit
 class TestListWorkflowTemplates:
     """Tests for list_workflow_templates MCP tool."""
 

@@ -2,7 +2,11 @@
 Tests for Nexus agent primitive blocks documentation.
 """
 
+import pytest
+
 from src.seer.agents.nexus.schema_context import generate_primitive_blocks_guide
+
+pytestmark = pytest.mark.unit
 
 
 def test_primitive_blocks_guide_generation():

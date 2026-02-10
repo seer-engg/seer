@@ -130,3 +130,77 @@ def mock_limits():
         poll_min_interval_seconds=60,
         llm_credits_monthly=10.0,
     )
+
+
+# =============================================================================
+# Common Mock Fixtures (Centralized to reduce duplication)
+# =============================================================================
+
+
+@pytest.fixture
+def mock_user():
+    """
+    Centralized mock user with all common attributes.
+
+    This fixture replaces duplicate mock_user fixtures across:
+    - api/workflows/test_execution.py
+    - api/workflows/test_triggers_service.py
+    - api/agents/test_workflow_services.py
+    - api/agents/test_chat_services.py
+    - api/tools/test_services.py
+    - api/integrations/test_services.py
+    - api/core/test_usage_limit_middleware.py
+    - tools/test_credential_resolver.py
+    - agents/nexus/test_cost_callback.py
+    - observability/test_cost_tracking.py
+    """
+    from seer.database import User
+
+    user = MagicMock(spec=User)
+    user.id = 1
+    user.user_id = "user_123"
+    user.email = "test@example.com"
+    user.default_workflow_creation_mode = None
+    user.save = AsyncMock()
+    # For Tortoise ORM compatibility
+    user._saved_in_db = True
+    return user
+
+
+@pytest.fixture
+def mock_workflow():
+    """
+    Centralized mock workflow.
+
+    This fixture replaces duplicate mock_workflow fixtures across:
+    - api/workflows/test_execution.py
+    - api/workflows/test_triggers_service.py
+    - api/agents/test_workflow_services.py
+    """
+    from seer.database import Workflow
+
+    workflow = MagicMock(spec=Workflow)
+    workflow.id = 1
+    workflow.workflow_id = "wf_1"
+    workflow.name = "Test Workflow"
+    return workflow
+
+
+@pytest.fixture
+def mock_workflow_version():
+    """
+    Centralized mock workflow version.
+
+    This fixture replaces duplicate mock_workflow_version fixtures across:
+    - api/workflows/test_execution.py
+    - api/workflows/test_history.py
+    """
+    from seer.database import WorkflowVersion, WorkflowVersionStatus
+
+    version = MagicMock(spec=WorkflowVersion)
+    version.id = 1
+    version.version_number = 1
+    version.status = WorkflowVersionStatus.DRAFT
+    version.spec = {"version": "2", "nodes": [], "edges": [], "triggers": []}
+    version.save = AsyncMock()
+    return version

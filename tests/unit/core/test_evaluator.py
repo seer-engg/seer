@@ -18,6 +18,8 @@ from seer.core.expr.evaluator import (
 )
 from seer.core.expr.parser import parse_reference_string
 
+pytestmark = pytest.mark.unit
+
 
 # =============================================================================
 # EvaluationContext Tests

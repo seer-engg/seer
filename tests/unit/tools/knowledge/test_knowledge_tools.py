@@ -7,6 +7,7 @@ from seer.tools.knowledge.add import KnowledgeBaseAddTextTool
 from seer.tools.knowledge.list import KnowledgeBaseListTool
 
 
+@pytest.mark.unit
 class TestKnowledgeBaseQueryTool:
     """Test KnowledgeBaseQueryTool metadata and schema."""
 
@@ -63,6 +64,7 @@ class TestKnowledgeBaseQueryTool:
         assert "results" in schema["properties"]
 
 
+@pytest.mark.unit
 class TestKnowledgeBaseAddTextTool:
     """Test KnowledgeBaseAddTextTool metadata and schema."""
 
@@ -115,6 +117,7 @@ class TestKnowledgeBaseAddTextTool:
         assert "chunk_count" in schema["properties"]
 
 
+@pytest.mark.unit
 class TestKnowledgeBaseListTool:
     """Test KnowledgeBaseListTool metadata and schema."""
 
@@ -153,6 +156,7 @@ class TestKnowledgeBaseListTool:
         assert "total" in schema["properties"]
 
 
+@pytest.mark.unit
 class TestToolRegistration:
     """Test that all knowledge tools can be registered."""
 

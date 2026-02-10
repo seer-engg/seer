@@ -22,6 +22,7 @@ from seer.mcp.auth import (
 )
 
 
+@pytest.mark.unit
 class TestExtractBearerToken:
     """Tests for extract_bearer_token function."""
 
@@ -66,6 +67,7 @@ class TestExtractBearerToken:
         assert result == "token-with-spaces"
 
 
+@pytest.mark.unit
 class TestWwwAuthenticateResponse:
     """Tests for www_authenticate_response function."""
 
@@ -114,6 +116,7 @@ class TestWwwAuthenticateResponse:
         assert 'error="insufficient_scope"' in header
 
 
+@pytest.mark.unit
 class TestMCPAuthMiddleware:
     """Tests for MCPAuthMiddleware."""
 
@@ -202,6 +205,7 @@ class TestMCPAuthMiddleware:
         assert "user_123" in response.text
 
 
+@pytest.mark.unit
 class TestGetMCPAuthenticatedUser:
     """Tests for get_mcp_authenticated_user context variable."""
 
@@ -248,6 +252,7 @@ class TestGetMCPAuthenticatedUser:
         assert result is None
 
 
+@pytest.mark.unit
 class TestMCPOpaqueAuthMiddleware:
     """Tests for MCPOpaqueAuthMiddleware (opaque token validation)."""
 

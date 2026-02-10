@@ -10,6 +10,7 @@ from seer.services.knowledge.document_processor import (
 )
 
 
+@pytest.mark.unit
 class TestDocumentProcessor:
     """Test DocumentProcessor text extraction functionality."""
 
@@ -54,6 +55,7 @@ class TestDocumentProcessor:
             await processor.extract_text(b"test", "image/png")
 
 
+@pytest.mark.unit
 class TestSupportedMimeTypes:
     """Test SUPPORTED_MIME_TYPES constant."""
 
@@ -65,6 +67,7 @@ class TestSupportedMimeTypes:
         assert "application/vnd.openxmlformats-officedocument.wordprocessingml.document" in SUPPORTED_MIME_TYPES
 
 
+@pytest.mark.unit
 class TestMimeToExtension:
     """Test MIME_TO_EXTENSION mapping."""
 
@@ -75,6 +78,7 @@ class TestMimeToExtension:
         assert MIME_TO_EXTENSION["application/vnd.openxmlformats-officedocument.wordprocessingml.document"] == ".docx"
 
 
+@pytest.mark.unit
 class TestGetDocumentProcessor:
     """Test get_document_processor singleton factory."""
 

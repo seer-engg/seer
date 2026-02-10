@@ -32,6 +32,8 @@ from seer.core.runtime.execution import CompiledWorkflow
 from seer.core.runtime.nodes import NodeRuntime, RuntimeServices
 from seer.core.schema.schema_registry import SchemaRegistry
 
+pytestmark = pytest.mark.unit
+
 
 def _create_tracking_tool(call_tracker: list) -> ToolDefinition:
     """Create a tool that tracks all calls for verification."""

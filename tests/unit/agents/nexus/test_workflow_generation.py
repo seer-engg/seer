@@ -2,6 +2,8 @@
 Unit tests for Nexus workflow generation with structured outputs.
 
 Tests the create_workflow_spec_structured function and WorkflowProposal model.
+
+Note: Integration tests with real LLM calls are in tests/integration/agents/nexus/
 """
 # pylint: disable=import-outside-toplevel  # Reason: Test-specific imports are acceptable
 import pytest
@@ -13,6 +15,7 @@ from seer.agents.nexus.tools.workflow_tools import (
 from seer.core.schema.models import WorkflowSpec
 
 
+@pytest.mark.unit
 class TestWorkflowProposal:
     """Test WorkflowProposal model validation."""
 
@@ -84,8 +87,9 @@ class TestWorkflowProposal:
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 class TestCreateWorkflowSpecStructured:
-    """Test create_workflow_spec_structured function with real LLM."""
+    """Test create_workflow_spec_structured function with mocked LLM."""
 
     async def test_generates_valid_spec_simple_workflow(self):
         """Test generating a simple workflow with structured output."""
@@ -140,68 +144,3 @@ class TestCreateWorkflowSpecStructured:
         call_args = mock_llm_instance.with_structured_output.call_args
         assert call_args[0][0] == WorkflowProposal
         assert call_args[1]["method"] == "function_calling"
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-class TestStructuredOutputIntegration:
-    """Integration tests with real LLM calls (requires API key)."""
-
-    @pytest.mark.skipif(
-        "OPENAI_API_KEY" not in __import__("os").environ,
-        reason="Requires OPENAI_API_KEY environment variable"
-    )
-    async def test_real_llm_simple_workflow(self):
-        """Test with real LLM for simple workflow generation."""
-        from seer.llm import get_llm_without_responses_api
-
-        llm = get_llm_without_responses_api(model="gpt-4o-mini", temperature=0)
-
-        proposal = create_workflow_spec_structured(
-            llm=llm,
-            user_intent="Send a test email",
-            discovered_tools=[
-                {"tool": "gmail_send_email", "description": "Send email via Gmail"}
-            ],
-            discovered_triggers=[],
-        )
-
-        # Validate structure
-        assert isinstance(proposal, WorkflowProposal)
-        assert proposal.spec.version == "2"
-        assert len(proposal.spec.nodes) >= 1
-        assert any(node.type == "tool" for node in proposal.spec.nodes)
-        assert proposal.summary
-        assert proposal.reasoning
-
-    @pytest.mark.skipif(
-        "OPENAI_API_KEY" not in __import__("os").environ,
-        reason="Requires OPENAI_API_KEY environment variable"
-    )
-    async def test_real_llm_trigger_workflow(self):
-        """Test with real LLM for trigger-based workflow."""
-        from seer.llm import get_llm_without_responses_api
-
-        llm = get_llm_without_responses_api(model="gpt-4o-mini", temperature=0)
-
-        proposal = create_workflow_spec_structured(
-            llm=llm,
-            user_intent="Send welcome email when user signs up",
-            discovered_tools=[
-                {"tool": "gmail_send_email", "description": "Send email via Gmail"}
-            ],
-            discovered_triggers=[
-                {"key": "webhook.supabase.db_changes", "description": "Supabase table change"}
-            ],
-        )
-
-        # Validate structure
-        assert isinstance(proposal, WorkflowProposal)
-        assert proposal.spec.version == "2"
-        assert len(proposal.spec.triggers) >= 1
-        assert len(proposal.spec.nodes) >= 1
-        assert len(proposal.spec.edges) >= 1
-
-        # Check trigger edge exists
-        trigger_edges = [e for e in proposal.spec.edges if e.type == "trigger"]
-        assert len(trigger_edges) >= 1
