@@ -820,6 +820,10 @@ class NodeRuntime:
 
         Uses the BrowserService to execute natural language browser tasks,
         optionally with a persisted browser profile for authenticated sessions.
+
+        Supports:
+        - Structured output via expect_outputs with extraction_schema
+        - Screenshot saving to S3 when save_screenshots=True
         """
         from seer.services.browser import BrowserService  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import
 
@@ -829,6 +833,26 @@ class NodeRuntime:
 
         # Evaluate task expression if it contains ${...}
         task = evaluate_value(ctx, node.task) if "${" in node.task else node.task
+
+        # Get extraction schema if expect_outputs is specified with JSON mode
+        # The browser service expects the user's extraction schema (for extracted_data),
+        # NOT the full browser envelope. The type environment registers the full envelope
+        # with user schema in extracted_data, so we extract just that part.
+        extraction_schema = None
+        if node.expect_outputs and node.expect_outputs.mode == OutputMode.json:
+            full_schema = self._type_schemas.get(node.id)
+            if full_schema:
+                extraction_schema = full_schema.get("properties", {}).get("extracted_data")
+
+        # Get file system context for screenshot saving
+        file_system = None
+        workflow_run_id = None
+        user_id = None
+        if node.save_screenshots and context:
+            if context.has_file_system:
+                file_system = context.file_system
+            workflow_run_id = context.workflow_run_id
+            user_id = str(context.user.id) if context.user else None
 
         # Get browser service singleton
         service = BrowserService.instance()
@@ -841,11 +865,26 @@ class NodeRuntime:
                 browser_profile_id=node.browser_profile_id,
                 max_steps=node.max_steps,
                 timeout_seconds=node.timeout_seconds,
+                extraction_schema=extraction_schema,
+                save_screenshots=node.save_screenshots,
+                file_system=file_system,
+                workflow_run_id=workflow_run_id,
+                user_id=user_id,
             )
         except Exception as exc:
             error_trace = self._write_error_trace(node, state, inputs, exc=exc, node_type='browser')
             state.update(error_trace)  # type: ignore[arg-type]
             raise ExecutionError(f"Browser task failed: {exc}", trace_data=error_trace) from exc
+
+        # Validate structured output if schema specified
+        if node.expect_outputs and node.expect_outputs.mode == OutputMode.json:
+            full_schema = self._type_schemas.get(node.id)
+            if full_schema:
+                # Extract the extracted_data schema from the full browser output schema
+                # The type environment now registers the full browser envelope with user schema in extracted_data
+                extracted_schema = full_schema.get("properties", {}).get("extracted_data")
+                if extracted_schema:
+                    validate_against_schema(extracted_schema, result.get("extracted_data", {}), schema_id=f"{node.id}.extracted_data")
 
         # Prepare output
         output = self._prepare_output(node.id, result)

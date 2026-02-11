@@ -338,6 +338,12 @@ class BrowserNode(NodeBase):
     # Optional output contract for structured output validation
     expect_outputs: Optional[OutputContract] = None
 
+    # Screenshot saving configuration
+    save_screenshots: bool = Field(
+        default=False,
+        description="When True, save screenshots to S3 and return WorkflowFileRef objects"
+    )
+
 
 Node = Annotated[
     Union[ToolNode, LLMNode, MCPNode, IfNode, ForEachNode, HITLNode, BrowserNode],

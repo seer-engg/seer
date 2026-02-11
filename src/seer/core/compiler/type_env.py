@@ -363,27 +363,32 @@ def _process_browser_node(
     """
     Process a BrowserNode and register its output schema.
 
-    Browser nodes output a result object with success, result, extracted_data, and final_url.
-    If expect_outputs is specified, use that schema instead.
+    Browser nodes ALWAYS output {success, result, extracted_data, final_url, screenshots}.
+    If expect_outputs is specified, its schema applies to extracted_data, not the root.
+    This ensures ${browser_id.extracted_data.field} references validate correctly.
     """
+    # Determine the extracted_data schema
     if node.expect_outputs:
-        schema = schema_from_output_contract(node.expect_outputs, schema_registry)
+        extracted_data_schema = schema_from_output_contract(node.expect_outputs, schema_registry)
     else:
-        # Default browser output schema
+        # Default: permissive object that allows any property access
         # Note: Using {} as additionalProperties (not True) because the typecheck code
         # at _resolve_property() requires additionalProperties to be a dict for property access
-        # Note: final_url can be null on error/timeout, so we use ["string", "null"]
-        schema = {
-            "type": "object",
-            "properties": {
-                "success": {"type": "boolean"},
-                "result": {"type": "string"},
-                "extracted_data": {"type": "object", "additionalProperties": {}},
-                "final_url": {"type": ["string", "null"]},
-                "screenshots": {"type": "array", "items": {"type": "string"}},
-            },
-            "additionalProperties": {},
-        }
+        extracted_data_schema = {"type": "object", "additionalProperties": {}}
+
+    # Browser always produces the same envelope structure
+    # Note: final_url can be null on error/timeout, so we use ["string", "null"]
+    schema = {
+        "type": "object",
+        "properties": {
+            "success": {"type": "boolean"},
+            "result": {"type": "string"},
+            "extracted_data": extracted_data_schema,
+            "final_url": {"type": ["string", "null"]},
+            "screenshots": {"type": "array", "items": {"type": "string"}},
+        },
+        "additionalProperties": {},
+    }
     _register_symbol(env, node.id, schema)
 
 
