@@ -137,56 +137,29 @@ async def get_run_file_download_url(
     """
     # pylint: disable=import-outside-toplevel  # Avoid circular imports with config/files modules
     from seer.config import config
-    from seer.core.files.models import WorkflowFileRef
-    from seer.core.files.service import WorkflowFileSystem
+    from seer.core.files.service import WorkflowFileSystem, file_to_ref
 
     run_pk = parse_run_public_id(run_id)
 
     # Verify user owns the run
     run = await WorkflowRun.filter(id=run_pk, user=user).first()
     if not run:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Run '{run_id}' not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run '{run_id}' not found")
 
     # Get the file
     file = await WorkflowFile.filter(file_id=file_id, workflow_run_id=run_pk).first()
     if not file:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File '{file_id}' not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File '{file_id}' not found")
 
-    # Check if file system is configured
     if not config.is_workflow_file_system_configured:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Workflow file storage is not configured"
-        )
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Workflow file storage is not configured")
 
-    # Create a file reference for the file system
-    file_ref = WorkflowFileRef(
-        file_id=file.file_id,
-        storage_path=file.storage_path,
-        filename=file.filename,
-        mime_type=file.mime_type,
-        size_bytes=file.size_bytes,
-        workflow_run_id=run_id,
-        created_at=file.created_at,
-        md5_hash=file.md5_hash,
-    )
-
-    # Get presigned URL
     fs = WorkflowFileSystem.instance()
     expires_seconds = config.workflow_file_presigned_url_expiry_seconds
-    download_url = await fs.get_presigned_url(file_ref, expires_seconds)
+    download_url = await fs.get_presigned_url(file_to_ref(file, run_id), expires_seconds)
 
     return api_models.WorkflowFileDownloadResponse(
-        file_id=file_id,
-        filename=file.filename,
-        download_url=download_url,
-        expires_in_seconds=expires_seconds,
+        file_id=file_id, filename=file.filename, download_url=download_url, expires_in_seconds=expires_seconds
     )
 
 
@@ -209,43 +182,26 @@ async def delete_run_file(
     """
     # pylint: disable=import-outside-toplevel  # Avoid circular imports with config/files modules
     from seer.config import config
-    from seer.core.files.models import WorkflowFileRef
-    from seer.core.files.service import WorkflowFileSystem
+    from seer.core.files.service import WorkflowFileSystem, file_to_ref
 
     run_pk = parse_run_public_id(run_id)
 
     # Verify user owns the run
     run = await WorkflowRun.filter(id=run_pk, user=user).first()
     if not run:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Run '{run_id}' not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run '{run_id}' not found")
 
     # Get the file
     file = await WorkflowFile.filter(file_id=file_id, workflow_run_id=run_pk).first()
     if not file:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File '{file_id}' not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File '{file_id}' not found")
 
     # Delete from storage if configured
     deleted_from_storage = False
     if config.is_workflow_file_system_configured:
         try:
-            file_ref = WorkflowFileRef(
-                file_id=file.file_id,
-                storage_path=file.storage_path,
-                filename=file.filename,
-                mime_type=file.mime_type,
-                size_bytes=file.size_bytes,
-                workflow_run_id=run_id,
-                created_at=file.created_at,
-                md5_hash=file.md5_hash,
-            )
             fs = WorkflowFileSystem.instance()
-            deleted_from_storage = await fs.delete_file(file_ref)
+            deleted_from_storage = await fs.delete_file(file_to_ref(file, run_id))
         except OSError as e:
             logger.warning("Failed to delete file from storage: %s", e)
             # Continue to delete metadata even if storage deletion fails
@@ -254,7 +210,4 @@ async def delete_run_file(
     await file.delete()
     logger.info("Deleted file %s from run %s (storage: %s)", file_id, run_id, deleted_from_storage)
 
-    return api_models.WorkflowFileDeleteResponse(
-        file_id=file_id,
-        deleted=True,
-    )
+    return api_models.WorkflowFileDeleteResponse(file_id=file_id, deleted=True)

@@ -16,7 +16,7 @@ from seer.core.files.storage import FileStorageBackend
 from seer.logger import get_logger
 
 if TYPE_CHECKING:
-    from seer.database import User, WorkflowRun
+    from seer.database import User, WorkflowFile, WorkflowRun
 
 logger = get_logger("seer.core.files.service")
 
@@ -390,5 +390,35 @@ def _create_backend_from_config() -> FileStorageBackend:
     )
 
 
+def file_to_ref(file: "WorkflowFile", run_id_override: Optional[str] = None) -> WorkflowFileRef:
+    """
+    Convert a WorkflowFile database model to a WorkflowFileRef.
+
+    This is a convenience function to avoid duplicate code when creating
+    file references from database records.
+
+    Args:
+        file: WorkflowFile database model instance.
+        run_id_override: Optional run ID to use instead of the file's workflow_run_id.
+                        Useful when the run ID format differs (e.g., "run_123" vs int).
+
+    Returns:
+        WorkflowFileRef instance for use with the file system.
+    """
+    workflow_run_id = run_id_override if run_id_override is not None else (
+        str(file.workflow_run_id) if file.workflow_run_id else ""
+    )
+    return WorkflowFileRef(
+        file_id=file.file_id,
+        storage_path=file.storage_path,
+        filename=file.filename,
+        mime_type=file.mime_type,
+        size_bytes=file.size_bytes,
+        workflow_run_id=workflow_run_id,
+        created_at=file.created_at,
+        md5_hash=file.md5_hash,
+    )
+
+
 # Re-export for convenience
-__all__ = ["WorkflowFileSystem", "is_file_ref", "parse_file_ref", "WORKFLOW_FILE_REF_TYPE"]
+__all__ = ["WorkflowFileSystem", "is_file_ref", "parse_file_ref", "WORKFLOW_FILE_REF_TYPE", "file_to_ref"]

@@ -333,45 +333,21 @@ async def get_user_file_download_url(user: User, file_id: str) -> api_models.Use
         HTTPException: If file not found, access denied, or storage not configured.
     """
     # pylint: disable=import-outside-toplevel  # Avoid circular imports
-    from seer.core.files.models import WorkflowFileRef
-    from seer.core.files.service import WorkflowFileSystem
+    from seer.core.files.service import WorkflowFileSystem, file_to_ref
 
     file = await WorkflowFile.filter(file_id=file_id, user=user).first()
-
     if not file:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File '{file_id}' not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File '{file_id}' not found")
 
     if not config.is_workflow_file_system_configured:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Workflow file storage is not configured"
-        )
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Workflow file storage is not configured")
 
-    # Create file reference for the file system
-    file_ref = WorkflowFileRef(
-        file_id=file.file_id,
-        storage_path=file.storage_path,
-        filename=file.filename,
-        mime_type=file.mime_type,
-        size_bytes=file.size_bytes,
-        workflow_run_id=str(file.workflow_run_id) if file.workflow_run_id else "",
-        created_at=file.created_at,
-        md5_hash=file.md5_hash,
-    )
-
-    # Get presigned URL
     fs = WorkflowFileSystem.instance()
     expires_seconds = config.workflow_file_presigned_url_expiry_seconds
-    download_url = await fs.get_presigned_url(file_ref, expires_seconds)
+    download_url = await fs.get_presigned_url(file_to_ref(file), expires_seconds)
 
     return api_models.UserFileDownloadResponse(
-        file_id=file_id,
-        filename=file.filename,
-        download_url=download_url,
-        expires_in_seconds=expires_seconds,
+        file_id=file_id, filename=file.filename, download_url=download_url, expires_in_seconds=expires_seconds
     )
 
 
@@ -390,33 +366,18 @@ async def delete_user_file(user: User, file_id: str) -> api_models.UserFileDelet
         HTTPException: If file not found or access denied.
     """
     # pylint: disable=import-outside-toplevel  # Avoid circular imports
-    from seer.core.files.models import WorkflowFileRef
-    from seer.core.files.service import WorkflowFileSystem
+    from seer.core.files.service import WorkflowFileSystem, file_to_ref
 
     file = await WorkflowFile.filter(file_id=file_id, user=user).first()
-
     if not file:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File '{file_id}' not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File '{file_id}' not found")
 
     # Delete from storage if configured
     deleted_from_storage = False
     if config.is_workflow_file_system_configured:
         try:
-            file_ref = WorkflowFileRef(
-                file_id=file.file_id,
-                storage_path=file.storage_path,
-                filename=file.filename,
-                mime_type=file.mime_type,
-                size_bytes=file.size_bytes,
-                workflow_run_id=str(file.workflow_run_id) if file.workflow_run_id else "",
-                created_at=file.created_at,
-                md5_hash=file.md5_hash,
-            )
             fs = WorkflowFileSystem.instance()
-            deleted_from_storage = await fs.delete_file(file_ref)
+            deleted_from_storage = await fs.delete_file(file_to_ref(file))
         except OSError as e:
             logger.warning("Failed to delete file from storage: %s", e)
 
@@ -424,10 +385,7 @@ async def delete_user_file(user: User, file_id: str) -> api_models.UserFileDelet
     await file.delete()
     logger.info("Deleted file %s (storage: %s)", file_id, deleted_from_storage)
 
-    return api_models.UserFileDeleteResponse(
-        file_id=file_id,
-        deleted=True,
-    )
+    return api_models.UserFileDeleteResponse(file_id=file_id, deleted=True)
 
 
 async def bulk_delete_user_files(
@@ -445,27 +403,20 @@ async def bulk_delete_user_files(
         Results for each file.
     """
     # pylint: disable=import-outside-toplevel  # Avoid circular imports
-    from seer.core.files.models import WorkflowFileRef
-    from seer.core.files.service import WorkflowFileSystem
+    from seer.core.files.service import WorkflowFileSystem, file_to_ref
 
     results = []
     deleted_count = 0
     failed_count = 0
     total_size_freed = 0
 
-    fs = None
-    if config.is_workflow_file_system_configured:
-        fs = WorkflowFileSystem.instance()
+    fs = WorkflowFileSystem.instance() if config.is_workflow_file_system_configured else None
 
     for file_id in file_ids:
         file = await WorkflowFile.filter(file_id=file_id, user=user).first()
 
         if not file:
-            results.append(api_models.BulkDeleteResult(
-                file_id=file_id,
-                deleted=False,
-                error="File not found",
-            ))
+            results.append(api_models.BulkDeleteResult(file_id=file_id, deleted=False, error="File not found"))
             failed_count += 1
             continue
 
@@ -474,17 +425,7 @@ async def bulk_delete_user_files(
         # Delete from storage
         if fs:
             try:
-                file_ref = WorkflowFileRef(
-                    file_id=file.file_id,
-                    storage_path=file.storage_path,
-                    filename=file.filename,
-                    mime_type=file.mime_type,
-                    size_bytes=file.size_bytes,
-                    workflow_run_id=str(file.workflow_run_id) if file.workflow_run_id else "",
-                    created_at=file.created_at,
-                    md5_hash=file.md5_hash,
-                )
-                await fs.delete_file(file_ref)
+                await fs.delete_file(file_to_ref(file))
             except OSError as e:
                 logger.warning("Failed to delete file %s from storage: %s", file_id, e)
 
