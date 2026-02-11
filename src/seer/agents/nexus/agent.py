@@ -74,7 +74,7 @@ def create_nexus_chat_agent(
     middleware = [
         SummarizationMiddleware(
             model=summarization_model,
-            max_tokens_before_summary=256000,  # 256k token limit
+            max_tokens_before_summary=256000/2,  #Model Limit 256k
         ),
     ]
 

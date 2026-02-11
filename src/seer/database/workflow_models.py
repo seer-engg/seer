@@ -507,7 +507,7 @@ class WorkflowDiscoveryChatSession(models.Model):
 
 class WorkflowFile(models.Model):
     """
-    Tracks files created during workflow execution.
+    Tracks files created during workflow execution or uploaded by users.
 
     Files are stored in S3-compatible storage (S3/R2) and this table tracks
     metadata for management, debugging, and API access.
@@ -520,11 +520,18 @@ class WorkflowFile(models.Model):
         db_index=True,
         description="UUID for the file (used in file references)",
     )
+    user = fields.ForeignKeyField(
+        "models.User",
+        related_name="files",
+        on_delete=fields.CASCADE,
+        description="User who owns this file",
+    )
     workflow_run = fields.ForeignKeyField(
         "models.WorkflowRun",
         related_name="files",
         on_delete=fields.CASCADE,
-        description="Workflow run that created this file",
+        null=True,
+        description="Workflow run that created this file (null for user uploads)",
     )
     storage_path = fields.CharField(
         max_length=512,
@@ -564,6 +571,11 @@ class WorkflowFile(models.Model):
         indexes = (
             ("workflow_run_id",),
             ("file_id",),
+            ("user_id",),
+            ("mime_type",),
+            ("source_tool",),
+            ("created_at",),
+            ("size_bytes",),
         )
 
     def __str__(self) -> str:
