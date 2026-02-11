@@ -26,7 +26,10 @@ def merge_state(left: dict, right: dict) -> dict:
 
 
 # State schema with reducer to merge all state updates (including trace keys)
-WorkflowState = Annotated[Dict[str, Any], merge_state]
+# NOTE: Use builtin `dict` instead of `typing.Dict` because LangGraph + Sentry SDK
+# needs to instantiate the state type for graph visualization, and typing.Dict
+# raises "Type Dict cannot be instantiated; use dict() instead"
+WorkflowState = Annotated[dict[str, Any], merge_state]
 
 
 def _build_if_router(node_id: str, true_target: Optional[str], false_target: Optional[str]):

@@ -19,6 +19,7 @@ from seer.core.expr.typecheck import (
 from seer.core.registry.mcp_client_registry import MCPClientRegistry, MCPServerConfig
 from seer.core.registry.tool_registry import ToolRegistry
 from seer.core.schema.models import (
+    BrowserNode,
     ForEachNode,
     HITLInputType,
     HITLNode,
@@ -354,6 +355,43 @@ def _process_hitl_node(node: HITLNode, env: TypeEnvironment) -> None:
     _register_symbol(env, node.id, schema)
 
 
+def _process_browser_node(
+    node: BrowserNode,
+    env: TypeEnvironment,
+    schema_registry: SchemaRegistry,
+) -> None:
+    """
+    Process a BrowserNode and register its output schema.
+
+    Browser nodes ALWAYS output {success, result, extracted_data, final_url, screenshots}.
+    If expect_outputs is specified, its schema applies to extracted_data, not the root.
+    This ensures ${browser_id.extracted_data.field} references validate correctly.
+    """
+    # Determine the extracted_data schema
+    if node.expect_outputs:
+        extracted_data_schema = schema_from_output_contract(node.expect_outputs, schema_registry)
+    else:
+        # Default: permissive object that allows any property access
+        # Note: Using {} as additionalProperties (not True) because the typecheck code
+        # at _resolve_property() requires additionalProperties to be a dict for property access
+        extracted_data_schema = {"type": "object", "additionalProperties": {}}
+
+    # Browser always produces the same envelope structure
+    # Note: final_url can be null on error/timeout, so we use ["string", "null"]
+    schema = {
+        "type": "object",
+        "properties": {
+            "success": {"type": "boolean"},
+            "result": {"type": "string"},
+            "extracted_data": extracted_data_schema,
+            "final_url": {"type": ["string", "null"]},
+            "screenshots": {"type": "array", "items": {"type": "string"}},
+        },
+        "additionalProperties": {},
+    }
+    _register_symbol(env, node.id, schema)
+
+
 def _process_node_sync(
     node: Node,
     env: TypeEnvironment,
@@ -371,6 +409,8 @@ def _process_node_sync(
         _process_for_each_node(node, env, schema_registry)
     elif isinstance(node, HITLNode):
         _process_hitl_node(node, env)
+    elif isinstance(node, BrowserNode):
+        _process_browser_node(node, env, schema_registry)
     # IfNode doesn't produce output directly (branches do)
 
 
@@ -417,6 +457,11 @@ async def _process_node_async(
             schema = output_schema
 
         _register_symbol(env, node.id, schema)
+        return
+
+    # Browser nodes use sync path (no async validation needed)
+    if isinstance(node, BrowserNode):
+        _process_browser_node(node, env, schema_registry)
         return
 
     # Non-MCP nodes use the sync path

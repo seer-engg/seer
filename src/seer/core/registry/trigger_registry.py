@@ -164,6 +164,24 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
         )
     )
 
+    registry.register(
+        TriggerDefinition(
+            key="form.hitl",
+            title="HITL Form",
+            provider="form",
+            mode="webhook",
+            description=(
+                "Auto-generated form for Human-in-the-Loop workflow responses. "
+                "Created when a workflow hits an HITL node with Gmail delivery channel."
+            ),
+            schemas=TriggerSchemas(event=_enveloped_event_schema(_form_hosted_payload_schema())),
+            meta=TriggerMetadata(
+                sample_event=_form_hitl_sample_event(),
+                requires_connection=False,
+            ),
+        )
+    )
+
 
 def _gmail_email_received_payload_schema() -> JsonSchema:
     return {
@@ -526,6 +544,25 @@ def _form_hosted_sample_event() -> Dict[str, Any]:
         "account_id": None,
         "occurred_at": "2026-01-08T14:30:00Z",
         "received_at": "2026-01-08T14:30:00Z",
+        "data": payload,
+        "raw": {"payload": payload},
+    }
+
+
+def _form_hitl_sample_event() -> Dict[str, Any]:
+    """Sample event for HITL form submissions."""
+    payload = {
+        "approval_decision": "approved",
+        "comments": "Looks good, proceed with the order.",
+        "priority": "high",
+    }
+    return {
+        "id": "evt_sample_form_hitl",
+        "trigger_key": "form.hitl",
+        "provider": "form",
+        "account_id": None,
+        "occurred_at": "2026-01-08T15:00:00Z",
+        "received_at": "2026-01-08T15:00:00Z",
         "data": payload,
         "raw": {"payload": payload},
     }
