@@ -52,6 +52,61 @@ def _calculate_interrupt_expiry(timeout_seconds: Optional[int]) -> Optional[date
         return None  # Indefinite wait
     return _now() + timedelta(seconds=timeout_seconds)
 
+
+async def _send_hitl_notifications(
+    run: WorkflowRun,
+    user: User,
+    interrupt_data: Dict[str, Any],
+) -> None:
+    """
+    Send HITL notifications via configured delivery channels.
+
+    This is fire-and-forget - errors are logged but don't fail the workflow.
+    The platform HITL (polling /runs/{id}/interrupt) always works as a fallback.
+
+    Args:
+        run: The interrupted workflow run
+        user: The workflow owner (for OAuth connection lookup)
+        interrupt_data: The HITL interrupt payload containing delivery_channels
+    """
+    delivery_channels = interrupt_data.get("delivery_channels", [])
+
+    for channel in delivery_channels:
+        channel_type = channel.get("type")
+
+        if channel_type == "gmail" and channel.get("gmail"):
+            # Import here to avoid circular dependency
+            from seer.core.schema.models import GmailDeliveryConfig  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import
+            from seer.services.workflows.hitl_email import send_hitl_gmail_notification  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import
+
+            gmail_config = GmailDeliveryConfig(**channel["gmail"])
+
+            try:
+                error = await send_hitl_gmail_notification(
+                    user=user,
+                    workflow_run=run,
+                    interrupt_data=interrupt_data,
+                    gmail_config=gmail_config,
+                )
+                if error:
+                    logger.warning(
+                        "HITL Gmail notification failed for run '%s': %s",
+                        run.run_id,
+                        error,
+                        extra={"run_id": run.run_id, "error": error},
+                    )
+            except Exception as exc:  # pylint: disable=broad-exception-caught  # Intentional: notifications must not fail workflow
+                # Log but don't fail - platform HITL still works
+                logger.exception(
+                    "Failed to send HITL Gmail notification for run '%s'",
+                    run.run_id,
+                    extra={"run_id": run.run_id, "error": str(exc)},
+                )
+
+        # Platform channel is the default - no action needed here
+        # Users can poll GET /runs/{run_id}/interrupt to get HITL data
+
+
 async def _compile_workflow(
     user: User,
     spec: Dict[str, Any],
@@ -177,6 +232,13 @@ async def _execute_run(
                 pending_interrupt_data=hitl_interrupt,
                 interrupt_expires_at=expires_at,
             )
+
+            # Refresh run to get updated state for notification service
+            await run.refresh_from_db()
+
+            # Send HITL notifications via configured delivery channels
+            await _send_hitl_notifications(run, user, hitl_interrupt)
+
             # Return result with interrupt flag for caller awareness
             return {"__interrupted__": True, "__interrupt_data__": hitl_interrupt, **result}
 

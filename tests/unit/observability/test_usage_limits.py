@@ -19,6 +19,7 @@ from seer.observability.models import TierLimits
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.unit
 def test_all_tiers_have_limits_defined():
     """Test that all subscription tiers have limits defined."""
     for tier in SubscriptionTier:
@@ -27,6 +28,7 @@ def test_all_tiers_have_limits_defined():
         assert isinstance(limits, TierLimits)
 
 
+@pytest.mark.unit
 def test_constants_match_tier_limits():
     """Test that tier limits use constants correctly."""
     from seer.observability.constants import tiered_usage_limits
