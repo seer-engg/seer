@@ -31,6 +31,10 @@ async def _set_sentry_context_for_trigger(subscription_id: int, event_id: int) -
                 email=getattr(user, "email", None),
                 username=f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip() or None,
             )
+            # Set user tags for indexed searching in Sentry
+            set_tag("user_id", user.user_id)
+            if getattr(user, "email", None):
+                set_tag("user_email", user.email)
 
         set_context("trigger_event", {
             "subscription_id": subscription_id,

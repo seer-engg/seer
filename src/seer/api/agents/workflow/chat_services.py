@@ -352,7 +352,7 @@ class ChatOrchestrator:
         config_dict: Dict[str, Any],
         # pylint: disable=unused-argument # Reason: Legacy parameter for compatibility
         thread_id_context=None,
-        timeout: float = 300.0,
+        timeout: float = 900.0,
     ) -> Dict[str, Any]:
         """Invoke agent with timeout."""
         # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with agents module
