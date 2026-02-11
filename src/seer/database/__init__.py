@@ -13,6 +13,7 @@ from seer.database.models import (
 )
 from seer.database.models_oauth import OAuthConnection
 from seer.database.models_integrations import IntegrationResource, IntegrationSecret
+from seer.database.models_browser import BrowserProfile
 from seer.database.workflow_models import (
     TriggerEvent,
     TriggerEventStatus,
@@ -90,6 +91,8 @@ __all__ = [
     "OAuthConnection",
     "IntegrationResource",
     "IntegrationSecret",
+    # Browser profiles
+    "BrowserProfile",
     # Workflow domain
     "Workflow",
     "WorkflowVersion",
