@@ -198,7 +198,7 @@ class DeliveryChannelType(str, Enum):
 
 class GmailDeliveryConfig(StrictModel):
     """Configuration for Gmail delivery channel."""
-    recipient_email: str = Field(min_length=1, description="Email address to send HITL form link to")
+    recipient_email: str = Field(description="Email address to send HITL form link to")
 
 
 class HITLDeliveryChannel(StrictModel):
@@ -231,8 +231,8 @@ class HITLInputType(str, Enum):
 
 class HITLInputOption(StrictModel):
     """Option for choice-based HITL inputs."""
-    value: str = Field(min_length=1)
-    label: str = Field(min_length=1)
+    value: str = Field()
+    label: str = Field()
     requires_text: bool = False  # If true, selecting this option prompts for additional text input
 
 
@@ -245,7 +245,7 @@ class HITLDisplayItem(StrictModel):
 class HITLInputField(StrictModel):
     """Input field definition for collecting user responses."""
     id: str = Field(min_length=1)
-    question: str = Field(min_length=1)
+    question: str = Field()
     input_type: HITLInputType
     options: Optional[List[HITLInputOption]] = None  # Required for choice types
     required: bool = True
@@ -275,7 +275,7 @@ class HITLNode(NodeBase):
     - gmail: Email with form link sent via Gmail
     """
     type: Literal["hitl"] = "hitl"
-    title: str = Field(min_length=1)
+    title: str = Field()
     description: Optional[str] = None
     display: List[HITLDisplayItem] = Field(default_factory=list)
     inputs: List[HITLInputField] = Field(default_factory=list)
@@ -322,7 +322,7 @@ class BrowserNode(NodeBase):
     type: Literal["browser"] = "browser"
 
     # Natural language task description (supports ${expressions})
-    task: str = Field(min_length=1)
+    task: str = Field()
 
     # Additional context data passed to the browser agent
     inputs: Dict[str, JSONValue] = Field(default_factory=dict)

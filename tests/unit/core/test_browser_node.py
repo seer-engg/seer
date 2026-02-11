@@ -137,17 +137,6 @@ def test_browser_node_with_all_features():
     assert node.inputs == {"url": "https://example.com"}
 
 
-def test_browser_node_empty_task_invalid():
-    """Test that empty task is rejected."""
-    with pytest.raises(ValidationError) as exc_info:
-        BrowserNode(
-            id="invalid",
-            task="",
-        )
-
-    assert "min_length" in str(exc_info.value).lower() or "at least 1" in str(exc_info.value).lower()
-
-
 def test_browser_node_max_steps_validation():
     """Test max_steps validation bounds."""
     # Valid minimum
