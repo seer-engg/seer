@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import uuid
 from datetime import datetime, timezone
 from functools import partial
@@ -43,40 +44,48 @@ class S3FileStorage(FileStorageBackend):
         - Data isolation between users
         - Easy cleanup of all files for a user
         - S3 policy scoping by user prefix if needed
+
+    Configuration:
+        Uses standard AWS environment variables via boto3's default credential chain:
+        - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY: Credentials
+        - AWS_REGION / AWS_DEFAULT_REGION: Region (fallback to us-east-1)
+        - WORKFLOW_FILE_S3_BUCKET: Bucket name (required)
+        - WORKFLOW_FILE_S3_ENDPOINT_URL: Custom endpoint for R2/MinIO (optional)
     """
 
     DEFAULT_PREFIX = "workflow-files"
+    DEFAULT_PRESIGNED_URL_EXPIRY = 3600
 
-    def __init__(  # pylint: disable=too-many-arguments  # S3 configuration requires these parameters
+    def __init__(
         self,
         bucket: str,
         *,
-        region: str = "us-east-1",
         endpoint_url: Optional[str] = None,
-        access_key: Optional[str] = None,
-        secret_key: Optional[str] = None,
         prefix: str = DEFAULT_PREFIX,
-        presigned_url_expiry: int = 3600,
+        presigned_url_expiry: int = DEFAULT_PRESIGNED_URL_EXPIRY,
     ):
         """
         Initialize S3 storage backend.
 
+        Uses boto3's default credential chain for AWS credentials (like parameter_store.py).
+        Reads region from AWS_REGION or AWS_DEFAULT_REGION environment variables.
+
         Args:
             bucket: S3 bucket name.
-            region: AWS region (default: us-east-1).
             endpoint_url: Custom endpoint for R2/MinIO (None for AWS S3).
-            access_key: AWS access key ID (None to use default credentials).
-            secret_key: AWS secret access key (None to use default credentials).
             prefix: Path prefix for all files (default: "workflow-files").
             presigned_url_expiry: Default presigned URL expiration in seconds.
         """
         self.bucket = bucket
-        self.region = region
         self.endpoint_url = endpoint_url
         self.prefix = prefix.strip("/")
         self.presigned_url_expiry = presigned_url_expiry
 
-        # Build client configuration
+        # Get region from environment (standard AWS pattern)
+        region = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-east-1"))
+        self.region = region
+
+        # Build client configuration - let boto3 handle credentials via default chain
         client_kwargs: dict[str, Any] = {
             "region_name": region,
             "config": Config(
@@ -88,10 +97,8 @@ class S3FileStorage(FileStorageBackend):
         if endpoint_url:
             client_kwargs["endpoint_url"] = endpoint_url
 
-        if access_key and secret_key:
-            client_kwargs["aws_access_key_id"] = access_key
-            client_kwargs["aws_secret_access_key"] = secret_key
-
+        # boto3 automatically uses AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+        # AWS_SESSION_TOKEN, or IAM role credentials
         self._client: S3Client = boto3.client("s3", **client_kwargs)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 

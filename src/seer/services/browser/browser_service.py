@@ -9,6 +9,7 @@ This is the main entry point for the browser node executor.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 from threading import Lock
@@ -207,7 +208,6 @@ class BrowserService:
         save_screenshots: bool = False,
         file_system: Optional["WorkflowFileSystem"] = None,
         workflow_run_id: Optional[str] = None,
-        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Execute a browser automation task.
@@ -226,7 +226,6 @@ class BrowserService:
             save_screenshots: When True, save screenshots to S3 as WorkflowFileRef
             file_system: WorkflowFileSystem for saving screenshots
             workflow_run_id: Run ID for organizing screenshot files
-            user_id: User ID for scoping screenshot files
 
         Returns:
             Result dict with success, result, extracted_data, final_url, screenshots
@@ -256,7 +255,7 @@ class BrowserService:
                         save_screenshots=save_screenshots,
                         file_system=file_system,
                         workflow_run_id=workflow_run_id,
-                        user_id=user_id,
+                        user=user,
                     ),
                 }
 
@@ -382,20 +381,21 @@ class BrowserService:
         save_screenshots: bool,
         file_system: Optional["WorkflowFileSystem"],
         workflow_run_id: Optional[str],
-        user_id: Optional[str],
+        user: Optional[User],
     ) -> List[Dict[str, Any]]:
         """
         Save screenshots from browser history to S3.
 
         Screenshots are saved as WorkflowFileRef objects that can be
-        accessed by downstream workflow nodes.
+        accessed by downstream workflow nodes. Also creates WorkflowFile
+        database records for file management API visibility.
 
         Args:
             history: AgentHistory from BrowserUse agent.run()
             save_screenshots: Whether screenshot saving is enabled
             file_system: WorkflowFileSystem for S3 uploads
             workflow_run_id: Run ID for organizing files
-            user_id: User ID for scoping files
+            user: User who owns the files
 
         Returns:
             List of WorkflowFileRef dicts with file references
@@ -403,11 +403,11 @@ class BrowserService:
         if not save_screenshots:
             return []
 
-        if not file_system or not workflow_run_id or not user_id:
+        if not file_system or not workflow_run_id or not user:
             logger.warning(
                 "Screenshot saving requested but missing required context "
                 f"(file_system={file_system is not None}, "
-                f"run_id={workflow_run_id}, user_id={user_id})"
+                f"run_id={workflow_run_id}, user={user is not None})"
             )
             return []
 
@@ -426,12 +426,15 @@ class BrowserService:
 
                 filename = f"screenshot_{idx:03d}.png"
                 try:
-                    file_ref = await file_system.store_from_base64(
-                        user_id=user_id,
+                    # Decode base64 and use store_file_with_record for DB tracking
+                    screenshot_data = base64.b64decode(screenshot_b64)
+                    file_ref = await file_system.store_file_with_record(
+                        user=user,
                         run_id=workflow_run_id,
                         filename=filename,
-                        base64_data=screenshot_b64,
+                        data=screenshot_data,
                         mime_type="image/png",
+                        source_tool="browser_screenshot",
                     )
                     screenshots_result.append(file_ref.to_dict())
                     logger.debug(f"Saved screenshot {filename} to S3")

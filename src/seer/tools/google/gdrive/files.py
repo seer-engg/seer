@@ -263,12 +263,13 @@ class GoogleDriveDownloadFileTool(GoogleDriveReadonlyScopeTool):
         # If running in workflow context with file system available, store file and return reference
         if context and context.workflow_run_id and context.has_file_system:
             try:
-                file_ref = await context.file_system.store_file(
-                    user_id=context.user.user_id,
+                file_ref = await context.file_system.store_file_with_record(
+                    user=context.user,
                     run_id=context.workflow_run_id,
                     filename=filename,
                     data=content,
                     mime_type=effective_mime_type,
+                    source_tool="google_drive_download_file",
                 )
                 logger.info("Stored file %s in workflow file system: %s", filename, file_ref.file_id)
 
