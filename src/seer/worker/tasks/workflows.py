@@ -28,6 +28,10 @@ async def _set_sentry_context_for_workflow(run_id: int, user_id: int) -> None:
             email=getattr(user, "email", None),
             username=f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip() or None,
         )
+        # Set user tags for indexed searching in Sentry
+        set_tag("user_id", user.user_id)
+        if getattr(user, "email", None):
+            set_tag("user_email", user.email)
         run = await WorkflowRun.get_or_none(id=run_id)
         if run:
             await run.fetch_related("workflow")

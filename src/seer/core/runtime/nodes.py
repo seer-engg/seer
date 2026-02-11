@@ -783,6 +783,7 @@ class NodeRuntime:
             "display": display_data,
             "inputs": [field.model_dump() for field in node.inputs],
             "timeout_seconds": node.timeout_seconds,
+            "delivery_channels": [ch.model_dump() for ch in node.delivery_channels],
         }
 
         # Trigger interrupt - execution pauses here until resumed
