@@ -16,7 +16,7 @@ from seer.core.files.storage import FileStorageBackend
 from seer.logger import get_logger
 
 if TYPE_CHECKING:
-    pass
+    from seer.database import User, WorkflowRun
 
 logger = get_logger("seer.core.files.service")
 
@@ -134,6 +134,77 @@ class WorkflowFileSystem:
         """
         data = base64.b64decode(base64_data)
         return await self.store_file(user_id, run_id, filename, data, mime_type=mime_type, metadata=metadata)
+
+    # pylint: disable=too-many-arguments  # All parameters are necessary for file storage with DB record tracking
+    async def store_file_with_record(
+        self,
+        user: "User",
+        run_id: str,
+        filename: str,
+        data: bytes,
+        *,
+        mime_type: str = "application/octet-stream",
+        metadata: Optional[dict[str, str]] = None,
+        source_node_id: Optional[str] = None,
+        source_tool: Optional[str] = None,
+        workflow_run: Optional["WorkflowRun"] = None,
+    ) -> WorkflowFileRef:
+        """
+        Store a file and create a database record for tracking.
+
+        This is the preferred method for tools that want files to appear
+        in the user's file management console (/api/v1/files).
+
+        Args:
+            user: User who owns the file.
+            run_id: Workflow run ID (used for S3 path organization).
+            filename: Original filename.
+            data: Raw file bytes.
+            mime_type: MIME type (default: application/octet-stream).
+            metadata: Optional S3 metadata.
+            source_node_id: Node that created the file (optional).
+            source_tool: Tool that created the file (e.g., "google_drive_download_file").
+            workflow_run: WorkflowRun model instance (optional, for FK relationship).
+
+        Returns:
+            WorkflowFileRef that can be stored in workflow state.
+        """
+        # pylint: disable=import-outside-toplevel  # Avoid circular imports with database models
+        from seer.database import WorkflowFile
+
+        # 1. Store in S3 (existing behavior)
+        file_ref = await self.store_file(
+            user_id=user.user_id,
+            run_id=run_id,
+            filename=filename,
+            data=data,
+            mime_type=mime_type,
+            metadata=metadata,
+        )
+
+        # 2. Create database record for file management API
+        try:
+            await WorkflowFile.create(
+                file_id=file_ref.file_id,
+                user=user,
+                workflow_run=workflow_run,
+                storage_path=file_ref.storage_path,
+                filename=file_ref.filename,
+                mime_type=file_ref.mime_type,
+                size_bytes=file_ref.size_bytes,
+                md5_hash=file_ref.md5_hash,
+                source_node_id=source_node_id,
+                source_tool=source_tool,
+            )
+            logger.debug(
+                "Created WorkflowFile record: file_id=%s user=%s tool=%s",
+                file_ref.file_id, user.user_id, source_tool
+            )
+        except Exception as e:  # pylint: disable=broad-exception-caught  # Catch all: S3 succeeded, DB record is optional
+            # Log but don't fail - S3 storage succeeded, DB record is for management only
+            logger.warning("Failed to create WorkflowFile record: %s", e)
+
+        return file_ref
 
     async def get_file_content(self, file_ref: WorkflowFileRef) -> bytes:
         """
@@ -289,6 +360,14 @@ def _create_backend_from_config() -> FileStorageBackend:
     """
     Create storage backend based on configuration.
 
+    Uses standard AWS environment variables via boto3's default credential chain:
+    - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY: Credentials (or IAM roles)
+    - AWS_REGION / AWS_DEFAULT_REGION: Region
+
+    Config values (via env vars, .env, or Parameter Store):
+    - WORKFLOW_FILE_S3_BUCKET: Bucket name (required)
+    - WORKFLOW_FILE_S3_ENDPOINT_URL: Custom endpoint for R2/MinIO (optional)
+
     Returns:
         Configured FileStorageBackend instance.
 
@@ -299,7 +378,6 @@ def _create_backend_from_config() -> FileStorageBackend:
     from seer.config import config
     from seer.core.files.backends.s3 import S3FileStorage
 
-    # Validate required configuration
     if not config.workflow_file_s3_bucket:
         raise ValueError(
             "Workflow file storage not configured. "
@@ -308,11 +386,7 @@ def _create_backend_from_config() -> FileStorageBackend:
 
     return S3FileStorage(
         config.workflow_file_s3_bucket,
-        region=config.workflow_file_s3_region,
         endpoint_url=config.workflow_file_s3_endpoint_url,
-        access_key=config.workflow_file_s3_access_key,
-        secret_key=config.workflow_file_s3_secret_key,
-        presigned_url_expiry=config.workflow_file_presigned_url_expiry_seconds,
     )
 
 
