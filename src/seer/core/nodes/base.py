@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
 from seer.core.schema.models import NodeBase
 
 if TYPE_CHECKING:
-    from seer.core.compiler.lower_control_flow import ExecutionPlan
     from seer.core.expr.evaluator import EvaluationContext
     from seer.core.expr.typecheck import TypeEnvironment
     from seer.core.registry.mcp_client_registry import MCPClientRegistry
@@ -138,25 +137,6 @@ class BaseNodeType(ABC):
 
         Override for IfNode (conditional routing) and ForEachNode (loop routing).
         Returns None for nodes that use simple sequential edges.
-        """
-        return None
-
-    def detect_loop_body(  # pylint: disable=unused-argument  # Reason: Optional override for ForEachNode
-        self,
-        node: "Node",
-        outgoing_edges: Dict[str, List["Edge"]],
-        node_map: Dict[str, "Node"],
-        plan: "ExecutionPlan",
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Detect loop body nodes for ForEachNode.
-
-        Only ForEachNode implements this. Returns dict with:
-        - body_nodes: Set of node IDs in the loop body
-        - terminal_nodes: Set of node IDs that are terminal in the body
-        - nested_parent: Optional parent loop ID if this is a nested loop
-
-        Returns None for non-loop nodes.
         """
         return None
 

@@ -3,7 +3,8 @@ MCP discovery tools for searching and listing tools and triggers.
 
 Uses shared discovery logic from seer.tools.discovery_shared.
 """
-# pylint: disable=cyclic-import # Reason: mcp server module registers tools via imports
+# pylint: disable=cyclic-import,duplicate-code
+# Reason: cyclic-import: mcp server registers tools via imports; duplicate-code: framework-specific formatting
 
 from __future__ import annotations
 

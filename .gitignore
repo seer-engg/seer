@@ -37,9 +37,6 @@ ENV/
 coverage.xml
 htmlcov/
 
-# Documentation generated files
-documentation/data/
-
 # Seer generated/runtime files
 logs/
 
