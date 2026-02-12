@@ -1,12 +1,14 @@
 {
-  "name": "Email Support Chatbot with Knowledge Base",
-  "description": "Monitor support emails, fetch conversation threads, search knowledge base, generate contextual AI responses with proper email threading, log all interactions",
+  "name": "Email Support with Knowledge Base",
+  "description": "Answer product questions automatically using your Google Docs knowledge base. Stop answering 'Do you ship to Alaska?' 20 times a week - let AI handle it with your existing documentation.",
   "tags": [
     "gmail",
     "support",
     "chatbot",
     "ai",
     "knowledge-base",
+    "google-docs",
+    "product-questions",
     "supabase",
     "conversation",
     "threading"

@@ -1,0 +1,216 @@
+{
+  "name": "Lead Classification & Routing",
+  "description": "Classify incoming leads by quality and urgency, then route high-priority leads to your sales team automatically. Save time and never miss a hot lead again.",
+  "tags": [
+    "gmail",
+    "lead-generation",
+    "sales",
+    "ai",
+    "classification",
+    "routing",
+    "google-sheets"
+  ],
+  "customization_guide": "Set sales_email to your sales team's email address for hot lead forwarding. Optionally provide sheet_id to log all leads to Google Sheets. Customize classification_criteria to match your lead scoring rubric (e.g., industry, company size, budget mentions).",
+  "spec": {
+    "version": "2",
+    "triggers": [],
+    "nodes": [
+      {
+        "id": "fetch_unread_leads",
+        "type": "tool",
+        "tool": "gmail_list_messages",
+        "inputs": {
+          "query": "is:unread label:leads OR subject:(inquiry OR quote OR demo)",
+          "max_results": 20
+        }
+      },
+      {
+        "id": "process_leads",
+        "type": "loop",
+        "iterator": "${unread_leads.messages}",
+        "body": [
+          {
+            "id": "fetch_lead_email",
+            "type": "tool",
+            "tool": "gmail_get_message",
+            "inputs": {
+              "message_id": "${item.id}"
+            }
+          },
+          {
+            "id": "classify_lead",
+            "type": "llm",
+            "inputs": {
+              "model": "moonshotai/kimi-k2.5",
+              "temperature": 0.3,
+              "prompt": "Classify this lead email:\n\nFrom: ${lead_email.from.email}\nName: ${lead_email.from.name}\nSubject: ${lead_email.subject}\nBody: ${lead_email.body}\n\nClassification criteria:\n${config.classification_criteria || 'Evaluate based on: 1) Budget signals (mentions price, looking to spend), 2) Timeline urgency (ASAP, this week, deadline), 3) Decision authority (founder, director, budget owner), 4) Specific need (clear problem statement), 5) Company legitimacy (corporate email, known company)'}\n\nClassify as:\n- Hot: Ready to buy, strong buyer signals, immediate timeline, clear budget\n- Warm: Interested, some signals, exploring options, medium timeline\n- Cold: Just browsing, vague inquiry, no urgency, unclear need\n\nProvide detailed reasoning for the classification."
+            },
+            "outputs": {
+              "mode": "json",
+              "schema": {
+                "json_schema": {
+                  "type": "object",
+                  "properties": {
+                    "classification": {
+                      "type": "string",
+                      "enum": [
+                        "Hot",
+                        "Warm",
+                        "Cold"
+                      ]
+                    },
+                    "score": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 10
+                    },
+                    "reasoning": {
+                      "type": "string"
+                    },
+                    "buyer_signals": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "recommended_action": {
+                      "type": "string"
+                    },
+                    "estimated_value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "classification",
+                    "score",
+                    "reasoning",
+                    "buyer_signals",
+                    "recommended_action"
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "filter_hot_leads",
+        "type": "task",
+        "kind": "set",
+        "value": "${processed_leads.filter(l => l.classification.classification === 'Hot')}"
+      },
+      {
+        "id": "check_if_hot_leads_exist",
+        "type": "if",
+        "condition": "${hot_leads.length > 0}"
+      },
+      {
+        "id": "forward_hot_leads",
+        "type": "loop",
+        "iterator": "${hot_leads}",
+        "body": [
+          {
+            "id": "send_hot_lead_alert",
+            "type": "tool",
+            "tool": "gmail_send_email",
+            "inputs": {
+              "to": [
+                "${config.sales_email || 'sales@company.com'}"
+              ],
+              "subject": "🔥 HOT LEAD: ${item.lead_email.from.name || item.lead_email.from.email}",
+              "body_text": "**URGENT: High-Quality Lead Detected**\n\nLead Score: ${item.classification.score}/10\nClassification: ${item.classification.classification}\n\n**Contact Details:**\nName: ${item.lead_email.from.name}\nEmail: ${item.lead_email.from.email}\nSubject: ${item.lead_email.subject}\n\n**Message:**\n${item.lead_email.body}\n\n**AI Analysis:**\n${item.classification.reasoning}\n\n**Buyer Signals:**\n${item.classification.buyer_signals.join('\\n- ')}\n\n**Recommended Action:**\n${item.classification.recommended_action}\n\n**Estimated Value:** ${item.classification.estimated_value || 'Not specified'}\n\n⚡ Respond within 1 hour for best conversion rate."
+            }
+          }
+        ]
+      },
+      {
+        "id": "check_if_sheets_configured",
+        "type": "if",
+        "condition": "${config.sheet_id != null}"
+      },
+      {
+        "id": "log_to_google_sheets",
+        "type": "loop",
+        "iterator": "${processed_leads}",
+        "body": [
+          {
+            "id": "append_lead_row",
+            "type": "tool",
+            "tool": "google_sheets_append",
+            "inputs": {
+              "spreadsheet_id": "${config.sheet_id}",
+              "range": "Leads!A:G",
+              "values": [
+                [
+                  "${new Date().toISOString()}",
+                  "${item.lead_email.from.name}",
+                  "${item.lead_email.from.email}",
+                  "${item.lead_email.subject}",
+                  "${item.classification.classification}",
+                  "${item.classification.score}",
+                  "${item.classification.reasoning}"
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "summary_results",
+        "type": "task",
+        "kind": "set",
+        "value": {
+          "status": "completed",
+          "total_leads": "${processed_leads.length}",
+          "hot_leads": "${hot_leads.length}",
+          "warm_leads": "${processed_leads.filter(l => l.classification.classification === 'Warm').length}",
+          "cold_leads": "${processed_leads.filter(l => l.classification.classification === 'Cold').length}",
+          "alerts_sent": "${hot_leads.length}",
+          "logged_to_sheets": "${config.sheet_id != null}"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "fetch_unread_leads",
+        "target": "process_leads"
+      },
+      {
+        "source": "process_leads",
+        "target": "filter_hot_leads"
+      },
+      {
+        "source": "filter_hot_leads",
+        "target": "check_if_hot_leads_exist"
+      },
+      {
+        "source": "check_if_hot_leads_exist",
+        "target": "forward_hot_leads",
+        "type": "conditional_true"
+      },
+      {
+        "source": "forward_hot_leads",
+        "target": "check_if_sheets_configured"
+      },
+      {
+        "source": "check_if_hot_leads_exist",
+        "target": "check_if_sheets_configured",
+        "type": "conditional_false"
+      },
+      {
+        "source": "check_if_sheets_configured",
+        "target": "log_to_google_sheets",
+        "type": "conditional_true"
+      },
+      {
+        "source": "log_to_google_sheets",
+        "target": "summary_results"
+      },
+      {
+        "source": "check_if_sheets_configured",
+        "target": "summary_results",
+        "type": "conditional_false"
+      }
+    ]
+  }
+}
