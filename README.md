@@ -7,7 +7,7 @@
 [![Twitter Follow](https://img.shields.io/twitter/follow/get_seer?style=social)](https://x.com/get_seer)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-get--seer-0077B5?logo=linkedin)](https://www.linkedin.com/company/get-seer)
 
-Seer is a **open-source workflow builder with built-in oversight and cost controls** for creating and executing automated workflows with integrated tools and services.
+**Open-source workflow builder with cost controls and human oversight.** Build AI automations with tools like Gmail, GitHub, and Supabase - with built-in spend caps and approval gates.
 
 ## Quick Start (Docker)
 
@@ -67,73 +67,36 @@ TAVILY_API_KEY=...
 
 Docker automatically configures `DATABASE_URL` and `REDIS_URL`.
 
-Helpful commands:
-- Start everything: `docker compose up`
-- Follow logs: `docker compose logs -f`
-- Stop services: `docker compose down`
-- Run API locally: `uv run uvicorn seer.api.main:app --reload --port 8000`
-- Run worker locally: `uv run taskiq worker seer.worker.broker:broker`
-- Tests: `uv run pytest`
-
-## Self-Hosted Setup: Migrations
-
-> Migrations do NOT run automatically. Run them manually when pulling new code.
-
-### Running Migrations (Docker)
-
-After pulling latest changes:
-
+**Commands:**
 ```bash
-docker compose exec api uv run aerich upgrade
+docker compose up                # Start all services
+docker compose logs -f           # Follow logs
+uv run pytest                    # Run tests
 ```
 
-### Cloud Deployments (Railway)
+## Migrations
 
-Migrations run automatically before deployment via Railway's `preDeployCommand`.
-No manual action needed for production.
+> Run migrations manually after pulling updates (Railway auto-runs them).
 
-### Non-Docker Development
-
-If not using Docker, run migrations directly:
 ```bash
+# Docker
+docker compose exec api uv run aerich upgrade
+
+# Local
 uv run aerich upgrade
 ```
 
-### Key Features
+### Why Seer?
 
-**🛠️ Visual Workflow Builder**
-- Drag-and-drop interface for creating automation workflows
-- Visual editor with custom blocks and integrations
-- Real-time workflow validation and execution
+**💰 Cost Controls** - Per-workflow spend caps and token limits prevent runaway AI expenses
 
-**💰 Cost Governance**
-- Built-in spend caps and token limits per workflow
-- Budget controls to prevent runaway AI expenses
-- Transparent cost tracking and reporting
-- Per-workflow and account-level spending limits
+**👁️ Human Oversight** - Approval gates for critical operations; complete audit trails
 
-**👁️ Execution Transparency**
-- Complete run history for every workflow execution
-- Detailed tracing with timing and outputs
-- Human oversight checkpoints for critical decisions
-- Audit trails and execution logs
+**🔗 Powerful Integrations** - Gmail, GitHub, Supabase, PostgreSQL with minimal permissions
 
-**🤖 AI-Assisted Automation**
-- Chat interface for workflow design and debugging
-- AI suggestions for workflow improvements
-- Intelligent error handling and recovery
+**🤖 AI-Native** - Chat interface for workflow design; intelligent error handling
 
-**🔗 Rich Integrations**
-- **Google Workspace**: Gmail, Drive, Sheets with minimal permissions
-- **GitHub**: Repository management, issues, PRs
-- **Web Tools**: Search, content fetching, APIs
-- **Databases**: PostgreSQL with approval-based write controls
-
-**🔒 Self-Hostable**
-- Self-hosted or cloud deployment options
-- Minimal permissions approach (read-only first)
-- OAuth-based authentication (Clerk integration)
-- Role-based access control
+**🔒 Self-Hostable** - Deploy anywhere; full control over your data
 
 ### Documentation
 
@@ -148,5 +111,4 @@ uv run aerich upgrade
 
 ### License
 
-Seer is open source under the MIT license. Enterprise features (if any exist)
-reside in the `ee/` directory and are licensed separately. See LICENSE for details.
+MIT License - 100% open source. See [LICENSE](LICENSE).
