@@ -12,8 +12,9 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, START, StateGraph
 
 from seer.core.compiler.lower_control_flow import ExecutionPlan
+from seer.core.nodes.registry import node_type_registry
 from seer.core.runtime.nodes import NodeRuntime
-from seer.core.schema.models import Edge, EdgeType, ForEachNode, IfNode, Node
+from seer.core.schema.models import Edge, EdgeType, ForEachNode, Node
 
 
 def merge_state(left: dict, right: dict) -> dict:
@@ -30,39 +31,6 @@ def merge_state(left: dict, right: dict) -> dict:
 # needs to instantiate the state type for graph visualization, and typing.Dict
 # raises "Type Dict cannot be instantiated; use dict() instead"
 WorkflowState = Annotated[dict[str, Any], merge_state]
-
-
-def _build_if_router(node_id: str, true_target: Optional[str], false_target: Optional[str]):
-    """
-    Build a routing function for IfNode conditional edges.
-
-    The IfNode runner stores the condition result in state[f"_if_result_{node_id}"].
-    This router reads that value and returns the appropriate target.
-    """
-    def route_if(state: dict) -> str:
-        condition_result = state.get(f"_if_result_{node_id}", False)
-        if condition_result:
-            return true_target if true_target else END
-        return false_target if false_target else END
-
-    return route_if
-
-
-def _build_loop_router(node_id: str, body_target: Optional[str], exit_target: Optional[str]):
-    """
-    Build a routing function for ForEachNode conditional edges.
-
-    The ForEachNode runner stores iteration state in state[f"_loop_{node_id}"].
-    This router checks has_more_iterations and returns body or exit target.
-    """
-    def route_loop(state: dict) -> str:
-        loop_state = state.get(f"_loop_{node_id}", {})
-        has_more = loop_state.get("has_more_iterations", False)
-        if has_more:
-            return body_target if body_target else END
-        return exit_target if exit_target else END
-
-    return route_loop
 
 
 def _build_trigger_router(trigger_targets: Dict[str, str]):
@@ -82,74 +50,6 @@ def _build_trigger_router(trigger_targets: Dict[str, str]):
         return END
 
     return route_by_trigger
-
-
-def _add_conditional_edges_for_if(
-    graph: StateGraph,
-    node: IfNode,
-    outgoing_edges: List[Edge],
-) -> None:
-    """
-    Add conditional edges for an IfNode.
-
-    Routes to true or false branch based on condition result stored in state.
-    """
-    true_target: Optional[str] = None
-    false_target: Optional[str] = None
-
-    for edge in outgoing_edges:
-        if edge.type == EdgeType.conditional_true:
-            true_target = edge.target
-        elif edge.type == EdgeType.conditional_false:
-            false_target = edge.target
-
-    # Build the routing function
-    router = _build_if_router(node.id, true_target, false_target)
-
-    # Build path map for all possible destinations
-    path_map: Dict[str, str] = {}
-    if true_target:
-        path_map[true_target] = true_target
-    if false_target:
-        path_map[false_target] = false_target
-    if END not in path_map.values():
-        path_map[END] = END
-
-    graph.add_conditional_edges(node.id, router, path_map)
-
-
-def _add_conditional_edges_for_loop(
-    graph: StateGraph,
-    node: ForEachNode,
-    outgoing_edges: List[Edge],
-) -> None:
-    """
-    Add conditional edges for a ForEachNode.
-
-    Routes to body (more iterations) or exit (done) based on iteration state.
-    """
-    body_target: Optional[str] = None
-    exit_target: Optional[str] = None
-
-    for edge in outgoing_edges:
-        if edge.type == EdgeType.loop_body:
-            body_target = edge.target
-        elif edge.type == EdgeType.loop_exit:
-            exit_target = edge.target
-
-    # Build the routing function
-    router = _build_loop_router(node.id, body_target, exit_target)
-
-    # Build path map for all possible destinations
-    path_map: Dict[str, str] = {}
-    if body_target:
-        path_map[body_target] = body_target
-    if exit_target:
-        path_map[exit_target] = exit_target
-    if END not in path_map.values():
-        path_map[END] = END
-
-    graph.add_conditional_edges(node.id, router, path_map)
 
 
 def _add_regular_edges(
@@ -187,6 +87,50 @@ def _is_terminal_of_nested_loop(
             if terminal_node_id in inner_terminal_nodes:
                 return True
     return False
+
+
+# pylint: disable=unused-argument,protected-access
+# Reason: 'state' required by LangGraph interface; protected access for internal trigger state
+def _connect_entry_points(
+    graph: StateGraph,
+    plan: ExecutionPlan,
+    runtime: NodeRuntime,
+) -> None:
+    """
+    Connect START to workflow entry point(s).
+
+    Handles three cases:
+    - Trigger-based routing: bootstrap node + conditional edges
+    - Single entry point: direct edge from START
+    - Fallback: use first node if no explicit entry
+    """
+    if plan.trigger_targets:
+        # Trigger-based routing: add bootstrap node and conditional edges
+        # Note: Using a closure that captures runtime to access trigger context
+        def make_trigger_bootstrap(rt: NodeRuntime):
+            def trigger_bootstrap(state: dict) -> dict:
+                """Extract trigger_id from runtime trigger envelope into state."""
+                trigger = rt._current_trigger
+                if trigger:
+                    return {"_trigger_id": trigger.get("trigger_id")}
+                return {}
+            return trigger_bootstrap
+
+        graph.add_node("__trigger_bootstrap", make_trigger_bootstrap(runtime))
+        graph.add_edge(START, "__trigger_bootstrap")
+
+        # Build router and path map for conditional edges
+        router = _build_trigger_router(plan.trigger_targets)
+        path_map: Dict[str, str] = {target: target for target in set(plan.trigger_targets.values())}
+        path_map[END] = END
+
+        graph.add_conditional_edges("__trigger_bootstrap", router, path_map)
+    elif plan.entry_node_id:
+        # Single entry point: direct edge from START
+        graph.add_edge(START, plan.entry_node_id)
+    elif plan.nodes:
+        # Fallback: use first node if no explicit entry
+        graph.add_edge(START, plan.nodes[0].id)
 
 
 def _add_implicit_loop_back_edges(
@@ -236,8 +180,8 @@ def _add_implicit_loop_back_edges(
                 graph.add_edge(terminal_node_id, node.id)
 
 
-# pylint: disable=too-complex,too-many-branches,unused-argument,protected-access
-# Reason: Workflow compilation to LangGraph requires branching logic for all node types; protected access for internal state
+# pylint: disable=unused-argument,protected-access
+# Reason: Unused params required by LangGraph interface; protected access for internal state
 async def emit_langgraph(
     plan: ExecutionPlan,
     runtime: NodeRuntime,
@@ -279,62 +223,22 @@ async def emit_langgraph(
         node_map[node.id] = node
 
     # Connect START to entry point(s)
-    if plan.trigger_targets:
-        # Trigger-based routing: add bootstrap node and conditional edges
-        # Note: Using a closure that captures runtime to access trigger context
-        def make_trigger_bootstrap(rt: NodeRuntime):
-            def trigger_bootstrap(state: dict) -> dict:
-                """Extract trigger_id from runtime trigger envelope into state."""
-                trigger = rt._current_trigger
-                if trigger:
-                    return {"_trigger_id": trigger.get("trigger_id")}
-                return {}
-            return trigger_bootstrap
+    _connect_entry_points(graph, plan, runtime)
 
-        graph.add_node("__trigger_bootstrap", make_trigger_bootstrap(runtime))
-        graph.add_edge(START, "__trigger_bootstrap")
-
-        # Build router and path map for conditional edges
-        router = _build_trigger_router(plan.trigger_targets)
-        path_map: Dict[str, str] = {target: target for target in set(plan.trigger_targets.values())}
-        path_map[END] = END
-
-        graph.add_conditional_edges("__trigger_bootstrap", router, path_map)
-    elif plan.entry_node_id:
-        # Single entry point: direct edge from START
-        graph.add_edge(START, plan.entry_node_id)
-    elif plan.nodes:
-        # Fallback: use first node if no explicit entry
-        graph.add_edge(START, plan.nodes[0].id)
-
-    # Process edges for each node
+    # Process edges for each node using registry-based routing
     for node in plan.nodes:
         outgoing = plan.outgoing_edges.get(node.id, [])
 
-        if isinstance(node, IfNode):
-            # Check if this node has conditional edges
-            has_conditional = any(
-                e.type in (EdgeType.conditional_true, EdgeType.conditional_false)
-                for e in outgoing
-            )
-            if has_conditional:
-                _add_conditional_edges_for_if(graph, node, outgoing)
-            else:
-                _add_regular_edges(graph, node, outgoing)
+        # Get routing from node type registry
+        node_impl = node_type_registry.get(node.type)
+        if node_impl:
+            routing = node_impl.get_routing(node, outgoing)
+            if routing and routing.is_conditional:
+                graph.add_conditional_edges(node.id, routing.router_func, routing.path_map)
+                continue
 
-        elif isinstance(node, ForEachNode):
-            # Check if this node has loop edges
-            has_loop_edges = any(
-                e.type in (EdgeType.loop_body, EdgeType.loop_exit)
-                for e in outgoing
-            )
-            if has_loop_edges:
-                _add_conditional_edges_for_loop(graph, node, outgoing)
-            else:
-                _add_regular_edges(graph, node, outgoing)
-
-        else:
-            _add_regular_edges(graph, node, outgoing)
+        # Default: regular edges for non-routing nodes (or nodes not needing conditional edges)
+        _add_regular_edges(graph, node, outgoing)
 
     # Add implicit back-edges for loop terminal nodes
     _add_implicit_loop_back_edges(graph, plan)

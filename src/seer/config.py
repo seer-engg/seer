@@ -216,25 +216,16 @@ class SeerConfig(BaseSettings):
     # ============================================================================
     # Workflow File System (S3/R2)
     # ============================================================================
+    # NOTE: AWS credentials use standard boto3 credential chain:
+    # - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (or IAM roles)
+    # - AWS_REGION / AWS_DEFAULT_REGION (defaults to us-east-1)
     workflow_file_s3_bucket: Optional[str] = Field(
         default=None,
         description="S3 bucket name for workflow file storage",
     )
-    workflow_file_s3_region: str = Field(
-        default="us-east-1",
-        description="AWS region for S3 bucket",
-    )
     workflow_file_s3_endpoint_url: Optional[str] = Field(
         default=None,
         description="Custom endpoint URL for S3-compatible storage (Cloudflare R2, MinIO, etc.)",
-    )
-    workflow_file_s3_access_key: Optional[str] = Field(
-        default=None,
-        description="AWS access key ID for S3 (uses default credentials if not set)",
-    )
-    workflow_file_s3_secret_key: Optional[str] = Field(
-        default=None,
-        description="AWS secret access key for S3 (uses default credentials if not set)",
     )
     workflow_file_max_size_mb: int = Field(
         default=100,
