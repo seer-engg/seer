@@ -58,6 +58,7 @@ class TriggerDescriptor(TriggerIdentity):
     event_schema: Dict[str, Any]
     filter_schema: Optional[Dict[str, Any]] = None
     config_schema: Optional[Dict[str, Any]] = None
+    is_connected: bool = True
 
 
 class TriggerCatalogResponse(BaseModel):
