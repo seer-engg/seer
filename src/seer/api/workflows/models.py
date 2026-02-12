@@ -58,6 +58,7 @@ class TriggerDescriptor(TriggerIdentity):
     event_schema: Dict[str, Any]
     filter_schema: Optional[Dict[str, Any]] = None
     config_schema: Optional[Dict[str, Any]] = None
+    is_connected: bool = True
 
 
 class TriggerCatalogResponse(BaseModel):
@@ -283,6 +284,21 @@ class RunFromWorkflowRequest(BaseModel):
     version: Optional[int] = None
     inputs: Dict[str, Any] = Field(default_factory=dict)
     config: Dict[str, Any] = Field(default_factory=dict)
+    trigger_event_override: Optional[Dict[str, Any]] = Field(
+        None,
+        description=(
+            "Custom trigger event envelope to use instead of sample data. "
+            "Must contain at least 'trigger_key' and 'data' fields. When provided, "
+            "runs a single execution with this event even if workflow has multiple triggers."
+        )
+    )
+    trigger_id: Optional[str] = Field(
+        None,
+        description=(
+            "ID of the specific trigger to run. Required when using "
+            "trigger_event_override on a workflow with multiple triggers."
+        )
+    )
 
 
 class RunProgress(BaseModel):

@@ -561,3 +561,155 @@ async def browse_resources(
         page_size=page_size,
         depends_on=depends_on,
     )
+
+
+# =============================================================================
+# TRIGGER EVENT BROWSER ROUTES - For browsing real trigger events
+# =============================================================================
+
+@router.get("/resources/{provider}/trigger_events/{trigger_key:path}")
+async def browse_trigger_events(  # pylint: disable=too-many-arguments # Reason: FastAPI requires explicit query params for OpenAPI schema
+    request: Request,
+    provider: str,
+    trigger_key: str,
+    *,
+    provider_connection_id: int = Query(
+        ..., description="OAuth connection ID for the provider"
+    ),
+    trigger_id: str = Query(
+        "trigger_test", description="Trigger ID to use in envelope (for expression resolution)"
+    ),
+    page_token: Optional[str] = Query(None, description="Pagination token"),
+    page_size: int = Query(5, ge=1, le=50, description="Number of items per page"),
+    filter_params: Optional[str] = Query(
+        None,
+        description="JSON object with trigger-specific filters (e.g., {\"label_ids\": [\"INBOX\"], \"query\": \"is:unread\"})",
+    ),
+):
+    """
+    Browse real trigger events from a connected account for workflow testing.
+
+    This endpoint allows users to browse actual events (like Gmail emails, Discord messages)
+    from their connected accounts, instead of using hardcoded sample data when testing workflows.
+
+    Each returned event includes a full trigger envelope ready for workflow execution.
+
+    Args:
+        provider: OAuth provider (google, discord)
+        trigger_key: Trigger type key (poll.gmail.email_received, poll.discord.message_received)
+        provider_connection_id: ID of the OAuth connection to use
+        trigger_id: Trigger ID for the envelope (used for expression resolution in workflows)
+        page_token: Token for pagination
+        page_size: Number of results per page (max 50)
+        filter_params: JSON object with trigger-specific filters
+
+    Returns:
+        {
+            "items": [...],  # List of trigger events with envelopes
+            "next_page_token": "...",
+            "trigger_key": "poll.gmail.email_received",
+            "supports_search": true
+        }
+
+    Example:
+        GET /resources/google/trigger_events/poll.gmail.email_received
+            ?provider_connection_id=123
+            &filter_params={"label_ids":["INBOX"]}
+    """
+    # Import here to avoid circular imports
+    from seer.services.integrations.trigger_event_browser import (  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
+        TriggerEventBrowser,
+        TriggerEventListOptions,
+        TRIGGER_PROVIDER_MAP,
+    )
+
+    user: User = request.state.db_user
+
+    # Validate trigger_key is supported
+    expected_provider = TRIGGER_PROVIDER_MAP.get(trigger_key)
+    if expected_provider is None:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Unsupported trigger key",
+            detail=f"Trigger key '{trigger_key}' does not support event browsing. "
+                   f"Supported: {list(TRIGGER_PROVIDER_MAP.keys())}",
+            status=400,
+        )
+
+    # Validate provider matches trigger
+    if expected_provider != provider:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Provider mismatch",
+            detail=f"Trigger '{trigger_key}' requires provider '{expected_provider}', not '{provider}'",
+            status=400,
+        )
+
+    # Parse filter_params
+    parsed_filter_params = None
+    if filter_params:
+        try:
+            parsed_filter_params = json.loads(filter_params)
+        except json.JSONDecodeError:
+            raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Invalid JSON",
+                detail="Invalid filter_params JSON",
+                status=400,
+            )
+
+    # Create browser and list events
+    browser = TriggerEventBrowser(user)
+    try:
+        result = await browser.list_events(
+            provider_connection_id=provider_connection_id,
+            options=TriggerEventListOptions(
+                trigger_key=trigger_key,
+                trigger_id=trigger_id,
+                page_size=page_size,
+                page_token=page_token,
+                filter_params=parsed_filter_params,
+            ),
+        )
+        return result
+    except ValueError as exc:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Invalid request",
+            detail=str(exc),
+            status=400,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # pylint: disable=broad-exception-caught  # Reason: Handle unexpected errors gracefully
+        logger.exception("Error browsing trigger events")
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="Event browsing failed",
+            detail=f"Error browsing trigger events: {str(exc)}",
+            status=500,
+        )
+
+
+@router.get("/trigger_events/types")
+async def list_trigger_event_types(_request: Request):
+    """
+    List all trigger keys that support event browsing.
+
+    Returns information about which triggers support browsing real events
+    from connected accounts.
+    """
+    from seer.services.integrations.trigger_event_browser import (  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
+        TRIGGER_PROVIDER_MAP,
+    )
+
+    return {
+        "trigger_keys": [
+            {
+                "trigger_key": key,
+                "provider": provider,
+                "supports_search": True,  # All currently supported triggers support search
+            }
+            for key, provider in TRIGGER_PROVIDER_MAP.items()
+        ]
+    }
