@@ -7,7 +7,7 @@ Handles nested loops with proper state isolation.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from seer.core.errors import ExecutionError
 from seer.core.expr.typecheck import schema_from_output_contract
@@ -17,10 +17,9 @@ from seer.core.nodes.registry import register_node_type
 from seer.core.schema.models import EdgeType, ForEachNode
 
 if TYPE_CHECKING:
-    from seer.core.compiler.lower_control_flow import ExecutionPlan
     from seer.core.expr.typecheck import TypeEnvironment
     from seer.core.runtime.nodes import RuntimeServices
-    from seer.core.schema.models import Edge, Node, NodeBase
+    from seer.core.schema.models import Edge, NodeBase
 
 
 # =============================================================================
@@ -43,79 +42,6 @@ def _build_loop_router(node_id: str, body_target: Optional[str], exit_target: Op
         return exit_target if exit_target else END
 
     return route_loop
-
-
-# =============================================================================
-# Loop Body Detection
-# =============================================================================
-
-def _find_loop_body_nodes(
-    loop_node_id: str,
-    body_entry_id: str,
-    outgoing_edges: Dict[str, List["Edge"]],
-    node_map: Dict[str, "Node"]
-) -> Tuple[Set[str], Set[str]]:
-    """
-    Detect all nodes in the loop body and identify terminal nodes.
-
-    Starting from the body entry node, follow all edge types to find nodes
-    that are part of the loop body. This includes:
-    - Regular nodes connected by default edges
-    - Nested control flow nodes (IfNode, ForEachNode) and their children
-    - Nodes after nested control flow
-
-    Traversal stops when we reach:
-    - A node with an edge back to the loop node (already handled)
-    - A node with no outgoing edges (terminal)
-    - A node outside the loop
-
-    BUG FIX (2024-02): Original code only followed EdgeType.default edges,
-    missing nodes after if/else branches and nested loops.
-    """
-    body_nodes: Set[str] = set()
-    terminal_nodes: Set[str] = set()
-    visited: Set[str] = set()
-    queue: List[str] = [body_entry_id]
-
-    # Must include ALL edge types that represent loop body control flow
-    body_edge_types = {
-        EdgeType.default,           # Regular sequential edges: A -> B
-        EdgeType.conditional_true,  # From IfNode to "then" branch
-        EdgeType.conditional_false, # From IfNode to "else" branch
-        EdgeType.loop_body,         # From ForEachNode to iteration body
-        EdgeType.loop_exit,         # From ForEachNode to nodes after loop
-    }
-
-    while queue:
-        current_id = queue.pop(0)
-        if current_id in visited:
-            continue
-        visited.add(current_id)
-        body_nodes.add(current_id)
-
-        edges_out = outgoing_edges.get(current_id, [])
-        body_edges = [e for e in edges_out if e.type in body_edge_types]
-
-        # Check for edge back to loop
-        has_loop_back = any(e.target == loop_node_id for e in body_edges)
-        if has_loop_back:
-            continue
-
-        # Check if terminal (no outgoing body edges)
-        if not body_edges:
-            terminal_nodes.add(current_id)
-            continue
-
-        # Add reachable nodes to queue
-        for edge in body_edges:
-            target_id = edge.target
-            if target_id == loop_node_id:
-                continue
-            if target_id not in node_map:
-                continue
-            queue.append(target_id)
-
-    return body_nodes, terminal_nodes
 
 
 # =============================================================================
@@ -268,47 +194,6 @@ class ForEachNodeType(BaseNodeType):
             router_func=router,
             path_map=path_map,
         )
-
-    def detect_loop_body(
-        self,
-        node: ForEachNode,  # type: ignore[override]
-        outgoing_edges: Dict[str, List["Edge"]],
-        node_map: Dict[str, "Node"],
-        plan: "ExecutionPlan",
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Detect loop body nodes for this ForEachNode.
-
-        Returns dict with body_nodes, terminal_nodes, and nested_parent info.
-        """
-        # Find the loop_body edge to get entry point
-        loop_edges = outgoing_edges.get(node.id, [])
-        body_entry: Optional[str] = None
-
-        for edge in loop_edges:
-            if edge.type == EdgeType.loop_body:
-                body_entry = edge.target
-                break
-
-        if not body_entry:
-            return None
-
-        body_nodes, terminal_nodes = _find_loop_body_nodes(
-            node.id, body_entry, outgoing_edges, node_map
-        )
-
-        # Check if this is a nested loop (inside another loop's body)
-        nested_parent: Optional[str] = None
-        for outer_loop_id, outer_body_nodes in plan.loop_body_nodes.items():
-            if node.id in outer_body_nodes:
-                nested_parent = outer_loop_id
-                break
-
-        return {
-            "body_nodes": body_nodes,
-            "terminal_nodes": terminal_nodes,
-            "nested_parent": nested_parent,
-        }
 
 
 # Auto-register on module import
