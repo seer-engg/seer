@@ -27,8 +27,8 @@ async def get_node_types(request: Request):
 
 @router.get("/triggers", response_model=api_models.TriggerCatalogResponse)
 async def get_trigger_catalog(request: Request):
-    _require_user(request)
-    return await services.list_triggers()
+    user = _require_user(request)
+    return await services.list_triggers(user)
 
 
 @router.post(
