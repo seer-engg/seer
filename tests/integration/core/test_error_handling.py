@@ -522,4 +522,4 @@ async def test_execution_plan_validation() -> None:
     # Verify plan has expected structure
     assert plan.trigger_targets is not None
     assert "test_trigger" in plan.trigger_targets
-    assert plan.trigger_targets["test_trigger"] == "node"
+    assert plan.trigger_targets["test_trigger"] == ["node"]

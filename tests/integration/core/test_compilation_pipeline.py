@@ -301,8 +301,8 @@ async def test_compile_workflow_builds_correct_execution_plan() -> None:
     # Verify trigger_targets maps each trigger to its entry node
     assert "trigger_a" in plan.trigger_targets
     assert "trigger_b" in plan.trigger_targets
-    assert plan.trigger_targets["trigger_a"] == "node_a"
-    assert plan.trigger_targets["trigger_b"] == "node_b"
+    assert plan.trigger_targets["trigger_a"] == ["node_a"]
+    assert plan.trigger_targets["trigger_b"] == ["node_b"]
 
 
 @pytest.mark.asyncio

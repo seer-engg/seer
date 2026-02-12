@@ -191,17 +191,17 @@ class TestMultipleTriggersSameType:
 
         # Verify trigger_targets has 3 entries (one per trigger instance)
         assert len(plan.trigger_targets) == 3
-        assert plan.trigger_targets["gmail_1"] == "node1"
-        assert plan.trigger_targets["gmail_2"] == "node2"
-        assert plan.trigger_targets["webhook_1"] == "node3"
+        assert plan.trigger_targets["gmail_1"] == ["node1"]
+        assert plan.trigger_targets["gmail_2"] == ["node2"]
+        assert plan.trigger_targets["webhook_1"] == ["node3"]
 
-    def test_multiple_edges_from_same_trigger_last_wins(self):
+    def test_multiple_edges_from_same_trigger_fan_out(self):
         """
         Verify that if multiple edges exist from the same trigger ID,
-        the last one in the list wins (dict behavior).
+        all targets are collected for parallel execution (fan-out).
 
-        NOTE: This is current behavior, not necessarily desired. In the future,
-        we might want to support fan-out (one trigger to multiple nodes).
+        This enables workflows where a single trigger fires multiple
+        parallel branches simultaneously.
         """
         spec_payload = {
             "version": "2",
@@ -211,7 +211,7 @@ class TestMultipleTriggersSameType:
             ],
             "edges": [
                 {"source": "trigger_1", "target": "node1", "type": "trigger"},
-                {"source": "trigger_1", "target": "node2", "type": "trigger"},  # Same source
+                {"source": "trigger_1", "target": "node2", "type": "trigger"},  # Same source, parallel
             ],
             "triggers": [
                 {
@@ -228,9 +228,9 @@ class TestMultipleTriggersSameType:
         spec = parse_workflow_spec(spec_payload)
         plan = build_execution_plan(spec)
 
-        # Last edge wins (dict overwrites previous value)
+        # Both targets are collected for parallel execution
         assert len(plan.trigger_targets) == 1
-        assert plan.trigger_targets["trigger_1"] == "node2"
+        assert plan.trigger_targets["trigger_1"] == ["node1", "node2"]
 
     def test_trigger_id_field_is_required(self):
         """Verify that trigger specs require an id field."""
@@ -314,9 +314,9 @@ class TestMultipleTriggersSameType:
         # Verify all triggers are distinct and route to correct nodes
         assert len(spec.triggers) == 3
         assert len(plan.trigger_targets) == 3
-        assert plan.trigger_targets["gmail_inbox"] == "process_inbox"
-        assert plan.trigger_targets["gmail_important"] == "process_important"
-        assert plan.trigger_targets["gmail_sent"] == "process_sent"
+        assert plan.trigger_targets["gmail_inbox"] == ["process_inbox"]
+        assert plan.trigger_targets["gmail_important"] == ["process_important"]
+        assert plan.trigger_targets["gmail_sent"] == ["process_sent"]
 
         # Verify all have same key but different IDs
         trigger_keys = [t.key for t in spec.triggers]

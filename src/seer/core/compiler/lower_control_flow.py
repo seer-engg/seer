@@ -25,7 +25,8 @@ class ExecutionPlan:  # pylint: disable=too-many-instance-attributes  # Reason: 
         entry_node_id: ID of the first node to execute (no incoming edges), None if trigger routing is used
         outgoing_edges: Map from node_id to list of edges leaving that node
         incoming_edges: Map from node_id to list of edges entering that node
-        trigger_targets: Map from trigger_id to target node_id for routing
+        trigger_targets: Map from trigger_id to list of target node_ids for routing
+                         (supports multiple parallel targets from same trigger)
         loop_body_nodes: Map from loop_id to set of node_ids in the loop body
         loop_terminal_nodes: Map from loop_id to set of node_ids that are terminal in the loop body
         nested_loop_parents: Map from inner_loop_id to outer_loop_id for nested loops
@@ -35,7 +36,7 @@ class ExecutionPlan:  # pylint: disable=too-many-instance-attributes  # Reason: 
     entry_node_id: Optional[str]
     outgoing_edges: Dict[str, List[Edge]] = field(default_factory=dict)
     incoming_edges: Dict[str, List[Edge]] = field(default_factory=dict)
-    trigger_targets: Dict[str, str] = field(default_factory=dict)  # trigger_id -> node_id
+    trigger_targets: Dict[str, List[str]] = field(default_factory=dict)  # trigger_id -> [node_ids]
     loop_body_nodes: Dict[str, Set[str]] = field(default_factory=dict)  # loop_id -> body_node_ids
     loop_terminal_nodes: Dict[str, Set[str]] = field(default_factory=dict)  # loop_id -> terminal_node_ids
     nested_loop_parents: Dict[str, str] = field(default_factory=dict)  # inner_loop_id -> outer_loop_id
@@ -166,12 +167,13 @@ def build_execution_plan(spec: WorkflowSpec) -> ExecutionPlan:  # pylint: disabl
     # Build edge indices
     outgoing: Dict[str, List[Edge]] = defaultdict(list)
     incoming: Dict[str, List[Edge]] = defaultdict(list)
-    trigger_targets: Dict[str, str] = {}
+    trigger_targets: Dict[str, List[str]] = defaultdict(list)
 
     for edge in spec.edges:
         if edge.type == EdgeType.trigger:
             # Trigger edge: source is trigger ID, target is node
-            trigger_targets[edge.source] = edge.target
+            # Support multiple parallel targets from the same trigger
+            trigger_targets[edge.source].append(edge.target)
             incoming[edge.target].append(edge)
         else:
             # Regular edge: source and target are both nodes
@@ -247,7 +249,7 @@ def build_execution_plan(spec: WorkflowSpec) -> ExecutionPlan:  # pylint: disabl
         entry_node_id=entry_node_id,
         outgoing_edges=dict(outgoing),
         incoming_edges=dict(incoming),
-        trigger_targets=trigger_targets,
+        trigger_targets=dict(trigger_targets),
         loop_body_nodes=loop_body_nodes,
         loop_terminal_nodes=loop_terminal_nodes,
         nested_loop_parents=nested_loop_parents,
