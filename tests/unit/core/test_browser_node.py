@@ -7,10 +7,9 @@ Tests schema validation, type environment registration, and workflow spec parsin
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from seer.core.compiler.type_env import (
-    build_type_environment,
-    _process_browser_node,
-)
+from seer.core.compiler.type_env import build_type_environment
+from seer.core.nodes.base import TypeRegistrationContext
+from seer.core.nodes.registry import node_type_registry
 from seer.core.expr.typecheck import TypeEnvironment
 from seer.core.registry.tool_registry import ToolRegistry
 from seer.core.schema.models import (
@@ -195,13 +194,18 @@ def test_type_env_registers_browser_node_default_schema():
     """Test that browser node registers default output schema."""
     env = TypeEnvironment()
     schema_registry = SchemaRegistry()
+    tool_registry = ToolRegistry()
 
     node = BrowserNode(
         id="browse",
         task="Extract data from webpage",
     )
 
-    _process_browser_node(node, env, schema_registry)
+    # Use registry-based approach
+    node_impl = node_type_registry.get("browser")
+    assert node_impl is not None, "BrowserNodeType should be registered"
+    ctx = TypeRegistrationContext(schema_registry=schema_registry, tool_registry=tool_registry)
+    node_impl.register_type_sync(node, env, ctx)
 
     # Verify schema was registered
     schema = env.get("browse")
@@ -254,6 +258,7 @@ def test_type_env_browser_node_default_schema_includes_screenshots():
     """Test that browser node default schema includes screenshots field."""
     env = TypeEnvironment()
     schema_registry = SchemaRegistry()
+    tool_registry = ToolRegistry()
 
     node = BrowserNode(
         id="browse",
@@ -261,7 +266,11 @@ def test_type_env_browser_node_default_schema_includes_screenshots():
         save_screenshots=True,
     )
 
-    _process_browser_node(node, env, schema_registry)
+    # Use registry-based approach
+    node_impl = node_type_registry.get("browser")
+    assert node_impl is not None, "BrowserNodeType should be registered"
+    ctx = TypeRegistrationContext(schema_registry=schema_registry, tool_registry=tool_registry)
+    node_impl.register_type_sync(node, env, ctx)
 
     # Verify schema includes screenshots field
     schema = env.get("browse")
@@ -278,6 +287,7 @@ def test_type_env_browser_node_with_expect_outputs():
     """
     env = TypeEnvironment()
     schema_registry = SchemaRegistry()
+    tool_registry = ToolRegistry()
 
     # Register a schema in the registry
     product_schema = {
@@ -298,7 +308,11 @@ def test_type_env_browser_node_with_expect_outputs():
         ),
     )
 
-    _process_browser_node(node, env, schema_registry)
+    # Use registry-based approach
+    node_impl = node_type_registry.get("browser")
+    assert node_impl is not None, "BrowserNodeType should be registered"
+    ctx = TypeRegistrationContext(schema_registry=schema_registry, tool_registry=tool_registry)
+    node_impl.register_type_sync(node, env, ctx)
 
     # Verify full browser output schema is registered with user schema in extracted_data
     schema = env.get("extract")

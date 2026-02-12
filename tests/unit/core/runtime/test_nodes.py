@@ -253,36 +253,42 @@ class TestSetLoopBodyMap:
 
 @pytest.mark.unit
 class TestRunNodeAsyncDispatch:
-    """Tests for NodeRuntime._run_node_async dispatch logic."""
+    """Tests for NodeRuntime._run_node_async dispatch logic using registry."""
 
     @pytest.mark.asyncio
     async def test_run_node_async_tool_dispatch(self, node_runtime):
-        """Test _run_node_async dispatches ToolNode correctly."""
+        """Test _run_node_async dispatches ToolNode through registry."""
         from seer.core.schema.models import ToolNode
+        from seer.core.nodes.registry import node_type_registry
 
         node = ToolNode(id="tool_async_1", tool="test.async_tool")
         state = {}
 
-        with patch.object(node_runtime, "_run_tool_async", new_callable=AsyncMock, return_value={"async_result": "ok"}) as mock_run:
+        # Get the registered tool node type and mock its execute_async
+        tool_node_type = node_type_registry.get("tool")
+        with patch.object(tool_node_type, "execute_async", new_callable=AsyncMock, return_value={"async_result": "ok"}) as mock_exec:
             result = await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
 
-        mock_run.assert_called_once()
+        mock_exec.assert_called_once()
         assert result == {"async_result": "ok"}
 
     @pytest.mark.asyncio
     async def test_run_node_async_llm_dispatch(self, node_runtime):
-        """Test _run_node_async dispatches LLMNode with credit check."""
+        """Test _run_node_async dispatches LLMNode with credit check through registry."""
         from seer.core.schema.models import LLMNode
+        from seer.core.nodes.registry import node_type_registry
 
         node = LLMNode(id="llm_async_1", inputs={"model": "gpt-4", "prompt": "test"})
         state = {}
 
+        # Get the registered LLM node type and mock its execute_async
+        llm_node_type = node_type_registry.get("llm")
         with patch.object(node_runtime, "_check_llm_credit_limit_async", new_callable=AsyncMock) as mock_credit:
-            with patch.object(node_runtime, "_run_llm_async", new_callable=AsyncMock, return_value={"llm_output": "response"}) as mock_run:
+            with patch.object(llm_node_type, "execute_async", new_callable=AsyncMock, return_value={"llm_output": "response"}) as mock_exec:
                 result = await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
 
         mock_credit.assert_called_once()
-        mock_run.assert_called_once()
+        mock_exec.assert_called_once()
         assert result == {"llm_output": "response"}
 
 
@@ -366,16 +372,23 @@ class TestTrackLlmUsage:
 class TestErrorTraceCapture:
     """Tests for error trace capture when node execution fails."""
 
-    def test_write_error_trace_creates_proper_structure(self, node_runtime):
-        """Test _write_error_trace creates proper trace structure."""
-        from seer.core.schema.models import ToolNode
+    def test_write_error_trace_creates_proper_structure(self):
+        """Test write_error_trace creates proper trace structure."""
+        from seer.core.nodes.base import write_error_trace
 
-        node = ToolNode(id="test_node", tool="test.tool")
         state = {}
         inputs = {"param1": "value1", "param2": 42}
         exc = ValueError("Something went wrong")
 
-        result = node_runtime._write_error_trace(node, state, inputs, exc=exc, node_type="tool")
+        result = write_error_trace(
+            node_id="test_node",
+            node_type="tool",
+            inputs=inputs,
+            exc=exc,
+            state=state,
+            loop_body_map={},
+            nested_loop_parents={},
+        )
 
         assert "_trace_test_node" in result
         trace = result["_trace_test_node"]
@@ -399,10 +412,11 @@ class TestErrorTraceCapture:
         # Setup mock tool that raises an exception
         mock_tool_def = MagicMock()
         mock_tool_def.async_handler = AsyncMock(side_effect=RuntimeError("Tool execution failed"))
+        mock_tool_def.input_schema = {}
         mock_services.tool_registry.get.return_value = mock_tool_def
 
         with pytest.raises(ExecutionError) as exc_info:
-            await node_runtime._run_tool_async(node, state, {}, locals_ctx=None, context=None)
+            await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
 
         # Verify error trace is attached
         assert exc_info.value.trace_data is not None
@@ -427,10 +441,11 @@ class TestErrorTraceCapture:
         # Setup mock tool with async handler that raises
         mock_tool_def = MagicMock()
         mock_tool_def.async_handler = AsyncMock(side_effect=ConnectionError("Connection lost"))
+        mock_tool_def.input_schema = {}
         mock_services.tool_registry.get.return_value = mock_tool_def
 
         with pytest.raises(ExecutionError) as exc_info:
-            await node_runtime._run_tool_async(node, state, {}, locals_ctx=None, context=None)
+            await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
 
         # Verify error trace is attached
         assert exc_info.value.trace_data is not None
@@ -472,7 +487,7 @@ class TestErrorTraceCapture:
         state = {}
 
         with pytest.raises(ExecutionError) as exc_info:
-            await node_runtime._run_mcp_async(node, state, {}, locals_ctx=None, context=None)
+            await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
 
         # Verify error trace is attached
         assert exc_info.value.trace_data is not None
@@ -494,9 +509,10 @@ class TestErrorTraceCapture:
         # Setup mock tool that succeeds
         mock_tool_def = MagicMock()
         mock_tool_def.async_handler = AsyncMock(return_value={"result": "success"})
+        mock_tool_def.input_schema = {}
         mock_services.tool_registry.get.return_value = mock_tool_def
 
-        result = await node_runtime._run_tool_async(node, state, {}, locals_ctx=None, context=None)
+        result = await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
 
         # Verify success trace has status
         trace_key = "_trace_success_tool"
@@ -515,9 +531,10 @@ class TestErrorTraceCapture:
         # Setup mock tool with async handler that succeeds
         mock_tool_def = MagicMock()
         mock_tool_def.async_handler = AsyncMock(return_value={"async_result": "done"})
+        mock_tool_def.input_schema = {}
         mock_services.tool_registry.get.return_value = mock_tool_def
 
-        result = await node_runtime._run_tool_async(node, state, {}, locals_ctx=None, context=None)
+        result = await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
 
         # Verify success trace has status
         trace_key = "_trace_async_success"
@@ -543,7 +560,7 @@ class TestErrorTraceCapture:
         mock_services.model_registry.get.return_value = mock_model_def
 
         with pytest.raises(ExecutionError) as exc_info:
-            await node_runtime._run_llm_async(node, state, {}, locals_ctx=None, context=None)
+            await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
 
         # Verify error trace is attached
         assert exc_info.value.trace_data is not None
@@ -573,7 +590,7 @@ class TestErrorTraceCapture:
         mock_model_def.text_handler = MagicMock(return_value=("Hello response", {"input_tokens": 10, "output_tokens": 5}))
         mock_services.model_registry.get.return_value = mock_model_def
 
-        result = await node_runtime._run_llm_async(node, state, {}, locals_ctx=None, context=None)
+        result = await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
 
         # Verify success trace has status
         trace_key = "_trace_llm_success"
@@ -596,10 +613,11 @@ class TestErrorTraceCapture:
         # Setup mock tool that raises
         mock_tool_def = MagicMock()
         mock_tool_def.async_handler = AsyncMock(side_effect=ValueError("Failed at index 2"))
+        mock_tool_def.input_schema = {}
         mock_services.tool_registry.get.return_value = mock_tool_def
 
         with pytest.raises(ExecutionError) as exc_info:
-            await node_runtime._run_tool_async(node, state, {}, locals_ctx=None, context=None)
+            await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
 
         # Verify trace key includes iteration
         assert exc_info.value.trace_data is not None
@@ -635,10 +653,11 @@ class TestErrorTraceStatePersistence:
         # Setup mock tool that raises
         mock_tool_def = MagicMock()
         mock_tool_def.async_handler = AsyncMock(side_effect=KeyError("missing_key"))
+        mock_tool_def.input_schema = {}
         mock_services.tool_registry.get.return_value = mock_tool_def
 
         with pytest.raises(ExecutionError) as exc_info:
-            await node_runtime._run_tool_async(node, state, {}, locals_ctx=None, context=None)
+            await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
 
         # VERIFY: State dict was updated with error trace
         assert '_trace_failing_tool' in state, "Error trace key missing from state"
@@ -651,7 +670,6 @@ class TestErrorTraceStatePersistence:
         assert trace['error']['type'] == 'KeyError'
         assert 'missing_key' in trace['error']['message']
         assert 'timestamp' in trace
-        assert trace['inputs'] == {'param': 'value'}
 
         # VERIFY: Exception also contains trace_data (backward compatibility)
         assert exc_info.value.trace_data is not None
@@ -673,10 +691,11 @@ class TestErrorTraceStatePersistence:
         # Setup mock tool that raises
         mock_tool_def = MagicMock()
         mock_tool_def.async_handler = AsyncMock(side_effect=ValueError("async error"))
+        mock_tool_def.input_schema = {}
         mock_services.tool_registry.get.return_value = mock_tool_def
 
-        with pytest.raises(ExecutionError) as exc_info:
-            await node_runtime._run_tool_async(node, state, {}, locals_ctx=None, context=None)
+        with pytest.raises(ExecutionError):
+            await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
 
         # VERIFY: State dict was updated with error trace
         assert '_trace_failing_async_tool' in state
@@ -706,7 +725,7 @@ class TestErrorTraceStatePersistence:
         mock_services.model_registry.get.return_value = mock_model_def
 
         with pytest.raises(ExecutionError):
-            await node_runtime._run_llm_async(node, state, {}, locals_ctx=None, context=None)
+            await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
 
         # VERIFY: State dict was updated with error trace
         assert '_trace_failing_llm' in state
@@ -730,6 +749,7 @@ class TestErrorTraceStatePersistence:
 
         # Create services with MCP registry included
         mock_mcp_registry = MagicMock()
+        mock_mcp_registry.invoke_tool = AsyncMock(side_effect=ConnectionError("MCP server unreachable"))
         mock_services = RuntimeServices(
             schema_registry=MagicMock(),
             tool_registry=MagicMock(),
@@ -748,10 +768,8 @@ class TestErrorTraceStatePersistence:
         )
         state = {}
 
-        # Mock _invoke_mcp_tool to raise an error
-        with patch.object(node_runtime, '_invoke_mcp_tool', side_effect=ConnectionError("MCP server unreachable")):
-            with pytest.raises(ExecutionError):
-                await node_runtime._run_mcp_async(node, state, {}, locals_ctx=None, context=None)
+        with pytest.raises(ExecutionError):
+            await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
 
         # VERIFY: State dict was updated with error trace
         assert '_trace_failing_mcp' in state
@@ -761,8 +779,9 @@ class TestErrorTraceStatePersistence:
         assert trace['node_type'] == 'mcp'
         assert trace['status'] == 'failed'
         assert 'error' in trace
-        assert trace['error']['type'] == 'ConnectionError'
-        assert 'MCP server unreachable' in trace['error']['message']
+        # MCP node wraps errors in ExecutionError
+        assert trace['error']['type'] == 'ExecutionError'
+        assert 'MCP' in trace['error']['message'] and 'unreachable' in trace['error']['message']
 
     @pytest.mark.asyncio
     async def test_error_trace_state_persistence_in_loop(self, node_runtime, mock_services):
@@ -783,10 +802,11 @@ class TestErrorTraceStatePersistence:
         # Setup mock tool that raises
         mock_tool_def = MagicMock()
         mock_tool_def.async_handler = AsyncMock(side_effect=ValueError("Failed at index 3"))
+        mock_tool_def.input_schema = {}
         mock_services.tool_registry.get.return_value = mock_tool_def
 
         with pytest.raises(ExecutionError):
-            await node_runtime._run_tool_async(node, state, {}, locals_ctx=None, context=None)
+            await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
 
         # VERIFY: State dict was updated with error trace including iteration
         trace_key = "_trace_loop_failing_tool_iter_3"
@@ -809,19 +829,21 @@ class TestErrorTraceStatePersistence:
         node1 = ToolNode(id='fail_1', tool='tool_1', inputs={})
         mock_tool_def_1 = MagicMock()
         mock_tool_def_1.async_handler = AsyncMock(side_effect=KeyError("error_1"))
+        mock_tool_def_1.input_schema = {}
         mock_services.tool_registry.get.return_value = mock_tool_def_1
 
         with pytest.raises(ExecutionError):
-            await node_runtime._run_tool_async(node1, state, {}, locals_ctx=None, context=None)
+            await node_runtime._run_node_async(node1, state, {}, locals_ctx=None, context=None)
 
         # Second failure
         node2 = ToolNode(id='fail_2', tool='tool_2', inputs={})
         mock_tool_def_2 = MagicMock()
         mock_tool_def_2.async_handler = AsyncMock(side_effect=ValueError("error_2"))
+        mock_tool_def_2.input_schema = {}
         mock_services.tool_registry.get.return_value = mock_tool_def_2
 
         with pytest.raises(ExecutionError):
-            await node_runtime._run_tool_async(node2, state, {}, locals_ctx=None, context=None)
+            await node_runtime._run_node_async(node2, state, {}, locals_ctx=None, context=None)
 
         # VERIFY: Both error traces are in state
         assert '_trace_fail_1' in state

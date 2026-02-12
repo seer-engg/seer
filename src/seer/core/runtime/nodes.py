@@ -1,10 +1,15 @@
-# pylint: disable=too-many-lines,unused-argument,import-outside-toplevel,broad-exception-caught,too-many-return-statements,no-else-return
-# Reason: Node runtime contains executors for all workflow node types; splitting would reduce cohesion; context params required by interface
+# pylint: disable=unused-argument,import-outside-toplevel
+# Reason: Context params required by interface; imports done inside methods to avoid circular imports
 """
 Runtime node executors – each workflow node type is compiled into a callable
-that LangGraph can schedule. Control flow nodes (if / for_each) execute their
-children inline using the same dispatch logic, ensuring consistent semantics
-between top-level and nested blocks.
+that LangGraph can schedule.
+
+With the registry-based dispatch, execution logic is now in individual node
+type files (src/seer/core/nodes/*_node.py). This module provides the NodeRuntime
+orchestrator that:
+1. Builds LangGraph-compatible runners
+2. Manages trigger and context binding
+3. Dispatches to registered node types via the node_type_registry
 """
 
 from __future__ import annotations
@@ -12,60 +17,20 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Dict, Mapping, Optional
 
 from langgraph._internal._runnable import RunnableCallable
 
 from seer.core.errors import ExecutionError
-from seer.core.expr.evaluator import (
-    EvaluationContext,
-    evaluate_condition,
-    evaluate_value,
-    render_template,
-)
-# =============================================================================
-# BUG FIX: Schema-Driven Coercion in Workflow Runtime (2024-02 RCA)
-# =============================================================================
-# PROBLEM: Google Sheets API failed with:
-#   "Unable to parse range: Sheet1!'E3'" (note the quotes around E3)
-#   The LLM output 'E3' (with quotes) instead of E3 (without quotes).
-#
-# ROOT CAUSE: Two separate code paths execute tools:
-#   1. executor.py (API calls) - HAD coercion via coerce_arguments()
-#   2. nodes.py (workflow runtime) - MISSING coercion
-#
-#   Coercion was added to executor.py for API-level tool execution, but
-#   workflow execution uses nodes.py which bypasses executor.py entirely.
-#
-# WHY NOT CAUGHT: LLM output is inconsistent - sometimes it returns "E2"
-#   (correct), sometimes "'E3'" (incorrect with quotes). The bug only
-#   manifested on certain iterations, making it hard to reproduce.
-#
-# FIX: Import and apply coerce_arguments() in both _run_tool() and
-#   _run_tool_async() before passing inputs to the tool handler.
-# =============================================================================
-from seer.tools.coercion import coerce_arguments
+from seer.core.expr.evaluator import EvaluationContext
 from seer.core.expr.typecheck import TypeEnvironment
 from seer.core.registry.mcp_client_registry import MCPClientRegistry
 from seer.core.registry.model_registry import ModelRegistry
 from seer.core.registry.tool_registry import ToolRegistry
 from seer.core.runtime.context import WorkflowRuntimeContext
 from seer.core.runtime.state import INTERNAL_STATE_PREFIX, WorkflowState
-from seer.core.runtime.validate_output import validate_against_schema
-from seer.core.schema.models import (
-    BrowserNode,
-    ForEachNode,
-    HITLNode,
-    IfNode,
-    LLMNode,
-    MCPNode,
-    Node,
-    OutputMode,
-    ToolNode,
-)
+from seer.core.schema.models import Node
 from seer.core.schema.schema_registry import SchemaRegistry
-from seer.core.files.models import is_file_ref, parse_file_ref
 
 logger = logging.getLogger(__name__)
 
@@ -177,7 +142,7 @@ class NodeRuntime:
 
         try:
             await check_credit_limit(self._current_context.user)
-        except Exception as exc:  # noqa: BLE001 - propagate credit failures, log others
+        except Exception as exc:  # noqa: BLE001  pylint: disable=broad-exception-caught  # Defensive: propagate credit failures only
             if exc.__class__.__name__ == "CreditLimitExceeded":
                 raise
             logger.error("Credit limit check failed: %s", exc)
@@ -206,8 +171,7 @@ class NodeRuntime:
             except RunCostCapExceeded:
                 # Re-raise cost cap exception to stop execution
                 raise
-            except Exception as e:
-                # Log error but don't fail workflow for other tracking errors
+            except Exception as e:  # pylint: disable=broad-exception-caught  # Defensive: log tracking errors, don't fail workflow
                 logger.error(
                     "Failed to track LLM usage: %s",
                     str(e),
@@ -226,11 +190,11 @@ class NodeRuntime:
                 asyncio.create_task(do_track())
             else:
                 loop.run_until_complete(do_track())
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught  # Defensive: scheduling failure shouldn't break workflow
             logger.error("Failed to schedule LLM usage tracking: %s", e)
 
     # ------------------------------------------------------------------
-    # Node handlers
+    # Node handlers - Registry-based dispatch (no fallback)
     # ------------------------------------------------------------------
     async def _run_node_async(
         self,
@@ -241,697 +205,47 @@ class NodeRuntime:
         locals_ctx: Mapping[str, Any] | None,
         context: WorkflowRuntimeContext | None,
     ) -> Dict[str, Any]:
-        if isinstance(node, ToolNode):
-            return await self._run_tool_async(node, state, config, locals_ctx=locals_ctx, context=context)
-        if isinstance(node, MCPNode):
-            return await self._run_mcp_async(node, state, config, locals_ctx=locals_ctx, context=context)
-        if isinstance(node, LLMNode):
-            await self._check_llm_credit_limit_async()
-            return await self._run_llm_async(node, state, config, locals_ctx=locals_ctx, context=context)
-        if isinstance(node, IfNode):
-            return await self._run_if_async(node, state, config, locals_ctx=locals_ctx, context=context)
-        if isinstance(node, ForEachNode):
-            return await self._run_for_each_async(node, state, config, locals_ctx=locals_ctx, context=context)
-        if isinstance(node, HITLNode):
-            return await self._run_hitl_async(node, state, config, locals_ctx=locals_ctx, context=context)
-        if isinstance(node, BrowserNode):
-            return await self._run_browser_async(node, state, config, locals_ctx=locals_ctx, context=context)
-        raise ExecutionError(f"Unsupported node type '{node.type}'")
+        """
+        Execute a node using the registry-based dispatch.
 
-    async def _run_tool_async(
-        self,
-        node: ToolNode,
-        state: WorkflowState,
-        config: Mapping[str, Any],
-        *,
-        locals_ctx: Mapping[str, Any] | None,
-        context: WorkflowRuntimeContext | None,
-    ) -> Dict[str, Any]:
-        # STEP 1: Capture inputs (AFTER evaluation, BEFORE execution)
-        inputs = self._capture_node_inputs(node, state, config, locals_ctx)
+        All node types must be registered in the node_type_registry.
+        There is no fallback to isinstance checks - if a node type is not
+        registered, it's an error.
+        """
+        from seer.core.nodes.registry import node_type_registry
+        from seer.core.nodes.base import NodeExecutionContext
 
-        # STEP 2: Execute tool (existing logic)
-        try:
-            tool_def = self.services.tool_registry.get(node.tool)
-            runtime_context = context or self._current_context
+        node_impl = node_type_registry.get(node.type)
+        if node_impl is None:
+            raise ExecutionError(f"Unsupported node type '{node.type}' - not registered in node_type_registry")
 
-            # -----------------------------------------------------------------
-            # STEP 1.5: Apply schema-driven coercion to inputs (async version)
-            # -----------------------------------------------------------------
-            # Same fix as _run_tool - see detailed comment there.
-            # Both sync and async paths need coercion because LLM outputs
-            # can contain quoted strings that tools don't expect.
-            # -----------------------------------------------------------------
-            inputs = coerce_arguments(inputs, tool_def.input_schema)
-
-            if tool_def.async_handler is None:
-                raise ExecutionError(f"Tool '{node.tool}' has no async handler registered")
-            result = await tool_def.async_handler(inputs, dict(config), runtime_context)
-        except Exception as exc:
-            error_trace = self._write_error_trace(node, state, inputs, exc=exc, node_type='tool')
-            # CRITICAL: Update state with error trace BEFORE raising
-            # This ensures the trace is persisted to checkpoints even when node fails
-            state.update(error_trace)  # type: ignore[arg-type]  # WorkflowState is TypedDict with total=False, allows any keys
-            raise ExecutionError(f"Tool '{node.tool}' failed: {exc}", trace_data=error_trace) from exc
-
-        # STEP 3: Prepare output (existing logic)
-        output = self._prepare_output(node.id, result)
-
-        # STEP 4: Store trace data
-        # Use single underscore prefix to avoid LangGraph filtering double-underscore keys
-        trace_key = self._get_trace_key(node.id, state)
-        output[trace_key] = {
-            'node_id': node.id,
-            'node_type': 'tool',
-            'inputs': inputs,  # Actual runtime inputs
-            'output': result,  # Raw tool result (before prepare_output)
-            'output_key': node.id,
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-            'status': 'succeeded',
-        }
-
-        # Diagnostic logging: Verify trace key is in output
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "Tool node '%s' (async) output keys: %s, trace_key present: %s", node.id, list(output.keys()), trace_key in output,
-                extra={"node_id": node.id, "output_keys": list(output.keys()), "trace_key": trace_key}
-            )
-
-        return output
-
-    async def _run_mcp_async(
-        self,
-        node: MCPNode,
-        state: WorkflowState,
-        config: Mapping[str, Any],
-        *,
-        locals_ctx: Mapping[str, Any] | None,
-        context: WorkflowRuntimeContext | None,
-    ) -> Dict[str, Any]:
-        """Execute MCP node with runtime auth resolution."""
-        from seer.core.registry.mcp_client_registry import MCPServerConfig
-
-        if self.services.mcp_client_registry is None:
-            raise ExecutionError(
-                "MCPClientRegistry is required to execute MCP nodes. "
-                "Ensure the compiler is initialized with MCP support."
-            )
-
-        inputs = self._capture_node_inputs(node, state, config, locals_ctx)
-        ctx = self._build_eval_context(state, config, locals_ctx)
-        resolved_auth = self._resolve_mcp_auth(node, ctx)
-
-        server_config = MCPServerConfig(
-            server=node.server,
-            server_type=node.server_type,
-            auth=resolved_auth,
+        # Build execution context with all necessary data
+        ctx = NodeExecutionContext(
+            state=state,
+            config=config,
+            locals_ctx=locals_ctx,
+            runtime_context=context or self._current_context,
+            loop_body_map=self._loop_body_map,
+            nested_loop_parents=self._nested_loop_parents,
+            trigger=self._current_trigger,
         )
 
-        try:
-            result = await self._invoke_mcp_tool(server_config, node, inputs)
-        except Exception as exc:
-            error_trace = self._write_error_trace(node, state, inputs, exc=exc, node_type='mcp')
-            # CRITICAL: Update state with error trace BEFORE raising
-            # This ensures the trace is persisted to checkpoints even when node fails
-            state.update(error_trace)  # type: ignore[arg-type]  # WorkflowState is TypedDict with total=False, allows any keys
-            raise ExecutionError(f"MCP tool '{node.tool}' failed: {exc}", trace_data=error_trace) from exc
-
-        if node.expect_outputs:
-            schema = self._type_schemas.get(node.id)
-            if schema:
-                validate_against_schema(schema, result, schema_id=node.id)
-
-        output = self._prepare_output(node.id, result)
-        self._attach_mcp_trace(output, node, state, inputs=inputs, result=result, resolved_auth=resolved_auth)
-        return output
-
-    def _resolve_mcp_auth(self, node: MCPNode, ctx: EvaluationContext) -> Optional[Dict[str, Any]]:
-        """Resolve runtime auth expressions (headers / env) for an MCP node."""
-        if not node.auth:
-            return None
-
-        resolved: Dict[str, Any] = {}
-        for section in ("headers", "env"):
-            if section in node.auth:
-                resolved[section] = {
-                    k: evaluate_value(ctx, v) if isinstance(v, str) and "${" in v else v
-                    for k, v in node.auth[section].items()
-                }
-        return resolved
-
-    async def _invoke_mcp_tool(
-        self,
-        server_config: Any,
-        node: MCPNode,
-        inputs: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """Invoke the MCP tool and normalise the result to a dict."""
-        try:
-            result = await self.services.mcp_client_registry.invoke_tool(
-                server_config, node.tool, inputs
-            )
-        except ConnectionError as exc:
-            raise ExecutionError(f"MCP connection failed for server '{node.server}': {exc}") from exc
-        except Exception as exc:
-            raise ExecutionError(
-                f"MCP tool '{node.tool}' failed on server '{node.server}': {exc}"
-            ) from exc
-
-        # MCP tools return strings or content lists; downstream expects objects.
-        if not isinstance(result, dict):
-            result = {"result": result}
-        return result
-
-    def _attach_mcp_trace(
-        self,
-        output: Dict[str, Any],
-        node: MCPNode,
-        state: WorkflowState,
-        *,
-        inputs: Dict[str, Any],
-        result: Any,
-        resolved_auth: Optional[Dict[str, Any]],
-    ) -> None:
-        """Attach trace data to MCP output, redacting sensitive auth values."""
-        trace_key = self._get_trace_key(node.id, state)
-
-        safe_auth = None
-        if resolved_auth:
-            safe_auth = {
-                "headers": {k: "***REDACTED***" for k in resolved_auth.get("headers", {})},
-                "env": {k: "***REDACTED***" for k in resolved_auth.get("env", {})},
-            }
-
-        output[trace_key] = {
-            "node_id": node.id,
-            "node_type": "mcp",
-            "server": node.server,
-            "server_type": node.server_type,
-            "tool": node.tool,
-            "auth": safe_auth,
-            "inputs": inputs,
-            "output": result,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "status": "succeeded",
-        }
-
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "MCP node '%s' (server='%s', tool='%s') output keys: %s, trace_key present: %s",
-                node.id,
-                node.server,
-                node.tool,
-                list(output.keys()),
-                trace_key in output,
-                extra={"node_id": node.id, "output_keys": list(output.keys()), "trace_key": trace_key},
-            )
-
-    async def _resolve_llm_file_inputs(
-        self,
-        auxiliary: Dict[str, Any],
-        context: WorkflowRuntimeContext | None,
-    ) -> tuple[Dict[str, Any], list[Dict[str, Any]]]:
-        """
-        Scan auxiliary inputs for file references and resolve to content.
-
-        File references (WorkflowFileRef) in the inputs are detected using the
-        is_file_ref() function and resolved via the WorkflowFileSystem. The
-        resolved content is returned separately for processing by the LLM handler.
-
-        Args:
-            auxiliary: Auxiliary inputs (non-reserved LLM inputs like 'document', 'image')
-            context: Workflow runtime context (provides access to file system)
-
-        Returns:
-            Tuple of (resolved_inputs, file_contents):
-            - resolved_inputs: inputs with file refs replaced by metadata (for trace)
-            - file_contents: list of resolved file data for LLM processing
-        """
-        if not context or not context.has_file_system:
-            return auxiliary, []
-
-        file_contents: list[Dict[str, Any]] = []
-        resolved: Dict[str, Any] = {}
-
-        for key, value in auxiliary.items():
-            if is_file_ref(value):
-                file_ref = parse_file_ref(value)
-                content = await context.file_system.get_file_content(file_ref)
-                file_contents.append({
-                    "key": key,
-                    "mime_type": file_ref.mime_type,
-                    "filename": file_ref.filename,
-                    "content": content,
-                })
-                # Replace with metadata for trace (don't store bytes in trace)
-                resolved[key] = {
-                    "_resolved_file": file_ref.filename,
-                    "mime_type": file_ref.mime_type,
-                    "size_bytes": file_ref.size_bytes,
-                }
-            elif isinstance(value, list):
-                # Handle list of file refs (e.g., attachments: [...])
-                resolved_list = []
-                for item in value:
-                    if is_file_ref(item):
-                        file_ref = parse_file_ref(item)
-                        content = await context.file_system.get_file_content(file_ref)
-                        file_contents.append({
-                            "key": key,
-                            "mime_type": file_ref.mime_type,
-                            "filename": file_ref.filename,
-                            "content": content,
-                        })
-                        resolved_list.append({
-                            "_resolved_file": file_ref.filename,
-                            "mime_type": file_ref.mime_type,
-                        })
-                    else:
-                        resolved_list.append(item)
-                resolved[key] = resolved_list
-            else:
-                resolved[key] = value
-
-        return resolved, file_contents
-
-    # pylint: disable=too-complex,too-many-locals
-    # Reason: LLM node execution inherently complex with prompt construction, model invocation, and usage tracking
-    async def _run_llm_async(
-        self,
-        node: LLMNode,
-        state: WorkflowState,
-        config: Mapping[str, Any],
-        *,
-        locals_ctx: Mapping[str, Any] | None,
-        context: WorkflowRuntimeContext | None,
-    ) -> Dict[str, Any]:
-        # STEP 1: Capture inputs
-        inputs = self._capture_node_inputs(node, state, config, locals_ctx)
-
-        # STEP 2: Execute LLM (existing logic)
-        ctx = self._build_eval_context(state, config, locals_ctx)
-
-        # Extract LLM configuration from inputs dict
-        model = node.inputs.get("model")
-        if not isinstance(model, str):
-            raise ExecutionError(f"LLMNode {node.id}: 'model' must be a string in inputs")
-
-        prompt_template = node.inputs.get("prompt")
-        if not isinstance(prompt_template, str):
-            raise ExecutionError(f"LLMNode {node.id}: 'prompt' must be a string in inputs")
-
-        temperature = node.inputs.get("temperature")
-        max_tokens = node.inputs.get("max_tokens")
-
-        # All other keys are auxiliary data inputs
-        reserved_keys = {"model", "prompt", "temperature", "max_tokens"}
-        auxiliary = {
-            key: evaluate_value(ctx, value)
-            for key, value in node.inputs.items()
-            if key not in reserved_keys
-        }
-
-        # STEP 2.5: Resolve file references in auxiliary inputs
-        # Use bound context as fallback (same pattern as _run_tool_async)
-        runtime_context = context or self._current_context
-        resolved_auxiliary, file_contents = await self._resolve_llm_file_inputs(auxiliary, runtime_context)
-
-        # Render prompt and lookup model
-        prompt = render_template(ctx, prompt_template)
-        model_def = self.services.model_registry.get(model)
-
-        invocation = {
-            "prompt": prompt,
-            "inputs": resolved_auxiliary,
-            "file_contents": file_contents,  # Resolved file data for multimodal processing
-            "config": dict(config),
-            "parameters": {
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-            },
-            "ui": node.ui,
-        }
-
-        usage_metadata = {}
-        try:
-            if node.outputs.mode == OutputMode.text:
-                if model_def.text_handler is None:
-                    raise ExecutionError(f"Model '{model}' does not support text responses")
-                # Handler now returns tuple
-                result, usage_metadata = model_def.text_handler(invocation)
-                if not isinstance(result, str):
-                    raise ExecutionError(f"LLM node '{node.id}' expected text response")
-            elif node.outputs.mode == OutputMode.json:
-                schema = self._type_schemas.get(node.id)
-                if schema is None:
-                    raise ExecutionError(f"No schema recorded for '{node.id}'")
-                if model_def.json_handler is None:
-                    raise ExecutionError(f"Model '{model}' does not support structured responses")
-                # Handler now returns tuple
-                result, usage_metadata = model_def.json_handler(invocation, schema)
-                if not isinstance(result, dict):
-                    raise ExecutionError(f"LLM node '{node.id}' expected JSON response")
-            else:
-                raise ExecutionError(f"Unsupported output mode '{node.outputs.mode}' for node '{node.id}'")
-        except ExecutionError:
-            # Re-raise ExecutionError without wrapping (includes validation errors)
-            raise
-        except Exception as exc:
-            error_trace = self._write_error_trace(node, state, inputs, exc=exc, node_type='llm')
-            # CRITICAL: Update state with error trace BEFORE raising
-            # This ensures the trace is persisted to checkpoints even when node fails
-            state.update(error_trace)  # type: ignore[arg-type]  # WorkflowState is TypedDict with total=False, allows any keys
-            raise ExecutionError(f"LLM node '{node.id}' failed: {exc}", trace_data=error_trace) from exc
-
-        # STEP 2.5: Track usage asynchronously (fire and forget)
-        if usage_metadata:
-            self._track_llm_usage_async(usage_metadata)
-
-        # STEP 3: Prepare output
-        output = self._prepare_output(node.id, result)
-
-        # STEP 4: Store trace data
-        # Use single underscore prefix to avoid LangGraph filtering double-underscore keys
-        trace_key = self._get_trace_key(node.id, state)
-        output[trace_key] = {
-            'node_id': node.id,
-            'node_type': 'llm',
-            'inputs': inputs,  # Prompt template + evaluated input_refs
-            'output': result,  # Raw LLM response
-            'output_key': node.id,
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-            'status': 'succeeded',
-            # Add usage metadata to trace
-            'usage': {
-                'model': usage_metadata.get('model', model),
-                'input_tokens': usage_metadata.get('input_tokens', 0),
-                'output_tokens': usage_metadata.get('output_tokens', 0),
-                'reasoning_tokens': usage_metadata.get('reasoning_tokens', 0),
-                'total_tokens': (
-                    usage_metadata.get('input_tokens', 0) +
-                    usage_metadata.get('output_tokens', 0) +
-                    usage_metadata.get('reasoning_tokens', 0)
-                ),
-            },
-        }
-
-        # Diagnostic logging: Verify trace key is in output
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "LLM node '%s' output keys: %s, trace_key present: %s", node.id, list(output.keys()), trace_key in output,
-                extra={"node_id": node.id, "output_keys": list(output.keys()), "trace_key": trace_key}
-            )
-
-        return output
-
-    async def _run_if_async(
-        self,
-        node: IfNode,
-        state: WorkflowState,
-        config: Mapping[str, Any],
-        *,
-        locals_ctx: Mapping[str, Any] | None,
-        context: WorkflowRuntimeContext | None,
-    ) -> Dict[str, Any]:
-        """
-        Evaluate the condition and store the result in state (async version).
-
-        Branch selection is handled by LangGraph conditional edges.
-        """
-        ctx = self._build_eval_context(state, config, locals_ctx)
-        condition_result = evaluate_condition(ctx, node.condition)
-
-        # Store condition result for the router
-        return {f"_if_result_{node.id}": condition_result}
-
-    async def _run_for_each_async(
-        self,
-        node: ForEachNode,
-        state: WorkflowState,
-        config: Mapping[str, Any],
-        *,
-        locals_ctx: Mapping[str, Any] | None,
-        context: WorkflowRuntimeContext | None,
-    ) -> Dict[str, Any]:
-        """
-        Initialize or advance loop iteration state (async version).
-
-        On first call: Evaluate items and initialize loop state.
-        On subsequent calls: Advance the index.
-        On nested loop re-entry after parent iteration: Reset the loop state.
-
-        Loop body execution is handled by LangGraph graph traversal.
-        The router reads _loop_{node_id} to determine body vs exit.
-        """
-        loop_key = f"_loop_{node.id}"
-        existing_loop_state = state.get(loop_key)
-
-        # =====================================================================
-        # NESTED LOOP RESET DETECTION
-        # =====================================================================
-        # For nested loops, check if the parent loop has advanced to a new
-        # iteration. If so, we need to reset this inner loop to start fresh.
-        #
-        # The fix uses `_parent_iteration_idx` to track the parent's index
-        # when this loop was initialized. On re-entry, if parent's current_index
-        # has changed, the inner loop resets for the new parent iteration.
-        # =====================================================================
-        should_reset = False
-        parent_loop_id = self._nested_loop_parents.get(node.id)
-        parent_state = state.get(f"_loop_{parent_loop_id}") if parent_loop_id else None
-
-        if existing_loop_state and parent_state:
-            # Compare stored parent index with current parent index
-            stored_parent_idx = existing_loop_state.get("_parent_iteration_idx")
-            current_parent_idx = parent_state.get("current_index", 0)
-            if stored_parent_idx != current_parent_idx:
-                # Parent has advanced - reset this inner loop
-                should_reset = True
-
-        if existing_loop_state is None or should_reset:
-            # First invocation OR nested loop reset - initialize loop state
-            ctx = self._build_eval_context(state, config, locals_ctx)
-            items_value = evaluate_value(ctx, node.items)
-            if not isinstance(items_value, list):
-                raise ExecutionError(f"for_each node '{node.id}' items expression must produce a list")
-
-            # _run_id tracks how many times this loop has been reset (for debugging)
-            new_run_id = (existing_loop_state.get("_run_id", -1) + 1) if existing_loop_state else 0
-
-            loop_state = {
-                "items": items_value,
-                "current_index": 0,
-                "has_more_iterations": len(items_value) > 0,
-                "results": [],
-                "_run_id": new_run_id,
-                # Store parent's current index to detect when parent advances
-                "_parent_iteration_idx": parent_state.get("current_index", 0) if parent_state else None,
-            }
-        else:
-            # Subsequent invocation - advance to next iteration
-            loop_state = dict(existing_loop_state)
-            loop_state["current_index"] += 1
-            loop_state["has_more_iterations"] = loop_state["current_index"] < len(loop_state["items"])
-
-        # Build updates
-        updates: Dict[str, Any] = {loop_key: loop_state}
-
-        # Set current item and index in state for body nodes to access
-        if loop_state["has_more_iterations"]:
-            idx = loop_state["current_index"]
-            updates[node.item_var] = loop_state["items"][idx]
-            updates[node.index_var] = idx
-
-        return updates
-
-    async def _run_hitl_async(
-        self,
-        node: HITLNode,
-        state: WorkflowState,
-        config: Mapping[str, Any],
-        *,
-        locals_ctx: Mapping[str, Any] | None,
-        context: WorkflowRuntimeContext | None,
-    ) -> Dict[str, Any]:
-        """
-        Execute HITL node asynchronously - pause workflow for user input collection.
-
-        Uses LangGraph's interrupt() to pause execution. The workflow resumes
-        when user provides responses via the resume API.
-        """
-        from langgraph.types import interrupt  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import
-
-        # Evaluate display expressions
-        ctx = self._build_eval_context(state, config, locals_ctx)
-        display_data = []
-        for item in node.display:
-            try:
-                evaluated_value = evaluate_value(ctx, item.value)
-            except Exception as exc:  # noqa: BLE001 - capture evaluation errors for display
-                evaluated_value = f"<error: {exc}>"
-            display_data.append({
-                "label": item.label,
-                "value": evaluated_value,
-            })
-
-        # Build interrupt payload
-        interrupt_payload = {
-            "type": "hitl",
-            "node_id": node.id,
-            "title": node.title,
-            "description": node.description,
-            "display": display_data,
-            "inputs": [field.model_dump() for field in node.inputs],
-            "timeout_seconds": node.timeout_seconds,
-            "delivery_channels": [ch.model_dump() for ch in node.delivery_channels],
-        }
-
-        # Trigger interrupt - execution pauses here until resumed
-        user_responses = interrupt(interrupt_payload)
-
-        # Build output from user responses
-        output: Dict[str, Any] = {node.id: user_responses or {}}
-
-        # Store trace data
-        trace_key = self._get_trace_key(node.id, state)
-        output[trace_key] = {
-            "node_id": node.id,
-            "node_type": "hitl",
-            "title": node.title,
-            "display": display_data,
-            "inputs": [field.model_dump() for field in node.inputs],
-            "output": user_responses,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-
-        return output
-
-    async def _run_browser_async(
-        self,
-        node: BrowserNode,
-        state: WorkflowState,
-        config: Mapping[str, Any],
-        *,
-        locals_ctx: Mapping[str, Any] | None,
-        context: WorkflowRuntimeContext | None,
-    ) -> Dict[str, Any]:
-        """
-        Execute browser automation node using BrowserUse Agent.
-
-        Uses the BrowserService to execute natural language browser tasks,
-        optionally with a persisted browser profile for authenticated sessions.
-
-        Supports:
-        - Structured output via expect_outputs with extraction_schema
-        - Screenshot saving to S3 when save_screenshots=True
-        """
-        from seer.services.browser import BrowserService  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import
-
-        # Capture inputs
-        inputs = self._capture_node_inputs(node, state, config, locals_ctx)
-        ctx = self._build_eval_context(state, config, locals_ctx)
-
-        # Evaluate task expression if it contains ${...}
-        task = evaluate_value(ctx, node.task) if "${" in node.task else node.task
-
-        # Get extraction schema if expect_outputs is specified with JSON mode
-        # The browser service expects the user's extraction schema (for extracted_data),
-        # NOT the full browser envelope. The type environment registers the full envelope
-        # with user schema in extracted_data, so we extract just that part.
-        extraction_schema = None
-        if node.expect_outputs and node.expect_outputs.mode == OutputMode.json:
-            full_schema = self._type_schemas.get(node.id)
-            if full_schema:
-                extraction_schema = full_schema.get("properties", {}).get("extracted_data")
-
-        # Get file system context for screenshot saving
-        file_system = None
-        workflow_run_id = None
-        user_id = None
-        if node.save_screenshots and context:
-            if context.has_file_system:
-                file_system = context.file_system
-            workflow_run_id = context.workflow_run_id
-            user_id = str(context.user.id) if context.user else None
-
-        # Get browser service singleton
-        service = BrowserService.instance()
-
-        try:
-            result = await service.execute_task(
-                user=context.user if context else None,
-                task=task,
-                inputs=inputs,
-                browser_profile_id=node.browser_profile_id,
-                max_steps=node.max_steps,
-                timeout_seconds=node.timeout_seconds,
-                extraction_schema=extraction_schema,
-                save_screenshots=node.save_screenshots,
-                file_system=file_system,
-                workflow_run_id=workflow_run_id,
-                user_id=user_id,
-            )
-        except Exception as exc:
-            error_trace = self._write_error_trace(node, state, inputs, exc=exc, node_type='browser')
-            state.update(error_trace)  # type: ignore[arg-type]
-            raise ExecutionError(f"Browser task failed: {exc}", trace_data=error_trace) from exc
-
-        # Validate structured output if schema specified
-        if node.expect_outputs and node.expect_outputs.mode == OutputMode.json:
-            full_schema = self._type_schemas.get(node.id)
-            if full_schema:
-                # Extract the extracted_data schema from the full browser output schema
-                # The type environment now registers the full browser envelope with user schema in extracted_data
-                extracted_schema = full_schema.get("properties", {}).get("extracted_data")
-                if extracted_schema:
-                    validate_against_schema(extracted_schema, result.get("extracted_data", {}), schema_id=f"{node.id}.extracted_data")
-
-        # Prepare output
-        output = self._prepare_output(node.id, result)
-
-        # Store trace data
-        trace_key = self._get_trace_key(node.id, state)
-        output[trace_key] = {
-            'node_id': node.id,
-            'node_type': 'browser',
-            'task': task,
-            'inputs': inputs,
-            'output': result,
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-            'status': 'succeeded' if result.get('success') else 'failed',
-        }
-
-        return output
+        # LLM nodes need credit check before execution
+        if node.type == "llm":
+            await self._check_llm_credit_limit_async()
+
+        return await node_impl.execute_async(node, ctx, self.services)
 
     # ------------------------------------------------------------------
-    # Helpers
+    # Helpers (kept for backward compatibility)
     # ------------------------------------------------------------------
-    async def _execute_sequence_async(
-        self,
-        nodes: Sequence[Node],
-        state: WorkflowState,
-        config: Mapping[str, Any],
-        *,
-        locals_ctx: Mapping[str, Any] | None,
-        context: WorkflowRuntimeContext | None,
-    ) -> Dict[str, Any]:
-        sequence_state: WorkflowState = dict(state)
-        accumulator: Dict[str, Any] = {}
-        for child in nodes:
-            updates = await self._run_node_async(
-                child, sequence_state, config, locals_ctx=locals_ctx, context=context
-            )
-            if updates:
-                sequence_state.update(updates)
-                accumulator.update(updates)
-        return accumulator
-
     def _build_eval_context(
         self,
         state: WorkflowState,
         config: Mapping[str, Any],
         locals_ctx: Mapping[str, Any] | None,
     ) -> EvaluationContext:
+        """Build evaluation context for expression evaluation."""
         visible_state = {k: v for k, v in state.items() if not k.startswith(INTERNAL_STATE_PREFIX)}
         locals_mapping = locals_ctx or {}
         return EvaluationContext(
@@ -940,134 +254,3 @@ class NodeRuntime:
             config=config,
             trigger=self._current_trigger,
         )
-
-    def _prepare_output(self, node_id: str, value: Any) -> Dict[str, Any]:
-        """
-        Prepare node output for state storage using node ID as the key.
-
-        Args:
-            node_id: The node's unique ID (used as state key)
-            value: The output value to store
-
-        Returns:
-            Dictionary with node_id as key
-        """
-        if node_id.startswith(INTERNAL_STATE_PREFIX):
-            raise ExecutionError(f"Node IDs starting with '{INTERNAL_STATE_PREFIX}' are reserved")
-        schema = self._type_schemas.get(node_id)
-        if schema is not None:
-            validate_against_schema(schema, value, schema_id=node_id)
-        return {node_id: value}
-
-    # ------------------------------------------------------------------
-    # Trace capture methods
-    # ------------------------------------------------------------------
-    def _evaluate_input_expressions(
-        self, ctx: EvaluationContext, in_dict: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Evaluate input expressions, capturing errors."""
-        inputs = {}
-        for key, expr in in_dict.items():
-            try:
-                inputs[key] = evaluate_value(ctx, expr)
-            except Exception as e:
-                inputs[key] = {"__error__": str(e), "__expression__": expr}
-        return inputs
-
-    def _capture_llm_node_inputs(
-        self, node: LLMNode, ctx: EvaluationContext
-    ) -> Dict[str, Any]:
-        """Capture LLM node specific inputs."""
-        inputs = {
-            'prompt_template': node.inputs.get('prompt'),
-            'model': node.inputs.get('model')
-        }
-
-        reserved_keys = {"model", "prompt", "temperature", "max_tokens"}
-        auxiliary = {k: v for k, v in node.inputs.items() if k not in reserved_keys}
-        if auxiliary:
-            inputs['input_refs'] = self._evaluate_input_expressions(ctx, auxiliary)
-
-        if 'temperature' in node.inputs:
-            inputs['temperature'] = node.inputs['temperature']
-        if 'max_tokens' in node.inputs:
-            inputs['max_tokens'] = node.inputs['max_tokens']
-
-        return inputs
-
-    def _capture_node_inputs(
-        self,
-        node: Node,
-        state: WorkflowState,
-        config: Mapping[str, Any],
-        locals_ctx: Mapping[str, Any] | None = None,
-    ) -> Dict[str, Any]:
-        """
-        Capture actual inputs used by node execution.
-        Inputs are evaluated from state at runtime - cannot be predicted at compile time.
-        """
-        ctx = self._build_eval_context(state, config, locals_ctx)
-
-        if isinstance(node, LLMNode):
-            return self._capture_llm_node_inputs(node, ctx)
-
-        if isinstance(node, (ToolNode, MCPNode)):
-            return self._evaluate_input_expressions(ctx, node.inputs)
-
-        return {}
-
-    def _write_error_trace(
-        self,
-        node: Node,
-        state: WorkflowState,
-        inputs: Dict[str, Any],
-        *,
-        exc: Exception,
-        node_type: str,
-    ) -> Dict[str, Any]:
-        """Write a partial trace with error info when node execution fails."""
-        trace_key = self._get_trace_key(node.id, state)
-
-        return {
-            trace_key: {
-                'node_id': node.id,
-                'node_type': node_type,
-                'inputs': inputs,
-                'error': {
-                    'type': exc.__class__.__name__,
-                    'message': str(exc),
-                },
-                'timestamp': datetime.now(timezone.utc).isoformat(),
-                'status': 'failed',
-            }
-        }
-
-    def _capture_node_output(
-        self,
-        node: Node,
-        output_dict: Dict[str, Any],
-    ) -> Any:
-        """
-        Extract raw output from node execution result.
-        This is the actual result before any transformation.
-        """
-        if isinstance(node, ToolNode):
-            # Output dict contains {node.id: result}
-            # Extract the raw result
-            if node.id in output_dict:
-                return output_dict[node.id]
-            # Fallback: return first value
-            if output_dict:
-                return next(iter(output_dict.values()))
-            return None
-
-        elif isinstance(node, LLMNode):
-            # Similar - extract from output_dict
-            if node.id in output_dict:
-                return output_dict[node.id]
-            if output_dict:
-                return next(iter(output_dict.values()))
-            return None
-
-        # For other node types, return the output dict
-        return output_dict
