@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/seer-engg/seer/blob/main/LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/seer-engg/seer?style=social)](https://github.com/seer-engg/seer/stargazers)
-[![Documentation](https://img.shields.io/badge/docs-docs.getseer.dev-blue)](https://docs.getseer.dev)
+[![DeepWiki](https://img.shields.io/badge/docs-DeepWiki-blue)](https://deepwiki.com/seer-engg/seer)
 [![Discord](https://img.shields.io/badge/discord-join-7289DA?logo=discord&logoColor=white)](https://discord.gg/NuYsDdhJ)
 [![Twitter Follow](https://img.shields.io/twitter/follow/get_seer?style=social)](https://x.com/get_seer)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-get--seer-0077B5?logo=linkedin)](https://www.linkedin.com/company/get-seer)
@@ -49,7 +49,7 @@ Your browser will automatically open and connect the cloud frontend to your loca
 - `src/seer/agents/` – agent orchestration (LangGraph-based workflow agent).
 - `src/seer/database/` – Tortoise ORM models/config; migrations live in `/migrations`.
 - `src/seer/analytics/`, `src/seer/observability/`, `src/seer/utilities/` – shared instrumentation and helpers.
-- `documentation/` – docs site assets; `scripts/` – maintenance helpers; `tests/` – automated tests.
+- `scripts/` – maintenance helpers; `tests/` – automated tests.
 
 ## Configuration
 
@@ -100,14 +100,10 @@ uv run aerich upgrade
 
 ### Documentation
 
-📚 **[Complete Documentation](https://docs.getseer.dev)** - Full docs site with guides, API reference, and examples
+📚 **[Complete Documentation](https://deepwiki.com/seer-engg/seer)** - Comprehensive guides, architecture, and examples on DeepWiki
 
 - [Quick Start](#quick-start-docker) - Get running in 60 seconds
-- [Architecture](https://docs.getseer.dev) - Backend overview and concepts
 - [Worker Setup](src/seer/worker/README.md) - Background task worker configuration
-- [Integrations](https://docs.getseer.dev/integrations/SUPABASE) - Google, GitHub, Supabase setup
-- [Advanced Features](https://docs.getseer.dev/advanced/TRIGGERS) - Triggers, proposals, and more
-- [Configuration Reference](https://docs.getseer.dev/advanced/CONFIGURATION) - Complete configuration options
 
 ### License
 
