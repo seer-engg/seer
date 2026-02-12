@@ -16,8 +16,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from seer.core.files.models import WorkflowFileRef, is_file_ref
+from seer.core.nodes.llm_node import _resolve_llm_file_inputs
 from seer.core.runtime.context import WorkflowRuntimeContext
-from seer.core.runtime.nodes import NodeRuntime, RuntimeServices
+from seer.core.runtime.nodes import RuntimeServices
 from seer.core.registry.model_registry import ModelRegistry
 from seer.core.registry.tool_registry import ToolRegistry
 from seer.core.schema.schema_registry import SchemaRegistry
@@ -103,12 +104,11 @@ class TestFileRefDetection:
 
 
 class TestResolveLLMFileInputs:
-    """Tests for _resolve_llm_file_inputs method."""
+    """Tests for _resolve_llm_file_inputs function."""
 
     @pytest.mark.asyncio
     async def test_resolve_single_file_ref(self):
         """Single file reference is resolved correctly."""
-        runtime = NodeRuntime(_create_mock_runtime_services())
         context = _create_mock_context_with_file_system()
 
         file_ref = _create_file_ref(
@@ -122,7 +122,7 @@ class TestResolveLLMFileInputs:
             "other_param": "string value",
         }
 
-        resolved, file_contents = await runtime._resolve_llm_file_inputs(auxiliary, context)
+        resolved, file_contents = await _resolve_llm_file_inputs(auxiliary, context)
 
         # File ref should be replaced with metadata
         assert "_resolved_file" in resolved["document"]
@@ -142,7 +142,6 @@ class TestResolveLLMFileInputs:
     @pytest.mark.asyncio
     async def test_resolve_list_of_file_refs(self):
         """List of file references is resolved correctly."""
-        runtime = NodeRuntime(_create_mock_runtime_services())
         context = _create_mock_context_with_file_system()
 
         file_ref1 = _create_file_ref(filename="image1.png", mime_type="image/png")
@@ -152,7 +151,7 @@ class TestResolveLLMFileInputs:
             "attachments": [file_ref1, file_ref2],
         }
 
-        resolved, file_contents = await runtime._resolve_llm_file_inputs(auxiliary, context)
+        resolved, file_contents = await _resolve_llm_file_inputs(auxiliary, context)
 
         # List items should be resolved
         assert len(resolved["attachments"]) == 2
@@ -165,7 +164,6 @@ class TestResolveLLMFileInputs:
     @pytest.mark.asyncio
     async def test_resolve_mixed_list(self):
         """List with mix of file refs and other values is handled."""
-        runtime = NodeRuntime(_create_mock_runtime_services())
         context = _create_mock_context_with_file_system()
 
         file_ref = _create_file_ref(filename="doc.pdf")
@@ -174,7 +172,7 @@ class TestResolveLLMFileInputs:
             "items": [file_ref, "string", 123],
         }
 
-        resolved, file_contents = await runtime._resolve_llm_file_inputs(auxiliary, context)
+        resolved, file_contents = await _resolve_llm_file_inputs(auxiliary, context)
 
         # Mixed list resolved
         assert "_resolved_file" in resolved["items"][0]
@@ -187,7 +185,6 @@ class TestResolveLLMFileInputs:
     @pytest.mark.asyncio
     async def test_no_file_refs_returns_original(self):
         """When no file refs, original inputs returned unchanged."""
-        runtime = NodeRuntime(_create_mock_runtime_services())
         context = _create_mock_context_with_file_system()
 
         auxiliary = {
@@ -196,7 +193,7 @@ class TestResolveLLMFileInputs:
             "nested": {"key": "value"},
         }
 
-        resolved, file_contents = await runtime._resolve_llm_file_inputs(auxiliary, context)
+        resolved, file_contents = await _resolve_llm_file_inputs(auxiliary, context)
 
         assert resolved == auxiliary
         assert file_contents == []
@@ -204,13 +201,11 @@ class TestResolveLLMFileInputs:
     @pytest.mark.asyncio
     async def test_no_context_returns_original(self):
         """Without context, original inputs returned unchanged."""
-        runtime = NodeRuntime(_create_mock_runtime_services())
-
         file_ref = _create_file_ref()
         auxiliary = {"document": file_ref}
 
         # No context provided
-        resolved, file_contents = await runtime._resolve_llm_file_inputs(auxiliary, None)
+        resolved, file_contents = await _resolve_llm_file_inputs(auxiliary, None)
 
         # File ref not resolved (no file system)
         assert resolved == auxiliary
@@ -219,8 +214,6 @@ class TestResolveLLMFileInputs:
     @pytest.mark.asyncio
     async def test_context_without_file_system(self):
         """Context without file system returns original inputs."""
-        runtime = NodeRuntime(_create_mock_runtime_services())
-
         mock_user = MagicMock(spec=User)
         context = WorkflowRuntimeContext(user=mock_user)
 
@@ -229,7 +222,7 @@ class TestResolveLLMFileInputs:
 
         # Mock has_file_system property to return False
         with patch.object(WorkflowRuntimeContext, "has_file_system", new_callable=lambda: property(lambda self: False)):
-            resolved, file_contents = await runtime._resolve_llm_file_inputs(auxiliary, context)
+            resolved, file_contents = await _resolve_llm_file_inputs(auxiliary, context)
 
         assert resolved == auxiliary
         assert file_contents == []
@@ -295,12 +288,10 @@ class TestBackwardCompatibility:
     async def test_no_files_same_behavior(self):
         """When no file_contents in invocation, behavior unchanged."""
         # This is implicitly tested by other tests, but making it explicit
-        runtime = NodeRuntime(_create_mock_runtime_services())
-
         auxiliary = {"regular": "input"}
         context = None
 
-        resolved, file_contents = await runtime._resolve_llm_file_inputs(auxiliary, context)
+        resolved, file_contents = await _resolve_llm_file_inputs(auxiliary, context)
 
         assert resolved == auxiliary
         assert file_contents == []
