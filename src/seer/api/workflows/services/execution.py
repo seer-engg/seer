@@ -116,6 +116,29 @@ def _serialize_run_summary(run: WorkflowRun) -> api_models.WorkflowRunSummary:
     )
 
 
+def _validate_trigger_envelope(envelope: Dict[str, Any]) -> None:
+    """
+    Validate that a trigger envelope has required fields for execution.
+    Raises HTTP 400 if validation fails.
+    """
+    required_fields = ["trigger_key", "data"]
+    missing = [field for field in required_fields if field not in envelope]
+    if missing:
+        _raise_problem(
+            type_uri=RUN_PROBLEM,
+            title="Invalid trigger envelope",
+            detail=f"Missing required fields: {', '.join(missing)}",
+            status=400,
+        )
+    if not isinstance(envelope.get("data"), dict):
+        _raise_problem(
+            type_uri=RUN_PROBLEM,
+            title="Invalid trigger envelope",
+            detail="'data' field must be an object",
+            status=400,
+        )
+
+
 async def _generate_sample_trigger_envelope(
     trigger: Union["TriggerSubscription", TriggerSpec],
 ) -> Optional[Dict[str, Any]]:
@@ -222,7 +245,223 @@ async def list_workflow_runs(
     )
 
 
-async def run_saved_workflow(  # pylint: disable=too-complex # Reason: Complex workflow routing logic for triggers vs manual runs
+async def _handle_trigger_event_override(
+    user: User,
+    *,
+    workflow: Workflow,
+    workflow_id: str,
+    version: WorkflowVersion,
+    spec: WorkflowSpec,
+    payload: api_models.RunFromWorkflowRequest,
+    trigger_specs: list[TriggerSpec],
+) -> api_models.RunResponse:
+    """Handle custom trigger_event_override for testing with real events."""
+    _validate_trigger_envelope(payload.trigger_event_override)
+
+    # Determine target trigger
+    target_trigger = None
+    if payload.trigger_id:
+        target_trigger = next((t for t in trigger_specs if t.id == payload.trigger_id), None)
+        if not target_trigger:
+            _raise_problem(
+                type_uri=RUN_PROBLEM,
+                title="Trigger not found",
+                detail=f"No trigger with id '{payload.trigger_id}' found in workflow",
+                status=404,
+            )
+    elif len(trigger_specs) == 1:
+        target_trigger = trigger_specs[0]
+    elif len(trigger_specs) > 1:
+        _raise_problem(
+            type_uri=RUN_PROBLEM,
+            title="Ambiguous trigger",
+            detail="trigger_id required when workflow has multiple triggers",
+            status=400,
+        )
+
+    # Build effective envelope with trigger_id for expression resolution
+    effective_envelope = dict(payload.trigger_event_override)
+    if target_trigger:
+        effective_envelope["trigger_id"] = target_trigger.id
+        if not effective_envelope.get("title"):
+            effective_envelope["title"] = target_trigger.ui_meta.get("title", target_trigger.key)
+
+    run = await _create_run_record(
+        user,
+        workflow=workflow,
+        workflow_version=version,
+        spec=spec,
+        inputs=payload.inputs,
+        config_payload=payload.config,
+        source=WorkflowRunSource.MANUAL,
+    )
+
+    try:
+        await workflow_execution_task.kiq(
+            run_id=run.id, user_id=user.id, trigger_envelope=effective_envelope
+        )
+    except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: Catch all enqueue failures
+        logger.exception(
+            "Failed to enqueue run with trigger_event_override",
+            extra={"workflow_id": workflow_id, "run_id": run.run_id}
+        )
+        await WorkflowRun.filter(id=run.id).update(
+            status=WorkflowRunStatus.FAILED,
+            finished_at=_now(),
+            error={"detail": f"Failed to enqueue workflow run: {exc}"},
+        )
+        await run.refresh_from_db()
+        _raise_problem(
+            type_uri=RUN_PROBLEM,
+            title="Failed to enqueue workflow run",
+            detail="An error occurred while queuing the workflow execution.",
+            status=500,
+        )
+
+    logger.info(
+        "Created run with trigger_event_override",
+        extra={
+            "workflow_id": workflow_id,
+            "run_id": run.run_id,
+            "trigger_key": effective_envelope.get("trigger_key"),
+            "trigger_id": effective_envelope.get("trigger_id"),
+        }
+    )
+    return _serialize_run(run)
+
+
+async def _handle_multi_trigger_runs(
+    user: User,
+    *,
+    workflow: Workflow,
+    workflow_id: str,
+    version: WorkflowVersion,
+    spec: WorkflowSpec,
+    payload: api_models.RunFromWorkflowRequest,
+    trigger_specs: list[TriggerSpec],
+) -> api_models.MultiRunResponse:
+    """Create multiple runs, one per trigger with sample event data."""
+    runs = []
+    for trigger_spec in trigger_specs:
+        trigger_envelope = await _generate_sample_trigger_envelope(trigger_spec)
+        if trigger_envelope is None:
+            logger.warning(
+                "Skipping trigger without sample event",
+                extra={"trigger_id": trigger_spec.id, "workflow_id": workflow_id}
+            )
+            continue
+
+        run = await _create_run_record(
+            user,
+            workflow=workflow,
+            workflow_version=version,
+            spec=spec,
+            inputs=payload.inputs,
+            config_payload=payload.config,
+            source=WorkflowRunSource.MANUAL,
+        )
+
+        try:
+            await workflow_execution_task.kiq(
+                run_id=run.id, user_id=user.id, trigger_envelope=trigger_envelope
+            )
+            trigger_title = trigger_spec.ui_meta.get("title", trigger_spec.key)
+            runs.append({"run": run, "trigger_title": trigger_title})
+        except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: Continue processing other triggers
+            logger.exception(
+                "Failed to enqueue trigger-based run",
+                extra={"workflow_id": workflow_id, "run_id": run.run_id, "trigger_id": trigger_spec.id}
+            )
+            await WorkflowRun.filter(id=run.id).update(
+                status=WorkflowRunStatus.FAILED,
+                finished_at=_now(),
+                error={"detail": f"Failed to enqueue workflow run: {exc}"},
+            )
+
+    if not runs:
+        _raise_problem(
+            type_uri=RUN_PROBLEM,
+            title="No valid triggers",
+            detail="Workflow has triggers but none have valid sample events",
+            status=400,
+        )
+
+    logger.info(
+        "Created multiple runs for workflow with triggers",
+        extra={
+            "workflow_id": workflow_id,
+            "run_count": len(runs),
+            "trigger_titles": [r["trigger_title"] for r in runs],
+        }
+    )
+    return api_models.MultiRunResponse(
+        runs=[
+            api_models.RunWithTrigger(**_serialize_run(r["run"]).model_dump(), trigger_title=r["trigger_title"])
+            for r in runs
+        ]
+    )
+
+
+async def _handle_manual_run(
+    user: User,
+    *,
+    workflow: Workflow,
+    workflow_id: str,
+    version: WorkflowVersion,
+    spec: WorkflowSpec,
+    payload: api_models.RunFromWorkflowRequest,
+) -> api_models.RunResponse:
+    """Create a single manual run without trigger data."""
+    run = await _create_run_record(
+        user,
+        workflow=workflow,
+        workflow_version=version,
+        spec=spec,
+        inputs=payload.inputs,
+        config_payload=payload.config,
+    )
+
+    try:
+        await workflow_execution_task.kiq(run_id=run.id, user_id=user.id)
+    except (asyncio.TimeoutError, asyncio.CancelledError, ConnectionError) as exc:
+        logger.exception(
+            "Failed to enqueue workflow task",
+            extra={"workflow_id": workflow_id, "run_id": run.run_id}
+        )
+        await WorkflowRun.filter(id=run.id).update(
+            status=WorkflowRunStatus.FAILED,
+            finished_at=_now(),
+            error={"detail": f"Failed to enqueue workflow run: {exc}"},
+        )
+        await run.refresh_from_db()
+        _raise_problem(
+            type_uri=RUN_PROBLEM,
+            title="Failed to enqueue workflow run",
+            detail="An error occurred while queuing the workflow execution.",
+            status=500,
+        )
+    except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: Catch all Taskiq broker failures
+        logger.exception(
+            "UNEXPECTED: Task enqueue failed",
+            extra={"workflow_id": workflow_id, "run_id": run.run_id}
+        )
+        await WorkflowRun.filter(id=run.id).update(
+            status=WorkflowRunStatus.FAILED,
+            finished_at=_now(),
+            error={"detail": f"Failed to enqueue workflow run: {exc}"},
+        )
+        await run.refresh_from_db()
+        _raise_problem(
+            type_uri=RUN_PROBLEM,
+            title="Failed to enqueue workflow run",
+            detail="An error occurred while queuing the workflow execution.",
+            status=500,
+        )
+
+    return _serialize_run(run)
+
+
+async def run_saved_workflow(
     user: User,
     workflow_id: str,
     payload: api_models.RunFromWorkflowRequest,
@@ -232,8 +471,8 @@ async def run_saved_workflow(  # pylint: disable=too-complex # Reason: Complex w
     automatically creates one run per trigger with sample event data.
     Otherwise, creates a single manual run.
     """
-    # Run limit check moved to UsageLimitMiddleware
     workflow = await _get_workflow(user, workflow_id)
+
     if payload.version is not None:
         version = await WorkflowVersion.filter(
             workflow=workflow,
@@ -248,7 +487,6 @@ async def run_saved_workflow(  # pylint: disable=too-complex # Reason: Complex w
                 status=404,
             )
     else:
-        # Always run latest DRAFT (create from published if needed)
         version = await _get_draft_version(workflow, create_if_missing=True, user=user)
         if not version:
             _raise_problem(
@@ -260,154 +498,45 @@ async def run_saved_workflow(  # pylint: disable=too-complex # Reason: Complex w
 
         # Sync triggers for DRAFT
         spec = WorkflowSpec.model_validate(version.spec)
-        has_triggers = bool(spec.triggers)
-        if has_triggers:
-            # pylint: disable=import-outside-toplevel
+        if spec.triggers:
+            # pylint: disable-next=import-outside-toplevel # Reason: Avoid circular import
             from seer.api.workflows.services.triggers import sync_trigger_subscriptions
             await sync_trigger_subscriptions(user, workflow, spec, skip_validation=True)
 
     spec = WorkflowSpec.model_validate(version.spec)
-
-    # Validate workflow before creating any runs
     await _validate_workflow_spec(user, spec)
+    trigger_specs = spec.triggers or []
 
-    # Read triggers directly from WorkflowSpec
-    trigger_specs = spec.triggers if spec.triggers else []
+    if payload.trigger_event_override:
+        return await _handle_trigger_event_override(
+            user,
+            workflow=workflow,
+            workflow_id=workflow_id,
+            version=version,
+            spec=spec,
+            payload=payload,
+            trigger_specs=trigger_specs,
+        )
 
-    # If triggers exist, create multiple runs (one per trigger)
     if trigger_specs:
-        runs = []
-        for trigger_spec in trigger_specs:
-            # Generate sample trigger envelope
-            trigger_envelope = await _generate_sample_trigger_envelope(trigger_spec)
-            if trigger_envelope is None:
-                logger.warning(
-                    "Skipping trigger without sample event",
-                    extra={
-                        "trigger_id": trigger_spec.id,
-                        "workflow_id": workflow_id,
-                    }
-                )
-                continue
-
-            # Create run record
-            run = await _create_run_record(
-                user,
-                workflow=workflow,
-                workflow_version=version,
-                spec=spec,
-                inputs=payload.inputs,
-                config_payload=payload.config,
-                source=WorkflowRunSource.MANUAL,  # Still manual, but with trigger data
-            )
-
-            # Enqueue with trigger envelope
-            try:
-                await workflow_execution_task.kiq(
-                    run_id=run.id,
-                    user_id=user.id,
-                    trigger_envelope=trigger_envelope
-                )
-
-                # Get trigger title from ui_meta or fallback to key
-                trigger_title = trigger_spec.ui_meta.get("title", trigger_spec.key)
-                runs.append({
-                    "run": run,
-                    "trigger_title": trigger_title,
-                })
-            except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: Catch all task enqueue failures to continue processing other triggers
-                logger.exception(
-                    "Failed to enqueue trigger-based run",
-                    extra={
-                        "workflow_id": workflow_id,
-                        "run_id": run.run_id,
-                        "trigger_id": trigger_spec.id,
-                    }
-                )
-                await WorkflowRun.filter(id=run.id).update(
-                    status=WorkflowRunStatus.FAILED,
-                    finished_at=_now(),
-                    error={"detail": f"Failed to enqueue workflow run: {exc}"},
-                )
-
-        if not runs:
-            _raise_problem(
-                type_uri=RUN_PROBLEM,
-                title="No valid triggers",
-                detail="Workflow has triggers but none have valid sample events",
-                status=400,
-            )
-
-        logger.info(
-            "Created multiple runs for workflow with triggers",
-            extra={
-                "workflow_id": workflow_id,
-                "run_count": len(runs),
-                "trigger_titles": [r["trigger_title"] for r in runs],
-            }
+        return await _handle_multi_trigger_runs(
+            user,
+            workflow=workflow,
+            workflow_id=workflow_id,
+            version=version,
+            spec=spec,
+            payload=payload,
+            trigger_specs=trigger_specs,
         )
 
-        return api_models.MultiRunResponse(
-            runs=[
-                api_models.RunWithTrigger(
-                    **_serialize_run(r["run"]).model_dump(),
-                    trigger_title=r["trigger_title"],
-                )
-                for r in runs
-            ]
-        )
-
-    # EXISTING: No triggers, create single manual run
-    run = await _create_run_record(
+    return await _handle_manual_run(
         user,
         workflow=workflow,
-        workflow_version=version,
+        workflow_id=workflow_id,
+        version=version,
         spec=spec,
-        inputs=payload.inputs,
-        config_payload=payload.config,
+        payload=payload,
     )
-
-    # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with worker.tasks.workflows
-
-    try:
-        await workflow_execution_task.kiq(run_id=run.id, user_id=user.id)
-    except (asyncio.TimeoutError, asyncio.CancelledError, ConnectionError) as exc:
-        logger.exception(
-            "Failed to enqueue workflow task",
-            extra={"workflow_id": workflow_id, "run_id": run.run_id},
-        )
-        await WorkflowRun.filter(id=run.id).update(
-            status=WorkflowRunStatus.FAILED,
-            finished_at=_now(),
-            error={"detail": f"Failed to enqueue workflow run: {exc}"},
-        )
-        await run.refresh_from_db()
-        _raise_problem(
-            type_uri=RUN_PROBLEM,
-            title="Failed to enqueue workflow run",
-            detail="An error occurred while queuing the workflow execution.",
-            status=500,
-        )
-    except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: Catch all Taskiq broker failures to gracefully handle enqueue errors
-        # Unexpected error - taskiq or broker issue
-        logger.exception(
-            "UNEXPECTED: Task enqueue failed",
-            extra={"workflow_id": workflow_id, "run_id": run.run_id},
-        )
-        # Still update run to failed state
-        await WorkflowRun.filter(id=run.id).update(
-            status=WorkflowRunStatus.FAILED,
-            finished_at=_now(),
-            error={"detail": f"Failed to enqueue workflow run: {exc}"},
-        )
-        await run.refresh_from_db()
-        _raise_problem(
-            type_uri=RUN_PROBLEM,
-            title="Failed to enqueue workflow run",
-            detail="An error occurred while queuing the workflow execution.",
-            status=500,
-        )
-    return _serialize_run(run)
 
 
 async def resume_workflow_run(
