@@ -118,9 +118,10 @@ class TriggerSubscriptionTestResponse(BaseModel):
 
 
 class StartListeningResponse(BaseModel):
-    webhook_url: str
-    secret_token: str
+    webhook_url: Optional[str] = None
+    secret_token: Optional[str] = None
     subscription_id: int
+    form_url: Optional[str] = None
 
 
 class PendingEventItem(BaseModel):
@@ -132,6 +133,13 @@ class PendingEventItem(BaseModel):
 class PendingEventsResponse(BaseModel):
     events: List[PendingEventItem] = Field(default_factory=list)
     latest_event_id: Optional[int] = None
+
+
+class SubscriptionEventCountResponse(BaseModel):
+    """Response containing the count of stored events for a subscription."""
+    subscription_id: int
+    event_count: int
+    has_events: bool
 
 
 class ModelDescriptor(BaseModel):
@@ -511,6 +519,7 @@ __all__ = [
     "StartListeningResponse",
     "PendingEventItem",
     "PendingEventsResponse",
+    "SubscriptionEventCountResponse",
     "ModelDescriptor",
     "ModelRegistryResponse",
     "SchemaResponse",
