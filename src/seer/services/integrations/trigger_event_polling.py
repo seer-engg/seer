@@ -1,0 +1,379 @@
+"""
+Polling-based trigger event browsers for Gmail and Discord.
+
+Extracted from trigger_event_browser to keep module sizes manageable (C0302).
+These functions fetch live events from external APIs for trigger event browsing.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+import httpx
+from fastapi import HTTPException
+
+from seer.config import config
+from seer.core.triggers.events import TriggerEventEnvelopeInput, build_event_envelope
+from seer.core.triggers.polling.adapters.gmail_email_received import (
+    GmailEmailReceivedAdapter,
+    MAX_MESSAGES_PER_POLL,
+)
+from seer.core.triggers.polling.adapters.discord_message_received import (
+    DISCORD_API_BASE,
+    DEFAULT_MAX_RESULTS as DISCORD_MAX_RESULTS,
+    _parse_discord_timestamp,
+)
+from seer.database import User
+from seer.logger import get_logger
+from seer.tools.google.gmail.helpers import GMAIL_API_BASE, build_gmail_list_params
+from seer.tools.oauth_manager import get_oauth_token
+
+logger = get_logger(__name__)
+
+
+# =============================================================================
+# Gmail Event Browsing
+# =============================================================================
+
+async def list_gmail_events(
+    user: User,
+    provider_connection_id: int,
+    options,
+    gmail_adapter: GmailEmailReceivedAdapter,
+) -> Dict[str, Any]:
+    """List Gmail emails for browsing."""
+    _, access_token = await get_oauth_token(
+        user, connection_id=str(provider_connection_id)
+    )
+
+    label_ids = (options.filter_params or {}).get("label_ids", ["INBOX"])
+    query = (options.filter_params or {}).get("query", "")
+    page_size = min(options.page_size, MAX_MESSAGES_PER_POLL)
+
+    params = build_gmail_list_params(page_size, label_ids, query)
+    if options.page_token:
+        params["pageToken"] = options.page_token
+
+    headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            list_resp = await client.get(
+                f"{GMAIL_API_BASE}/messages", headers=headers, params=params
+            )
+            if list_resp.status_code >= 400:
+                _handle_gmail_error(list_resp)
+
+            list_json = list_resp.json()
+            messages, next_page_token = list_json.get("messages", []) or [], list_json.get("nextPageToken")
+
+            if not messages:
+                return {
+                    "items": [],
+                    "next_page_token": None,
+                    "trigger_key": options.trigger_key,
+                    "supports_search": True,
+                }
+
+            items: List[Dict[str, Any]] = []
+            for message in messages[:page_size]:
+                msg_id = message.get("id")
+                if not msg_id:
+                    continue
+
+                msg_resp = await client.get(
+                    f"{GMAIL_API_BASE}/messages/{msg_id}",
+                    headers=headers,
+                    params={
+                        "format": "metadata",
+                        "metadataHeaders": ["From", "To", "Subject", "Date"],
+                    },
+                )
+                if msg_resp.status_code >= 400:
+                    logger.warning(
+                        "Failed to fetch message metadata",
+                        extra={"message_id": msg_id, "status": msg_resp.status_code},
+                    )
+                    continue
+
+                items.append(_build_gmail_event_item(
+                    msg_data=msg_resp.json(),
+                    trigger_key=options.trigger_key,
+                    trigger_id=options.trigger_id,
+                    provider_connection_id=provider_connection_id,
+                    gmail_adapter=gmail_adapter,
+                ))
+
+            return {
+                "items": items,
+                "next_page_token": next_page_token,
+                "trigger_key": options.trigger_key,
+                "supports_search": True,
+            }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to list Gmail events")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch Gmail messages: {str(exc)}"
+        ) from exc
+
+
+def _build_gmail_event_item(
+    *,
+    msg_data: Dict[str, Any],
+    trigger_key: str,
+    trigger_id: str,
+    provider_connection_id: int,
+    gmail_adapter: GmailEmailReceivedAdapter,
+) -> Dict[str, Any]:
+    """Build a TriggerEventItem from Gmail message data."""
+    normalized_payload = gmail_adapter._normalize_message(msg_data)  # pylint: disable=protected-access # Reason: Reusing adapter's message normalization
+
+    subject = normalized_payload.get("subject") or "(No subject)"
+    from_info = normalized_payload.get("from", {})
+    from_display = from_info.get("name") or from_info.get("email") or "Unknown"
+    snippet = msg_data.get("snippet", "")
+    internal_date_ms = int(msg_data.get("internalDate") or 0)
+
+    occurred_at = datetime.fromtimestamp(internal_date_ms / 1000, tz=timezone.utc)
+    display_subtitle = occurred_at.strftime("%b %d, %Y %I:%M %p")
+
+    envelope = build_event_envelope(
+        TriggerEventEnvelopeInput(
+            trigger_id=trigger_id,
+            trigger_key=trigger_key,
+            title=f"{subject} - from {from_display}",
+            provider="gmail",
+            provider_connection_id=provider_connection_id,
+            payload=normalized_payload,
+            raw=msg_data,
+            occurred_at=occurred_at,
+        )
+    )
+
+    return {
+        "id": normalized_payload.get("message_id"),
+        "display_title": f"{subject} - from {from_display}",
+        "display_subtitle": display_subtitle,
+        "preview": snippet[:200] if snippet else None,
+        "envelope": envelope,
+        "metadata": {
+            "labels": normalized_payload.get("labels", []),
+            "thread_id": normalized_payload.get("thread_id"),
+        },
+    }
+
+
+def _handle_gmail_error(response: httpx.Response) -> None:
+    """Handle Gmail API errors."""
+    if response.status_code == 401:
+        raise HTTPException(
+            status_code=401,
+            detail="Gmail authentication failed. Please reconnect your Google account.",
+        )
+    if response.status_code == 403:
+        raise HTTPException(
+            status_code=403,
+            detail="Gmail access denied. Please ensure you have granted Gmail permissions.",
+        )
+    if response.status_code == 429:
+        raise HTTPException(
+            status_code=429,
+            detail="Gmail rate limit exceeded. Please try again later.",
+        )
+    raise HTTPException(
+        status_code=response.status_code,
+        detail=f"Gmail API error: {response.text[:200]}",
+    )
+
+
+# =============================================================================
+# Discord Event Browsing
+# =============================================================================
+
+async def list_discord_events(
+    options,
+) -> Dict[str, Any]:
+    """
+    List Discord messages for browsing.
+
+    Discord uses bot token authentication (not OAuth), so provider_connection_id
+    is not used. The channel_id must be provided in filter_params.
+    """
+    bot_token = _get_discord_bot_token()
+    channel_id = (options.filter_params or {}).get("channel_id")
+    guild_id = (options.filter_params or {}).get("guild_id")
+
+    if not channel_id:
+        raise HTTPException(
+            status_code=400,
+            detail="channel_id is required in filter_params for Discord message browsing",
+        )
+
+    page_size = min(options.page_size, DISCORD_MAX_RESULTS)
+
+    try:
+        messages = await _fetch_discord_messages(bot_token, channel_id, page_size)
+
+        if not messages:
+            return {
+                "items": [],
+                "next_page_token": None,
+                "trigger_key": options.trigger_key,
+                "supports_search": False,
+            }
+
+        items: List[Dict[str, Any]] = []
+        for message in messages:
+            items.append(_build_discord_event_item(
+                message=message,
+                guild_id=guild_id,
+                trigger_key=options.trigger_key,
+                trigger_id=options.trigger_id,
+            ))
+
+        oldest_message_id = messages[-1].get("id") if messages else None
+
+        return {
+            "items": items,
+            "next_page_token": oldest_message_id,
+            "trigger_key": options.trigger_key,
+            "supports_search": False,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to list Discord events")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch Discord messages: {str(exc)}"
+        ) from exc
+
+
+async def _fetch_discord_messages(
+    bot_token: str, channel_id: str, max_results: int
+) -> List[Dict[str, Any]]:
+    """Fetch messages from Discord API."""
+    headers = {
+        "Authorization": f"Bot {bot_token}",
+        "Content-Type": "application/json",
+    }
+    params = {"limit": max_results}
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(
+            f"{DISCORD_API_BASE}/channels/{channel_id}/messages",
+            headers=headers,
+            params=params,
+        )
+        _handle_discord_error(resp, channel_id)
+        messages = resp.json()
+
+        if not messages or not isinstance(messages, list):
+            return []
+
+        return messages
+
+
+def _build_discord_event_item(
+    *,
+    message: Dict[str, Any],
+    guild_id: Optional[str],
+    trigger_key: str,
+    trigger_id: str,
+) -> Dict[str, Any]:
+    """Build a TriggerEventItem from Discord message data."""
+    author = message.get("author") or {}
+    content = message.get("content", "")
+    msg_id = message.get("id")
+
+    username = author.get("username", "Unknown")
+    display_title = f"{username}: {content[:80]}{'...' if len(content) > 80 else ''}"
+    if not content:
+        display_title = f"{username}: (attachment or embed)"
+
+    timestamp_str = message.get("timestamp")
+    occurred_at = _parse_discord_timestamp(timestamp_str)
+    if not occurred_at:
+        occurred_at = datetime.now(timezone.utc)
+    display_subtitle = occurred_at.strftime("%b %d, %Y %I:%M %p")
+
+    normalized_payload = {
+        "message_id": msg_id,
+        "channel_id": message.get("channel_id"),
+        "guild_id": guild_id or message.get("guild_id"),
+        "author": {
+            "id": author.get("id"),
+            "username": author.get("username"),
+            "discriminator": author.get("discriminator"),
+            "bot": author.get("bot", False),
+        },
+        "content": content,
+        "timestamp": message.get("timestamp"),
+        "edited_timestamp": message.get("edited_timestamp"),
+        "attachments": message.get("attachments", []),
+        "embeds": message.get("embeds", []),
+    }
+
+    envelope = build_event_envelope(
+        TriggerEventEnvelopeInput(
+            trigger_id=trigger_id,
+            trigger_key=trigger_key,
+            title=f"Discord message from {username}",
+            provider="discord",
+            provider_connection_id=None,
+            payload=normalized_payload,
+            raw=message,
+            occurred_at=occurred_at,
+        )
+    )
+
+    return {
+        "id": msg_id,
+        "display_title": display_title,
+        "display_subtitle": display_subtitle,
+        "preview": content[:200] if content else None,
+        "envelope": envelope,
+        "metadata": {
+            "author_id": author.get("id"),
+            "channel_id": message.get("channel_id"),
+            "guild_id": guild_id or message.get("guild_id"),
+        },
+    }
+
+
+def _get_discord_bot_token() -> str:
+    """Get Discord bot token from config."""
+    if not config.discord_bot_token:
+        raise HTTPException(
+            status_code=500,
+            detail="Discord bot token not configured. Please configure DISCORD_BOT_TOKEN.",
+        )
+    return config.discord_bot_token
+
+
+def _handle_discord_error(response: httpx.Response, channel_id: str) -> None:
+    """Handle Discord API errors."""
+    if response.status_code < 400:
+        return
+    if response.status_code in {401, 403}:
+        raise HTTPException(
+            status_code=response.status_code,
+            detail="Discord authentication error. Please check bot token and permissions.",
+        )
+    if response.status_code == 404:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Discord channel {channel_id} not found or bot doesn't have access.",
+        )
+    if response.status_code == 429:
+        raise HTTPException(
+            status_code=429,
+            detail="Discord rate limit exceeded. Please try again later.",
+        )
+    raise HTTPException(
+        status_code=response.status_code,
+        detail=f"Discord API error: {response.text[:200]}",
+    )

@@ -1,9 +1,9 @@
 """
 Trigger Event Browser for browsing real events from connected accounts.
 
-This service allows users to browse actual trigger events (like Gmail emails)
-from their connected accounts for workflow testing, instead of using hardcoded
-sample data.
+This service allows users to browse actual trigger events (like Gmail emails,
+Discord messages, webhooks, forms) from their connected accounts or stored
+events for workflow testing, instead of using hardcoded sample data.
 """
 from __future__ import annotations
 
@@ -11,18 +11,16 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-import httpx
 from fastapi import HTTPException
 
 from seer.core.triggers.events import TriggerEventEnvelopeInput, build_event_envelope
-from seer.core.triggers.polling.adapters.gmail_email_received import (
-    GmailEmailReceivedAdapter,
-    MAX_MESSAGES_PER_POLL,
-)
-from seer.database import User
+from seer.core.triggers.polling.adapters.gmail_email_received import GmailEmailReceivedAdapter
+from seer.database import User, TriggerEvent, TriggerSubscription
 from seer.logger import get_logger
-from seer.tools.google.gmail.helpers import GMAIL_API_BASE, build_gmail_list_params
-from seer.tools.oauth_manager import get_oauth_token
+from seer.services.integrations.trigger_event_polling import (
+    list_discord_events,
+    list_gmail_events,
+)
 
 logger = get_logger(__name__)
 
@@ -50,20 +48,47 @@ class TriggerEventListOptions:
     filter_params: Optional[Dict[str, Any]] = None  # Trigger-specific filters
 
 
-# Map of trigger keys to their providers
+@dataclass
+class TriggerBrowsingConfig:
+    """Configuration for how a trigger type supports event browsing."""
+
+    provider: str
+    mode: str  # "polling" (live API) or "persisted" (database)
+    supports_search: bool = False
+
+
+# Configuration for trigger event browsing
+TRIGGER_BROWSING_CONFIG: Dict[str, TriggerBrowsingConfig] = {
+    # Polling triggers - fetch live from external APIs
+    "poll.gmail.email_received": TriggerBrowsingConfig("google", "polling", True),
+    "poll.discord.message_received": TriggerBrowsingConfig("discord", "polling", False),
+    # Persisted triggers - query from TriggerEvent database table
+    "webhook.generic": TriggerBrowsingConfig("generic", "persisted", False),
+    "webhook.supabase.db_changes": TriggerBrowsingConfig("supabase", "persisted", False),
+    "form.hosted": TriggerBrowsingConfig("form", "persisted", False),
+    "form.hitl": TriggerBrowsingConfig("form", "persisted", False),
+}
+
+# Map of trigger keys to their providers (for backward compatibility)
 TRIGGER_PROVIDER_MAP: Dict[str, str] = {
-    "poll.gmail.email_received": "google",
-    "poll.discord.message_received": "discord",
+    key: cfg.provider for key, cfg in TRIGGER_BROWSING_CONFIG.items()
 }
 
 
 class TriggerEventBrowser:
     """
-    Browse real trigger events from connected accounts.
+    Browse real trigger events from connected accounts or stored events.
 
-    Supports:
-    - Gmail emails (poll.gmail.email_received)
-    - Discord messages (poll.discord.message_received) - future
+    Supports two browsing modes:
+    1. Polling triggers - fetch live events from external APIs:
+       - Gmail emails (poll.gmail.email_received)
+       - Discord messages (poll.discord.message_received)
+
+    2. Persisted triggers - query stored events from TriggerEvent table:
+       - Generic webhooks (webhook.generic)
+       - Supabase DB changes (webhook.supabase.db_changes)
+       - Hosted forms (form.hosted)
+       - HITL forms (form.hitl)
 
     Uses existing PollAdapter logic to normalize event payloads.
     """
@@ -84,14 +109,16 @@ class TriggerEventBrowser:
 
     async def list_events(
         self,
-        provider_connection_id: int,
-        options: TriggerEventListOptions,
+        provider_connection_id: Optional[int] = None,
+        subscription_id: Optional[int] = None,
+        options: Optional[TriggerEventListOptions] = None,
     ) -> Dict[str, Any]:
         """
-        List trigger events from a connected account.
+        List trigger events from a connected account or database.
 
         Args:
-            provider_connection_id: ID of the OAuthConnection to use
+            provider_connection_id: ID of the OAuthConnection to use (for polling triggers)
+            subscription_id: ID of the TriggerSubscription (for persisted triggers)
             options: Listing options (trigger_key, pagination, filters)
 
         Returns:
@@ -102,177 +129,221 @@ class TriggerEventBrowser:
                 "supports_search": bool,
             }
         """
+        if options is None:
+            raise ValueError("options is required")
+
         trigger_key = options.trigger_key
+        browsing_config = TRIGGER_BROWSING_CONFIG.get(trigger_key)
 
-        if trigger_key == "poll.gmail.email_received":
-            return await self._list_gmail_events(provider_connection_id, options)
-        # Add more trigger types here as needed
-        # elif trigger_key == "poll.discord.message_received":
-        #     return await self._list_discord_events(provider_connection_id, options)
+        if browsing_config is None:
+            raise ValueError(f"Trigger key '{trigger_key}' does not support event browsing")
 
-        raise ValueError(f"Trigger key '{trigger_key}' does not support event browsing")
+        # Route based on browsing mode
+        if browsing_config.mode == "polling":
+            if provider_connection_id is None:
+                raise ValueError(f"provider_connection_id is required for polling trigger '{trigger_key}'")
+            return await self._dispatch_polling_trigger(trigger_key, provider_connection_id, options)
 
-    async def _list_gmail_events(
+        if browsing_config.mode == "persisted":
+            if subscription_id is None:
+                raise ValueError(f"subscription_id is required for persisted trigger '{trigger_key}'")
+            return await self._list_persisted_events(subscription_id, options)
+
+        raise ValueError(f"Unknown browsing mode for trigger '{trigger_key}'")
+
+    async def _dispatch_polling_trigger(
         self,
+        trigger_key: str,
         provider_connection_id: int,
         options: TriggerEventListOptions,
     ) -> Dict[str, Any]:
-        """List Gmail emails for browsing."""
-        # Get OAuth token
-        _, access_token = await get_oauth_token(
-            self.user, connection_id=str(provider_connection_id)
-        )
+        """Dispatch to the correct polling browser based on trigger key."""
+        if trigger_key == "poll.gmail.email_received":
+            return await list_gmail_events(self.user, provider_connection_id, options, self._gmail_adapter)
+        if trigger_key == "poll.discord.message_received":
+            return await list_discord_events(options)
+        raise ValueError(f"Polling trigger '{trigger_key}' is not yet implemented")
 
-        # Parse filter params (inline to reduce local variable count)
-        label_ids = (options.filter_params or {}).get("label_ids", ["INBOX"])
-        query = (options.filter_params or {}).get("query", "")
-        page_size = min(options.page_size, MAX_MESSAGES_PER_POLL)
+    # =========================================================================
+    # Persisted Events - Query from TriggerEvent database table
+    # =========================================================================
 
-        # Build Gmail API params
-        params = build_gmail_list_params(page_size, label_ids, query)
-        if options.page_token:
-            params["pageToken"] = options.page_token
-
-        headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
-
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                # List messages
-                list_resp = await client.get(
-                    f"{GMAIL_API_BASE}/messages", headers=headers, params=params
-                )
-                if list_resp.status_code >= 400:
-                    self._handle_gmail_error(list_resp)
-
-                list_json = list_resp.json()
-                messages, next_page_token = list_json.get("messages", []) or [], list_json.get("nextPageToken")
-
-                if not messages:
-                    return {
-                        "items": [],
-                        "next_page_token": None,
-                        "trigger_key": options.trigger_key,
-                        "supports_search": True,
-                    }
-
-                # Fetch metadata for each message
-                items: List[Dict[str, Any]] = []
-                for message in messages[:page_size]:
-                    msg_id = message.get("id")
-                    if not msg_id:
-                        continue
-
-                    msg_resp = await client.get(
-                        f"{GMAIL_API_BASE}/messages/{msg_id}",
-                        headers=headers,
-                        params={
-                            "format": "metadata",
-                            "metadataHeaders": ["From", "To", "Subject", "Date"],
-                        },
-                    )
-                    if msg_resp.status_code >= 400:
-                        logger.warning(
-                            "Failed to fetch message metadata",
-                            extra={"message_id": msg_id, "status": msg_resp.status_code},
-                        )
-                        continue
-
-                    items.append(self._build_gmail_event_item(
-                        msg_data=msg_resp.json(),
-                        trigger_key=options.trigger_key,
-                        trigger_id=options.trigger_id,
-                        provider_connection_id=provider_connection_id,
-                    ))
-
-                return {
-                    "items": items,
-                    "next_page_token": next_page_token,
-                    "trigger_key": options.trigger_key,
-                    "supports_search": True,
-                }
-
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.exception("Failed to list Gmail events")
-            raise HTTPException(
-                status_code=500, detail=f"Failed to fetch Gmail messages: {str(exc)}"
-            ) from exc
-
-    def _build_gmail_event_item(
+    async def _list_persisted_events(
         self,
-        msg_data: Dict[str, Any],
-        trigger_key: str,
-        trigger_id: str,
-        provider_connection_id: int,
+        subscription_id: int,
+        options: TriggerEventListOptions,
     ) -> Dict[str, Any]:
-        """Build a TriggerEventItem from Gmail message data."""
-        # Reuse adapter's normalization logic
-        normalized_payload = self._gmail_adapter._normalize_message(msg_data)  # pylint: disable=protected-access # Reason: Reusing adapter's message normalization
+        """
+        List persisted trigger events from the database.
 
-        # Extract display fields
-        subject = normalized_payload.get("subject") or "(No subject)"
-        from_info = normalized_payload.get("from", {})
-        from_display = from_info.get("name") or from_info.get("email") or "Unknown"
-        snippet = msg_data.get("snippet", "")
-        internal_date_ms = int(msg_data.get("internalDate") or 0)
-
-        # Format timestamp
-        occurred_at = datetime.fromtimestamp(internal_date_ms / 1000, tz=timezone.utc)
-        display_subtitle = occurred_at.strftime("%b %d, %Y %I:%M %p")
-
-        # Build full trigger envelope
-        envelope = build_event_envelope(
-            TriggerEventEnvelopeInput(
-                trigger_id=trigger_id,
-                trigger_key=trigger_key,
-                title=f"{subject} - from {from_display}",
-                provider="gmail",
-                provider_connection_id=provider_connection_id,
-                payload=normalized_payload,
-                raw=msg_data,
-                occurred_at=occurred_at,
-            )
+        Used for webhooks, forms, and other triggers that store events in the
+        TriggerEvent table rather than fetching from external APIs.
+        """
+        # Verify subscription exists and belongs to user
+        subscription = await TriggerSubscription.get_or_none(
+            id=subscription_id, user=self.user
         )
+        if not subscription:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Subscription {subscription_id} not found",
+            )
+
+        page_size = min(options.page_size, 50)
+
+        # Parse offset from page_token
+        offset = 0
+        if options.page_token:
+            try:
+                offset = int(options.page_token)
+            except ValueError:
+                offset = 0
+
+        # Query events
+        events = await TriggerEvent.filter(
+            subscription_id=subscription_id
+        ).order_by("-received_at").offset(offset).limit(page_size + 1)
+
+        # Check if there are more
+        has_more = len(events) > page_size
+        events = events[:page_size]
+
+        # Build items
+        items: List[Dict[str, Any]] = []
+        for event in events:
+            items.append(self._build_persisted_event_item(
+                event=event,
+                trigger_key=options.trigger_key,
+                trigger_id=options.trigger_id,
+            ))
+
+        # Calculate next_page_token
+        next_page_token = str(offset + page_size) if has_more else None
 
         return {
-            "id": normalized_payload.get("message_id"),
-            "display_title": f"{subject} - from {from_display}",
-            "display_subtitle": display_subtitle,
-            "preview": snippet[:200] if snippet else None,
-            "envelope": envelope,
-            "metadata": {
-                "labels": normalized_payload.get("labels", []),
-                "thread_id": normalized_payload.get("thread_id"),
-            },
+            "items": items,
+            "next_page_token": next_page_token,
+            "trigger_key": options.trigger_key,
+            "supports_search": False,
         }
 
-    def _handle_gmail_error(self, response: httpx.Response) -> None:
-        """Handle Gmail API errors."""
-        if response.status_code == 401:
-            raise HTTPException(
-                status_code=401,
-                detail="Gmail authentication failed. Please reconnect your Google account.",
-            )
-        if response.status_code == 403:
-            raise HTTPException(
-                status_code=403,
-                detail="Gmail access denied. Please ensure you have granted Gmail permissions.",
-            )
-        if response.status_code == 429:
-            raise HTTPException(
-                status_code=429,
-                detail="Gmail rate limit exceeded. Please try again later.",
-            )
-        raise HTTPException(
-            status_code=response.status_code,
-            detail=f"Gmail API error: {response.text[:200]}",
+    def _build_persisted_event_item(
+        self,
+        event: TriggerEvent,
+        trigger_key: str,
+        trigger_id: str,
+    ) -> Dict[str, Any]:
+        """Build a TriggerEventItem from a persisted TriggerEvent."""
+        event_data = event.event or {}
+
+        # Determine display based on trigger type
+        if trigger_key.startswith("webhook."):
+            display_title, preview, provider = _extract_webhook_display(event_data, trigger_key)
+        elif trigger_key.startswith("form."):
+            display_title, preview, provider = _extract_form_display(event_data, trigger_key)
+        else:
+            display_title = f"Event #{event.id}"
+            preview = str(event_data)[:200] if event_data else None
+            provider = "generic"
+
+        return _build_persisted_event_result(
+            event=event,
+            display_title=display_title,
+            preview=preview,
+            trigger_key=trigger_key,
+            trigger_id=trigger_id,
+            provider=provider,
         )
+
+
+def _extract_webhook_display(event_data: Dict[str, Any], trigger_key: str) -> tuple[str, Optional[str], str]:
+    """Extract display title and preview for webhook events."""
+    display_title = "Webhook Event"
+    preview = None
+
+    if "type" in event_data:
+        display_title = f"Webhook: {event_data['type']}"
+    elif "event" in event_data:
+        display_title = f"Webhook: {event_data['event']}"
+    elif "action" in event_data:
+        display_title = f"Webhook: {event_data['action']}"
+
+    if trigger_key == "webhook.supabase.db_changes":
+        table = event_data.get("table", "")
+        op_type = event_data.get("type", "")
+        display_title = f"Supabase: {op_type} on {table}" if table else f"Supabase: {op_type}"
+        record = event_data.get("record", {})
+        if record:
+            preview = str(record)[:200]
+
+    return display_title, preview, "webhook"
+
+
+def _extract_form_display(event_data: Dict[str, Any], trigger_key: str) -> tuple[str, Optional[str], str]:
+    """Extract display title and preview for form events."""
+    display_title = "Form Submission"
+    preview = None
+
+    if trigger_key == "form.hitl":
+        display_title = "HITL Response"
+        response = event_data.get("response", event_data.get("answer", ""))
+        if response:
+            preview = str(response)[:200]
+    else:
+        form_fields = list(event_data.keys())
+        if form_fields:
+            first_field = form_fields[0]
+            first_value = str(event_data[first_field])[:50]
+            display_title = f"Form: {first_field}={first_value}..."
+            preview = str(event_data)[:200]
+
+    return display_title, preview, "form"
+
+
+def _build_persisted_event_result(
+    *,
+    event: TriggerEvent,
+    display_title: str,
+    preview: Optional[str],
+    trigger_key: str,
+    trigger_id: str,
+    provider: str,
+) -> Dict[str, Any]:
+    """Build a standard event result dict with envelope for a persisted event."""
+    received_at = event.received_at or datetime.now(timezone.utc)
+    display_subtitle = received_at.strftime("%b %d, %Y %I:%M %p")
+
+    envelope = build_event_envelope(
+        TriggerEventEnvelopeInput(
+            trigger_id=trigger_id,
+            trigger_key=trigger_key,
+            title=display_title,
+            provider=provider,
+            provider_connection_id=None,
+            payload=event.event or {},
+            raw=event.raw_payload or {},
+            occurred_at=event.occurred_at or received_at,
+        )
+    )
+
+    return {
+        "id": str(event.id),
+        "display_title": display_title,
+        "display_subtitle": display_subtitle,
+        "preview": preview,
+        "envelope": envelope,
+        "metadata": {
+            "event_id": event.id,
+            "received_at": received_at.isoformat(),
+        },
+    }
 
 
 __all__ = [
     "TriggerEventBrowser",
     "TriggerEventItem",
     "TriggerEventListOptions",
+    "TriggerBrowsingConfig",
+    "TRIGGER_BROWSING_CONFIG",
     "TRIGGER_PROVIDER_MAP",
 ]
