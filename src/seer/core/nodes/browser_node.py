@@ -42,6 +42,77 @@ class BrowserNodeType(BaseNodeType):
     def model_class(self) -> type["NodeBase"]:
         return BrowserNode
 
+    async def _check_credit_limit(self, context: Any) -> None:
+        """Check credit limit before browser execution."""
+        if not context or not context.user:
+            return
+
+        from seer.observability.credit_gate import check_credit_limit  # pylint: disable=import-outside-toplevel  # Reason: Late import for optional feature
+
+        try:
+            await check_credit_limit(context.user)
+        except Exception as exc:  # pylint: disable=broad-exception-caught  # Reason: Log and continue if credit check fails (except CreditLimitExceeded)
+            if exc.__class__.__name__ == "CreditLimitExceeded":
+                raise
+            logger.error("Credit limit check failed: %s", exc)
+
+    async def _track_usage_async(self, usage_metadata: Dict[str, Any], context: Any, node_id: str) -> None:
+        """Track browser LLM usage via centralized CostTracker."""
+        if not context or not context.user:
+            logger.warning("Cannot track browser LLM usage: no user context")
+            return
+
+        from seer.observability.cost_tracking import CostTracker  # pylint: disable=import-outside-toplevel  # Reason: Late import for optional feature
+
+        try:
+            await CostTracker.track_and_enforce_cap(
+                usage_metadata=usage_metadata,
+                context=context,
+                operation="browser_execution",
+                extra_metadata={
+                    "node_id": node_id,
+                    "steps_taken": usage_metadata.get("steps_taken", 0),
+                    "aggregated": True,
+                },
+            )
+        except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Log error without crashing workflow
+            if e.__class__.__name__ == "RunCostCapExceeded":
+                raise
+            logger.error("Failed to track browser LLM usage: %s", str(e), exc_info=True)
+
+    @staticmethod
+    def _get_extraction_schema(node: BrowserNode, type_schemas: Any) -> Any:
+        """Get extraction schema if expect_outputs is specified with JSON mode."""
+        if not (node.expect_outputs and node.expect_outputs.mode == OutputMode.json):
+            return None
+        full_schema = type_schemas.get(node.id)
+        if not full_schema:
+            return None
+        return full_schema.get("properties", {}).get("extracted_data")
+
+    @staticmethod
+    def _get_screenshot_context(node: BrowserNode, runtime_context: Any) -> tuple:
+        """Get file system context for screenshot saving."""
+        if not (node.save_screenshots and runtime_context):
+            return None, None, None
+        file_system = runtime_context.file_system if runtime_context.has_file_system else None
+        workflow_run_id = runtime_context.workflow_run_id
+        user_id = str(runtime_context.user.id) if runtime_context.user else None
+        return file_system, workflow_run_id, user_id
+
+    @staticmethod
+    def _validate_extracted_data(node: BrowserNode, result: Dict[str, Any], type_schemas: Any) -> None:
+        """Validate structured output against expect_outputs schema if applicable."""
+        if not (node.expect_outputs and node.expect_outputs.mode == OutputMode.json):
+            return
+        from seer.core.runtime.validate_output import validate_against_schema  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+        full_schema = type_schemas.get(node.id)
+        if not full_schema:
+            return
+        extracted_schema = full_schema.get("properties", {}).get("extracted_data")
+        if extracted_schema:
+            validate_against_schema(extracted_schema, result.get("extracted_data", {}), schema_id=f"{node.id}.extracted_data")
+
     async def execute_async(  # pylint: disable=too-many-locals  # Reason: Browser automation requires many context variables
         self,
         node: BrowserNode,  # type: ignore[override]
@@ -49,17 +120,21 @@ class BrowserNodeType(BaseNodeType):
         services: "RuntimeServices",
     ) -> Dict[str, Any]:
         """
-        Execute browser automation node using BrowserUse Agent.
+        Execute browser automation node with credit checking and usage tracking.
 
         Supports:
+        - Pre-execution credit limit check
         - Structured output via expect_outputs with extraction_schema
         - Screenshot saving to S3 when save_screenshots=True
+        - LLM usage tracking via CostTracker
         """
         # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
         from seer.services.browser import BrowserService
         from seer.core.expr.evaluator import EvaluationContext, evaluate_value
         from seer.core.runtime.state import INTERNAL_STATE_PREFIX
-        from seer.core.runtime.validate_output import validate_against_schema
+
+        # Check credit limit before execution
+        await self._check_credit_limit(ctx.runtime_context)
 
         # Build eval context
         visible_state = {k: v for k, v in ctx.state.items() if not k.startswith(INTERNAL_STATE_PREFIX)}
@@ -70,35 +145,18 @@ class BrowserNodeType(BaseNodeType):
             trigger=ctx.trigger,
         )
 
-        # Capture inputs
+        # Capture inputs and evaluate task expression
         inputs = self._evaluate_inputs(node, eval_ctx)
-
-        # Evaluate task expression
         task = evaluate_value(eval_ctx, node.task) if "${" in node.task else node.task
 
-        # Get extraction schema if expect_outputs is specified with JSON mode
+        # Resolve pre-execution config via helpers
         type_schemas = services.type_env.as_dict()
-        extraction_schema = None
-        if node.expect_outputs and node.expect_outputs.mode == OutputMode.json:
-            full_schema = type_schemas.get(node.id)
-            if full_schema:
-                extraction_schema = full_schema.get("properties", {}).get("extracted_data")
-
-        # Get file system context for screenshot saving
-        file_system = None
-        workflow_run_id = None
-        user_id = None
-        if node.save_screenshots and ctx.runtime_context:
-            if ctx.runtime_context.has_file_system:
-                file_system = ctx.runtime_context.file_system
-            workflow_run_id = ctx.runtime_context.workflow_run_id
-            user_id = str(ctx.runtime_context.user.id) if ctx.runtime_context.user else None
+        extraction_schema = self._get_extraction_schema(node, type_schemas)
+        file_system, workflow_run_id, user_id = self._get_screenshot_context(node, ctx.runtime_context)
 
         # Execute browser task
-        service = BrowserService.instance()
-
         try:
-            result = await service.execute_task(
+            result = await BrowserService.instance().execute_task(
                 user=ctx.runtime_context.user if ctx.runtime_context else None,
                 task=task,
                 inputs=inputs,
@@ -126,20 +184,29 @@ class BrowserNodeType(BaseNodeType):
             ctx.state.update(error_trace)  # type: ignore[arg-type]
             raise ExecutionError(f"Browser task failed: {exc}", trace_data=error_trace) from exc
 
+        # Track LLM usage if available
+        usage_metadata = result.pop("usage", None)
+        if usage_metadata and ctx.runtime_context:
+            await self._track_usage_async(usage_metadata, ctx.runtime_context, node.id)
+
         # Validate structured output
-        if node.expect_outputs and node.expect_outputs.mode == OutputMode.json:
-            full_schema = type_schemas.get(node.id)
-            if full_schema:
-                extracted_schema = full_schema.get("properties", {}).get("extracted_data")
-                if extracted_schema:
-                    validate_against_schema(extracted_schema, result.get("extracted_data", {}), schema_id=f"{node.id}.extracted_data")
+        self._validate_extracted_data(node, result, type_schemas)
 
-        # Prepare output
-        output = {node.id: result}
+        # Build usage trace
+        usage_trace = {}
+        if usage_metadata:
+            usage_trace = {
+                "model": usage_metadata.get("model", "moonshotai/kimi-k2.5"),
+                "input_tokens": usage_metadata.get("input_tokens", 0),
+                "output_tokens": usage_metadata.get("output_tokens", 0),
+                "reasoning_tokens": usage_metadata.get("reasoning_tokens", 0),
+                "total_tokens": usage_metadata.get("total_tokens", 0),
+            }
 
-        # Store trace data (loop-aware key for nested loop support)
+        # Assemble output with trace data
+        output: Dict[str, Any] = {node.id: result}
         trace_key = get_trace_key(node.id, ctx.state, ctx.loop_body_map or {}, ctx.nested_loop_parents or {})
-        output[trace_key] = {
+        trace_data: Dict[str, Any] = {
             "node_id": node.id,
             "node_type": "browser",
             "task": task,
@@ -148,7 +215,9 @@ class BrowserNodeType(BaseNodeType):
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "status": "succeeded" if result.get("success") else "failed",
         }
-
+        if usage_trace:
+            trace_data["usage"] = usage_trace
+        output[trace_key] = trace_data
         return output
 
     def _evaluate_inputs(self, node: BrowserNode, ctx: Any) -> Dict[str, Any]:

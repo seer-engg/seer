@@ -188,6 +188,7 @@ class BrowserService:
             llm=llm,
             browser=browser_use_browser,
             output_model_schema=output_model,
+            calculate_cost=True,
         )
 
         return await asyncio.wait_for(
@@ -245,6 +246,8 @@ class BrowserService:
                     task, inputs, extraction_schema, max_steps, timeout_seconds
                 )
 
+                usage_metadata = self._extract_usage_metadata(history)
+
                 return {
                     "success": True,
                     "result": str(history) if history else "",
@@ -257,14 +260,19 @@ class BrowserService:
                         workflow_run_id=workflow_run_id,
                         user=user,
                     ),
+                    "usage": usage_metadata,
                 }
 
             except asyncio.TimeoutError:
                 logger.warning(f"Browser task timed out after {timeout_seconds}s")
-                return self._build_error_result(f"Task timed out after {timeout_seconds} seconds")
+                result = self._build_error_result(f"Task timed out after {timeout_seconds} seconds")
+                result["usage"] = None
+                return result
             except Exception as e:
                 logger.error(f"Browser task failed: {e}")
-                return self._build_error_result(f"Task failed: {str(e)}")
+                result = self._build_error_result(f"Task failed: {str(e)}")
+                result["usage"] = None
+                return result
             finally:
                 await browser.close()
 
@@ -289,6 +297,42 @@ class BrowserService:
             base_url="https://openrouter.ai/api/v1",
             temperature=0,
         )
+
+    @staticmethod
+    def _extract_usage_metadata(history: Any) -> Optional[Dict[str, Any]]:
+        """
+        Extract LLM usage metadata from browser_use agent history.
+
+        Converts browser_use's UsageSummary (aggregated across all agent steps)
+        to the standard usage_metadata dict format for cost tracking.
+
+        Args:
+            history: AgentHistoryList from browser_use agent.run()
+
+        Returns:
+            Usage metadata dict, or None if usage unavailable.
+        """
+        try:
+            if not hasattr(history, "usage") or history.usage is None:
+                logger.debug("No usage data available from browser agent history")
+                return None
+
+            usage = history.usage
+            if usage.total_tokens == 0:
+                logger.debug("Browser agent reported zero token usage")
+                return None
+
+            return {
+                "model": "moonshotai/kimi-k2.5",
+                "input_tokens": usage.total_prompt_tokens,
+                "output_tokens": usage.total_completion_tokens,
+                "reasoning_tokens": 0,
+                "total_tokens": usage.total_tokens,
+                "steps_taken": usage.entry_count,
+            }
+        except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Usage extraction must not break workflow
+            logger.warning(f"Failed to extract usage metadata from browser history: {e}")
+            return None
 
     def _enhance_task(self, task: str, inputs: Dict[str, Any]) -> str:
         """
