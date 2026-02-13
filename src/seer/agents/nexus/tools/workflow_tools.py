@@ -357,33 +357,3 @@ async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # 
         response["summary"] = summary
 
     return json.dumps(response, indent=2)
-
-
-@tool
-async def get_workflow_template(query: str) -> str:
-    """
-    Retrieve a workflow template by name or tags to use as a starting point.
-
-    Use this when you identify that the user's request matches a common pattern.
-    For example, if user wants "create gmail draft when supabase signup", search
-    for templates with tags like "supabase", "gmail", "welcome".
-
-    Args:
-        query: Template name or tag to search for (e.g., "supabase gmail", "welcome", "slack notification")
-
-    Returns:
-        JSON with matching template(s) including full spec that can be customized
-    """
-    # Import here to avoid circular imports at module load time
-    from seer.tools.template_shared import search_templates  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
-
-    try:
-        result = search_templates(query)
-        return json.dumps(result, indent=2)
-    except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Return friendly JSON error
-        logger.exception("Error retrieving template: %s", e)
-        return json.dumps({
-            "query": query,
-            "matches": [],
-            "error": str(e)
-        })
