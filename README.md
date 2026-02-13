@@ -2,12 +2,12 @@
 
 [![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/seer-engg/seer/blob/main/LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/seer-engg/seer?style=social)](https://github.com/seer-engg/seer/stargazers)
-[![Documentation](https://img.shields.io/badge/docs-docs.getseer.dev-blue)](https://docs.getseer.dev)
+[![DeepWiki](https://img.shields.io/badge/docs-DeepWiki-blue)](https://deepwiki.com/seer-engg/seer)
 [![Discord](https://img.shields.io/badge/discord-join-7289DA?logo=discord&logoColor=white)](https://discord.gg/NuYsDdhJ)
 [![Twitter Follow](https://img.shields.io/twitter/follow/get_seer?style=social)](https://x.com/get_seer)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-get--seer-0077B5?logo=linkedin)](https://www.linkedin.com/company/get-seer)
 
-Seer is a **open-source workflow builder with built-in oversight and cost controls** for creating and executing automated workflows with integrated tools and services.
+**Open-source workflow builder with cost controls and human oversight.** Build AI automations with tools like Gmail, GitHub, and Supabase - with built-in spend caps and approval gates.
 
 ## Quick Start (Docker)
 
@@ -49,7 +49,7 @@ Your browser will automatically open and connect the cloud frontend to your loca
 - `src/seer/agents/` – agent orchestration (LangGraph-based workflow agent).
 - `src/seer/database/` – Tortoise ORM models/config; migrations live in `/migrations`.
 - `src/seer/analytics/`, `src/seer/observability/`, `src/seer/utilities/` – shared instrumentation and helpers.
-- `documentation/` – docs site assets; `scripts/` – maintenance helpers; `tests/` – automated tests.
+- `scripts/` – maintenance helpers; `tests/` – automated tests.
 
 ## Configuration
 
@@ -67,86 +67,44 @@ TAVILY_API_KEY=...
 
 Docker automatically configures `DATABASE_URL` and `REDIS_URL`.
 
-Helpful commands:
-- Start everything: `docker compose up`
-- Follow logs: `docker compose logs -f`
-- Stop services: `docker compose down`
-- Run API locally: `uv run uvicorn seer.api.main:app --reload --port 8000`
-- Run worker locally: `uv run taskiq worker seer.worker.broker:broker`
-- Tests: `uv run pytest`
-
-## Self-Hosted Setup: Migrations
-
-> Migrations do NOT run automatically. Run them manually when pulling new code.
-
-### Running Migrations (Docker)
-
-After pulling latest changes:
-
+**Commands:**
 ```bash
-docker compose exec api uv run aerich upgrade
+docker compose up                # Start all services
+docker compose logs -f           # Follow logs
+uv run pytest                    # Run tests
 ```
 
-### Cloud Deployments (Railway)
+## Migrations
 
-Migrations run automatically before deployment via Railway's `preDeployCommand`.
-No manual action needed for production.
+> Run migrations manually after pulling updates (Railway auto-runs them).
 
-### Non-Docker Development
-
-If not using Docker, run migrations directly:
 ```bash
+# Docker
+docker compose exec api uv run aerich upgrade
+
+# Local
 uv run aerich upgrade
 ```
 
-### Key Features
+### Why Seer?
 
-**🛠️ Visual Workflow Builder**
-- Drag-and-drop interface for creating automation workflows
-- Visual editor with custom blocks and integrations
-- Real-time workflow validation and execution
+**💰 Cost Controls** - Per-workflow spend caps and token limits prevent runaway AI expenses
 
-**💰 Cost Governance**
-- Built-in spend caps and token limits per workflow
-- Budget controls to prevent runaway AI expenses
-- Transparent cost tracking and reporting
-- Per-workflow and account-level spending limits
+**👁️ Human Oversight** - Approval gates for critical operations; complete audit trails
 
-**👁️ Execution Transparency**
-- Complete run history for every workflow execution
-- Detailed tracing with timing and outputs
-- Human oversight checkpoints for critical decisions
-- Audit trails and execution logs
+**🔗 Powerful Integrations** - Gmail, GitHub, Supabase, PostgreSQL with minimal permissions
 
-**🤖 AI-Assisted Automation**
-- Chat interface for workflow design and debugging
-- AI suggestions for workflow improvements
-- Intelligent error handling and recovery
+**🤖 AI-Native** - Chat interface for workflow design; intelligent error handling
 
-**🔗 Rich Integrations**
-- **Google Workspace**: Gmail, Drive, Sheets with minimal permissions
-- **GitHub**: Repository management, issues, PRs
-- **Web Tools**: Search, content fetching, APIs
-- **Databases**: PostgreSQL with approval-based write controls
-
-**🔒 Self-Hostable**
-- Self-hosted or cloud deployment options
-- Minimal permissions approach (read-only first)
-- OAuth-based authentication (Clerk integration)
-- Role-based access control
+**🔒 Self-Hostable** - Deploy anywhere; full control over your data
 
 ### Documentation
 
-📚 **[Complete Documentation](https://docs.getseer.dev)** - Full docs site with guides, API reference, and examples
+📚 **[Complete Documentation](https://deepwiki.com/seer-engg/seer)** - Comprehensive guides, architecture, and examples on DeepWiki
 
 - [Quick Start](#quick-start-docker) - Get running in 60 seconds
-- [Architecture](https://docs.getseer.dev) - Backend overview and concepts
 - [Worker Setup](src/seer/worker/README.md) - Background task worker configuration
-- [Integrations](https://docs.getseer.dev/integrations/SUPABASE) - Google, GitHub, Supabase setup
-- [Advanced Features](https://docs.getseer.dev/advanced/TRIGGERS) - Triggers, proposals, and more
-- [Configuration Reference](https://docs.getseer.dev/advanced/CONFIGURATION) - Complete configuration options
 
 ### License
 
-Seer is open source under the MIT license. Enterprise features (if any exist)
-reside in the `ee/` directory and are licensed separately. See LICENSE for details.
+MIT License - 100% open source. See [LICENSE](LICENSE).

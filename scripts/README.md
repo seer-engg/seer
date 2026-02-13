@@ -1,83 +1,43 @@
-> **[← Back to Documentation Index](../docs/README.md)**
+> # Seer Utility Scripts
 
-# Seer Utility Scripts
-
-This directory contains utility scripts for debugging, deployment, and maintenance.
+Maintenance and debugging scripts for Seer.
 
 ## Available Scripts
 
-### inspect_checkpoint_blob.py
+### `inspect_checkpoint_blob.py`
+Debug LangGraph checkpoint state and trace persistence.
 
-**Purpose**: Diagnostic tool for inspecting LangGraph checkpoint data structures
-
-**Usage**:
 ```bash
-python scripts/inspect_checkpoint_blob.py <thread_id>
+uv run python scripts/inspect_checkpoint_blob.py <thread_id>
 ```
 
-**Example**:
+### `lint-migrations.py`
+Lint Aerich migrations for dangerous operations (runs in pre-commit).
+
 ```bash
-python scripts/inspect_checkpoint_blob.py run_7
+uv run python scripts/lint-migrations.py
 ```
 
-**What it does**:
-- Inspects checkpoint channel_values and full checkpoint structure
-- Searches for trace keys in checkpoints
-- Shows channel versions, metadata, and pending writes
-- Useful for debugging checkpointer state and trace key persistence
+### `railway-migrate.sh`
+Apply database migrations on Railway deployments.
 
-**When to use**:
-- Debugging workflow execution state
-- Investigating checkpoint persistence issues
-- Understanding LangGraph state structure
-- Troubleshooting agent conversation history
-
----
-
-### railway-migrate.sh
-
-**Purpose**: Runs database migrations on Railway deployments
-
-**Usage**:
 ```bash
 ./scripts/railway-migrate.sh
 ```
 
-**What it does**:
-- Executes `aerich upgrade` to apply pending database migrations
-- Used during Railway deployment initialization
-- Ensures database schema is up to date
+### `ensure_stripe_catalog.py`
+Create/reactivate Stripe products and prices for subscription tiers.
 
-**When to use**:
-- During Railway deployment setup
-- When manually applying migrations to cloud deployments
-- After database schema changes
-
----
-
-### ensure_stripe_catalog.py
-
-**Purpose**: Ensure Stripe products and prices exist for all subscription tiers
-
-**Usage**:
 ```bash
-python scripts/ensure_stripe_catalog.py
+uv run python scripts/ensure_stripe_catalog.py
 ```
 
-**What it does**:
-- Creates or reactivates Stripe products for each tier (Pro, Pro+, Ultra)
-- Creates or reactivates recurring prices (monthly and annual) with lookup keys
-- Prints the lookup key to price ID mapping after completion
+### `test_imports.py`
+Test Python imports to catch circular dependencies (pre-commit hook, currently disabled).
 
-**When to use**:
-- Setting up Stripe for a new environment
-- Rotating Stripe keys and recreating catalog objects
-- Validating Stripe catalog consistency before deployments
+### `view_aws_parameters.sh`
+View AWS Parameter Store configuration values.
 
----
-
-## Related Documentation
-
-- [Configuration Reference](../docs/advanced/CONFIGURATION.md)
-- [Railway Deployment](../docs/deployment/RAILWAY.md)
-- [Main README](../README.md)
+```bash
+./scripts/view_aws_parameters.sh <environment>
+```

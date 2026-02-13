@@ -4,6 +4,7 @@ Nexus agent discovery tools for searching and listing tools and triggers.
 Uses shared discovery logic from seer.tools.discovery_shared.
 These tools are decorated with LangChain's @tool for use in LangGraph agents.
 """
+# pylint: disable=duplicate-code  # Reason: Intentional per-framework formatting (LangChain vs MCP decorators)
 
 from typing import Optional, List
 import json
