@@ -17,7 +17,6 @@ from seer.agents.nexus.context import (
     get_workflow_state_for_thread,
     get_user_for_thread,
 )
-from seer.tools.trigger_schema_fix import fix_trigger_event_schemas
 from seer.agents.nexus.schema_context import (
     generate_node_type_reference,
     generate_validation_checklist_from_model,
@@ -26,14 +25,7 @@ from seer.agents.nexus.schema_context import (
     get_workflow_spec_example_text,
 )
 from seer.logger import get_logger
-from seer.core.compiler.parse import parse_workflow_spec
-from seer.core.errors import ValidationPhaseError
 from seer.core.schema.models import WorkflowSpec
-from seer.tools.workflow_validation import (
-    validate_tools_and_triggers,
-    validate_compilation,
-    detect_extra_fields,
-)
 
 logger = get_logger(__name__)
 
@@ -277,21 +269,6 @@ def _validate_spec_format(workflow_spec: Any) -> tuple[Optional[Dict], Optional[
     return spec_dict, None
 
 
-def _validate_pydantic(spec_dict: Dict) -> tuple[Optional[Any], Optional[str]]:
-    """Run Pydantic validation. Returns (validated_spec, error_message)."""
-    try:
-        validated_spec = parse_workflow_spec(spec_dict)
-        return validated_spec, None
-    except ValidationPhaseError as exc:
-        logger.warning("Workflow spec validation failed", exc_info=exc)
-        error_msg = str(exc)
-
-        # Use shared helper to detect extra fields and generate hint
-        hint = detect_extra_fields(spec_dict, error_msg)
-        return None, _error_response("parsing", f"Workflow spec validation failed: {exc}", hint)
-
-
-
 
 @tool
 async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # Reason: Validation chain requires early returns for each validation step
@@ -314,7 +291,7 @@ async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # 
     from seer.database.workflow_models import WorkflowChatSession  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
     from seer.database.workflow_models import WorkflowProposal as WorkflowProposalModel  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
 
-    # Validation chain - each returns early if error
+    # Nexus-specific pre-checks
     if error := _validate_thread_context():
         return error
 
@@ -322,41 +299,25 @@ async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # 
     if error:
         return error
 
-    validated_spec, error = _validate_pydantic(spec_dict)
-    if error:
-        return error
-
-    # Validate tools and triggers exist before compilation (using shared validation)
-    validation_errors = validate_tools_and_triggers(spec_dict)
-    if validation_errors:
-        return _error_response(
-            "tool_trigger_validation",
-            "Workflow references non-existent tools or triggers",
-            "\n".join(validation_errors)
-        )
-
-    # Auto-fix trigger event_schemas with canonical schemas from registry
-    spec_dict, schema_fixes = fix_trigger_event_schemas(spec_dict)
-
-    # Get user for compilation validation
+    # Resolve user for compilation context
     thread_id = _current_thread_id.get()
     user = await get_user_for_thread(thread_id)
     if not user:
         return _error_response("internal", "User context not available for compilation validation")
 
-    # Run compilation validation (using shared validation)
-    compilation_error = await validate_compilation(user, spec_dict, detailed_errors=True)
-    if compilation_error:
+    # Run golden validation pipeline (schema, references, trigger fix, compilation, re-parse)
+    from seer.tools.workflow_validation import run_full_validation  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
+    validation = await run_full_validation(user, spec_dict)
+
+    if not validation.success:
         return _error_response(
-            compilation_error.error_type,
-            compilation_error.message,
-            compilation_error.hint
+            validation.error.error_type,
+            validation.error.message,
+            validation.error.hint,
         )
 
     # All validations passed - create WorkflowProposal record
-    # Re-parse to get Pydantic model with the auto-fixed schemas
-    validated_spec = parse_workflow_spec(spec_dict)
-    spec_payload = validated_spec.model_dump(mode="json")
+    spec_payload = validation.validated_spec.model_dump(mode="json")
 
     # Get session and workflow for this thread
     session = await WorkflowChatSession.get_or_none(thread_id=thread_id).prefetch_related('workflow', 'user')
@@ -381,9 +342,9 @@ async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # 
         "proposal_id": proposal.id,
     }
 
-    if schema_fixes:
+    if validation.schema_fixes:
         response["auto_fixes"] = {
-            "trigger_schemas_updated": schema_fixes,
+            "trigger_schemas_updated": validation.schema_fixes,
             "recommendation": (
                 "Event schemas were auto-corrected to use canonical schemas from the registry. "
                 "If you have expressions referencing trigger data (e.g., ${trigger.data.subject}), "

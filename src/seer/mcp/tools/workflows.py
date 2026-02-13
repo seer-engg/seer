@@ -14,14 +14,8 @@ from seer.mcp.server import mcp
 from seer.mcp.auth import get_mcp_authenticated_user
 from seer.mcp.tracking import track_mcp_tool
 from seer.database import User, init_db
-from seer.core.compiler.parse import parse_workflow_spec
-from seer.core.errors import ValidationPhaseError
 from seer.logger import get_logger
-from seer.tools.workflow_validation import (
-    validate_tools_and_triggers,
-    validate_compilation,
-    detect_extra_fields,
-)
+from seer.tools.workflow_validation import run_full_validation
 
 logger = get_logger(__name__)
 
@@ -174,75 +168,6 @@ async def get_workflow(workflow_id: str) -> str:
 
 
 @mcp.tool()
-@track_mcp_tool("validate_workflow")
-async def validate_workflow(spec: Dict[str, Any]) -> str:
-    """
-    Validate a workflow specification without creating it.
-
-    Use this to check if a workflow spec is valid before creating it.
-    Returns validation errors if the spec is invalid.
-
-    Args:
-        spec: Workflow specification as a JSON object with:
-              - version: Must be string "2" (NOT "1.0", NOT "2.0", exactly "2")
-              - nodes: Array of node objects (required)
-              - edges: Array of edge objects (optional)
-              - triggers: Array of trigger objects (optional)
-
-    Returns:
-        JSON with validation result (ok: true/false) and any errors
-    """
-    try:
-        # First, validate against Pydantic schema
-        try:
-            validated_spec = parse_workflow_spec(spec)
-        except ValidationPhaseError as exc:
-            error_msg = str(exc)
-            hint = detect_extra_fields(spec, error_msg) or "Check that your spec follows the workflow schema"
-            return json.dumps({
-                "ok": False,
-                "error_type": "schema_validation",
-                "message": error_msg,
-                "hint": hint
-            })
-
-        # Check tools and triggers exist (using shared validation)
-        validation_errors = validate_tools_and_triggers(validated_spec)
-
-        if validation_errors:
-            return json.dumps({
-                "ok": False,
-                "error_type": "reference_validation",
-                "errors": validation_errors,
-                "hint": "Use search_tools() and list_triggers() to find valid names"
-            })
-
-        # Full compilation validation (using shared validation)
-        user = await _get_mcp_user()
-        compilation_error = await validate_compilation(user, spec, detailed_errors=False)
-
-        if compilation_error:
-            return json.dumps({
-                "ok": False,
-                "error_type": "compilation",
-                "message": compilation_error.message,
-            })
-
-        return json.dumps({
-            "ok": True,
-            "message": "Workflow spec is valid",
-            "spec": validated_spec.model_dump(mode="json")
-        }, indent=2)
-
-    except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Return friendly JSON error
-        logger.exception("Error validating workflow: %s", e)
-        return json.dumps({
-            "ok": False,
-            "error": str(e)
-        })
-
-
-@mcp.tool()
 @track_mcp_tool("publish_workflow")
 async def publish_workflow(workflow_id: str) -> str:
     """
@@ -280,26 +205,6 @@ async def publish_workflow(workflow_id: str) -> str:
             "error": "publish_failed",
             "message": str(e)
         })
-
-
-def _run_schema_validation(spec: Dict[str, Any]) -> tuple[Optional[Any], Optional[str]]:
-    """Run schema and reference validation. Returns (validated_spec, error_json) tuple."""
-    try:
-        validated_spec = parse_workflow_spec(spec)
-    except ValidationPhaseError as exc:
-        error_msg = str(exc)
-        hint = detect_extra_fields(spec, error_msg) or "Check that your spec follows the workflow schema"
-        return None, json.dumps({
-            "status": "error", "error_type": "schema_validation", "message": error_msg, "hint": hint
-        })
-
-    validation_errors = validate_tools_and_triggers(validated_spec)
-    if validation_errors:
-        return None, json.dumps({
-            "status": "error", "error_type": "reference_validation",
-            "errors": validation_errors, "hint": "Use search_tools() and list_triggers() to find valid names"
-        })
-    return validated_spec, None
 
 
 def _build_auto_fix_info(schema_fixes: list) -> Dict[str, Any]:
@@ -351,44 +256,37 @@ async def validate_and_upsert_workflow(
         JSON with status, message, validated spec, workflow_id, and any auto-fixes applied
     """
     try:
-        # 1-2. Schema and reference validation
-        _, error_json = _run_schema_validation(spec)
-        if error_json:
-            return error_json
-
-        # 3. Auto-fix trigger event_schemas with canonical schemas from registry
-        # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
-        from seer.tools.trigger_schema_fix import fix_trigger_event_schemas
-        fixed_spec, schema_fixes = fix_trigger_event_schemas(spec)
-
-        # 4. Full compilation validation (using shared validation)
         user = await _get_mcp_user()
-        compilation_error = await validate_compilation(user, fixed_spec, detailed_errors=True)
-        if compilation_error:
-            return json.dumps({
-                "status": "error", "error_type": compilation_error.error_type,
-                "message": compilation_error.message,
-                "hint": compilation_error.hint or "Check that output schemas match input expectations and ${...} references are valid"
-            })
+        validation = await run_full_validation(user, spec)
 
-        # 5. All validations passed - create or update workflow
+        if not validation.success:
+            response = {
+                "status": "error",
+                "error_type": validation.error.error_type,
+                "message": validation.error.message,
+            }
+            if validation.error.hint:
+                response["hint"] = validation.error.hint
+            return json.dumps(response)
+
+        # All validations passed - create or update workflow
         # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
         from seer.api.workflows.services import lifecycle as wf_lifecycle
         from seer.api.workflows.models import WorkflowCreateRequest, WorkflowDraftPatchRequest
 
-        final_spec = parse_workflow_spec(fixed_spec)
+        final_spec = validation.validated_spec
 
         if workflow_id:
-            response = await wf_lifecycle.patch_workflow_draft(user, workflow_id, WorkflowDraftPatchRequest(spec=final_spec))
-            result = {"status": "ok", "message": "Workflow updated successfully", "workflow_id": response.workflow_id,
-                      "name": response.name, "spec": response.spec.model_dump(mode="json"), "updated_at": response.updated_at.isoformat()}
+            resp = await wf_lifecycle.patch_workflow_draft(user, workflow_id, WorkflowDraftPatchRequest(spec=final_spec))
+            result = {"status": "ok", "message": "Workflow updated successfully", "workflow_id": resp.workflow_id,
+                      "name": resp.name, "spec": resp.spec.model_dump(mode="json"), "updated_at": resp.updated_at.isoformat()}
         else:
-            response = await wf_lifecycle.create_workflow(user, WorkflowCreateRequest(name=name, spec=final_spec))
-            result = {"status": "ok", "message": "Workflow created successfully", "workflow_id": response.workflow_id,
-                      "name": response.name, "spec": response.spec.model_dump(mode="json"), "created_at": response.created_at.isoformat()}
+            resp = await wf_lifecycle.create_workflow(user, WorkflowCreateRequest(name=name, spec=final_spec))
+            result = {"status": "ok", "message": "Workflow created successfully", "workflow_id": resp.workflow_id,
+                      "name": resp.name, "spec": resp.spec.model_dump(mode="json"), "created_at": resp.created_at.isoformat()}
 
-        if schema_fixes:
-            result["auto_fixes"] = _build_auto_fix_info(schema_fixes)
+        if validation.schema_fixes:
+            result["auto_fixes"] = _build_auto_fix_info(validation.schema_fixes)
         if summary:
             result["summary"] = summary
 
