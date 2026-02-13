@@ -120,12 +120,14 @@ async def submit_form(suffix: str, request: Request) -> Dict[str, Any]:
             return await _handle_hitl_form_submission(subscription, data, hitl_run_id)
 
         # Regular form - trigger webhook to start new workflow run
+        # Skip secret verification — form submissions are public endpoints
         event = await handle_generic_webhook(
             subscription.id,
             payload=data,
             headers=dict(request.headers),
             secret=None,
             provider_event_id=None,
+            skip_secret_verification=True,
         )
 
         return {

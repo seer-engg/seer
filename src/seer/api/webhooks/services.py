@@ -67,13 +67,15 @@ async def handle_generic_webhook(
     headers: Mapping[str, str],
     secret: Optional[str],
     provider_event_id: Optional[str],
+    skip_secret_verification: bool = False,
 ) -> TriggerEvent:
     logger.info(
         "Handling generic webhook",
         extra={"subscription_id": subscription_id, "provider_event_id": provider_event_id},
     )
     subscription = await _get_active_subscription(subscription_id)
-    _verify_secret(subscription, secret)
+    if not skip_secret_verification:
+        _verify_secret(subscription, secret)
     provider = _load_trigger_provider(subscription.trigger_key)
     raw_payload = {
         "headers": dict(headers),

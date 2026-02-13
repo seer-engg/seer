@@ -57,6 +57,7 @@ from .lifecycle import (
 from .triggers import (
     delete_trigger_subscription,
     get_pending_events,
+    get_subscription_event_count,
     get_trigger_subscription,
     list_trigger_subscriptions,
     start_listening_for_trigger,
@@ -108,6 +109,7 @@ __all__ = [
     "sync_trigger_subscriptions",
     "start_listening_for_trigger",
     "get_pending_events",
+    "get_subscription_event_count",
     "_create_run_record",
     # File management
     "list_run_files",

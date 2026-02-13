@@ -113,8 +113,8 @@ class TestTriggerEventBrowserListEvents:
         mock_msg_response.status_code = 200
         mock_msg_response.json.return_value = mock_gmail_message_data
 
-        with patch("seer.services.integrations.trigger_event_browser.get_oauth_token", new_callable=AsyncMock) as mock_get_token, \
-             patch("seer.services.integrations.trigger_event_browser.httpx.AsyncClient") as mock_client_class:
+        with patch("seer.services.integrations.trigger_event_polling.get_oauth_token", new_callable=AsyncMock) as mock_get_token, \
+             patch("seer.services.integrations.trigger_event_polling.httpx.AsyncClient") as mock_client_class:
 
             mock_get_token.return_value = (mock_connection, "access_token_123")
 
@@ -153,8 +153,8 @@ class TestTriggerEventBrowserListEvents:
         mock_list_response.status_code = 200
         mock_list_response.json.return_value = {"messages": []}
 
-        with patch("seer.services.integrations.trigger_event_browser.get_oauth_token", new_callable=AsyncMock) as mock_get_token, \
-             patch("seer.services.integrations.trigger_event_browser.httpx.AsyncClient") as mock_client_class:
+        with patch("seer.services.integrations.trigger_event_polling.get_oauth_token", new_callable=AsyncMock) as mock_get_token, \
+             patch("seer.services.integrations.trigger_event_polling.httpx.AsyncClient") as mock_client_class:
 
             mock_get_token.return_value = (mock_connection, "access_token_123")
 
@@ -214,8 +214,8 @@ class TestTriggerEventBrowserListEvents:
         mock_error_response.status_code = 401
         mock_error_response.text = "Invalid credentials"
 
-        with patch("seer.services.integrations.trigger_event_browser.get_oauth_token", new_callable=AsyncMock) as mock_get_token, \
-             patch("seer.services.integrations.trigger_event_browser.httpx.AsyncClient") as mock_client_class:
+        with patch("seer.services.integrations.trigger_event_polling.get_oauth_token", new_callable=AsyncMock) as mock_get_token, \
+             patch("seer.services.integrations.trigger_event_polling.httpx.AsyncClient") as mock_client_class:
 
             mock_get_token.return_value = (mock_connection, "expired_token")
 
@@ -260,8 +260,8 @@ class TestTriggerEventBrowserListEvents:
         mock_msg_response.status_code = 200
         mock_msg_response.json.return_value = mock_gmail_message_data
 
-        with patch("seer.services.integrations.trigger_event_browser.get_oauth_token", new_callable=AsyncMock) as mock_get_token, \
-             patch("seer.services.integrations.trigger_event_browser.httpx.AsyncClient") as mock_client_class:
+        with patch("seer.services.integrations.trigger_event_polling.get_oauth_token", new_callable=AsyncMock) as mock_get_token, \
+             patch("seer.services.integrations.trigger_event_polling.httpx.AsyncClient") as mock_client_class:
 
             mock_get_token.return_value = (mock_connection, "access_token_123")
 
@@ -290,15 +290,15 @@ class TestTriggerEventItemBuilding:
 
     def test_build_gmail_event_item(self, mock_user, mock_gmail_message_data):
         """Test building event item from Gmail message data."""
-        from seer.services.integrations.trigger_event_browser import TriggerEventBrowser
+        from seer.services.integrations.trigger_event_polling import _build_gmail_event_item
+        from seer.core.triggers.polling.adapters.gmail_email_received import GmailEmailReceivedAdapter
 
-        browser = TriggerEventBrowser(mock_user)
-
-        item = browser._build_gmail_event_item(
+        item = _build_gmail_event_item(
             msg_data=mock_gmail_message_data,
             trigger_key="poll.gmail.email_received",
             trigger_id="trigger_test",
             provider_connection_id=123,
+            gmail_adapter=GmailEmailReceivedAdapter(),
         )
 
         # Check item structure
@@ -326,9 +326,8 @@ class TestTriggerEventItemBuilding:
 
     def test_build_gmail_event_item_no_subject(self, mock_user):
         """Test building event item when email has no subject."""
-        from seer.services.integrations.trigger_event_browser import TriggerEventBrowser
-
-        browser = TriggerEventBrowser(mock_user)
+        from seer.services.integrations.trigger_event_polling import _build_gmail_event_item
+        from seer.core.triggers.polling.adapters.gmail_email_received import GmailEmailReceivedAdapter
 
         msg_data = {
             "id": "msg_no_subject",
@@ -342,11 +341,12 @@ class TestTriggerEventItemBuilding:
             }
         }
 
-        item = browser._build_gmail_event_item(
+        item = _build_gmail_event_item(
             msg_data=msg_data,
             trigger_key="poll.gmail.email_received",
             trigger_id="trigger_test",
             provider_connection_id=123,
+            gmail_adapter=GmailEmailReceivedAdapter(),
         )
 
         assert "(No subject)" in item["display_title"]

@@ -131,6 +131,15 @@ def _generate_subscription_secret() -> str:
     return secrets.token_urlsafe(24)
 
 
+def _generate_form_suffix() -> str:
+    """Generate a short, URL-safe suffix for form URLs."""
+    return secrets.token_urlsafe(6)
+
+
+def _is_form_trigger(trigger_key: str) -> bool:
+    return trigger_key == "form.hosted"
+
+
 def _should_emit_webhook_url(trigger_key: str) -> bool:
     return trigger_key.startswith("webhook.")
 
@@ -229,11 +238,11 @@ def _validate_event_payload(event_payload: Dict[str, Any], schema: Dict[str, Any
 def _validate_form_suffix(suffix: Optional[str]) -> None:
     if not suffix:
         return
-    if not re.match(r"^[a-z0-9-]+$", suffix):
+    if not re.match(r"^[a-zA-Z0-9_-]+$", suffix):
         _raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Invalid form suffix",
-            detail="Invalid form suffix format. Use lowercase letters, numbers, and hyphens only.",
+            detail="Invalid form suffix format. Use letters, numbers, hyphens, and underscores only.",
             status=400,
         )
     reserved = {"workflows", "settings", "sign-in", "sign-up", "api", "admin"}
@@ -578,6 +587,30 @@ async def _validate_form_suffix_uniqueness(
         )
 
 
+async def _reconcile_existing_subscriptions(
+    user: User,
+    workflow: Workflow,
+    desired_ids: set,
+) -> Dict[str, TriggerSubscription]:
+    """Build a map of existing subscriptions, cleaning up duplicates and stale entries."""
+    existing: Dict[str, TriggerSubscription] = {}
+    duplicate_subscriptions: List[TriggerSubscription] = []
+    for sub in await TriggerSubscription.filter(workflow=workflow):
+        if sub.trigger_id in existing:
+            duplicate_subscriptions.append(sub)
+        else:
+            existing[sub.trigger_id] = sub
+
+    for duplicate in duplicate_subscriptions:
+        await delete_trigger_subscription(user, duplicate.id)
+
+    for trigger_id, subscription in existing.items():
+        if trigger_id not in desired_ids:
+            await delete_trigger_subscription(user, subscription.id)
+
+    return existing
+
+
 async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-locals,too-many-branches  # Reason: Comprehensive trigger sync requires extensive state reconciliation
     user: User,
     workflow: Workflow,
@@ -594,23 +627,8 @@ async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-lo
         skip_validation: If True, skip connection validation and webhook creation.
                         Used when running with sample events.
     """
-
-    existing: Dict[str, TriggerSubscription] = {}
-    duplicate_subscriptions: List[TriggerSubscription] = []
-    for sub in await TriggerSubscription.filter(workflow=workflow):
-        if sub.trigger_id in existing:
-            duplicate_subscriptions.append(sub)
-        else:
-            existing[sub.trigger_id] = sub
-    # Clean up any accidental duplicates before reconciling desired state.
-    for duplicate in duplicate_subscriptions:
-        await delete_trigger_subscription(user, duplicate.id)
-    desired = {trigger.id: trigger for trigger in spec.triggers or []}
-
-    # Remove subscriptions no longer declared in the spec.
-    for trigger_id, subscription in existing.items():
-        if trigger_id not in desired:
-            await delete_trigger_subscription(user, subscription.id)
+    desired_ids = {trigger.id for trigger in spec.triggers or []}
+    existing = await _reconcile_existing_subscriptions(user, workflow, desired_ids)
 
     # Upsert declared triggers.
     for trigger_spec in spec.triggers or []:
@@ -675,8 +693,11 @@ async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-lo
             existing_subscription.provider_config = provider_config
             existing_subscription.secret_token = secret
             existing_subscription.poll_interval_seconds = adjusted_interval
-            # Sync form data for form triggers
-            existing_subscription.form_suffix = form_suffix
+            # Sync form data for form triggers — preserve auto-generated suffix
+            if form_suffix:
+                existing_subscription.form_suffix = form_suffix
+            elif not existing_subscription.form_suffix and _is_form_trigger(trigger_spec.key):
+                existing_subscription.form_suffix = _generate_form_suffix()
             existing_subscription.form_fields = form_fields
             existing_subscription.form_config = form_config
             await existing_subscription.save()
@@ -690,9 +711,9 @@ async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-lo
             ):
                 await _create_supabase_webhook(existing_subscription, secret)
         else:
-            is_polling = False
-            if trigger_spec.key in POLLING_TRIGGERS:
-                is_polling = True
+            is_polling = trigger_spec.key in POLLING_TRIGGERS
+            # Auto-generate form suffix if not provided and this is a form trigger
+            effective_form_suffix = form_suffix or (_generate_form_suffix() if _is_form_trigger(trigger_spec.key) else None)
             subscription = await TriggerSubscription.create(
                 user=user,
                 workflow=workflow,
@@ -707,7 +728,7 @@ async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-lo
                 poll_interval_seconds=adjusted_interval,
                 is_polling=is_polling,
                 # Set form data for form triggers
-                form_suffix=form_suffix,
+                form_suffix=effective_form_suffix,
                 form_fields=form_fields,
                 form_config=form_config,
             )
@@ -715,72 +736,75 @@ async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-lo
                 await _create_supabase_webhook(subscription, secret)
 
 
-async def start_listening_for_trigger(
+async def _provision_form_listening(
     user: User,
-    workflow_id: str,
+    workflow: Workflow,
     trigger_id: str,
+    trigger_spec,
+    *,
+    definition,
+    existing: Optional[TriggerSubscription],
 ) -> api_models.StartListeningResponse:
-    """
-    Provision a TriggerSubscription for a webhook trigger immediately (without publish).
+    """Provision or update a form trigger subscription and return the form URL."""
+    form_suffix, form_fields, form_config = _extract_form_config_from_spec(trigger_spec)
 
-    Idempotent: if a subscription already exists for this trigger, reuse it.
-    Returns the webhook URL and signing secret the client can use right away.
-    """
-    workflow = await _get_workflow(user, workflow_id)
+    if existing and existing.form_suffix:
+        subscription = existing
+        subscription.form_fields = form_fields
+        subscription.form_config = form_config
+        await subscription.save()
+    else:
+        suffix = form_suffix or _generate_form_suffix()
+        if existing:
+            existing.form_suffix = suffix
+            existing.form_fields = form_fields
+            existing.form_config = form_config
+            existing.enabled = True
+            await existing.save()
+            subscription = existing
+        else:
+            subscription = await TriggerSubscription.create(
+                user=user,
+                workflow=workflow,
+                trigger_id=trigger_id,
+                trigger_key=trigger_spec.key,
+                title=definition.title,
+                provider_connection_id=trigger_spec.provider_config.get("provider_connection_id"),
+                enabled=True,
+                filters=dict(trigger_spec.filters or {}),
+                provider_config=dict(trigger_spec.provider_config or {}),
+                form_suffix=suffix,
+                form_fields=form_fields,
+                form_config=form_config,
+            )
 
-    # Verify trigger exists in the draft spec
-    draft_version = await _get_draft_version(workflow, create_if_missing=False)
-    if not draft_version:
-        _raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="No draft found",
-            detail="Cannot start listening without a draft version. Save the workflow first.",
-            status=400,
-        )
+    form_url = _build_form_url(subscription)
+    return api_models.StartListeningResponse(
+        form_url=form_url,
+        subscription_id=subscription.id,
+    )
 
-    spec = WorkflowSpec.model_validate(draft_version.spec)
-    trigger_spec = None
-    for t in (spec.triggers or []):
-        if t.id == trigger_id:
-            trigger_spec = t
-            break
 
-    if trigger_spec is None:
-        _raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Trigger not found in spec",
-            detail=f"Trigger '{trigger_id}' not found in workflow draft.",
-            status=404,
-        )
-
-    if not _should_emit_webhook_url(trigger_spec.key):
-        _raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Not a webhook trigger",
-            detail=f"Trigger '{trigger_spec.key}' does not support webhook URLs.",
-            status=400,
-        )
-
-    definition = _load_trigger_definition(trigger_spec.key)
-
-    # Find or create subscription (idempotent)
-    existing = await TriggerSubscription.filter(
-        workflow=workflow, trigger_id=trigger_id
-    ).first()
-
+async def _provision_webhook_listening(
+    user: User,
+    workflow: Workflow,
+    trigger_id: str,
+    trigger_spec,
+    *,
+    definition,
+    existing: Optional[TriggerSubscription],
+) -> api_models.StartListeningResponse:
+    """Provision or update a webhook trigger subscription and return the webhook URL."""
     if existing and existing.secret_token:
-        # Reuse existing subscription
         subscription = existing
     else:
         secret = _generate_subscription_secret()
         if existing:
-            # Update existing subscription that was missing a secret
             existing.secret_token = secret
             existing.enabled = True
             await existing.save()
             subscription = existing
         else:
-            # Create new subscription
             subscription = await TriggerSubscription.create(
                 user=user,
                 workflow=workflow,
@@ -803,7 +827,6 @@ async def start_listening_for_trigger(
             status=500,
         )
 
-    # Prepend the base URL so the client gets a fully usable URL
     webhook_base_url = shared_config.webhook_base_url or "http://localhost:8000"
     full_url = f"{webhook_base_url.rstrip('/')}{webhook_url}"
 
@@ -812,6 +835,59 @@ async def start_listening_for_trigger(
         secret_token=subscription.secret_token,
         subscription_id=subscription.id,
     )
+
+
+async def start_listening_for_trigger(
+    user: User,
+    workflow_id: str,
+    trigger_id: str,
+) -> api_models.StartListeningResponse:
+    """
+    Provision a TriggerSubscription for a webhook or form trigger immediately (without publish).
+
+    Idempotent: if a subscription already exists for this trigger, reuse it.
+    For webhook triggers: returns the webhook URL and signing secret.
+    For form triggers: returns the form URL.
+    """
+    workflow = await _get_workflow(user, workflow_id)
+
+    draft_version = await _get_draft_version(workflow, create_if_missing=False)
+    if not draft_version:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="No draft found",
+            detail="Cannot start listening without a draft version. Save the workflow first.",
+            status=400,
+        )
+
+    spec = WorkflowSpec.model_validate(draft_version.spec)
+    trigger_spec = next((t for t in (spec.triggers or []) if t.id == trigger_id), None)
+
+    if trigger_spec is None:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Trigger not found in spec",
+            detail=f"Trigger '{trigger_id}' not found in workflow draft.",
+            status=404,
+        )
+
+    if not _should_emit_webhook_url(trigger_spec.key) and not _is_form_trigger(trigger_spec.key):
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Unsupported trigger type",
+            detail=f"Trigger '{trigger_spec.key}' does not support start listening.",
+            status=400,
+        )
+
+    definition = _load_trigger_definition(trigger_spec.key)
+    existing = await TriggerSubscription.filter(
+        workflow=workflow, trigger_id=trigger_id
+    ).first()
+
+    if _is_form_trigger(trigger_spec.key):
+        return await _provision_form_listening(user, workflow, trigger_id, trigger_spec, definition=definition, existing=existing)
+
+    return await _provision_webhook_listening(user, workflow, trigger_id, trigger_spec, definition=definition, existing=existing)
 
 
 async def get_pending_events(
@@ -860,3 +936,35 @@ async def get_pending_events(
             latest_id = event.id
 
     return api_models.PendingEventsResponse(events=items, latest_event_id=latest_id)
+
+
+async def get_subscription_event_count(
+    user: User,
+    subscription_id: int,
+) -> api_models.SubscriptionEventCountResponse:
+    """
+    Get the count of stored events for a trigger subscription.
+
+    Used by the frontend to determine if "Browse events" should be shown
+    for persisted triggers (webhooks, forms).
+    """
+    # Verify subscription exists and belongs to user
+    subscription = await TriggerSubscription.get_or_none(
+        id=subscription_id, user=user
+    )
+    if not subscription:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Subscription {subscription_id} not found",
+        )
+
+    # Count events for this subscription
+    event_count = await TriggerEvent.filter(
+        subscription_id=subscription_id
+    ).count()
+
+    return api_models.SubscriptionEventCountResponse(
+        subscription_id=subscription_id,
+        event_count=event_count,
+        has_events=event_count > 0,
+    )
