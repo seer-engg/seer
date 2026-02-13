@@ -11,7 +11,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from seer.api.core.middleware.path_allowlist import is_public_path
+from seer.api.core.middleware.path_allowlist import is_public_path, is_payment_exempt_path
 from seer.database import User
 from seer.logger import get_logger
 from seer.observability import (
@@ -47,7 +47,7 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
     4. Polling intervals: POST /api/v1/trigger-subscriptions (soft enforcement)
     """
 
-    # pylint: disable=too-complex,too-many-return-statements # Reason: Middleware with multiple enforcement points
+    # pylint: disable=too-complex,too-many-return-statements # Reason: Middleware dispatch with multiple path-based enforcement points
     async def dispatch(self, request: Request, call_next):
         """
         Main middleware dispatch method.
@@ -58,9 +58,22 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
+        # Public paths skip all checks
         if is_public_path(path, include_docs=True):
             return await call_next(request)
 
+        # Payment-exempt paths skip usage limits but require auth
+        if is_payment_exempt_path(path):
+            user: Optional[User] = getattr(request.state, "db_user", None)
+            if user is None:
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Authentication required"},
+                )
+            # Skip usage limit checks for payment/billing endpoints
+            return await call_next(request)
+
+        # Regular authenticated paths - check usage limits
         user: Optional[User] = getattr(request.state, "db_user", None)
         if user is None:
             return JSONResponse(
@@ -76,63 +89,21 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
 
         # 1. Workflow Creation Limit
         if method == "POST" and path == "/api/v1/workflows":
-            if not limits.has_unlimited_workflows:
-                logger.info("Checking workflow creation limit for user %s", user.id)
-                current = await get_workflow_count(user)
-                if current >= limits.workflows:
-                    tier = await resolve_user_tier(user)
-                    error = WorkflowLimitExceeded(limits.workflows, current, tier)
-                    logger.warning(
-                        "Workflow creation limit exceeded for user %s (tier=%s, current=%d, limit=%d)",
-                        user.id,
-                        tier.value,
-                        current,
-                        limits.workflows,
-                    )
-                    return JSONResponse(status_code=402, content=error.to_dict())
+            response = await self._check_workflow_creation_limit(user, limits)
+            if response:
+                return response
 
         # 2. Workflow Run Limit
         elif method == "POST" and "/run" in path and "/api/v1/workflows/" in path:
-            if not limits.has_unlimited_runs:
-                current = await get_monthly_run_count(user)
-                if current >= limits.runs_monthly:
-                    tier = await resolve_user_tier(user)
-                    error = RunLimitExceeded(limits.runs_monthly, current, tier)
-                    logger.warning(
-                        "Workflow run limit exceeded for user %s (tier=%s, current=%d, limit=%d)",
-                        user.id,
-                        tier.value,
-                        current,
-                        limits.runs_monthly,
-                    )
-                    return JSONResponse(status_code=402, content=error.to_dict())
+            response = await self._check_workflow_run_limit(user, limits)
+            if response:
+                return response
 
         # 3. Chat Message Limit (PER USER, not per workflow)
         elif method == "POST" and "/chat" in path and "/api/nexus/" in path:
-            # Check if chat is enabled
-            if limits.is_chat_disabled:
-                error = ChatDisabledError()
-                logger.info("Chat access denied for user %s (self-hosted mode)", user.id)
-                return JSONResponse(status_code=403, content=error.to_dict())
-
-            if not limits.has_unlimited_chat:
-                # Count ALL chat messages for this user (across all workflows)
-                current = await get_total_chat_message_count(user)
-                if current >= limits.chat_messages_total:
-                    tier = await resolve_user_tier(user)
-                    error = MessageLimitExceeded(
-                        limit=limits.chat_messages_total,
-                        current=current,
-                        tier=tier,
-                    )
-                    logger.warning(
-                        "Chat message limit exceeded for user %s (tier=%s, current=%d, limit=%d)",
-                        user.id,
-                        tier.value,
-                        current,
-                        limits.chat_messages_total,
-                    )
-                    return JSONResponse(status_code=402, content=error.to_dict())
+            response = await self._check_chat_message_limit(user, limits)
+            if response:
+                return response
 
         # 4. Polling Frequency Validation (reads request body for soft enforcement)
         elif method == "POST" and "trigger-subscriptions" in path:
@@ -140,6 +111,69 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
 
         # All checks passed - proceed to handler
         return await call_next(request)
+
+    async def _check_workflow_creation_limit(self, user: User, limits) -> Optional[JSONResponse]:
+        """Check if user has exceeded workflow creation limit."""
+        if not limits.has_unlimited_workflows:
+            logger.info("Checking workflow creation limit for user %s", user.id)
+            current = await get_workflow_count(user)
+            if current >= limits.workflows:
+                tier = await resolve_user_tier(user)
+                error = WorkflowLimitExceeded(limits.workflows, current, tier)
+                logger.warning(
+                    "Workflow creation limit exceeded for user %s (tier=%s, current=%d, limit=%d)",
+                    user.id,
+                    tier.value,
+                    current,
+                    limits.workflows,
+                )
+                return JSONResponse(status_code=402, content=error.to_dict())
+        return None
+
+    async def _check_workflow_run_limit(self, user: User, limits) -> Optional[JSONResponse]:
+        """Check if user has exceeded workflow run limit."""
+        if not limits.has_unlimited_runs:
+            current = await get_monthly_run_count(user)
+            if current >= limits.runs_monthly:
+                tier = await resolve_user_tier(user)
+                error = RunLimitExceeded(limits.runs_monthly, current, tier)
+                logger.warning(
+                    "Workflow run limit exceeded for user %s (tier=%s, current=%d, limit=%d)",
+                    user.id,
+                    tier.value,
+                    current,
+                    limits.runs_monthly,
+                )
+                return JSONResponse(status_code=402, content=error.to_dict())
+        return None
+
+    async def _check_chat_message_limit(self, user: User, limits) -> Optional[JSONResponse]:
+        """Check if user has exceeded chat message limit or if chat is disabled."""
+        # Check if chat is enabled
+        if limits.is_chat_disabled:
+            error = ChatDisabledError()
+            logger.info("Chat access denied for user %s (self-hosted mode)", user.id)
+            return JSONResponse(status_code=403, content=error.to_dict())
+
+        if not limits.has_unlimited_chat:
+            # Count ALL chat messages for this user (across all workflows)
+            current = await get_total_chat_message_count(user)
+            if current >= limits.chat_messages_total:
+                tier = await resolve_user_tier(user)
+                error = MessageLimitExceeded(
+                    limit=limits.chat_messages_total,
+                    current=current,
+                    tier=tier,
+                )
+                logger.warning(
+                    "Chat message limit exceeded for user %s (tier=%s, current=%d, limit=%d)",
+                    user.id,
+                    tier.value,
+                    current,
+                    limits.chat_messages_total,
+                )
+                return JSONResponse(status_code=402, content=error.to_dict())
+        return None
 
     async def _validate_polling_interval(self, request: Request, user: User, limits) -> None:
         """

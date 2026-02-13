@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-from seer.api.core.middleware.path_allowlist import is_public_path
+from seer.api.core.middleware.path_allowlist import is_public_path, is_payment_exempt_path
 from seer.auth.clerk_verifier import ClerkJWTVerifier, VerifiedClerkToken
 from seer.config import config
 from seer.database import User
@@ -122,6 +122,12 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
 
     async def _check_access_gates(self, request: Request, db_user: User) -> Optional[JSONResponse]:
         """Check trial expiry and payment method gates. Returns error response or None."""
+
+        # Skip all payment gates for payment-exempt paths
+        path = request.scope.get("path") or request.url.path
+        if is_payment_exempt_path(path):
+            return None
+
         # Phase 2: Account Day Limit Gate
         if await is_trial_expired(db_user):
             days_since_signup = await get_account_age_days(db_user)
@@ -133,19 +139,16 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
 
         # Phase 3: Payment Method Gate (Cloud only)
         if not config.is_self_hosted:
-            payment_gate_response = await self._check_payment_method_gate(request, db_user)
+            payment_gate_response = await self._check_payment_method_gate(db_user)
             if payment_gate_response:
                 return payment_gate_response
 
         return None
 
-    async def _check_payment_method_gate(self, request: Request, db_user: User) -> Optional[JSONResponse]:
+    async def _check_payment_method_gate(self, db_user: User) -> Optional[JSONResponse]:
         """Check if payment method is required for this request."""
-        path = request.scope.get("path") or request.url.path
-
-        # Allow onboarding-related endpoints and settings API
-        if path.startswith("/api/subscriptions") or path == "/api/users/me/settings":
-            return None
+        # Payment-exempt paths are now handled in _check_access_gates
+        # This method only checks if user has payment method
 
         billing_profile = await BillingProfile.get_or_none(owner_user=db_user)
 
