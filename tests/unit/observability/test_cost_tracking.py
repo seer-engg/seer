@@ -39,6 +39,11 @@ class TestDetectProviderFromModel:
         assert detect_provider_from_model("claude-3-opus-20240229") == "anthropic"
         assert detect_provider_from_model("claude-3-5-sonnet-20241022") == "anthropic"
 
+    def test_openrouter_moonshotai_models(self):
+        """Test OpenRouter moonshotai model detection (used by browser node)."""
+        assert detect_provider_from_model("moonshotai/kimi-k2.5") == "openrouter"
+        assert detect_provider_from_model("moonshotai/kimi-k2-thinking") == "openrouter"
+
     def test_unknown_models(self):
         """Test unknown model detection."""
         assert detect_provider_from_model("llama-3") == "unknown"

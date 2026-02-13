@@ -725,3 +725,193 @@ def test_json_schema_to_pydantic_browser_use_case():
     json_output = instance.model_dump(mode="json")
     assert "features" in json_output
     assert "pricing_tiers" in json_output
+
+
+# =============================================================================
+# Usage Metadata Extraction Tests
+# =============================================================================
+
+
+def test_extract_usage_metadata_from_history():
+    """Test extraction of usage metadata from browser_use history."""
+    from unittest.mock import MagicMock
+    from seer.services.browser.browser_service import BrowserService
+
+    mock_history = MagicMock()
+    mock_usage = MagicMock()
+    mock_usage.total_prompt_tokens = 5000
+    mock_usage.total_completion_tokens = 2000
+    mock_usage.total_tokens = 7000
+    mock_usage.entry_count = 10
+    mock_history.usage = mock_usage
+
+    result = BrowserService._extract_usage_metadata(mock_history)
+
+    assert result is not None
+    assert result["model"] == "moonshotai/kimi-k2.5"
+    assert result["input_tokens"] == 5000
+    assert result["output_tokens"] == 2000
+    assert result["reasoning_tokens"] == 0
+    assert result["total_tokens"] == 7000
+    assert result["steps_taken"] == 10
+
+
+def test_extract_usage_metadata_no_usage():
+    """Test extraction when usage is None."""
+    from unittest.mock import MagicMock
+    from seer.services.browser.browser_service import BrowserService
+
+    mock_history = MagicMock()
+    mock_history.usage = None
+
+    result = BrowserService._extract_usage_metadata(mock_history)
+    assert result is None
+
+
+def test_extract_usage_metadata_zero_tokens():
+    """Test extraction when all tokens are zero."""
+    from unittest.mock import MagicMock
+    from seer.services.browser.browser_service import BrowserService
+
+    mock_history = MagicMock()
+    mock_usage = MagicMock()
+    mock_usage.total_prompt_tokens = 0
+    mock_usage.total_completion_tokens = 0
+    mock_usage.total_tokens = 0
+    mock_usage.entry_count = 0
+    mock_history.usage = mock_usage
+
+    result = BrowserService._extract_usage_metadata(mock_history)
+    assert result is None
+
+
+def test_extract_usage_metadata_no_usage_attr():
+    """Test extraction when history lacks usage attribute."""
+    from seer.services.browser.browser_service import BrowserService
+
+    # Plain object without usage attribute
+    result = BrowserService._extract_usage_metadata(object())
+    assert result is None
+
+
+# =============================================================================
+# Browser Node Cost Tracking Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestBrowserNodeCostTracking:
+    """Tests for browser node credit checking and cost tracking."""
+
+    async def test_check_credit_limit_called(self, mock_user):
+        """Test that credit check is called before browser execution."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        browser_node_type = node_type_registry.get("browser")
+
+        mock_context = MagicMock()
+        mock_context.user = mock_user
+
+        with patch("seer.observability.credit_gate.check_credit_limit", new_callable=AsyncMock) as mock_check:
+            await browser_node_type._check_credit_limit(mock_context)
+            mock_check.assert_called_once_with(mock_user)
+
+    async def test_check_credit_limit_no_context(self):
+        """Test credit check is skipped when no context."""
+        from unittest.mock import AsyncMock, patch
+
+        browser_node_type = node_type_registry.get("browser")
+
+        with patch("seer.observability.credit_gate.check_credit_limit", new_callable=AsyncMock) as mock_check:
+            await browser_node_type._check_credit_limit(None)
+            mock_check.assert_not_called()
+
+    async def test_check_credit_limit_no_user(self):
+        """Test credit check is skipped when context has no user."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        browser_node_type = node_type_registry.get("browser")
+
+        mock_context = MagicMock()
+        mock_context.user = None
+
+        with patch("seer.observability.credit_gate.check_credit_limit", new_callable=AsyncMock) as mock_check:
+            await browser_node_type._check_credit_limit(mock_context)
+            mock_check.assert_not_called()
+
+    async def test_track_usage_calls_cost_tracker(self, mock_user):
+        """Test that _track_usage_async calls CostTracker with correct params."""
+        from unittest.mock import AsyncMock, patch
+        from seer.core.runtime.context import WorkflowRuntimeContext
+
+        browser_node_type = node_type_registry.get("browser")
+
+        runtime_context = WorkflowRuntimeContext(
+            user=mock_user,
+            workflow_run_id="run_test_123",
+            per_run_cost_cap_usd=5.0,
+            accumulated_cost_usd=0.0,
+        )
+
+        usage_metadata = {
+            "model": "moonshotai/kimi-k2.5",
+            "input_tokens": 5000,
+            "output_tokens": 2000,
+            "reasoning_tokens": 0,
+            "steps_taken": 10,
+        }
+
+        with patch("seer.observability.cost_tracking.CostTracker.track_and_enforce_cap", new_callable=AsyncMock) as mock_track:
+            await browser_node_type._track_usage_async(usage_metadata, runtime_context, "browse-1")
+
+            mock_track.assert_called_once()
+            call_kwargs = mock_track.call_args.kwargs
+            assert call_kwargs["operation"] == "browser_execution"
+            assert call_kwargs["extra_metadata"]["node_id"] == "browse-1"
+            assert call_kwargs["extra_metadata"]["steps_taken"] == 10
+            assert call_kwargs["extra_metadata"]["aggregated"] is True
+
+    async def test_track_usage_no_user_context(self):
+        """Test usage tracking is skipped when no user context."""
+        from unittest.mock import AsyncMock, patch
+
+        browser_node_type = node_type_registry.get("browser")
+
+        with patch("seer.observability.cost_tracking.CostTracker.track_and_enforce_cap", new_callable=AsyncMock) as mock_track:
+            await browser_node_type._track_usage_async({}, None, "browse-1")
+            mock_track.assert_not_called()
+
+    async def test_track_usage_propagates_cost_cap_exceeded(self, mock_user):
+        """Test that RunCostCapExceeded propagates from _track_usage_async."""
+        from unittest.mock import AsyncMock, patch
+        from seer.core.runtime.context import WorkflowRuntimeContext
+        from seer.observability.exceptions import RunCostCapExceeded
+
+        browser_node_type = node_type_registry.get("browser")
+
+        runtime_context = WorkflowRuntimeContext(
+            user=mock_user,
+            workflow_run_id="run_test_123",
+            per_run_cost_cap_usd=5.0,
+            accumulated_cost_usd=0.0,
+        )
+
+        usage_metadata = {
+            "model": "moonshotai/kimi-k2.5",
+            "input_tokens": 5000,
+            "output_tokens": 2000,
+            "reasoning_tokens": 0,
+        }
+
+        with patch(
+            "seer.observability.cost_tracking.CostTracker.track_and_enforce_cap",
+            new_callable=AsyncMock,
+            side_effect=RunCostCapExceeded(
+                run_identifier="run_test_123",
+                accumulated_cost=6.0,
+                cost_cap=5.0,
+                run_type="workflow",
+            ),
+        ):
+            with pytest.raises(RunCostCapExceeded):
+                await browser_node_type._track_usage_async(usage_metadata, runtime_context, "browse-1")
