@@ -48,6 +48,7 @@ class WorkflowProposal(BaseModel):
     )
     summary: str = Field(
         ...,
+        max_length=512,
         description="1-2 sentence summary of what the workflow does"
     )
     reasoning: str = Field(
@@ -329,7 +330,7 @@ async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # 
         workflow=session.workflow,
         session=session,
         created_by=user,
-        summary=summary or _summarize_spec(spec_payload),
+        summary=(summary or _summarize_spec(spec_payload))[:512],
         spec=spec_payload,
         status=WorkflowProposalModel.STATUS_PENDING,
         thread_id=thread_id,
