@@ -355,7 +355,7 @@ class TestValidateFormSuffix:
             mock_raise.side_effect = Exception("Invalid suffix")
 
             with pytest.raises(Exception, match="Invalid suffix"):
-                _validate_form_suffix("UPPERCASE")
+                _validate_form_suffix("has spaces!")
 
     def test_validate_form_suffix_reserved_raises(self):
         """Test reserved form suffix raises problem."""

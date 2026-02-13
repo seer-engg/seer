@@ -75,6 +75,7 @@ async def _enrich_trigger_specs_with_subscriptions(workflow: Workflow, spec: Wor
             form_url = _build_form_url(subscription)
 
         # Add enrichment data to ui_meta
+        trigger.ui_meta["subscription_id"] = subscription.id
         trigger.ui_meta["secret_token"] = subscription.secret_token
         if webhook_url:
             trigger.ui_meta["webhook_url"] = webhook_url

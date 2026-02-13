@@ -71,6 +71,24 @@ async def get_pending_events(
     return await services.get_pending_events(user, workflow_id, trigger_id, since=since)
 
 
+@router.get(
+    "/subscriptions/{subscription_id}/event-count",
+    response_model=api_models.SubscriptionEventCountResponse,
+)
+async def get_subscription_event_count(
+    request: Request,
+    subscription_id: int,
+):
+    """
+    Get the count of stored events for a trigger subscription.
+
+    Used by the frontend to determine if "Browse events" should be shown
+    for persisted triggers (webhooks, forms).
+    """
+    user = _require_user(request)
+    return await services.get_subscription_event_count(user, subscription_id)
+
+
 @router.get("/registries/tools", response_model=api_models.ToolRegistryResponse)
 async def get_tool_registry(request: Request, include_schemas: bool = Query(False)):
     _require_user(request)
