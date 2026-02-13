@@ -8,6 +8,7 @@ and full compilation validation.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from seer.logger import get_logger
@@ -29,6 +30,26 @@ class ValidationError:
         if self.hint:
             result["hint"] = self.hint
         return result
+
+
+@dataclass
+class ValidationResult:
+    """Result of the full workflow validation pipeline."""
+
+    success: bool
+    """Whether the entire validation pipeline passed."""
+
+    validated_spec: Optional[Any] = None
+    """The Pydantic-parsed WorkflowSpec (post-trigger-fix). None on failure."""
+
+    fixed_spec_dict: Optional[Dict[str, Any]] = None
+    """The spec dict after trigger auto-fixes were applied. None on failure."""
+
+    error: Optional[ValidationError] = None
+    """Structured error if validation failed at any stage. None on success."""
+
+    schema_fixes: List[Dict[str, Any]] = field(default_factory=list)
+    """Records of trigger event_schema auto-fixes applied (may be empty)."""
 
 
 def _get_attr_or_key(obj: Any, name: str, default: Any = None) -> Any:
@@ -221,4 +242,79 @@ def format_validation_errors(errors: List[str], error_type: str = "reference_val
         error_type,
         "Workflow references non-existent tools or triggers",
         "\n".join(errors)
+    )
+
+
+async def run_full_validation(
+    user: Any,
+    spec_dict: Dict[str, Any],
+) -> ValidationResult:
+    """
+    Run the complete workflow validation pipeline.
+
+    This is the single golden validation path. All callers (MCP tools, Nexus agent)
+    should use this function to ensure consistent validation behavior.
+
+    Pipeline steps:
+        1. Pydantic schema parse (structural validation gate)
+        2. Tool and trigger reference validation
+        3. Trigger event_schema auto-fix from registry
+        4. Full compilation validation (against the fixed spec)
+        5. Re-parse the fixed spec into a final WorkflowSpec model
+
+    Args:
+        user: User object for compilation context.
+        spec_dict: Raw workflow spec as a dict.
+
+    Returns:
+        ValidationResult with success/failure, validated spec, and any auto-fixes.
+    """
+    # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports at module level
+    from seer.core.compiler.parse import parse_workflow_spec
+    from seer.core.errors import ValidationPhaseError
+    from seer.tools.trigger_schema_fix import fix_trigger_event_schemas
+
+    # Step 1: Pydantic schema validation (structural gate)
+    try:
+        parse_workflow_spec(spec_dict)
+    except ValidationPhaseError as exc:
+        error_msg = str(exc)
+        hint = detect_extra_fields(spec_dict, error_msg) or "Check that your spec follows the workflow schema"
+        return ValidationResult(
+            success=False,
+            error=ValidationError("schema_validation", error_msg, hint),
+        )
+
+    # Step 2: Tool and trigger reference validation
+    ref_errors = validate_tools_and_triggers(spec_dict)
+    if ref_errors:
+        return ValidationResult(
+            success=False,
+            error=ValidationError(
+                "reference_validation",
+                "Workflow references non-existent tools or triggers",
+                "\n".join(ref_errors) + "\nUse search_tools() and list_triggers() to find valid names",
+            ),
+        )
+
+    # Step 3: Auto-fix trigger event_schemas with canonical schemas from registry
+    fixed_spec_dict, schema_fixes = fix_trigger_event_schemas(spec_dict)
+
+    # Step 4: Full compilation validation (always detailed, against the fixed spec)
+    compilation_error = await validate_compilation(user, fixed_spec_dict, detailed_errors=True)
+    if compilation_error:
+        return ValidationResult(
+            success=False,
+            error=compilation_error,
+            schema_fixes=schema_fixes,
+        )
+
+    # Step 5: Re-parse fixed spec to get the final WorkflowSpec model
+    validated_spec = parse_workflow_spec(fixed_spec_dict)
+
+    return ValidationResult(
+        success=True,
+        validated_spec=validated_spec,
+        fixed_spec_dict=fixed_spec_dict,
+        schema_fixes=schema_fixes,
     )

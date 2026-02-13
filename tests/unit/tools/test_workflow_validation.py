@@ -7,12 +7,14 @@ from unittest.mock import patch, MagicMock
 
 from seer.tools.workflow_validation import (
     ValidationError,
+    ValidationResult,
     _get_attr_or_key,
     validate_tool_references,
     validate_trigger_references,
     validate_tools_and_triggers,
     detect_extra_fields,
     format_validation_errors,
+    run_full_validation,
 )
 
 
@@ -206,3 +208,127 @@ class TestFormatValidationErrors:
         errors = ["Error"]
         result = format_validation_errors(errors, error_type="custom_type")
         assert result.error_type == "custom_type"
+
+
+@pytest.mark.unit
+class TestRunFullValidation:
+    """Tests for the unified run_full_validation pipeline."""
+
+    @pytest.mark.asyncio
+    @patch("seer.core.compiler.parse.parse_workflow_spec")
+    async def test_returns_schema_error_on_invalid_spec(self, mock_parse):
+        """Step 1 failure: Pydantic parse error yields schema_validation error."""
+        from seer.core.errors import ValidationPhaseError
+        mock_parse.side_effect = ValidationPhaseError("bad nodes")
+        mock_user = MagicMock()
+
+        result = await run_full_validation(mock_user, {"version": "2", "nodes": "bad"})
+
+        assert result.success is False
+        assert result.error.error_type == "schema_validation"
+        assert "bad nodes" in result.error.message
+        assert result.validated_spec is None
+        assert result.schema_fixes == []
+
+    @pytest.mark.asyncio
+    @patch("seer.tools.workflow_validation.validate_tools_and_triggers")
+    @patch("seer.core.compiler.parse.parse_workflow_spec")
+    async def test_returns_reference_error_for_bad_tools(self, mock_parse, mock_ref):
+        """Step 2 failure: invalid tool reference yields reference_validation error."""
+        mock_parse.return_value = MagicMock()
+        mock_ref.return_value = ["Tool 'bad_tool' not found."]
+        mock_user = MagicMock()
+
+        result = await run_full_validation(mock_user, {"version": "2", "nodes": []})
+
+        assert result.success is False
+        assert result.error.error_type == "reference_validation"
+        assert "bad_tool" in result.error.hint
+
+    @pytest.mark.asyncio
+    @patch("seer.tools.workflow_validation.validate_compilation")
+    @patch("seer.tools.trigger_schema_fix.fix_trigger_event_schemas")
+    @patch("seer.tools.workflow_validation.validate_tools_and_triggers")
+    @patch("seer.core.compiler.parse.parse_workflow_spec")
+    async def test_trigger_auto_fix_applied_before_compilation(
+        self, mock_parse, mock_ref, mock_fix, mock_compile
+    ):
+        """Step 3: trigger schemas are auto-fixed before compilation runs."""
+        mock_parse.return_value = MagicMock()
+        mock_ref.return_value = []
+        fixed_dict = {"version": "2", "nodes": [], "triggers": [{"key": "k", "event_schema": {"fixed": True}}]}
+        mock_fix.return_value = (fixed_dict, [{"trigger_id": "t1", "reason": "fixed"}])
+        mock_compile.return_value = None
+        mock_user = MagicMock()
+
+        result = await run_full_validation(mock_user, {"version": "2", "nodes": []})
+
+        assert result.success is True
+        assert len(result.schema_fixes) == 1
+        assert result.schema_fixes[0]["trigger_id"] == "t1"
+        # Verify compilation was called with the FIXED spec
+        mock_compile.assert_called_once()
+        compile_spec_arg = mock_compile.call_args[0][1]
+        assert compile_spec_arg is fixed_dict
+
+    @pytest.mark.asyncio
+    @patch("seer.tools.workflow_validation.validate_compilation")
+    @patch("seer.tools.trigger_schema_fix.fix_trigger_event_schemas")
+    @patch("seer.tools.workflow_validation.validate_tools_and_triggers")
+    @patch("seer.core.compiler.parse.parse_workflow_spec")
+    async def test_compilation_error_still_includes_schema_fixes(
+        self, mock_parse, mock_ref, mock_fix, mock_compile
+    ):
+        """Step 4 failure: compilation error includes any trigger auto-fixes that were applied."""
+        mock_parse.return_value = MagicMock()
+        mock_ref.return_value = []
+        mock_fix.return_value = ({"version": "2", "nodes": []}, [{"trigger_id": "t1", "reason": "fixed"}])
+        mock_compile.return_value = ValidationError("compilation", "graph cycle detected")
+        mock_user = MagicMock()
+
+        result = await run_full_validation(mock_user, {"version": "2", "nodes": []})
+
+        assert result.success is False
+        assert result.error.error_type == "compilation"
+        assert len(result.schema_fixes) == 1
+
+    @pytest.mark.asyncio
+    @patch("seer.tools.workflow_validation.validate_compilation")
+    @patch("seer.tools.trigger_schema_fix.fix_trigger_event_schemas")
+    @patch("seer.tools.workflow_validation.validate_tools_and_triggers")
+    @patch("seer.core.compiler.parse.parse_workflow_spec")
+    async def test_success_returns_validated_spec_and_fixes(
+        self, mock_parse, mock_ref, mock_fix, mock_compile
+    ):
+        """Full success: returns validated_spec, fixed_spec_dict, and schema_fixes."""
+        mock_spec = MagicMock()
+        mock_parse.return_value = mock_spec
+        mock_ref.return_value = []
+        fixed_dict = {"version": "2", "nodes": []}
+        mock_fix.return_value = (fixed_dict, [])
+        mock_compile.return_value = None
+        mock_user = MagicMock()
+
+        result = await run_full_validation(mock_user, {"version": "2", "nodes": []})
+
+        assert result.success is True
+        assert result.validated_spec is mock_spec
+        assert result.fixed_spec_dict is fixed_dict
+        assert result.error is None
+        assert result.schema_fixes == []
+
+    @pytest.mark.asyncio
+    @patch("seer.core.compiler.parse.parse_workflow_spec")
+    async def test_extra_fields_hint_on_schema_error(self, mock_parse):
+        """Schema error with extra fields produces a helpful hint."""
+        from seer.core.errors import ValidationPhaseError
+        mock_parse.side_effect = ValidationPhaseError("extra_forbidden: 'metadata'")
+        mock_user = MagicMock()
+
+        result = await run_full_validation(
+            mock_user,
+            {"version": "2", "nodes": [], "metadata": {}}
+        )
+
+        assert result.success is False
+        assert "metadata" in result.error.hint
