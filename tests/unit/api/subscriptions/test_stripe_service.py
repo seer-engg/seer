@@ -90,13 +90,11 @@ class TestBuildPriceToTierMap:
         """Test building price to tier mapping."""
         from seer.api.subscriptions.stripe_service import _build_price_to_tier_map
 
-        mock_tier_pricing = MagicMock()
-        mock_tier_pricing.tier = "pro"
-        mock_tier_pricing.monthly.price_id = "price_monthly_123"
-        mock_tier_pricing.annual.price_id = "price_annual_456"
-
-        with patch("seer.api.subscriptions.stripe_service.get_pricing_catalog") as mock_catalog:
-            mock_catalog.return_value = [mock_tier_pricing]
+        with patch("seer.api.subscriptions.stripe_service.get_price_id_to_tier_map") as mock_map:
+            mock_map.return_value = {
+                "price_monthly_123": "pro",
+                "price_annual_456": "pro",
+            }
 
             result = _build_price_to_tier_map()
 
@@ -107,8 +105,8 @@ class TestBuildPriceToTierMap:
         """Test building mapping with empty catalog."""
         from seer.api.subscriptions.stripe_service import _build_price_to_tier_map
 
-        with patch("seer.api.subscriptions.stripe_service.get_pricing_catalog") as mock_catalog:
-            mock_catalog.return_value = []
+        with patch("seer.api.subscriptions.stripe_service.get_price_id_to_tier_map") as mock_map:
+            mock_map.return_value = {}
 
             result = _build_price_to_tier_map()
 
@@ -118,8 +116,8 @@ class TestBuildPriceToTierMap:
         """Test handling catalog load error."""
         from seer.api.subscriptions.stripe_service import _build_price_to_tier_map
 
-        with patch("seer.api.subscriptions.stripe_service.get_pricing_catalog") as mock_catalog:
-            mock_catalog.side_effect = Exception("Catalog error")
+        with patch("seer.api.subscriptions.stripe_service.get_price_id_to_tier_map") as mock_map:
+            mock_map.side_effect = Exception("Catalog error")
 
             result = _build_price_to_tier_map()
 

@@ -1,7 +1,31 @@
-"""Subscription pricing catalog and Stripe price helpers."""
-from dataclasses import dataclass
+"""Subscription pricing catalog — Stripe is the single source of truth.
+
+Products and prices are fetched from Stripe, parsed from their metadata,
+and cached in-memory with a configurable TTL.  No hardcoded prices,
+product names, features, or display labels live in this module.
+
+Stripe metadata conventions
+---------------------------
+**Product metadata** (set on each Stripe Product):
+    tier (required)            : "pro" / "pro_plus" / "ultra"
+    display_name (required)    : "Pro" / "Pro+"
+    features (required)        : JSON array, e.g. '["Unlimited workflows","Priority support"]'
+    sort_order                 : "1", "2" — display ordering
+    badge (optional)           : e.g. "MOST POPULAR"
+    upgrade_benefits (opt.)    : JSON array for PaymentRequiredModal
+
+**Price metadata** (set on each Stripe Price):
+    tier (required)            : "pro" — needed for webhook tier resolution
+    variant (required)         : "regular"
+    trial_period_days (opt.)   : "14"
+    original_price_cents (opt.): "3900" — for strikethrough display on discounted prices
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, Optional
+from typing import Optional
 
 import stripe
 from pydantic import BaseModel
@@ -11,396 +35,371 @@ from seer.logger import get_logger
 
 logger = get_logger("api.subscriptions.pricing_catalog")
 
+# ---------------------------------------------------------------------------
+# Public Pydantic models (returned by the API)
+# ---------------------------------------------------------------------------
+
 
 class PriceInfo(BaseModel):
-    """Price information for a billing cycle."""
+    """Price information for a single billing cycle."""
+
     price: int
     price_id: Optional[str] = None
+    original_price: Optional[int] = None
+    trial_period_days: Optional[int] = None
+    lookup_key: Optional[str] = None
 
 
 class TierPricing(BaseModel):
-    """Pricing information for a subscription tier."""
+    """Full pricing + display information for one subscription tier."""
+
     tier: str
     name: str
     monthly: PriceInfo
     annual: PriceInfo
-
-
-@dataclass(frozen=True)
-class ProductDefinition:
-    """Static definition used to construct Stripe products."""
-    tier: str
-    name: str
+    features: list[str] = []
+    badge: Optional[str] = None
+    sort_order: int = 0
     description: Optional[str] = None
+    upgrade_benefits: list[str] = []
 
 
-@dataclass(frozen=True)
-class PriceDefinition:
-    """Static definition used to construct Stripe prices."""
+# ---------------------------------------------------------------------------
+# Internal cache
+# ---------------------------------------------------------------------------
+
+_CACHE_TTL = timedelta(minutes=10)
+
+
+@dataclass
+class _CachedProduct:  # pylint: disable=too-many-instance-attributes  # Reason: mirrors Stripe Product metadata structure
+    """Parsed product metadata from a Stripe Product."""
+
+    product_id: str
     tier: str
-    name: str
-    interval: str  # month or year
-    amount: int
-    lookup_key: str
-    currency: str = "usd"
+    display_name: str
+    features: list[str] = field(default_factory=list)
+    sort_order: int = 0
+    badge: Optional[str] = None
+    description: Optional[str] = None
+    upgrade_benefits: list[str] = field(default_factory=list)
+
+
+@dataclass
+class _CachedPrice:  # pylint: disable=too-many-instance-attributes  # Reason: mirrors Stripe Price metadata structure
+    """Parsed price metadata from a Stripe Price."""
+
+    price_id: str
+    tier: str
+    variant: str  # "regular" or "early_adopter"
+    interval: str  # "month" or "year"
+    amount: int  # unit_amount in cents
+    lookup_key: Optional[str] = None
     trial_period_days: Optional[int] = None
+    original_price_cents: Optional[int] = None
 
 
-PRODUCT_DEFINITIONS: dict[str, ProductDefinition] = {
-    "pro": ProductDefinition(
-        tier="pro",
-        name="Seer Pro",
-        description="Pro tier subscription for Seer",
-    ),
-    "pro_plus": ProductDefinition(
-        tier="pro_plus",
-        name="Seer Pro+",
-        description="Pro+ tier subscription for Seer",
-    )
-}
+@dataclass
+class _PricingCache:
+    """In-memory cache holding parsed Stripe products and prices."""
 
-PRICE_DEFINITIONS: tuple[PriceDefinition, ...] = (
-    # Regular Pro prices (updated from $20/$200)
-    PriceDefinition(
-        tier="pro",
-        name="Pro",
-        interval="month",
-        amount=39,
-        lookup_key="pro_monthly",
-        trial_period_days=14,
-    ),
-    PriceDefinition(
-        tier="pro",
-        name="Pro",
-        interval="year",
-        amount=390,
-        lookup_key="pro_annual",
-    ),
-    # Early adopter Pro prices (new)
-    PriceDefinition(
-        tier="pro",
-        name="Pro (Early Adopter)",
-        interval="month",
-        amount=29,
-        lookup_key="pro_monthly_early_adopter",
-        trial_period_days=14,
-    ),
-    PriceDefinition(
-        tier="pro",
-        name="Pro (Early Adopter)",
-        interval="year",
-        amount=290,
-        lookup_key="pro_annual_early_adopter",
-    ),
-    # Pro+ unchanged
-    PriceDefinition(
-        tier="pro_plus",
-        name="Pro+",
-        interval="month",
-        amount=60,
-        lookup_key="pro_plus_monthly",
-        trial_period_days=14,
-    ),
-    PriceDefinition(
-        tier="pro_plus",
-        name="Pro+",
-        interval="year",
-        amount=600,
-        lookup_key="pro_plus_annual",
-    )
-)
-
-# Cache Stripe price IDs to avoid hitting the API on every pricing request.
-_PRICE_ID_CACHE: dict[str, str] = {}
-_PRICE_ID_CACHE_EXPIRES_AT: Optional[datetime] = None
-_PRICE_CACHE_TTL = timedelta(days=30)
+    products_by_tier: dict[str, _CachedProduct] = field(default_factory=dict)
+    prices: list[_CachedPrice] = field(default_factory=list)
+    price_id_to_tier: dict[str, str] = field(default_factory=dict)
+    lookup_key_to_price_id: dict[str, str] = field(default_factory=dict)
+    expires_at: Optional[datetime] = None
 
 
-def _find_product_by_tier(tier: str) -> Optional[dict]:
-    """Find an existing Stripe product for the given tier."""
-    if not config.stripe_secret_key:
+_cache = _PricingCache()
+
+
+# ---------------------------------------------------------------------------
+# Cache helpers
+# ---------------------------------------------------------------------------
+
+
+def _cache_is_valid() -> bool:
+    if _cache.expires_at is None:
+        return False
+    return datetime.now(timezone.utc) < _cache.expires_at
+
+
+def invalidate_pricing_cache() -> None:
+    """Force the next call to re-fetch from Stripe.  Useful for tests / admin."""
+    global _cache  # pylint: disable=global-statement  # Reason: intentional caching pattern
+    _cache = _PricingCache()
+
+
+# ---------------------------------------------------------------------------
+# Stripe fetching & parsing
+# ---------------------------------------------------------------------------
+
+
+def _parse_json_metadata(raw: Optional[str]) -> list[str]:
+    """Safely parse a JSON-encoded list stored in Stripe metadata."""
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed]
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("Failed to parse JSON metadata: %s", raw)
+    return []
+
+
+def _parse_int_metadata(raw: Optional[str]) -> Optional[int]:
+    """Safely parse an integer stored in Stripe metadata."""
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
         return None
 
-    stripe.api_key = stripe.api_key or config.stripe_secret_key
 
-    try:
-        response = stripe.Product.list(active=True, limit=100)
-    except stripe.error.StripeError as exc:
-        logger.error("Failed to list Stripe products: %s", exc)
+def _parse_product(product: dict) -> Optional[_CachedProduct]:
+    """Parse a Stripe Product dict into _CachedProduct, or None if tier is missing."""
+    metadata = product.get("metadata") or {}
+    tier = metadata.get("tier")
+    if not tier:
         return None
-
-    data: Iterable[dict] = response.data if hasattr(response, "data") else response.get("data", [])  # type: ignore[index]
-    product_definition = PRODUCT_DEFINITIONS.get(tier)
-    for product in data:
-        metadata = getattr(product, "metadata", None) or product.get("metadata", {})  # type: ignore[attr-defined]
-        product_name = getattr(product, "name", None) or product.get("name")  # type: ignore[attr-defined]
-        if metadata.get("tier") == tier:
-            return product
-        if product_definition and product_name and product_name.lower() == product_definition.name.lower():
-            return product
-    return None
-
-
-def _get_or_create_product(definition: ProductDefinition) -> dict:
-    """Fetch or create the Stripe product for a tier."""
-    existing = _find_product_by_tier(definition.tier)
-    if existing:
-        if not getattr(existing, "active", True):
-            try:
-                existing = stripe.Product.modify(existing["id"], active=True)
-            except stripe.error.StripeError as exc:
-                logger.error("Failed to activate Stripe product %s: %s", existing["id"], exc)
-                raise
-        return existing
-
-    stripe.api_key = stripe.api_key or config.stripe_secret_key
-    try:
-        return stripe.Product.create(
-            name=definition.name,
-            description=definition.description,
-            metadata={"tier": definition.tier},
-        )
-    except stripe.error.StripeError as exc:
-        logger.error("Failed to create Stripe product for tier %s: %s", definition.tier, exc)
-        raise
+    return _CachedProduct(
+        product_id=product["id"],
+        tier=tier,
+        display_name=metadata.get("display_name", product.get("name", tier)),
+        features=_parse_json_metadata(metadata.get("features")),
+        sort_order=int(metadata.get("sort_order", 0)),
+        badge=metadata.get("badge") or None,
+        description=product.get("description"),
+        upgrade_benefits=_parse_json_metadata(metadata.get("upgrade_benefits")),
+    )
 
 
-def _cache_valid(now: datetime) -> bool:
-    """Check if the cached Stripe price IDs are still valid."""
-    if not _PRICE_ID_CACHE or _PRICE_ID_CACHE_EXPIRES_AT is None:
-        return False
-    if now >= _PRICE_ID_CACHE_EXPIRES_AT:
-        return False
-    return True
+def _parse_price(price: dict) -> Optional[_CachedPrice]:
+    """Parse a Stripe Price dict into _CachedPrice, or None if metadata incomplete.
 
-
-def _get_cached_stripe_price_ids() -> dict[str, str]:
-    """Return cached Stripe price IDs if valid, otherwise fetch and cache them."""
-    global _PRICE_ID_CACHE, _PRICE_ID_CACHE_EXPIRES_AT  # pylint: disable=global-statement  # Reason: intentional caching pattern
-    now = datetime.now(timezone.utc)
-    if _cache_valid(now):
-        return dict(_PRICE_ID_CACHE)
-
-    if not config.stripe_secret_key:
-        return {}
-
-    stripe.api_key = stripe.api_key or config.stripe_secret_key
-
-    lookup_keys = [definition.lookup_key for definition in PRICE_DEFINITIONS]
-    try:
-        response = stripe.Price.list(
-            lookup_keys=lookup_keys,
-            active=True,
-            limit=len(lookup_keys),
-        )
-    except stripe.error.StripeError as exc:
-        logger.error("Failed to list Stripe prices: %s", exc)
-        return {}
-
-    data: Iterable[dict] = response.data if hasattr(response, "data") else response.get("data", [])  # type: ignore[index]
-    fetched: dict[str, str] = {}
-
-    for price in data:
-        lookup_key = price.get("lookup_key")
-        price_id = price.get("id")
-        if lookup_key in lookup_keys and price_id:
-            fetched[lookup_key] = price_id
-
-    missing = [key for key in lookup_keys if key not in fetched]
-    if missing:
-        logger.warning("Missing Stripe prices for lookup keys: %s", ", ".join(missing))
-
-    if fetched:
-        _PRICE_ID_CACHE = fetched
-        _PRICE_ID_CACHE_EXPIRES_AT = now + _PRICE_CACHE_TTL
-
-    return fetched
-
-
-def _resolve_price_ids() -> dict[str, Optional[str]]:
+    The ``tier`` metadata field is required.  If ``variant`` is absent,
+    we fall back to inferring it from the lookup_key (``*_early_adopter`` →
+    ``"early_adopter"``, everything else → ``"regular"``).  This provides
+    backward compatibility with prices that predate the metadata convention.
     """
-    Resolve price IDs using Stripe (cached).
+    metadata = price.get("metadata") or {}
+    tier = metadata.get("tier")
+
+    # tier can also live on the associated product
+    if not tier:
+        product = price.get("product")
+        if isinstance(product, dict):
+            tier = (product.get("metadata") or {}).get("tier")
+    if not tier:
+        return None
+
+    variant = metadata.get("variant")
+    if not variant:
+        # Infer variant from lookup_key for backward compatibility
+        lookup_key = price.get("lookup_key") or ""
+        variant = "early_adopter" if "early_adopter" in lookup_key else "regular"
+
+    recurring = price.get("recurring") or {}
+    interval = recurring.get("interval")
+    if interval not in ("month", "year"):
+        return None
+
+    return _CachedPrice(
+        price_id=price["id"],
+        tier=tier,
+        variant=variant,
+        interval=interval,
+        amount=price.get("unit_amount") or 0,
+        lookup_key=price.get("lookup_key"),
+        trial_period_days=_parse_int_metadata(metadata.get("trial_period_days")),
+        original_price_cents=_parse_int_metadata(metadata.get("original_price_cents")),
+    )
+
+
+def _fetch_products_from_stripe() -> dict[str, _CachedProduct]:
+    """
+    Fetch and parse all active products from Stripe.
 
     Returns:
-        Mapping from lookup key to Stripe price ID (may be None).
+        Dictionary mapping tier to cached product data
     """
+    products_by_tier: dict[str, _CachedProduct] = {}
+
+    try:
+        product_response = stripe.Product.list(active=True, limit=100)
+        product_data = product_response.data if hasattr(product_response, "data") else product_response.get("data", [])
+        for raw_product in product_data:
+            product = _parse_product(raw_product)
+            if product:
+                products_by_tier[product.tier] = product
+    except stripe.error.StripeError as exc:
+        logger.error("Failed to list Stripe products: %s", exc)
+
+    return products_by_tier
+
+
+def _fetch_prices_from_stripe() -> tuple[list[_CachedPrice], dict[str, str], dict[str, str]]:
+    """
+    Fetch and parse all active prices from Stripe.
+
+    Returns:
+        Tuple of (prices list, price_id_to_tier mapping, lookup_key_to_price_id mapping)
+    """
+    prices: list[_CachedPrice] = []
+    price_id_to_tier: dict[str, str] = {}
+    lookup_key_to_price_id: dict[str, str] = {}
+
+    try:
+        price_response = stripe.Price.list(active=True, limit=100, expand=["data.product"])
+        price_data = price_response.data if hasattr(price_response, "data") else price_response.get("data", [])
+        for raw_price in price_data:
+            parsed = _parse_price(raw_price)
+            if parsed:
+                prices.append(parsed)
+                price_id_to_tier[parsed.price_id] = parsed.tier
+                if parsed.lookup_key:
+                    lookup_key_to_price_id[parsed.lookup_key] = parsed.price_id
+    except stripe.error.StripeError as exc:
+        logger.error("Failed to list Stripe prices: %s", exc)
+
+    return prices, price_id_to_tier, lookup_key_to_price_id
+
+
+def _fetch_and_cache_from_stripe() -> None:
+    """Fetch all active products and prices from Stripe, parse metadata, build cache."""
+    global _cache  # pylint: disable=global-statement  # Reason: intentional caching pattern
+
     if not config.stripe_secret_key:
-        return {}
-    return _get_cached_stripe_price_ids()
+        logger.warning("Stripe secret key not configured — pricing cache empty")
+        return
+
+    stripe.api_key = stripe.api_key or config.stripe_secret_key
+
+    # Fetch products and prices from Stripe
+    products_by_tier = _fetch_products_from_stripe()
+    prices, price_id_to_tier, lookup_key_to_price_id = _fetch_prices_from_stripe()
+
+    # Build and store cache
+    _cache = _PricingCache(
+        products_by_tier=products_by_tier,
+        prices=prices,
+        price_id_to_tier=price_id_to_tier,
+        lookup_key_to_price_id=lookup_key_to_price_id,
+        expires_at=datetime.now(timezone.utc) + _CACHE_TTL,
+    )
+
+    logger.info(
+        "Pricing cache refreshed: %d products, %d prices",
+        len(products_by_tier),
+        len(prices),
+    )
 
 
-def _build_pricing(price_ids: Dict[str, Optional[str]]) -> list[TierPricing]:
-    """
-    Build tier pricing objects using the static catalog and provided price IDs.
+def _ensure_cache() -> None:
+    """Populate the cache if expired or empty."""
+    if not _cache_is_valid():
+        _fetch_and_cache_from_stripe()
 
-    Args:
-        price_ids: Mapping from lookup key to Stripe price ID (may be None).
-    """
-    tiers: dict[str, dict[str, Any]] = {}
-    for definition in PRICE_DEFINITIONS:
-        tier_entry = tiers.setdefault(definition.tier, {"name": definition.name})
-        price_info = PriceInfo(
-            price=definition.amount * 100,
-            price_id=price_ids.get(definition.lookup_key),
-        )
-        if definition.interval == "month":
-            tier_entry["monthly"] = price_info
-        else:
-            tier_entry["annual"] = price_info
 
-    pricing: list[TierPricing] = []
-    for tier_key, values in tiers.items():
-        pricing.append(TierPricing(
-            tier=tier_key,
-            name=values["name"],
-            monthly=values["monthly"],
-            annual=values["annual"],
-        ))
-    return pricing
+# ---------------------------------------------------------------------------
+# Public API — pricing catalog
+# ---------------------------------------------------------------------------
 
 
 def get_pricing_catalog() -> list[TierPricing]:
-    """Return pricing details using Stripe price IDs (cached) or config fallbacks."""
-    return _build_pricing(_resolve_price_ids())
+    """Return a sorted list of ``TierPricing`` objects built from cached Stripe data."""
+    _ensure_cache()
 
+    variant = "regular"
 
-def get_price_id_for_checkout(tier: str, interval: str, is_early_adopter: bool = False) -> Optional[str]:
-    """Get Stripe price_id for tier/interval with optional early adopter pricing.
+    result: list[TierPricing] = []
+    for tier, product in _cache.products_by_tier.items():
+        monthly: Optional[PriceInfo] = None
+        annual: Optional[PriceInfo] = None
 
-    Args:
-        tier: Subscription tier (e.g., "pro", "pro_plus")
-        interval: Billing interval ("month" or "year")
-        is_early_adopter: Whether to use early adopter pricing
-
-    Returns:
-        Stripe price_id string or None if not found
-    """
-    # Map frontend interval values to Stripe lookup key suffixes
-    interval_mapping = {
-        "month": "monthly",
-        "year": "annual"
-    }
-    interval_suffix = interval_mapping.get(interval, interval)
-
-    if is_early_adopter and tier == "pro":
-        lookup_key = f"pro_{interval_suffix}_early_adopter"
-    else:
-        lookup_key = f"{tier}_{interval_suffix}"
-
-    price_ids = _resolve_price_ids()
-    return price_ids.get(lookup_key)
-
-
-def _get_existing_price(lookup_key: str, price_id: Optional[str], product_id: Optional[str]) -> Optional[dict]:
-    """Fetch an existing Stripe price by ID or lookup key."""
-    if not config.stripe_secret_key:
-        return None
-
-    stripe.api_key = stripe.api_key or config.stripe_secret_key
-
-    if price_id:
-        try:
-            return stripe.Price.retrieve(price_id)
-        except stripe.error.StripeError as exc:
-            logger.warning(
-                "Configured price %s could not be retrieved (%s); falling back to lookup_key search",
-                price_id,
-                exc,
+        # Collect prices for this tier, preferring the requested variant
+        tier_prices = [p for p in _cache.prices if p.tier == tier]
+        for interval in ("month", "year"):
+            # Try requested variant first, fall back to regular
+            price = next(
+                (p for p in tier_prices if p.interval == interval and p.variant == variant),
+                None,
             )
+            if price is None and variant != "regular":
+                price = next(
+                    (p for p in tier_prices if p.interval == interval and p.variant == "regular"),
+                    None,
+                )
 
-    try:
-        response = stripe.Price.list(lookup_keys=[lookup_key], limit=1, expand=["data.product"])
-    except stripe.error.StripeError as exc:
-        logger.error("Failed to list Stripe prices for %s: %s", lookup_key, exc)
-        raise
+            if price is None:
+                continue
 
-    data: Iterable[dict] = response.data if hasattr(response, "data") else response.get("data", [])  # type: ignore[index]
-    price = next(iter(data), None)
-    if price and product_id:
-        price_product_id = getattr(price, "product", None) or price.get("product")  # type: ignore[attr-defined]
-        if price_product_id and price_product_id != product_id:
-            logger.warning(
-                "Stripe price %s uses product %s instead of expected %s",
-                lookup_key,
-                price_product_id,
-                product_id,
+            info = PriceInfo(
+                price=price.amount,
+                price_id=price.price_id,
+                original_price=price.original_price_cents,
+                trial_period_days=price.trial_period_days,
+                lookup_key=price.lookup_key,
             )
-    return price
+            if interval == "month":
+                monthly = info
+            else:
+                annual = info
 
+        if monthly is None or annual is None:
+            logger.warning("Tier %s missing monthly or annual price — skipping", tier)
+            continue
 
-def _create_stripe_price(definition: PriceDefinition, product_id: str) -> dict:
-    """Create a Stripe price for the given definition."""
-    stripe.api_key = stripe.api_key or config.stripe_secret_key
-
-    # Build recurring configuration
-    # Note: trial_period_days is NOT supported in the recurring config by Stripe API
-    # Trials must be specified at subscription creation time, not on the price
-    recurring_config = {"interval": definition.interval}
-
-    try:
-        return stripe.Price.create(
-            currency=definition.currency,
-            unit_amount=definition.amount * 100,
-            recurring=recurring_config,
-            lookup_key=definition.lookup_key,
-            nickname=f"{definition.name} {definition.interval}",
-            product=product_id,
-            metadata={"tier": definition.tier},
-        )
-    except stripe.error.StripeError as exc:
-        logger.error("Failed to create Stripe price for %s: %s", definition.lookup_key, exc)
-        raise
-
-
-def create_prices_in_stripe() -> dict[str, str]:
-    """
-    Create or fetch Stripe prices for all tiers and return their IDs.
-
-    Returns:
-        Mapping of lookup_key -> Stripe price ID.
-
-    Raises:
-        ValueError: if Stripe secret key is not configured.
-        stripe.error.StripeError: if Stripe operations fail.
-    """
-    global _PRICE_ID_CACHE, _PRICE_ID_CACHE_EXPIRES_AT  # pylint: disable=global-statement  # Reason: intentional caching pattern
-    if not config.stripe_secret_key:
-        raise ValueError("Stripe secret key is not configured")
-
-    stripe.api_key = stripe.api_key or config.stripe_secret_key
-    price_ids: dict[str, str] = {}
-    product_ids: dict[str, str] = {}
-
-    for definition in PRICE_DEFINITIONS:
-        product_definition = PRODUCT_DEFINITIONS.get(definition.tier)
-        if not product_definition:
-            raise ValueError(f"No product definition for tier {definition.tier}")
-
-        product_id = product_ids.get(definition.tier)
-        if not product_id:
-            product = _get_or_create_product(product_definition)
-            product_id = product["id"]
-            product_ids[definition.tier] = product_id
-
-        existing = _get_existing_price(
-            lookup_key=definition.lookup_key,
-            price_id=None,
-            product_id=product_id,
+        result.append(
+            TierPricing(
+                tier=tier,
+                name=product.display_name,
+                monthly=monthly,
+                annual=annual,
+                features=product.features,
+                badge=product.badge,
+                sort_order=product.sort_order,
+                description=product.description,
+                upgrade_benefits=product.upgrade_benefits,
+            )
         )
 
-        if existing and not getattr(existing, "active", True):
-            existing = stripe.Price.modify(existing["id"], active=True)
+    result.sort(key=lambda t: t.sort_order)
+    return result
 
-        price = existing or _create_stripe_price(definition, product_id)
-        price_ids[definition.lookup_key] = price["id"]
-        logger.info(
-            "Stripe price ready for %s (%s): %s",
-            definition.tier,
-            definition.interval,
-            price["id"],
-        )
 
-    _PRICE_ID_CACHE = price_ids
-    _PRICE_ID_CACHE_EXPIRES_AT = datetime.now(timezone.utc) + _PRICE_CACHE_TTL
+def get_price_id_for_checkout(
+    tier: str,
+    interval: str,
+) -> Optional[str]:
+    """Return the Stripe price ID for a tier + interval combination."""
+    _ensure_cache()
 
-    return price_ids
+    match = next(
+        (p for p in _cache.prices if p.tier == tier and p.interval == interval and p.variant == "regular"),
+        None,
+    )
+
+    return match.price_id if match else None
+
+
+def get_trial_period_days(
+    tier: str,
+    interval: str,
+) -> Optional[int]:
+    """Return the trial period in days from cached Stripe price metadata."""
+    _ensure_cache()
+
+    match = next(
+        (p for p in _cache.prices if p.tier == tier and p.interval == interval and p.variant == "regular"),
+        None,
+    )
+    return match.trial_period_days if match else None
+
+
+def get_price_id_to_tier_map() -> dict[str, str]:
+    """Return a mapping ``{stripe_price_id: tier}`` for webhook tier resolution."""
+    _ensure_cache()
+    return dict(_cache.price_id_to_tier)

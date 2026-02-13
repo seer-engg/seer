@@ -402,7 +402,9 @@ async def test_trial_expiration_with_annual_subscription(
 
     # Create annual subscription with trial
     stripe.api_key = config.stripe_secret_key
-    price_id = get_price_id_for_checkout("pro", "year", is_early_adopter=False)
+    price_id = get_price_id_for_checkout("pro", "year")
+    if price_id is None:
+        pytest.skip("No annual price available in Stripe test account")
 
     subscription = stripe.Subscription.create(
         customer=test_customer.id,
