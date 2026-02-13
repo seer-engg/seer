@@ -27,6 +27,11 @@ from seer.observability.service import (
 )
 from seer.observability.tracking import (
     get_chat_message_count,  # Deprecated - use get_total_chat_message_count
+    get_llm_usage_by_model,
+    get_llm_usage_by_operation,
+    get_llm_usage_by_workflow,
+    get_llm_usage_daily_trend,
+    get_llm_usage_records_paginated,
     get_monthly_llm_credits_detailed,
     get_monthly_llm_credits_used,
     get_monthly_run_count,
@@ -67,6 +72,12 @@ __all__ = [
     "get_monthly_llm_credits_used",
     "get_monthly_llm_credits_detailed",
     "reset_monthly_counters",
+    # Analytics query functions
+    "get_llm_usage_by_model",
+    "get_llm_usage_by_operation",
+    "get_llm_usage_daily_trend",
+    "get_llm_usage_by_workflow",
+    "get_llm_usage_records_paginated",
     # Exceptions
     "UsageLimitError",
     "WorkflowLimitExceeded",

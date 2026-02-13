@@ -114,6 +114,103 @@ class TestDispatchBasic:
 
             assert result.status_code == 401
 
+    @pytest.mark.asyncio
+    async def test_dispatch_payment_exempt_path_skips_limits(self, mock_request, mock_user):
+        """Test that payment-exempt paths skip usage limit checks."""
+        mock_request.state.db_user = mock_user
+        mock_request.method = "GET"
+        mock_request.url.path = "/api/subscriptions/checkout"
+        call_next = AsyncMock(return_value=MagicMock())
+
+        with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
+             patch("seer.api.core.middleware.usage_limit.is_payment_exempt_path") as mock_is_exempt, \
+             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits:
+
+            mock_is_public.return_value = False
+            mock_is_exempt.return_value = True
+
+            middleware = UsageLimitMiddleware(app=MagicMock())
+
+            await middleware.dispatch(mock_request, call_next)
+
+            # Should pass through without checking limits
+            call_next.assert_called_once()
+            # get_limits_for_user should not be called
+            mock_get_limits.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_payment_exempt_path_requires_auth(self, mock_request):
+        """Test that payment-exempt paths still require authentication."""
+        mock_request.state.db_user = None
+        mock_request.method = "GET"
+        mock_request.url.path = "/api/usage"
+
+        with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
+             patch("seer.api.core.middleware.usage_limit.is_payment_exempt_path") as mock_is_exempt:
+
+            mock_is_public.return_value = False
+            mock_is_exempt.return_value = True
+
+            middleware = UsageLimitMiddleware(app=MagicMock())
+
+            result = await middleware.dispatch(mock_request, AsyncMock())
+
+            # Should return 401 (not allowed without auth)
+            assert result.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_usage_analytics_path_is_payment_exempt(self, mock_request, mock_user):
+        """Test that /api/usage/analytics/* paths are payment-exempt."""
+        mock_request.state.db_user = mock_user
+        mock_request.method = "GET"
+        mock_request.url.path = "/api/usage/analytics/daily"
+        call_next = AsyncMock(return_value=MagicMock())
+
+        with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
+             patch("seer.api.core.middleware.usage_limit.is_payment_exempt_path") as mock_is_exempt, \
+             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits:
+
+            mock_is_public.return_value = False
+            mock_is_exempt.return_value = True
+
+            middleware = UsageLimitMiddleware(app=MagicMock())
+
+            await middleware.dispatch(mock_request, call_next)
+
+            # Should pass through
+            call_next.assert_called_once()
+            # Limits should not be checked
+            mock_get_limits.assert_not_called()
+
+
+    @pytest.mark.asyncio
+    async def test_non_payment_exempt_path_enforces_limits(self, mock_request, mock_user, mock_limits):
+        """Test that regular paths still enforce usage limits."""
+        mock_request.state.db_user = mock_user
+        mock_request.method = "POST"
+        mock_request.url.path = "/api/v1/workflows"
+
+        with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
+             patch("seer.api.core.middleware.usage_limit.is_payment_exempt_path") as mock_is_exempt, \
+             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits, \
+             patch("seer.api.core.middleware.usage_limit.get_workflow_count") as mock_get_count, \
+             patch("seer.api.core.middleware.usage_limit.resolve_user_tier") as mock_resolve_tier:
+
+            mock_is_public.return_value = False
+            mock_is_exempt.return_value = False
+            mock_get_limits.return_value = mock_limits
+            mock_get_count.return_value = 10  # At limit
+            mock_resolve_tier.return_value = MagicMock(value="free")
+
+            middleware = UsageLimitMiddleware(app=MagicMock())
+
+            result = await middleware.dispatch(mock_request, AsyncMock())
+
+            # Should be blocked with 402
+            assert result.status_code == 402
+            # Limits should have been checked
+            mock_get_limits.assert_called_once()
+
 
 # =============================================================================
 # Workflow Creation Limit Tests
@@ -133,10 +230,12 @@ class TestWorkflowCreationLimit:
         call_next = AsyncMock(return_value=MagicMock())
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
+             patch("seer.api.core.middleware.usage_limit.is_payment_exempt_path") as mock_is_exempt, \
              patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits, \
              patch("seer.api.core.middleware.usage_limit.get_workflow_count") as mock_get_count:
 
             mock_is_public.return_value = False
+            mock_is_exempt.return_value = False
             mock_get_limits.return_value = mock_limits
             mock_get_count.return_value = 5  # Under limit of 10
 
@@ -154,11 +253,13 @@ class TestWorkflowCreationLimit:
         mock_request.url.path = "/api/v1/workflows"
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
+             patch("seer.api.core.middleware.usage_limit.is_payment_exempt_path") as mock_is_exempt, \
              patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits, \
              patch("seer.api.core.middleware.usage_limit.get_workflow_count") as mock_get_count, \
              patch("seer.api.core.middleware.usage_limit.resolve_user_tier") as mock_resolve_tier:
 
             mock_is_public.return_value = False
+            mock_is_exempt.return_value = False
             mock_get_limits.return_value = mock_limits
             mock_get_count.return_value = 10  # At limit
             mock_resolve_tier.return_value = MagicMock(value="free")

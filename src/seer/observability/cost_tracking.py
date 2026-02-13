@@ -24,15 +24,17 @@ def detect_provider_from_model(model: str) -> str:
     Detect LLM provider from model name.
 
     Args:
-        model: Model name (e.g., "gpt-4o", "claude-sonnet-4.5")
+        model: Model name (e.g., "gpt-4o", "claude-sonnet-4.5", "moonshotai/kimi-k2.5")
 
     Returns:
-        Provider name: "openai", "anthropic", or "unknown"
+        Provider name: "openai", "anthropic", "openrouter", or "unknown"
     """
     if model.startswith(("gpt-", "o3-", "o1-")):
         return "openai"
     if model.startswith("claude-"):
         return "anthropic"
+    if model.startswith("moonshotai/"):
+        return "openrouter"
     return "unknown"
 
 
