@@ -4,7 +4,6 @@ E2E tests for onboarding flow with trial subscription creation.
 Tests the complete onboarding flow including:
 - Trial subscription creation after payment method added
 - Webhook synchronization
-- Early adopter eligibility
 - Error handling
 """
 from datetime import datetime, timedelta, timezone
@@ -122,10 +121,6 @@ async def test_create_trial_requires_payment_method(db_engine):
         owner_user=user,
         stripe_customer_id=stripe_customer.id,
     )
-
-    # Create early adopter counters (required for subscription creation)
-    from seer.database.subscription_models import EarlyAdopterCounter
-    await EarlyAdopterCounter.get_or_create(tier="pro", defaults={"count": 0})
 
     # Create test app and client with mocked auth
     app = FastAPI(title="Test Subscription App")
@@ -245,56 +240,6 @@ async def test_trial_end_date_calculation(subscription_with_trial):
             f"If current_period_end exists during trial, it should equal trial_end: "
             f"current_period_end={current_period_end}, trial_end={stripe_sub.trial_end}"
         )
-
-
-@pytest.mark.asyncio
-async def test_early_adopter_trial_creation(
-    authenticated_subscription_client, user_with_payment_method
-):
-    """
-    Test creating a trial subscription with early adopter pricing.
-
-    Verifies:
-    - Correct early adopter price_id is used
-    - Metadata includes is_early_adopter=true
-    - DB has is_early_adopter=true
-    """
-    user, billing_profile, _ = user_with_payment_method
-
-    # Note: Early adopter eligibility is checked in the endpoint
-    # This test assumes the user is eligible (within limit)
-
-    response = await authenticated_subscription_client.post(
-        "/api/subscriptions/create-with-trial",
-        json={"tier": "pro", "interval": "month"},
-    )
-
-    assert response.status_code == 200
-    result = response.json()
-
-    # Retrieve subscription from Stripe
-    stripe.api_key = config.stripe_secret_key
-    stripe_sub = stripe.Subscription.retrieve(result["subscription_id"])
-
-    # Check metadata for early adopter flag
-    metadata = stripe_sub.metadata
-    is_early_adopter = metadata.get("is_early_adopter") == "true"
-
-    # If early adopter, verify the price
-    if is_early_adopter:
-        price_id = stripe_sub["items"]["data"][0]["price"]["id"]
-        # Early adopter price IDs contain "early" in them (from pricing_catalog.py)
-        assert "early" in price_id.lower() or price_id == config.stripe_price_pro_monthly_early_adopter
-
-        # Verify DB
-        await billing_profile.refresh_from_db()
-        subscription = await BillingSubscription.get(billing_profile=billing_profile)
-        assert billing_profile.is_early_adopter is True
-    else:
-        # Regular pricing
-        await billing_profile.refresh_from_db()
-        subscription = await BillingSubscription.get(billing_profile=billing_profile)
-        # is_early_adopter might be False or None depending on eligibility
 
 
 @pytest.mark.asyncio
