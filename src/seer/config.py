@@ -16,6 +16,7 @@ Usage:
     if score >= config.eval_pass_threshold:
         ...
 """
+import hashlib
 from typing import Optional, Tuple, Type
 
 from pydantic import Field
@@ -336,6 +337,65 @@ class SeerConfig(BaseSettings):
     )
 
     # ============================================================================
+    # Browser Pool Configuration
+    # ============================================================================
+
+    browser_pool_max_concurrent: int = Field(
+        default=5,
+        description="Maximum number of concurrent browser sessions in the pool"
+    )
+    browser_pool_default_timeout_seconds: int = Field(
+        default=300,
+        description="Default timeout in seconds for browser pool sessions"
+    )
+    browser_pool_reaper_interval_seconds: int = Field(
+        default=30,
+        description="Interval in seconds for the session reaper to check for expired sessions"
+    )
+    browser_session_encryption_key: Optional[str] = Field(
+        default=None,
+        description="Fernet encryption key for browser session state. If not set, derived from SECRET_KEY."
+    )
+
+    # Browser Live Streaming
+    browser_screencast_quality: int = Field(
+        default=60, description="JPEG quality for CDP screencast (1-100)"
+    )
+    browser_screencast_max_width: int = Field(
+        default=1280, description="Max screencast frame width"
+    )
+    browser_screencast_max_height: int = Field(
+        default=800, description="Max screencast frame height"
+    )
+    browser_screencast_every_nth_frame: int = Field(
+        default=1, description="Send every Nth frame (1=all)"
+    )
+    browser_interactive_timeout_seconds: int = Field(
+        default=600, description="Interactive session timeout"
+    )
+
+    # Session Recording
+    browser_recording_enabled: bool = Field(
+        default=True, description="Enable rrweb recording"
+    )
+    browser_recording_max_events: int = Field(
+        default=50000, description="Max rrweb events per recording"
+    )
+    browser_recording_max_size_mb: int = Field(
+        default=50, description="Max compressed recording size MB"
+    )
+    browser_recording_rrweb_cdn_url: str = Field(
+        default="https://cdn.jsdelivr.net/npm/rrweb@2.0.0-alpha.13/dist/record/rrweb-record.min.js",
+        description="CDN URL for rrweb recording script",
+    )
+
+    # Browser Stealth
+    browser_stealth_enabled: bool = Field(
+        default=True,
+        description="Enable stealth mode (--headless=new) for interactive browser sessions",
+    )
+
+    # ============================================================================
     # Langfuse Configuration
     # ============================================================================
     langfuse_enabled: bool = Field(
@@ -470,6 +530,25 @@ class SeerConfig(BaseSettings):
     def is_sentry_configured(self) -> bool:
         """Check if Sentry error monitoring is configured and enabled."""
         return self.sentry_enabled and self.sentry_dsn is not None
+
+    @property
+    def browser_encryption_key_bytes(self) -> bytes:
+        """Get 32-byte Fernet key for browser session encryption.
+
+        Uses BROWSER_SESSION_ENCRYPTION_KEY env var if set,
+        otherwise derives from SECRET_KEY via SHA-256.
+        """
+        import base64  # pylint: disable=import-outside-toplevel  # Reason: only needed for this property
+        if self.browser_session_encryption_key:
+            key = self.browser_session_encryption_key.encode()
+            if len(key) == 44:
+                return key
+            raw = hashlib.sha256(key).digest()
+            return base64.urlsafe_b64encode(raw)
+        import os  # pylint: disable=import-outside-toplevel  # Reason: only needed for fallback
+        secret = os.getenv("SECRET_KEY", "dev_secret_key")
+        raw = hashlib.sha256(secret.encode()).digest()
+        return base64.urlsafe_b64encode(raw)
 
     @property
     def is_workflow_file_system_configured(self) -> bool:

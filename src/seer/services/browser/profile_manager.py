@@ -9,16 +9,20 @@ and persisting encrypted session state.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from playwright.async_api import async_playwright, Browser as PlaywrightBrowser
+from playwright.async_api import async_playwright
 
+from seer.config import config
 from seer.database import User
 from seer.database.models_browser import BrowserProfile
+from seer.services.browser.encryption import SessionEncryptor
+from seer.services.browser.pool_manager import BrowserPoolManager
+from seer.services.browser.recording_service import RecordingService
+from seer.services.browser.session_context_manager import SessionContextManager
+from seer.services.browser.stealth_config import CHROME_USER_AGENTS, get_headed_stealth_args
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +34,10 @@ class BrowserProfileManager:
     Browser profiles store encrypted Playwright storage state (cookies, localStorage)
     that can be reused across workflow executions for authenticated browser automation.
     """
+
+    def __init__(self) -> None:
+        self._encryptor = SessionEncryptor()
+        self._session_context = SessionContextManager(self._encryptor)
 
     async def create_profile(self, user: User, name: str) -> BrowserProfile:
         """
@@ -107,6 +115,10 @@ class BrowserProfileManager:
         """
         Launch interactive browser for user to log in.
 
+        .. deprecated::
+            Use :meth:`create_interactive_session` + streaming WebSocket +
+            :meth:`complete_interactive_session` instead for remote/cloud use.
+
         Opens a visible browser window where the user can navigate
         and log into services. The session is captured when the browser closes.
 
@@ -122,19 +134,20 @@ class BrowserProfileManager:
         logger.info(f"Starting interactive login for profile '{profile.name}' ({profile_id})")
 
         async with async_playwright() as p:
-            # Load existing session if any
+            # Load existing session if any (decrypt)
             storage_state = None
             if profile.session_state_enc:
-                try:
-                    storage_state = json.loads(profile.session_state_enc)
-                except json.JSONDecodeError:
-                    logger.warning(f"Failed to parse existing session state for profile {profile_id}")
+                storage_state = self._encryptor.decrypt(profile.session_state_enc)
 
-            # Launch VISIBLE browser (headless=False for interactive login)
-            browser = await p.chromium.launch(headless=False)
+            # Launch VISIBLE browser with stealth args (headless=False for interactive login)
+            browser = await p.chromium.launch(
+                headless=False,
+                args=get_headed_stealth_args(),  # Stealth args without --headless=new
+            )
             context = await browser.new_context(
                 storage_state=storage_state,
                 viewport={"width": 1280, "height": 800},
+                user_agent=CHROME_USER_AGENTS.get("linux"),  # Realistic user agent
             )
 
             page = await context.new_page()
@@ -157,17 +170,12 @@ class BrowserProfileManager:
             # Capture final session state
             final_state = await context.storage_state()
 
-            # Extract domains from cookies
-            domains = self._extract_domains(final_state)
-
-            # Save session state (in production, this should be encrypted)
-            profile.session_state_enc = json.dumps(final_state)
-            profile.logged_in_domains = domains
-            profile.updated_at = datetime.now(timezone.utc)
-            await profile.save()
+            # Save encrypted session state via context manager
+            await self._session_context.save_session_state(user, profile_id, final_state)
 
             await browser.close()
 
+        domains = SessionContextManager._extract_domains(final_state)
         logger.info(f"Session saved for profile '{profile.name}'. Domains: {domains}")
         return {
             "profile_id": str(profile_id),
@@ -179,6 +187,8 @@ class BrowserProfileManager:
         """
         Load session state for workflow execution.
 
+        Delegates to SessionContextManager for decryption and backward compatibility.
+
         Args:
             user: Profile owner
             profile_id: UUID of the profile
@@ -186,57 +196,134 @@ class BrowserProfileManager:
         Returns:
             Playwright storage_state dict, or None if not found
         """
-        profile = await BrowserProfile.get_or_none(
-            id=profile_id, user=user, status="active"
-        )
-        if not profile or not profile.session_state_enc:
-            return None
-
-        try:
-            session_data = json.loads(profile.session_state_enc)
-        except json.JSONDecodeError:
-            logger.error(f"Failed to parse session data for profile {profile_id}")
-            return None
-
-        # Update last used timestamp
-        profile.last_used_at = datetime.now(timezone.utc)
-        await profile.save()
-
-        return session_data
+        return await self._session_context.load_session_state(user, profile_id)
 
     async def update_session_state(
         self,
         user: User,
         profile_id: UUID,
-        browser: PlaywrightBrowser,
+        storage_state: Dict[str, Any],
     ) -> None:
         """
-        Update profile session state from a browser context.
+        Update profile session state with new storage state.
 
         Called after workflow execution to persist any new cookies/sessions.
 
         Args:
             user: Profile owner
             profile_id: Profile to update
-            browser: Playwright browser with active context
+            storage_state: Playwright storage_state dict
         """
-        profile = await BrowserProfile.get_or_none(
-            id=profile_id, user=user, status="active"
+        await self._session_context.save_session_state(user, profile_id, storage_state)
+
+    async def create_interactive_session(
+        self,
+        user: User,
+        profile_id: UUID,
+        target_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a pooled headless session for interactive login via streaming.
+
+        Unlike start_interactive_login(), this creates a headless browser session
+        that can be viewed and controlled remotely via WebSocket streaming.
+
+        Args:
+            user: Profile owner
+            profile_id: Profile to use for session state
+            target_url: Optional starting URL
+
+        Returns:
+            Dict with session_id, profile_id, and status
+        """
+        profile = await BrowserProfile.get(id=profile_id, user=user, status="active")
+        logger.info(f"Creating interactive session for profile '{profile.name}' ({profile_id})")
+
+        # Load existing session state
+        storage_state = None
+        if profile.session_state_enc:
+            storage_state = self._encryptor.decrypt(profile.session_state_enc)
+
+        # Create pooled session with stealth mode for Google auth compatibility
+        pool = await BrowserPoolManager.get_instance()
+        managed = await pool.create_session(
+            user_id=str(user.user_id),
+            profile_id=str(profile_id),
+            session_type="interactive",
+            storage_state=storage_state,
+            timeout=config.browser_interactive_timeout_seconds,
+            stealth_mode=True,  # Enable stealth with --headless=new for auth flows
         )
-        if not profile:
-            return
 
-        # Get storage state from first context
-        contexts = browser.contexts
-        if contexts:
-            final_state = await contexts[0].storage_state()
-            domains = self._extract_domains(final_state)
+        # Navigate to target URL
+        try:
+            page = await managed.session.must_get_current_page()
+            url = target_url or "about:blank"
+            await managed.session.cdp_client.send.Page.navigate(
+                params={"url": url},
+                # NOTE: browser-use stores target_id as private _target_id (no public property)
+                session_id=(await managed.session.get_or_create_cdp_session(page._target_id)).session_id,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to navigate to {target_url}: {e}")
 
-            profile.session_state_enc = json.dumps(final_state)
-            profile.logged_in_domains = domains
-            profile.last_used_at = datetime.now(timezone.utc)
-            await profile.save()
-            logger.info(f"Updated session state for profile {profile_id}")
+        # Start recording if enabled
+        recording_id = None
+        if config.browser_recording_enabled:
+            try:
+                recorder = RecordingService()
+                recording_id = await recorder.start_recording(
+                    managed.id, managed.session, start_url=target_url
+                )
+            except Exception as e:
+                logger.warning(f"Failed to start recording: {e}")
+
+        return {
+            "session_id": managed.id,
+            "profile_id": str(profile_id),
+            "recording_id": recording_id,
+            "status": "created",
+        }
+
+    async def complete_interactive_session(
+        self,
+        user: User,
+        profile_id: UUID,
+        session_id: str,
+    ) -> Dict[str, Any]:
+        """Complete interactive session: export state, save encrypted, release pool.
+
+        Args:
+            user: Profile owner
+            profile_id: Profile to update
+            session_id: Pool session ID to complete
+
+        Returns:
+            Dict with profile_id, logged_in_domains, recording_id, and status
+        """
+        pool = await BrowserPoolManager.get_instance()
+        managed = pool.get_session(session_id)
+        if not managed:
+            raise ValueError(f"Session {session_id} not found in pool")
+        if managed.user_id != str(user.user_id):
+            raise PermissionError("Session does not belong to this user")
+
+        # Release session (exports storage state and stops browser)
+        storage_state = await pool.release_session(session_id)
+
+        # Save encrypted state if we got storage_state back
+        recording_id = None
+        domains: List[str] = []
+        if storage_state:
+            await self._session_context.save_session_state(user, profile_id, storage_state)
+            domains = SessionContextManager._extract_domains(storage_state)
+
+        logger.info(f"Completed interactive session {session_id} for profile {profile_id}")
+        return {
+            "profile_id": str(profile_id),
+            "logged_in_domains": domains,
+            "recording_id": recording_id,
+            "status": "session_saved",
+        }
 
     def _extract_domains(self, session_data: Any) -> List[str]:
         """
@@ -248,10 +335,4 @@ class BrowserProfileManager:
         Returns:
             List of unique domain strings
         """
-        domains = set()
-        for cookie in session_data.get("cookies", []):
-            if "domain" in cookie:
-                # Remove leading dot from domain
-                domain = cookie["domain"].lstrip(".")
-                domains.add(domain)
-        return sorted(domains)
+        return SessionContextManager._extract_domains(session_data)
