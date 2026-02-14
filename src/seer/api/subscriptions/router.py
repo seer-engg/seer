@@ -26,12 +26,12 @@ from seer.database.subscription_models import (
 from seer.logger import get_logger
 from seer.worker.tasks.stripe import process_stripe_webhook_event
 
-from .early_adopter_service import (
-    EARLY_ADOPTER_LIMIT,
-    check_and_claim_early_adopter_slot,
-    get_early_adopter_count,
+from .pricing_catalog import (
+    TierPricing,
+    get_price_id_for_checkout,
+    get_pricing_catalog,
+    get_trial_period_days,
 )
-from .pricing_catalog import TierPricing, get_price_id_for_checkout, get_pricing_catalog
 from .stripe_service import (
     create_checkout_session,
     create_portal_session,
@@ -86,7 +86,6 @@ class SubscriptionResponse(BaseModel):
 class PricingResponse(BaseModel):
     """Response containing all subscription pricing."""
     prices: list[TierPricing]
-    early_adopter_slots_remaining: Optional[int] = None
 
 
 class PaginationMeta(BaseModel):
@@ -177,18 +176,13 @@ async def get_stripe_config():
 @router.get("/pricing", response_model=PricingResponse)
 async def get_pricing():
     """
-    Get available subscription prices with early adopter availability.
+    Get available subscription prices.
 
     Returns pricing information for all subscription tiers with
-    monthly and annual options, plus early adopter slot availability.
+    monthly and annual options.
     """
-    pro_count = await get_early_adopter_count(SubscriptionTier.PRO)
-    slots_remaining = max(0, EARLY_ADOPTER_LIMIT - pro_count)
-
-    return PricingResponse(
-        prices=get_pricing_catalog(),
-        early_adopter_slots_remaining=slots_remaining if slots_remaining > 0 else None,
-    )
+    prices = get_pricing_catalog()
+    return PricingResponse(prices=prices)
 
 
 @router.get("/current", response_model=SubscriptionResponse)
@@ -216,7 +210,7 @@ async def get_current_subscription(request: Request):
 @router.post("/checkout", response_model=CheckoutResponse)
 async def create_checkout(request: Request, body: CheckoutRequest):
     """
-    Create Stripe Checkout session with early adopter pricing if eligible.
+    Create Stripe Checkout session.
 
     Creates a hosted checkout page for the user to complete payment.
     On success, redirects to billing settings with success message.
@@ -225,18 +219,15 @@ async def create_checkout(request: Request, body: CheckoutRequest):
         raise HTTPException(status_code=503, detail="Stripe is not configured")
 
     user = _require_user(request)
-    subscription = await get_user_subscription(user)
 
+    # Validate tier value
     try:
-        tier = SubscriptionTier(body.tier)
+        SubscriptionTier(body.tier)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid tier: {body.tier}") from exc
 
-    # Check early adopter eligibility and claim slot atomically
-    is_early_adopter = await check_and_claim_early_adopter_slot(tier, subscription)
-
-    # Get appropriate price_id
-    price_id = get_price_id_for_checkout(body.tier, body.interval, is_early_adopter)
+    # Get price for the tier and interval
+    price_id = get_price_id_for_checkout(body.tier, body.interval)
 
     if not price_id:
         raise HTTPException(
@@ -253,7 +244,6 @@ async def create_checkout(request: Request, body: CheckoutRequest):
             price_id=price_id,
             success_url=success_url,
             cancel_url=cancel_url,
-            metadata={"is_early_adopter": str(is_early_adopter)},
         )
         return CheckoutResponse(checkout_url=checkout_url)
     except stripe.error.StripeError as exc:
@@ -341,6 +331,70 @@ async def list_payments(
     )
 
 
+def _verify_and_get_payment_method(customer_id: str) -> str:
+    """
+    Verify customer has a payment method and return the default payment method ID.
+
+    Args:
+        customer_id: Stripe customer ID
+
+    Returns:
+        Default payment method ID
+
+    Raises:
+        HTTPException: If no payment method found
+    """
+    payment_methods = stripe.PaymentMethod.list(customer=customer_id, type="card")
+
+    if not payment_methods.data:
+        raise HTTPException(
+            status_code=400,
+            detail="No payment method found. Please add a payment method first.",
+        )
+
+    # Get the most recently added payment method
+    default_payment_method_id = payment_methods.data[0].id
+
+    # Set default payment method on customer for future invoices
+    stripe.Customer.modify(
+        customer_id,
+        invoice_settings={"default_payment_method": default_payment_method_id}
+    )
+
+    return default_payment_method_id
+
+
+def _create_trial_subscription(
+    customer_id: str,
+    price_id: str,
+    user: User,
+    trial_days: Optional[int],
+) -> stripe.Subscription:
+    """
+    Create a Stripe subscription with optional trial period.
+
+    Args:
+        customer_id: Stripe customer ID
+        price_id: Stripe price ID for the subscription
+        user: User creating the subscription
+        trial_days: Optional trial period in days
+
+    Returns:
+        Created Stripe subscription object
+    """
+    subscription_params: dict = {
+        "customer": customer_id,
+        "items": [{"price": price_id}],
+        "metadata": {
+            "user_id": user.user_id,
+        },
+    }
+    if trial_days:
+        subscription_params["trial_period_days"] = trial_days
+
+    return stripe.Subscription.create(**subscription_params)
+
+
 @router.post("/create-with-trial", response_model=CreateSubscriptionWithTrialResponse)
 async def create_subscription_with_trial(
     request: Request,
@@ -367,19 +421,15 @@ async def create_subscription_with_trial(
         raise HTTPException(status_code=503, detail="Stripe is not configured")
 
     user = _require_user(request)
-    subscription = await get_user_subscription(user)
 
-    # Validate tier
+    # Validate tier value
     try:
-        tier = SubscriptionTier(body.tier)
+        SubscriptionTier(body.tier)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid tier: {body.tier}") from exc
 
-    # Check early adopter eligibility and claim slot atomically
-    is_early_adopter = await check_and_claim_early_adopter_slot(tier, subscription)
-
-    # Get appropriate price_id
-    price_id = get_price_id_for_checkout(body.tier, body.interval, is_early_adopter)
+    # Get price for the tier and interval
+    price_id = get_price_id_for_checkout(body.tier, body.interval)
 
     if not price_id:
         raise HTTPException(
@@ -391,44 +441,26 @@ async def create_subscription_with_trial(
     customer_id = await get_or_create_stripe_customer(user)
 
     try:
-        # Verify customer has a payment method attached
-        payment_methods = stripe.PaymentMethod.list(customer=customer_id, type="card")
+        # Verify customer has a payment method and get the default one
+        default_payment_method_id = _verify_and_get_payment_method(customer_id)
 
-        if not payment_methods.data:
-            raise HTTPException(
-                status_code=400,
-                detail="No payment method found. Please add a payment method first.",
-            )
-
-        # Get the most recently added payment method
-        default_payment_method_id = payment_methods.data[0].id
-
-        # Set default payment method on customer for future invoices
-        stripe.Customer.modify(
-            customer_id,
-            invoice_settings={
-                "default_payment_method": default_payment_method_id
-            }
+        # Create subscription with trial period from Stripe price metadata
+        trial_days = get_trial_period_days(body.tier, body.interval)
+        stripe_subscription = _create_trial_subscription(
+            customer_id=customer_id,
+            price_id=price_id,
+            user=user,
+            trial_days=trial_days,
         )
 
-        # Create subscription with trial period
-        # Trial period starts immediately - no charge until trial ends
-        stripe_subscription = stripe.Subscription.create(
-            customer=customer_id,
-            items=[{"price": price_id}],
-            trial_period_days=14,  # Start 14-day trial immediately
-            default_payment_method=default_payment_method_id,  # Set payment method for subscription
-            metadata={
-                "user_id": user.user_id,
-                "is_early_adopter": str(is_early_adopter),
-            },
+        # Update subscription to use the default payment method
+        stripe.Subscription.modify(
+            stripe_subscription.id,
+            default_payment_method=default_payment_method_id,
         )
 
         # Sync subscription to database
-        db_subscription = await sync_subscription_from_stripe(
-            stripe_subscription,
-            is_early_adopter=is_early_adopter,
-        )
+        db_subscription = await sync_subscription_from_stripe(stripe_subscription)
 
         if not db_subscription:
             raise HTTPException(

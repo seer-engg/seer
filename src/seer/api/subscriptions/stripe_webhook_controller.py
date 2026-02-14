@@ -68,8 +68,7 @@ class StripeWebhookController:
 
         subscription_id = data.get("subscription")
         if subscription_id:
-            is_early_adopter = data.get("metadata", {}).get("is_early_adopter") == "true"
-            await stripe_service.sync_subscription_from_stripe(subscription_id, is_early_adopter=is_early_adopter)
+            await stripe_service.sync_subscription_from_stripe(subscription_id)
 
     async def _handle_invoice_event(self, event_type: str, invoice: dict) -> None:
         subscription_source = await self._resolve_subscription_for_invoice(invoice)

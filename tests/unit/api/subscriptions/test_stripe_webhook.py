@@ -38,7 +38,6 @@ def mock_checkout_session_event():
         "mode": "subscription",
         "metadata": {
             "user_id": "user_abc",
-            "is_early_adopter": "true",
         },
     }
 
@@ -324,31 +323,7 @@ class TestHandleCheckoutSessionCompleted:
             )
 
             mock_service.sync_subscription_from_stripe.assert_called_once_with(
-                "sub_123",
-                is_early_adopter=True
-            )
-
-    @pytest.mark.asyncio
-    async def test_early_adopter_flag_false_when_not_true(self, webhook_controller):
-        """Test early_adopter is False when metadata value is not 'true'."""
-        event_data = {
-            "customer": "cus_123",
-            "subscription": "sub_123",
-            "metadata": {"is_early_adopter": "false"},
-        }
-        with patch(
-            "seer.api.subscriptions.stripe_webhook_controller.sync_stripe_customer_to_clerk",
-            new_callable=AsyncMock
-        ), patch(
-            "seer.api.subscriptions.stripe_webhook_controller.stripe_service"
-        ) as mock_service:
-            mock_service.sync_subscription_from_stripe = AsyncMock()
-
-            await webhook_controller._handle_checkout_session_completed(event_data)
-
-            mock_service.sync_subscription_from_stripe.assert_called_once_with(
-                "sub_123",
-                is_early_adopter=False
+                "sub_123"
             )
 
     @pytest.mark.asyncio
@@ -731,7 +706,6 @@ class TestWebhookEventFlow:
             "subscription": "sub_123",
             "metadata": {
                 "user_id": "user_abc",
-                "is_early_adopter": "true",
             },
         }
 
@@ -751,8 +725,7 @@ class TestWebhookEventFlow:
 
             mock_clerk.assert_called_once_with("user_abc", "cus_123")
             mock_service.sync_subscription_from_stripe.assert_called_once_with(
-                "sub_123",
-                is_early_adopter=True
+                "sub_123"
             )
 
     @pytest.mark.asyncio

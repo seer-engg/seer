@@ -23,7 +23,7 @@ from seer.database.subscription_models import (
     SubscriptionTier,
 )
 from seer.logger import get_logger
-from seer.api.subscriptions.pricing_catalog import get_pricing_catalog
+from seer.api.subscriptions.pricing_catalog import get_price_id_to_tier_map
 
 logger = get_logger("api.subscriptions.stripe_service")
 
@@ -33,20 +33,19 @@ if config.stripe_secret_key:
 
 
 def _build_price_to_tier_map() -> dict[str, SubscriptionTier]:
-    """Build mapping from Stripe price IDs to subscription tiers using cached pricing."""
+    """Build mapping from Stripe price IDs to subscription tiers using cached pricing catalog."""
     mapping: dict[str, SubscriptionTier] = {}
     try:
-        pricing_catalog = get_pricing_catalog()
+        raw_map = get_price_id_to_tier_map()
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to load pricing catalog for tier mapping: %s", exc)
         return mapping
 
-    for tier_pricing in pricing_catalog:
-        tier = SubscriptionTier(tier_pricing.tier)
-        if tier_pricing.monthly.price_id:
-            mapping[tier_pricing.monthly.price_id] = tier
-        if tier_pricing.annual.price_id:
-            mapping[tier_pricing.annual.price_id] = tier
+    for price_id, tier_str in raw_map.items():
+        try:
+            mapping[price_id] = SubscriptionTier(tier_str)
+        except ValueError:
+            logger.warning("Unknown tier '%s' for price %s — skipping", tier_str, price_id)
     return mapping
 
 
@@ -381,9 +380,80 @@ async def list_customer_payments(user: User, page: int, page_size: int) -> dict:
     }
 
 
+def _resolve_subscription_tier(subscription_obj: dict, current_tier: SubscriptionTier) -> SubscriptionTier:
+    """
+    Resolve subscription tier from Stripe subscription items.
+
+    Tries multiple resolution strategies in order:
+    1. Lookup in cached price-to-tier map
+    2. Fetch price directly from Stripe and read metadata
+    3. Fall back to current tier
+
+    Args:
+        subscription_obj: Stripe subscription object
+        current_tier: Current tier to use as fallback
+
+    Returns:
+        Resolved subscription tier
+    """
+    items = subscription_obj.get("items", {}).get("data", [])
+    if not items:
+        return current_tier
+
+    price_id = items[0].get("price", {}).get("id")
+    if not price_id:
+        return current_tier
+
+    # Try cached price-to-tier map first
+    price_to_tier = _build_price_to_tier_map()
+    tier = price_to_tier.get(price_id)
+
+    # Fallback: fetch price directly from Stripe and read metadata.tier
+    if tier is None:
+        try:
+            fetched_price = stripe.Price.retrieve(price_id)
+            tier_str = (fetched_price.get("metadata") or {}).get("tier")
+            if tier_str:
+                tier = SubscriptionTier(tier_str)
+        except (stripe.error.StripeError, ValueError) as exc:
+            logger.warning("Failed to resolve tier for price %s: %s", price_id, exc)
+
+    return tier if tier is not None else current_tier
+
+
+def _update_subscription_fields(
+    subscription: BillingSubscription,
+    stripe_obj: dict,
+    tier: SubscriptionTier,
+) -> None:
+    """
+    Update all fields on a BillingSubscription from Stripe data.
+
+    Args:
+        subscription: The subscription to update
+        stripe_obj: Stripe subscription object
+        tier: Resolved tier for the subscription
+    """
+    status = stripe_obj.get("status")
+    mapped_status = STRIPE_STATUS_MAP.get(status, subscription.status)
+
+    subscription.stripe_subscription_id = stripe_obj.get("id")
+    subscription.tier = tier
+    subscription.status = mapped_status
+
+    current_period_start_ts = stripe_obj.get("current_period_start")
+    current_period_end_ts = stripe_obj.get("current_period_end")
+
+    if current_period_start_ts is not None:
+        subscription.current_period_start = _timestamp_to_datetime(current_period_start_ts)
+    if current_period_end_ts is not None:
+        subscription.current_period_end = _timestamp_to_datetime(current_period_end_ts)
+
+    subscription.cancel_at_period_end = bool(stripe_obj.get("cancel_at_period_end", False))
+
+
 async def sync_subscription_from_stripe(
     stripe_subscription: Union[dict, str, stripe.Subscription],
-    is_early_adopter: Optional[bool] = None,
 ) -> Optional[BillingSubscription]:
     """
     Sync subscription state from Stripe webhook data.
@@ -393,7 +463,6 @@ async def sync_subscription_from_stripe(
 
     Args:
         stripe_subscription: The Stripe subscription object or subscription ID
-        is_early_adopter: Optional early adopter flag from checkout metadata
 
     Returns:
         The updated BillingSubscription or None if customer not found
@@ -404,7 +473,6 @@ async def sync_subscription_from_stripe(
 
     customer_id = subscription_obj.get("customer")
     subscription_id = subscription_obj.get("id")
-    status = subscription_obj.get("status")
 
     if not customer_id or not subscription_id:
         logger.warning("Stripe subscription payload missing id/customer: %s", subscription_obj)
@@ -427,38 +495,17 @@ async def sync_subscription_from_stripe(
     )
     subscription.billing_profile = billing_profile
 
-    # Determine tier from price
-    price_to_tier = _build_price_to_tier_map()
-    items = subscription_obj.get("items", {}).get("data", [])
-    if items:
-        price_id = items[0].get("price", {}).get("id")
-        tier = price_to_tier.get(price_id, subscription.tier)
-    else:
-        tier = subscription.tier
+    # Resolve tier from Stripe price metadata
+    tier = _resolve_subscription_tier(subscription_obj, subscription.tier)
 
-    # Map Stripe status to our status
-    mapped_status = STRIPE_STATUS_MAP.get(status, subscription.status)
-
-    # Update subscription
-    subscription.stripe_subscription_id = subscription_id
-    subscription.tier = tier
-    subscription.status = mapped_status
-    current_period_start_ts = subscription_obj.get("current_period_start")
-    current_period_end_ts = subscription_obj.get("current_period_end")
-    if current_period_start_ts is not None:
-        subscription.current_period_start = _timestamp_to_datetime(current_period_start_ts)
-    if current_period_end_ts is not None:
-        subscription.current_period_end = _timestamp_to_datetime(current_period_end_ts)
-    subscription.cancel_at_period_end = bool(subscription_obj.get("cancel_at_period_end", False))
-
-    if is_early_adopter is not None:
-        subscription.is_early_adopter = is_early_adopter
+    # Update all subscription fields from Stripe data
+    _update_subscription_fields(subscription, subscription_obj, tier)
 
     await subscription.save()
 
     logger.info(
         "Synced subscription for customer %s: tier=%s, status=%s",
-        customer_id, tier.value, mapped_status.value
+        customer_id, tier.value, subscription.status.value
     )
 
     return subscription
