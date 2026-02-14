@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import socket
 import ssl
-from typing import Optional
+import sys
+from typing import Any, Dict, Optional
 
 from taskiq_redis import RedisAsyncResultBackend, RedisStreamBroker
 
@@ -27,15 +29,76 @@ def _resolve_redis_url() -> str:
     return "redis://localhost:6379/0"
 
 
+def _build_keepalive_options() -> Dict[int, int]:
+    """Build TCP keepalive options for the current platform.
+
+    These settings ensure idle connections are detected before AWS/cloud
+    infrastructure terminates them (typically 10-15 min idle timeout).
+    """
+    options: Dict[int, int] = {}
+
+    # Linux-specific TCP keepalive constants
+    if sys.platform == "linux":
+        # TCP_KEEPIDLE: Start sending keepalive probes after 60s of idle
+        options[socket.TCP_KEEPIDLE] = 60
+        # TCP_KEEPINTVL: Send keepalive probes every 15s
+        options[socket.TCP_KEEPINTVL] = 15
+        # TCP_KEEPCNT: Consider connection dead after 3 failed probes
+        options[socket.TCP_KEEPCNT] = 3
+
+    return options
+
+
+def _build_connection_kwargs() -> Dict[str, Any]:
+    """Build connection kwargs for Redis/Valkey with resilience settings.
+
+    Returns connection parameters that prevent silent connection termination
+    by cloud infrastructure (AWS NAT Gateway, Valkey Serverless, etc.).
+    """
+    kwargs: Dict[str, Any] = {}
+
+    # Socket timeouts - prevent infinite hangs
+    kwargs["socket_timeout"] = config.redis_socket_timeout
+    kwargs["socket_connect_timeout"] = config.redis_socket_connect_timeout
+
+    # TCP keepalive - detect dead connections proactively
+    if config.redis_socket_keepalive:
+        kwargs["socket_keepalive"] = True
+        keepalive_options = _build_keepalive_options()
+        if keepalive_options:
+            kwargs["socket_keepalive_options"] = keepalive_options
+
+    # Health checks - ping connections before use
+    kwargs["health_check_interval"] = config.redis_health_check_interval
+
+    # Retry on timeout - auto-retry transient failures
+    kwargs["retry_on_timeout"] = True
+
+    return kwargs
+
+
 redis_url = _resolve_redis_url()
 
+# Build connection kwargs with resilience settings
+connection_kwargs = _build_connection_kwargs()
+
 # Enable TLS/SSL for rediss:// URLs
-ssl_kwargs = {}
 if redis_url.startswith("rediss://"):
-    ssl_kwargs["ssl_cert_reqs"] = ssl.CERT_REQUIRED
+    connection_kwargs["ssl_cert_reqs"] = ssl.CERT_REQUIRED
     logger.info("TLS/SSL enabled for Valkey/Redis connections")
 
-result_backend = RedisAsyncResultBackend(redis_url=redis_url, **ssl_kwargs)
-broker = RedisStreamBroker(url=redis_url, **ssl_kwargs).with_result_backend(result_backend)
+logger.info(
+    "Redis broker configured with keepalive=%s, socket_timeout=%s, health_check_interval=%s",
+    connection_kwargs.get("socket_keepalive", False),
+    connection_kwargs.get("socket_timeout"),
+    connection_kwargs.get("health_check_interval"),
+)
+
+result_backend = RedisAsyncResultBackend(redis_url=redis_url, **connection_kwargs)
+broker = RedisStreamBroker(
+    url=redis_url,
+    max_connection_pool_size=config.redis_max_connections,
+    **connection_kwargs,
+).with_result_backend(result_backend)
 
 __all__ = ["broker", "redis_url", "result_backend"]
