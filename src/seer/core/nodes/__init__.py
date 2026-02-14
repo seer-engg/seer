@@ -45,6 +45,7 @@ from seer.core.nodes.if_node import IfNodeType
 from seer.core.nodes.for_each_node import ForEachNodeType
 from seer.core.nodes.hitl_node import HITLNodeType
 from seer.core.nodes.browser_node import BrowserNodeType
+from seer.core.nodes.image_gen_node import ImageGenNodeType
 
 # Re-export Pydantic model classes from schema/models.py (canonical location)
 from seer.core.schema.models import (
@@ -56,6 +57,7 @@ from seer.core.schema.models import (
     ForEachNode,
     HITLNode,
     BrowserNode,
+    ImageGenNode,
     Node,
     # HITL supporting types
     HITLInputType,
@@ -92,6 +94,7 @@ __all__ = [
     "ForEachNodeType",
     "HITLNodeType",
     "BrowserNodeType",
+    "ImageGenNodeType",
     # Node models (Pydantic classes) - re-exported from schema/models.py
     "ToolNode",
     "LLMNode",
@@ -100,6 +103,7 @@ __all__ = [
     "ForEachNode",
     "HITLNode",
     "BrowserNode",
+    "ImageGenNode",
     "Node",
     # HITL supporting types
     "HITLInputType",
