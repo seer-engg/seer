@@ -155,9 +155,26 @@ class BrowserPoolManager:
                     "keep_alive": True,
                 }
 
+            # Log cookie count for debugging persistence issues
+            cookie_count = len(storage_state.get("cookies", [])) if storage_state else 0
+            if storage_state:
+                logger.info(f"Creating session with {cookie_count} cookies from storage_state")
+
             browser_profile = BrowserUseProfile(**profile_kwargs)
             browser_session = BrowserSession(browser_profile=browser_profile)
             await browser_session.start()
+
+            # Apply cookies directly via CDP after session start
+            # browser-use's StorageStateWatchdog only works with file paths, not dict storage_state
+            if storage_state and storage_state.get("cookies"):
+                cookies = storage_state["cookies"]
+                try:
+                    # pylint: disable=protected-access
+                    # Reason: browser-use doesn't expose public method to set cookies from dict
+                    await browser_session._cdp_set_cookies(cookies)
+                    logger.info(f"Applied {len(cookies)} cookies to browser context via CDP")
+                except Exception as e:
+                    logger.warning(f"Failed to apply cookies via CDP: {e}")
 
             managed = ManagedSession(
                 id=session_id,

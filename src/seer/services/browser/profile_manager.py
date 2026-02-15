@@ -242,6 +242,8 @@ class BrowserProfileManager:
         storage_state = None
         if profile.session_state_enc:
             storage_state = self._encryptor.decrypt(profile.session_state_enc)
+            cookie_count = len(storage_state.get("cookies", [])) if storage_state else 0
+            logger.info(f"Loaded {cookie_count} cookies from encrypted profile {profile_id}")
 
         # Create pooled session with stealth mode for Google auth compatibility
         pool = await BrowserPoolManager.get_instance()
