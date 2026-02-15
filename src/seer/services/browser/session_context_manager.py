@@ -80,7 +80,7 @@ class SessionContextManager:
 
         try:
             encrypted = self._encryptor.encrypt(storage_state)
-            domains = self._extract_domains(storage_state)
+            domains = self.extract_domains(storage_state)
 
             profile.session_state_enc = encrypted
             profile.logged_in_domains = domains
@@ -109,7 +109,7 @@ class SessionContextManager:
         return len(cookies) > 0
 
     @staticmethod
-    def _extract_domains(session_data: Any) -> List[str]:
+    def extract_domains(session_data: Any) -> List[str]:
         """Extract unique domains from session cookies.
 
         Args:

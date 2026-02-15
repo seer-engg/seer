@@ -13,8 +13,8 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
-from uuid import UUID, uuid4
+from typing import Dict, List, Optional
+from uuid import uuid4
 
 from browser_use import BrowserSession
 
@@ -56,7 +56,7 @@ class RecordingService:
         self,
         session_id: str,
         browser_session: BrowserSession,
-        start_url: Optional[str] = None,
+        start_url: Optional[str] = None,  # pylint: disable=unused-argument  # Reason: Reserved for future recording metadata
     ) -> str:
         """Inject rrweb into the page and start collecting events.
 
@@ -74,8 +74,8 @@ class RecordingService:
         self._start_times[session_id] = time.monotonic()
 
         page = await browser_session.must_get_current_page()
-        # NOTE: browser-use stores target_id as private _target_id (no public property)
-        cdp_session = await browser_session.get_or_create_cdp_session(page._target_id)
+        # browser-use stores target_id as private _target_id (no public property exposed)
+        cdp_session = await browser_session.get_or_create_cdp_session(page._target_id)  # pylint: disable=protected-access
         cdp_client = browser_session.cdp_client
         sid = cdp_session.session_id
 
@@ -99,7 +99,8 @@ class RecordingService:
             except (json.JSONDecodeError, TypeError) as e:
                 logger.warning(f"Failed to parse rrweb event: {e}")
 
-        cdp_client._event_registry.register(
+        # browser-use cdp_client exposes _event_registry for event registration (no public API)
+        cdp_client._event_registry.register(  # pylint: disable=protected-access
             "Runtime.bindingCalled", on_binding_called
         )
 
@@ -139,6 +140,7 @@ class RecordingService:
         self,
         session_id: str,
         user: User,
+        *,
         profile_id: Optional[str] = None,
         workflow_run_id: Optional[str] = None,
         session_type: str = "interactive",

@@ -175,7 +175,7 @@ class BrowserProfileManager:
 
             await browser.close()
 
-        domains = SessionContextManager._extract_domains(final_state)
+        domains = SessionContextManager.extract_domains(final_state)
         logger.info(f"Session saved for profile '{profile.name}'. Domains: {domains}")
         return {
             "profile_id": str(profile_id),
@@ -262,7 +262,7 @@ class BrowserProfileManager:
             url = target_url or "about:blank"
             await managed.session.cdp_client.send.Page.navigate(
                 params={"url": url},
-                # NOTE: browser-use stores target_id as private _target_id (no public property)
+                # pylint: disable-next=protected-access  # Reason: browser-use library stores target_id as private _target_id (no public property exposed)
                 session_id=(await managed.session.get_or_create_cdp_session(page._target_id)).session_id,
             )
         except Exception as e:
@@ -317,7 +317,7 @@ class BrowserProfileManager:
         domains: List[str] = []
         if storage_state:
             await self._session_context.save_session_state(user, profile_id, storage_state)
-            domains = SessionContextManager._extract_domains(storage_state)
+            domains = SessionContextManager.extract_domains(storage_state)
 
         logger.info(f"Completed interactive session {session_id} for profile {profile_id}")
         return {
@@ -337,4 +337,4 @@ class BrowserProfileManager:
         Returns:
             List of unique domain strings
         """
-        return SessionContextManager._extract_domains(session_data)
+        return SessionContextManager.extract_domains(session_data)

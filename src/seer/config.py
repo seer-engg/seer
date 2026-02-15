@@ -540,6 +540,7 @@ class SeerConfig(BaseSettings):
         """
         import base64  # pylint: disable=import-outside-toplevel  # Reason: only needed for this property
         if self.browser_session_encryption_key:
+            # pylint: disable-next=no-member  # Reason: Pydantic resolves FieldInfo to str at runtime
             key = self.browser_session_encryption_key.encode()
             if len(key) == 44:
                 return key

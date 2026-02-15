@@ -112,6 +112,7 @@ class BrowserPoolManager:
     async def create_session(
         self,
         user_id: str,
+        *,
         profile_id: Optional[str] = None,
         session_type: str = "workflow",
         storage_state: Optional[Dict[str, Any]] = None,

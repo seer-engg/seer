@@ -56,7 +56,7 @@ class SessionEncryptor:
             logger.debug("Fernet decryption failed, attempting plain JSON fallback")
             return self._try_plain_json(ciphertext)
         except Exception as e:
-            logger.warning(f"Session decryption failed: {e}")
+            logger.warning("Session decryption failed: %s", e)
             return self._try_plain_json(ciphertext)
 
     @staticmethod

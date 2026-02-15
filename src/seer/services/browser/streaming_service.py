@@ -1,5 +1,6 @@
-# pylint: disable=broad-exception-caught,logging-fstring-interpolation
-# Reason: CDP operations require flexible exception handling and dynamic logging
+# pylint: disable=broad-exception-caught,logging-fstring-interpolation,too-many-instance-attributes
+# Reason: CDP operations require flexible exception handling and dynamic logging.
+# Streaming state requires multiple related attributes (viewport, frame, queue, CDP session).
 """
 CDP screencast streaming service for live browser viewing.
 
@@ -56,6 +57,7 @@ class StreamingService:
         """
         page = await browser_session.must_get_current_page()
         # NOTE: browser-use stores target_id as private _target_id (no public property)
+        # pylint: disable-next=protected-access
         cdp_session = await browser_session.get_or_create_cdp_session(page._target_id)
         self._cdp_client = browser_session.cdp_client
         self._target_session_id = cdp_session.session_id
@@ -80,6 +82,8 @@ class StreamingService:
             self._viewport_height = float(self._max_height)
 
         # Register event handler for screencast frames
+        # NOTE: cdp_use library exposes _event_registry as the only way to register handlers
+        # pylint: disable-next=protected-access
         browser_session.cdp_client._event_registry.register(
             "Page.screencastFrame", self._on_frame
         )
@@ -163,6 +167,7 @@ class StreamingService:
         event_type: str,
         x: float,
         y: float,
+        *,
         button: str = "left",
         click_count: int = 1,
     ) -> None:
@@ -206,6 +211,7 @@ class StreamingService:
         self,
         event_type: str,
         key: str,
+        *,
         code: str = "",
         text: str = "",
         modifiers: int = 0,
@@ -235,7 +241,7 @@ class StreamingService:
             session_id=self._target_session_id,
         )
 
-    async def dispatch_click_js(self, x: float, y: float, button: str = "left") -> None:
+    async def dispatch_click_js(self, x: float, y: float, _button: str = "left") -> None:
         """Dispatch a click using JavaScript - the industry standard approach.
 
         CDP mousePressed/mouseReleased don't fire the 'click' event. All production
