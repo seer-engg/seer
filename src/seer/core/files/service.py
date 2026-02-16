@@ -278,18 +278,20 @@ class WorkflowFileSystem:
         self,
         file_ref: WorkflowFileRef,
         expires_seconds: int = 3600,
+        inline: bool = False,
     ) -> str:
         """
-        Get a presigned URL for direct download.
+        Get a presigned URL for direct download or inline preview.
 
         Args:
             file_ref: File reference.
             expires_seconds: URL expiration time.
+            inline: If True, sets Content-Disposition to inline for browser preview.
 
         Returns:
             Presigned URL string.
         """
-        return await self._backend.get_presigned_url(file_ref, expires_seconds)
+        return await self._backend.get_presigned_url(file_ref, expires_seconds, inline=inline)
 
     async def file_exists(self, file_ref: WorkflowFileRef) -> bool:
         """
