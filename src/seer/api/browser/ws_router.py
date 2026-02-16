@@ -45,9 +45,9 @@ async def _handle_mouse_event(streamer: StreamingService, data: dict) -> None:
         # CDP mousePressed/mouseReleased don't fire the 'click' event
         await streamer.dispatch_click_js(x, y, button)
     elif action == "down":
-        await streamer.dispatch_mouse_event("mousePressed", x, y, button, click_count)
+        await streamer.dispatch_mouse_event("mousePressed", x, y, button=button, click_count=click_count)
     elif action == "up":
-        await streamer.dispatch_mouse_event("mouseReleased", x, y, button, click_count)
+        await streamer.dispatch_mouse_event("mouseReleased", x, y, button=button, click_count=click_count)
     elif action == "move":
         await streamer.dispatch_mouse_event("mouseMoved", x, y)
 
@@ -60,14 +60,14 @@ async def _handle_key_event(streamer: StreamingService, data: dict) -> None:
     text = data.get("text", "")
 
     if action == "press":
-        await streamer.dispatch_key_event("keyDown", key, code, text)
+        await streamer.dispatch_key_event("keyDown", key, code=code, text=text)
         if text:
-            await streamer.dispatch_key_event("char", key, code, text)
-        await streamer.dispatch_key_event("keyUp", key, code)
+            await streamer.dispatch_key_event("char", key, code=code, text=text)
+        await streamer.dispatch_key_event("keyUp", key, code=code)
     elif action == "down":
-        await streamer.dispatch_key_event("keyDown", key, code, text)
+        await streamer.dispatch_key_event("keyDown", key, code=code, text=text)
     elif action == "up":
-        await streamer.dispatch_key_event("keyUp", key, code)
+        await streamer.dispatch_key_event("keyUp", key, code=code)
 
 
 async def _handle_scroll_event(streamer: StreamingService, data: dict) -> None:
