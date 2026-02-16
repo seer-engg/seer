@@ -94,11 +94,10 @@ class BrowserNodeType(BaseNodeType):
     def _get_screenshot_context(node: BrowserNode, runtime_context: Any) -> tuple:
         """Get file system context for screenshot saving."""
         if not (node.save_screenshots and runtime_context):
-            return None, None, None
+            return None, None
         file_system = runtime_context.file_system if runtime_context.has_file_system else None
         workflow_run_id = runtime_context.workflow_run_id
-        user_id = str(runtime_context.user.id) if runtime_context.user else None
-        return file_system, workflow_run_id, user_id
+        return file_system, workflow_run_id
 
     @staticmethod
     def _validate_extracted_data(node: BrowserNode, result: Dict[str, Any], type_schemas: Any) -> None:
@@ -152,7 +151,7 @@ class BrowserNodeType(BaseNodeType):
         # Resolve pre-execution config via helpers
         type_schemas = services.type_env.as_dict()
         extraction_schema = self._get_extraction_schema(node, type_schemas)
-        file_system, workflow_run_id, user_id = self._get_screenshot_context(node, ctx.runtime_context)
+        file_system, workflow_run_id = self._get_screenshot_context(node, ctx.runtime_context)
 
         # Execute browser task
         try:
@@ -167,7 +166,6 @@ class BrowserNodeType(BaseNodeType):
                 save_screenshots=node.save_screenshots,
                 file_system=file_system,
                 workflow_run_id=workflow_run_id,
-                user_id=user_id,
             )
         except Exception as exc:
             trace_key = get_trace_key(node.id, ctx.state, ctx.loop_body_map or {}, ctx.nested_loop_parents or {})

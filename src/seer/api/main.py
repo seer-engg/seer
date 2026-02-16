@@ -104,12 +104,16 @@ async def lifespan(fastapi_app: FastAPI):
                     finally:
                         if hasattr(fastapi_app.state, "checkpointer"):
                             delattr(fastapi_app.state, "checkpointer")
+                        from seer.services.browser.pool_manager import BrowserPoolManager  # pylint: disable=import-outside-toplevel  # Reason: shutdown import
+                        await BrowserPoolManager.shutdown_instance()
             else:
                 try:
                     yield
                 finally:
                     if hasattr(fastapi_app.state, "checkpointer"):
                         delattr(fastapi_app.state, "checkpointer")
+                    from seer.services.browser.pool_manager import BrowserPoolManager  # pylint: disable=import-outside-toplevel  # Reason: shutdown import
+                    await BrowserPoolManager.shutdown_instance()
 
     # Shutdown PostHog client (flush pending events)
     if config.is_posthog_configured:

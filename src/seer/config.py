@@ -21,9 +21,11 @@ from typing import Optional, Tuple, Type
 from pydantic import Field
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
+from seer.config_properties import SeerConfigPropertiesMixin
 from seer.utilities.aws.parameter_store import AwsSsmSettingsSource
 
-class SeerConfig(BaseSettings):
+
+class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     """
     Central configuration for Seer.
 
@@ -359,6 +361,65 @@ class SeerConfig(BaseSettings):
     )
 
     # ============================================================================
+    # Browser Pool Configuration
+    # ============================================================================
+
+    browser_pool_max_concurrent: int = Field(
+        default=5,
+        description="Maximum number of concurrent browser sessions in the pool"
+    )
+    browser_pool_default_timeout_seconds: int = Field(
+        default=300,
+        description="Default timeout in seconds for browser pool sessions"
+    )
+    browser_pool_reaper_interval_seconds: int = Field(
+        default=30,
+        description="Interval in seconds for the session reaper to check for expired sessions"
+    )
+    browser_session_encryption_key: Optional[str] = Field(
+        default=None,
+        description="Fernet encryption key for browser session state. If not set, derived from SECRET_KEY."
+    )
+
+    # Browser Live Streaming
+    browser_screencast_quality: int = Field(
+        default=60, description="JPEG quality for CDP screencast (1-100)"
+    )
+    browser_screencast_max_width: int = Field(
+        default=1280, description="Max screencast frame width"
+    )
+    browser_screencast_max_height: int = Field(
+        default=800, description="Max screencast frame height"
+    )
+    browser_screencast_every_nth_frame: int = Field(
+        default=1, description="Send every Nth frame (1=all)"
+    )
+    browser_interactive_timeout_seconds: int = Field(
+        default=600, description="Interactive session timeout"
+    )
+
+    # Session Recording
+    browser_recording_enabled: bool = Field(
+        default=True, description="Enable rrweb recording"
+    )
+    browser_recording_max_events: int = Field(
+        default=50000, description="Max rrweb events per recording"
+    )
+    browser_recording_max_size_mb: int = Field(
+        default=50, description="Max compressed recording size MB"
+    )
+    browser_recording_rrweb_cdn_url: str = Field(
+        default="https://cdn.jsdelivr.net/npm/rrweb@2.0.0-alpha.13/dist/record/rrweb-record.min.js",
+        description="CDN URL for rrweb recording script",
+    )
+
+    # Browser Stealth
+    browser_stealth_enabled: bool = Field(
+        default=True,
+        description="Enable stealth mode (--headless=new) for interactive browser sessions",
+    )
+
+    # ============================================================================
     # Langfuse Configuration
     # ============================================================================
     langfuse_enabled: bool = Field(
@@ -383,74 +444,6 @@ class SeerConfig(BaseSettings):
     )
 
     # ============================================================================
-    # Computed Properties
-    # ============================================================================
-
-    @property
-    def is_cloud_mode(self) -> bool:
-        """Check if running in cloud mode."""
-        return self.seer_mode == "cloud"
-
-    @property
-    def is_self_hosted(self) -> bool:
-        """Check if running in self-hosted mode."""
-        return self.seer_mode == "self-hosted"
-
-    @property
-    def is_clerk_configured(self) -> bool:
-        """Check if Clerk authentication is configured."""
-        return self.clerk_jwks_url is not None and self.clerk_issuer is not None
-
-    @property
-    def is_stripe_configured(self) -> bool:
-        """Check if Stripe is configured for subscription billing."""
-        return (
-            self.stripe_secret_key is not None
-            and self.stripe_webhook_secret is not None
-        )
-
-    @property
-    def is_slack_configured(self) -> bool:
-        """Check if Slack error notifications are configured."""
-        return (
-            self.slack_bot_token is not None
-            and self.slack_error_channel_id is not None
-        )
-
-    @property
-    def is_langfuse_configured(self) -> bool:
-        """Check if Langfuse is configured (at least one project has credentials)."""
-        if not self.langfuse_enabled:
-            return False
-        nexus_configured = (
-            self.langfuse_nexus_public_key is not None
-            and self.langfuse_nexus_secret_key is not None
-        )
-        workflow_configured = (
-            self.langfuse_workflow_public_key is not None
-            and self.langfuse_workflow_secret_key is not None
-        )
-        return nexus_configured or workflow_configured
-
-    @property
-    def is_langfuse_nexus_configured(self) -> bool:
-        """Check if Langfuse is configured for Nexus agent tracing."""
-        return (
-            self.langfuse_enabled
-            and self.langfuse_nexus_public_key is not None
-            and self.langfuse_nexus_secret_key is not None
-        )
-
-    @property
-    def is_langfuse_workflow_configured(self) -> bool:
-        """Check if Langfuse is configured for Workflow tracing."""
-        return (
-            self.langfuse_enabled
-            and self.langfuse_workflow_public_key is not None
-            and self.langfuse_workflow_secret_key is not None
-        )
-
-    # ============================================================================
     # PostHog Analytics Configuration
     # ============================================================================
 
@@ -463,11 +456,6 @@ class SeerConfig(BaseSettings):
     posthog_enabled: bool = Field(
         default=False, description="Enable/disable PostHog analytics"
     )
-
-    @property
-    def is_posthog_configured(self) -> bool:
-        """Check if PostHog analytics is configured and enabled."""
-        return self.posthog_enabled and self.posthog_api_key is not None
 
     # ============================================================================
     # Sentry Error Monitoring Configuration
@@ -488,16 +476,6 @@ class SeerConfig(BaseSettings):
     sentry_enabled: bool = Field(
         default=True, description="Enable Sentry (requires DSN to be set)"
     )
-
-    @property
-    def is_sentry_configured(self) -> bool:
-        """Check if Sentry error monitoring is configured and enabled."""
-        return self.sentry_enabled and self.sentry_dsn is not None
-
-    @property
-    def is_workflow_file_system_configured(self) -> bool:
-        """Check if the workflow file system (S3/R2) is configured."""
-        return self.workflow_file_s3_bucket is not None
 
     @classmethod
     def settings_customise_sources(  # pylint: disable=too-many-positional-arguments  # Reason: Method signature is defined by Pydantic's BaseSettings API and cannot be modified
