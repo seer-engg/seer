@@ -268,14 +268,17 @@ class BrowserProfileManager:
         except Exception as e:
             logger.warning(f"Failed to navigate to {target_url}: {e}")
 
-        # Start recording if enabled
+        # Start recording if enabled (use singleton so events persist to save_recording)
         recording_id = None
         if config.browser_recording_enabled:
             try:
-                recorder = RecordingService()
+                recorder = await RecordingService.get_instance()
                 recording_id = await recorder.start_recording(
                     managed.id, managed.session, start_url=target_url
                 )
+                # Store recording metadata in managed session for complete_interactive_session
+                managed.recording_id = recording_id
+                managed.start_url = target_url
             except Exception as e:
                 logger.warning(f"Failed to start recording: {e}")
 
@@ -309,11 +312,26 @@ class BrowserProfileManager:
         if managed.user_id != str(user.user_id):
             raise PermissionError("Session does not belong to this user")
 
+        # Save recording BEFORE releasing session (events are still in RecordingService)
+        recording_id = None
+        if managed.recording_id and config.browser_recording_enabled:
+            try:
+                recorder = await RecordingService.get_instance()
+                recording_id = await recorder.save_recording(
+                    session_id,
+                    user,
+                    profile_id=str(profile_id),
+                    workflow_run_id=None,
+                    session_type="interactive",
+                    start_url=managed.start_url,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to save recording for session {session_id}: {e}")
+
         # Release session (exports storage state and stops browser)
         storage_state = await pool.release_session(session_id)
 
         # Save encrypted state if we got storage_state back
-        recording_id = None
         domains: List[str] = []
         if storage_state:
             await self._session_context.save_session_state(user, profile_id, storage_state)

@@ -25,6 +25,8 @@ from seer.services.browser.stealth_config import get_stealth_profile_kwargs
 logger = logging.getLogger(__name__)
 
 
+# pylint: disable=too-many-instance-attributes
+# Reason: ManagedSession is a cohesive data container; all attributes describe one session
 @dataclass
 class ManagedSession:
     """Tracks a browser session managed by the pool."""
@@ -36,6 +38,8 @@ class ManagedSession:
     session_type: str  # "workflow" or "interactive"
     created_at: float = field(default_factory=time.monotonic)
     timeout: int = 300
+    recording_id: Optional[str] = None  # RecordingService recording ID for save_recording()
+    start_url: Optional[str] = None  # URL session started on (for recording metadata)
 
     @property
     def is_expired(self) -> bool:
