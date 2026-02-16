@@ -92,11 +92,17 @@ class BrowserNodeType(BaseNodeType):
 
     @staticmethod
     def _get_screenshot_context(node: BrowserNode, runtime_context: Any) -> tuple:
-        """Get file system context for screenshot saving."""
-        if not (node.save_screenshots and runtime_context):
+        """Get file system and workflow_run_id for screenshots and recording.
+
+        Note: workflow_run_id is returned regardless of save_screenshots setting
+        because session recordings also need it for associating with workflow runs.
+        """
+        if not runtime_context:
             return None, None
-        file_system = runtime_context.file_system if runtime_context.has_file_system else None
-        workflow_run_id = runtime_context.workflow_run_id
+        file_system = None
+        if node.save_screenshots and runtime_context.has_file_system:
+            file_system = runtime_context.file_system
+        workflow_run_id = runtime_context.workflow_run_id  # Always return for recordings
         return file_system, workflow_run_id
 
     @staticmethod

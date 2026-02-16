@@ -3,8 +3,58 @@
 """
 rrweb session recording service for browser observability and replay.
 
-Injects rrweb into browser pages via CDP, collects events via JS binding,
-and stores compressed recordings in the database.
+Injects rrweb into browser pages via CDP, stores events in JavaScript,
+and retrieves them via polling when saving recordings.
+
+ARCHITECTURE OVERVIEW
+=====================
+
+1. INLINE RRWEB LIBRARY (CSP Bypass)
+   ---------------------------------
+   Enterprise apps (Gmail, Salesforce, etc.) use Content Security Policy (CSP)
+   to block loading external scripts from CDNs. Instead of:
+
+       <script src="https://cdn.jsdelivr.net/npm/rrweb/...">  # Blocked by CSP!
+
+   We inline the entire rrweb library (~68KB) directly in the injection script
+   and execute it via CDP's Runtime.evaluate. This bypasses CSP because:
+   - We're not creating a <script> tag with an external src
+   - Runtime.evaluate executes code in the page context directly
+   - The browser treats it as trusted code from the extension/automation
+
+2. JAVASCRIPT-SIDE EVENT STORAGE
+   ------------------------------
+   Events are stored in window.__seer_events array in JavaScript.
+   On save_recording(), we poll this array via Runtime.evaluate.
+
+   Why not use CDP bindings (Runtime.bindingCalled)?
+   - CDP event handlers can be overwritten by other code (like browser_use
+     Agent's DOMService) using the same event registry
+   - Timing issues with binding registration after navigation
+   - JS polling is simpler and more reliable
+
+3. RECORDING FLOW
+   ---------------
+   start_recording() -> Injects rrweb script into page via CDP
+                     -> Script stores events in window.__seer_events
+   save_recording()  -> Polls window.__seer_events via Runtime.evaluate
+                     -> Compresses events with gzip
+                     -> Saves to SessionRecording table
+
+UPDATING RRWEB VERSION
+======================
+To update the bundled rrweb library:
+
+1. Download new version:
+   curl -o src/seer/services/browser/rrweb-record.min.js \\
+     "https://cdn.jsdelivr.net/npm/rrweb@VERSION/dist/record/rrweb-record.min.js"
+
+2. Verify the export name is still 'rrwebRecord':
+   head -c 100 src/seer/services/browser/rrweb-record.min.js
+   # Should show: var rrwebRecord=function()...
+
+3. Run tests:
+   uv run pytest tests/unit/services/browser/test_recording_service.py -v
 """
 from __future__ import annotations
 
@@ -14,90 +64,110 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from importlib import resources
+from typing import TYPE_CHECKING, Dict, List, Optional
 from uuid import uuid4
-
-from browser_use import BrowserSession
 
 from seer.config import config
 from seer.database import User
 from seer.database.models_browser_recording import SessionRecording
 
+if TYPE_CHECKING:
+    from browser_use import BrowserSession
+
 logger = logging.getLogger(__name__)
 
-# rrweb injection script template. ${RRWEB_CDN_URL} is replaced at runtime.
+# Load inlined rrweb library at module level (once)
+# This bypasses CSP restrictions that block loading external scripts from CDN
+_RRWEB_LIBRARY_CODE: Optional[str] = None
+
+
+def _get_rrweb_library() -> str:
+    """Load the bundled rrweb-record.min.js library.
+
+    The library is inlined to bypass Content Security Policy (CSP) restrictions
+    that block loading external scripts from CDN on sites like Gmail.
+
+    Returns:
+        Minified rrweb recording library JavaScript code
+    """
+    global _RRWEB_LIBRARY_CODE  # pylint: disable=global-statement  # Reason: Module-level caching for performance
+    if _RRWEB_LIBRARY_CODE is None:
+        _RRWEB_LIBRARY_CODE = resources.files("seer.services.browser").joinpath(
+            "rrweb-record.min.js"
+        ).read_text(encoding="utf-8")
+    return _RRWEB_LIBRARY_CODE
+
+
+# rrweb injection script template with INLINED library code.
 #
-# BUG FIX: Race Condition Causing Blank Recordings After Navigation
-# ===================================================================
-# PROBLEM: Recordings only captured events from the initial about:blank page.
-# After navigating to real sites (e.g., google.com), no events were captured,
-# resulting in blank white replays with only 2 events.
+# ARCHITECTURE: JavaScript-side event storage with polling
+# =========================================================
+# Events are stored in window.__seer_events array in JavaScript.
+# On save_recording(), we poll this array via Runtime.evaluate.
 #
-# ROOT CAUSE: CDP timing race condition during page navigation:
-#   1. User navigates to https://google.com
-#   2. Page.addScriptToEvaluateOnNewDocument runs IMMEDIATELY on new page context
-#   3. Injected script calls window.__seer_rrweb_event() to emit events
-#   4. Page.frameNavigated event fires (AFTER script already ran)
-#   5. Our handler's asyncio.create_task(self._register_binding()) is scheduled
-#   6. Binding registration completes... TOO LATE - script already failed silently
+# Why inline instead of CDN:
+# - Gmail, Salesforce, and other enterprise apps have strict CSP policies
+# - CSP blocks loading external scripts from CDN (script.src fails)
+# - Inline code executed via Runtime.evaluate bypasses CSP restrictions
 #
-# The script called window.__seer_rrweb_event() BEFORE the binding existed,
-# which fails silently in JavaScript (undefined function call).
+# Why this storage approach:
+# - CDP event handlers (Runtime.bindingCalled) can be overwritten by other
+#   code (like browser_use Agent's DOMService) using the same event registry
+# - Timing issues with binding registration after navigation
+# - This approach is simpler and more reliable: store in JS, poll on save
 #
-# SOLUTION: Make the script poll/wait for the binding before proceeding.
-# The while loop below waits up to 5 seconds (50 attempts × 100ms) for the
-# binding to be registered. This handles all timing variations gracefully.
-# On initial page load, the binding already exists so there's no delay.
+# NOTE: __seer_rrweb_loaded is set ONLY after rrweb successfully starts.
 #
 _RRWEB_INJECT_SCRIPT = """
-(async () => {
-    if (window.__seer_rrweb_loaded) return;
-    window.__seer_rrweb_loaded = true;
+(function() {
+    // Skip if already loading or loaded
+    if (window.__seer_rrweb_loading || window.__seer_rrweb_loaded) return;
+    window.__seer_rrweb_loading = true;
 
-    // CRITICAL: Wait for CDP binding to exist before proceeding.
-    // On navigation, this script runs BEFORE the binding is re-registered (see comment above).
-    // Without this wait, window.__seer_rrweb_event is undefined and events are lost silently.
-    let attempts = 0;
-    while (!window.__seer_rrweb_event && attempts < 50) {
-        await new Promise(r => setTimeout(r, 100));
-        attempts++;
-    }
-    if (!window.__seer_rrweb_event) {
-        console.warn('[seer] rrweb binding not available after 5s, skipping recording');
-        return;
-    }
+    // Initialize events array for storing rrweb events
+    window.__seer_events = window.__seer_events || [];
 
-    const script = document.createElement('script');
-    script.src = '${RRWEB_CDN_URL}';
-    script.onload = () => {
+    try {
+        // Inline rrweb library (bypasses CSP - no external script load)
+        ${RRWEB_INLINE_CODE}
+
+        // Start recording
         rrwebRecord({
             emit(event) {
-                window.__seer_rrweb_event(JSON.stringify(event));
+                // Store events in JS array (limit to prevent memory issues)
+                if (window.__seer_events && window.__seer_events.length < 50000) {
+                    window.__seer_events.push(event);
+                }
             },
             sampling: { mousemove: false, mouseInteraction: true, scroll: 150, input: 'last' },
         });
-    };
-    document.head.appendChild(script);
+
+        // Only set loaded flag AFTER rrweb successfully starts
+        window.__seer_rrweb_loaded = true;
+        console.debug('[seer] rrweb recording started (inline)');
+    } catch (e) {
+        console.error('[seer] rrweb init failed:', e);
+        window.__seer_rrweb_loading = false;
+    }
 })();
 """
 
 
 class RecordingService:
-    """Manages rrweb session recording via CDP injection and event collection.
+    """Manages rrweb session recording via CDP injection and JS polling.
 
-    Singleton service to ensure events collected in create_interactive_session()
-    are available in complete_interactive_session() for save_recording().
+    Singleton service to ensure browser session references are available
+    between start_recording() and save_recording() calls.
     """
 
     _instance: Optional["RecordingService"] = None
     _instance_lock: asyncio.Lock = asyncio.Lock()
 
     def __init__(self) -> None:
-        self._events: Dict[str, List[Dict]] = {}  # session_id -> events
         self._recording_ids: Dict[str, str] = {}   # session_id -> recording_id
         self._start_times: Dict[str, float] = {}   # session_id -> start timestamp
-        self._cdp_sessions: Dict[str, str] = {}    # session_id -> cdp_session_id
-        self._cdp_clients: Dict[str, object] = {}  # session_id -> cdp_client reference
+        self._browser_sessions: Dict[str, "BrowserSession"] = {}  # session_id -> BrowserSession
 
     @classmethod
     async def get_instance(cls) -> "RecordingService":
@@ -108,32 +178,13 @@ class RecordingService:
                     cls._instance = cls()
         return cls._instance
 
-    async def _register_binding(self, session_id: str) -> None:
-        """Re-register the rrweb binding in the current execution context.
-
-        Called on initial setup AND after each navigation, since
-        Runtime.addBinding is execution-context scoped (not page-scoped).
-        """
-        cdp_client = self._cdp_clients.get(session_id)
-        sid = self._cdp_sessions.get(session_id)
-        if not cdp_client or not sid:
-            return
-        try:
-            await cdp_client.send_raw(
-                "Runtime.addBinding",
-                {"name": "__seer_rrweb_event"},
-                session_id=sid,
-            )
-        except Exception as e:
-            logger.warning(f"Failed to register binding for session {session_id}: {e}")
-
     async def start_recording(
         self,
         session_id: str,
-        browser_session: BrowserSession,
+        browser_session: "BrowserSession",
         start_url: Optional[str] = None,  # pylint: disable=unused-argument  # Reason: Reserved for future recording metadata
     ) -> str:
-        """Inject rrweb into the page and start collecting events.
+        """Inject rrweb into the page and prepare for event collection.
 
         Args:
             session_id: Pool session ID
@@ -144,9 +195,9 @@ class RecordingService:
             Recording ID (UUID string)
         """
         recording_id = str(uuid4())
-        self._events[session_id] = []
         self._recording_ids[session_id] = recording_id
         self._start_times[session_id] = time.monotonic()
+        self._browser_sessions[session_id] = browser_session
 
         page = await browser_session.must_get_current_page()
         # browser-use stores target_id as private _target_id (no public property exposed)
@@ -154,61 +205,12 @@ class RecordingService:
         cdp_client = browser_session.cdp_client
         sid = cdp_session.session_id
 
-        # Store CDP references for re-registration after navigation
-        self._cdp_sessions[session_id] = sid
-        self._cdp_clients[session_id] = cdp_client
-
-        # Create JS binding for rrweb events
-        await cdp_client.send_raw(
-            "Runtime.addBinding",
-            {"name": "__seer_rrweb_event"},
-            session_id=sid,
-        )
-
-        # Handler for page navigations - re-registers binding after each navigation
-        # since Runtime.addBinding is execution-context scoped (destroyed on navigation)
-        # pylint: disable-next=unused-argument  # Reason: CDP callback signature requires session_id_param
-        def on_frame_navigated(params: dict, session_id_param: str = None) -> None:
-            frame = params.get("frame", {})
-            # Only process main frame navigations (skip iframes)
-            if frame.get("parentId"):
-                return
-            url = frame.get("url", "")
-            # Skip non-HTTP navigations (about:blank, chrome://, etc.)
-            if not url.startswith(("http://", "https://")):
-                return
-            logger.debug(f"Navigation detected to {url}, re-registering binding for {session_id}")
-            # Fire-and-forget: don't await to avoid deadlocking the CDP event loop
-            # (CDP message handler is sequential - awaiting send_raw() inside a handler deadlocks)
-            asyncio.create_task(self._register_binding(session_id))
-
-        # Register handler for binding calls
-        def on_binding_called(params: dict, session_id_param: str = None) -> None:  # pylint: disable=unused-argument  # Reason: CDP callback signature requires session_id parameter
-            if params.get("name") != "__seer_rrweb_event":
-                return
-            payload = params.get("payload", "")
-            try:
-                event = json.loads(payload)
-                events = self._events.get(session_id)
-                if events is not None and len(events) < config.browser_recording_max_events:
-                    events.append(event)
-            except (json.JSONDecodeError, TypeError) as e:
-                logger.warning(f"Failed to parse rrweb event: {e}")
-
-        # browser-use cdp_client exposes _event_registry for event registration (no public API)
-        cdp_client._event_registry.register(  # pylint: disable=protected-access
-            "Page.frameNavigated", on_frame_navigated
-        )
-        cdp_client._event_registry.register(  # pylint: disable=protected-access
-            "Runtime.bindingCalled", on_binding_called
-        )
-
-        # Build injection script with CDN URL
+        # Build injection script with inlined rrweb library
         inject_script = _RRWEB_INJECT_SCRIPT.replace(
-            "${RRWEB_CDN_URL}", config.browser_recording_rrweb_cdn_url
+            "${RRWEB_INLINE_CODE}", _get_rrweb_library()
         )
 
-        # Inject into future navigations
+        # Inject into future navigations (runs on each new document)
         await cdp_client.send.Page.addScriptToEvaluateOnNewDocument(
             params={"source": inject_script},
             session_id=sid,
@@ -223,32 +225,97 @@ class RecordingService:
         logger.info(f"Recording started for session {session_id} (recording_id={recording_id})")
         return recording_id
 
-    async def stop_recording(self, session_id: str) -> None:
-        """Stop collecting events for a session.
+    async def _collect_events_from_page(self, session_id: str) -> List[Dict]:
+        """Retrieve rrweb events from page JavaScript.
 
-        Cleans up CDP event handlers and references.
+        Waits for rrweb to be loaded (up to 2 seconds), then polls
+        window.__seer_events array via Runtime.evaluate.
+
+        Args:
+            session_id: Pool session ID
+
+        Returns:
+            List of rrweb event dicts
+        """
+        browser_session = self._browser_sessions.get(session_id)
+        if not browser_session:
+            logger.warning(f"No browser session found for {session_id}")
+            return []
+
+        try:
+            # pylint: disable=protected-access
+            # Reason: browser-use stores target_id as private _target_id
+            page = await browser_session.must_get_current_page()
+            cdp_session = await browser_session.get_or_create_cdp_session(page._target_id)
+            cdp_client = browser_session.cdp_client
+            sid = cdp_session.session_id
+
+            # Debug: Get current URL
+            url_result = await cdp_client.send_raw(
+                "Runtime.evaluate",
+                {"expression": "window.location.href", "returnByValue": True},
+                session_id=sid,
+            )
+            current_url = url_result.get("result", {}).get("value", "unknown")
+            logger.debug(f"Collecting events from page: {current_url}")
+
+            # Wait for rrweb to be loaded (up to 2 seconds)
+            rrweb_loaded = False
+            for attempt in range(20):
+                loaded_result = await cdp_client.send_raw(
+                    "Runtime.evaluate",
+                    {"expression": "window.__seer_rrweb_loaded === true", "returnByValue": True},
+                    session_id=sid,
+                )
+                if loaded_result.get("result", {}).get("value") is True:
+                    logger.debug(f"rrweb loaded after {attempt * 100}ms on {current_url}")
+                    rrweb_loaded = True
+                    break
+                await asyncio.sleep(0.1)
+
+            if not rrweb_loaded:
+                logger.warning(f"rrweb not loaded on {current_url} after 2s")
+
+            # Collect events
+            result = await cdp_client.send_raw(
+                "Runtime.evaluate",
+                {
+                    "expression": "JSON.stringify(window.__seer_events || [])",
+                    "returnByValue": True,
+                },
+                session_id=sid,
+            )
+
+            events_json = result.get("result", {}).get("value", "[]")
+            events = json.loads(events_json)
+            logger.info(f"Collected {len(events)} events from {current_url}")
+            return events
+        except Exception as e:
+            logger.warning(f"Failed to collect events from page for {session_id}: {e}")
+            return []
+
+    async def stop_recording(self, session_id: str) -> None:
+        """Stop recording for a session.
+
+        Cleans up session references. Events are not lost - they remain
+        in the browser's window.__seer_events until collected.
 
         Args:
             session_id: Pool session ID
         """
         if session_id in self._recording_ids:
-            # Clean up CDP event handlers
-            cdp_client = self._cdp_clients.get(session_id)
-            if cdp_client:
+            events_count = 0
+            browser_session = self._browser_sessions.get(session_id)
+            if browser_session:
                 try:
-                    # pylint: disable=protected-access  # Reason: No public API for event unregistration
-                    cdp_client._event_registry.unregister("Page.frameNavigated")
-                    cdp_client._event_registry.unregister("Runtime.bindingCalled")
+                    events = await self._collect_events_from_page(session_id)
+                    events_count = len(events)
                 except Exception:
-                    pass  # Ignore cleanup errors (session may already be closed)
-
-            # Clean up CDP references
-            self._cdp_sessions.pop(session_id, None)
-            self._cdp_clients.pop(session_id, None)
+                    pass
 
             logger.info(
                 f"Recording stopped for session {session_id} "
-                f"(events: {len(self._events.get(session_id, []))})"
+                f"(events: {events_count})"
             )
 
     async def save_recording(
@@ -258,25 +325,28 @@ class RecordingService:
         *,
         profile_id: Optional[str] = None,
         workflow_run_id: Optional[str] = None,
-        session_type: str = "interactive",
+        session_type: str = "workflow",
         start_url: Optional[str] = None,
     ) -> Optional[str]:
-        """Compress events and create SessionRecording in the database.
+        """Collect events from page, compress, and create SessionRecording.
 
         Args:
             session_id: Pool session ID
             user: Recording owner
             profile_id: Optional browser profile ID
             workflow_run_id: Optional workflow run ID
-            session_type: "interactive" or "workflow"
+            session_type: Recording type (default: "workflow")
             start_url: URL the session started on
 
         Returns:
             Recording ID string, or None if no events were recorded
         """
-        events = self._events.pop(session_id, [])
+        # Collect events from the browser page
+        events = await self._collect_events_from_page(session_id)
+
         recording_id = self._recording_ids.pop(session_id, None)
         start_time = self._start_times.pop(session_id, None)
+        self._browser_sessions.pop(session_id, None)
 
         if not events or not recording_id:
             logger.info(f"No events to save for session {session_id}")
