@@ -193,8 +193,9 @@ class BrowserNodeType(BaseNodeType):
         if usage_metadata and ctx.runtime_context:
             await self._track_usage_async(usage_metadata, ctx.runtime_context, node.id)
 
-        # Validate structured output
-        self._validate_extracted_data(node, result, type_schemas)
+        # Validate structured output only on success (skip validation on timeout/error)
+        if result.get("success", False):
+            self._validate_extracted_data(node, result, type_schemas)
 
         # Build usage trace
         usage_trace = {}
