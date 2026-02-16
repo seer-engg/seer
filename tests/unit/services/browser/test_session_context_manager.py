@@ -171,14 +171,14 @@ class TestExtractDomains:
                 {"domain": "example.com"},
             ]
         }
-        domains = SessionContextManager._extract_domains(data)
+        domains = SessionContextManager.extract_domains(data)
         assert domains == ["example.com", "github.com"]
 
     def test_empty_cookies(self):
-        domains = SessionContextManager._extract_domains({"cookies": []})
+        domains = SessionContextManager.extract_domains({"cookies": []})
         assert domains == []
 
     def test_no_domain_field(self):
         data = {"cookies": [{"name": "test", "value": "123"}]}
-        domains = SessionContextManager._extract_domains(data)
+        domains = SessionContextManager.extract_domains(data)
         assert domains == []

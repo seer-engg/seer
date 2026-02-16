@@ -181,7 +181,7 @@ class TestInputDispatch:
         streamer = StreamingService()
         await streamer.start(mock_browser_session)
 
-        await streamer.dispatch_mouse_event("mousePressed", 100, 200, "left", 1)
+        await streamer.dispatch_mouse_event("mousePressed", 100, 200, button="left", click_count=1)
 
         mock_browser_session.cdp_client.send.Input.dispatchMouseEvent.assert_called_once_with(
             params={
@@ -198,7 +198,7 @@ class TestInputDispatch:
         streamer = StreamingService()
         await streamer.start(mock_browser_session)
 
-        await streamer.dispatch_key_event("keyDown", "Enter", "Enter", "\r", 0)
+        await streamer.dispatch_key_event("keyDown", "Enter", code="Enter", text="\r", modifiers=0)
 
         mock_browser_session.cdp_client.send.Input.dispatchKeyEvent.assert_called_once_with(
             params={
