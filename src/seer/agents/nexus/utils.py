@@ -4,6 +4,7 @@ from seer.agents.nexus.tools import (
     analyze_workflow,
     submit_workflow_spec,
     ask_clarification_questions,
+    web_search,
 )
 
 logger = get_logger(__name__)
@@ -34,6 +35,7 @@ def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:
         analyze_workflow,
         submit_workflow_spec,
         ask_clarification_questions,
+        web_search,
     ]
 
     return unified_registry.get_langgraph_tools() + nexus_only_tools

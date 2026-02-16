@@ -56,6 +56,9 @@ class SeerConfig(BaseSettings):
     openrouter_api_key: Optional[str] = Field(
         default=None, description="OpenRouter API key for multi-provider LLM access"
     )
+    tavily_api_key: Optional[str] = Field(
+        default=None, description="Tavily API key for web search"
+    )
 
     # ============================================================================
     # LangGraph Checkpointer Configuration
