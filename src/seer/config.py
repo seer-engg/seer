@@ -16,15 +16,16 @@ Usage:
     if score >= config.eval_pass_threshold:
         ...
 """
-import hashlib
 from typing import Optional, Tuple, Type
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
+from seer.config_properties import SeerConfigPropertiesMixin
 from seer.utilities.aws.parameter_store import AwsSsmSettingsSource
 
-class SeerConfig(BaseSettings):
+
+class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     """
     Central configuration for Seer.
 
@@ -443,74 +444,6 @@ class SeerConfig(BaseSettings):
     )
 
     # ============================================================================
-    # Computed Properties
-    # ============================================================================
-
-    @property
-    def is_cloud_mode(self) -> bool:
-        """Check if running in cloud mode."""
-        return self.seer_mode == "cloud"
-
-    @property
-    def is_self_hosted(self) -> bool:
-        """Check if running in self-hosted mode."""
-        return self.seer_mode == "self-hosted"
-
-    @property
-    def is_clerk_configured(self) -> bool:
-        """Check if Clerk authentication is configured."""
-        return self.clerk_jwks_url is not None and self.clerk_issuer is not None
-
-    @property
-    def is_stripe_configured(self) -> bool:
-        """Check if Stripe is configured for subscription billing."""
-        return (
-            self.stripe_secret_key is not None
-            and self.stripe_webhook_secret is not None
-        )
-
-    @property
-    def is_slack_configured(self) -> bool:
-        """Check if Slack error notifications are configured."""
-        return (
-            self.slack_bot_token is not None
-            and self.slack_error_channel_id is not None
-        )
-
-    @property
-    def is_langfuse_configured(self) -> bool:
-        """Check if Langfuse is configured (at least one project has credentials)."""
-        if not self.langfuse_enabled:
-            return False
-        nexus_configured = (
-            self.langfuse_nexus_public_key is not None
-            and self.langfuse_nexus_secret_key is not None
-        )
-        workflow_configured = (
-            self.langfuse_workflow_public_key is not None
-            and self.langfuse_workflow_secret_key is not None
-        )
-        return nexus_configured or workflow_configured
-
-    @property
-    def is_langfuse_nexus_configured(self) -> bool:
-        """Check if Langfuse is configured for Nexus agent tracing."""
-        return (
-            self.langfuse_enabled
-            and self.langfuse_nexus_public_key is not None
-            and self.langfuse_nexus_secret_key is not None
-        )
-
-    @property
-    def is_langfuse_workflow_configured(self) -> bool:
-        """Check if Langfuse is configured for Workflow tracing."""
-        return (
-            self.langfuse_enabled
-            and self.langfuse_workflow_public_key is not None
-            and self.langfuse_workflow_secret_key is not None
-        )
-
-    # ============================================================================
     # PostHog Analytics Configuration
     # ============================================================================
 
@@ -523,11 +456,6 @@ class SeerConfig(BaseSettings):
     posthog_enabled: bool = Field(
         default=False, description="Enable/disable PostHog analytics"
     )
-
-    @property
-    def is_posthog_configured(self) -> bool:
-        """Check if PostHog analytics is configured and enabled."""
-        return self.posthog_enabled and self.posthog_api_key is not None
 
     # ============================================================================
     # Sentry Error Monitoring Configuration
@@ -548,36 +476,6 @@ class SeerConfig(BaseSettings):
     sentry_enabled: bool = Field(
         default=True, description="Enable Sentry (requires DSN to be set)"
     )
-
-    @property
-    def is_sentry_configured(self) -> bool:
-        """Check if Sentry error monitoring is configured and enabled."""
-        return self.sentry_enabled and self.sentry_dsn is not None
-
-    @property
-    def browser_encryption_key_bytes(self) -> bytes:
-        """Get 32-byte Fernet key for browser session encryption.
-
-        Uses BROWSER_SESSION_ENCRYPTION_KEY env var if set,
-        otherwise derives from SECRET_KEY via SHA-256.
-        """
-        import base64  # pylint: disable=import-outside-toplevel  # Reason: only needed for this property
-        if self.browser_session_encryption_key:
-            # pylint: disable-next=no-member  # Reason: Pydantic resolves FieldInfo to str at runtime
-            key = self.browser_session_encryption_key.encode()
-            if len(key) == 44:
-                return key
-            raw = hashlib.sha256(key).digest()
-            return base64.urlsafe_b64encode(raw)
-        import os  # pylint: disable=import-outside-toplevel  # Reason: only needed for fallback
-        secret = os.getenv("SECRET_KEY", "dev_secret_key")
-        raw = hashlib.sha256(secret.encode()).digest()
-        return base64.urlsafe_b64encode(raw)
-
-    @property
-    def is_workflow_file_system_configured(self) -> bool:
-        """Check if the workflow file system (S3/R2) is configured."""
-        return self.workflow_file_s3_bucket is not None
 
     @classmethod
     def settings_customise_sources(  # pylint: disable=too-many-positional-arguments  # Reason: Method signature is defined by Pydantic's BaseSettings API and cannot be modified
