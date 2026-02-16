@@ -214,3 +214,266 @@ class TestSingleton:
 
         pool2 = await BrowserPoolManager.get_instance()
         assert pool2 is not pool1
+
+
+class TestSessionReaper:
+    """Test session reaper background task."""
+
+    @patch("seer.services.browser.pool_manager.BrowserSession")
+    @patch("seer.services.browser.pool_manager.BrowserUseProfile")
+    async def test_reaper_removes_expired_sessions(self, mock_profile_cls, mock_session_cls, mock_browser_session):
+        """Test that reaper removes expired sessions."""
+        mock_session_cls.return_value = mock_browser_session
+
+        pool = BrowserPoolManager(max_concurrent=5)
+        pool._reaper_interval = 0.05  # Speed up for test
+
+        # Create session with very short timeout
+        managed = await pool.create_session(
+            user_id="user-1",
+            timeout=0,  # Expires immediately
+        )
+
+        # Manually mark as expired by setting created_at in past
+        managed.created_at = 0
+        managed.timeout = 0
+
+        # Start reaper
+        pool._start_reaper()
+
+        # Wait for reaper to run
+        await asyncio.sleep(0.1)
+
+        # Session should be removed
+        assert managed.id not in pool._sessions
+
+        await pool.shutdown()
+
+    @patch("seer.services.browser.pool_manager.BrowserSession")
+    @patch("seer.services.browser.pool_manager.BrowserUseProfile")
+    async def test_reaper_handles_release_exception(self, mock_profile_cls, mock_session_cls):
+        """Test that reaper handles exceptions during session release."""
+        mock_session = MagicMock()
+        mock_session.start = AsyncMock()
+        mock_session.stop = AsyncMock(side_effect=RuntimeError("Stop failed"))
+        mock_session.export_storage_state = AsyncMock(side_effect=RuntimeError("Export failed"))
+        mock_session_cls.return_value = mock_session
+
+        pool = BrowserPoolManager(max_concurrent=5)
+        pool._reaper_interval = 0.05
+
+        # Create session that will fail on release
+        managed = await pool.create_session(user_id="user-1", timeout=0)
+        managed.created_at = 0
+        managed.timeout = 0
+
+        pool._start_reaper()
+
+        # Wait for reaper to run
+        await asyncio.sleep(0.1)
+
+        # Session should still be removed despite errors
+        assert managed.id not in pool._sessions
+
+        await pool.shutdown()
+
+
+class TestGetSession:
+    """Test get_session lookup method."""
+
+    @patch("seer.services.browser.pool_manager.BrowserSession")
+    @patch("seer.services.browser.pool_manager.BrowserUseProfile")
+    async def test_get_session_returns_managed_session(self, mock_profile_cls, mock_session_cls, mock_browser_session):
+        """Test get_session returns correct ManagedSession."""
+        mock_session_cls.return_value = mock_browser_session
+
+        pool = BrowserPoolManager(max_concurrent=5)
+        created = await pool.create_session(user_id="user-1", profile_id="profile-1")
+
+        found = pool.get_session(created.id)
+
+        assert found is created
+        assert found.user_id == "user-1"
+        assert found.profile_id == "profile-1"
+
+        await pool.shutdown()
+
+    async def test_get_session_returns_none_for_missing(self):
+        """Test get_session returns None for non-existent session."""
+        pool = BrowserPoolManager(max_concurrent=5)
+
+        result = pool.get_session("nonexistent-id")
+
+        assert result is None
+
+        await pool.shutdown()
+
+
+class TestStealthMode:
+    """Test stealth mode profile creation."""
+
+    @patch("seer.services.browser.pool_manager.get_stealth_profile_kwargs")
+    @patch("seer.services.browser.pool_manager.BrowserSession")
+    @patch("seer.services.browser.pool_manager.BrowserUseProfile")
+    async def test_always_uses_stealth_profile(
+        self, mock_profile_cls, mock_session_cls, mock_stealth_kwargs, mock_browser_session
+    ):
+        """Test that all sessions use stealth profile kwargs for container compatibility."""
+        mock_session_cls.return_value = mock_browser_session
+        mock_stealth_kwargs.return_value = {
+            "headless": False,  # stealth profile uses --headless=new via args
+            "args": ["--headless=new", "--disable-dev-shm-usage"],
+        }
+
+        pool = BrowserPoolManager(max_concurrent=5)
+        await pool.create_session(
+            user_id="user-1",
+            storage_state={"cookies": []},
+        )
+
+        # Verify stealth profile kwargs were used (critical for ECS/Docker)
+        mock_stealth_kwargs.assert_called_once()
+        mock_profile_cls.assert_called_once()
+        call_kwargs = mock_profile_cls.call_args.kwargs
+        assert call_kwargs.get("keep_alive") is True
+        # Verify --disable-dev-shm-usage is present (required for containers)
+        assert "--disable-dev-shm-usage" in call_kwargs.get("args", [])
+
+        await pool.shutdown()
+
+
+class TestCDPCookieApplication:
+    """Test CDP cookie application after session start."""
+
+    @patch("seer.services.browser.pool_manager.BrowserSession")
+    @patch("seer.services.browser.pool_manager.BrowserUseProfile")
+    async def test_cookies_applied_via_cdp(self, mock_profile_cls, mock_session_cls):
+        """Test that cookies are applied via CDP after session start."""
+        mock_session = MagicMock()
+        mock_session.start = AsyncMock()
+        mock_session.stop = AsyncMock()
+        mock_session.export_storage_state = AsyncMock(return_value={})
+        mock_session._cdp_set_cookies = AsyncMock()
+        mock_session_cls.return_value = mock_session
+
+        pool = BrowserPoolManager(max_concurrent=5)
+        cookies = [
+            {"name": "session", "value": "abc123", "domain": ".example.com"},
+            {"name": "auth", "value": "xyz789", "domain": ".example.com"},
+        ]
+        await pool.create_session(
+            user_id="user-1",
+            storage_state={"cookies": cookies},
+        )
+
+        mock_session._cdp_set_cookies.assert_called_once_with(cookies)
+
+        await pool.shutdown()
+
+    @patch("seer.services.browser.pool_manager.BrowserSession")
+    @patch("seer.services.browser.pool_manager.BrowserUseProfile")
+    async def test_cdp_cookie_application_failure_logged(self, mock_profile_cls, mock_session_cls):
+        """Test that CDP cookie application failure is logged but doesn't crash."""
+        mock_session = MagicMock()
+        mock_session.start = AsyncMock()
+        mock_session.stop = AsyncMock()
+        mock_session.export_storage_state = AsyncMock(return_value={})
+        mock_session._cdp_set_cookies = AsyncMock(side_effect=RuntimeError("CDP error"))
+        mock_session_cls.return_value = mock_session
+
+        pool = BrowserPoolManager(max_concurrent=5)
+
+        # Should not raise
+        managed = await pool.create_session(
+            user_id="user-1",
+            storage_state={"cookies": [{"name": "test", "value": "123"}]},
+        )
+
+        assert managed is not None
+
+        await pool.shutdown()
+
+
+class TestShutdownErrors:
+    """Test shutdown error handling."""
+
+    @patch("seer.services.browser.pool_manager.BrowserSession")
+    @patch("seer.services.browser.pool_manager.BrowserUseProfile")
+    async def test_shutdown_handles_session_errors(self, mock_profile_cls, mock_session_cls):
+        """Test that shutdown handles errors from individual sessions."""
+        mock_session = MagicMock()
+        mock_session.start = AsyncMock()
+        mock_session.stop = AsyncMock(side_effect=RuntimeError("Session cleanup failed"))
+        mock_session.export_storage_state = AsyncMock(side_effect=RuntimeError("Export failed"))
+        mock_session_cls.return_value = mock_session
+
+        pool = BrowserPoolManager(max_concurrent=5)
+        await pool.create_session(user_id="u1")
+        await pool.create_session(user_id="u2")
+
+        # Should not raise despite session errors
+        await pool.shutdown()
+
+        assert pool.health_status()["active_sessions"] == 0
+
+    @patch("seer.services.browser.pool_manager.BrowserSession")
+    @patch("seer.services.browser.pool_manager.BrowserUseProfile")
+    async def test_shutdown_cancels_reaper(self, mock_profile_cls, mock_session_cls, mock_browser_session):
+        """Test that shutdown cancels the reaper task."""
+        mock_session_cls.return_value = mock_browser_session
+
+        pool = BrowserPoolManager(max_concurrent=5)
+        pool._start_reaper()
+
+        assert pool._reaper_task is not None
+        assert not pool._reaper_task.done()
+
+        await pool.shutdown()
+
+        assert pool._reaper_task.done()
+
+
+class TestReleaseSessionEdgeCases:
+    """Test release_session edge cases."""
+
+    @patch("seer.services.browser.pool_manager.BrowserSession")
+    @patch("seer.services.browser.pool_manager.BrowserUseProfile")
+    async def test_release_handles_export_failure(self, mock_profile_cls, mock_session_cls):
+        """Test that release handles export_storage_state failure."""
+        mock_session = MagicMock()
+        mock_session.start = AsyncMock()
+        mock_session.stop = AsyncMock()
+        mock_session.export_storage_state = AsyncMock(side_effect=RuntimeError("Export failed"))
+        mock_session_cls.return_value = mock_session
+
+        pool = BrowserPoolManager(max_concurrent=5)
+        managed = await pool.create_session(user_id="u1")
+
+        # Should not raise, returns None for storage_state
+        result = await pool.release_session(managed.id)
+
+        assert result is None
+        assert pool.health_status()["active_sessions"] == 0
+
+        await pool.shutdown()
+
+    @patch("seer.services.browser.pool_manager.BrowserSession")
+    @patch("seer.services.browser.pool_manager.BrowserUseProfile")
+    async def test_release_handles_stop_failure(self, mock_profile_cls, mock_session_cls):
+        """Test that release handles session.stop failure."""
+        mock_session = MagicMock()
+        mock_session.start = AsyncMock()
+        mock_session.stop = AsyncMock(side_effect=RuntimeError("Stop failed"))
+        mock_session.export_storage_state = AsyncMock(return_value={"cookies": []})
+        mock_session_cls.return_value = mock_session
+
+        pool = BrowserPoolManager(max_concurrent=5)
+        managed = await pool.create_session(user_id="u1")
+
+        # Should not raise, still returns storage_state
+        result = await pool.release_session(managed.id)
+
+        assert result == {"cookies": []}
+        assert pool.health_status()["active_sessions"] == 0
+
+        await pool.shutdown()

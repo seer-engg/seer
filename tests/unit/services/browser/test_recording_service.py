@@ -415,3 +415,221 @@ class TestNavigationHandling:
         assert recorder._cdp_sessions["session-nav"] == "cdp-session-456"
         assert "session-nav" in recorder._cdp_clients
         assert recorder._cdp_clients["session-nav"] == mock_browser_session.cdp_client
+
+
+class TestRegisterBindingErrors:
+    """Test _register_binding error handling."""
+
+    async def test_register_binding_no_cdp_client(self):
+        """Test _register_binding returns early when no CDP client."""
+        recorder = RecordingService()
+        # Don't start recording, so no CDP client
+
+        # Should not raise
+        await recorder._register_binding("nonexistent-session")
+
+    async def test_register_binding_no_cdp_session(self, mock_browser_session):
+        """Test _register_binding returns early when no CDP session ID."""
+        recorder = RecordingService()
+        recorder._cdp_clients["session-1"] = mock_browser_session.cdp_client
+        # Don't set _cdp_sessions
+
+        # Should not raise
+        await recorder._register_binding("session-1")
+
+    async def test_register_binding_exception_handled(self, mock_browser_session):
+        """Test _register_binding handles CDP exceptions gracefully."""
+        mock_browser_session.cdp_client.send_raw = AsyncMock(
+            side_effect=RuntimeError("CDP error")
+        )
+
+        recorder = RecordingService()
+        recorder._cdp_clients["session-1"] = mock_browser_session.cdp_client
+        recorder._cdp_sessions["session-1"] = "cdp-sess-123"
+
+        # Should not raise
+        await recorder._register_binding("session-1")
+
+
+class TestBindingCallbackJsonErrors:
+    """Test JSON parse errors in binding callback."""
+
+    async def test_invalid_json_payload(self, mock_browser_session):
+        """Test that invalid JSON payloads are handled gracefully."""
+        recorder = RecordingService()
+        await recorder.start_recording("session-1", mock_browser_session)
+
+        # Get the binding callback (second registered handler)
+        register_calls = mock_browser_session.cdp_client._event_registry.register.call_args_list
+        on_binding_called = None
+        for call in register_calls:
+            if call[0][0] == "Runtime.bindingCalled":
+                on_binding_called = call[0][1]
+                break
+
+        # Send invalid JSON
+        on_binding_called({
+            "name": "__seer_rrweb_event",
+            "payload": "not valid json {{{",
+        })
+
+        # Should not crash, events list should be empty
+        assert len(recorder._events.get("session-1", [])) == 0
+
+    async def test_wrong_binding_name_ignored(self, mock_browser_session):
+        """Test that callbacks with wrong binding name are ignored."""
+        recorder = RecordingService()
+        await recorder.start_recording("session-1", mock_browser_session)
+
+        register_calls = mock_browser_session.cdp_client._event_registry.register.call_args_list
+        on_binding_called = None
+        for call in register_calls:
+            if call[0][0] == "Runtime.bindingCalled":
+                on_binding_called = call[0][1]
+                break
+
+        # Send event with wrong binding name
+        on_binding_called({
+            "name": "__some_other_binding",
+            "payload": '{"type": 1}',
+        })
+
+        # Should be ignored
+        assert len(recorder._events.get("session-1", [])) == 0
+
+
+class TestStopRecordingCleanup:
+    """Test stop_recording cleanup error handling."""
+
+    async def test_stop_cleanup_errors_ignored(self, mock_browser_session):
+        """Test that cleanup errors during stop are ignored."""
+        mock_browser_session.cdp_client._event_registry.unregister = MagicMock(
+            side_effect=RuntimeError("Already closed")
+        )
+
+        recorder = RecordingService()
+        await recorder.start_recording("session-1", mock_browser_session)
+
+        # Should not raise
+        await recorder.stop_recording("session-1")
+
+        # CDP references should still be cleaned up
+        assert "session-1" not in recorder._cdp_sessions
+        assert "session-1" not in recorder._cdp_clients
+
+    async def test_stop_nonexistent_session(self):
+        """Test stopping a nonexistent session is a no-op."""
+        recorder = RecordingService()
+
+        # Should not raise
+        await recorder.stop_recording("nonexistent-session")
+
+
+class TestSaveRecordingTruncation:
+    """Test save_recording truncation for oversized data."""
+
+    @patch("seer.services.browser.recording_service.SessionRecording")
+    @patch("seer.services.browser.recording_service.config")
+    async def test_truncates_oversized_recording(
+        self, mock_config, mock_recording_model, mock_browser_session, mock_user
+    ):
+        """Test that oversized recordings are truncated."""
+        mock_config.browser_recording_max_events = 1000
+        mock_config.browser_recording_max_size_mb = 0.0001  # Very small limit
+        mock_config.browser_recording_rrweb_cdn_url = "https://cdn.test/rrweb.js"
+        mock_recording_model.create = AsyncMock()
+
+        recorder = RecordingService()
+        await recorder.start_recording("session-1", mock_browser_session)
+
+        # Get binding callback
+        register_calls = mock_browser_session.cdp_client._event_registry.register.call_args_list
+        on_binding = None
+        for call in register_calls:
+            if call[0][0] == "Runtime.bindingCalled":
+                on_binding = call[0][1]
+                break
+
+        # Add many events to exceed size limit
+        for i in range(100):
+            on_binding({
+                "name": "__seer_rrweb_event",
+                "payload": json.dumps({
+                    "type": i,
+                    "data": "x" * 100,  # Some padding
+                    "timestamp": i * 1000,
+                }),
+            })
+
+        original_count = len(recorder._events["session-1"])
+
+        result = await recorder.save_recording(
+            "session-1",
+            mock_user,
+            session_type="interactive",
+        )
+
+        # Should still save something
+        assert result is not None
+        mock_recording_model.create.assert_called_once()
+
+        # Event count in DB should be less than original (truncated)
+        call_kwargs = mock_recording_model.create.call_args[1]
+        assert call_kwargs["event_count"] < original_count
+
+
+class TestSaveRecordingDbErrors:
+    """Test save_recording database error handling."""
+
+    @patch("seer.services.browser.recording_service.SessionRecording")
+    @patch("seer.services.browser.recording_service.config")
+    async def test_db_error_returns_none(
+        self, mock_config, mock_recording_model, mock_browser_session, mock_user
+    ):
+        """Test that database errors cause None return."""
+        mock_config.browser_recording_max_events = 50000
+        mock_config.browser_recording_max_size_mb = 50
+        mock_config.browser_recording_rrweb_cdn_url = "https://cdn.test/rrweb.js"
+        mock_recording_model.create = AsyncMock(
+            side_effect=RuntimeError("Database connection failed")
+        )
+
+        recorder = RecordingService()
+        await recorder.start_recording("session-1", mock_browser_session)
+
+        # Add an event
+        register_calls = mock_browser_session.cdp_client._event_registry.register.call_args_list
+        on_binding = None
+        for call in register_calls:
+            if call[0][0] == "Runtime.bindingCalled":
+                on_binding = call[0][1]
+                break
+
+        on_binding({
+            "name": "__seer_rrweb_event",
+            "payload": '{"type": 1}',
+        })
+
+        # Should return None on DB error
+        result = await recorder.save_recording(
+            "session-1",
+            mock_user,
+            session_type="interactive",
+        )
+
+        assert result is None
+
+
+class TestSaveRecordingNoRecordingId:
+    """Test save_recording when recording_id is missing."""
+
+    async def test_no_recording_id_returns_none(self, mock_user):
+        """Test that save_recording returns None when no recording_id."""
+        recorder = RecordingService()
+        # Add events directly without start_recording (no recording_id)
+        recorder._events["session-1"] = [{"type": 1}]
+        # Don't set _recording_ids["session-1"]
+
+        result = await recorder.save_recording("session-1", mock_user)
+
+        assert result is None

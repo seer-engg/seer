@@ -250,3 +250,254 @@ class TestStop:
         streamer = StreamingService()
         await streamer.stop()  # Should not raise
         assert streamer.is_running is False
+
+    async def test_stop_exception_handling(self, mock_browser_session):
+        """Test that stop handles CDP exceptions gracefully."""
+        streamer = StreamingService()
+        await streamer.start(mock_browser_session)
+
+        # Make stop screencast fail
+        mock_browser_session.cdp_client.send_raw.side_effect = RuntimeError("CDP disconnected")
+
+        # Should not raise
+        await streamer.stop()
+        assert streamer.is_running is False
+
+
+class TestViewportParsing:
+    """Test viewport JSON string parsing edge case."""
+
+    async def test_viewport_json_string_parsing(self, mock_browser_session):
+        """Test that viewport returned as JSON string is handled."""
+        page = mock_browser_session.must_get_current_page.return_value
+
+        # Return viewport as JSON string instead of dict
+        page.evaluate = AsyncMock(return_value='{"width": 1920, "height": 1080}')
+
+        streamer = StreamingService(max_width=1280, max_height=800)
+        await streamer.start(mock_browser_session)
+
+        assert streamer._viewport_width == 1920.0
+        assert streamer._viewport_height == 1080.0
+
+    async def test_viewport_dict_parsing(self, mock_browser_session):
+        """Test normal viewport dict handling."""
+        page = mock_browser_session.must_get_current_page.return_value
+        page.evaluate = AsyncMock(return_value={"width": 1600, "height": 900})
+
+        streamer = StreamingService(max_width=1280, max_height=800)
+        await streamer.start(mock_browser_session)
+
+        assert streamer._viewport_width == 1600.0
+        assert streamer._viewport_height == 900.0
+
+    async def test_viewport_evaluation_exception(self, mock_browser_session):
+        """Test that viewport evaluation exception uses fallback values."""
+        page = mock_browser_session.must_get_current_page.return_value
+        page.evaluate = AsyncMock(side_effect=RuntimeError("JS eval failed"))
+
+        streamer = StreamingService(max_width=1280, max_height=800)
+        await streamer.start(mock_browser_session)
+
+        # Should fallback to max values
+        assert streamer._viewport_width == 1280.0
+        assert streamer._viewport_height == 800.0
+
+
+class TestDispatchClickJs:
+    """Test JavaScript click dispatch method."""
+
+    async def test_dispatch_click_js_success(self, mock_browser_session):
+        """Test successful JS click dispatch."""
+        mock_browser_session.cdp_client.send.Runtime = MagicMock()
+        mock_browser_session.cdp_client.send.Runtime.evaluate = AsyncMock(return_value={
+            "result": {"value": {"success": True, "tagName": "BUTTON", "id": "submit-btn"}}
+        })
+
+        streamer = StreamingService()
+        await streamer.start(mock_browser_session)
+
+        await streamer.dispatch_click_js(100, 200, "left")
+
+        mock_browser_session.cdp_client.send.Runtime.evaluate.assert_called_once()
+        call_args = mock_browser_session.cdp_client.send.Runtime.evaluate.call_args
+        assert "elementFromPoint" in call_args.kwargs["params"]["expression"]
+
+    async def test_dispatch_click_js_no_cdp_client(self):
+        """Test click dispatch without CDP client returns early."""
+        streamer = StreamingService()
+        # Don't start, so no CDP client
+
+        # Should not raise
+        await streamer.dispatch_click_js(100, 200)
+
+    async def test_dispatch_click_js_with_scaling(self, mock_browser_session):
+        """Test that click coordinates are scaled correctly."""
+        mock_browser_session.cdp_client.send.Runtime = MagicMock()
+        mock_browser_session.cdp_client.send.Runtime.evaluate = AsyncMock(return_value={})
+
+        streamer = StreamingService(max_width=1280, max_height=800)
+        await streamer.start(mock_browser_session)
+
+        # Set up scaling scenario
+        streamer._viewport_width = 1920.0
+        streamer._viewport_height = 1080.0
+        streamer._actual_screencast_width = 1280.0
+        streamer._actual_screencast_height = 720.0
+
+        await streamer.dispatch_click_js(640, 360)
+
+        call_args = mock_browser_session.cdp_client.send.Runtime.evaluate.call_args
+        js_code = call_args.kwargs["params"]["expression"]
+        # Scaled coordinates should be 960, 540 (center of 1920x1080)
+        assert "960" in js_code
+        assert "540" in js_code
+
+    async def test_dispatch_click_js_exception_handling(self, mock_browser_session):
+        """Test that JS click handles exceptions gracefully."""
+        mock_browser_session.cdp_client.send.Runtime = MagicMock()
+        mock_browser_session.cdp_client.send.Runtime.evaluate = AsyncMock(
+            side_effect=RuntimeError("JS execution failed")
+        )
+
+        streamer = StreamingService()
+        await streamer.start(mock_browser_session)
+
+        # Should not raise
+        await streamer.dispatch_click_js(100, 200)
+
+
+class TestDispatchWithoutCDP:
+    """Test dispatch methods without CDP client initialized."""
+
+    async def test_dispatch_mouse_event_without_cdp(self):
+        """Test mouse event dispatch without CDP returns early."""
+        streamer = StreamingService()
+        # Don't start, so no CDP client
+
+        # Should not raise
+        await streamer.dispatch_mouse_event("mousePressed", 100, 200)
+
+    async def test_dispatch_key_event_without_cdp(self):
+        """Test key event dispatch without CDP returns early."""
+        streamer = StreamingService()
+        # Don't start, so no CDP client
+
+        # Should not raise
+        await streamer.dispatch_key_event("keyDown", "Enter")
+
+    async def test_dispatch_scroll_event_without_cdp(self):
+        """Test scroll event dispatch without CDP returns early."""
+        streamer = StreamingService()
+        # Don't start, so no CDP client
+
+        # Should not raise
+        await streamer.dispatch_scroll_event(100, 200, 0, -120)
+
+
+class TestFrameQueueFull:
+    """Test frame queue overflow handling."""
+
+    async def test_frame_dropped_when_queue_full(self, mock_browser_session, valid_jpeg_bytes):
+        """Test that frames are dropped when queue is full."""
+        # Create streamer with small queue (maxsize=5)
+        streamer = StreamingService()
+        await streamer.start(mock_browser_session)
+
+        b64_data = base64.b64encode(valid_jpeg_bytes).decode("ascii")
+
+        # Fill the queue beyond capacity
+        for i in range(10):
+            streamer._on_frame({"data": b64_data, "sessionId": i})
+
+        # Queue should be at max capacity (5)
+        assert streamer._frame_queue.qsize() == 5
+        # But all frames should be counted
+        assert streamer.frame_count == 10
+
+
+class TestFrameProcessingError:
+    """Test frame processing error handling."""
+
+    async def test_invalid_base64_handled(self, mock_browser_session):
+        """Test that invalid base64 data is handled gracefully."""
+        streamer = StreamingService()
+        await streamer.start(mock_browser_session)
+
+        # Send invalid base64 data
+        streamer._on_frame({"data": "not-valid-base64!!!", "sessionId": 1})
+
+        # Should not crash, frame count should increment
+        # (frame is counted but not queued due to decode error)
+        assert streamer.frame_count == 1
+        assert streamer._frame_queue.qsize() == 0
+
+    async def test_not_running_skips_frame(self, mock_browser_session, valid_jpeg_bytes):
+        """Test that frames are skipped when not running."""
+        streamer = StreamingService()
+        await streamer.start(mock_browser_session)
+        await streamer.stop()  # Stop the streamer
+
+        b64_data = base64.b64encode(valid_jpeg_bytes).decode("ascii")
+        streamer._on_frame({"data": b64_data, "sessionId": 1})
+
+        # Frame should be skipped
+        assert streamer.frame_count == 0
+
+
+class TestCoordinateScalingEdgeCases:
+    """Test coordinate scaling edge cases."""
+
+    def test_scale_coordinates_zero_viewport(self):
+        """Test scaling with zero viewport dimensions returns original coords."""
+        streamer = StreamingService()
+        streamer._viewport_width = 0
+        streamer._viewport_height = 0
+
+        x, y = streamer._scale_coordinates(100, 200)
+
+        assert x == 100
+        assert y == 200
+
+    def test_scale_coordinates_negative_viewport(self):
+        """Test scaling with negative viewport dimensions returns original coords."""
+        streamer = StreamingService()
+        streamer._viewport_width = -100
+        streamer._viewport_height = 0
+
+        x, y = streamer._scale_coordinates(100, 200)
+
+        assert x == 100
+        assert y == 200
+
+
+class TestDispatchMouseEventException:
+    """Test mouse event dispatch exception handling."""
+
+    async def test_dispatch_mouse_event_cdp_exception(self, mock_browser_session):
+        """Test that CDP mouse dispatch exceptions are handled."""
+        mock_browser_session.cdp_client.send.Input.dispatchMouseEvent = AsyncMock(
+            side_effect=RuntimeError("CDP error")
+        )
+
+        streamer = StreamingService()
+        await streamer.start(mock_browser_session)
+
+        # Should not raise
+        await streamer.dispatch_mouse_event("mousePressed", 100, 200)
+
+
+class TestDispatchScrollEventException:
+    """Test scroll event dispatch exception handling."""
+
+    async def test_dispatch_scroll_event_cdp_exception(self, mock_browser_session):
+        """Test that CDP scroll dispatch exceptions are handled."""
+        mock_browser_session.cdp_client.send.Input.dispatchMouseEvent = AsyncMock(
+            side_effect=RuntimeError("CDP error")
+        )
+
+        streamer = StreamingService()
+        await streamer.start(mock_browser_session)
+
+        # Should not raise
+        await streamer.dispatch_scroll_event(100, 200, 0, -120)

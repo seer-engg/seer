@@ -121,7 +121,6 @@ class BrowserPoolManager:
         session_type: str = "workflow",
         storage_state: Optional[Dict[str, Any]] = None,
         timeout: Optional[int] = None,
-        stealth_mode: bool = False,
     ) -> ManagedSession:
         """Create a new managed browser session.
 
@@ -134,7 +133,6 @@ class BrowserPoolManager:
             session_type: "workflow" or "interactive"
             storage_state: Optional Playwright storage_state dict for session restore
             timeout: Session timeout in seconds (defaults to config value)
-            stealth_mode: Enable anti-detection features (for auth flows like Google sign-in)
 
         Returns:
             ManagedSession with started browser session
@@ -145,20 +143,11 @@ class BrowserPoolManager:
         effective_timeout = timeout or config.browser_pool_default_timeout_seconds
 
         try:
-            # Build profile kwargs based on stealth mode
-            if stealth_mode:
-                # Use new headless mode with stealth (works on cloud, undetectable)
-                profile_kwargs = get_stealth_profile_kwargs()
-                profile_kwargs["storage_state"] = storage_state
-                profile_kwargs["keep_alive"] = True
-                logger.info("Stealth mode enabled with --headless=new")
-            else:
-                # Standard headless mode for workflows (existing behavior)
-                profile_kwargs = {
-                    "headless": True,
-                    "storage_state": storage_state,
-                    "keep_alive": True,
-                }
+            # Always use stealth profile for container compatibility (--disable-dev-shm-usage)
+            # and anti-detection benefits. Critical for ECS/Docker where /dev/shm is limited.
+            profile_kwargs = get_stealth_profile_kwargs()
+            profile_kwargs["storage_state"] = storage_state
+            profile_kwargs["keep_alive"] = True
 
             # Log cookie count for debugging persistence issues
             cookie_count = len(storage_state.get("cookies", [])) if storage_state else 0
