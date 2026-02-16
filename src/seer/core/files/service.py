@@ -305,6 +305,67 @@ class WorkflowFileSystem:
         """
         return await self._backend.exists(file_ref)
 
+    async def get_file_by_id(self, file_id: str, user: "User") -> tuple[bytes, WorkflowFileRef]:
+        """
+        Retrieve file content and metadata by file_id from user's storage.
+
+        This is used for resolving static_file_ref inputs, where the workflow
+        references a file that was previously uploaded to the user's storage.
+
+        Args:
+            file_id: Unique file identifier.
+            user: User who owns the file (for access control).
+
+        Returns:
+            Tuple of (file_bytes, WorkflowFileRef).
+
+        Raises:
+            FileNotFoundError: If the file doesn't exist or doesn't belong to the user.
+        """
+        # pylint: disable=import-outside-toplevel  # Avoid circular imports with database models
+        from seer.database import WorkflowFile
+
+        file_record = await WorkflowFile.filter(file_id=file_id, user=user).first()
+        if not file_record:
+            raise FileNotFoundError(
+                f"File '{file_id}' not found in user's storage. "
+                "Ensure the file exists and belongs to the current user."
+            )
+
+        file_ref = file_to_ref(file_record)
+        content = await self.get_file_content(file_ref)
+        logger.debug("Retrieved file by ID: file_id=%s user=%s size=%d", file_id, user.user_id, len(content))
+
+        return content, file_ref
+
+    async def get_file_metadata_by_id(self, file_id: str, user: "User") -> WorkflowFileRef:
+        """
+        Get file metadata by file_id without downloading content.
+
+        This is used when only metadata is needed (e.g., for validation or display).
+
+        Args:
+            file_id: Unique file identifier.
+            user: User who owns the file (for access control).
+
+        Returns:
+            WorkflowFileRef with file metadata.
+
+        Raises:
+            FileNotFoundError: If the file doesn't exist or doesn't belong to the user.
+        """
+        # pylint: disable=import-outside-toplevel  # Avoid circular imports with database models
+        from seer.database import WorkflowFile
+
+        file_record = await WorkflowFile.filter(file_id=file_id, user=user).first()
+        if not file_record:
+            raise FileNotFoundError(
+                f"File '{file_id}' not found in user's storage. "
+                "Ensure the file exists and belongs to the current user."
+            )
+
+        return file_to_ref(file_record)
+
     def is_file_ref(self, value: Any) -> bool:
         """
         Check if a value is a file reference.

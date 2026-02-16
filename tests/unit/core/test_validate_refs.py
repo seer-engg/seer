@@ -1149,3 +1149,128 @@ def test_single_trigger_accepts_explicit_id():
 
     # Should not raise any errors
     validate_references(spec, type_env)
+
+
+# =============================================================================
+# Static File Reference Collection Tests
+# =============================================================================
+
+
+def test_collect_static_file_refs_empty():
+    """Test collecting static file refs from workflow with no file refs."""
+    from seer.core.compiler.validate_refs import collect_static_file_refs
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            ToolNode(
+                id="task1",
+                type="tool", tool="test.tool",
+                inputs={"value": "plain string"}
+            )
+        ],
+        edges=[]
+    )
+
+    refs = collect_static_file_refs(spec)
+    assert refs == []
+
+
+def test_collect_static_file_refs_direct():
+    """Test collecting direct static file refs from node inputs."""
+    from seer.core.compiler.validate_refs import collect_static_file_refs
+    from seer.core.files.schemas import STATIC_FILE_REF_TYPE
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            ToolNode(
+                id="upload_node",
+                type="tool", tool="google_drive_upload_file",
+                inputs={
+                    "name": "test.pdf",
+                    "file": {
+                        "_type": STATIC_FILE_REF_TYPE,
+                        "file_id": "user-file-123",
+                    }
+                }
+            )
+        ],
+        edges=[]
+    )
+
+    refs = collect_static_file_refs(spec)
+    assert len(refs) == 1
+    assert refs[0] == ("upload_node", "file", "user-file-123")
+
+
+def test_collect_static_file_refs_nested_in_array():
+    """Test collecting static file refs nested in array inputs (e.g., attachments)."""
+    from seer.core.compiler.validate_refs import collect_static_file_refs
+    from seer.core.files.schemas import STATIC_FILE_REF_TYPE
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            ToolNode(
+                id="send_email",
+                type="tool", tool="gmail_send_email",
+                inputs={
+                    "to": ["test@example.com"],
+                    "subject": "Test",
+                    "body_text": "Hello",
+                    "attachments": [
+                        {
+                            "file": {
+                                "_type": STATIC_FILE_REF_TYPE,
+                                "file_id": "attachment-1",
+                            }
+                        },
+                        {
+                            "file": {
+                                "_type": STATIC_FILE_REF_TYPE,
+                                "file_id": "attachment-2",
+                            }
+                        }
+                    ]
+                }
+            )
+        ],
+        edges=[]
+    )
+
+    refs = collect_static_file_refs(spec)
+    assert len(refs) == 2
+    # Check both attachments are found
+    file_ids = {ref[2] for ref in refs}
+    assert file_ids == {"attachment-1", "attachment-2"}
+
+
+def test_collect_static_file_refs_ignores_workflow_file_refs():
+    """Test that workflow_file_ref is not collected as static ref."""
+    from seer.core.compiler.validate_refs import collect_static_file_refs
+    from seer.core.files.models import WORKFLOW_FILE_REF_TYPE
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            ToolNode(
+                id="upload_node",
+                type="tool", tool="google_drive_upload_file",
+                inputs={
+                    "file": {
+                        "_type": WORKFLOW_FILE_REF_TYPE,  # Dynamic ref, not static
+                        "file_id": "dynamic-ref-123",
+                    }
+                }
+            )
+        ],
+        edges=[]
+    )
+
+    refs = collect_static_file_refs(spec)
+    assert refs == []  # workflow_file_ref should not be collected
