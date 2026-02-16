@@ -5,7 +5,7 @@ Each tool has ONE canonical async implementation used by both surfaces. Shared
 parameters like 'reasoning' have defaults so MCP callers can ignore them while
 Nexus agents can populate them for tracing.
 
-All 6 tools are registered via register_unified_tools() which is idempotent
+All 7 tools are registered via register_unified_tools() which is idempotent
 and safe to call from both MCP and Nexus startup paths.
 """
 # pylint: disable=duplicate-code  # Reason: Canonical implementations intentionally consolidate MCP + Nexus formatting
@@ -272,6 +272,28 @@ async def list_workflow_templates_impl() -> str:
         })
 
 
+async def get_workflow_schema_impl() -> str:
+    """
+    Get the WorkflowSpec JSON schema for building valid workflows.
+
+    Use this to understand the structure of valid workflow specifications.
+    The schema defines nodes, edges, triggers, and all their required fields.
+
+    Returns:
+        JSON schema for WorkflowSpec with key validation rules
+    """
+    from seer.agents.nexus.schema_context import get_workflow_spec_schema_text  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+
+    try:
+        return get_workflow_spec_schema_text()
+    except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Return friendly JSON error
+        logger.exception("Error getting workflow schema: %s", e)
+        return json.dumps({
+            "error": str(e),
+            "message": "Failed to retrieve workflow schema"
+        })
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -279,7 +301,7 @@ async def list_workflow_templates_impl() -> str:
 
 def register_unified_tools() -> None:
     """
-    Register all 6 unified tool definitions. Idempotent — safe to call multiple times.
+    Register all 7 unified tool definitions. Idempotent — safe to call multiple times.
 
     Called from both MCP server startup (_register_tools) and Nexus agent startup
     (get_workflow_tools). The first call registers; subsequent calls are no-ops.
@@ -339,4 +361,12 @@ def register_unified_tools() -> None:
         implementation=list_workflow_templates_impl,
         surface=ToolSurface.BOTH,
         mcp_tracking_name="list_workflow_templates",
+    ))
+
+    unified_registry.register(ToolDefinition(
+        name="get_workflow_schema",
+        description=get_workflow_schema_impl.__doc__ or "",
+        implementation=get_workflow_schema_impl,
+        surface=ToolSurface.BOTH,
+        mcp_tracking_name="get_workflow_schema",
     ))

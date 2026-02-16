@@ -30,7 +30,7 @@ def test_primitive_blocks_guide_content():
 
     # Should have overview
     assert "Overview" in guide
-    assert "5 primitive block types" in guide
+    assert "8 primitive block types" in guide
 
     # Should document schemas
     assert "Schema:" in guide
