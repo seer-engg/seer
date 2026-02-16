@@ -1133,6 +1133,101 @@ class TestBrowserNodeExecuteAsync:
         # Verify trace data was added to state
         assert any("browse-1" in key for key in ctx.state.keys())
 
+    async def test_execute_async_timeout_skips_validation(self, mock_user):
+        """Regression test: timeout with expect_outputs should NOT raise validation error.
+
+        When browser task times out, success=False and extracted_data={}.
+        Even if expect_outputs requires fields, validation should be skipped
+        because the task failed.
+        """
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from seer.core.nodes.base import NodeExecutionContext
+        from seer.core.runtime.context import WorkflowRuntimeContext
+        from seer.core.expr.typecheck import TypeEnvironment
+
+        browser_node_type = node_type_registry.get("browser")
+
+        # Node with expect_outputs that requires fields
+        node = BrowserNode(
+            id="scrape-1",
+            task="Extract data from page",
+            expect_outputs=OutputContract(
+                mode=OutputMode.json,
+                schema={
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "headline": {"type": "string"},
+                            "description": {"type": "string"},
+                        },
+                        "required": ["headline", "description"],
+                    }
+                },
+            ),
+        )
+
+        runtime_context = WorkflowRuntimeContext(
+            user=mock_user,
+            workflow_run_id="run_timeout_test",
+        )
+
+        ctx = NodeExecutionContext(
+            state={},
+            config={},
+            locals_ctx={},
+            trigger={},
+            runtime_context=runtime_context,
+        )
+
+        # Build type_env with the schema
+        mock_services = MagicMock()
+        type_env = TypeEnvironment()
+        type_env.register(
+            "scrape-1",
+            {
+                "type": "object",
+                "properties": {
+                    "success": {"type": "boolean"},
+                    "result": {"type": "string"},
+                    "extracted_data": {
+                        "type": "object",
+                        "properties": {
+                            "headline": {"type": "string"},
+                            "description": {"type": "string"},
+                        },
+                        "required": ["headline", "description"],
+                    },
+                    "final_url": {"type": ["string", "null"]},
+                    "screenshots": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+        )
+        mock_services.type_env = type_env
+
+        # Simulate timeout result: success=False, extracted_data={}
+        timeout_result = {
+            "success": False,
+            "result": "Task timed out after 120 seconds",
+            "extracted_data": {},
+            "final_url": None,
+            "screenshots": [],
+        }
+
+        with patch("seer.services.browser.BrowserService") as mock_browser_service_cls:
+            mock_instance = MagicMock()
+            mock_instance.execute_task = AsyncMock(return_value=timeout_result.copy())
+            mock_browser_service_cls.instance.return_value = mock_instance
+
+            with patch("seer.observability.credit_gate.check_credit_limit", new_callable=AsyncMock):
+                # This should NOT raise ExecutionError for validation
+                result = await browser_node_type.execute_async(node, ctx, mock_services)
+
+        # Verify the timeout result is returned without validation error
+        assert "scrape-1" in result
+        assert result["scrape-1"]["success"] is False
+        assert "timed out" in result["scrape-1"]["result"]
+        assert result["scrape-1"]["extracted_data"] == {}
+
 
 # =============================================================================
 # BrowserNodeType Helper Method Tests
