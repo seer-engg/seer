@@ -315,51 +315,29 @@ class TestStealthMode:
     @patch("seer.services.browser.pool_manager.get_stealth_profile_kwargs")
     @patch("seer.services.browser.pool_manager.BrowserSession")
     @patch("seer.services.browser.pool_manager.BrowserUseProfile")
-    async def test_stealth_mode_uses_stealth_profile(
+    async def test_always_uses_stealth_profile(
         self, mock_profile_cls, mock_session_cls, mock_stealth_kwargs, mock_browser_session
     ):
-        """Test that stealth mode uses stealth profile kwargs."""
+        """Test that all sessions use stealth profile kwargs for container compatibility."""
         mock_session_cls.return_value = mock_browser_session
         mock_stealth_kwargs.return_value = {
-            "headless_mode": "new",
-            "extra_chromium_args": ["--disable-blink-features=AutomationControlled"],
+            "headless": False,  # stealth profile uses --headless=new via args
+            "args": ["--headless=new", "--disable-dev-shm-usage"],
         }
 
         pool = BrowserPoolManager(max_concurrent=5)
         await pool.create_session(
             user_id="user-1",
-            stealth_mode=True,
             storage_state={"cookies": []},
         )
 
-        # Verify stealth profile kwargs were used
+        # Verify stealth profile kwargs were used (critical for ECS/Docker)
         mock_stealth_kwargs.assert_called_once()
         mock_profile_cls.assert_called_once()
         call_kwargs = mock_profile_cls.call_args.kwargs
-        assert call_kwargs.get("headless_mode") == "new"
         assert call_kwargs.get("keep_alive") is True
-
-        await pool.shutdown()
-
-    @patch("seer.services.browser.pool_manager.BrowserSession")
-    @patch("seer.services.browser.pool_manager.BrowserUseProfile")
-    async def test_standard_mode_uses_headless_true(
-        self, mock_profile_cls, mock_session_cls, mock_browser_session
-    ):
-        """Test that standard mode uses headless=True."""
-        mock_session_cls.return_value = mock_browser_session
-
-        pool = BrowserPoolManager(max_concurrent=5)
-        await pool.create_session(
-            user_id="user-1",
-            stealth_mode=False,
-            storage_state={"cookies": []},
-        )
-
-        mock_profile_cls.assert_called_once()
-        call_kwargs = mock_profile_cls.call_args.kwargs
-        assert call_kwargs.get("headless") is True
-        assert call_kwargs.get("keep_alive") is True
+        # Verify --disable-dev-shm-usage is present (required for containers)
+        assert "--disable-dev-shm-usage" in call_kwargs.get("args", [])
 
         await pool.shutdown()
 

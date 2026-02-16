@@ -341,7 +341,7 @@ class TestCreateInteractiveSession:
     @patch("seer.services.browser.profile_manager.RecordingService")
     @patch("seer.services.browser.profile_manager.BrowserPoolManager")
     @patch("seer.services.browser.profile_manager.BrowserProfile")
-    async def test_create_session_creates_pool_session_with_stealth(self, mock_bp, mock_pool_cls, mock_rec_cls, mock_config, manager, mock_user, profile_id, mock_profile):
+    async def test_create_session_creates_pool_session_for_interactive(self, mock_bp, mock_pool_cls, mock_rec_cls, mock_config, manager, mock_user, profile_id, mock_profile):
         mock_config.browser_recording_enabled = False
         mock_config.browser_interactive_timeout_seconds = 300
         mock_profile.session_state_enc = None
@@ -360,9 +360,8 @@ class TestCreateInteractiveSession:
 
         await manager.create_interactive_session(mock_user, profile_id)
 
-        # Verify stealth_mode=True is passed
+        # Verify session_type is set correctly
         call_kwargs = mock_pool.create_session.call_args.kwargs
-        assert call_kwargs["stealth_mode"] is True
         assert call_kwargs["session_type"] == "interactive"
 
     @patch("seer.services.browser.profile_manager.config")

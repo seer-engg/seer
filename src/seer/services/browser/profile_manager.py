@@ -253,7 +253,6 @@ class BrowserProfileManager:
             session_type="interactive",
             storage_state=storage_state,
             timeout=config.browser_interactive_timeout_seconds,
-            stealth_mode=True,  # Enable stealth with --headless=new for auth flows
         )
 
         # Navigate to target URL
