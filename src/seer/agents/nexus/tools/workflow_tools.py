@@ -22,7 +22,6 @@ from seer.agents.nexus.schema_context import (
     generate_validation_checklist_from_model,
     generate_trigger_reference,
     generate_edge_reference,
-    get_workflow_spec_example_text,
 )
 from seer.logger import get_logger
 from seer.core.schema.models import WorkflowSpec
@@ -98,7 +97,6 @@ def create_workflow_spec_structured(
     validation_checklist = generate_validation_checklist_from_model()
     trigger_reference = generate_trigger_reference()
     edge_reference = generate_edge_reference()
-    examples = get_workflow_spec_example_text()
 
     template_section = ""
     if template_hint:
@@ -123,9 +121,6 @@ Available triggers:
 
 **Requirements**
 {validation_checklist}
-
-**Examples**
-{examples}
 
 Create a complete WorkflowSpec with:
 - Appropriate nodes using discovered tools/triggers
