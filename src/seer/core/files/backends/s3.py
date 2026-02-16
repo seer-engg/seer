@@ -334,10 +334,24 @@ class S3FileStorage(FileStorageBackend):
         self,
         file_ref: WorkflowFileRef,
         expires_seconds: int = 3600,
+        inline: bool = False,
     ) -> str:
-        """Get a presigned URL for direct file download."""
+        """Get a presigned URL for direct file download or inline preview.
+
+        Args:
+            file_ref: File reference.
+            expires_seconds: URL expiration time.
+            inline: If True, sets Content-Disposition to inline for browser preview.
+                   If False, sets to attachment for download.
+        """
         key = self._parse_storage_path(file_ref.storage_path)
         expiry = expires_seconds or self.presigned_url_expiry
+
+        # Set Content-Disposition based on inline flag
+        if inline:
+            disposition = "inline"
+        else:
+            disposition = f'attachment; filename="{file_ref.filename}"'
 
         try:
             url = await self._run_sync(
@@ -346,7 +360,7 @@ class S3FileStorage(FileStorageBackend):
                 Params={
                     "Bucket": self.bucket,
                     "Key": key,
-                    "ResponseContentDisposition": f'attachment; filename="{file_ref.filename}"',
+                    "ResponseContentDisposition": disposition,
                 },
                 ExpiresIn=expiry,
             )

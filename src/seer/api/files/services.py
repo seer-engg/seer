@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 from fastapi import HTTPException, status
+from fastapi.responses import StreamingResponse
 from tortoise.functions import Count, Max, Min, Sum
 
 from seer.api.files import models as api_models
@@ -318,13 +319,14 @@ async def get_user_file(user: User, file_id: str) -> api_models.UserFileResponse
     )
 
 
-async def get_user_file_download_url(user: User, file_id: str) -> api_models.UserFileDownloadResponse:
+async def get_user_file_download_url(user: User, file_id: str, inline: bool = False) -> api_models.UserFileDownloadResponse:
     """
-    Get a presigned URL to download a file.
+    Get a presigned URL to download or preview a file.
 
     Args:
         user: Authenticated user.
         file_id: File UUID.
+        inline: If True, returns URL for inline preview instead of download.
 
     Returns:
         Presigned download URL.
@@ -344,10 +346,62 @@ async def get_user_file_download_url(user: User, file_id: str) -> api_models.Use
 
     fs = WorkflowFileSystem.instance()
     expires_seconds = config.workflow_file_presigned_url_expiry_seconds
-    download_url = await fs.get_presigned_url(file_to_ref(file), expires_seconds)
+    download_url = await fs.get_presigned_url(file_to_ref(file), expires_seconds, inline=inline)
 
     return api_models.UserFileDownloadResponse(
         file_id=file_id, filename=file.filename, download_url=download_url, expires_in_seconds=expires_seconds
+    )
+
+
+async def get_user_file_content(user: User, file_id: str, max_size_bytes: int) -> StreamingResponse:
+    """
+    Stream file content directly for preview.
+
+    Args:
+        user: Authenticated user.
+        file_id: File UUID.
+        max_size_bytes: Maximum file size allowed for preview.
+
+    Returns:
+        StreamingResponse with file content.
+
+    Raises:
+        HTTPException: If file not found, too large, or storage not configured.
+    """
+    # pylint: disable=import-outside-toplevel  # Avoid circular imports
+    from seer.core.files.service import WorkflowFileSystem, file_to_ref
+
+    file = await WorkflowFile.filter(file_id=file_id, user=user).first()
+    if not file:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File '{file_id}' not found")
+
+    if file.size_bytes > max_size_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large for preview (max {max_size_bytes // (1024 * 1024)}MB)"
+        )
+
+    if not config.is_workflow_file_system_configured:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Workflow file storage is not configured")
+
+    fs = WorkflowFileSystem.instance()
+    file_ref = file_to_ref(file)
+
+    # Retrieve file content (size already checked above)
+    content = await fs.get_file_content(file_ref)
+
+    async def content_generator():
+        """Yield content as a single chunk."""
+        yield content
+
+    return StreamingResponse(
+        content_generator(),
+        media_type=file.mime_type,
+        headers={
+            "Content-Disposition": f'inline; filename="{file.filename}"',
+            "Content-Length": str(file.size_bytes),
+            "Cache-Control": "private, max-age=3600",
+        }
     )
 
 

@@ -148,13 +148,16 @@ class FileStorageBackend(ABC):
         self,
         file_ref: "WorkflowFileRef",
         expires_seconds: int = 3600,
+        inline: bool = False,
     ) -> str:
         """
-        Get a presigned URL for direct file download.
+        Get a presigned URL for direct file download or inline preview.
 
         Args:
             file_ref: File reference.
             expires_seconds: URL expiration time in seconds.
+            inline: If True, sets Content-Disposition to inline for browser preview.
+                   If False, sets to attachment for download.
 
         Returns:
             Presigned URL string.
