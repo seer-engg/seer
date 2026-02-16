@@ -303,6 +303,26 @@ class HITLNode(NodeBase):
 # -----------------------------
 # Browser Automation Node
 # -----------------------------
+class ImageGenNode(NodeBase):
+    """
+    Image generation node using OpenRouter image generation models.
+
+    Calls OpenRouter API with an image generation model and returns
+    the generated image URL/base64.
+    """
+    type: Literal["image_gen"] = "image_gen"
+    inputs: Dict[str, JSONValue] = Field(default_factory=dict)
+    # inputs expected: model, prompt, size (optional), num_images (optional)
+
+    @model_validator(mode="after")
+    def _validate_inputs(self) -> "ImageGenNode":
+        required = ["model", "prompt"]
+        missing = [k for k in required if k not in self.inputs]
+        if missing:
+            raise ValueError(f'ImageGenNode requires {", ".join(missing)} in inputs')
+        return self
+
+
 class BrowserNode(NodeBase):
     """
     Browser automation node using natural language task descriptions.
@@ -346,7 +366,7 @@ class BrowserNode(NodeBase):
 
 
 Node = Annotated[
-    Union[ToolNode, LLMNode, MCPNode, IfNode, ForEachNode, HITLNode, BrowserNode],
+    Union[ToolNode, LLMNode, MCPNode, IfNode, ForEachNode, HITLNode, ImageGenNode, BrowserNode],
     Field(discriminator="type"),
 ]
 

@@ -29,6 +29,7 @@ from seer.core.runtime.context import WorkflowRuntimeContext
 from seer.core.runtime.execution import CompiledWorkflow
 from seer.core.schema.jsonschema_adapter import SchemaError, check_schema
 from seer.core.schema.models import (
+    ImageGenNode,
     LLMNode,
     MCPNode,
     Node,
@@ -177,6 +178,10 @@ class WorkflowCompilerSingleton:
                     model_acc.add(model)
             elif isinstance(node, MCPNode):
                 mcp_acc.add((node.server, node.server_type))
+            elif isinstance(node, ImageGenNode):
+                model = node.inputs.get("model")
+                if model and isinstance(model, str):
+                    model_acc.add(model)
             # No recursion needed - all nodes are at top level in spec.nodes
 
     def _ensure_tool_registered(self, tool_name: str) -> None:

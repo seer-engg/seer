@@ -57,6 +57,9 @@ class SeerConfig(BaseSettings):
     openrouter_api_key: Optional[str] = Field(
         default=None, description="OpenRouter API key for multi-provider LLM access"
     )
+    tavily_api_key: Optional[str] = Field(
+        default=None, description="Tavily API key for web search"
+    )
 
     # ============================================================================
     # LangGraph Checkpointer Configuration
@@ -139,6 +142,26 @@ class SeerConfig(BaseSettings):
     redis_url: str = Field(
         default="redis://localhost:6379/0",
         description="Valkey/Redis connection string for Taskiq broker and result backend. Use 'rediss://' for TLS/SSL connections.",
+    )
+    redis_socket_timeout: float = Field(
+        default=30.0,
+        description="Socket timeout for Redis operations in seconds.",
+    )
+    redis_socket_connect_timeout: float = Field(
+        default=5.0,
+        description="Connection timeout for Redis in seconds.",
+    )
+    redis_health_check_interval: int = Field(
+        default=30,
+        description="Interval for Redis connection health checks in seconds (0 to disable).",
+    )
+    redis_max_connections: int = Field(
+        default=20,
+        description="Maximum Redis connection pool size.",
+    )
+    redis_socket_keepalive: bool = Field(
+        default=True,
+        description="Enable TCP keepalive for Redis connections to prevent idle timeout disconnections.",
     )
 
     google_client_id: str = Field(default="", description="Google OAuth client ID")

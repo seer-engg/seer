@@ -30,6 +30,8 @@ async def list_models():
         models.extend([
             ModelInfo(id="moonshotai/kimi-k2.5", provider="openrouter", name="Kimi K2.5", available=True),
             ModelInfo(id="moonshotai/kimi-k2-thinking", provider="openrouter", name="Kimi K2 Thinking", available=True),
+            ModelInfo(id="sourceful/riverflow-v2-fast", provider="openrouter", name="Riverflow V2 Fast (Image)", available=True),
+            ModelInfo(id="google/gemini-2.5-flash-image", provider="openrouter", name="Gemini 2.5 Flash Image", available=True),
         ])
 
     return models
