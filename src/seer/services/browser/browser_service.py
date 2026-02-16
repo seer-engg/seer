@@ -3,7 +3,7 @@
 """
 Browser automation service using BrowserUse.
 
-Executes browser tasks within workflows using persisted profiles.
+Executes browser tasks within workflows using pooled browser sessions.
 This is the main entry point for the browser node executor.
 """
 from __future__ import annotations
@@ -16,16 +16,19 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type
 from uuid import UUID
 
-from browser_use import Agent, Browser, ChatOpenAI
-from playwright.async_api import async_playwright
+from browser_use import Agent, ChatOpenAI
 from pydantic import BaseModel, create_model
 
 from seer.config import config
 from seer.database import User
-from seer.services.browser.profile_manager import BrowserProfileManager
+from seer.services.browser.pool_manager import BrowserPoolManager
+from seer.services.browser.recording_service import RecordingService
+from seer.services.browser.session_context_manager import SessionContextManager
 
 if TYPE_CHECKING:
+    from browser_use import BrowserSession
     from seer.core.files.service import WorkflowFileSystem
+    from seer.services.browser.pool_manager import ManagedSession
 
 logger = logging.getLogger(__name__)
 
@@ -109,14 +112,14 @@ class BrowserService:
     Singleton service for browser automation task execution.
 
     Uses BrowserUse Agent for LLM-driven browser automation with
-    Playwright for browser management and session persistence.
+    pooled browser sessions for concurrency control and session persistence.
     """
 
     _instance: Optional["BrowserService"] = None
     _instance_lock = Lock()
 
     def __init__(self) -> None:
-        self._profile_manager = BrowserProfileManager()
+        self._session_context = SessionContextManager()
 
     @classmethod
     def instance(cls) -> "BrowserService":
@@ -134,7 +137,7 @@ class BrowserService:
         if not browser_profile_id or not user:
             return None
         try:
-            storage_state = await self._profile_manager.get_session_state(
+            storage_state = await self._session_context.load_session_state(
                 user, UUID(browser_profile_id)
             )
             if storage_state:
@@ -176,17 +179,17 @@ class BrowserService:
         extraction_schema: Optional[Dict[str, Any]],
         max_steps: int,
         timeout_seconds: int,
+        browser_session: "BrowserSession",
     ) -> Any:
-        """Run the BrowserUse agent and return history."""
+        """Run the BrowserUse agent with a managed browser session."""
         llm = self._get_agent_llm()
         enhanced_task = self._enhance_task(task, inputs)
         output_model = self._create_output_model(extraction_schema)
 
-        browser_use_browser = Browser()
         agent = Agent(
             task=enhanced_task,
             llm=llm,
-            browser=browser_use_browser,
+            browser_session=browser_session,
             output_model_schema=output_model,
             calculate_cost=True,
         )
@@ -195,6 +198,46 @@ class BrowserService:
             agent.run(max_steps=max_steps),
             timeout=timeout_seconds
         )
+
+    async def _start_recording_if_enabled(
+        self,
+        managed: "ManagedSession",
+        start_url: Optional[str],
+    ) -> None:
+        """Start rrweb recording for session replay if enabled."""
+        if not config.browser_recording_enabled:
+            return
+        try:
+            recorder = await RecordingService.get_instance()
+            managed.recording_id = await recorder.start_recording(
+                managed.id, managed.session, start_url=start_url
+            )
+            managed.start_url = start_url
+        except Exception as e:
+            logger.warning(f"Failed to start workflow recording: {e}")
+
+    async def _save_recording_if_enabled(
+        self,
+        managed: "ManagedSession",
+        user: Optional[User],
+        browser_profile_id: Optional[str],
+        workflow_run_id: Optional[str],
+    ) -> None:
+        """Save rrweb recording if enabled and recording was started."""
+        if not (managed.recording_id and config.browser_recording_enabled and user):
+            return
+        try:
+            recorder = await RecordingService.get_instance()
+            await recorder.save_recording(
+                managed.id,
+                user,
+                profile_id=browser_profile_id,
+                workflow_run_id=workflow_run_id,
+                session_type="workflow",
+                start_url=managed.start_url,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to save workflow recording: {e}")
 
     async def execute_task(
         self,
@@ -211,10 +254,11 @@ class BrowserService:
         workflow_run_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Execute a browser automation task.
+        Execute a browser automation task using a pooled browser session.
 
         Uses BrowserUse Agent to interpret and execute natural language
-        browser automation tasks, optionally with a persisted session.
+        browser automation tasks, with pooled session management and
+        automatic session state persistence.
 
         Args:
             user: User context for profile resolution
@@ -233,48 +277,53 @@ class BrowserService:
         """
         logger.info(f"Executing browser task: {task[:100]}...")
 
-        storage_state = await self._load_storage_state(user, browser_profile_id)
+        pool = await BrowserPoolManager.get_instance()
+        managed = await pool.create_session(
+            user_id=str(user.user_id) if user else "anonymous",
+            profile_id=browser_profile_id,
+            session_type="workflow",
+            storage_state=await self._load_storage_state(user, browser_profile_id),
+            timeout=timeout_seconds,
+        )
 
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+        await self._start_recording_if_enabled(
+            managed, inputs.get("url") or inputs.get("start_url")
+        )
 
-            try:
-                context = await browser.new_context(storage_state=storage_state)
-                page = await context.new_page()
+        try:
+            history = await self._run_browser_agent(
+                task, inputs, extraction_schema, max_steps, timeout_seconds,
+                browser_session=managed.session,
+            )
 
-                history = await self._run_browser_agent(
-                    task, inputs, extraction_schema, max_steps, timeout_seconds
+            return {
+                "success": True,
+                "result": str(history) if history else "",
+                "extracted_data": await self._extract_structured_data(history, extraction_schema),
+                "final_url": None,
+                "screenshots": await self._save_screenshots(
+                    history=history,
+                    save_screenshots=save_screenshots,
+                    file_system=file_system,
+                    workflow_run_id=workflow_run_id,
+                    user=user,
+                ),
+                "usage": self._extract_usage_metadata(history),
+            }
+
+        except asyncio.TimeoutError:
+            logger.warning(f"Browser task timed out after {timeout_seconds}s")
+            return {**self._build_error_result(f"Task timed out after {timeout_seconds} seconds"), "usage": None}
+        except Exception as e:
+            logger.error(f"Browser task failed: {e}")
+            return {**self._build_error_result(f"Task failed: {str(e)}"), "usage": None}
+        finally:
+            await self._save_recording_if_enabled(managed, user, browser_profile_id, workflow_run_id)
+            final_state = await pool.release_session(managed.id)
+            if final_state and browser_profile_id and user:
+                await self._session_context.save_session_state(
+                    user, UUID(browser_profile_id), final_state
                 )
-
-                usage_metadata = self._extract_usage_metadata(history)
-
-                return {
-                    "success": True,
-                    "result": str(history) if history else "",
-                    "extracted_data": await self._extract_structured_data(history, extraction_schema),
-                    "final_url": page.url if page else None,
-                    "screenshots": await self._save_screenshots(
-                        history=history,
-                        save_screenshots=save_screenshots,
-                        file_system=file_system,
-                        workflow_run_id=workflow_run_id,
-                        user=user,
-                    ),
-                    "usage": usage_metadata,
-                }
-
-            except asyncio.TimeoutError:
-                logger.warning(f"Browser task timed out after {timeout_seconds}s")
-                result = self._build_error_result(f"Task timed out after {timeout_seconds} seconds")
-                result["usage"] = None
-                return result
-            except Exception as e:
-                logger.error(f"Browser task failed: {e}")
-                result = self._build_error_result(f"Task failed: {str(e)}")
-                result["usage"] = None
-                return result
-            finally:
-                await browser.close()
 
     def _get_agent_llm(self) -> Any:
         """
@@ -283,14 +332,12 @@ class BrowserService:
         BrowserUse accesses llm.provider for telemetry and feature detection.
         We add this attribute dynamically to support OpenRouter-backed models.
         """
-        # Use the standard get_llm which routes through OpenRouter
-        # llm = get_llm(model="gpt-4o", temperature=0.1)
         api_key = config.openrouter_api_key
         if api_key is None or api_key == "":
             raise ValueError("OPENROUTER_API_KEY not found in environment")
 
         model = 'moonshotai/kimi-k2.5'
-        logger.info(f"🌐 Using OpenRouter API | Model: {model} | Base URL: https://openrouter.ai/api/v1")
+        logger.info(f"Using OpenRouter API | Model: {model} | Base URL: https://openrouter.ai/api/v1")
         return ChatOpenAI(
             model=model,
             api_key=api_key,
@@ -371,7 +418,6 @@ class BrowserService:
         if isinstance(result, dict):
             return result
         if isinstance(result, str):
-            # Try to parse as JSON
             try:
                 return json.loads(result)
             except json.JSONDecodeError:
@@ -397,11 +443,8 @@ class BrowserService:
             Dict with extracted data conforming to the schema
         """
         if not extraction_schema:
-            # No structured output requested, use legacy extraction
             return self._extract_data(history)
 
-        # Use BrowserUse's structured output - with output_model_schema,
-        # final_result() returns pure JSON (not markdown)
         try:
             final_result = history.final_result()
             if final_result:
@@ -413,7 +456,6 @@ class BrowserService:
             return {}
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse structured output as JSON: {e}")
-            # Fall back to legacy extraction on parse failure
             return self._extract_data(history)
         except Exception as e:
             logger.warning(f"Failed to extract structured data: {e}")
@@ -458,7 +500,6 @@ class BrowserService:
         screenshots_result: List[Dict[str, Any]] = []
 
         try:
-            # BrowserUse history.screenshots() returns list of base64 strings
             screenshots_b64 = history.screenshots()
             if not screenshots_b64:
                 logger.debug("No screenshots captured during browser task")
@@ -470,7 +511,6 @@ class BrowserService:
 
                 filename = f"screenshot_{idx:03d}.png"
                 try:
-                    # Decode base64 and use store_file_with_record for DB tracking
                     screenshot_data = base64.b64decode(screenshot_b64)
                     file_ref = await file_system.store_file_with_record(
                         user=user,
@@ -493,6 +533,7 @@ class BrowserService:
         return screenshots_result
 
     @property
-    def profile_manager(self) -> BrowserProfileManager:
+    def profile_manager(self) -> Any:
         """Get the profile manager for direct profile operations."""
-        return self._profile_manager
+        from seer.services.browser.profile_manager import BrowserProfileManager  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
+        return BrowserProfileManager()

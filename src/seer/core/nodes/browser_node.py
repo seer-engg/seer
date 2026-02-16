@@ -92,13 +92,18 @@ class BrowserNodeType(BaseNodeType):
 
     @staticmethod
     def _get_screenshot_context(node: BrowserNode, runtime_context: Any) -> tuple:
-        """Get file system context for screenshot saving."""
-        if not (node.save_screenshots and runtime_context):
-            return None, None, None
-        file_system = runtime_context.file_system if runtime_context.has_file_system else None
-        workflow_run_id = runtime_context.workflow_run_id
-        user_id = str(runtime_context.user.id) if runtime_context.user else None
-        return file_system, workflow_run_id, user_id
+        """Get file system and workflow_run_id for screenshots and recording.
+
+        Note: workflow_run_id is returned regardless of save_screenshots setting
+        because session recordings also need it for associating with workflow runs.
+        """
+        if not runtime_context:
+            return None, None
+        file_system = None
+        if node.save_screenshots and runtime_context.has_file_system:
+            file_system = runtime_context.file_system
+        workflow_run_id = runtime_context.workflow_run_id  # Always return for recordings
+        return file_system, workflow_run_id
 
     @staticmethod
     def _validate_extracted_data(node: BrowserNode, result: Dict[str, Any], type_schemas: Any) -> None:
@@ -152,7 +157,7 @@ class BrowserNodeType(BaseNodeType):
         # Resolve pre-execution config via helpers
         type_schemas = services.type_env.as_dict()
         extraction_schema = self._get_extraction_schema(node, type_schemas)
-        file_system, workflow_run_id, user_id = self._get_screenshot_context(node, ctx.runtime_context)
+        file_system, workflow_run_id = self._get_screenshot_context(node, ctx.runtime_context)
 
         # Execute browser task
         try:
@@ -167,7 +172,6 @@ class BrowserNodeType(BaseNodeType):
                 save_screenshots=node.save_screenshots,
                 file_system=file_system,
                 workflow_run_id=workflow_run_id,
-                user_id=user_id,
             )
         except Exception as exc:
             trace_key = get_trace_key(node.id, ctx.state, ctx.loop_body_map or {}, ctx.nested_loop_parents or {})
@@ -189,8 +193,9 @@ class BrowserNodeType(BaseNodeType):
         if usage_metadata and ctx.runtime_context:
             await self._track_usage_async(usage_metadata, ctx.runtime_context, node.id)
 
-        # Validate structured output
-        self._validate_extracted_data(node, result, type_schemas)
+        # Validate structured output only on success (skip validation on timeout/error)
+        if result.get("success", False):
+            self._validate_extracted_data(node, result, type_schemas)
 
         # Build usage trace
         usage_trace = {}

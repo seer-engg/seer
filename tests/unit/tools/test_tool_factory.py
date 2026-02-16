@@ -309,15 +309,15 @@ class TestRegisterUnifiedTools:
         ut._REGISTERED = False
         unified_registry.clear()
 
-    def test_registers_all_six_tools(self):
+    def test_registers_all_seven_tools(self):
         from seer.tools.unified_tools import register_unified_tools
         register_unified_tools()
-        assert unified_registry.tool_count == 6
+        assert unified_registry.tool_count == 7
 
     def test_expected_tool_names(self):
         from seer.tools.unified_tools import register_unified_tools
         register_unified_tools()
-        expected = {"search_tools", "list_tools", "search_triggers", "list_triggers", "get_workflow_template", "list_workflow_templates"}
+        expected = {"search_tools", "list_tools", "search_triggers", "list_triggers", "get_workflow_template", "list_workflow_templates", "get_workflow_schema"}
         actual = {td.name for td in unified_registry._tools.values()}
         assert actual == expected
 
@@ -325,7 +325,7 @@ class TestRegisterUnifiedTools:
         from seer.tools.unified_tools import register_unified_tools
         register_unified_tools()
         register_unified_tools()
-        assert unified_registry.tool_count == 6
+        assert unified_registry.tool_count == 7
 
     def test_list_tools_nexus_name(self):
         from seer.tools.unified_tools import register_unified_tools

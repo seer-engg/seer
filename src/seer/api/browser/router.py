@@ -169,6 +169,10 @@ async def start_login(
     """
     Start an interactive login session.
 
+    .. deprecated::
+        Use POST /api/browser/sessions to create a streaming session,
+        connect via WebSocket, then POST /api/browser/sessions/{id}/complete.
+
     Opens a browser window where the user can log into services.
     The session (cookies, localStorage) is captured and saved when
     the browser is closed.

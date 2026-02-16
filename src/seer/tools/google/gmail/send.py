@@ -3,10 +3,14 @@
 Gmail send operations - sending emails and replies.
 """
 
-from typing import Any, Dict, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from fastapi import HTTPException
 
+from seer.core.files.resolver import FileResolutionError, resolve_file_input
+from seer.core.files.schemas import FILE_INPUT_SCHEMA
 from seer.logger import get_logger
 from seer.tools.google.base import GoogleAPIClient
 from seer.tools.google.gmail.helpers import (
@@ -17,6 +21,10 @@ from seer.tools.google.gmail.helpers import (
     _b64url_encode,
 )
 
+if TYPE_CHECKING:
+    from seer.core.runtime.context import WorkflowRuntimeContext
+    from seer.tools.credential_resolver import ResolvedCredentials
+
 logger = get_logger("shared.tools.gmail.send")
 
 
@@ -24,7 +32,10 @@ class GmailSendEmailTool(GoogleAPIClient):
     """Send email via Gmail API with attachments and HTML support."""
 
     name = "gmail_send_email"
-    description = "Send an email using Gmail. Supports plain text + optional HTML + optional attachments."
+    description = (
+        "Send an email using Gmail. Supports plain text + optional HTML + optional attachments. "
+        "Attachments can be file references from other tools or static files from user storage."
+    )
     required_scopes = ["https://www.googleapis.com/auth/gmail.send"]
     integration_type = "gmail"
 
@@ -32,6 +43,10 @@ class GmailSendEmailTool(GoogleAPIClient):
         return GMAIL_MESSAGE_SCHEMA
 
     def get_parameters_schema(self) -> Dict[str, Any]:
+        # Build attachment schema that accepts file references
+        attachment_file_schema = FILE_INPUT_SCHEMA.copy()
+        attachment_file_schema["description"] = "File reference (from parent node or user storage)"
+
         return {
             "type": "object",
             "properties": {
@@ -92,18 +107,17 @@ class GmailSendEmailTool(GoogleAPIClient):
                 },
                 "attachments": {
                     "type": "array",
-                    "description": "Optional attachments. Each: {filename, mime_type, data_base64}.",
+                    "description": "Optional attachments. Each item is a file reference from another tool or user storage.",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "filename": {"type": "string"},
-                            "mime_type": {"type": "string"},
-                            "data_base64": {
+                            "file": attachment_file_schema,
+                            "filename": {
                                 "type": "string",
-                                "description": "Base64 (or base64url) encoded bytes."
+                                "description": "Override filename (uses original if not provided)"
                             },
                         },
-                        "required": ["data_base64"],
+                        "required": ["file"],
                     },
                     "default": [],
                 },
@@ -115,52 +129,77 @@ class GmailSendEmailTool(GoogleAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,  # pylint: disable=unused-argument  # Part of tool interface
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Dict[str, Any]:
         to = _coerce_str_list(arguments.get("to"), [])
         if not to:
             raise HTTPException(status_code=400, detail="Parameter 'to' must be a non-empty list")
 
-        subject = str(arguments.get("subject") or "")
-        body_text = str(arguments.get("body_text") or "")
-        body_html = arguments.get("body_html")
-        cc = _coerce_str_list(arguments.get("cc"), [])
-        bcc = _coerce_str_list(arguments.get("bcc"), [])
-        from_email = arguments.get("from_email")
-        reply_to = arguments.get("reply_to")
-        thread_id = arguments.get("thread_id")
-        in_reply_to = arguments.get("in_reply_to")
-        references = arguments.get("references")
-        attachments = arguments.get("attachments") or []
+        # Resolve file attachments
+        resolved_attachments = await self._resolve_attachments(arguments.get("attachments") or [], context)
 
-        # Build MIME email
+        # Build MIME email with arguments passed directly
         mime_msg = _build_mime_email(
             to=to,
-            subject=subject,
-            body_text=body_text,
-            body_html=str(body_html) if body_html else None,
-            cc=cc,
-            bcc=bcc,
-            from_email=str(from_email) if from_email else None,
-            reply_to=str(reply_to) if reply_to else None,
-            attachments=attachments if isinstance(attachments, list) else None,
-            in_reply_to=str(in_reply_to) if in_reply_to else None,
-            references=str(references) if references else None,
+            subject=str(arguments.get("subject") or ""),
+            body_text=str(arguments.get("body_text") or ""),
+            body_html=str(arguments["body_html"]) if arguments.get("body_html") else None,
+            cc=_coerce_str_list(arguments.get("cc"), []),
+            bcc=_coerce_str_list(arguments.get("bcc"), []),
+            from_email=str(arguments["from_email"]) if arguments.get("from_email") else None,
+            reply_to=str(arguments["reply_to"]) if arguments.get("reply_to") else None,
+            attachments=resolved_attachments,
+            in_reply_to=str(arguments["in_reply_to"]) if arguments.get("in_reply_to") else None,
+            references=str(arguments["references"]) if arguments.get("references") else None,
         )
 
-        # Encode to base64url
-        raw = _b64url_encode(mime_msg.as_bytes())
-        body: Dict[str, Any] = {"raw": raw}
-        if thread_id:
-            body["threadId"] = str(thread_id)
+        # Encode to base64url and build request body
+        body: Dict[str, Any] = {"raw": _b64url_encode(mime_msg.as_bytes())}
+        if arguments.get("thread_id"):
+            body["threadId"] = str(arguments["thread_id"])
 
-        logger.info("Sending Gmail email to=%s subject='%s'", to, subject[:80])
+        logger.info("Sending Gmail email to=%s subject='%s' attachments=%d", to, arguments.get("subject", "")[:80], len(resolved_attachments))
 
-        # Use base class HTTP client
-        resp = await self._make_request(
-            "POST",
-            f"{GMAIL_API_BASE}/messages/send",
-            access_token,
-            json_body=body,
-        )
-
+        resp = await self._make_request("POST", f"{GMAIL_API_BASE}/messages/send", access_token, json_body=body)
         return resp.json()
+
+    async def _resolve_attachments(
+        self,
+        raw_attachments: List[Dict[str, Any]],
+        context: Optional["WorkflowRuntimeContext"],
+    ) -> List[Dict[str, Any]]:
+        """
+        Resolve file references in attachments to actual file data.
+
+        Args:
+            raw_attachments: List of attachment dicts with 'file' field containing file refs.
+            context: Workflow runtime context for file resolution.
+
+        Returns:
+            List of resolved attachments with 'filename', 'mime_type', and 'data_bytes' fields.
+        """
+        resolved = []
+        for i, att in enumerate(raw_attachments):
+            file_input = att.get("file")
+            if not file_input:
+                continue
+
+            try:
+                data_bytes, mime_type, original_filename = await resolve_file_input(file_input, context)
+            except FileResolutionError as e:
+                raise HTTPException(status_code=400, detail=f"Attachment {i}: {e}") from e
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=f"Attachment {i}: {e}") from e
+
+            # Use provided filename or fall back to resolved filename
+            filename = att.get("filename") or original_filename or f"attachment_{i}"
+
+            resolved.append({
+                "filename": filename,
+                "mime_type": mime_type,
+                "data_bytes": data_bytes,
+            })
+
+        return resolved

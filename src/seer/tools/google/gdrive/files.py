@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 import httpx
 from fastapi import HTTPException
 
+from seer.core.files.resolver import FileResolutionError, resolve_file_input
+from seer.core.files.schemas import FILE_INPUT_SCHEMA
 from seer.logger import get_logger
 from seer.tools.google.gdrive.base import (
     GoogleDriveFileScopeTool,
@@ -330,28 +332,24 @@ class GoogleDriveUploadFileTool(GoogleDriveFileScopeTool):
     name = "google_drive_upload_file"
     description = (
         "Upload a file to Google Drive using multipart upload. "
-        "Accepts either a file reference from another tool or base64-encoded content."
+        "Accepts a file reference from another tool (e.g., ${download.file}) "
+        "or a static file from user storage."
     )
 
     def get_parameters_schema(self) -> Dict[str, Any]:
+        file_schema = FILE_INPUT_SCHEMA.copy()
+        file_schema["description"] = "File to upload (from parent node or user storage)"
         return {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "File name"},
-                "file": {
-                    "type": "object",
-                    "description": "File reference from another tool (e.g., google_drive_download_file)"
-                },
-                "content_base64": {
-                    "type": "string",
-                    "description": "File content as base64 (use 'file' instead if available)"
-                },
-                "mime_type": {"type": "string", "description": "File MIME type", "default": "application/octet-stream"},
+                "name": {"type": "string", "description": "File name (defaults to original filename if not provided)"},
+                "file": file_schema,
+                "mime_type": {"type": "string", "description": "File MIME type (auto-detected from file if not provided)"},
                 "parent_folder_id": {"type": "string", "description": "Parent folder ID"},
                 "description": {"type": "string"},
                 "supports_all_drives": {"type": "boolean", "default": True},
             },
-            "required": ["name"]
+            "required": ["file"]
         }
 
     def get_output_schema(self) -> Dict[str, Any]:
@@ -365,17 +363,24 @@ class GoogleDriveUploadFileTool(GoogleDriveFileScopeTool):
         credentials: Optional["ResolvedCredentials"] = None,  # pylint: disable=unused-argument  # Part of tool interface
         context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Any:
-        name = arguments.get("name")
-        file_ref_data = arguments.get("file")
-        content_b64 = arguments.get("content_base64")
+        file_input = arguments.get("file")
+        if not file_input:
+            raise HTTPException(status_code=400, detail="file is required")
 
+        # Resolve file content using the unified resolver
+        try:
+            content_bytes, resolved_mime_type, resolved_filename = await resolve_file_input(
+                file_input, context
+            )
+        except FileResolutionError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        # Use provided name or fall back to resolved filename
+        name = arguments.get("name") or resolved_filename
         if not name:
-            raise HTTPException(status_code=400, detail="name is required")
-
-        # Resolve file content from file reference or base64
-        content_bytes, resolved_mime_type = await self._resolve_file_content(
-            file_ref_data, content_b64, context
-        )
+            raise HTTPException(status_code=400, detail="name is required (could not determine from file)")
 
         mime_type = arguments.get("mime_type") or resolved_mime_type or "application/octet-stream"
         metadata = {"name": name, "mimeType": mime_type}
@@ -398,6 +403,8 @@ class GoogleDriveUploadFileTool(GoogleDriveFileScopeTool):
         headers = self._build_headers(token)
         headers["Content-Type"] = multipart["content_type"]
 
+        logger.info("Uploading file to Drive: name=%s size=%d", name, len(content_bytes))
+
         # Make request directly with httpx for custom content
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
@@ -411,60 +418,29 @@ class GoogleDriveUploadFileTool(GoogleDriveFileScopeTool):
 
         return resp.json()
 
-    async def _resolve_file_content(
-        self,
-        file_ref_data: Optional[Dict[str, Any]],
-        content_b64: Optional[str],
-        context: Optional["WorkflowRuntimeContext"],
-    ) -> tuple[bytes, Optional[str]]:
-        """
-        Resolve file content from either a file reference or base64 data.
-
-        Returns:
-            Tuple of (content_bytes, mime_type)
-        """
-        # pylint: disable=import-outside-toplevel  # Avoid circular imports with files module
-        from seer.core.files.models import is_file_ref
-
-        # Try file reference first
-        if file_ref_data and is_file_ref(file_ref_data):
-            if context and context.has_file_system:
-                file_ref = context.file_system.parse_file_ref(file_ref_data)
-                content_bytes = await context.file_system.get_file_content(file_ref)
-                logger.info("Resolved file from workflow file system: %s", file_ref.file_id)
-                return content_bytes, file_ref.mime_type
-            raise HTTPException(
-                status_code=400,
-                detail="File reference provided but workflow file system not available"
-            )
-
-        # Fall back to base64
-        if content_b64:
-            try:
-                return base64.b64decode(content_b64), None
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=f"Invalid base64 content: {str(e)}") from e
-
-        raise HTTPException(status_code=400, detail="Either 'file' or 'content_base64' is required")
-
 
 class GoogleDriveUpdateFileTool(GoogleDriveFileScopeTool):
     """Update Google Drive file metadata and/or content."""
 
     name = "google_drive_update_file"
-    description = "Update Google Drive file metadata and/or content."
+    description = (
+        "Update Google Drive file metadata and/or content. "
+        "Can update file content using a file reference from another tool."
+    )
 
     def get_parameters_schema(self) -> Dict[str, Any]:
+        file_schema = FILE_INPUT_SCHEMA.copy()
+        file_schema["description"] = "New file content (from parent node or user storage)"
         return {
             "type": "object",
             "properties": {
-                "file_id": {"type": "string", "description": "File ID to update"},
+                "file_id": {"type": "string", "description": "Drive file ID to update"},
                 "name": {"type": "string", "description": "New file name"},
                 "description": {"type": "string"},
                 "mime_type": {"type": "string"},
                 "add_parents": {"type": "array", "items": {"type": "string"}, "description": "Parent folder IDs to add"},
                 "remove_parents": {"type": "array", "items": {"type": "string"}, "description": "Parent folder IDs to remove"},
-                "content_base64": {"type": "string", "description": "New file content as base64"},
+                "file": file_schema,
                 "supports_all_drives": {"type": "boolean", "default": True},
             },
             "required": ["file_id"]
@@ -495,21 +471,17 @@ class GoogleDriveUpdateFileTool(GoogleDriveFileScopeTool):
 
     async def _update_with_content(
         self, file_id: str, access_token: Optional[str], *, metadata: Dict[str, Any],
-        params: Dict[str, Any], content_b64: str, arguments: Dict[str, Any],
+        params: Dict[str, Any], content_bytes: bytes, mime_type: str,
     ) -> Dict[str, Any]:
         """Handle multipart file content update."""
-        try:
-            content_bytes = base64.b64decode(content_b64)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid base64: {str(e)}") from e
-
-        mime_type = arguments.get("mime_type", "application/octet-stream")
         multipart = _encode_multipart_related(metadata, content_bytes, mime_type)
         params["uploadType"] = "multipart"
 
         token = self._validate_token(access_token)
         headers = self._build_headers(token)
         headers["Content-Type"] = multipart["content_type"]
+
+        logger.info("Updating Drive file content: file_id=%s size=%d", file_id, len(content_bytes))
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.patch(
@@ -526,6 +498,9 @@ class GoogleDriveUpdateFileTool(GoogleDriveFileScopeTool):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,  # pylint: disable=unused-argument  # Part of tool interface
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Any:
         file_id = arguments.get("file_id")
         if not file_id:
@@ -534,11 +509,22 @@ class GoogleDriveUpdateFileTool(GoogleDriveFileScopeTool):
         metadata = self._build_update_metadata(arguments)
         params = self._build_update_params(arguments)
 
-        content_b64 = arguments.get("content_base64")
-        if content_b64:
+        file_input = arguments.get("file")
+        if file_input:
+            # Resolve file content using the unified resolver
+            try:
+                content_bytes, resolved_mime_type, _ = await resolve_file_input(
+                    file_input, context
+                )
+            except FileResolutionError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+
+            mime_type = arguments.get("mime_type") or resolved_mime_type or "application/octet-stream"
             return await self._update_with_content(
                 file_id, access_token, metadata=metadata, params=params,
-                content_b64=content_b64, arguments=arguments,
+                content_bytes=content_bytes, mime_type=mime_type,
             )
 
         # Metadata-only update

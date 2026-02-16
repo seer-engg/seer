@@ -12,6 +12,7 @@ from enum import Enum
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, status
+from fastapi.responses import StreamingResponse
 
 from seer.api.files import models as api_models
 from seer.api.files import services
@@ -132,15 +133,38 @@ async def get_file(
 async def get_file_download_url(
     request: Request,
     file_id: str,
+    inline: bool = Query(False, description="If true, returns URL for inline preview instead of download"),
 ) -> api_models.UserFileDownloadResponse:
     """
     Get a presigned URL to download a file.
 
     The URL expires after a configurable time (default: 1 hour).
+    Set inline=true to get a URL suitable for in-browser preview.
     Returns 503 if file storage is not configured.
     """
     user = _require_user(request)
-    return await services.get_user_file_download_url(user, file_id)
+    return await services.get_user_file_download_url(user, file_id, inline=inline)
+
+
+# Maximum file size for content preview (5MB)
+MAX_PREVIEW_SIZE_BYTES = 5 * 1024 * 1024
+
+
+@router.get("/{file_id}/content")
+async def get_file_content(
+    request: Request,
+    file_id: str,
+) -> StreamingResponse:
+    """
+    Stream file content directly for preview.
+
+    This endpoint proxies file content to avoid CORS issues when previewing files.
+    Returns the raw file content with appropriate Content-Type header.
+    Limited to files under 5MB for preview purposes.
+    Returns 503 if file storage is not configured.
+    """
+    user = _require_user(request)
+    return await services.get_user_file_content(user, file_id, MAX_PREVIEW_SIZE_BYTES)
 
 
 @router.delete("/{file_id}", response_model=api_models.UserFileDeleteResponse)

@@ -9,9 +9,7 @@ from seer.logger import get_logger
 from seer.llm import get_llm
 from seer.agents.nexus.utils import get_workflow_tools
 from seer.agents.nexus.schema_context import (
-    get_workflow_spec_example_text,
     get_workflow_spec_schema_text,
-    get_workflow_templates_summary,
     generate_primitive_blocks_guide,
     generate_graph_structure_guide,
 )
@@ -20,7 +18,6 @@ from seer.utilities.ml_flow import _ensure_mlflow_autologging
 logger = get_logger(__name__)
 
 WORKFLOW_SPEC_SCHEMA = get_workflow_spec_schema_text()
-WORKFLOW_SPEC_EXAMPLE = get_workflow_spec_example_text()
 
 if config.mlflow_enabled:
     _ensure_mlflow_autologging()
@@ -51,15 +48,13 @@ def create_nexus_chat_agent(
     # Load base system prompt from markdown file
     base_system_prompt = get_nexus_system_prompt()
 
-    # Add dynamic content sections
+    # Add dynamic content sections (schema always injected; templates/examples available via tools)
     schema_section = f"\n\nWorkflowSpec schema excerpt (trimmed):\n{WORKFLOW_SPEC_SCHEMA}"
-    example_section = f"\n\nValid WorkflowSpec example:\n{WORKFLOW_SPEC_EXAMPLE}"
-    templates_section = f"\n\n{get_workflow_templates_summary()}"
     blocks_guide = f"\n\n{generate_primitive_blocks_guide()}"
     graph_guide = f"\n\n{generate_graph_structure_guide()}"
 
     # Compose full system prompt from loaded base + dynamic content
-    system_prompt = base_system_prompt + blocks_guide + graph_guide + schema_section + example_section + templates_section
+    system_prompt = base_system_prompt + blocks_guide + graph_guide + schema_section
 
     # Get workflow tools (with optional workflow_state injection)
     tools = get_workflow_tools(workflow_state=workflow_state)

@@ -15,9 +15,32 @@ Usage:
 
     # Retrieve file content
     content = await fs.get_file_content(file_ref)
+
+    # Resolve file input (handles both WorkflowFileRef and static_file_ref)
+    from seer.core.files.resolver import resolve_file_input
+    content, mime_type, filename = await resolve_file_input(file_input, context)
 """
 
-from seer.core.files.models import WorkflowFileRef
+from seer.core.files.models import WorkflowFileRef, is_file_ref, parse_file_ref
+from seer.core.files.resolver import FileResolutionError, resolve_file_input, resolve_file_inputs
+from seer.core.files.schemas import (
+    FILE_INPUT_SCHEMA,
+    FILE_OUTPUT_SCHEMA,
+    STATIC_FILE_REF_TYPE,
+    is_static_file_ref,
+)
 from seer.core.files.service import WorkflowFileSystem
 
-__all__ = ["WorkflowFileRef", "WorkflowFileSystem"]
+__all__ = [
+    "WorkflowFileRef",
+    "WorkflowFileSystem",
+    "is_file_ref",
+    "parse_file_ref",
+    "FileResolutionError",
+    "resolve_file_input",
+    "resolve_file_inputs",
+    "FILE_INPUT_SCHEMA",
+    "FILE_OUTPUT_SCHEMA",
+    "STATIC_FILE_REF_TYPE",
+    "is_static_file_ref",
+]

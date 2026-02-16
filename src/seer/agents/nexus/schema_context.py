@@ -14,107 +14,21 @@ from seer.core.schema.models import (
     EdgeType,
     ToolNode,
     LLMNode,
+    MCPNode,
     IfNode,
     ForEachNode,
+    HITLNode,
+    ImageGenNode,
+    BrowserNode,
     TriggerSpec,
     Edge,
 )
 from seer.logger import get_logger
-from seer.prompts import get_primitive_blocks_guide as _load_primitive_blocks_guide
-from seer.prompts import get_graph_structure_guide as _load_graph_structure_guide
 
 logger = get_logger(__name__)
 
 # Keys that keep the schema digestible while conveying the structure.
 _SCHEMA_KEYS = ("title", "type", "properties", "required", "definitions", "default")
-
-_WORKFLOW_SPEC_EXAMPLE: Dict[str, Any] = {
-    "version": "2",
-    "triggers": [],
-    "nodes": [
-        {
-            "id": "fetch_news",
-            "type": "tool",
-            "tool": "demo.news_search",
-            "inputs": {
-                "query": "AI automation trends",
-                "timeframe_days": 7,
-            },
-        },
-        {
-            "id": "summarize",
-            "type": "llm",
-            "inputs": {
-                "model": "moonshotai/kimi-k2.5",
-                "prompt": "Summarize the top 3 recent articles. Use bullet points with source names.",
-                "articles": "${fetch_news}",
-            },
-            "outputs": {
-                "mode": "json",
-                "schema": {
-                    "json_schema": {
-                        "type": "object",
-                        "properties": {
-                            "talking_points": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                            }
-                        },
-                        "required": ["talking_points"],
-                    }
-                },
-            },
-        },
-    ],
-    "edges": [
-        {"source": "fetch_news", "target": "summarize"},
-    ],
-}
-
-_WORKFLOW_SPEC_TRIGGER_EXAMPLE: Dict[str, Any] = {
-    "version": "2",
-    "triggers": [
-        {
-            "id": "new_signup",
-            "key": "webhook.supabase.db_changes",
-            "mode": "webhook",
-            "provider_config": {
-                "integration_resource_id": 123,
-                "table": "signups",
-                "schema": "public",
-                "events": ["INSERT"]
-            },
-            "event_schema": {
-                "type": "object",
-                "properties": {
-                    "record": {
-                        "type": "object",
-                        "properties": {
-                            "email": {"type": "string"},
-                            "name": {"type": "string"}
-                        }
-                    }
-                },
-                "required": ["record"]
-            }
-        }
-    ],
-    "nodes": [
-        {
-            "id": "create_draft",
-            "type": "tool",
-            "tool": "gmail_create_draft",
-            "inputs": {
-                "to": ["${new_signup.data.record.email}"],
-                "subject": "Welcome!",
-                "body_text": "Hi ${new_signup.data.record.name}, welcome to our platform!"
-            },
-        }
-    ],
-    "edges": [
-        {"source": "new_signup", "target": "create_draft", "type": "trigger"},
-    ],
-}
 
 
 @lru_cache(maxsize=1)
@@ -137,20 +51,6 @@ def get_workflow_spec_schema_text(max_chars: int = 4000) -> str:
     if len(schema_text) > max_chars:
         schema_text = schema_text[: max_chars - 3] + "..."
     return schema_text
-
-
-def get_workflow_spec_example_text() -> str:
-    """
-    Provide compact, valid WorkflowSpec examples for the agent to imitate.
-    Includes both input-based and trigger-based workflow examples.
-    """
-
-    examples_text = "Example 1 (Input-based workflow):\n"
-    examples_text += json.dumps(_WORKFLOW_SPEC_EXAMPLE, indent=2)
-    examples_text += "\n\nExample 2 (Trigger-based workflow):\n"
-    examples_text += json.dumps(_WORKFLOW_SPEC_TRIGGER_EXAMPLE, indent=2)
-
-    return examples_text
 
 
 @lru_cache(maxsize=1)
@@ -182,34 +82,6 @@ def get_workflow_templates() -> List[Dict[str, Any]]:
     return templates
 
 
-def get_workflow_templates_summary() -> str:
-    """
-    Generate a concise summary of available workflow templates for the agent system prompt.
-
-    Returns:
-        Formatted string listing templates with their descriptions and use cases
-    """
-    templates = get_workflow_templates()
-
-    if not templates:
-        return "No workflow templates available."
-
-    summary_lines = ["## Common Workflow Templates\n"]
-    summary_lines.append("You can suggest these templates when they match user intent:\n")
-
-    for idx, template in enumerate(templates, 1):
-        name = template.get("name", "Unknown")
-        description = template.get("description", "")
-        tags = template.get("tags", [])
-
-        summary_lines.append(f"{idx}. **{name}**")
-        summary_lines.append(f"   - Description: {description}")
-        summary_lines.append(f"   - Use when: {', '.join(tags[:4])}")
-        summary_lines.append("")
-
-    return "\n".join(summary_lines)
-
-
 def _format_node_type_usage_notes(node_type: str) -> List[str]:
     """Generate usage notes for a specific node type."""
     notes_map = {
@@ -221,6 +93,10 @@ def _format_node_type_usage_notes(node_type: str) -> List[str]:
             "**Important:** LLM nodes require `model` and `prompt` in inputs. "
             "Use `outputs` to specify structured JSON output with schema."
         ],
+        "mcp": [
+            "**Important:** MCP nodes call external Model Context Protocol servers. "
+            "Use `auth.headers` for HTTP servers or `auth.env` for stdio servers."
+        ],
         "if": [
             "**Important:** Condition should be a boolean expression. "
             "Use edges with `type=conditional_true` and `type=conditional_false` for branching."
@@ -228,6 +104,18 @@ def _format_node_type_usage_notes(node_type: str) -> List[str]:
         "for_each": [
             "**Important:** Items should evaluate to a list. "
             "Use edges with `type=loop_body` for loop content and `type=loop_exit` to exit."
+        ],
+        "hitl": [
+            "**Important:** HITL nodes pause workflow execution to collect user input. "
+            "Access responses via `${node_id.input_field_id}` in downstream nodes."
+        ],
+        "image_gen": [
+            "**Important:** ImageGen nodes require `model` and `prompt` in inputs. "
+            "Output contains generated image URL(s)."
+        ],
+        "browser": [
+            "**Important:** Browser nodes use natural language task descriptions. "
+            "Use `browser_profile_id` for authenticated automation with saved sessions."
         ],
     }
     return notes_map.get(node_type, [])
@@ -238,8 +126,8 @@ def generate_node_type_reference() -> str:
     """
     Auto-generate node type reference from Pydantic models.
 
-    Extracts documentation from ToolNode, LLMNode, IfNode, ForEachNode
-    including required fields, all fields with descriptions, and usage notes.
+    Extracts documentation from all 8 node types including required fields,
+    all fields with descriptions, and usage notes.
 
     Returns:
         Formatted documentation for each node type
@@ -247,8 +135,12 @@ def generate_node_type_reference() -> str:
     node_types = {
         "tool": (ToolNode, "Execute a tool from the tool registry"),
         "llm": (LLMNode, "AI inference with model configuration"),
+        "mcp": (MCPNode, "Execute tools from external MCP servers"),
         "if": (IfNode, "Conditional branching based on expression"),
         "for_each": (ForEachNode, "Iterate over a list with loop body"),
+        "hitl": (HITLNode, "Human-In-The-Loop for collecting user input"),
+        "image_gen": (ImageGenNode, "Generate images using AI models"),
+        "browser": (BrowserNode, "Browser automation with natural language tasks"),
     }
 
     lines = []
@@ -477,7 +369,10 @@ def generate_primitive_blocks_guide() -> str:
     Returns:
         Formatted markdown guide for primitive blocks
     """
-    return _load_primitive_blocks_guide()
+    # Lazy import to avoid circular dependency
+    from seer.prompts import get_primitive_blocks_guide  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import with seer.prompts
+
+    return get_primitive_blocks_guide()
 
 
 @lru_cache(maxsize=1)
@@ -497,4 +392,7 @@ def generate_graph_structure_guide() -> str:
     Returns:
         Formatted markdown guide for graph structure
     """
-    return _load_graph_structure_guide()
+    # Lazy import to avoid circular dependency
+    from seer.prompts import get_graph_structure_guide  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import with seer.prompts
+
+    return get_graph_structure_guide()

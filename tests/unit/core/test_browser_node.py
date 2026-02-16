@@ -915,3 +915,506 @@ class TestBrowserNodeCostTracking:
         ):
             with pytest.raises(RunCostCapExceeded):
                 await browser_node_type._track_usage_async(usage_metadata, runtime_context, "browse-1")
+
+
+# =============================================================================
+# BrowserNodeType execute_async Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+class TestBrowserNodeExecuteAsync:
+    """Tests for BrowserNodeType.execute_async method."""
+
+    async def test_execute_async_success(self, mock_user):
+        """Test successful browser task execution."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from seer.core.nodes.base import NodeExecutionContext
+        from seer.core.runtime.context import WorkflowRuntimeContext
+        from seer.core.expr.typecheck import TypeEnvironment
+
+        browser_node_type = node_type_registry.get("browser")
+
+        node = BrowserNode(
+            id="browse-1",
+            task="Go to example.com and get the title",
+        )
+
+        runtime_context = WorkflowRuntimeContext(
+            user=mock_user,
+            workflow_run_id="run_test_123",
+            per_run_cost_cap_usd=10.0,
+            accumulated_cost_usd=0.0,
+        )
+
+        ctx = NodeExecutionContext(
+            state={},
+            config={},
+            locals_ctx={},
+            trigger={},
+            runtime_context=runtime_context,
+        )
+
+        mock_services = MagicMock()
+        mock_services.type_env = TypeEnvironment()
+
+        mock_result = {
+            "success": True,
+            "result": "Page title: Example Domain",
+            "extracted_data": {},
+            "final_url": "https://example.com",
+            "screenshots": [],
+            "usage": {
+                "model": "moonshotai/kimi-k2.5",
+                "input_tokens": 1000,
+                "output_tokens": 500,
+                "total_tokens": 1500,
+                "steps_taken": 3,
+            },
+        }
+
+        with patch("seer.services.browser.BrowserService") as mock_browser_service_cls:
+            mock_instance = MagicMock()
+            mock_instance.execute_task = AsyncMock(return_value=mock_result.copy())
+            mock_browser_service_cls.instance.return_value = mock_instance
+
+            with patch("seer.observability.credit_gate.check_credit_limit", new_callable=AsyncMock):
+                with patch("seer.observability.cost_tracking.CostTracker.track_and_enforce_cap", new_callable=AsyncMock):
+                    result = await browser_node_type.execute_async(node, ctx, mock_services)
+
+        assert "browse-1" in result
+        assert result["browse-1"]["success"] is True
+        assert result["browse-1"]["result"] == "Page title: Example Domain"
+
+    async def test_execute_async_with_inputs(self, mock_user):
+        """Test browser task execution with inputs provided."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from seer.core.nodes.base import NodeExecutionContext
+        from seer.core.runtime.context import WorkflowRuntimeContext
+        from seer.core.expr.typecheck import TypeEnvironment
+
+        browser_node_type = node_type_registry.get("browser")
+
+        node = BrowserNode(
+            id="browse-1",
+            task="Search for test query",
+            inputs={
+                "query": "test search term",
+                "max_results": 10,
+            },
+        )
+
+        runtime_context = WorkflowRuntimeContext(
+            user=mock_user,
+            workflow_run_id="run_test_456",
+        )
+
+        ctx = NodeExecutionContext(
+            state={},
+            config={},
+            locals_ctx={},
+            trigger={},
+            runtime_context=runtime_context,
+        )
+
+        mock_services = MagicMock()
+        mock_services.type_env = TypeEnvironment()
+
+        mock_result = {
+            "success": True,
+            "result": "Found 5 results",
+            "extracted_data": {},
+            "final_url": "https://search.example.com",
+            "screenshots": [],
+        }
+
+        with patch("seer.services.browser.BrowserService") as mock_browser_service_cls:
+            mock_instance = MagicMock()
+            mock_instance.execute_task = AsyncMock(return_value=mock_result.copy())
+            mock_browser_service_cls.instance.return_value = mock_instance
+
+            with patch("seer.observability.credit_gate.check_credit_limit", new_callable=AsyncMock):
+                result = await browser_node_type.execute_async(node, ctx, mock_services)
+
+        # Verify execute_task was called with evaluated inputs
+        call_kwargs = mock_instance.execute_task.call_args.kwargs
+        assert "inputs" in call_kwargs
+        assert call_kwargs["inputs"]["query"] == "test search term"
+        assert call_kwargs["inputs"]["max_results"] == 10
+
+    async def test_execute_async_credit_limit_exceeded(self, mock_user):
+        """Test that CreditLimitExceeded is raised from execute_async."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from seer.core.nodes.base import NodeExecutionContext
+        from seer.core.runtime.context import WorkflowRuntimeContext
+        from seer.core.expr.typecheck import TypeEnvironment
+        from seer.observability.exceptions import CreditLimitExceeded
+        from seer.database.subscription_models import SubscriptionTier
+
+        browser_node_type = node_type_registry.get("browser")
+
+        node = BrowserNode(
+            id="browse-1",
+            task="Go to example.com",
+        )
+
+        runtime_context = WorkflowRuntimeContext(
+            user=mock_user,
+            workflow_run_id="run_test_789",
+        )
+
+        ctx = NodeExecutionContext(
+            state={},
+            config={},
+            locals_ctx={},
+            trigger={},
+            runtime_context=runtime_context,
+        )
+
+        mock_services = MagicMock()
+        mock_services.type_env = TypeEnvironment()
+
+        with patch(
+            "seer.observability.credit_gate.check_credit_limit",
+            new_callable=AsyncMock,
+            side_effect=CreditLimitExceeded(
+                limit=50.0,
+                current=100.0,
+                tier=SubscriptionTier.FREE,
+            ),
+        ):
+            with pytest.raises(CreditLimitExceeded):
+                await browser_node_type.execute_async(node, ctx, mock_services)
+
+    async def test_execute_async_browser_task_failure(self, mock_user):
+        """Test that browser task failures raise ExecutionError."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from seer.core.nodes.base import NodeExecutionContext
+        from seer.core.runtime.context import WorkflowRuntimeContext
+        from seer.core.expr.typecheck import TypeEnvironment
+        from seer.core.errors import ExecutionError
+
+        browser_node_type = node_type_registry.get("browser")
+
+        node = BrowserNode(
+            id="browse-1",
+            task="Go to nonexistent.example.com",
+        )
+
+        runtime_context = WorkflowRuntimeContext(
+            user=mock_user,
+            workflow_run_id="run_test_error",
+        )
+
+        ctx = NodeExecutionContext(
+            state={},
+            config={},
+            locals_ctx={},
+            trigger={},
+            runtime_context=runtime_context,
+        )
+
+        mock_services = MagicMock()
+        mock_services.type_env = TypeEnvironment()
+
+        with patch("seer.services.browser.BrowserService") as mock_browser_service_cls:
+            mock_instance = MagicMock()
+            mock_instance.execute_task = AsyncMock(
+                side_effect=RuntimeError("Browser timeout")
+            )
+            mock_browser_service_cls.instance.return_value = mock_instance
+
+            with patch("seer.observability.credit_gate.check_credit_limit", new_callable=AsyncMock):
+                with pytest.raises(ExecutionError) as exc_info:
+                    await browser_node_type.execute_async(node, ctx, mock_services)
+
+        assert "Browser task failed" in str(exc_info.value)
+        # Verify trace data was added to state
+        assert any("browse-1" in key for key in ctx.state.keys())
+
+    async def test_execute_async_timeout_skips_validation(self, mock_user):
+        """Regression test: timeout with expect_outputs should NOT raise validation error.
+
+        When browser task times out, success=False and extracted_data={}.
+        Even if expect_outputs requires fields, validation should be skipped
+        because the task failed.
+        """
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from seer.core.nodes.base import NodeExecutionContext
+        from seer.core.runtime.context import WorkflowRuntimeContext
+        from seer.core.expr.typecheck import TypeEnvironment
+
+        browser_node_type = node_type_registry.get("browser")
+
+        # Node with expect_outputs that requires fields
+        node = BrowserNode(
+            id="scrape-1",
+            task="Extract data from page",
+            expect_outputs=OutputContract(
+                mode=OutputMode.json,
+                schema={
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "headline": {"type": "string"},
+                            "description": {"type": "string"},
+                        },
+                        "required": ["headline", "description"],
+                    }
+                },
+            ),
+        )
+
+        runtime_context = WorkflowRuntimeContext(
+            user=mock_user,
+            workflow_run_id="run_timeout_test",
+        )
+
+        ctx = NodeExecutionContext(
+            state={},
+            config={},
+            locals_ctx={},
+            trigger={},
+            runtime_context=runtime_context,
+        )
+
+        # Build type_env with the schema
+        mock_services = MagicMock()
+        type_env = TypeEnvironment()
+        type_env.register(
+            "scrape-1",
+            {
+                "type": "object",
+                "properties": {
+                    "success": {"type": "boolean"},
+                    "result": {"type": "string"},
+                    "extracted_data": {
+                        "type": "object",
+                        "properties": {
+                            "headline": {"type": "string"},
+                            "description": {"type": "string"},
+                        },
+                        "required": ["headline", "description"],
+                    },
+                    "final_url": {"type": ["string", "null"]},
+                    "screenshots": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+        )
+        mock_services.type_env = type_env
+
+        # Simulate timeout result: success=False, extracted_data={}
+        timeout_result = {
+            "success": False,
+            "result": "Task timed out after 120 seconds",
+            "extracted_data": {},
+            "final_url": None,
+            "screenshots": [],
+        }
+
+        with patch("seer.services.browser.BrowserService") as mock_browser_service_cls:
+            mock_instance = MagicMock()
+            mock_instance.execute_task = AsyncMock(return_value=timeout_result.copy())
+            mock_browser_service_cls.instance.return_value = mock_instance
+
+            with patch("seer.observability.credit_gate.check_credit_limit", new_callable=AsyncMock):
+                # This should NOT raise ExecutionError for validation
+                result = await browser_node_type.execute_async(node, ctx, mock_services)
+
+        # Verify the timeout result is returned without validation error
+        assert "scrape-1" in result
+        assert result["scrape-1"]["success"] is False
+        assert "timed out" in result["scrape-1"]["result"]
+        assert result["scrape-1"]["extracted_data"] == {}
+
+
+# =============================================================================
+# BrowserNodeType Helper Method Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestBrowserNodeHelpers:
+    """Tests for BrowserNodeType helper methods."""
+
+    def test_get_extraction_schema_with_json_mode(self):
+        """Test extraction schema retrieval with JSON output mode."""
+        browser_node_type = node_type_registry.get("browser")
+
+        node = BrowserNode(
+            id="extract-1",
+            task="Extract product data",
+            expect_outputs=OutputContract(
+                mode=OutputMode.json,
+                schema={"id": "product_schema"},
+            ),
+        )
+
+        type_schemas = {
+            "extract-1": {
+                "type": "object",
+                "properties": {
+                    "extracted_data": {
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}},
+                    }
+                },
+            }
+        }
+
+        result = browser_node_type._get_extraction_schema(node, type_schemas)
+
+        assert result is not None
+        assert result["type"] == "object"
+        assert "name" in result["properties"]
+
+    def test_get_extraction_schema_without_expect_outputs(self):
+        """Test that no schema is returned when expect_outputs is not specified."""
+        browser_node_type = node_type_registry.get("browser")
+
+        node = BrowserNode(
+            id="browse-1",
+            task="Just browse",
+        )
+
+        type_schemas = {}
+
+        result = browser_node_type._get_extraction_schema(node, type_schemas)
+
+        assert result is None
+
+    def test_get_extraction_schema_text_mode(self):
+        """Test that no schema is returned for text output mode."""
+        browser_node_type = node_type_registry.get("browser")
+
+        node = BrowserNode(
+            id="browse-1",
+            task="Just browse",
+            expect_outputs=OutputContract(
+                mode=OutputMode.text,
+            ),
+        )
+
+        type_schemas = {}
+
+        result = browser_node_type._get_extraction_schema(node, type_schemas)
+
+        assert result is None
+
+    def test_get_screenshot_context_enabled(self):
+        """Test screenshot context retrieval when enabled."""
+        from unittest.mock import MagicMock
+        browser_node_type = node_type_registry.get("browser")
+
+        node = BrowserNode(
+            id="screenshot-1",
+            task="Take screenshots",
+            save_screenshots=True,
+        )
+
+        runtime_context = MagicMock()
+        runtime_context.has_file_system = True
+        runtime_context.file_system = MagicMock()
+        runtime_context.workflow_run_id = "run_123"
+
+        file_system, workflow_run_id = browser_node_type._get_screenshot_context(node, runtime_context)
+
+        assert file_system is runtime_context.file_system
+        assert workflow_run_id == "run_123"
+
+    def test_get_screenshot_context_disabled(self):
+        """Test screenshot context when save_screenshots is False.
+
+        Note: workflow_run_id is still returned even when save_screenshots=False
+        because session recordings need it for associating with workflow runs.
+        """
+        from unittest.mock import MagicMock
+        browser_node_type = node_type_registry.get("browser")
+
+        node = BrowserNode(
+            id="browse-1",
+            task="Browse without screenshots",
+            save_screenshots=False,
+        )
+
+        runtime_context = MagicMock()
+        runtime_context.workflow_run_id = "run_456"
+
+        file_system, workflow_run_id = browser_node_type._get_screenshot_context(node, runtime_context)
+
+        # file_system should be None when save_screenshots=False
+        assert file_system is None
+        # workflow_run_id is always returned (needed for session recordings)
+        assert workflow_run_id == "run_456"
+
+    def test_get_screenshot_context_no_runtime_context(self):
+        """Test screenshot context when runtime_context is None."""
+        browser_node_type = node_type_registry.get("browser")
+
+        node = BrowserNode(
+            id="browse-1",
+            task="Browse",
+            save_screenshots=True,
+        )
+
+        file_system, workflow_run_id = browser_node_type._get_screenshot_context(node, None)
+
+        assert file_system is None
+        assert workflow_run_id is None
+
+    def test_evaluate_inputs_success(self):
+        """Test input evaluation with valid expressions."""
+        from unittest.mock import MagicMock
+        from seer.core.expr.evaluator import EvaluationContext
+
+        browser_node_type = node_type_registry.get("browser")
+
+        node = BrowserNode(
+            id="browse-1",
+            task="Search",
+            inputs={
+                "static_value": "hello",
+                "number_value": 42,
+            },
+        )
+
+        eval_ctx = EvaluationContext(
+            state={},
+            locals={},
+            config={},
+            trigger={},
+        )
+
+        result = browser_node_type._evaluate_inputs(node, eval_ctx)
+
+        assert result["static_value"] == "hello"
+        assert result["number_value"] == 42
+
+    def test_evaluate_inputs_with_error(self):
+        """Test input evaluation captures errors in result."""
+        from seer.core.expr.evaluator import EvaluationContext
+
+        browser_node_type = node_type_registry.get("browser")
+
+        node = BrowserNode(
+            id="browse-1",
+            task="Search",
+            inputs={
+                "invalid_expr": "${undefined.path.to.value}",
+            },
+        )
+
+        eval_ctx = EvaluationContext(
+            state={},
+            locals={},
+            config={},
+            trigger={},
+        )
+
+        result = browser_node_type._evaluate_inputs(node, eval_ctx)
+
+        # Error should be captured in result
+        assert "__error__" in result["invalid_expr"]
+        assert "__expression__" in result["invalid_expr"]
+        assert result["invalid_expr"]["__expression__"] == "${undefined.path.to.value}"
