@@ -1229,7 +1229,11 @@ class TestBrowserNodeHelpers:
         assert workflow_run_id == "run_123"
 
     def test_get_screenshot_context_disabled(self):
-        """Test screenshot context when save_screenshots is False."""
+        """Test screenshot context when save_screenshots is False.
+
+        Note: workflow_run_id is still returned even when save_screenshots=False
+        because session recordings need it for associating with workflow runs.
+        """
         from unittest.mock import MagicMock
         browser_node_type = node_type_registry.get("browser")
 
@@ -1240,11 +1244,14 @@ class TestBrowserNodeHelpers:
         )
 
         runtime_context = MagicMock()
+        runtime_context.workflow_run_id = "run_456"
 
         file_system, workflow_run_id = browser_node_type._get_screenshot_context(node, runtime_context)
 
+        # file_system should be None when save_screenshots=False
         assert file_system is None
-        assert workflow_run_id is None
+        # workflow_run_id is always returned (needed for session recordings)
+        assert workflow_run_id == "run_456"
 
     def test_get_screenshot_context_no_runtime_context(self):
         """Test screenshot context when runtime_context is None."""

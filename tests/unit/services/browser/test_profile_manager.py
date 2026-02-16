@@ -282,11 +282,9 @@ class TestCreateInteractiveSession:
     """Test create_interactive_session method."""
 
     @patch("seer.services.browser.profile_manager.config")
-    @patch("seer.services.browser.profile_manager.RecordingService")
     @patch("seer.services.browser.profile_manager.BrowserPoolManager")
     @patch("seer.services.browser.profile_manager.BrowserProfile")
-    async def test_create_session_gets_profile(self, mock_bp, mock_pool_cls, mock_rec_cls, mock_config, manager, mock_user, profile_id, mock_profile):
-        mock_config.browser_recording_enabled = False
+    async def test_create_session_gets_profile(self, mock_bp, mock_pool_cls, mock_config, manager, mock_user, profile_id, mock_profile):
         mock_config.browser_interactive_timeout_seconds = 300
         mock_bp.get = AsyncMock(return_value=mock_profile)
 
@@ -307,11 +305,9 @@ class TestCreateInteractiveSession:
         mock_bp.get.assert_called_once_with(id=profile_id, user=mock_user, status="active")
 
     @patch("seer.services.browser.profile_manager.config")
-    @patch("seer.services.browser.profile_manager.RecordingService")
     @patch("seer.services.browser.profile_manager.BrowserPoolManager")
     @patch("seer.services.browser.profile_manager.BrowserProfile")
-    async def test_create_session_loads_existing_state(self, mock_bp, mock_pool_cls, mock_rec_cls, mock_config, manager, mock_user, profile_id, mock_profile, sample_storage_state):
-        mock_config.browser_recording_enabled = False
+    async def test_create_session_loads_existing_state(self, mock_bp, mock_pool_cls, mock_config, manager, mock_user, profile_id, mock_profile, sample_storage_state):
         mock_config.browser_interactive_timeout_seconds = 300
         encrypted_state = "encrypted_data"
         mock_profile.session_state_enc = encrypted_state
@@ -338,11 +334,9 @@ class TestCreateInteractiveSession:
         assert call_kwargs["storage_state"] == sample_storage_state
 
     @patch("seer.services.browser.profile_manager.config")
-    @patch("seer.services.browser.profile_manager.RecordingService")
     @patch("seer.services.browser.profile_manager.BrowserPoolManager")
     @patch("seer.services.browser.profile_manager.BrowserProfile")
-    async def test_create_session_creates_pool_session_for_interactive(self, mock_bp, mock_pool_cls, mock_rec_cls, mock_config, manager, mock_user, profile_id, mock_profile):
-        mock_config.browser_recording_enabled = False
+    async def test_create_session_creates_pool_session_for_interactive(self, mock_bp, mock_pool_cls, mock_config, manager, mock_user, profile_id, mock_profile):
         mock_config.browser_interactive_timeout_seconds = 300
         mock_profile.session_state_enc = None
         mock_bp.get = AsyncMock(return_value=mock_profile)
@@ -365,41 +359,9 @@ class TestCreateInteractiveSession:
         assert call_kwargs["session_type"] == "interactive"
 
     @patch("seer.services.browser.profile_manager.config")
-    @patch("seer.services.browser.profile_manager.RecordingService")
     @patch("seer.services.browser.profile_manager.BrowserPoolManager")
     @patch("seer.services.browser.profile_manager.BrowserProfile")
-    async def test_create_session_starts_recording_when_enabled(self, mock_bp, mock_pool_cls, mock_rec_cls, mock_config, manager, mock_user, profile_id, mock_profile):
-        mock_config.browser_recording_enabled = True
-        mock_config.browser_interactive_timeout_seconds = 300
-        mock_profile.session_state_enc = None
-        mock_bp.get = AsyncMock(return_value=mock_profile)
-
-        mock_managed = MagicMock()
-        mock_managed.id = "sess-123"
-        mock_managed.session = MagicMock()
-        mock_managed.session.must_get_current_page = AsyncMock()
-        mock_managed.session.cdp_client = MagicMock()
-        mock_managed.session.get_or_create_cdp_session = AsyncMock(return_value=MagicMock(session_id="cdp-1"))
-
-        mock_pool = MagicMock()
-        mock_pool.create_session = AsyncMock(return_value=mock_managed)
-        mock_pool_cls.get_instance = AsyncMock(return_value=mock_pool)
-
-        mock_recorder = MagicMock()
-        mock_recorder.start_recording = AsyncMock(return_value="rec-456")
-        mock_rec_cls.get_instance = AsyncMock(return_value=mock_recorder)
-
-        result = await manager.create_interactive_session(mock_user, profile_id, target_url="https://example.com")
-
-        mock_recorder.start_recording.assert_called_once()
-        assert result["recording_id"] == "rec-456"
-
-    @patch("seer.services.browser.profile_manager.config")
-    @patch("seer.services.browser.profile_manager.RecordingService")
-    @patch("seer.services.browser.profile_manager.BrowserPoolManager")
-    @patch("seer.services.browser.profile_manager.BrowserProfile")
-    async def test_create_session_returns_session_info(self, mock_bp, mock_pool_cls, mock_rec_cls, mock_config, manager, mock_user, profile_id, mock_profile):
-        mock_config.browser_recording_enabled = False
+    async def test_create_session_returns_session_info(self, mock_bp, mock_pool_cls, mock_config, manager, mock_user, profile_id, mock_profile):
         mock_config.browser_interactive_timeout_seconds = 300
         mock_profile.session_state_enc = None
         mock_bp.get = AsyncMock(return_value=mock_profile)
@@ -422,11 +384,9 @@ class TestCreateInteractiveSession:
         assert result["status"] == "created"
 
     @patch("seer.services.browser.profile_manager.config")
-    @patch("seer.services.browser.profile_manager.RecordingService")
     @patch("seer.services.browser.profile_manager.BrowserPoolManager")
     @patch("seer.services.browser.profile_manager.BrowserProfile")
-    async def test_create_session_handles_navigation_failure(self, mock_bp, mock_pool_cls, mock_rec_cls, mock_config, manager, mock_user, profile_id, mock_profile):
-        mock_config.browser_recording_enabled = False
+    async def test_create_session_handles_navigation_failure(self, mock_bp, mock_pool_cls, mock_config, manager, mock_user, profile_id, mock_profile):
         mock_config.browser_interactive_timeout_seconds = 300
         mock_profile.session_state_enc = None
         mock_bp.get = AsyncMock(return_value=mock_profile)
@@ -445,51 +405,16 @@ class TestCreateInteractiveSession:
 
         assert result["status"] == "created"
 
-    @patch("seer.services.browser.profile_manager.config")
-    @patch("seer.services.browser.profile_manager.RecordingService")
-    @patch("seer.services.browser.profile_manager.BrowserPoolManager")
-    @patch("seer.services.browser.profile_manager.BrowserProfile")
-    async def test_create_session_handles_recording_failure(self, mock_bp, mock_pool_cls, mock_rec_cls, mock_config, manager, mock_user, profile_id, mock_profile):
-        mock_config.browser_recording_enabled = True
-        mock_config.browser_interactive_timeout_seconds = 300
-        mock_profile.session_state_enc = None
-        mock_bp.get = AsyncMock(return_value=mock_profile)
-
-        mock_managed = MagicMock()
-        mock_managed.id = "sess-123"
-        mock_managed.session = MagicMock()
-        mock_managed.session.must_get_current_page = AsyncMock()
-        mock_managed.session.cdp_client = MagicMock()
-        mock_managed.session.get_or_create_cdp_session = AsyncMock(return_value=MagicMock(session_id="cdp-1"))
-
-        mock_pool = MagicMock()
-        mock_pool.create_session = AsyncMock(return_value=mock_managed)
-        mock_pool_cls.get_instance = AsyncMock(return_value=mock_pool)
-
-        mock_recorder = MagicMock()
-        mock_recorder.start_recording = AsyncMock(side_effect=RuntimeError("Recording failed"))
-        mock_rec_cls.get_instance = AsyncMock(return_value=mock_recorder)
-
-        # Should not raise, just log warning
-        result = await manager.create_interactive_session(mock_user, profile_id)
-
-        assert result["recording_id"] is None
-
 
 @pytest.mark.asyncio
 @pytest.mark.unit
 class TestCompleteInteractiveSession:
     """Test complete_interactive_session method."""
 
-    @patch("seer.services.browser.profile_manager.config")
-    @patch("seer.services.browser.profile_manager.RecordingService")
     @patch("seer.services.browser.profile_manager.BrowserPoolManager")
-    async def test_complete_session_gets_pool_session(self, mock_pool_cls, mock_rec_cls, mock_config, manager, mock_user, profile_id, sample_storage_state):
-        mock_config.browser_recording_enabled = False
-
+    async def test_complete_session_gets_pool_session(self, mock_pool_cls, manager, mock_user, profile_id, sample_storage_state):
         mock_managed = MagicMock()
         mock_managed.user_id = str(mock_user.user_id)
-        mock_managed.recording_id = None
 
         mock_pool = MagicMock()
         mock_pool.get_session = MagicMock(return_value=mock_managed)
@@ -502,12 +427,8 @@ class TestCompleteInteractiveSession:
 
         mock_pool.get_session.assert_called_once_with("sess-123")
 
-    @patch("seer.services.browser.profile_manager.config")
-    @patch("seer.services.browser.profile_manager.RecordingService")
     @patch("seer.services.browser.profile_manager.BrowserPoolManager")
-    async def test_complete_session_validates_user_ownership(self, mock_pool_cls, mock_rec_cls, mock_config, manager, mock_user, profile_id):
-        mock_config.browser_recording_enabled = False
-
+    async def test_complete_session_validates_user_ownership(self, mock_pool_cls, manager, mock_user, profile_id):
         mock_managed = MagicMock()
         mock_managed.user_id = "different-user"
 
@@ -518,12 +439,8 @@ class TestCompleteInteractiveSession:
         with pytest.raises(PermissionError, match="Session does not belong to this user"):
             await manager.complete_interactive_session(mock_user, profile_id, "sess-123")
 
-    @patch("seer.services.browser.profile_manager.config")
-    @patch("seer.services.browser.profile_manager.RecordingService")
     @patch("seer.services.browser.profile_manager.BrowserPoolManager")
-    async def test_complete_session_session_not_found(self, mock_pool_cls, mock_rec_cls, mock_config, manager, mock_user, profile_id):
-        mock_config.browser_recording_enabled = False
-
+    async def test_complete_session_session_not_found(self, mock_pool_cls, manager, mock_user, profile_id):
         mock_pool = MagicMock()
         mock_pool.get_session = MagicMock(return_value=None)
         mock_pool_cls.get_instance = AsyncMock(return_value=mock_pool)
@@ -531,42 +448,10 @@ class TestCompleteInteractiveSession:
         with pytest.raises(ValueError, match="Session sess-123 not found in pool"):
             await manager.complete_interactive_session(mock_user, profile_id, "sess-123")
 
-    @patch("seer.services.browser.profile_manager.config")
-    @patch("seer.services.browser.profile_manager.RecordingService")
     @patch("seer.services.browser.profile_manager.BrowserPoolManager")
-    async def test_complete_session_saves_recording(self, mock_pool_cls, mock_rec_cls, mock_config, manager, mock_user, profile_id, sample_storage_state):
-        mock_config.browser_recording_enabled = True
-
+    async def test_complete_session_releases_pool_session(self, mock_pool_cls, manager, mock_user, profile_id, sample_storage_state):
         mock_managed = MagicMock()
         mock_managed.user_id = str(mock_user.user_id)
-        mock_managed.recording_id = "rec-123"
-        mock_managed.start_url = "https://example.com"
-
-        mock_pool = MagicMock()
-        mock_pool.get_session = MagicMock(return_value=mock_managed)
-        mock_pool.release_session = AsyncMock(return_value=sample_storage_state)
-        mock_pool_cls.get_instance = AsyncMock(return_value=mock_pool)
-
-        mock_recorder = MagicMock()
-        mock_recorder.save_recording = AsyncMock(return_value="rec-saved-123")
-        mock_rec_cls.get_instance = AsyncMock(return_value=mock_recorder)
-
-        manager._session_context.save_session_state = AsyncMock()
-
-        result = await manager.complete_interactive_session(mock_user, profile_id, "sess-123")
-
-        mock_recorder.save_recording.assert_called_once()
-        assert result["recording_id"] == "rec-saved-123"
-
-    @patch("seer.services.browser.profile_manager.config")
-    @patch("seer.services.browser.profile_manager.RecordingService")
-    @patch("seer.services.browser.profile_manager.BrowserPoolManager")
-    async def test_complete_session_releases_pool_session(self, mock_pool_cls, mock_rec_cls, mock_config, manager, mock_user, profile_id, sample_storage_state):
-        mock_config.browser_recording_enabled = False
-
-        mock_managed = MagicMock()
-        mock_managed.user_id = str(mock_user.user_id)
-        mock_managed.recording_id = None
 
         mock_pool = MagicMock()
         mock_pool.get_session = MagicMock(return_value=mock_managed)
@@ -579,15 +464,10 @@ class TestCompleteInteractiveSession:
 
         mock_pool.release_session.assert_called_once_with("sess-123")
 
-    @patch("seer.services.browser.profile_manager.config")
-    @patch("seer.services.browser.profile_manager.RecordingService")
     @patch("seer.services.browser.profile_manager.BrowserPoolManager")
-    async def test_complete_session_saves_encrypted_state(self, mock_pool_cls, mock_rec_cls, mock_config, manager, mock_user, profile_id, sample_storage_state):
-        mock_config.browser_recording_enabled = False
-
+    async def test_complete_session_saves_encrypted_state(self, mock_pool_cls, manager, mock_user, profile_id, sample_storage_state):
         mock_managed = MagicMock()
         mock_managed.user_id = str(mock_user.user_id)
-        mock_managed.recording_id = None
 
         mock_pool = MagicMock()
         mock_pool.get_session = MagicMock(return_value=mock_managed)
@@ -600,15 +480,10 @@ class TestCompleteInteractiveSession:
 
         manager._session_context.save_session_state.assert_called_once_with(mock_user, profile_id, sample_storage_state)
 
-    @patch("seer.services.browser.profile_manager.config")
-    @patch("seer.services.browser.profile_manager.RecordingService")
     @patch("seer.services.browser.profile_manager.BrowserPoolManager")
-    async def test_complete_session_extracts_domains(self, mock_pool_cls, mock_rec_cls, mock_config, manager, mock_user, profile_id, sample_storage_state):
-        mock_config.browser_recording_enabled = False
-
+    async def test_complete_session_extracts_domains(self, mock_pool_cls, manager, mock_user, profile_id, sample_storage_state):
         mock_managed = MagicMock()
         mock_managed.user_id = str(mock_user.user_id)
-        mock_managed.recording_id = None
 
         mock_pool = MagicMock()
         mock_pool.get_session = MagicMock(return_value=mock_managed)
@@ -623,15 +498,10 @@ class TestCompleteInteractiveSession:
         assert "example.com" in result["logged_in_domains"]
         assert "github.com" in result["logged_in_domains"]
 
-    @patch("seer.services.browser.profile_manager.config")
-    @patch("seer.services.browser.profile_manager.RecordingService")
     @patch("seer.services.browser.profile_manager.BrowserPoolManager")
-    async def test_complete_session_returns_result_dict(self, mock_pool_cls, mock_rec_cls, mock_config, manager, mock_user, profile_id, sample_storage_state):
-        mock_config.browser_recording_enabled = False
-
+    async def test_complete_session_returns_result_dict(self, mock_pool_cls, manager, mock_user, profile_id, sample_storage_state):
         mock_managed = MagicMock()
         mock_managed.user_id = str(mock_user.user_id)
-        mock_managed.recording_id = None
 
         mock_pool = MagicMock()
         mock_pool.get_session = MagicMock(return_value=mock_managed)
@@ -646,43 +516,10 @@ class TestCompleteInteractiveSession:
         assert "logged_in_domains" in result
         assert result["status"] == "session_saved"
 
-    @patch("seer.services.browser.profile_manager.config")
-    @patch("seer.services.browser.profile_manager.RecordingService")
     @patch("seer.services.browser.profile_manager.BrowserPoolManager")
-    async def test_complete_session_handles_recording_failure(self, mock_pool_cls, mock_rec_cls, mock_config, manager, mock_user, profile_id, sample_storage_state):
-        mock_config.browser_recording_enabled = True
-
+    async def test_complete_session_no_storage_state(self, mock_pool_cls, manager, mock_user, profile_id):
         mock_managed = MagicMock()
         mock_managed.user_id = str(mock_user.user_id)
-        mock_managed.recording_id = "rec-123"
-        mock_managed.start_url = "https://example.com"
-
-        mock_pool = MagicMock()
-        mock_pool.get_session = MagicMock(return_value=mock_managed)
-        mock_pool.release_session = AsyncMock(return_value=sample_storage_state)
-        mock_pool_cls.get_instance = AsyncMock(return_value=mock_pool)
-
-        mock_recorder = MagicMock()
-        mock_recorder.save_recording = AsyncMock(side_effect=RuntimeError("Save failed"))
-        mock_rec_cls.get_instance = AsyncMock(return_value=mock_recorder)
-
-        manager._session_context.save_session_state = AsyncMock()
-
-        # Should not raise, just log warning and continue
-        result = await manager.complete_interactive_session(mock_user, profile_id, "sess-123")
-
-        assert result["recording_id"] is None
-        assert result["status"] == "session_saved"
-
-    @patch("seer.services.browser.profile_manager.config")
-    @patch("seer.services.browser.profile_manager.RecordingService")
-    @patch("seer.services.browser.profile_manager.BrowserPoolManager")
-    async def test_complete_session_no_storage_state(self, mock_pool_cls, mock_rec_cls, mock_config, manager, mock_user, profile_id):
-        mock_config.browser_recording_enabled = False
-
-        mock_managed = MagicMock()
-        mock_managed.user_id = str(mock_user.user_id)
-        mock_managed.recording_id = None
 
         mock_pool = MagicMock()
         mock_pool.get_session = MagicMock(return_value=mock_managed)

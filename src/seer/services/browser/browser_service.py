@@ -22,11 +22,13 @@ from pydantic import BaseModel, create_model
 from seer.config import config
 from seer.database import User
 from seer.services.browser.pool_manager import BrowserPoolManager
+from seer.services.browser.recording_service import RecordingService
 from seer.services.browser.session_context_manager import SessionContextManager
 
 if TYPE_CHECKING:
     from browser_use import BrowserSession
     from seer.core.files.service import WorkflowFileSystem
+    from seer.services.browser.pool_manager import ManagedSession
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +199,46 @@ class BrowserService:
             timeout=timeout_seconds
         )
 
+    async def _start_recording_if_enabled(
+        self,
+        managed: "ManagedSession",
+        start_url: Optional[str],
+    ) -> None:
+        """Start rrweb recording for session replay if enabled."""
+        if not config.browser_recording_enabled:
+            return
+        try:
+            recorder = await RecordingService.get_instance()
+            managed.recording_id = await recorder.start_recording(
+                managed.id, managed.session, start_url=start_url
+            )
+            managed.start_url = start_url
+        except Exception as e:
+            logger.warning(f"Failed to start workflow recording: {e}")
+
+    async def _save_recording_if_enabled(
+        self,
+        managed: "ManagedSession",
+        user: Optional[User],
+        browser_profile_id: Optional[str],
+        workflow_run_id: Optional[str],
+    ) -> None:
+        """Save rrweb recording if enabled and recording was started."""
+        if not (managed.recording_id and config.browser_recording_enabled and user):
+            return
+        try:
+            recorder = await RecordingService.get_instance()
+            await recorder.save_recording(
+                managed.id,
+                user,
+                profile_id=browser_profile_id,
+                workflow_run_id=workflow_run_id,
+                session_type="workflow",
+                start_url=managed.start_url,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to save workflow recording: {e}")
+
     async def execute_task(
         self,
         user: Optional[User],
@@ -235,15 +277,17 @@ class BrowserService:
         """
         logger.info(f"Executing browser task: {task[:100]}...")
 
-        storage_state = await self._load_storage_state(user, browser_profile_id)
-
         pool = await BrowserPoolManager.get_instance()
         managed = await pool.create_session(
             user_id=str(user.user_id) if user else "anonymous",
             profile_id=browser_profile_id,
             session_type="workflow",
-            storage_state=storage_state,
+            storage_state=await self._load_storage_state(user, browser_profile_id),
             timeout=timeout_seconds,
+        )
+
+        await self._start_recording_if_enabled(
+            managed, inputs.get("url") or inputs.get("start_url")
         )
 
         try:
@@ -251,8 +295,6 @@ class BrowserService:
                 task, inputs, extraction_schema, max_steps, timeout_seconds,
                 browser_session=managed.session,
             )
-
-            usage_metadata = self._extract_usage_metadata(history)
 
             return {
                 "success": True,
@@ -266,20 +308,17 @@ class BrowserService:
                     workflow_run_id=workflow_run_id,
                     user=user,
                 ),
-                "usage": usage_metadata,
+                "usage": self._extract_usage_metadata(history),
             }
 
         except asyncio.TimeoutError:
             logger.warning(f"Browser task timed out after {timeout_seconds}s")
-            result = self._build_error_result(f"Task timed out after {timeout_seconds} seconds")
-            result["usage"] = None
-            return result
+            return {**self._build_error_result(f"Task timed out after {timeout_seconds} seconds"), "usage": None}
         except Exception as e:
             logger.error(f"Browser task failed: {e}")
-            result = self._build_error_result(f"Task failed: {str(e)}")
-            result["usage"] = None
-            return result
+            return {**self._build_error_result(f"Task failed: {str(e)}"), "usage": None}
         finally:
+            await self._save_recording_if_enabled(managed, user, browser_profile_id, workflow_run_id)
             final_state = await pool.release_session(managed.id)
             if final_state and browser_profile_id and user:
                 await self._session_context.save_session_state(

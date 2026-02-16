@@ -20,7 +20,6 @@ from seer.database import User
 from seer.database.models_browser import BrowserProfile
 from seer.services.browser.encryption import SessionEncryptor
 from seer.services.browser.pool_manager import BrowserPoolManager
-from seer.services.browser.recording_service import RecordingService
 from seer.services.browser.session_context_manager import SessionContextManager
 from seer.services.browser.stealth_config import CHROME_USER_AGENTS, get_headed_stealth_args
 
@@ -267,24 +266,9 @@ class BrowserProfileManager:
         except Exception as e:
             logger.warning(f"Failed to navigate to {target_url}: {e}")
 
-        # Start recording if enabled (use singleton so events persist to save_recording)
-        recording_id = None
-        if config.browser_recording_enabled:
-            try:
-                recorder = await RecordingService.get_instance()
-                recording_id = await recorder.start_recording(
-                    managed.id, managed.session, start_url=target_url
-                )
-                # Store recording metadata in managed session for complete_interactive_session
-                managed.recording_id = recording_id
-                managed.start_url = target_url
-            except Exception as e:
-                logger.warning(f"Failed to start recording: {e}")
-
         return {
             "session_id": managed.id,
             "profile_id": str(profile_id),
-            "recording_id": recording_id,
             "status": "created",
         }
 
@@ -302,7 +286,7 @@ class BrowserProfileManager:
             session_id: Pool session ID to complete
 
         Returns:
-            Dict with profile_id, logged_in_domains, recording_id, and status
+            Dict with profile_id, logged_in_domains, and status
         """
         pool = await BrowserPoolManager.get_instance()
         managed = pool.get_session(session_id)
@@ -310,22 +294,6 @@ class BrowserProfileManager:
             raise ValueError(f"Session {session_id} not found in pool")
         if managed.user_id != str(user.user_id):
             raise PermissionError("Session does not belong to this user")
-
-        # Save recording BEFORE releasing session (events are still in RecordingService)
-        recording_id = None
-        if managed.recording_id and config.browser_recording_enabled:
-            try:
-                recorder = await RecordingService.get_instance()
-                recording_id = await recorder.save_recording(
-                    session_id,
-                    user,
-                    profile_id=str(profile_id),
-                    workflow_run_id=None,
-                    session_type="interactive",
-                    start_url=managed.start_url,
-                )
-            except Exception as e:
-                logger.warning(f"Failed to save recording for session {session_id}: {e}")
 
         # Release session (exports storage state and stops browser)
         storage_state = await pool.release_session(session_id)
@@ -340,7 +308,6 @@ class BrowserProfileManager:
         return {
             "profile_id": str(profile_id),
             "logged_in_domains": domains,
-            "recording_id": recording_id,
             "status": "session_saved",
         }
 

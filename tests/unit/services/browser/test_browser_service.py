@@ -829,3 +829,274 @@ class TestGetAgentLlm:
 
         with pytest.raises(ValueError, match="OPENROUTER_API_KEY"):
             browser_service._get_agent_llm()
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+class TestWorkflowRecording:
+    """Test workflow session recording integration."""
+
+    @patch("seer.services.browser.browser_service.RecordingService")
+    @patch("seer.services.browser.browser_service.BrowserPoolManager")
+    @patch("seer.services.browser.browser_service.Agent")
+    @patch("seer.services.browser.browser_service.ChatOpenAI")
+    @patch("seer.services.browser.browser_service.config")
+    async def test_starts_recording_when_enabled(
+        self, mock_config, mock_openai_cls, mock_agent_cls, mock_pool_cls, mock_rec_cls,
+        browser_service, mock_user, mock_agent_history
+    ):
+        """Test that recording is started when config.browser_recording_enabled=True."""
+        mock_config.openrouter_api_key = "test-api-key"
+        mock_config.browser_recording_enabled = True
+
+        mock_managed = MagicMock()
+        mock_managed.id = "sess-123"
+        mock_managed.session = MagicMock()
+        mock_managed.recording_id = None
+        mock_managed.start_url = None
+
+        mock_pool = MagicMock()
+        mock_pool.create_session = AsyncMock(return_value=mock_managed)
+        mock_pool.release_session = AsyncMock(return_value=None)
+        mock_pool_cls.get_instance = AsyncMock(return_value=mock_pool)
+
+        mock_recorder = MagicMock()
+        mock_recorder.start_recording = AsyncMock(return_value="rec-456")
+        mock_recorder.save_recording = AsyncMock(return_value="rec-456")
+        mock_rec_cls.get_instance = AsyncMock(return_value=mock_recorder)
+
+        mock_agent = MagicMock()
+        mock_agent.run = AsyncMock(return_value=mock_agent_history)
+        mock_agent_cls.return_value = mock_agent
+
+        browser_service._session_context.load_session_state = AsyncMock(return_value=None)
+
+        await browser_service.execute_task(
+            user=mock_user,
+            task="Click button",
+            inputs={"url": "https://example.com"},
+        )
+
+        # Verify start_recording was called
+        mock_recorder.start_recording.assert_called_once()
+        call_args = mock_recorder.start_recording.call_args
+        assert call_args[0][0] == "sess-123"  # session_id
+        assert call_args[1]["start_url"] == "https://example.com"
+
+    @patch("seer.services.browser.browser_service.RecordingService")
+    @patch("seer.services.browser.browser_service.BrowserPoolManager")
+    @patch("seer.services.browser.browser_service.Agent")
+    @patch("seer.services.browser.browser_service.ChatOpenAI")
+    @patch("seer.services.browser.browser_service.config")
+    async def test_saves_recording_with_workflow_run_id(
+        self, mock_config, mock_openai_cls, mock_agent_cls, mock_pool_cls, mock_rec_cls,
+        browser_service, mock_user, mock_agent_history
+    ):
+        """Test that recording is saved with correct workflow_run_id and session_type."""
+        mock_config.openrouter_api_key = "test-api-key"
+        mock_config.browser_recording_enabled = True
+
+        mock_managed = MagicMock()
+        mock_managed.id = "sess-123"
+        mock_managed.session = MagicMock()
+        mock_managed.recording_id = "rec-456"
+        mock_managed.start_url = "https://example.com"
+
+        mock_pool = MagicMock()
+        mock_pool.create_session = AsyncMock(return_value=mock_managed)
+        mock_pool.release_session = AsyncMock(return_value=None)
+        mock_pool_cls.get_instance = AsyncMock(return_value=mock_pool)
+
+        mock_recorder = MagicMock()
+        mock_recorder.start_recording = AsyncMock(return_value="rec-456")
+        mock_recorder.save_recording = AsyncMock(return_value="rec-456")
+        mock_rec_cls.get_instance = AsyncMock(return_value=mock_recorder)
+
+        mock_agent = MagicMock()
+        mock_agent.run = AsyncMock(return_value=mock_agent_history)
+        mock_agent_cls.return_value = mock_agent
+
+        browser_service._session_context.load_session_state = AsyncMock(return_value=None)
+
+        await browser_service.execute_task(
+            user=mock_user,
+            task="Click button",
+            inputs={},
+            workflow_run_id="run_789",
+        )
+
+        # Verify save_recording was called with correct params
+        mock_recorder.save_recording.assert_called_once()
+        call_kwargs = mock_recorder.save_recording.call_args.kwargs
+        assert call_kwargs["workflow_run_id"] == "run_789"
+        assert call_kwargs["session_type"] == "workflow"
+
+    @patch("seer.services.browser.browser_service.RecordingService")
+    @patch("seer.services.browser.browser_service.BrowserPoolManager")
+    @patch("seer.services.browser.browser_service.Agent")
+    @patch("seer.services.browser.browser_service.ChatOpenAI")
+    @patch("seer.services.browser.browser_service.config")
+    async def test_recording_skipped_when_disabled(
+        self, mock_config, mock_openai_cls, mock_agent_cls, mock_pool_cls, mock_rec_cls,
+        browser_service, mock_user, mock_agent_history
+    ):
+        """Test that recording is not started when config.browser_recording_enabled=False."""
+        mock_config.openrouter_api_key = "test-api-key"
+        mock_config.browser_recording_enabled = False
+
+        mock_managed = MagicMock()
+        mock_managed.id = "sess-123"
+        mock_managed.session = MagicMock()
+        mock_managed.recording_id = None
+
+        mock_pool = MagicMock()
+        mock_pool.create_session = AsyncMock(return_value=mock_managed)
+        mock_pool.release_session = AsyncMock(return_value=None)
+        mock_pool_cls.get_instance = AsyncMock(return_value=mock_pool)
+
+        mock_agent = MagicMock()
+        mock_agent.run = AsyncMock(return_value=mock_agent_history)
+        mock_agent_cls.return_value = mock_agent
+
+        browser_service._session_context.load_session_state = AsyncMock(return_value=None)
+
+        await browser_service.execute_task(
+            user=mock_user,
+            task="Click button",
+            inputs={},
+        )
+
+        # Verify RecordingService was never accessed
+        mock_rec_cls.get_instance.assert_not_called()
+
+    @patch("seer.services.browser.browser_service.RecordingService")
+    @patch("seer.services.browser.browser_service.BrowserPoolManager")
+    @patch("seer.services.browser.browser_service.Agent")
+    @patch("seer.services.browser.browser_service.ChatOpenAI")
+    @patch("seer.services.browser.browser_service.config")
+    async def test_recording_failure_does_not_fail_workflow(
+        self, mock_config, mock_openai_cls, mock_agent_cls, mock_pool_cls, mock_rec_cls,
+        browser_service, mock_user, mock_agent_history
+    ):
+        """Test that recording failures don't cause workflow failure."""
+        mock_config.openrouter_api_key = "test-api-key"
+        mock_config.browser_recording_enabled = True
+
+        mock_managed = MagicMock()
+        mock_managed.id = "sess-123"
+        mock_managed.session = MagicMock()
+        mock_managed.recording_id = None
+        mock_managed.start_url = None
+
+        mock_pool = MagicMock()
+        mock_pool.create_session = AsyncMock(return_value=mock_managed)
+        mock_pool.release_session = AsyncMock(return_value=None)
+        mock_pool_cls.get_instance = AsyncMock(return_value=mock_pool)
+
+        mock_recorder = MagicMock()
+        mock_recorder.start_recording = AsyncMock(side_effect=RuntimeError("Recording failed"))
+        mock_rec_cls.get_instance = AsyncMock(return_value=mock_recorder)
+
+        mock_agent = MagicMock()
+        mock_agent.run = AsyncMock(return_value=mock_agent_history)
+        mock_agent_cls.return_value = mock_agent
+
+        browser_service._session_context.load_session_state = AsyncMock(return_value=None)
+
+        # Should not raise despite recording failure
+        result = await browser_service.execute_task(
+            user=mock_user,
+            task="Click button",
+            inputs={},
+        )
+
+        assert result["success"] is True
+
+    @patch("seer.services.browser.browser_service.RecordingService")
+    @patch("seer.services.browser.browser_service.BrowserPoolManager")
+    @patch("seer.services.browser.browser_service.Agent")
+    @patch("seer.services.browser.browser_service.ChatOpenAI")
+    @patch("seer.services.browser.browser_service.config")
+    async def test_recording_skipped_when_no_user(
+        self, mock_config, mock_openai_cls, mock_agent_cls, mock_pool_cls, mock_rec_cls,
+        browser_service, mock_agent_history
+    ):
+        """Test that recording save is skipped when user is None (anonymous)."""
+        mock_config.openrouter_api_key = "test-api-key"
+        mock_config.browser_recording_enabled = True
+
+        mock_managed = MagicMock()
+        mock_managed.id = "sess-123"
+        mock_managed.session = MagicMock()
+        mock_managed.recording_id = "rec-456"  # Recording was started
+        mock_managed.start_url = "https://example.com"
+
+        mock_pool = MagicMock()
+        mock_pool.create_session = AsyncMock(return_value=mock_managed)
+        mock_pool.release_session = AsyncMock(return_value=None)
+        mock_pool_cls.get_instance = AsyncMock(return_value=mock_pool)
+
+        mock_recorder = MagicMock()
+        mock_recorder.start_recording = AsyncMock(return_value="rec-456")
+        mock_recorder.save_recording = AsyncMock()
+        mock_rec_cls.get_instance = AsyncMock(return_value=mock_recorder)
+
+        mock_agent = MagicMock()
+        mock_agent.run = AsyncMock(return_value=mock_agent_history)
+        mock_agent_cls.return_value = mock_agent
+
+        browser_service._session_context.load_session_state = AsyncMock(return_value=None)
+
+        await browser_service.execute_task(
+            user=None,  # Anonymous user
+            task="Click button",
+            inputs={},
+        )
+
+        # save_recording should NOT be called when user is None
+        mock_recorder.save_recording.assert_not_called()
+
+    @patch("seer.services.browser.browser_service.RecordingService")
+    @patch("seer.services.browser.browser_service.BrowserPoolManager")
+    @patch("seer.services.browser.browser_service.Agent")
+    @patch("seer.services.browser.browser_service.ChatOpenAI")
+    @patch("seer.services.browser.browser_service.config")
+    async def test_extracts_start_url_from_inputs(
+        self, mock_config, mock_openai_cls, mock_agent_cls, mock_pool_cls, mock_rec_cls,
+        browser_service, mock_user, mock_agent_history
+    ):
+        """Test that start_url is extracted from inputs['url'] or inputs['start_url']."""
+        mock_config.openrouter_api_key = "test-api-key"
+        mock_config.browser_recording_enabled = True
+
+        mock_managed = MagicMock()
+        mock_managed.id = "sess-123"
+        mock_managed.session = MagicMock()
+        mock_managed.recording_id = None
+        mock_managed.start_url = None
+
+        mock_pool = MagicMock()
+        mock_pool.create_session = AsyncMock(return_value=mock_managed)
+        mock_pool.release_session = AsyncMock(return_value=None)
+        mock_pool_cls.get_instance = AsyncMock(return_value=mock_pool)
+
+        mock_recorder = MagicMock()
+        mock_recorder.start_recording = AsyncMock(return_value="rec-456")
+        mock_recorder.save_recording = AsyncMock()
+        mock_rec_cls.get_instance = AsyncMock(return_value=mock_recorder)
+
+        mock_agent = MagicMock()
+        mock_agent.run = AsyncMock(return_value=mock_agent_history)
+        mock_agent_cls.return_value = mock_agent
+
+        browser_service._session_context.load_session_state = AsyncMock(return_value=None)
+
+        # Test with 'start_url' key
+        await browser_service.execute_task(
+            user=mock_user,
+            task="Click button",
+            inputs={"start_url": "https://start-url-example.com"},
+        )
+
+        call_kwargs = mock_recorder.start_recording.call_args[1]
+        assert call_kwargs["start_url"] == "https://start-url-example.com"
