@@ -12,6 +12,7 @@ from seer.services.browser.browser_service import (
     BrowserService,
     _json_type_to_python,
     _strip_markdown_fencing,
+    format_browser_history,
     json_schema_to_pydantic,
 )
 
@@ -65,6 +66,19 @@ def mock_agent_history():
     history.final_result = MagicMock(return_value='{"name": "Widget", "price": 29.99}')
     history.screenshots = MagicMock(return_value=[])
     history.__str__ = MagicMock(return_value="Task completed successfully")
+
+    # Methods needed for format_browser_history
+    history.action_names = MagicMock(return_value=["navigate", "click"])
+
+    mock_result = MagicMock()
+    mock_result.extracted_content = "Clicked the login button"
+    mock_result.long_term_memory = None
+    mock_result.error = None
+    history.action_results = MagicMock(return_value=[mock_result])
+
+    history.is_done = MagicMock(return_value=True)
+    history.is_successful = MagicMock(return_value=True)
+    history.has_errors = MagicMock(return_value=False)
     return history
 
 
@@ -141,6 +155,164 @@ class TestStripMarkdownFencing:
         parsed = json.loads(result)
         assert "thinking" in parsed
         assert "shops" in parsed
+
+
+@pytest.mark.unit
+class TestFormatBrowserHistory:
+    """Test format_browser_history function.
+
+    This function transforms verbose AgentHistoryList output into a
+    human-readable summary for the /history API response.
+    """
+
+    def test_format_none_history(self):
+        """Test formatting None history returns empty structure."""
+        result = format_browser_history(None)
+        assert result == {"steps": [], "completed": False, "success": False}
+
+    def test_format_with_steps(self):
+        """Test formatting history with multiple steps."""
+        mock_history = MagicMock()
+        mock_history.action_names.return_value = ["navigate", "input_text", "click"]
+
+        mock_result1 = MagicMock()
+        mock_result1.extracted_content = "Navigated to https://example.com"
+        mock_result1.long_term_memory = None
+        mock_result1.error = None
+
+        mock_result2 = MagicMock()
+        mock_result2.extracted_content = "Typed 'search query'"
+        mock_result2.long_term_memory = None
+        mock_result2.error = None
+
+        mock_result3 = MagicMock()
+        mock_result3.extracted_content = "Clicked Search button"
+        mock_result3.long_term_memory = None
+        mock_result3.error = None
+
+        mock_history.action_results.return_value = [mock_result1, mock_result2, mock_result3]
+        mock_history.is_done.return_value = True
+        mock_history.is_successful.return_value = True
+        mock_history.has_errors.return_value = False
+
+        result = format_browser_history(mock_history)
+
+        assert len(result["steps"]) == 3
+        assert result["steps"][0]["action"] == "navigate"
+        assert result["steps"][0]["description"] == "Navigated to https://example.com"
+        assert result["steps"][1]["action"] == "input_text"
+        assert result["steps"][2]["action"] == "click"
+        assert result["completed"] is True
+        assert result["success"] is True
+
+    def test_format_with_errors(self):
+        """Test formatting history that contains errors."""
+        mock_history = MagicMock()
+        mock_history.action_names.return_value = ["click"]
+
+        mock_result = MagicMock()
+        mock_result.extracted_content = "Attempted to click button"
+        mock_result.long_term_memory = None
+        mock_result.error = "Element not found"
+
+        mock_history.action_results.return_value = [mock_result]
+        mock_history.is_done.return_value = True
+        mock_history.is_successful.return_value = False
+        mock_history.has_errors.return_value = True
+        mock_history.errors.return_value = ["Element not found"]
+
+        result = format_browser_history(mock_history)
+
+        assert result["steps"][0]["error"] == "Element not found"
+        assert result["success"] is False
+        assert "errors" in result
+        assert "Element not found" in result["errors"]
+
+    def test_format_uses_long_term_memory_fallback(self):
+        """Test that long_term_memory is used when extracted_content is None."""
+        mock_history = MagicMock()
+        mock_history.action_names.return_value = ["navigate"]
+
+        mock_result = MagicMock()
+        mock_result.extracted_content = None
+        mock_result.long_term_memory = "Navigated to target page"
+        mock_result.error = None
+
+        mock_history.action_results.return_value = [mock_result]
+        mock_history.is_done.return_value = True
+        mock_history.is_successful.return_value = True
+        mock_history.has_errors.return_value = False
+
+        result = format_browser_history(mock_history)
+
+        assert result["steps"][0]["description"] == "Navigated to target page"
+
+    def test_format_fallback_description(self):
+        """Test fallback description when both extracted_content and long_term_memory are None."""
+        mock_history = MagicMock()
+        mock_history.action_names.return_value = ["click"]
+
+        mock_result = MagicMock()
+        mock_result.extracted_content = None
+        mock_result.long_term_memory = None
+        mock_result.error = None
+
+        mock_history.action_results.return_value = [mock_result]
+        mock_history.is_done.return_value = True
+        mock_history.is_successful.return_value = True
+        mock_history.has_errors.return_value = False
+
+        result = format_browser_history(mock_history)
+
+        assert result["steps"][0]["description"] == "Performed click action"
+
+    def test_format_handles_missing_action_names(self):
+        """Test handling when action_names has fewer items than action_results."""
+        mock_history = MagicMock()
+        mock_history.action_names.return_value = ["navigate"]  # Only 1
+
+        mock_result1 = MagicMock()
+        mock_result1.extracted_content = "Step 1"
+        mock_result1.long_term_memory = None
+        mock_result1.error = None
+
+        mock_result2 = MagicMock()
+        mock_result2.extracted_content = "Step 2"
+        mock_result2.long_term_memory = None
+        mock_result2.error = None
+
+        mock_history.action_results.return_value = [mock_result1, mock_result2]  # 2 results
+        mock_history.is_done.return_value = True
+        mock_history.is_successful.return_value = True
+        mock_history.has_errors.return_value = False
+
+        result = format_browser_history(mock_history)
+
+        assert result["steps"][0]["action"] == "navigate"
+        assert result["steps"][1]["action"] == "unknown"
+
+    def test_format_handles_malformed_history(self):
+        """Test graceful handling of malformed history objects."""
+        mock_history = MagicMock()
+        mock_history.action_names.side_effect = AttributeError("No such method")
+
+        result = format_browser_history(mock_history)
+
+        # Should not raise, should return fallback with format_error
+        assert "format_error" in result
+        assert result["steps"] == []
+        assert result["completed"] is False
+        assert result["success"] is False
+
+    def test_format_handles_missing_methods(self):
+        """Test handling history object missing some methods."""
+        mock_history = MagicMock(spec=[])  # Empty spec = no methods
+
+        result = format_browser_history(mock_history)
+
+        # Should handle gracefully
+        assert result["steps"] == []
+        assert result["completed"] is False
 
 
 @pytest.mark.unit
