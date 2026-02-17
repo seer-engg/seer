@@ -278,3 +278,114 @@ class TestResolveFileInputs:
 
         with pytest.raises(FileResolutionError, match="index 1"):
             await resolve_file_inputs(inputs, mock_context)
+
+
+# =============================================================================
+# Tests for Nested File Reference Unwrapping
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestUnwrapFileWrapper:
+    """Tests for unwrapping nested file references from tool output wrappers."""
+
+    @pytest.fixture
+    def wrapped_workflow_file_ref(self, sample_workflow_file_ref) -> dict:
+        """Create a wrapped file reference like google_drive_download_file returns."""
+        return {
+            "file": sample_workflow_file_ref,
+            "size_bytes": 1024,
+            "exported": True,
+            "export_mime_type": "text/csv",
+        }
+
+    @pytest.fixture
+    def wrapped_static_file_ref(self, sample_static_file_ref) -> dict:
+        """Create a wrapped static file reference."""
+        return {
+            "file": sample_static_file_ref,
+            "size_bytes": 500,
+        }
+
+    @pytest.mark.asyncio
+    async def test_resolve_wrapped_workflow_file_ref(self, wrapped_workflow_file_ref, mock_context):
+        """Test resolution unwraps nested WorkflowFileRef."""
+        expected_content = b"CSV content here"
+        mock_context.file_system.get_file_content = AsyncMock(return_value=expected_content)
+
+        content, mime_type, filename = await resolve_file_input(wrapped_workflow_file_ref, mock_context)
+
+        assert content == expected_content
+        assert mime_type == "application/pdf"
+        assert filename == "document.pdf"
+
+    @pytest.mark.asyncio
+    async def test_resolve_wrapped_static_file_ref(self, wrapped_static_file_ref, mock_context):
+        """Test resolution unwraps nested static_file_ref."""
+        expected_content = b"Static file content"
+        file_ref = WorkflowFileRef(
+            file_id="user-file-789",
+            storage_path="s3://bucket/user/file.txt",
+            filename="userfile.txt",
+            mime_type="text/plain",
+            size_bytes=100,
+            workflow_run_id="",
+            created_at=datetime.now(timezone.utc),
+        )
+        mock_context.file_system.get_file_by_id = AsyncMock(return_value=(expected_content, file_ref))
+
+        content, mime_type, filename = await resolve_file_input(wrapped_static_file_ref, mock_context)
+
+        assert content == expected_content
+        assert mime_type == "text/plain"
+        assert filename == "userfile.txt"
+
+    def test_validate_wrapped_workflow_file_ref(self, wrapped_workflow_file_ref):
+        """Test validation passes for wrapped WorkflowFileRef."""
+        assert validate_file_input_format(wrapped_workflow_file_ref) is True
+
+    def test_validate_wrapped_static_file_ref(self, wrapped_static_file_ref):
+        """Test validation passes for wrapped static_file_ref."""
+        assert validate_file_input_format(wrapped_static_file_ref) is True
+
+    def test_no_unwrap_when_file_is_string(self):
+        """Test that {'file': 'some_string'} is NOT unwrapped (edge case)."""
+        invalid_wrapper = {"file": "some_base64_string", "size_bytes": 100}
+        # Should not be valid since the nested value isn't a file ref
+        assert validate_file_input_format(invalid_wrapper) is False
+
+    def test_no_unwrap_when_file_is_invalid_dict(self):
+        """Test that {'file': {'random': 'dict'}} is NOT unwrapped."""
+        invalid_wrapper = {"file": {"random": "dict"}, "size_bytes": 100}
+        assert validate_file_input_format(invalid_wrapper) is False
+
+    def test_no_unwrap_when_no_file_key(self):
+        """Test that dicts without 'file' key are not affected."""
+        no_file_key = {"content": "something", "size_bytes": 100}
+        assert validate_file_input_format(no_file_key) is False
+
+    def test_deeply_nested_does_not_recurse(self, sample_workflow_file_ref):
+        """Test that only one level of unwrapping occurs (no infinite recursion)."""
+        # Create a doubly-nested wrapper (edge case that shouldn't happen in practice)
+        single_wrap = {"file": sample_workflow_file_ref, "size_bytes": 1024}
+        double_wrap = {"file": single_wrap, "size_bytes": 1024}
+
+        # Double wrap should fail validation (only unwraps once)
+        assert validate_file_input_format(double_wrap) is False
+
+    @pytest.mark.asyncio
+    async def test_resolve_supabase_style_wrapper(self, sample_workflow_file_ref, mock_context):
+        """Test resolution of Supabase storage download output format."""
+        # Supabase returns: {"file": {...}, "size_bytes": N}
+        supabase_output = {
+            "file": sample_workflow_file_ref,
+            "size_bytes": 2048,
+        }
+        expected_content = b"Supabase file content"
+        mock_context.file_system.get_file_content = AsyncMock(return_value=expected_content)
+
+        content, mime_type, filename = await resolve_file_input(supabase_output, mock_context)
+
+        assert content == expected_content
+        assert mime_type == "application/pdf"
+        assert filename == "document.pdf"

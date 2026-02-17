@@ -8,6 +8,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from seer.core.compiler.type_env import build_type_environment
+from seer.core.errors import ValidationPhaseError
 from seer.core.nodes.base import TypeRegistrationContext
 from seer.core.nodes.registry import node_type_registry
 from seer.core.expr.typecheck import TypeEnvironment
@@ -111,6 +112,38 @@ def test_browser_node_with_save_screenshots_enabled():
     assert node.save_screenshots is True
 
 
+def test_browser_node_with_custom_model():
+    """Test BrowserNode with custom model specified."""
+    node = BrowserNode(
+        id="browse",
+        task="Extract data from webpage",
+        model="openai/gpt-4o",
+    )
+
+    assert node.model == "openai/gpt-4o"
+
+
+def test_browser_node_model_defaults_to_gemini():
+    """Test BrowserNode model defaults to google/gemini-2.5-flash."""
+    node = BrowserNode(
+        id="browse",
+        task="Extract data from webpage",
+    )
+
+    assert node.model == "google/gemini-2.5-flash"
+
+
+def test_browser_node_with_claude_model():
+    """Test BrowserNode with Claude model."""
+    node = BrowserNode(
+        id="browse",
+        task="Extract data from webpage",
+        model="anthropic/claude-sonnet-4.5",
+    )
+
+    assert node.model == "anthropic/claude-sonnet-4.5"
+
+
 def test_browser_node_with_all_features():
     """Test BrowserNode with all features configured."""
     node = BrowserNode(
@@ -125,6 +158,7 @@ def test_browser_node_with_all_features():
         ),
         save_screenshots=True,
         inputs={"url": "https://example.com"},
+        model="openai/gpt-4o",
     )
 
     assert node.browser_profile_id == "550e8400-e29b-41d4-a716-446655440000"
@@ -134,6 +168,7 @@ def test_browser_node_with_all_features():
     assert node.expect_outputs.mode == OutputMode.json
     assert node.save_screenshots is True
     assert node.inputs == {"url": "https://example.com"}
+    assert node.model == "openai/gpt-4o"
 
 
 def test_browser_node_max_steps_validation():
@@ -372,6 +407,69 @@ def test_type_env_browser_node_extracted_data_reference():
     validate_references(spec, env)  # Should complete without exception
 
 
+def test_type_env_browser_node_rejects_invalid_property_access():
+    """Test that invalid references like ${browser_id.shops} are caught at compile time.
+
+    This regression test ensures that the type checker catches invalid property access
+    on browser node outputs. Users must use ${node.extracted_data.field} not ${node.field}.
+
+    Bug context: Browser node schema had additionalProperties={} which allowed any
+    property access to pass validation. Changed to additionalProperties=False to
+    enforce strict type checking.
+    """
+    from seer.core.compiler.validate_refs import validate_references
+    from seer.core.errors import ValidationPhaseError
+
+    spec = WorkflowSpec(
+        version="2",
+        nodes=[
+            BrowserNode(
+                id="scrape_maps",
+                task="Find coffee shops",
+                expect_outputs=OutputContract(
+                    mode=OutputMode.json,
+                    schema={
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "shops": {"type": "array"},
+                            },
+                        }
+                    },
+                ),
+            ),
+            LLMNode(
+                id="format_data",
+                inputs={
+                    "model": "gpt-4o",
+                    # WRONG: should be ${scrape_maps.extracted_data.shops}
+                    "prompt": "Format these shops: ${scrape_maps.shops}",
+                },
+            ),
+        ],
+        edges=[
+            Edge(source="scrape_maps", target="format_data"),
+        ],
+    )
+
+    tool_registry = ToolRegistry()
+    schema_registry = SchemaRegistry()
+
+    env = build_type_environment(
+        spec,
+        schema_registry=schema_registry,
+        tool_registry=tool_registry,
+    )
+
+    # This SHOULD raise - shops is not a direct property of browser output
+    # The correct reference is ${scrape_maps.extracted_data.shops}
+    with pytest.raises(ValidationPhaseError) as exc_info:
+        validate_references(spec, env)
+
+    assert "shops" in str(exc_info.value)
+    assert "scrape_maps" in str(exc_info.value)
+
+
 # =============================================================================
 # WorkflowSpec Parsing Tests
 # =============================================================================
@@ -483,6 +581,28 @@ def test_workflow_spec_browser_with_save_screenshots():
 
     assert isinstance(node, BrowserNode)
     assert node.save_screenshots is True
+
+
+def test_workflow_spec_browser_with_model():
+    """Test parsing workflow spec with custom model specified."""
+    spec_dict = {
+        "version": "2",
+        "nodes": [
+            {
+                "id": "browse",
+                "type": "browser",
+                "task": "Extract data from webpage",
+                "model": "openai/gpt-4o",
+            }
+        ],
+        "edges": [],
+    }
+
+    spec = WorkflowSpec.model_validate(spec_dict)
+    node = spec.nodes[0]
+
+    assert isinstance(node, BrowserNode)
+    assert node.model == "openai/gpt-4o"
 
 
 def test_workflow_spec_browser_with_structured_output_and_screenshots():
@@ -727,6 +847,77 @@ def test_json_schema_to_pydantic_browser_use_case():
     assert "pricing_tiers" in json_output
 
 
+def test_json_schema_to_pydantic_nested_objects():
+    """Test that nested objects are converted to proper Pydantic models, not Dict[str, Any].
+
+    This is critical for OpenAI's strict JSON Schema validation. When browser-use
+    extracts the schema via .model_json_schema(), nested objects must be proper models
+    to generate valid schemas with properties and required fields.
+    """
+    # Schema with nested objects (like the user's shops extraction schema)
+    schema = {
+        "type": "object",
+        "required": ["shops"],
+        "properties": {
+            "shops": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["name", "address"],
+                    "properties": {
+                        "name": {"type": "string"},
+                        "address": {"type": "string"},
+                        "phone": {"type": "string"},
+                        "rating": {"type": "number"},
+                    },
+                },
+            }
+        },
+    }
+
+    Model = json_schema_to_pydantic(schema)
+
+    # Verify shops field exists and is a List
+    assert "shops" in Model.model_fields
+    shops_field = Model.model_fields["shops"]
+
+    # Get the annotation (should be List[SomeNestedModel])
+    from typing import get_origin, get_args
+
+    shops_type = shops_field.annotation
+    assert get_origin(shops_type) is list, "shops should be a List type"
+
+    # Get the item type (should be a Pydantic BaseModel, not dict)
+    item_type = get_args(shops_type)[0]
+    assert issubclass(item_type, BaseModel), (
+        f"Array items should be a Pydantic model, got {item_type}. "
+        "Dict[str, Any] would break OpenAI's strict JSON Schema validation."
+    )
+
+    # Verify nested model has the expected fields
+    assert "name" in item_type.model_fields
+    assert "address" in item_type.model_fields
+    assert "phone" in item_type.model_fields
+    assert "rating" in item_type.model_fields
+
+    # Verify we can instantiate with proper data
+    instance = Model(
+        shops=[
+            {"name": "Coffee Shop", "address": "123 Main St", "phone": "555-1234", "rating": 4.5},
+            {"name": "Tea House", "address": "456 Oak Ave"},  # phone/rating are optional
+        ]
+    )
+    assert len(instance.shops) == 2
+    assert instance.shops[0].name == "Coffee Shop"
+    assert instance.shops[1].address == "456 Oak Ave"
+
+    # Verify JSON schema has proper nested structure (what browser-use sends to OpenAI)
+    json_schema = Model.model_json_schema()
+    # The shops items should have properties, not just {"type": "object"}
+    shops_items_schema = json_schema.get("$defs", {})
+    assert len(shops_items_schema) > 0, "Nested models should create $defs entries"
+
+
 # =============================================================================
 # Usage Metadata Extraction Tests
 # =============================================================================
@@ -734,7 +925,7 @@ def test_json_schema_to_pydantic_browser_use_case():
 
 def test_extract_usage_metadata_from_history():
     """Test extraction of usage metadata from browser_use history."""
-    from unittest.mock import MagicMock
+    from unittest.mock import MagicMock, patch
     from seer.services.browser.browser_service import BrowserService
 
     mock_history = MagicMock()
@@ -745,10 +936,12 @@ def test_extract_usage_metadata_from_history():
     mock_usage.entry_count = 10
     mock_history.usage = mock_usage
 
-    result = BrowserService._extract_usage_metadata(mock_history)
+    with patch("seer.services.browser.browser_service.config") as mock_config:
+        mock_config.default_llm_model = "test-model"
+        result = BrowserService._extract_usage_metadata(mock_history)
 
     assert result is not None
-    assert result["model"] == "moonshotai/kimi-k2.5"
+    assert result["model"] == "test-model"
     assert result["input_tokens"] == 5000
     assert result["output_tokens"] == 2000
     assert result["reasoning_tokens"] == 0
