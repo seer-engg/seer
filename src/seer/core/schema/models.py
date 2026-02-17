@@ -364,6 +364,16 @@ class BrowserNode(NodeBase):
         description="When True, save screenshots to S3 and return WorkflowFileRef objects"
     )
 
+    # LLM model for browser automation (OpenRouter format)
+    model: Optional[str] = Field(
+        default="google/gemini-2.5-flash",
+        description=(
+            "OpenRouter model identifier for browser automation agent. "
+            "Examples: 'openai/gpt-4o', 'anthropic/claude-sonnet-4.5', 'google/gemini-2.5-flash'. "
+            "Defaults to 'google/gemini-2.5-flash' for browser tasks."
+        )
+    )
+
 
 Node = Annotated[
     Union[ToolNode, LLMNode, MCPNode, IfNode, ForEachNode, HITLNode, ImageGenNode, BrowserNode],
