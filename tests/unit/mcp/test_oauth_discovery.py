@@ -7,6 +7,7 @@ from unittest.mock import patch
 from starlette.testclient import TestClient
 
 
+@pytest.mark.unit
 class TestOAuthProtectedResourceMetadata:
     """Tests for /.well-known/oauth-protected-resource endpoint."""
 

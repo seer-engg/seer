@@ -67,7 +67,11 @@ class GmailCreateDraftTool(GoogleAPIClient):
             "required": ["to", "subject", "body_text"],
         }
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Dict[str, Any]:
         to = _coerce_str_list(arguments.get("to"), [])
         if not to:
             raise HTTPException(status_code=400, detail="Parameter 'to' must be a non-empty list")
@@ -104,7 +108,7 @@ class GmailCreateDraftTool(GoogleAPIClient):
             "POST",
             f"{GMAIL_API_BASE}/drafts",
             access_token,
-            json_body=body
+            json_body=body,
         )
         return resp.json()
 
@@ -141,7 +145,11 @@ class GmailListDraftsTool(GoogleAPIClient):
             "required": [],
         }
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Dict[str, Any]:
         max_results = _coerce_int(arguments.get("max_results", 10), 10, min_value=1, max_value=100)
         q = arguments.get("q")
         page_token = arguments.get("page_token")
@@ -157,7 +165,7 @@ class GmailListDraftsTool(GoogleAPIClient):
             "GET",
             f"{GMAIL_API_BASE}/drafts",
             access_token,
-            params=params
+            params=params,
         )
         data = resp.json()
         return {"drafts": data.get("drafts", []) or [], "nextPageToken": data.get("nextPageToken")}
@@ -189,7 +197,11 @@ class GmailGetDraftTool(GoogleAPIClient):
             "required": ["draft_id"],
         }
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Dict[str, Any]:
         draft_id = str(arguments.get("draft_id") or "").strip()
         if not draft_id:
             raise HTTPException(status_code=400, detail="Parameter 'draft_id' is required")
@@ -205,7 +217,7 @@ class GmailGetDraftTool(GoogleAPIClient):
             "GET",
             f"{GMAIL_API_BASE}/drafts/{draft_id}",
             access_token,
-            params=params
+            params=params,
         )
         return resp.json()
 
@@ -235,7 +247,11 @@ class GmailSendDraftTool(GoogleAPIClient):
             "required": ["draft_id"],
         }
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Dict[str, Any]:
         draft_id = str(arguments.get("draft_id") or "").strip()
         if not draft_id:
             raise HTTPException(status_code=400, detail="Parameter 'draft_id' is required")
@@ -268,7 +284,7 @@ class GmailSendDraftTool(GoogleAPIClient):
             "POST",
             f"{GMAIL_API_BASE}/drafts/send",
             access_token,
-            json_body=body
+            json_body=body,
         )
         return resp.json()
 
@@ -295,7 +311,11 @@ class GmailDeleteDraftTool(GoogleAPIClient):
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {"type": "object", "properties": {"draft_id": {"type": "string"}}, "required": ["draft_id"]}
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+    ) -> Dict[str, Any]:
         draft_id = str(arguments.get("draft_id") or "").strip()
         if not draft_id:
             raise HTTPException(status_code=400, detail="Parameter 'draft_id' is required")
@@ -303,6 +323,6 @@ class GmailDeleteDraftTool(GoogleAPIClient):
         await self._make_request(
             "DELETE",
             f"{GMAIL_API_BASE}/drafts/{draft_id}",
-            access_token
+            access_token,
         )
         return {"status": "deleted", "draft_id": draft_id}

@@ -8,6 +8,7 @@ from seer.services.integrations.providers.discord import DiscordProvider
 from seer.services.integrations.providers.base import OAuthAuthorizeContext
 
 
+@pytest.mark.unit
 class TestDiscordProviderScopeHandling:
     """Test DiscordProvider.get_oauth_scope()."""
 
@@ -30,6 +31,7 @@ class TestDiscordProviderScopeHandling:
         assert scope == "bot"
 
 
+@pytest.mark.unit
 class TestCalculateRequestedPermissions:
     """Test DiscordProvider._calculate_requested_permissions()."""
 
@@ -82,6 +84,7 @@ class TestCalculateRequestedPermissions:
         assert perms == 3072  # Falls back to default
 
 
+@pytest.mark.unit
 class TestBuildAuthorizeKwargsFirstTime:
     """Test build_authorize_kwargs for first-time authorization."""
 
@@ -121,6 +124,7 @@ class TestBuildAuthorizeKwargsFirstTime:
         assert kwargs["permissions"] == 3072  # Combined: 1024 | 2048
 
 
+@pytest.mark.unit
 class TestBuildAuthorizeKwargsIncremental:
     """Test build_authorize_kwargs for incremental authorization."""
 
@@ -230,6 +234,7 @@ class TestBuildAuthorizeKwargsIncremental:
         assert kwargs["permissions"] == 3072
 
 
+@pytest.mark.unit
 class TestBuildAuthorizeKwargsStateAndScope:
     """Test that state and scope are always included in kwargs."""
 
@@ -270,6 +275,7 @@ class TestBuildAuthorizeKwargsStateAndScope:
         assert all(isinstance(k, str) for k in kwargs.keys())
 
 
+@pytest.mark.unit
 class TestProviderAttributes:
     """Test DiscordProvider class attributes."""
 
@@ -289,6 +295,7 @@ class TestProviderAttributes:
         assert provider.DEFAULT_PERMISSIONS == 3072  # VIEW_CHANNEL | SEND_MESSAGES
 
 
+@pytest.mark.unit
 class TestPermissionMerging:
     """Test permission merging logic in various scenarios."""
 

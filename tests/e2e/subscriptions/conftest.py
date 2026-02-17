@@ -8,6 +8,7 @@ import pytest
 import stripe
 from httpx import AsyncClient
 
+from seer.api.subscriptions.pricing_catalog import invalidate_pricing_cache
 from seer.api.subscriptions.stripe_service import get_or_create_stripe_customer
 from seer.config import config
 from seer.database.models import User
@@ -21,6 +22,106 @@ from .helpers import (
 )
 
 
+def _infer_tier_from_name(name: str) -> str:
+    """Infer tier slug from a Stripe product name (e.g. 'Pro Plus' → 'pro_plus')."""
+    lowered = name.lower().strip()
+    if "ultra" in lowered:
+        return "ultra"
+    if "pro_plus" in lowered or "pro plus" in lowered:
+        return "pro_plus"
+    return "pro"
+
+
+def _ensure_stripe_price_metadata() -> None:
+    """Ensure Stripe products and prices have metadata required by the dynamic pricing catalog.
+
+    Patches products with ``tier``, ``display_name``, ``features``, ``sort_order``
+    and prices with ``tier``, ``variant``, ``trial_period_days`` when missing.
+    """
+    stripe.api_key = config.stripe_secret_key
+    if not stripe.api_key:
+        return
+
+    # --- Products: always set tier metadata from product name ---
+    product_tier_map: dict[str, str] = {}
+    products = stripe.Product.list(active=True, limit=100)
+    for product in products.data:
+        prod_meta = product.get("metadata") or {}
+        tier = _infer_tier_from_name(product.get("name", ""))
+        updates: dict = {
+            "tier": tier,
+            "display_name": product.get("name", tier),
+        }
+        if not prod_meta.get("features"):
+            updates["features"] = '["Unlimited workflows","Priority support"]'
+        updates["sort_order"] = "1" if tier == "pro" else "2"
+
+        new_meta = dict(prod_meta)
+        new_meta.update(updates)
+        stripe.Product.modify(product.id, metadata=new_meta)
+
+        product_tier_map[product.id] = tier
+
+    # --- Prices: always set tier / variant / trial_period_days ---
+    prices = stripe.Price.list(active=True, limit=100)
+
+    # Track which products already have which intervals
+    product_intervals: dict[str, set[str]] = {}
+    for price in prices.data:
+        metadata = price.get("metadata") or {}
+        product_id = price.get("product")
+        if isinstance(product_id, dict):
+            product_id = product_id.get("id")
+        tier = product_tier_map.get(product_id, "pro")
+
+        recurring = price.get("recurring") or {}
+        interval = recurring.get("interval", "")
+        product_intervals.setdefault(product_id, set()).add(interval)
+
+        updates = {
+            "tier": tier,
+            "variant": "regular",
+        }
+
+        # Set trial_period_days for monthly prices
+        if interval == "month" and not metadata.get("trial_period_days"):
+            updates["trial_period_days"] = "14"
+
+        new_metadata = dict(metadata)
+        new_metadata.update(updates)
+        stripe.Price.modify(price.id, metadata=new_metadata)
+
+    # --- Create missing annual prices for products that only have monthly ---
+    for product_id, intervals in product_intervals.items():
+        if "year" not in intervals and "month" in intervals:
+            tier = product_tier_map.get(product_id, "pro")
+            # Find the monthly price to base the annual price on
+            monthly_price = next(
+                (p for p in prices.data
+                 if (p.get("product") == product_id or
+                     (isinstance(p.get("product"), dict) and p["product"].get("id") == product_id))
+                 and (p.get("recurring") or {}).get("interval") == "month"),
+                None,
+            )
+            if monthly_price:
+                monthly_amount = monthly_price.get("unit_amount", 0)
+                annual_amount = monthly_amount * 10  # ~17% discount
+                stripe.Price.create(
+                    product=product_id,
+                    unit_amount=annual_amount,
+                    currency=monthly_price.get("currency", "usd"),
+                    recurring={"interval": "year"},
+                    metadata={
+                        "tier": tier,
+                        "variant": "regular",
+                        "trial_period_days": "14",
+                    },
+                )
+
+    # Invalidate cache so fresh data is loaded
+    invalidate_pricing_cache()
+
+
 @pytest.fixture
 async def user_with_payment_method(db_engine):
     """
@@ -32,6 +133,9 @@ async def user_with_payment_method(db_engine):
     Cleanup:
         Deletes Stripe customer and DB records
     """
+    # Ensure Stripe prices have required metadata for dynamic pricing catalog
+    _ensure_stripe_price_metadata()
+
     # Create test user
     user = await User.create(
         user_id="test_user_trial",
@@ -54,11 +158,6 @@ async def user_with_payment_method(db_engine):
         owner_user=user,
         stripe_customer_id=stripe_customer.id,
     )
-
-    # Create early adopter counters (required for subscription creation)
-    from seer.database.subscription_models import EarlyAdopterCounter
-    await EarlyAdopterCounter.get_or_create(tier="pro", defaults={"count": 0})
-    await EarlyAdopterCounter.get_or_create(tier="pro_plus", defaults={"count": 0})
 
     yield user, billing_profile, stripe_customer.id
 
@@ -119,7 +218,7 @@ async def trial_subscription_setup(user_with_payment_method, stripe_test_clock):
     # Create subscription with trial (will use test clock)
     from seer.api.subscriptions.pricing_catalog import get_price_id_for_checkout
 
-    price_id = get_price_id_for_checkout("pro", "month", is_early_adopter=False)
+    price_id = get_price_id_for_checkout("pro", "month")
 
     stripe_subscription = stripe.Subscription.create(
         customer=test_customer.id,

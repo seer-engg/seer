@@ -11,6 +11,7 @@ DEFAULT_PUBLIC_PATHS = {
     "/api/integrations/github/callback",
     "/api/integrations/supabase_mgmt/callback",
     "/.well-known/oauth-protected-resource",
+    "/sentry-debug",  # For testing Sentry integration; not included in DEFAULT_DOCS_PATHS since it's not a documented API endpoint.
 }
 
 DEFAULT_DOCS_PATHS = {
@@ -24,6 +25,28 @@ DEFAULT_PUBLIC_PREFIXES = (
     "/api/forms",
     "/sse",  # MCP SSE transport (has its own auth)
     "/mcp",  # MCP HTTP transport (has its own auth)
+)
+
+# Payment-exempt paths: require auth but skip payment gates and usage limits.
+# These are typically payment/billing endpoints that users need to access
+# to resolve payment issues or add payment methods.
+DEFAULT_PAYMENT_EXEMPT_PATHS = {
+    "/api/subscriptions/pricing",
+    "/api/subscriptions/current",
+    "/api/subscriptions/checkout",
+    "/api/subscriptions/portal",
+    "/api/subscriptions/invoices",
+    "/api/subscriptions/payments",
+    "/api/subscriptions/create-with-trial",
+    "/api/subscriptions/setup-intent",
+    "/api/subscriptions/setup-intent/confirm",
+    "/api/subscriptions/payment-method/status",
+    "/api/usage",
+    "/api/users/me/settings",
+}
+
+DEFAULT_PAYMENT_EXEMPT_PREFIXES = (
+    "/api/usage/analytics",  # All analytics endpoints
 )
 
 
@@ -60,6 +83,34 @@ def is_public_path(
         return True
 
     for prefix in DEFAULT_PUBLIC_PREFIXES:
+        normalized_prefix = _normalize_path(prefix)
+        if normalized_path == normalized_prefix or normalized_path.startswith(f"{normalized_prefix}/"):
+            return True
+
+    return False
+
+
+def is_payment_exempt_path(
+    path: str,
+    extra_allowed_paths: Optional[Iterable[str]] = None,
+) -> bool:
+    """
+    Returns True if the request path should skip payment gates and usage limits
+    but still require authentication.
+
+    These are typically payment/billing endpoints that users need to access
+    to resolve payment issues or add payment methods.
+    """
+    normalized_path = _normalize_path(path)
+
+    allowed_paths: Set[str] = {_normalize_path(p) for p in DEFAULT_PAYMENT_EXEMPT_PATHS}
+    if extra_allowed_paths:
+        allowed_paths.update(_normalize_path(p) for p in extra_allowed_paths)
+
+    if normalized_path in allowed_paths:
+        return True
+
+    for prefix in DEFAULT_PAYMENT_EXEMPT_PREFIXES:
         normalized_prefix = _normalize_path(prefix)
         if normalized_path == normalized_prefix or normalized_path.startswith(f"{normalized_prefix}/"):
             return True

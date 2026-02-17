@@ -116,8 +116,10 @@ async def process_trigger_event(subscription_id: int, event_id: int) -> None:
             status=TriggerEventStatus.FAILED,
             error={"detail": "Workflow has no published version"},
         )
+        # Disable the trigger subscription to prevent further failed events
+        await TriggerSubscription.filter(id=subscription_id).update(enabled=False)
         logger.error(
-            "Trigger job failed: no published version",
+            "Trigger job failed: no published version - subscription disabled",
             extra={
                 "subscription_id": subscription_id,
                 "event_id": event_id,

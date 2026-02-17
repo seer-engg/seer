@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 from dataclasses import dataclass
 from threading import Lock
 from typing import Any, Dict, Mapping, Sequence, Set
 
+from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+from seer.core.runtime.file_processor import FileContentProcessor
 
 import seer.tools  # noqa: F401  # pylint: disable=unused-import  # Reason: import triggers tool registration via decorators
 from seer.database import User
@@ -25,6 +29,7 @@ from seer.core.runtime.context import WorkflowRuntimeContext
 from seer.core.runtime.execution import CompiledWorkflow
 from seer.core.schema.jsonschema_adapter import SchemaError, check_schema
 from seer.core.schema.models import (
+    ImageGenNode,
     LLMNode,
     MCPNode,
     Node,
@@ -48,28 +53,6 @@ class UserBoundCompiledWorkflow:
 
     workflow: CompiledWorkflow
     user: User
-
-    def invoke(
-        self,
-        workflow_input: Any = None,
-        config: Mapping[str, Any] | None = None,
-        context: WorkflowRuntimeContext | None = None,
-        trigger: Mapping[str, Any] | None = None,
-    ) -> Mapping[str, Any]:
-        merged_config = dict(config or {})
-        runtime_context = context or WorkflowRuntimeContext(user=self.user)
-        user_before = merged_config.get("user")
-        merged_config.pop("user", None)
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "UserBoundCompiledWorkflow.invoke user_in_config_before=%s context_user=%s config_keys=%s",
-                bool(user_before),
-                getattr(runtime_context.user, "id", None),
-                sorted(merged_config.keys()),
-            )
-        return self.workflow.invoke(
-            workflow_input=workflow_input, config=merged_config, context=runtime_context, trigger=trigger
-        )
 
     async def ainvoke(
         self,
@@ -195,6 +178,10 @@ class WorkflowCompilerSingleton:
                     model_acc.add(model)
             elif isinstance(node, MCPNode):
                 mcp_acc.add((node.server, node.server_type))
+            elif isinstance(node, ImageGenNode):
+                model = node.inputs.get("model")
+                if model and isinstance(model, str):
+                    model_acc.add(model)
             # No recursion needed - all nodes are at top level in spec.nodes
 
     def _ensure_tool_registered(self, tool_name: str) -> None:
@@ -319,23 +306,10 @@ class WorkflowCompilerSingleton:
                 user=user,
                 connection_id=connection_id,
                 arguments=inputs or {},
+                context=context,
             )
 
-        def sync_handler(
-            inputs: Dict[str, Any],
-            config: Dict[str, Any] | None,
-            context: WorkflowRuntimeContext | None = None,
-        ) -> Any:
-            try:
-                asyncio.get_running_loop()
-            except RuntimeError:
-                return asyncio.run(async_handler(inputs, config, context))
-            raise ExecutionError(
-                "Synchronous workflow execution cannot run tools from an active event loop. "
-                "Use 'compiled.ainvoke(...)' instead."
-            )
-
-        return sync_handler, async_handler
+        return None, async_handler
 
     @staticmethod
     def _inject_structured_inputs(prompt: str, inputs_block: Dict[str, Any] | None) -> str:
@@ -348,9 +322,42 @@ class WorkflowCompilerSingleton:
             f"{serialized}"
         )
 
+    @staticmethod
+    def _process_file_contents_sync(file_contents: list[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Process file contents synchronously for LLM input.
+
+        Runs the async FileContentProcessor in a sync context. This is necessary
+        because LLM handlers are synchronous but file processing is async.
+
+        Args:
+            file_contents: List of file info dicts from _resolve_llm_file_inputs
+
+        Returns:
+            Dict with 'image_blocks' and 'extracted_text'
+        """
+        processor = FileContentProcessor()
+
+        # Run async processing synchronously
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None:
+            # Already in an async context - use nest_asyncio pattern or run in executor
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, processor.process_files(file_contents))
+                return future.result()
+        else:
+            # Not in async context - safe to use asyncio.run
+            return asyncio.run(processor.process_files(file_contents))
+
     def _build_text_handler(self, model_id: str):
         def handler(invocation: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
             parameters = invocation.get("parameters") or {}
+            file_contents = invocation.get("file_contents", [])
+
             llm = get_llm(
                 model=model_id,
                 temperature=parameters.get("temperature") or 0.2,
@@ -358,7 +365,25 @@ class WorkflowCompilerSingleton:
             prompt = self._inject_structured_inputs(
                 invocation["prompt"], invocation.get("inputs")
             )
-            response = llm.invoke(prompt)
+
+            # Process file inputs if present
+            if file_contents:
+                processed = WorkflowCompilerSingleton._process_file_contents_sync(file_contents)
+
+                # Append extracted document text to prompt
+                if processed["extracted_text"]:
+                    prompt = f"{prompt}\n\n{processed['extracted_text']}"
+
+                # Build multimodal message if images are present
+                if processed["image_blocks"]:
+                    content: list[Dict[str, Any]] = [{"type": "text", "text": prompt}]
+                    content.extend(processed["image_blocks"])
+                    message = HumanMessage(content=content)
+                    response = llm.invoke([message])
+                else:
+                    response = llm.invoke(prompt)
+            else:
+                response = llm.invoke(prompt)
 
             # Extract usage metadata
             usage_metadata = extract_usage_metadata(response, model_id)
@@ -371,6 +396,8 @@ class WorkflowCompilerSingleton:
     def _build_json_handler(self, model_id: str):
         def handler(invocation: Dict[str, Any], schema: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
             parameters = invocation.get("parameters") or {}
+            file_contents = invocation.get("file_contents", [])
+
             llm = get_llm(
                 model=model_id,
                 temperature=parameters.get("temperature") or 0.2,
@@ -389,7 +416,25 @@ class WorkflowCompilerSingleton:
             }
 
             structured_llm = llm.with_structured_output(enriched_schema, method="json_schema")
-            response = structured_llm.invoke(prompt)
+
+            # Process file inputs if present
+            if file_contents:
+                processed = WorkflowCompilerSingleton._process_file_contents_sync(file_contents)
+
+                # Append extracted document text to prompt
+                if processed["extracted_text"]:
+                    prompt = f"{prompt}\n\n{processed['extracted_text']}"
+
+                # Build multimodal message if images are present
+                if processed["image_blocks"]:
+                    content: list[Dict[str, Any]] = [{"type": "text", "text": prompt}]
+                    content.extend(processed["image_blocks"])
+                    message = HumanMessage(content=content)
+                    response = structured_llm.invoke([message])
+                else:
+                    response = structured_llm.invoke(prompt)
+            else:
+                response = structured_llm.invoke(prompt)
 
             # Extract usage metadata
             # Note: structured output might return dict directly, not AIMessage

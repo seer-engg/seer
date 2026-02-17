@@ -77,6 +77,8 @@ TORTOISE_ORM: Dict[str, Any] = {
                 "seer.database.models",
                 "seer.database.models_oauth",
                 "seer.database.models_integrations",
+                "seer.database.models_browser",
+                "seer.database.models_browser_recording",
                 "seer.database.workflow_models",
                 "seer.database.subscription_models",
                 "seer.database.usage_models",

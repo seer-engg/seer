@@ -27,8 +27,8 @@ async def get_node_types(request: Request):
 
 @router.get("/triggers", response_model=api_models.TriggerCatalogResponse)
 async def get_trigger_catalog(request: Request):
-    _require_user(request)
-    return await services.list_triggers()
+    user = _require_user(request)
+    return await services.list_triggers(user)
 
 
 @router.post(
@@ -69,6 +69,24 @@ async def get_pending_events(
 ):
     user = _require_user(request)
     return await services.get_pending_events(user, workflow_id, trigger_id, since=since)
+
+
+@router.get(
+    "/subscriptions/{subscription_id}/event-count",
+    response_model=api_models.SubscriptionEventCountResponse,
+)
+async def get_subscription_event_count(
+    request: Request,
+    subscription_id: int,
+):
+    """
+    Get the count of stored events for a trigger subscription.
+
+    Used by the frontend to determine if "Browse events" should be shown
+    for persisted triggers (webhooks, forms).
+    """
+    user = _require_user(request)
+    return await services.get_subscription_event_count(user, subscription_id)
 
 
 @router.get("/registries/tools", response_model=api_models.ToolRegistryResponse)
@@ -306,6 +324,53 @@ async def resume_run(request: Request, run_id: str, payload: api_models.HITLResu
     """
     user = _require_user(request)
     return await services.resume_workflow_run(user, run_id, payload.responses)
+
+
+# ============================================================================
+# Workflow File Endpoints
+# ============================================================================
+
+
+@router.get("/runs/{run_id}/files", response_model=api_models.WorkflowFileListResponse)
+async def list_run_files(request: Request, run_id: str):
+    """
+    List all files created during a workflow run.
+
+    Returns file metadata including size, type, and creation time.
+    """
+    user = _require_user(request)
+    return await services.list_run_files(user, run_id)
+
+
+@router.get("/runs/{run_id}/files/{file_id}", response_model=api_models.WorkflowFileResponse)
+async def get_run_file(request: Request, run_id: str, file_id: str):
+    """
+    Get metadata for a specific file in a workflow run.
+    """
+    user = _require_user(request)
+    return await services.get_run_file(user, run_id, file_id)
+
+
+@router.get("/runs/{run_id}/files/{file_id}/download", response_model=api_models.WorkflowFileDownloadResponse)
+async def download_run_file(request: Request, run_id: str, file_id: str):
+    """
+    Get a presigned URL to download a file from a workflow run.
+
+    The URL is valid for 1 hour.
+    """
+    user = _require_user(request)
+    return await services.get_run_file_download_url(user, run_id, file_id)
+
+
+@router.delete("/runs/{run_id}/files/{file_id}", response_model=api_models.WorkflowFileDeleteResponse)
+async def delete_run_file(request: Request, run_id: str, file_id: str):
+    """
+    Delete a file from a workflow run.
+
+    This removes both the file from storage and its metadata.
+    """
+    user = _require_user(request)
+    return await services.delete_run_file(user, run_id, file_id)
 
 
 __all__ = ["router"]

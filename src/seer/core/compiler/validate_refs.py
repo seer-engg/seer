@@ -8,7 +8,7 @@ is simpler as all nodes are processed at the top level.
 
 from __future__ import annotations
 
-from typing import List
+from typing import TYPE_CHECKING, Any, List
 
 from seer.core.errors import ValidationPhaseError
 from seer.core.expr import parser
@@ -20,12 +20,19 @@ from seer.core.expr.typecheck import (
     ensure_references_valid,
     typecheck_reference,
 )
-from seer.core.schema.models import ForEachNode, HITLNode, IfNode, Node, WorkflowSpec
+from seer.core.files.schemas import is_static_file_ref
+from seer.core.schema.models import EdgeType, ForEachNode, HITLNode, IfNode, Node, WorkflowSpec
+
+if TYPE_CHECKING:
+    from seer.database import User
 
 
 def validate_references(spec: WorkflowSpec, type_env: TypeEnvironment) -> None:
     scope = Scope(env=type_env)
     errors: List[str] = []
+
+    # Check for orphaned triggers (triggers without edges)
+    _validate_orphaned_triggers(spec, errors)
 
     # Check if workflow uses trigger references without triggers declared
     if _uses_trigger_references(spec) and not spec.triggers:
@@ -53,6 +60,24 @@ def validate_references(spec: WorkflowSpec, type_env: TypeEnvironment) -> None:
 
     if errors:
         raise ValidationPhaseError("\n".join(errors))
+
+
+def _validate_orphaned_triggers(spec: WorkflowSpec, errors: List[str]) -> None:
+    """Validate that every trigger has at least one edge connecting it to a node."""
+    if not spec.triggers:
+        return
+
+    trigger_ids = {t.id for t in spec.triggers}
+    connected_trigger_ids = {edge.source for edge in spec.edges if edge.type == EdgeType.trigger}
+    orphaned_triggers = trigger_ids - connected_trigger_ids
+
+    if orphaned_triggers:
+        orphan_list = ", ".join(sorted(orphaned_triggers))
+        errors.append(
+            f"Orphaned triggers without edges are not allowed. "
+            f"The following triggers are not connected to any node: {orphan_list}. "
+            f"Add trigger edges with type='trigger' to connect these triggers to nodes."
+        )
 
 
 def _uses_trigger_references(spec: WorkflowSpec) -> bool:
@@ -194,3 +219,95 @@ def _validate_value_references(value, scope: Scope, errors: List[str], *, contex
         ensure_references_valid(refs, scope)
     except TypeCheckError as exc:
         errors.append(f"{context}: {exc}")
+
+
+# =============================================================================
+# Static File Reference Validation
+# =============================================================================
+
+
+def collect_static_file_refs(spec: WorkflowSpec) -> List[tuple[str, str, str]]:
+    """
+    Collect all static_file_ref inputs from a workflow specification.
+
+    Static file references are files that exist in user storage and are
+    referenced at workflow design time (as opposed to dynamic references
+    from parent node outputs).
+
+    Args:
+        spec: Workflow specification to scan.
+
+    Returns:
+        List of (node_id, input_key, file_id) tuples for each static file ref found.
+    """
+    refs: List[tuple[str, str, str]] = []
+
+    for node in spec.nodes:
+        if hasattr(node, "inputs"):
+            inputs = getattr(node, "inputs")
+            _scan_value_for_static_refs(inputs, node.id, "", refs)
+
+    return refs
+
+
+def _scan_value_for_static_refs(
+    value: Any,
+    node_id: str,
+    path: str,
+    refs: List[tuple[str, str, str]],
+) -> None:
+    """
+    Recursively scan a value for static_file_ref objects.
+
+    Static file refs can be nested in dicts or lists (e.g., in attachment arrays).
+    """
+    if is_static_file_ref(value):
+        file_id = value.get("file_id", "")
+        refs.append((node_id, path, file_id))
+    elif isinstance(value, dict):
+        for key, val in value.items():
+            new_path = f"{path}.{key}" if path else key
+            _scan_value_for_static_refs(val, node_id, new_path, refs)
+    elif isinstance(value, list):
+        for i, item in enumerate(value):
+            new_path = f"{path}[{i}]"
+            _scan_value_for_static_refs(item, node_id, new_path, refs)
+
+
+async def validate_static_file_refs(spec: WorkflowSpec, user: "User") -> List[str]:
+    """
+    Validate that all static_file_ref inputs reference existing files.
+
+    This should be called during workflow compilation/validation to ensure
+    that static file references point to files that exist in the user's storage.
+
+    Args:
+        spec: Workflow specification to validate.
+        user: User who owns the workflow (for file access control).
+
+    Returns:
+        List of validation error messages (empty if all valid).
+    """
+    # pylint: disable=import-outside-toplevel  # Avoid circular imports with database models
+    from seer.database import WorkflowFile
+
+    refs = collect_static_file_refs(spec)
+    if not refs:
+        return []
+
+    errors: List[str] = []
+
+    # Batch lookup all file_ids for efficiency
+    file_ids = {ref[2] for ref in refs}
+    existing_files = await WorkflowFile.filter(file_id__in=file_ids, user=user).values_list("file_id", flat=True)
+    existing_file_ids = set(existing_files)
+
+    for node_id, input_key, file_id in refs:
+        if file_id not in existing_file_ids:
+            location = f"{node_id}.inputs.{input_key}" if input_key else f"{node_id}.inputs"
+            errors.append(
+                f"{location}: Static file '{file_id}' not found in user's storage. "
+                "Ensure the file exists or select a different file."
+            )
+
+    return errors

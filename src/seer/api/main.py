@@ -27,6 +27,12 @@ from seer.database import db_lifespan
 from seer.logger import get_logger
 from seer.observability.exceptions import ChatDisabledError, UsageLimitError
 
+# Initialize Sentry BEFORE app creation for proper ASGI integration
+if config.is_sentry_configured:
+    from seer.observability.sentry_client import init_sentry, flush as sentry_flush  # pylint: disable=ungrouped-imports  # Reason: Must init before app creation
+    if init_sentry():
+        get_logger("api.main").info("Sentry error monitoring initialized")
+
 # MCP imports for combined server
 if config.mcp_enabled:
     from seer.mcp.server import create_combined_mcp_app, oauth_protected_resource_metadata
@@ -98,12 +104,25 @@ async def lifespan(fastapi_app: FastAPI):
                     finally:
                         if hasattr(fastapi_app.state, "checkpointer"):
                             delattr(fastapi_app.state, "checkpointer")
+                        from seer.services.browser.pool_manager import BrowserPoolManager  # pylint: disable=import-outside-toplevel  # Reason: shutdown import
+                        await BrowserPoolManager.shutdown_instance()
             else:
                 try:
                     yield
                 finally:
                     if hasattr(fastapi_app.state, "checkpointer"):
                         delattr(fastapi_app.state, "checkpointer")
+                    from seer.services.browser.pool_manager import BrowserPoolManager  # pylint: disable=import-outside-toplevel  # Reason: shutdown import
+                    await BrowserPoolManager.shutdown_instance()
+
+    # Shutdown PostHog client (flush pending events)
+    if config.is_posthog_configured:
+        from seer.observability.posthog_client import shutdown as posthog_shutdown  # pylint: disable=import-outside-toplevel  # Reason: conditional import during shutdown
+        posthog_shutdown()
+
+    # Flush Sentry events before shutdown
+    if config.is_sentry_configured:
+        sentry_flush(timeout=2.0)
 
     logger.info("👋 Seer API server shutting down...")
 
@@ -135,6 +154,18 @@ if config.mcp_enabled:
 # Correlation middleware - add correlation IDs to all requests
 from seer.api.core.middleware.correlation import CorrelationMiddleware  # pylint: disable=wrong-import-position,ungrouped-imports # Reason: Import after app creation
 app.add_middleware(CorrelationMiddleware)
+
+# Sentry context middleware - enrich errors with request context (must be after CorrelationMiddleware)
+if config.is_sentry_configured:
+    from seer.api.core.middleware.sentry_middleware import SentryContextMiddleware  # pylint: disable=wrong-import-position,ungrouped-imports # Reason: Conditional import after config check
+    app.add_middleware(SentryContextMiddleware)
+    logger.info("Sentry context middleware enabled")
+
+# PostHog analytics middleware - track API requests (non-blocking)
+if config.is_posthog_configured:
+    from seer.api.core.middleware.posthog_middleware import PostHogMiddleware  # pylint: disable=wrong-import-position,ungrouped-imports # Reason: Conditional import after config check
+    app.add_middleware(PostHogMiddleware)
+    logger.info("📊 PostHog analytics middleware enabled")
 
 # Usage limit middleware - enforce subscription limits centrally
 # must be AFTER auth middleware to have user info
@@ -234,6 +265,12 @@ async def global_exception_handler(request: Request, exc: Exception):
         extra={'correlation_id': correlation_id}
     )
 
+    # Capture exception to Sentry with context
+    if config.is_sentry_configured:
+        from seer.observability.sentry_client import capture_exception, set_tag  # pylint: disable=import-outside-toplevel  # Reason: conditional import for error handling
+        set_tag("correlation_id", correlation_id)
+        capture_exception(exc)
+
     # Create error response with CORS headers
     response = JSONResponse(
         status_code=500,
@@ -283,6 +320,9 @@ async def health_check():
         "version": "1.0.0"
     }
 
+@app.get("/sentry-debug")
+async def trigger_error():
+    _ = 1 / 0  # Intentionally trigger error for Sentry testing
 
 @app.get("/", tags=["System"], include_in_schema=False)
 async def root_redirect():

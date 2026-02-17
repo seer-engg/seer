@@ -13,6 +13,8 @@ from seer.database.models import (
 )
 from seer.database.models_oauth import OAuthConnection
 from seer.database.models_integrations import IntegrationResource, IntegrationSecret
+from seer.database.models_browser import BrowserProfile
+from seer.database.models_browser_recording import SessionRecording
 from seer.database.workflow_models import (
     TriggerEvent,
     TriggerEventStatus,
@@ -20,6 +22,7 @@ from seer.database.workflow_models import (
     Workflow,
     WorkflowChatMessage,
     WorkflowChatSession,
+    WorkflowFile,
     WorkflowProposal,
     WorkflowRun,
     WorkflowRunSource,
@@ -89,10 +92,15 @@ __all__ = [
     "OAuthConnection",
     "IntegrationResource",
     "IntegrationSecret",
+    # Browser profiles
+    "BrowserProfile",
+    # Session recordings
+    "SessionRecording",
     # Workflow domain
     "Workflow",
     "WorkflowVersion",
     "WorkflowRun",
+    "WorkflowFile",
     "WorkflowChatSession",
     "WorkflowChatMessage",
     "WorkflowProposal",

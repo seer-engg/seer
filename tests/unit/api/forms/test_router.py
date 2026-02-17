@@ -135,6 +135,7 @@ class TestSubmitForm:
 
         mock_subscription = MagicMock()
         mock_subscription.id = 123
+        mock_subscription.form_config = {}  # Regular form, not HITL
         mock_subscription.form_fields = [
             {"name": "email", "type": "email", "required": True},
             {"name": "message", "type": "text", "required": True},
@@ -178,6 +179,7 @@ class TestSubmitForm:
 
         mock_subscription = MagicMock()
         mock_subscription.id = 123
+        mock_subscription.form_config = {}  # Regular form, not HITL
         mock_subscription.form_fields = [
             {"name": "email", "type": "email", "required": True},
         ]
@@ -224,6 +226,7 @@ class TestSubmitForm:
 
         mock_subscription = MagicMock()
         mock_subscription.id = 789
+        mock_subscription.form_config = {}  # Regular form, not HITL
         mock_subscription.form_fields = None  # No fields defined
 
         mock_event = MagicMock()
@@ -247,6 +250,7 @@ class TestSubmitForm:
 
         mock_subscription = MagicMock()
         mock_subscription.id = 123
+        mock_subscription.form_config = {}  # Regular form, not HITL
         mock_subscription.form_fields = []
 
         with patch("seer.api.forms.router.TriggerSubscription") as MockSubscription:

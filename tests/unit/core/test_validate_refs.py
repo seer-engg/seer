@@ -15,12 +15,16 @@ from seer.core.compiler.validate_refs import (
 from seer.core.errors import ValidationPhaseError
 from seer.core.expr.typecheck import TypeEnvironment
 from seer.core.schema.models import (
+    Edge,
+    EdgeType,
     ForEachNode,
     IfNode,
     ToolNode,
     TriggerSpec,
     WorkflowSpec,
 )
+
+pytestmark = pytest.mark.unit
 
 
 # =============================================================================
@@ -61,7 +65,9 @@ def test_validate_references_with_valid_trigger_ref():
                 inputs={"value": "${t1.data}"}
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="t1", target="task1", type=EdgeType.trigger)
+        ]
     )
 
     # Should not raise any errors
@@ -128,7 +134,10 @@ def test_validate_references_with_multiple_refs():
                 inputs={"value": "${task1}"}
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="t1", target="task1", type=EdgeType.trigger),
+            Edge(source="task1", target="task2", type=EdgeType.default)
+        ]
     )
 
     # Should not raise any errors
@@ -423,7 +432,9 @@ def test_uses_trigger_references_true():
                 inputs={"value": "${t1.data}"}
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="t1", target="task1", type=EdgeType.trigger)
+        ]
     )
 
     assert _uses_trigger_references(spec) is True
@@ -448,7 +459,9 @@ def test_uses_trigger_references_false():
                 inputs={"value": "static value"}
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="t1", target="task1", type=EdgeType.trigger)
+        ]
     )
 
     assert _uses_trigger_references(spec) is False
@@ -882,7 +895,9 @@ def test_validate_references_trigger_title_with_spaces():
                 inputs={"value": "${t1.data}"}
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="t1", target="task1", type=EdgeType.trigger)
+        ]
     )
 
     # Reference validation uses trigger ID, not title
@@ -913,7 +928,9 @@ def test_validate_references_trigger_title_with_hyphen():
                 inputs={"value": "${t1.value}"}
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="t1", target="task1", type=EdgeType.trigger)
+        ]
     )
 
     # Reference validation uses trigger ID
@@ -945,7 +962,9 @@ def test_validate_references_trigger_title_unicode():
                 inputs={"value": "${t1.data}"}
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="t1", target="task1", type=EdgeType.trigger)
+        ]
     )
 
     # Reference validation uses trigger ID
@@ -1020,7 +1039,10 @@ def test_multi_trigger_rejects_bare_trigger_reference():
                 inputs={"value": "${trigger.data}"}  # Invalid: bare "trigger" in multi-trigger workflow
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="t1", target="task1", type=EdgeType.trigger),
+            Edge(source="t2", target="task1", type=EdgeType.trigger),
+        ]
     )
 
     # Should raise ValidationPhaseError with helpful message
@@ -1059,7 +1081,10 @@ def test_multi_trigger_accepts_explicit_trigger_ids():
                 inputs={"value": "${t2.payload}"}  # Valid: explicit trigger ID
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="t1", target="task1", type=EdgeType.trigger),
+            Edge(source="t2", target="task2", type=EdgeType.trigger),
+        ]
     )
 
     # Should not raise any errors
@@ -1085,7 +1110,9 @@ def test_single_trigger_rejects_bare_trigger_reference():
                 inputs={"value": "${trigger.data}"}  # Invalid: bare "trigger" not allowed
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="t1", target="task1", type=EdgeType.trigger)
+        ]
     )
 
     # Should raise ValidationPhaseError with helpful message
@@ -1115,8 +1142,135 @@ def test_single_trigger_accepts_explicit_id():
                 inputs={"value": "${email_trigger.data}"}  # Valid: explicit ID
             )
         ],
-        edges=[]
+        edges=[
+            Edge(source="email_trigger", target="task1", type=EdgeType.trigger)
+        ]
     )
 
     # Should not raise any errors
     validate_references(spec, type_env)
+
+
+# =============================================================================
+# Static File Reference Collection Tests
+# =============================================================================
+
+
+def test_collect_static_file_refs_empty():
+    """Test collecting static file refs from workflow with no file refs."""
+    from seer.core.compiler.validate_refs import collect_static_file_refs
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            ToolNode(
+                id="task1",
+                type="tool", tool="test.tool",
+                inputs={"value": "plain string"}
+            )
+        ],
+        edges=[]
+    )
+
+    refs = collect_static_file_refs(spec)
+    assert refs == []
+
+
+def test_collect_static_file_refs_direct():
+    """Test collecting direct static file refs from node inputs."""
+    from seer.core.compiler.validate_refs import collect_static_file_refs
+    from seer.core.files.schemas import STATIC_FILE_REF_TYPE
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            ToolNode(
+                id="upload_node",
+                type="tool", tool="google_drive_upload_file",
+                inputs={
+                    "name": "test.pdf",
+                    "file": {
+                        "_type": STATIC_FILE_REF_TYPE,
+                        "file_id": "user-file-123",
+                    }
+                }
+            )
+        ],
+        edges=[]
+    )
+
+    refs = collect_static_file_refs(spec)
+    assert len(refs) == 1
+    assert refs[0] == ("upload_node", "file", "user-file-123")
+
+
+def test_collect_static_file_refs_nested_in_array():
+    """Test collecting static file refs nested in array inputs (e.g., attachments)."""
+    from seer.core.compiler.validate_refs import collect_static_file_refs
+    from seer.core.files.schemas import STATIC_FILE_REF_TYPE
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            ToolNode(
+                id="send_email",
+                type="tool", tool="gmail_send_email",
+                inputs={
+                    "to": ["test@example.com"],
+                    "subject": "Test",
+                    "body_text": "Hello",
+                    "attachments": [
+                        {
+                            "file": {
+                                "_type": STATIC_FILE_REF_TYPE,
+                                "file_id": "attachment-1",
+                            }
+                        },
+                        {
+                            "file": {
+                                "_type": STATIC_FILE_REF_TYPE,
+                                "file_id": "attachment-2",
+                            }
+                        }
+                    ]
+                }
+            )
+        ],
+        edges=[]
+    )
+
+    refs = collect_static_file_refs(spec)
+    assert len(refs) == 2
+    # Check both attachments are found
+    file_ids = {ref[2] for ref in refs}
+    assert file_ids == {"attachment-1", "attachment-2"}
+
+
+def test_collect_static_file_refs_ignores_workflow_file_refs():
+    """Test that workflow_file_ref is not collected as static ref."""
+    from seer.core.compiler.validate_refs import collect_static_file_refs
+    from seer.core.files.models import WORKFLOW_FILE_REF_TYPE
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            ToolNode(
+                id="upload_node",
+                type="tool", tool="google_drive_upload_file",
+                inputs={
+                    "file": {
+                        "_type": WORKFLOW_FILE_REF_TYPE,  # Dynamic ref, not static
+                        "file_id": "dynamic-ref-123",
+                    }
+                }
+            )
+        ],
+        edges=[]
+    )
+
+    refs = collect_static_file_refs(spec)
+    assert refs == []  # workflow_file_ref should not be collected

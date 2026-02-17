@@ -43,6 +43,12 @@ async def _on_worker_startup(_: TaskiqState) -> None:
 
     global _poll_scheduler
 
+    # Initialize Sentry for worker error monitoring
+    if config.is_sentry_configured:
+        from seer.observability.sentry_client import init_sentry
+        if init_sentry():
+            logger.info("Sentry error monitoring initialized for worker")
+
     # Capture main event loop for cross-thread async operations (same as API)
     set_main_event_loop(asyncio.get_running_loop())
     logger.info("Main event loop captured for cross-thread scheduling")
@@ -66,7 +72,7 @@ async def _on_worker_startup(_: TaskiqState) -> None:
 @broker.on_event(TaskiqEvents.WORKER_SHUTDOWN)
 async def _on_worker_shutdown(_: TaskiqState) -> None:
     """Clean up background services when worker exits."""
-    # pylint: disable=global-statement
+    # pylint: disable=global-statement,import-outside-toplevel
     global _poll_scheduler
 
     if _poll_scheduler:
@@ -75,6 +81,12 @@ async def _on_worker_shutdown(_: TaskiqState) -> None:
         _poll_scheduler = None
 
     await close_db()
+
+    # Flush Sentry events before shutdown
+    if config.is_sentry_configured:
+        from seer.observability.sentry_client import flush as sentry_flush
+        sentry_flush(timeout=2.0)
+
     logger.info("Taskiq worker shutdown complete")
 
 

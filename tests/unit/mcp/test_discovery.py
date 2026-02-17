@@ -1,5 +1,8 @@
 """
-Unit tests for MCP discovery tools.
+Unit tests for discovery tools (unified implementations).
+
+Tests the canonical tool implementations from seer.tools.unified_tools,
+plus the shared discovery logic from seer.tools.discovery_shared.
 """
 
 import json
@@ -12,6 +15,7 @@ from seer.tools.discovery_shared import (
 )
 
 
+@pytest.mark.unit
 class TestTokenize:
     """Tests for _tokenize helper function."""
 
@@ -42,6 +46,7 @@ class TestTokenize:
         assert _tokenize(None) == set()
 
 
+@pytest.mark.unit
 class TestSearchToolsIntent:
     """Tests for _search_tools_intent function."""
 
@@ -108,13 +113,14 @@ class TestSearchToolsIntent:
         assert results == []
 
 
-class TestSearchToolsMCP:
-    """Tests for search_tools MCP tool - accessing underlying function."""
+@pytest.mark.unit
+class TestSearchToolsUnified:
+    """Tests for search_tools_impl — unified canonical implementation."""
 
     @pytest.mark.asyncio
     @patch("seer.tools.discovery_shared.get_tools_by_integration")
     async def test_search_tools_returns_json(self, mock_get_tools):
-        """Test that search_tools returns valid JSON."""
+        """Test that search_tools_impl returns valid JSON."""
         mock_get_tools.return_value = [
             {
                 "name": "gmail_create_draft",
@@ -124,9 +130,8 @@ class TestSearchToolsMCP:
             },
         ]
 
-        # Access the underlying function via .fn attribute
-        from seer.mcp.tools.discovery import search_tools
-        result = await search_tools.fn("create draft")
+        from seer.tools.unified_tools import search_tools_impl
+        result = await search_tools_impl("create draft")
         data = json.loads(result)
 
         assert "query" in data
@@ -135,24 +140,25 @@ class TestSearchToolsMCP:
     @pytest.mark.asyncio
     @patch("seer.tools.discovery_shared.get_tools_by_integration")
     async def test_search_tools_handles_no_results(self, mock_get_tools):
-        """Test that search_tools handles no results gracefully."""
+        """Test that search_tools_impl handles no results gracefully."""
         mock_get_tools.return_value = []
 
-        from seer.mcp.tools.discovery import search_tools
-        result = await search_tools.fn("nonexistent")
+        from seer.tools.unified_tools import search_tools_impl
+        result = await search_tools_impl("nonexistent")
         data = json.loads(result)
 
         assert data["top_match"] is None
         assert "message" in data or "alternatives" in data
 
 
-class TestListToolsMCP:
-    """Tests for list_tools MCP tool."""
+@pytest.mark.unit
+class TestListToolsUnified:
+    """Tests for list_tools_impl — unified canonical implementation."""
 
     @pytest.mark.asyncio
     @patch("seer.tools.discovery_shared.get_tools_by_integration")
     async def test_list_tools_returns_all_tools(self, mock_get_tools):
-        """Test that list_tools returns all available tools."""
+        """Test that list_tools_impl returns all available tools."""
         mock_get_tools.return_value = [
             {
                 "name": "tool1",
@@ -170,8 +176,8 @@ class TestListToolsMCP:
             },
         ]
 
-        from seer.mcp.tools.discovery import list_tools
-        result = await list_tools.fn()
+        from seer.tools.unified_tools import list_tools_impl
+        result = await list_tools_impl()
         data = json.loads(result)
 
         assert "tools" in data
@@ -180,7 +186,7 @@ class TestListToolsMCP:
     @pytest.mark.asyncio
     @patch("seer.tools.discovery_shared.get_tools_by_integration")
     async def test_list_tools_filters_by_integration(self, mock_get_tools):
-        """Test that list_tools filters by integration type."""
+        """Test that list_tools_impl filters by integration type."""
         mock_get_tools.return_value = [
             {
                 "name": "gmail_tool",
@@ -191,8 +197,8 @@ class TestListToolsMCP:
             },
         ]
 
-        from seer.mcp.tools.discovery import list_tools
-        result = await list_tools.fn(integration_type="gmail")
+        from seer.tools.unified_tools import list_tools_impl
+        result = await list_tools_impl(integration_type="gmail")
         data = json.loads(result)
 
         # Verify the filter was passed (shared module calls get_tools_by_integration twice)
@@ -201,13 +207,14 @@ class TestListToolsMCP:
         assert data["integration_filter"] == "gmail"
 
 
-class TestSearchTriggersMCP:
-    """Tests for search_triggers MCP tool."""
+@pytest.mark.unit
+class TestSearchTriggersUnified:
+    """Tests for search_triggers_impl — unified canonical implementation."""
 
     @pytest.mark.asyncio
     @patch("seer.tools.discovery_shared.trigger_registry")
     async def test_search_triggers_returns_json(self, mock_registry):
-        """Test that search_triggers returns valid JSON."""
+        """Test that search_triggers_impl returns valid JSON."""
         # Create mock trigger
         mock_trigger = MagicMock()
         mock_trigger.key = "poll.gmail.email_received"
@@ -224,8 +231,8 @@ class TestSearchTriggersMCP:
 
         mock_registry.all.return_value = [mock_trigger]
 
-        from seer.mcp.tools.discovery import search_triggers
-        result = await search_triggers.fn("gmail email")
+        from seer.tools.unified_tools import search_triggers_impl
+        result = await search_triggers_impl("gmail email")
         data = json.loads(result)
 
         assert "triggers" in data
@@ -233,13 +240,14 @@ class TestSearchTriggersMCP:
         assert data["triggers"][0]["key"] == "poll.gmail.email_received"
 
 
-class TestListTriggersMCP:
-    """Tests for list_triggers MCP tool."""
+@pytest.mark.unit
+class TestListTriggersUnified:
+    """Tests for list_triggers_impl — unified canonical implementation."""
 
     @pytest.mark.asyncio
     @patch("seer.tools.discovery_shared.trigger_registry")
     async def test_list_triggers_returns_all(self, mock_registry):
-        """Test that list_triggers returns all triggers."""
+        """Test that list_triggers_impl returns all triggers."""
         mock_trigger1 = MagicMock()
         mock_trigger1.key = "webhook.generic"
         mock_trigger1.title = "Generic Webhook"
@@ -266,8 +274,8 @@ class TestListTriggersMCP:
 
         mock_registry.all.return_value = [mock_trigger1, mock_trigger2]
 
-        from seer.mcp.tools.discovery import list_triggers
-        result = await list_triggers.fn()
+        from seer.tools.unified_tools import list_triggers_impl
+        result = await list_triggers_impl()
         data = json.loads(result)
 
         assert "triggers" in data

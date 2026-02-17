@@ -21,6 +21,7 @@ from seer.core.schema.models import (
 )
 
 
+@pytest.mark.unit
 class TestFindLoopBodyNodes:
     """Tests for _find_loop_body_nodes function."""
 
@@ -198,6 +199,7 @@ class TestFindLoopBodyNodes:
         assert terminal_nodes == {"log_sent_status"}
 
 
+@pytest.mark.unit
 class TestBuildExecutionPlanLoopBodyMap:
     """Tests for loop_body_nodes in ExecutionPlan."""
 

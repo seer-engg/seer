@@ -7,10 +7,8 @@ Tests schema validation, type environment, reference validation, and runtime exe
 import pytest
 from unittest.mock import MagicMock, patch
 
-from seer.core.compiler.type_env import (
-    build_type_environment,
-    _build_hitl_output_schema,
-)
+from seer.core.compiler.type_env import build_type_environment
+from seer.core.nodes.hitl_node import _build_hitl_output_schema
 from seer.core.compiler.validate_refs import validate_references, _validate_hitl
 from seer.core.expr.typecheck import TypeEnvironment, Scope
 from seer.core.registry.tool_registry import ToolRegistry
@@ -26,6 +24,8 @@ from seer.core.schema.models import (
     WorkflowSpec,
 )
 from seer.core.schema.schema_registry import SchemaRegistry
+
+pytestmark = pytest.mark.unit
 
 
 # =============================================================================

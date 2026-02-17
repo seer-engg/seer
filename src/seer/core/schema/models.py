@@ -190,6 +190,36 @@ class ForEachNode(NodeBase):
 # -----------------------------
 # HITL (Human-In-The-Loop) Node
 # -----------------------------
+class DeliveryChannelType(str, Enum):
+    """Types of delivery channels for HITL notifications."""
+    platform = "platform"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
+    gmail = "gmail"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
+
+
+class GmailDeliveryConfig(StrictModel):
+    """Configuration for Gmail delivery channel."""
+    recipient_email: str = Field(description="Email address to send HITL form link to")
+
+
+class HITLDeliveryChannel(StrictModel):
+    """
+    Delivery channel configuration for HITL notifications.
+
+    Supports multiple delivery methods:
+    - platform: Default web-based HITL (existing behavior)
+    - gmail: Send email with form link via Gmail
+    """
+    type: DeliveryChannelType = DeliveryChannelType.platform
+    gmail: Optional[GmailDeliveryConfig] = None
+
+    @model_validator(mode="after")
+    def _validate_channel_config(self) -> "HITLDeliveryChannel":
+        """Validate that Gmail channel has required config."""
+        if self.type == DeliveryChannelType.gmail and self.gmail is None:
+            raise ValueError("HITLDeliveryChannel with type='gmail' requires gmail config")
+        return self
+
+
 class HITLInputType(str, Enum):
     """Input types for HITL node user input collection."""
     single_choice = "single_choice"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
@@ -201,8 +231,8 @@ class HITLInputType(str, Enum):
 
 class HITLInputOption(StrictModel):
     """Option for choice-based HITL inputs."""
-    value: str = Field(min_length=1)
-    label: str = Field(min_length=1)
+    value: str = Field()
+    label: str = Field()
     requires_text: bool = False  # If true, selecting this option prompts for additional text input
 
 
@@ -215,7 +245,7 @@ class HITLDisplayItem(StrictModel):
 class HITLInputField(StrictModel):
     """Input field definition for collecting user responses."""
     id: str = Field(min_length=1)
-    question: str = Field(min_length=1)
+    question: str = Field()
     input_type: HITLInputType
     options: Optional[List[HITLInputOption]] = None  # Required for choice types
     required: bool = True
@@ -239,13 +269,21 @@ class HITLNode(NodeBase):
 
     Uses LangGraph's interrupt() mechanism to pause execution and wait for
     user response before continuing.
+
+    Supports multiple delivery channels for notifications:
+    - platform: Default web-based HITL (user polls /runs/{id}/interrupt)
+    - gmail: Email with form link sent via Gmail
     """
     type: Literal["hitl"] = "hitl"
-    title: str = Field(min_length=1)
+    title: str = Field()
     description: Optional[str] = None
     display: List[HITLDisplayItem] = Field(default_factory=list)
     inputs: List[HITLInputField] = Field(default_factory=list)
     timeout_seconds: Optional[int] = None  # null or 0 = indefinite wait
+    delivery_channels: List[HITLDeliveryChannel] = Field(
+        default_factory=lambda: [HITLDeliveryChannel(type=DeliveryChannelType.platform)],
+        description="Notification delivery channels (defaults to platform only)"
+    )
 
     @model_validator(mode="after")
     def _validate_inputs(self) -> "HITLNode":
@@ -262,8 +300,73 @@ class HITLNode(NodeBase):
         return self
 
 
+# -----------------------------
+# Browser Automation Node
+# -----------------------------
+class ImageGenNode(NodeBase):
+    """
+    Image generation node using OpenRouter image generation models.
+
+    Calls OpenRouter API with an image generation model and returns
+    the generated image URL/base64.
+    """
+    type: Literal["image_gen"] = "image_gen"
+    inputs: Dict[str, JSONValue] = Field(default_factory=dict)
+    # inputs expected: model, prompt, size (optional), num_images (optional)
+
+    @model_validator(mode="after")
+    def _validate_inputs(self) -> "ImageGenNode":
+        required = ["model", "prompt"]
+        missing = [k for k in required if k not in self.inputs]
+        if missing:
+            raise ValueError(f'ImageGenNode requires {", ".join(missing)} in inputs')
+        return self
+
+
+class BrowserNode(NodeBase):
+    """
+    Browser automation node using natural language task descriptions.
+
+    Executes browser automation tasks via BrowserUse Agent. Users manage
+    browser profiles separately (with saved login sessions), and workflows
+    reference profiles by ID for authenticated automation.
+
+    Example:
+        {
+            "id": "scrape_data",
+            "type": "browser",
+            "task": "Go to Slack and get the last 10 messages from #general",
+            "browser_profile_id": "uuid-of-profile"
+        }
+    """
+    type: Literal["browser"] = "browser"
+
+    # Natural language task description (supports ${expressions})
+    task: str = Field()
+
+    # Additional context data passed to the browser agent
+    inputs: Dict[str, JSONValue] = Field(default_factory=dict)
+
+    # Reference to user's browser profile with saved login sessions
+    # Profiles are managed via /browser/profiles API endpoints
+    browser_profile_id: Optional[str] = None
+
+    # Execution limits
+    max_steps: int = Field(default=25, ge=1, le=100)
+    timeout_seconds: int = Field(default=300, ge=30, le=1800)
+
+    # Optional output contract for structured output validation
+    expect_outputs: Optional[OutputContract] = None
+
+    # Screenshot saving configuration
+    save_screenshots: bool = Field(
+        default=False,
+        description="When True, save screenshots to S3 and return WorkflowFileRef objects"
+    )
+
+
 Node = Annotated[
-    Union[ToolNode, LLMNode, MCPNode, IfNode, ForEachNode, HITLNode],
+    Union[ToolNode, LLMNode, MCPNode, IfNode, ForEachNode, HITLNode, ImageGenNode, BrowserNode],
     Field(discriminator="type"),
 ]
 

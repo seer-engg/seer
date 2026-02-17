@@ -204,34 +204,18 @@ class TestParseWorkflowCursor:
 class TestListWorkflowsLimitBounds:
     """Tests for list_workflows limit bounds logic."""
 
-    def test_limit_bounds_minimum(self):
-        """Test limit is clamped to minimum of 1."""
-        limit = 0
-        result = max(1, min(limit, 100))
-        assert result == 1
-
-    def test_limit_bounds_negative(self):
-        """Test negative limit is clamped to minimum of 1."""
-        limit = -5
-        result = max(1, min(limit, 100))
-        assert result == 1
-
-    def test_limit_bounds_valid(self):
-        """Test valid limit passes through."""
-        limit = 50
-        result = max(1, min(limit, 100))
-        assert result == 50
-
-    def test_limit_bounds_maximum(self):
-        """Test limit is clamped to maximum of 100."""
-        limit = 200
-        result = max(1, min(limit, 100))
-        assert result == 100
-
-    def test_limit_bounds_at_boundary(self):
-        """Test limit at boundary values."""
-        assert max(1, min(1, 100)) == 1
-        assert max(1, min(100, 100)) == 100
+    @pytest.mark.parametrize("input_limit,expected", [
+        (0, 1),      # Minimum boundary - clamp to 1
+        (-5, 1),     # Negative value - clamp to 1
+        (50, 50),    # Valid middle value - passes through
+        (200, 100),  # Above maximum - clamp to 100
+        (1, 1),      # At minimum boundary
+        (100, 100),  # At maximum boundary
+    ])
+    def test_limit_bounds_clamping(self, input_limit, expected):
+        """Test limit is clamped to valid range [1, 100]."""
+        result = max(1, min(input_limit, 100))
+        assert result == expected
 
 
 # =============================================================================

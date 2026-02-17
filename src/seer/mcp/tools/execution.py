@@ -12,12 +12,14 @@ from typing import Any, Dict, Optional
 
 from seer.mcp.server import mcp
 from seer.mcp.tools.workflows import _get_mcp_user, _ensure_db
+from seer.mcp.tracking import track_mcp_tool
 from seer.logger import get_logger
 
 logger = get_logger(__name__)
 
 
 @mcp.tool()
+@track_mcp_tool("run_workflow")
 async def run_workflow(
     workflow_id: str,
     inputs: Optional[Dict[str, Any]] = None,
@@ -87,6 +89,7 @@ async def run_workflow(
 
 
 @mcp.tool()
+@track_mcp_tool("get_run_status")
 async def get_run_status(
     workflow_id: str,  # pylint: disable=unused-argument # Reason: Required for MCP tool API signature consistency
     run_id: str,
@@ -142,6 +145,7 @@ async def get_run_status(
 
 
 @mcp.tool()
+@track_mcp_tool("list_runs")
 async def list_runs(
     workflow_id: str,
     limit: int = 50,
@@ -196,6 +200,7 @@ async def list_runs(
 
 
 @mcp.tool()
+@track_mcp_tool("get_run_history")
 async def get_run_history(
     workflow_id: str,  # pylint: disable=unused-argument # Reason: Required for MCP tool API signature consistency
     run_id: str,

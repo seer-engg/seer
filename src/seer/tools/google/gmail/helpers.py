@@ -213,21 +213,30 @@ def _decode_attachment_data(data_b64: str, filename: str) -> Optional[bytes]:
 
 
 def _add_attachments(msg: EmailMessage, attachments: Optional[List[Dict[str, Any]]]):
-    """Add attachments to email message."""
+    """
+    Add attachments to email message.
+
+    Supports two formats:
+    1. Resolved attachments with 'data_bytes' (from file resolver)
+    2. Legacy format with 'data_base64' (deprecated)
+    """
     if not attachments:
         return
 
     for att in attachments:
         filename = str(att.get("filename") or "attachment")
         mime_type = str(att.get("mime_type") or "application/octet-stream")
-        data_b64 = att.get("data_base64")
 
-        if not data_b64:
-            continue
-
-        file_bytes = _decode_attachment_data(data_b64, filename)
-        if not file_bytes:
-            continue
+        # Check for resolved file data first (from file resolver)
+        file_bytes = att.get("data_bytes")
+        if file_bytes is None:
+            # Fall back to legacy base64 format
+            data_b64 = att.get("data_base64")
+            if not data_b64:
+                continue
+            file_bytes = _decode_attachment_data(data_b64, filename)
+            if not file_bytes:
+                continue
 
         maintype, subtype = _parse_mime_type(mime_type)
         msg.add_attachment(file_bytes, maintype=maintype, subtype=subtype, filename=filename)

@@ -13,6 +13,8 @@ import pytest
 
 from seer.core.compiler.lower_control_flow import build_execution_plan
 from seer.core.compiler.parse import parse_workflow_spec
+from seer.core.compiler.validate_refs import validate_references
+from seer.core.expr.typecheck import TypeEnvironment
 from seer.core.schema.models import WorkflowSpec
 from seer.core.errors import ValidationPhaseError
 from seer.core.registry.tool_registry import ToolDefinition
@@ -40,6 +42,7 @@ def _create_mock_tool() -> ToolDefinition:
     )
 
 
+@pytest.mark.unit
 class TestMultipleTriggersSameType:
     """Test suite for multiple triggers of the same type."""
 
@@ -188,17 +191,17 @@ class TestMultipleTriggersSameType:
 
         # Verify trigger_targets has 3 entries (one per trigger instance)
         assert len(plan.trigger_targets) == 3
-        assert plan.trigger_targets["gmail_1"] == "node1"
-        assert plan.trigger_targets["gmail_2"] == "node2"
-        assert plan.trigger_targets["webhook_1"] == "node3"
+        assert plan.trigger_targets["gmail_1"] == ["node1"]
+        assert plan.trigger_targets["gmail_2"] == ["node2"]
+        assert plan.trigger_targets["webhook_1"] == ["node3"]
 
-    def test_multiple_edges_from_same_trigger_last_wins(self):
+    def test_multiple_edges_from_same_trigger_fan_out(self):
         """
         Verify that if multiple edges exist from the same trigger ID,
-        the last one in the list wins (dict behavior).
+        all targets are collected for parallel execution (fan-out).
 
-        NOTE: This is current behavior, not necessarily desired. In the future,
-        we might want to support fan-out (one trigger to multiple nodes).
+        This enables workflows where a single trigger fires multiple
+        parallel branches simultaneously.
         """
         spec_payload = {
             "version": "2",
@@ -208,7 +211,7 @@ class TestMultipleTriggersSameType:
             ],
             "edges": [
                 {"source": "trigger_1", "target": "node1", "type": "trigger"},
-                {"source": "trigger_1", "target": "node2", "type": "trigger"},  # Same source
+                {"source": "trigger_1", "target": "node2", "type": "trigger"},  # Same source, parallel
             ],
             "triggers": [
                 {
@@ -225,9 +228,9 @@ class TestMultipleTriggersSameType:
         spec = parse_workflow_spec(spec_payload)
         plan = build_execution_plan(spec)
 
-        # Last edge wins (dict overwrites previous value)
+        # Both targets are collected for parallel execution
         assert len(plan.trigger_targets) == 1
-        assert plan.trigger_targets["trigger_1"] == "node2"
+        assert plan.trigger_targets["trigger_1"] == ["node1", "node2"]
 
     def test_trigger_id_field_is_required(self):
         """Verify that trigger specs require an id field."""
@@ -311,9 +314,9 @@ class TestMultipleTriggersSameType:
         # Verify all triggers are distinct and route to correct nodes
         assert len(spec.triggers) == 3
         assert len(plan.trigger_targets) == 3
-        assert plan.trigger_targets["gmail_inbox"] == "process_inbox"
-        assert plan.trigger_targets["gmail_important"] == "process_important"
-        assert plan.trigger_targets["gmail_sent"] == "process_sent"
+        assert plan.trigger_targets["gmail_inbox"] == ["process_inbox"]
+        assert plan.trigger_targets["gmail_important"] == ["process_important"]
+        assert plan.trigger_targets["gmail_sent"] == ["process_sent"]
 
         # Verify all have same key but different IDs
         trigger_keys = [t.key for t in spec.triggers]
@@ -322,6 +325,7 @@ class TestMultipleTriggersSameType:
         assert len(set(trigger_ids)) == 3  # All different IDs
 
 
+@pytest.mark.unit
 class TestTriggerEventEnvelope:
     """Test trigger event envelope includes both trigger_id and trigger_key."""
 
@@ -349,6 +353,7 @@ class TestTriggerEventEnvelope:
         assert envelope["data"]["subject"] == "Test email"
 
 
+@pytest.mark.unit
 class TestTriggerReferenceResolution:
     """Test trigger reference resolution with realistic envelope structure."""
 
@@ -456,6 +461,152 @@ class TestTriggerReferenceResolution:
         # Should successfully resolve ${trigger-1.data.message}
         assert result["echo_node"] == "hello from trigger"
 
+
+@pytest.mark.unit
+class TestOrphanedTriggerValidation:
+    """Test suite for orphaned trigger detection (compile-time validation)."""
+
+    def test_compiler_rejects_single_orphaned_trigger(self):
+        """Verify validate_references rejects a trigger with no edge connecting it."""
+        spec_payload = {
+            "version": "2",
+            "nodes": [
+                {"id": "node1", "type": "tool", "tool": "test.tool", "inputs": {"value": "result1"}},
+            ],
+            "edges": [],  # No trigger edge!
+            "triggers": [
+                {
+                    "id": "trigger_1",
+                    "key": "webhook.generic",
+                    "mode": "webhook",
+                },
+            ],
+        }
+
+        spec = parse_workflow_spec(spec_payload)
+        type_env = TypeEnvironment()
+
+        with pytest.raises(ValidationPhaseError, match="Orphaned triggers without edges are not allowed"):
+            validate_references(spec, type_env)
+
+    def test_compiler_rejects_multiple_orphaned_triggers(self):
+        """Verify error lists all orphaned trigger IDs."""
+        spec_payload = {
+            "version": "2",
+            "nodes": [
+                {"id": "node1", "type": "tool", "tool": "test.tool", "inputs": {"value": "result1"}},
+            ],
+            "edges": [],
+            "triggers": [
+                {"id": "trigger_a", "key": "webhook.generic", "mode": "webhook"},
+                {"id": "trigger_b", "key": "gmail.new_email", "mode": "polling"},
+                {"id": "trigger_c", "key": "schedule.cron", "mode": "schedule"},
+            ],
+        }
+
+        spec = parse_workflow_spec(spec_payload)
+        type_env = TypeEnvironment()
+
+        with pytest.raises(ValidationPhaseError) as exc_info:
+            validate_references(spec, type_env)
+
+        error_msg = str(exc_info.value)
+        assert "trigger_a" in error_msg
+        assert "trigger_b" in error_msg
+        assert "trigger_c" in error_msg
+
+    def test_compiler_rejects_partial_orphaned_triggers(self):
+        """Verify error when some triggers are connected and others are not."""
+        spec_payload = {
+            "version": "2",
+            "nodes": [
+                {"id": "node1", "type": "tool", "tool": "test.tool", "inputs": {"value": "result1"}},
+            ],
+            "edges": [
+                {"source": "connected_trigger", "target": "node1", "type": "trigger"},
+            ],
+            "triggers": [
+                {"id": "connected_trigger", "key": "webhook.generic", "mode": "webhook"},
+                {"id": "orphan_trigger", "key": "gmail.new_email", "mode": "polling"},
+            ],
+        }
+
+        spec = parse_workflow_spec(spec_payload)
+        type_env = TypeEnvironment()
+
+        with pytest.raises(ValidationPhaseError) as exc_info:
+            validate_references(spec, type_env)
+
+        error_msg = str(exc_info.value)
+        assert "orphan_trigger" in error_msg
+        assert "connected_trigger" not in error_msg  # Should not list connected trigger
+
+    def test_compiler_allows_triggers_with_edges(self):
+        """Verify validate_references accepts triggers that are properly connected."""
+        spec_payload = {
+            "version": "2",
+            "nodes": [
+                {"id": "node1", "type": "tool", "tool": "test.tool", "inputs": {"value": "result1"}},
+                {"id": "node2", "type": "tool", "tool": "test.tool", "inputs": {"value": "result2"}},
+            ],
+            "edges": [
+                {"source": "trigger_1", "target": "node1", "type": "trigger"},
+                {"source": "trigger_2", "target": "node2", "type": "trigger"},
+            ],
+            "triggers": [
+                {"id": "trigger_1", "key": "webhook.generic", "mode": "webhook"},
+                {"id": "trigger_2", "key": "gmail.new_email", "mode": "polling"},
+            ],
+        }
+
+        spec = parse_workflow_spec(spec_payload)
+        type_env = TypeEnvironment()
+
+        # Should validate without error
+        validate_references(spec, type_env)
+        assert len(spec.triggers) == 2
+
+    def test_compiler_allows_workflow_without_triggers(self):
+        """Verify validate_references accepts workflows with no triggers (manual execution)."""
+        spec_payload = {
+            "version": "2",
+            "nodes": [
+                {"id": "node1", "type": "tool", "tool": "test.tool", "inputs": {"value": "result1"}},
+            ],
+            "edges": [],
+            "triggers": [],  # No triggers at all is valid
+        }
+
+        spec = parse_workflow_spec(spec_payload)
+        type_env = TypeEnvironment()
+
+        # Should validate without error
+        validate_references(spec, type_env)
+        assert len(spec.triggers) == 0
+
+    def test_compiler_allows_trigger_with_multiple_edges(self):
+        """Verify a single trigger can have multiple edges (fan-out pattern)."""
+        spec_payload = {
+            "version": "2",
+            "nodes": [
+                {"id": "node1", "type": "tool", "tool": "test.tool", "inputs": {"value": "result1"}},
+                {"id": "node2", "type": "tool", "tool": "test.tool", "inputs": {"value": "result2"}},
+            ],
+            "edges": [
+                {"source": "trigger_1", "target": "node1", "type": "trigger"},
+                {"source": "trigger_1", "target": "node2", "type": "trigger"},  # Same trigger, multiple targets
+            ],
+            "triggers": [
+                {"id": "trigger_1", "key": "webhook.generic", "mode": "webhook"},
+            ],
+        }
+
+        spec = parse_workflow_spec(spec_payload)
+        type_env = TypeEnvironment()
+
+        # Should validate without error - trigger has at least one edge
+        validate_references(spec, type_env)
+        assert len(spec.triggers) == 1
 
 
 if __name__ == "__main__":

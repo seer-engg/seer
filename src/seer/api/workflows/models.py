@@ -58,6 +58,7 @@ class TriggerDescriptor(TriggerIdentity):
     event_schema: Dict[str, Any]
     filter_schema: Optional[Dict[str, Any]] = None
     config_schema: Optional[Dict[str, Any]] = None
+    is_connected: bool = True
 
 
 class TriggerCatalogResponse(BaseModel):
@@ -117,9 +118,10 @@ class TriggerSubscriptionTestResponse(BaseModel):
 
 
 class StartListeningResponse(BaseModel):
-    webhook_url: str
-    secret_token: str
+    webhook_url: Optional[str] = None
+    secret_token: Optional[str] = None
     subscription_id: int
+    form_url: Optional[str] = None
 
 
 class PendingEventItem(BaseModel):
@@ -131,6 +133,13 @@ class PendingEventItem(BaseModel):
 class PendingEventsResponse(BaseModel):
     events: List[PendingEventItem] = Field(default_factory=list)
     latest_event_id: Optional[int] = None
+
+
+class SubscriptionEventCountResponse(BaseModel):
+    """Response containing the count of stored events for a subscription."""
+    subscription_id: int
+    event_count: int
+    has_events: bool
 
 
 class ModelDescriptor(BaseModel):
@@ -283,6 +292,21 @@ class RunFromWorkflowRequest(BaseModel):
     version: Optional[int] = None
     inputs: Dict[str, Any] = Field(default_factory=dict)
     config: Dict[str, Any] = Field(default_factory=dict)
+    trigger_event_override: Optional[Dict[str, Any]] = Field(
+        None,
+        description=(
+            "Custom trigger event envelope to use instead of sample data. "
+            "Must contain at least 'trigger_key' and 'data' fields. When provided, "
+            "runs a single execution with this event even if workflow has multiple triggers."
+        )
+    )
+    trigger_id: Optional[str] = Field(
+        None,
+        description=(
+            "ID of the specific trigger to run. Required when using "
+            "trigger_event_override on a workflow with multiple triggers."
+        )
+    )
 
 
 class RunProgress(BaseModel):
@@ -432,6 +456,50 @@ class HITLInterruptResponse(BaseModel):
     is_expired: bool = False
 
 
+# ============================================================================
+# Workflow File Models
+# ============================================================================
+
+
+class WorkflowFileItem(BaseModel):
+    """File metadata for a workflow run file."""
+    file_id: str
+    filename: str
+    mime_type: str
+    size_bytes: int
+    size_human: str
+    source_node_id: Optional[str] = None
+    source_tool: Optional[str] = None
+    created_at: datetime
+
+
+class WorkflowFileListResponse(BaseModel):
+    """Response containing list of files for a workflow run."""
+    run_id: str
+    files: List[WorkflowFileItem]
+    total_count: int
+    total_size_bytes: int
+
+
+class WorkflowFileResponse(BaseModel):
+    """Response containing single file metadata."""
+    file: WorkflowFileItem
+
+
+class WorkflowFileDownloadResponse(BaseModel):
+    """Response containing presigned download URL."""
+    file_id: str
+    filename: str
+    download_url: str
+    expires_in_seconds: int
+
+
+class WorkflowFileDeleteResponse(BaseModel):
+    """Response confirming file deletion."""
+    file_id: str
+    deleted: bool
+
+
 __all__ = [
     "ProblemDetails",
     "ProblemError",
@@ -451,6 +519,7 @@ __all__ = [
     "StartListeningResponse",
     "PendingEventItem",
     "PendingEventsResponse",
+    "SubscriptionEventCountResponse",
     "ModelDescriptor",
     "ModelRegistryResponse",
     "SchemaResponse",
@@ -494,4 +563,10 @@ __all__ = [
     "HITLInterruptDisplayItem",
     "HITLInterruptInputField",
     "HITLInterruptResponse",
+    # Workflow Files
+    "WorkflowFileItem",
+    "WorkflowFileListResponse",
+    "WorkflowFileResponse",
+    "WorkflowFileDownloadResponse",
+    "WorkflowFileDeleteResponse",
 ]

@@ -3,11 +3,8 @@ from seer.logger import get_logger
 from seer.agents.nexus.tools import (
     analyze_workflow,
     submit_workflow_spec,
-    search_tools,
-    search_triggers,
-    list_available_triggers,
-    get_workflow_template,
     ask_clarification_questions,
+    web_search,
 )
 
 logger = get_logger(__name__)
@@ -18,6 +15,9 @@ def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:
     """
     Get all workflow manipulation tools and dynamic discovery tools.
 
+    Uses the unified tool registry for discovery/template tools (shared with MCP),
+    plus Nexus-only tools that are tightly coupled to the agent context.
+
     Args:
         workflow_state: Reserved for future use. Planned: inject workflow state into tool context
                         so tools can access state without requiring it as a parameter.
@@ -25,24 +25,20 @@ def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:
     # TODO: Implement workflow_state injection when tool context system is ready
     # Currently, tools use _current_thread_id context instead of explicit state parameter
 
-    # Base tools that are always available
-    base_tools = [
-        # Workflow manipulation tools
+    # Register unified tools (idempotent) and get LangGraph-compatible versions
+    from seer.tools.unified_tools import register_unified_tools  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+    register_unified_tools()
+    from seer.tools.tool_factory import unified_registry  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+
+    # Nexus-only tools (tightly coupled to agent context, not in factory)
+    nexus_only_tools = [
         analyze_workflow,
         submit_workflow_spec,
-        # Dynamic tool discovery tools
-        search_tools,
-        # Dynamic trigger discovery tools
-        search_triggers,
-        list_available_triggers,
-        # Template discovery tools
-        get_workflow_template,
-        # Clarification tools
         ask_clarification_questions,
-        # list_available_tools,
+        web_search,
     ]
 
-    return base_tools
+    return unified_registry.get_langgraph_tools() + nexus_only_tools
 
 
 def extract_thinking_from_messages(messages: List[Any]) -> List[str]:

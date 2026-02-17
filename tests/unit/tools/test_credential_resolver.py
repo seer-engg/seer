@@ -15,13 +15,7 @@ from fastapi import HTTPException
 # Fixtures
 # =============================================================================
 
-
-@pytest.fixture
-def mock_user():
-    """Create a mock user."""
-    user = MagicMock()
-    user.user_id = "test_user_123"
-    return user
+# Note: mock_user fixture is provided by tests/unit/conftest.py
 
 
 @pytest.fixture

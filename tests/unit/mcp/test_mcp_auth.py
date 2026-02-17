@@ -22,6 +22,7 @@ from seer.mcp.auth import (
 )
 
 
+@pytest.mark.unit
 class TestExtractBearerToken:
     """Tests for extract_bearer_token function."""
 
@@ -66,6 +67,7 @@ class TestExtractBearerToken:
         assert result == "token-with-spaces"
 
 
+@pytest.mark.unit
 class TestWwwAuthenticateResponse:
     """Tests for www_authenticate_response function."""
 
@@ -86,12 +88,16 @@ class TestWwwAuthenticateResponse:
 
     def test_includes_www_authenticate_header_with_resource_metadata(self, mock_request):
         """Test that WWW-Authenticate header includes resource_metadata for OAuth discovery."""
-        response = www_authenticate_response(mock_request, "Token expired")
-        assert "WWW-Authenticate" in response.headers
-        header = response.headers["WWW-Authenticate"]
-        # Check for resource_metadata URL (scheme comes from config, defaults to http)
-        assert 'resource_metadata="http://api.example.com/.well-known/oauth-protected-resource"' in header
-        assert "Token expired" in header
+        from unittest.mock import patch
+        # Mock config to ensure deterministic scheme
+        with patch("seer.mcp.auth.config") as mock_config:
+            mock_config.redirect_uri_scheme = "https"
+            response = www_authenticate_response(mock_request, "Token expired")
+            assert "WWW-Authenticate" in response.headers
+            header = response.headers["WWW-Authenticate"]
+            # Check for resource_metadata URL (scheme from mocked config)
+            assert 'resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"' in header
+            assert "Token expired" in header
 
     def test_includes_mcp_meta(self, mock_request):
         """Test that _meta with mcp/www_authenticate is included in body."""
@@ -110,6 +116,7 @@ class TestWwwAuthenticateResponse:
         assert 'error="insufficient_scope"' in header
 
 
+@pytest.mark.unit
 class TestMCPAuthMiddleware:
     """Tests for MCPAuthMiddleware."""
 
@@ -198,6 +205,7 @@ class TestMCPAuthMiddleware:
         assert "user_123" in response.text
 
 
+@pytest.mark.unit
 class TestGetMCPAuthenticatedUser:
     """Tests for get_mcp_authenticated_user context variable."""
 
@@ -244,6 +252,7 @@ class TestGetMCPAuthenticatedUser:
         assert result is None
 
 
+@pytest.mark.unit
 class TestMCPOpaqueAuthMiddleware:
     """Tests for MCPOpaqueAuthMiddleware (opaque token validation)."""
 

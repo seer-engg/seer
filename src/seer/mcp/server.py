@@ -69,14 +69,27 @@ async def oauth_protected_resource_metadata(request):
     return JSONResponse(metadata)
 
 
+_MCP_TOOLS_REGISTERED = False
+
+
 def _register_tools() -> None:
-    """Register all MCP tools with the server."""
-    # Import tool modules to register their tools
+    """Register all MCP tools with the server. Idempotent — safe to call multiple times."""
+    global _MCP_TOOLS_REGISTERED  # pylint: disable=global-statement # Reason: Idempotent guard for module-level mcp singleton
+    if _MCP_TOOLS_REGISTERED:
+        return
+    _MCP_TOOLS_REGISTERED = True
+
     # pylint: disable=import-outside-toplevel,unused-import # Reason: Lazy loading to avoid circular imports
-    from seer.mcp.tools import discovery
+
+    # Unified tools (discovery + templates) — registered via factory pattern
+    from seer.tools.unified_tools import register_unified_tools
+    register_unified_tools()
+    from seer.tools.tool_factory import unified_registry
+    unified_registry.register_mcp_tools(mcp)
+
+    # MCP-only modules (not yet in factory)
     from seer.mcp.tools import workflows
     from seer.mcp.tools import execution
-    from seer.mcp.tools import templates
     from seer.mcp.tools import guides
 
 
@@ -214,6 +227,12 @@ def create_http_app(transport: str = "sse") -> Starlette:
 
 def main() -> None:
     """CLI entry point for seer-mcp command."""
+    # Initialize Sentry for standalone MCP server mode
+    if config.is_sentry_configured:
+        from seer.observability.sentry_client import init_sentry  # pylint: disable=import-outside-toplevel  # Reason: lazy import for optional dependency
+        if init_sentry():
+            logger.info("Sentry error monitoring initialized for MCP server")
+
     parser = argparse.ArgumentParser(
         description="Seer MCP Server - Workflow management via Model Context Protocol"
     )

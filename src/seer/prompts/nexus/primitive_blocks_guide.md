@@ -1,7 +1,7 @@
 # Primitive Workflow Blocks Reference
 
 ## Overview
-Seer workflows are built from 5 primitive block types: **tool**, **llm**, **mcp**, **if**, and **for_each**.
+Seer workflows are built from 8 primitive block types: **tool**, **llm**, **mcp**, **if**, **for_each**, **hitl**, **image_gen**, and **browser**.
 Each block is a node in the workflow graph, connected by edges that define execution flow.
 
 ---
@@ -374,44 +374,13 @@ If nodes **require** two edges:
 - `index_var` (string): Variable name for current index (default: `"index"`)
 - `outputs` (object): Schema for aggregated results
 
-**⚠️ Type Inference Limitation:**
-Loop variables (`item_var`) receive a permissive object schema at compile time because the actual item type cannot always be inferred. This means:
-- ✅ Object property access works: `${item.name}`, `${item.email}`
-- ⚠️ Array indexing may fail: `${item[0]}` - only works if the compiler knows `item` is an array type
-
-**If iterating over array-of-arrays (e.g., spreadsheet rows):**
-Each `item` is `["col1", "col2", "col3"]` but may be typed as object, not array.
-
-**Recommended workaround - use LLM to extract values:**
-```json
-{
-  "id": "parse_row",
-  "type": "llm",
-  "inputs": {
-    "model": "gpt-5-mini",
-    "prompt": "Extract from this spreadsheet row: ${item}. Expected columns: Name (index 0), Email (index 1), Status (index 2). Return as JSON with name, email, status fields."
-  },
-  "outputs": {
-    "mode": "json",
-    "schema": {
-      "json_schema": {
-        "type": "object",
-        "properties": {
-          "name": {"type": "string"},
-          "email": {"type": "string"},
-          "status": {"type": "string"}
-        },
-        "required": ["name", "email", "status"]
-      }
-    }
-  }
-}
-```
-
 **Best Practice:** Design your data structures so items are objects with named properties (`{name: "...", email: "..."}`) rather than arrays requiring index access (`["...", "..."]`).
 
 **Edge Configuration:**
-ForEach nodes **require** specific edge patterns:
+ForEach nodes use two edge types:
+- `loop_body`: Points to the first node in the loop body
+- `loop_exit`: Points to the node executed after all iterations complete
+
 ```json
 {
   "source": "loop_id",
@@ -419,16 +388,13 @@ ForEach nodes **require** specific edge patterns:
   "type": "loop_body"
 },
 {
-  "source": "process_item",
-  "target": "loop_id",
-  "type": "default"
-},
-{
   "source": "loop_id",
   "target": "next_node",
   "type": "loop_exit"
 }
 ```
+
+**Note:** Back-edges from the last node in the loop body to the for_each node are **optional**. The compiler automatically adds implicit back-edges from terminal nodes (nodes with no outgoing edges in the loop body) back to the loop. You can add explicit back-edges if you prefer, but they are not required.
 
 **Accessing Loop Variables:**
 - Current item: `${item_var}` (or custom name)
@@ -469,7 +435,6 @@ ForEach nodes **require** specific edge patterns:
   ],
   "edges": [
     {"source": "loop_emails", "target": "send_email", "type": "loop_body"},
-    {"source": "send_email", "target": "loop_emails", "type": "default"},
     {"source": "loop_emails", "target": "notify_complete", "type": "loop_exit"}
   ]
 }
@@ -482,6 +447,339 @@ ForEach nodes **require** specific edge patterns:
 - Send bulk emails/notifications
 - Batch operations
 - Data transformation on lists
+
+---
+
+## 6. HITL BLOCK (`type: "hitl"`)
+
+**Purpose:** Human-In-The-Loop - pause workflow execution to collect user input via web form or email
+
+**Schema:**
+```json
+{
+  "id": "unique_node_id",
+  "type": "hitl",
+  "title": "Approval Required",
+  "description": "Please review and approve this action",
+  "display": [
+    {"label": "Item", "value": "${previous_node.name}"},
+    {"label": "Amount", "value": "${previous_node.total}"}
+  ],
+  "inputs": [
+    {
+      "id": "decision",
+      "question": "Do you approve this request?",
+      "input_type": "single_choice",
+      "options": [
+        {"value": "approve", "label": "Approve"},
+        {"value": "reject", "label": "Reject"}
+      ],
+      "required": true
+    }
+  ],
+  "timeout_seconds": 86400,
+  "delivery_channels": [
+    {"type": "platform"}
+  ]
+}
+```
+
+**Required Fields:**
+- `id` (string): Unique identifier
+- `type`: Must be `"hitl"`
+- `title` (string): Display title shown to the user
+
+**Optional Fields:**
+- `description` (string): Additional context text
+- `display` (array): Items to show for context, each with `label` and `value` (supports `${...}` expressions)
+- `inputs` (array): Input fields to collect from user
+- `timeout_seconds` (number): Timeout in seconds (`null` or `0` = indefinite wait)
+- `delivery_channels` (array): Notification channels (default: `platform` only)
+
+**Input Types:**
+| Type | Description | Requires Options |
+|------|-------------|------------------|
+| `single_choice` | User selects ONE option | Yes (min 2) |
+| `multi_choice` | User selects MULTIPLE options | Yes (min 2) |
+| `text` | Free-form text input | No |
+| `number` | Numeric input | No |
+| `boolean` | Yes/No toggle | No |
+
+**Input Field Schema:**
+```json
+{
+  "id": "field_id",
+  "question": "What is your decision?",
+  "input_type": "single_choice",
+  "options": [
+    {"value": "yes", "label": "Yes"},
+    {"value": "no", "label": "No", "requires_text": true}
+  ],
+  "required": true,
+  "placeholder": "Select an option",
+  "default_value": "yes"
+}
+```
+
+**Delivery Channels:**
+- `platform`: Default web-based form (user polls `/runs/{id}/interrupt`)
+- `gmail`: Email notification with form link
+
+**Gmail Delivery Example:**
+```json
+{
+  "delivery_channels": [
+    {"type": "platform"},
+    {
+      "type": "gmail",
+      "gmail": {
+        "to": ["approver@example.com"],
+        "subject": "Approval Required: ${item.name}"
+      }
+    }
+  ]
+}
+```
+
+**Important Notes:**
+- ⏸️ Workflow execution **pauses** until user responds or timeout occurs
+- ✅ User responses accessible via `${hitl_node_id.field_id}` in downstream nodes
+- ✅ Use `display` items to show context data from previous nodes
+- ✅ Multiple delivery channels can be combined (e.g., platform + email)
+
+**Example - Data Review Workflow:**
+```json
+{
+  "id": "review_data",
+  "type": "hitl",
+  "title": "Review Extracted Data",
+  "description": "Please verify the extracted information is correct",
+  "display": [
+    {"label": "Customer Name", "value": "${extract.customer_name}"},
+    {"label": "Order Total", "value": "${extract.total}"},
+    {"label": "Items", "value": "${extract.item_count} items"}
+  ],
+  "inputs": [
+    {
+      "id": "is_correct",
+      "question": "Is this data correct?",
+      "input_type": "boolean",
+      "required": true
+    },
+    {
+      "id": "corrections",
+      "question": "If incorrect, what needs to be fixed?",
+      "input_type": "text",
+      "required": false,
+      "placeholder": "Describe any corrections needed"
+    }
+  ],
+  "timeout_seconds": 3600
+}
+```
+
+**Common Use Cases:**
+- Approval workflows (expense, content, access requests)
+- Data verification/correction
+- Manual decision points
+- Quality assurance checkpoints
+
+---
+
+## 7. IMAGE_GEN BLOCK (`type: "image_gen"`)
+
+**Purpose:** Generate images using AI models via OpenRouter API
+
+**Schema:**
+```json
+{
+  "id": "unique_node_id",
+  "type": "image_gen",
+  "inputs": {
+    "model": "openai/dall-e-3",
+    "prompt": "A professional product photo of ${product.name}",
+    "size": "1024x1024",
+    "num_images": 1
+  }
+}
+```
+
+**Required Fields:**
+- `id` (string): Unique identifier
+- `type`: Must be `"image_gen"`
+- `inputs` (object): Must contain:
+  - `model` (string): Image generation model ID
+  - `prompt` (string): Image description (supports `${...}` expressions)
+
+**Optional Input Fields:**
+- `size` (string): Image dimensions (e.g., `"1024x1024"`, `"1792x1024"`)
+- `num_images` (number): Number of images to generate
+
+**Available Models (via OpenRouter):**
+- `openai/dall-e-3` - DALL-E 3
+- `openai/dall-e-2` - DALL-E 2
+- Other models supported by OpenRouter
+
+**Important Notes:**
+- ✅ Output contains generated image URL(s)
+- ✅ Use descriptive prompts for better results
+- ✅ Prompt supports `${...}` expressions for dynamic content
+
+**Example:**
+```json
+{
+  "id": "generate_thumbnail",
+  "type": "image_gen",
+  "inputs": {
+    "model": "openai/dall-e-3",
+    "prompt": "Create a minimalist thumbnail image for a blog post about: ${article.title}. Style: modern, clean, professional",
+    "size": "1024x1024"
+  }
+}
+```
+
+**Common Use Cases:**
+- Product image generation
+- Social media graphics
+- Blog post thumbnails
+- Marketing visuals
+
+---
+
+## 8. BROWSER BLOCK (`type: "browser"`)
+
+**Purpose:** Browser automation using natural language task descriptions
+
+**Schema:**
+```json
+{
+  "id": "unique_node_id",
+  "type": "browser",
+  "task": "Go to the website and extract the pricing information",
+  "inputs": {
+    "url": "${config.target_url}",
+    "search_term": "${query}"
+  },
+  "browser_profile_id": "uuid-of-saved-profile",
+  "max_steps": 25,
+  "timeout_seconds": 300,
+  "expect_outputs": {
+    "mode": "json",
+    "schema": {
+      "json_schema": {
+        "type": "object",
+        "properties": {
+          "prices": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["prices"]
+      }
+    }
+  },
+  "save_screenshots": false
+}
+```
+
+**Required Fields:**
+- `id` (string): Unique identifier
+- `type`: Must be `"browser"`
+- `task` (string): Natural language description of what to do (supports `${...}` expressions)
+
+**Optional Fields:**
+- `inputs` (object): Additional context data passed to the browser agent
+- `browser_profile_id` (string): Reference to saved browser profile with login sessions
+- `max_steps` (number): Maximum automation steps (default: 25, range: 1-100)
+- `timeout_seconds` (number): Execution timeout (default: 300, range: 30-1800)
+- `expect_outputs` (object): Output schema for structured data extraction
+- `save_screenshots` (boolean): Save screenshots to S3 (default: false)
+
+**Browser Profiles:**
+Browser profiles contain saved login sessions, allowing workflows to interact with authenticated websites (Slack, email, dashboards, etc.) without storing credentials in the workflow.
+
+- Profiles are managed separately via `/browser/profiles` API endpoints
+- Reference a profile by its UUID in `browser_profile_id`
+- The browser agent loads the profile's cookies/session state before executing the task
+
+**Important Notes:**
+- 🤖 Uses BrowserUse Agent for intelligent browser automation
+- ✅ Natural language tasks - describe WHAT you want, not HOW
+- ✅ `inputs` provide additional context data the agent can reference
+- ✅ Use `expect_outputs` for structured data extraction
+- ⏱️ Default timeout is 5 minutes; increase for complex tasks
+
+**Example - Web Scraping:**
+```json
+{
+  "id": "scrape_prices",
+  "type": "browser",
+  "task": "Navigate to ${inputs.url}, find the pricing table, and extract all plan names and their monthly prices",
+  "inputs": {
+    "url": "https://example.com/pricing"
+  },
+  "max_steps": 30,
+  "timeout_seconds": 120,
+  "expect_outputs": {
+    "mode": "json",
+    "schema": {
+      "json_schema": {
+        "type": "object",
+        "properties": {
+          "plans": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {"type": "string"},
+                "price": {"type": "string"}
+              }
+            }
+          }
+        },
+        "required": ["plans"]
+      }
+    }
+  }
+}
+```
+
+**Example - Authenticated Task:**
+```json
+{
+  "id": "get_slack_messages",
+  "type": "browser",
+  "task": "Go to Slack, navigate to the #general channel, and get the last 5 messages",
+  "browser_profile_id": "abc123-profile-uuid",
+  "max_steps": 20,
+  "expect_outputs": {
+    "mode": "json",
+    "schema": {
+      "json_schema": {
+        "type": "object",
+        "properties": {
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "author": {"type": "string"},
+                "text": {"type": "string"},
+                "timestamp": {"type": "string"}
+              }
+            }
+          }
+        },
+        "required": ["messages"]
+      }
+    }
+  }
+}
+```
+
+**Common Use Cases:**
+- Web scraping and data extraction
+- Form filling and submissions
+- Authenticated website interactions
+- Screenshot capture for documentation
+- E-commerce monitoring
 
 ---
 
@@ -621,7 +919,6 @@ Arithmetic works in `if` conditions!
   "edges": [
     {"source": "fetch_list", "target": "loop"},
     {"source": "loop", "target": "process", "type": "loop_body"},
-    {"source": "process", "target": "loop"},
     {"source": "loop", "target": "complete", "type": "loop_exit"}
   ]
 }
@@ -638,5 +935,8 @@ Arithmetic works in `if` conditions!
 | `mcp` | External MCP tool | `id`, `server`, `tool` | `${node_id}`, `${node_id.field}` |
 | `if` | Conditional branch | `id`, `condition` | N/A (routing only) |
 | `for_each` | Loop over list | `id`, `items` | Loop state (internal) |
+| `hitl` | Human-In-The-Loop | `id`, `title` | `${node_id.input_field_id}` |
+| `image_gen` | Generate images | `id`, `inputs.model`, `inputs.prompt` | `${node_id}` (image URL) |
+| `browser` | Browser automation | `id`, `task` | `${node_id}`, `${node_id.field}` |
 
 ---

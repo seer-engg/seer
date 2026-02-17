@@ -1,8 +1,8 @@
 """
-Unit tests for MCP template tools.
+Unit tests for template tools (unified implementations).
 
-Tests the MCP tool wrappers that use shared template search logic from
-seer.tools.template_shared.
+Tests the canonical tool implementations from seer.tools.unified_tools,
+using shared template search logic from seer.tools.template_shared.
 """
 
 import json
@@ -10,13 +10,14 @@ import pytest
 from unittest.mock import patch
 
 
+@pytest.mark.unit
 class TestGetWorkflowTemplate:
-    """Tests for get_workflow_template MCP tool."""
+    """Tests for get_workflow_template_impl — unified canonical implementation."""
 
     @pytest.mark.asyncio
     @patch("seer.tools.template_shared.get_workflow_templates")
     async def test_get_template_finds_matching(self, mock_get_templates):
-        """Test that get_workflow_template finds matching templates."""
+        """Test that get_workflow_template_impl finds matching templates."""
         mock_get_templates.return_value = [
             {
                 "name": "Supabase to Gmail Welcome",
@@ -34,8 +35,8 @@ class TestGetWorkflowTemplate:
             },
         ]
 
-        from seer.mcp.tools.templates import get_workflow_template
-        result = await get_workflow_template.fn("gmail")
+        from seer.tools.unified_tools import get_workflow_template_impl
+        result = await get_workflow_template_impl("gmail")
         data = json.loads(result)
 
         assert data["count"] == 1
@@ -45,7 +46,7 @@ class TestGetWorkflowTemplate:
     @pytest.mark.asyncio
     @patch("seer.tools.template_shared.get_workflow_templates")
     async def test_get_template_no_matches(self, mock_get_templates):
-        """Test that get_workflow_template handles no matches."""
+        """Test that get_workflow_template_impl handles no matches."""
         mock_get_templates.return_value = [
             {
                 "name": "Test Template",
@@ -55,8 +56,8 @@ class TestGetWorkflowTemplate:
             }
         ]
 
-        from seer.mcp.tools.templates import get_workflow_template
-        result = await get_workflow_template.fn("nonexistent")
+        from seer.tools.unified_tools import get_workflow_template_impl
+        result = await get_workflow_template_impl("nonexistent")
         data = json.loads(result)
 
         assert data["matches"] == []
@@ -64,20 +65,21 @@ class TestGetWorkflowTemplate:
         assert "available_templates" in data
 
 
+@pytest.mark.unit
 class TestListWorkflowTemplates:
-    """Tests for list_workflow_templates MCP tool."""
+    """Tests for list_workflow_templates_impl — unified canonical implementation."""
 
     @pytest.mark.asyncio
     @patch("seer.tools.template_shared.get_workflow_templates")
     async def test_list_templates_returns_all(self, mock_get_templates):
-        """Test that list_workflow_templates returns all templates."""
+        """Test that list_workflow_templates_impl returns all templates."""
         mock_get_templates.return_value = [
             {"name": "Template 1", "description": "Desc 1", "tags": ["t1"]},
             {"name": "Template 2", "description": "Desc 2", "tags": ["t2"]},
         ]
 
-        from seer.mcp.tools.templates import list_workflow_templates
-        result = await list_workflow_templates.fn()
+        from seer.tools.unified_tools import list_workflow_templates_impl
+        result = await list_workflow_templates_impl()
         data = json.loads(result)
 
         assert data["total"] == 2
@@ -86,11 +88,11 @@ class TestListWorkflowTemplates:
     @pytest.mark.asyncio
     @patch("seer.tools.template_shared.get_workflow_templates")
     async def test_list_templates_empty(self, mock_get_templates):
-        """Test that list_workflow_templates handles empty list."""
+        """Test that list_workflow_templates_impl handles empty list."""
         mock_get_templates.return_value = []
 
-        from seer.mcp.tools.templates import list_workflow_templates
-        result = await list_workflow_templates.fn()
+        from seer.tools.unified_tools import list_workflow_templates_impl
+        result = await list_workflow_templates_impl()
         data = json.loads(result)
 
         assert data["total"] == 0

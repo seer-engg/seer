@@ -21,6 +21,8 @@ from seer.core.runtime.execution import CompiledWorkflow
 from seer.core.runtime.nodes import NodeRuntime, RuntimeServices
 from seer.core.schema.schema_registry import SchemaRegistry
 
+pytestmark = pytest.mark.unit
+
 
 def _create_mock_tool() -> ToolDefinition:
     """Create a mock test.tool that simply returns its input value."""
@@ -417,7 +419,9 @@ async def test_workflow_with_trigger_id_spaces():
                 "inputs": {"value": "${My Trigger.data}"}  # Reference with space
             }
         ],
-        "edges": []
+        "edges": [
+            {"source": "My Trigger", "target": "task1", "type": "trigger"}
+        ]
     }
 
     # Should compile successfully
@@ -457,7 +461,9 @@ async def test_workflow_with_trigger_id_hyphen():
                 "inputs": {"value": "${my-trigger.value}"}  # Reference with hyphen
             }
         ],
-        "edges": []
+        "edges": [
+            {"source": "my-trigger", "target": "task1", "type": "trigger"}
+        ]
     }
 
     # Should compile successfully
@@ -507,7 +513,9 @@ async def test_workflow_with_trigger_id_special_chars(valid_id):
                 "inputs": {"value": f"${{{valid_id}.message}}"}  # Reference with special char
             }
         ],
-        "edges": []
+        "edges": [
+            {"source": valid_id, "target": "task1", "type": "trigger"}
+        ]
     }
 
     # Should compile successfully
@@ -713,6 +721,9 @@ async def test_workflow_with_multiple_triggers_special_chars():
             }
         ],
         "edges": [
+            {"source": "Gmail Inbox", "target": "combined message", "type": "trigger"},
+            {"source": "slack-message", "target": "combined message", "type": "trigger"},
+            {"source": "trigger@webhook", "target": "if1", "type": "trigger"},
             {"source": "combined message", "target": "if1", "type": "default"}
         ]
     }
@@ -777,7 +788,10 @@ async def test_workflow_with_unicode_trigger_ids():
                 "inputs": {"value": "${Déclencheur Français.message}"}
             }
         ],
-        "edges": []
+        "edges": [
+            {"source": "数据触发器", "target": "chinese_result", "type": "trigger"},
+            {"source": "Déclencheur Français", "target": "french_result", "type": "trigger"}
+        ]
     }
 
     # Should compile successfully

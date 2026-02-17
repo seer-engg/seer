@@ -5,6 +5,8 @@ import pytest
 
 from seer.observability.credit_calculator import calculate_cost
 
+pytestmark = pytest.mark.unit
+
 
 def test_gpt4o_cost():
     """Test GPT-4o cost calculation."""

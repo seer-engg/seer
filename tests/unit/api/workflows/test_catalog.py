@@ -237,14 +237,20 @@ class TestListTriggers:
         mock_definition.schemas.event = {"type": "object"}
         mock_definition.schemas.filter = None
         mock_definition.schemas.config = None
+        mock_definition.meta.requires_connection = False
+
+        mock_user = MagicMock()
 
         with patch.object(catalog.trigger_registry, "all", return_value=[mock_definition]):
-            result = await catalog.list_triggers()
+            with patch("seer.database.models_oauth.OAuthConnection") as mock_oauth:
+                mock_oauth.filter.return_value.values_list = AsyncMock(return_value=[])
+                result = await catalog.list_triggers(mock_user)
 
         assert isinstance(result, api_models.TriggerCatalogResponse)
         assert len(result.triggers) == 1
         assert result.triggers[0].key == "webhook.generic"
         assert result.triggers[0].title == "Webhook"
+        assert result.triggers[0].is_connected is True  # No connection required
 
     @pytest.mark.asyncio
     async def test_list_triggers_includes_all_fields(self):
@@ -258,9 +264,14 @@ class TestListTriggers:
         mock_definition.schemas.event = {"type": "object", "properties": {"time": {"type": "string"}}}
         mock_definition.schemas.filter = {"type": "object"}
         mock_definition.schemas.config = {"type": "object", "properties": {"cron": {"type": "string"}}}
+        mock_definition.meta.requires_connection = False
+
+        mock_user = MagicMock()
 
         with patch.object(catalog.trigger_registry, "all", return_value=[mock_definition]):
-            result = await catalog.list_triggers()
+            with patch("seer.database.models_oauth.OAuthConnection") as mock_oauth:
+                mock_oauth.filter.return_value.values_list = AsyncMock(return_value=[])
+                result = await catalog.list_triggers(mock_user)
 
         trigger = result.triggers[0]
         assert trigger.key == "schedule.cron"
@@ -271,14 +282,69 @@ class TestListTriggers:
         assert trigger.event_schema is not None
         assert trigger.filter_schema is not None
         assert trigger.config_schema is not None
+        assert trigger.is_connected is True
 
     @pytest.mark.asyncio
     async def test_list_triggers_empty_registry(self):
         """Test handling empty trigger registry."""
+        mock_user = MagicMock()
+
         with patch.object(catalog.trigger_registry, "all", return_value=[]):
-            result = await catalog.list_triggers()
+            with patch("seer.database.models_oauth.OAuthConnection") as mock_oauth:
+                mock_oauth.filter.return_value.values_list = AsyncMock(return_value=[])
+                result = await catalog.list_triggers(mock_user)
 
         assert result.triggers == []
+
+    @pytest.mark.asyncio
+    async def test_list_triggers_is_connected_true_when_user_has_connection(self):
+        """Test is_connected is True when user has active OAuth connection."""
+        mock_definition = MagicMock()
+        mock_definition.key = "poll.gmail.email_received"
+        mock_definition.title = "Gmail"
+        mock_definition.provider = "gmail"
+        mock_definition.mode = "poll"
+        mock_definition.description = "Gmail trigger"
+        mock_definition.schemas.event = {"type": "object"}
+        mock_definition.schemas.filter = None
+        mock_definition.schemas.config = None
+        mock_definition.meta.requires_connection = True
+
+        mock_user = MagicMock()
+
+        with patch.object(catalog.trigger_registry, "all", return_value=[mock_definition]):
+            with patch("seer.database.models_oauth.OAuthConnection") as mock_oauth:
+                # User has google connection (gmail maps to google)
+                mock_oauth.filter.return_value.values_list = AsyncMock(return_value=["google"])
+                with patch("seer.services.integrations.auth.oauth.get_oauth_provider", return_value="google"):
+                    result = await catalog.list_triggers(mock_user)
+
+        assert result.triggers[0].is_connected is True
+
+    @pytest.mark.asyncio
+    async def test_list_triggers_is_connected_false_when_no_connection(self):
+        """Test is_connected is False when user lacks OAuth connection."""
+        mock_definition = MagicMock()
+        mock_definition.key = "poll.discord.message_received"
+        mock_definition.title = "Discord"
+        mock_definition.provider = "discord"
+        mock_definition.mode = "poll"
+        mock_definition.description = "Discord trigger"
+        mock_definition.schemas.event = {"type": "object"}
+        mock_definition.schemas.filter = None
+        mock_definition.schemas.config = None
+        mock_definition.meta.requires_connection = True
+
+        mock_user = MagicMock()
+
+        with patch.object(catalog.trigger_registry, "all", return_value=[mock_definition]):
+            with patch("seer.database.models_oauth.OAuthConnection") as mock_oauth:
+                # User has no connections
+                mock_oauth.filter.return_value.values_list = AsyncMock(return_value=[])
+                with patch("seer.services.integrations.auth.oauth.get_oauth_provider", return_value="discord"):
+                    result = await catalog.list_triggers(mock_user)
+
+        assert result.triggers[0].is_connected is False
 
 
 # =============================================================================

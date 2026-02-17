@@ -22,6 +22,8 @@ from seer.core.runtime.execution import CompiledWorkflow
 from seer.core.runtime.nodes import NodeRuntime, RuntimeServices
 from seer.core.schema.schema_registry import SchemaRegistry
 
+pytestmark = pytest.mark.unit
+
 
 async def _compile_workflow_with_mcp(spec_payload: dict) -> CompiledWorkflow:
     """Compile a workflow with MCP support."""

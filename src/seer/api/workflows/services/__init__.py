@@ -57,11 +57,20 @@ from .lifecycle import (
 from .triggers import (
     delete_trigger_subscription,
     get_pending_events,
+    get_subscription_event_count,
     get_trigger_subscription,
     list_trigger_subscriptions,
     start_listening_for_trigger,
     test_trigger_subscription,
     sync_trigger_subscriptions,
+)
+
+# Import from files module
+from .files import (
+    list_run_files,
+    get_run_file,
+    get_run_file_download_url,
+    delete_run_file,
 )
 
 __all__ = [
@@ -100,5 +109,11 @@ __all__ = [
     "sync_trigger_subscriptions",
     "start_listening_for_trigger",
     "get_pending_events",
+    "get_subscription_event_count",
     "_create_run_record",
+    # File management
+    "list_run_files",
+    "get_run_file",
+    "get_run_file_download_url",
+    "delete_run_file",
 ]

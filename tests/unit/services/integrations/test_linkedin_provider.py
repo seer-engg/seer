@@ -9,6 +9,7 @@ from seer.services.integrations.providers.linkedin import LinkedInProvider
 from seer.services.integrations.providers.base import OAuthAuthorizeContext
 
 
+@pytest.mark.unit
 class TestLinkedInProviderScopeHandling:
     """Test LinkedInProvider.get_oauth_scope()."""
 
@@ -22,25 +23,27 @@ class TestLinkedInProviderScopeHandling:
         assert scope == "openid profile email"
 
     def test_get_oauth_scope_single_scope(self):
-        """Test get_oauth_scope with single scope."""
+        """Test get_oauth_scope with single scope adds required OpenID scopes."""
         provider = LinkedInProvider()
         context = Mock(spec=OAuthAuthorizeContext)
         context.requested_scopes = ["openid"]
 
         scope = provider.get_oauth_scope(context)
-        assert scope == "openid"
+        # Profile is added as it's required for userinfo endpoint
+        assert scope == "openid profile"
 
-    def test_get_oauth_scope_empty_scopes(self):
-        """Test get_oauth_scope with empty scopes."""
+    def test_get_oauth_scope_empty_scopes_still_includes_required_openid_scopes(self):
+        """Test get_oauth_scope with empty scopes still includes required OpenID scopes."""
         provider = LinkedInProvider()
         context = Mock(spec=OAuthAuthorizeContext)
         context.requested_scopes = []
 
         scope = provider.get_oauth_scope(context)
-        assert scope == ""
+        # Even with no requested scopes, openid and profile are always included
+        assert scope == "openid profile"
 
     def test_get_oauth_scope_posting_scope(self):
-        """Test get_oauth_scope with posting scopes."""
+        """Test get_oauth_scope with posting scopes includes openid."""
         provider = LinkedInProvider()
         context = Mock(spec=OAuthAuthorizeContext)
         context.requested_scopes = ["openid", "profile", "email", "w_member_social"]
@@ -48,7 +51,48 @@ class TestLinkedInProviderScopeHandling:
         scope = provider.get_oauth_scope(context)
         assert scope == "openid profile email w_member_social"
 
+    def test_get_oauth_scope_always_includes_required_openid_scopes(self):
+        """Test that openid and profile scopes are automatically added when missing."""
+        provider = LinkedInProvider()
+        context = Mock(spec=OAuthAuthorizeContext)
+        context.requested_scopes = ["w_member_social"]  # Only posting scope
 
+        scope = provider.get_oauth_scope(context)
+        scope_list = scope.split()
+
+        assert "openid" in scope_list
+        assert "profile" in scope_list
+        assert "w_member_social" in scope_list
+
+    def test_get_oauth_scope_no_duplicate_openid_scopes(self):
+        """Test that openid and profile are not duplicated if already present."""
+        provider = LinkedInProvider()
+        context = Mock(spec=OAuthAuthorizeContext)
+        context.requested_scopes = ["openid", "profile", "w_member_social"]
+
+        scope = provider.get_oauth_scope(context)
+        scope_list = scope.split()
+
+        # Each should appear exactly once
+        assert scope_list.count("openid") == 1
+        assert scope_list.count("profile") == 1
+
+    def test_get_oauth_scope_preserves_order(self):
+        """Test that scope order is preserved with required scopes appended."""
+        provider = LinkedInProvider()
+        context = Mock(spec=OAuthAuthorizeContext)
+        context.requested_scopes = ["w_member_social", "email"]
+
+        scope = provider.get_oauth_scope(context)
+        scope_list = scope.split()
+
+        # w_member_social and email should be first (in order), openid/profile appended
+        assert scope_list.index("w_member_social") < scope_list.index("openid")
+        assert scope_list.index("email") < scope_list.index("openid")
+        assert "profile" in scope_list
+
+
+@pytest.mark.unit
 class TestLinkedInProviderUserProfile:
     """Test LinkedInProvider.fetch_user_profile()."""
 
@@ -136,6 +180,7 @@ class TestLinkedInProviderUserProfile:
             assert "401" in str(exc_info.value) or "failed" in str(exc_info.value).lower()
 
 
+@pytest.mark.unit
 class TestLinkedInProviderProperties:
     """Test LinkedInProvider basic properties."""
 

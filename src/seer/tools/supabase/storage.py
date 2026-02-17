@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 import base64
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import httpx
 from fastapi import HTTPException
 
+from seer.core.files.resolver import FileResolutionError, resolve_file_input
+from seer.core.files.schemas import FILE_INPUT_SCHEMA, FILE_OUTPUT_SCHEMA
 from seer.logger import get_logger
 from seer.tools.supabase.common import (
     SupabaseProjectTool,
@@ -12,6 +16,9 @@ from seer.tools.supabase.common import (
     _resolve_storage_url,
     _service_headers,
 )
+
+if TYPE_CHECKING:
+    from seer.core.runtime.context import WorkflowRuntimeContext
 
 logger = get_logger("shared.tools.supabase.storage")
 
@@ -102,26 +109,39 @@ class SupabaseStorageCreateBucketTool(SupabaseProjectTool):
 
 class SupabaseStorageUploadObjectTool(SupabaseProjectTool):
     name = "supabase_storage_upload_object"
-    description = "Upload/overwrite an object into a bucket (simple upload)."
+    description = (
+        "Upload/overwrite an object into a Supabase storage bucket. "
+        "Accepts a file reference from another tool (e.g., ${download.file}) "
+        "or a static file from user storage."
+    )
 
     def get_parameters_schema(self) -> Dict[str, Any]:
+        file_schema = FILE_INPUT_SCHEMA.copy()
+        file_schema["description"] = "File to upload (from parent node or user storage)"
         return {
             "type": "object",
             "properties": {
                 "integration_resource_id": {"type": "integer"},
                 "bucket": {"type": "string"},
                 "path": {"type": "string", "description": "Object path inside the bucket, e.g. 'folder/a.png'"},
-                "content_base64": {"type": "string", "description": "File content as base64."},
-                "content_type": {"type": "string", "default": "application/octet-stream"},
+                "file": file_schema,
+                "content_type": {"type": "string", "description": "Content type (auto-detected from file if not provided)"},
                 "cache_control": {"type": "string", "description": "Optional cache control header, e.g. '3600'."},
             },
-            "required": ["integration_resource_id", "bucket", "path", "content_base64"],
+            "required": ["integration_resource_id", "bucket", "path", "file"],
         }
 
     def get_output_schema(self) -> Dict[str, Any]:
         return {"type": "object", "additionalProperties": True}
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any], credentials: Optional[Any] = None) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+        credentials: Optional[Any] = None,
+        *,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Any:
         resource, service_key = _require_project_and_key(credentials)
         storage_url = _resolve_storage_url(resource)
         if not storage_url:
@@ -129,16 +149,26 @@ class SupabaseStorageUploadObjectTool(SupabaseProjectTool):
 
         bucket = arguments["bucket"]
         path = arguments["path"].lstrip("/")
-        content_type = arguments.get("content_type") or "application/octet-stream"
         cache_control = arguments.get("cache_control")
 
+        file_input = arguments.get("file")
+        if not file_input:
+            raise HTTPException(status_code=400, detail="file is required")
+
+        # Resolve file content using the unified resolver
         try:
-            data = base64.b64decode(arguments["content_base64"])
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail="content_base64 is not valid base64") from exc
+            data, resolved_mime_type, _ = await resolve_file_input(file_input, context)
+        except FileResolutionError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        content_type = arguments.get("content_type") or resolved_mime_type or "application/octet-stream"
 
         # Simple PUT to /object/<bucket>/<path>
         url = f"{storage_url.rstrip('/')}/object/{bucket}/{path}"
+
+        logger.info("Uploading to Supabase storage: bucket=%s path=%s size=%d", bucket, path, len(data))
 
         extra = {"Content-Type": content_type}
         if cache_control:
@@ -159,7 +189,10 @@ class SupabaseStorageUploadObjectTool(SupabaseProjectTool):
 
 class SupabaseStorageDownloadObjectTool(SupabaseProjectTool):
     name = "supabase_storage_download_object"
-    description = "Download an object from Storage (returns base64)."
+    description = (
+        "Download an object from Supabase Storage. Returns a file reference "
+        "for efficient handling in workflows."
+    )
 
     def get_parameters_schema(self) -> Dict[str, Any]:
         return {
@@ -182,38 +215,71 @@ class SupabaseStorageDownloadObjectTool(SupabaseProjectTool):
         return {
             "type": "object",
             "properties": {
-                "content_base64": {"type": "string"},
-                "content_type": {"type": "string"},
+                "file": FILE_OUTPUT_SCHEMA,
+                "size_bytes": {"type": "integer"},
+                "content_base64": {
+                    "type": "string",
+                    "description": "File content as base64 (only included when not in workflow context)"
+                },
             },
-            "required": ["content_base64"],
         }
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any], credentials: Optional[Any] = None) -> Any:
+    async def _store_in_workflow_fs(
+        self, context: Optional["WorkflowRuntimeContext"], content: bytes, *, content_type: str, path: str, bucket: str
+    ) -> Optional[Dict[str, Any]]:
+        """Store downloaded content in workflow file system if available."""
+        if not (context and context.workflow_run_id and context.has_file_system):
+            return None
+
+        filename = path.rsplit("/", 1)[-1] if "/" in path else path
+        try:
+            file_ref = await context.file_system.store_file_with_record(
+                user=context.user,
+                run_id=context.workflow_run_id,
+                filename=filename,
+                data=content,
+                mime_type=content_type,
+                source_tool="supabase_storage_download_object",
+            )
+            logger.info("Stored Supabase file in workflow file system: bucket=%s path=%s file_id=%s", bucket, path, file_ref.file_id)
+            return {"file": file_ref.to_dict(), "size_bytes": len(content)}
+        except OSError as e:
+            logger.warning("Failed to store file in workflow file system, falling back to base64: %s", e)
+            return None
+
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+        credentials: Optional[Any] = None,
+        *,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Any:
         resource, service_key = _require_project_and_key(credentials)
         storage_url = _resolve_storage_url(resource)
         if not storage_url:
             raise HTTPException(status_code=400, detail="Supabase project metadata is missing storage URL. Please re-bind.")
 
-        bucket = arguments["bucket"]
-        path = arguments["path"].lstrip("/")
+        bucket, path = arguments["bucket"], arguments["path"].lstrip("/")
         mode = arguments.get("mode") or "authenticated"
-
-        # Matches documented serving URL formats:
-        # /storage/v1/object/public/<bucket>/<asset>
-        # /storage/v1/object/authenticated/<bucket>/<asset>
         url = f"{storage_url.rstrip('/')}/object/{mode}/{bucket}/{path}"
-        headers = _service_headers(service_key)
 
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.get(url, headers=headers)
+                resp = await client.get(url, headers=_service_headers(service_key))
                 if resp.status_code >= 400:
                     raise HTTPException(status_code=resp.status_code, detail=f"Download failed: {resp.text[:500]}")
-                content_b64 = base64.b64encode(resp.content).decode("utf-8")
-                return {
-                    "content_base64": content_b64,
-                    "content_type": resp.headers.get("content-type", "application/octet-stream"),
-                }
+
+                content = resp.content
+                content_type = resp.headers.get("content-type", "application/octet-stream")
+
+                # Try to store in workflow file system first
+                result = await self._store_in_workflow_fs(context, content, content_type=content_type, path=path, bucket=bucket)
+                if result:
+                    return result
+
+                # Fallback: return base64 encoded content
+                return {"content_base64": base64.b64encode(content).decode("utf-8"), "size_bytes": len(content)}
         except HTTPException:
             raise
         except Exception as exc:

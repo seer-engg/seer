@@ -28,6 +28,8 @@ from seer.core.runtime.execution import CompiledWorkflow
 from seer.core.runtime.nodes import NodeRuntime, RuntimeServices
 from seer.core.schema.schema_registry import SchemaRegistry
 
+pytestmark = pytest.mark.unit
+
 
 def _create_mock_tool() -> ToolDefinition:
     """Create a mock test.tool that simply returns its input value."""
@@ -451,16 +453,11 @@ async def test_for_each_with_if_iteration_traces() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    reason="BUG: Nested loops trace key generation has off-by-one or iteration counting issue",
-    strict=True  # Must fail; remove xfail when bug is fixed
-)
 async def test_nested_loops_trace_keys() -> None:
     """Test trace keys for nested loop scenarios.
 
-    KNOWN BUG: The outer loop iteration indices in trace keys appear to be off.
-    Expected _trace_after_inner_iter_0 and _trace_after_inner_iter_1, but
-    actual keys start from _iter_1 and _iter_2. Related to state isolation bug.
+    Verifies that nested loops generate correct multi-level iteration trace keys
+    (e.g., _trace_process_inner_iter_0_iter_0 for outer=0, inner=0).
     """
     spec = {
         "version": "2",
@@ -530,11 +527,16 @@ async def test_nested_loops_trace_keys() -> None:
     result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Inner loop iterations should have iteration-specific traces
-    assert "_trace_process_inner_iter_0" in result
-    assert "_trace_process_inner_iter_1" in result
+    # With nested loops, trace keys include both outer and inner iteration indices
+    # Format: _trace_{node_id}_iter_{outer_idx}_iter_{inner_idx}
+    assert "_trace_process_inner_iter_0_iter_0" in result  # outer=0 (A), inner=0 (x)
+    assert "_trace_process_inner_iter_0_iter_1" in result  # outer=0 (A), inner=1 (y)
+    assert "_trace_process_inner_iter_1_iter_0" in result  # outer=1 (B), inner=0 (x)
+    assert "_trace_process_inner_iter_1_iter_1" in result  # outer=1 (B), inner=1 (y)
 
-    # After-inner node is in outer loop body, should have outer loop iteration
-    assert "_trace_after_inner_iter_0" in result or "_trace_after_inner" in result
+    # After-inner node is in outer loop body only, should have outer loop iteration
+    assert "_trace_after_inner_iter_0" in result  # after A's inner loop
+    assert "_trace_after_inner_iter_1" in result  # after B's inner loop
 
     # Done node is outside both loops
     assert "_trace_done" in result

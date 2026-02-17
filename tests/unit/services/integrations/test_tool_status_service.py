@@ -21,6 +21,7 @@ class MockTool:
         self.integration_type = integration_type
 
 
+@pytest.mark.unit
 class TestProviderWithoutRefreshTokens:
     """Test LinkedIn and other providers without refresh tokens."""
 
@@ -118,6 +119,7 @@ class TestProviderWithoutRefreshTokens:
         assert status["missing_scopes"] == ["openid", "profile", "email"]
 
 
+@pytest.mark.unit
 class TestStandardProvidersRequireRefreshTokens:
     """Test that standard providers (Google, GitHub) still require refresh tokens."""
 
@@ -216,6 +218,7 @@ class TestStandardProvidersRequireRefreshTokens:
         assert status["connected"] is False
 
 
+@pytest.mark.unit
 class TestMixedAuthModes:
     """Test tools that support both OAuth and manual secrets."""
 

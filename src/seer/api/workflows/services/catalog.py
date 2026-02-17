@@ -118,20 +118,39 @@ async def list_tools(include_schemas: bool = False) -> api_models.ToolRegistryRe
     return api_models.ToolRegistryResponse(tools=tools)
 
 
-async def list_triggers() -> api_models.TriggerCatalogResponse:
-    triggers = [
-        api_models.TriggerDescriptor(
-            key=definition.key,
-            title=definition.title,
-            provider=definition.provider,
-            mode=definition.mode,
-            description=definition.description,
-            event_schema=definition.schemas.event,
-            filter_schema=definition.schemas.filter,
-            config_schema=definition.schemas.config,
+async def list_triggers(user: User) -> api_models.TriggerCatalogResponse:
+    from seer.database.models_oauth import OAuthConnection
+    from seer.services.integrations.auth.oauth import get_oauth_provider
+
+    # Batch query: Get all active OAuth providers for this user
+    active_connections = await OAuthConnection.filter(
+        user=user,
+        status="active"
+    ).values_list("provider", flat=True)
+    connected_providers: set = set(active_connections)
+
+    triggers = []
+    for definition in trigger_registry.all():
+        # Determine connection status
+        if not definition.meta.requires_connection:
+            is_connected = True  # No OAuth needed
+        else:
+            oauth_provider = get_oauth_provider(definition.provider)
+            is_connected = oauth_provider in connected_providers
+
+        triggers.append(
+            api_models.TriggerDescriptor(
+                key=definition.key,
+                title=definition.title,
+                provider=definition.provider,
+                mode=definition.mode,
+                description=definition.description,
+                event_schema=definition.schemas.event,
+                filter_schema=definition.schemas.filter,
+                config_schema=definition.schemas.config,
+                is_connected=is_connected,
+            )
         )
-        for definition in trigger_registry.all()
-    ]
     return api_models.TriggerCatalogResponse(triggers=triggers)
 
 

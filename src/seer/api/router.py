@@ -14,6 +14,10 @@ from .users.settings import router as user_settings_router
 from .webhooks.router import router as webhooks_router
 from .workflows.router import router as workflows_router
 from .templates.router import router as templates_router
+from .browser.router import router as browser_router
+from .browser.ws_router import router as browser_session_router
+from .browser.recording_router import router as recording_router
+from .files.router import router as files_router
 
 router = APIRouter(prefix="/api")
 router.include_router(agents_traces_router)
@@ -29,3 +33,7 @@ router.include_router(forms_router)
 router.include_router(usage_router)
 router.include_router(user_settings_router)
 router.include_router(templates_router)
+router.include_router(browser_router)
+router.include_router(browser_session_router)
+router.include_router(recording_router)
+router.include_router(files_router)

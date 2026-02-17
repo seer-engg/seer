@@ -32,6 +32,8 @@ from seer.core.runtime.execution import CompiledWorkflow
 from seer.core.runtime.nodes import NodeRuntime, RuntimeServices
 from seer.core.schema.schema_registry import SchemaRegistry
 
+pytestmark = pytest.mark.unit
+
 
 def _create_tracking_tool(call_tracker: list) -> ToolDefinition:
     """Create a tool that tracks all calls for verification."""
@@ -657,19 +659,11 @@ async def test_if_false_branch_contains_for_each() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    reason="BUG: Nested loop state isolation issue - inner loop variables leak across outer iterations",
-    strict=True  # Must fail; remove xfail when bug is fixed
-)
 async def test_for_each_containing_if_containing_for_each() -> None:
     """Test 3 levels of nesting: loop -> if -> loop.
 
-    CRITICAL: This was NOT TESTED AT ALL (0% coverage for 3+ levels).
-
-    KNOWN BUG: This test exposes a state isolation issue where inner loop
-    item/index variables are not properly isolated between outer loop iterations.
-    When outer_idx=0 (A), the inner loop should process ['x', 'y'], but due to
-    the bug, the inner loop state from one outer iteration leaks into the next.
+    This validates that nested loops within conditionals work correctly,
+    with proper state isolation between outer loop iterations.
     """
     call_tracker: list = []
     tracking_tool = _create_tracking_tool(call_tracker)
@@ -968,16 +962,11 @@ async def test_loop_variables_available_in_both_if_branches() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    reason="BUG: Nested loop state isolation issue - inner loop only runs once per outer iteration",
-    strict=True  # Must fail; remove xfail when bug is fixed
-)
 async def test_nested_loops_variable_isolation() -> None:
     """Test that inner and outer loop variables don't conflict.
 
-    KNOWN BUG: The inner loop only executes once per outer iteration instead of
-    the full number of items. This appears to be related to how the inner loop
-    state (_loop_inner_loop) is reset between outer loop iterations.
+    Verifies that nested loops properly reset and execute all iterations,
+    with inner loop state correctly isolated from outer loop iterations.
     """
     call_tracker: list = []
     tracking_tool = _create_tracking_tool(call_tracker)
@@ -1256,19 +1245,12 @@ async def test_single_level_loop() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("nesting_depth", [2, 3, 4, 5])
-@pytest.mark.xfail(
-    reason="BUG: Nested loop state isolation - inner loops don't complete all iterations",
-    strict=True  # All nested depths (n >= 2) should fail
-)
 async def test_n_level_nested_loops(nesting_depth: int) -> None:
     """
     Parameterized test for n levels of nested for_each loops (n >= 2).
 
     This test dynamically generates workflows with 2-5 levels of nesting
     and verifies that all expected item combinations are processed.
-
-    KNOWN BUG: For nesting_depth >= 2, inner loops don't complete all
-    iterations due to state isolation issues between loop levels.
     """
     call_tracker: list = []
     tracking_tool = _create_tracking_tool(call_tracker)
@@ -1304,10 +1286,6 @@ async def test_n_level_nested_loops(nesting_depth: int) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("nesting_depth", [2, 3, 4])
-@pytest.mark.xfail(
-    reason="BUG: Nested loop trace keys have incorrect iteration indices",
-    strict=True
-)
 async def test_n_level_trace_key_uniqueness(nesting_depth: int) -> None:
     """
     Verify trace keys are unique for each iteration path in n-level nesting.
@@ -1317,9 +1295,6 @@ async def test_n_level_trace_key_uniqueness(nesting_depth: int) -> None:
         _trace_process_iter_0_iter_1  (L0_0, L1_1)
         _trace_process_iter_1_iter_0  (L0_1, L1_0)
         _trace_process_iter_1_iter_1  (L0_1, L1_1)
-
-    KNOWN BUG: Trace keys are not correctly generated for nested loops,
-    causing collisions and data overwrites.
     """
     call_tracker: list = []
     tracking_tool = _create_tracking_tool(call_tracker)
@@ -1355,10 +1330,6 @@ async def test_n_level_trace_key_uniqueness(nesting_depth: int) -> None:
         (4, 2),   # 4 levels, 2 items each = 16 combinations
         (2, 4),   # 2 levels, 4 items each = 16 combinations
     ]
-)
-@pytest.mark.xfail(
-    reason="BUG: Nested loop state isolation prevents full iteration",
-    strict=True
 )
 async def test_n_level_with_varying_item_counts(nesting_depth: int, items_per_level: int) -> None:
     """
@@ -1503,6 +1474,20 @@ def _generate_n_level_loop_with_alternating_if(n: int) -> tuple[dict, dict]:
             "target": "process",
             "type": "loop_body"
         })
+        # Add "after_level_{i}" nodes for each inner loop level to properly return control
+        # Each inner loop needs its own "after" node to track when it completes
+        for level in range(1, n):
+            nodes.append({
+                "id": f"after_level_{level}",
+                "type": "tool",
+                "tool": "test.tracker",
+                "inputs": {"value": f"after_level_{level}"},
+            })
+            edges.append({
+                "source": f"loop_{level}",
+                "target": f"after_level_{level}",
+                "type": "loop_exit"
+            })
     else:
         edges.append({"source": "if_check", "target": "process", "type": "conditional_true"})
 
@@ -1546,10 +1531,6 @@ async def test_single_level_loop_with_conditional_filter() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("nesting_depth", [2, 3])
-@pytest.mark.xfail(
-    reason="BUG: Conditional branches within nested loops have state isolation issues",
-    strict=True  # All nested depths (n >= 2) should fail
-)
 async def test_n_level_loop_with_conditional_filter(nesting_depth: int) -> None:
     """
     Test n-level nested loops (n >= 2) with conditional filtering at the outermost level.
@@ -1558,9 +1539,6 @@ async def test_n_level_loop_with_conditional_filter(nesting_depth: int) -> None:
     - Index 0 (even): processes inner loops
     - Index 1 (odd): skipped
     - Index 2 (even): processes inner loops
-
-    KNOWN BUG: For nesting_depth >= 2, the combination of conditionals and
-    nested loops causes state isolation issues.
     """
     call_tracker: list = []
     tracking_tool = _create_tracking_tool(call_tracker)

@@ -561,3 +561,200 @@ async def browse_resources(
         page_size=page_size,
         depends_on=depends_on,
     )
+
+
+# =============================================================================
+# TRIGGER EVENT BROWSER ROUTES - For browsing real trigger events
+# =============================================================================
+
+def _validate_trigger_event_request(
+    provider: str,
+    trigger_key: str,
+    provider_connection_id: Optional[int],
+    subscription_id: Optional[int],
+    filter_params: Optional[str],
+):
+    """Validate browse_trigger_events request parameters and return parsed config/filters."""
+    # Import here to avoid circular imports
+    from seer.services.integrations.trigger_event_browser import (  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
+        TRIGGER_BROWSING_CONFIG,
+        TRIGGER_PROVIDER_MAP,
+    )
+
+    browsing_config = TRIGGER_BROWSING_CONFIG.get(trigger_key)
+    if browsing_config is None:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Unsupported trigger key",
+            detail=f"Trigger key '{trigger_key}' does not support event browsing. "
+                   f"Supported: {list(TRIGGER_BROWSING_CONFIG.keys())}",
+            status=400,
+        )
+    assert browsing_config is not None  # For type narrowing after raise_problem
+
+    expected_provider = TRIGGER_PROVIDER_MAP.get(trigger_key)
+    if expected_provider != provider:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Provider mismatch",
+            detail=f"Trigger '{trigger_key}' requires provider '{expected_provider}', not '{provider}'",
+            status=400,
+        )
+
+    if browsing_config.mode == "polling" and provider_connection_id is None:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Missing parameter",
+            detail=f"provider_connection_id is required for polling trigger '{trigger_key}'",
+            status=400,
+        )
+    if browsing_config.mode == "persisted" and subscription_id is None:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Missing parameter",
+            detail=f"subscription_id is required for persisted trigger '{trigger_key}'",
+            status=400,
+        )
+
+    parsed_filter_params = None
+    if filter_params:
+        try:
+            parsed_filter_params = json.loads(filter_params)
+        except json.JSONDecodeError:
+            raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Invalid JSON",
+                detail="Invalid filter_params JSON",
+                status=400,
+            )
+
+    return parsed_filter_params
+
+
+@router.get("/resources/{provider}/trigger_events/{trigger_key:path}")
+async def browse_trigger_events(  # pylint: disable=too-many-arguments,too-many-positional-arguments # Reason: FastAPI requires explicit query params for OpenAPI schema
+    request: Request,
+    provider: str,
+    trigger_key: str,
+    *,
+    provider_connection_id: Optional[int] = Query(
+        None, description="OAuth connection ID for polling triggers (gmail, discord)"
+    ),
+    subscription_id: Optional[int] = Query(
+        None, description="Subscription ID for persisted triggers (webhooks, forms)"
+    ),
+    trigger_id: str = Query(
+        "trigger_test", description="Trigger ID to use in envelope (for expression resolution)"
+    ),
+    page_token: Optional[str] = Query(None, description="Pagination token"),
+    page_size: int = Query(5, ge=1, le=50, description="Number of items per page"),
+    filter_params: Optional[str] = Query(
+        None,
+        description="JSON object with trigger-specific filters (e.g., {\"label_ids\": [\"INBOX\"], \"query\": \"is:unread\"})",
+    ),
+):
+    """
+    Browse real trigger events from a connected account or stored events for workflow testing.
+
+    This endpoint allows users to browse actual events (like Gmail emails, Discord messages,
+    webhook payloads, form submissions) for workflow testing.
+
+    For polling triggers (gmail, discord): provide provider_connection_id
+    For persisted triggers (webhooks, forms): provide subscription_id
+
+    Each returned event includes a full trigger envelope ready for workflow execution.
+
+    Args:
+        provider: Provider name (google, discord, generic, supabase, form)
+        trigger_key: Trigger type key (poll.gmail.email_received, webhook.generic, etc.)
+        provider_connection_id: ID of the OAuth connection (for polling triggers)
+        subscription_id: ID of the TriggerSubscription (for persisted triggers)
+        trigger_id: Trigger ID for the envelope (used for expression resolution in workflows)
+        page_token: Token for pagination
+        page_size: Number of results per page (max 50)
+        filter_params: JSON object with trigger-specific filters
+
+    Returns:
+        {
+            "items": [...],  # List of trigger events with envelopes
+            "next_page_token": "...",
+            "trigger_key": "poll.gmail.email_received",
+            "supports_search": true
+        }
+
+    Example (polling):
+        GET /resources/google/trigger_events/poll.gmail.email_received
+            ?provider_connection_id=123
+            &filter_params={"label_ids":["INBOX"]}
+
+    Example (persisted):
+        GET /resources/generic/trigger_events/webhook.generic
+            ?subscription_id=456
+    """
+    from seer.services.integrations.trigger_event_browser import (  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
+        TriggerEventBrowser,
+        TriggerEventListOptions,
+    )
+
+    user: User = request.state.db_user
+
+    parsed_filter_params = _validate_trigger_event_request(
+        provider, trigger_key, provider_connection_id, subscription_id, filter_params
+    )
+
+    browser = TriggerEventBrowser(user)
+    try:
+        result = await browser.list_events(
+            provider_connection_id=provider_connection_id,
+            subscription_id=subscription_id,
+            options=TriggerEventListOptions(
+                trigger_key=trigger_key,
+                trigger_id=trigger_id,
+                page_size=page_size,
+                page_token=page_token,
+                filter_params=parsed_filter_params,
+            ),
+        )
+        return result
+    except ValueError as exc:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Invalid request",
+            detail=str(exc),
+            status=400,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # pylint: disable=broad-exception-caught  # Reason: Handle unexpected errors gracefully
+        logger.exception("Error browsing trigger events")
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="Event browsing failed",
+            detail=f"Error browsing trigger events: {str(exc)}",
+            status=500,
+        )
+
+
+@router.get("/trigger_events/types")
+async def list_trigger_event_types(_request: Request):
+    """
+    List all trigger keys that support event browsing.
+
+    Returns information about which triggers support browsing real events
+    from connected accounts or stored events.
+    """
+    from seer.services.integrations.trigger_event_browser import (  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
+        TRIGGER_BROWSING_CONFIG,
+    )
+
+    return {
+        "trigger_keys": [
+            {
+                "trigger_key": key,
+                "provider": cfg.provider,
+                "mode": cfg.mode,
+                "supports_search": cfg.supports_search,
+            }
+            for key, cfg in TRIGGER_BROWSING_CONFIG.items()
+        ]
+    }

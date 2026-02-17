@@ -3,7 +3,6 @@ Unit tests for workflow execution operations logic.
 
 Tests the actual execution service functions with mocked database operations.
 """
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,49 +13,15 @@ from seer.database import (
     make_run_public_id,
     make_workflow_public_id,
 )
+from tests.unit.helpers import utcnow
 
-
-def utcnow():
-    """Get current UTC time."""
-    return datetime.now(timezone.utc)
+# Note: mock_user, mock_workflow, mock_workflow_version fixtures are
+# provided by tests/unit/conftest.py
 
 
 # =============================================================================
 # Test Fixtures
 # =============================================================================
-
-
-@pytest.fixture
-def mock_user():
-    """Create a mock user object."""
-    user = MagicMock()
-    user.id = 1
-    return user
-
-
-@pytest.fixture
-def mock_workflow():
-    """Create a mock workflow object."""
-    workflow = MagicMock()
-    workflow.id = 1
-    workflow.workflow_id = "wf_1"
-    workflow.name = "Test Workflow"
-    return workflow
-
-
-@pytest.fixture
-def mock_workflow_version():
-    """Create a mock workflow version object."""
-    version = MagicMock()
-    version.id = 1
-    version.version_number = 1
-    version.spec = {
-        "version": "2",
-        "nodes": [{"id": "n1", "type": "tool"}],
-        "edges": [],
-        "triggers": []
-    }
-    return version
 
 
 @pytest.fixture
@@ -101,29 +66,17 @@ def mock_workflow_spec():
 class TestWorkflowRunStatus:
     """Tests for WorkflowRunStatus enum values."""
 
-    def test_queued_status_value(self):
-        """Test QUEUED status value."""
-        assert WorkflowRunStatus.QUEUED.value == "queued"
-
-    def test_running_status_value(self):
-        """Test RUNNING status value."""
-        assert WorkflowRunStatus.RUNNING.value == "running"
-
-    def test_succeeded_status_value(self):
-        """Test SUCCEEDED status value."""
-        assert WorkflowRunStatus.SUCCEEDED.value == "succeeded"
-
-    def test_failed_status_value(self):
-        """Test FAILED status value."""
-        assert WorkflowRunStatus.FAILED.value == "failed"
-
-    def test_cancelled_status_value(self):
-        """Test CANCELLED status value."""
-        assert WorkflowRunStatus.CANCELLED.value == "cancelled"
-
-    def test_interrupted_status_value(self):
-        """Test INTERRUPTED status value."""
-        assert WorkflowRunStatus.INTERRUPTED.value == "interrupted"
+    @pytest.mark.parametrize("enum_member,expected_value", [
+        (WorkflowRunStatus.QUEUED, "queued"),
+        (WorkflowRunStatus.RUNNING, "running"),
+        (WorkflowRunStatus.SUCCEEDED, "succeeded"),
+        (WorkflowRunStatus.FAILED, "failed"),
+        (WorkflowRunStatus.CANCELLED, "cancelled"),
+        (WorkflowRunStatus.INTERRUPTED, "interrupted"),
+    ])
+    def test_status_values(self, enum_member, expected_value):
+        """Test each WorkflowRunStatus enum has correct string value."""
+        assert enum_member.value == expected_value
 
     def test_all_status_values_exist(self):
         """Test all expected status values exist."""
@@ -141,13 +94,13 @@ class TestWorkflowRunStatus:
 class TestWorkflowRunSource:
     """Tests for WorkflowRunSource enum values."""
 
-    def test_manual_source_value(self):
-        """Test MANUAL source value."""
-        assert WorkflowRunSource.MANUAL.value == "manual"
-
-    def test_trigger_source_value(self):
-        """Test TRIGGER source value."""
-        assert WorkflowRunSource.TRIGGER.value == "trigger"
+    @pytest.mark.parametrize("enum_member,expected_value", [
+        (WorkflowRunSource.MANUAL, "manual"),
+        (WorkflowRunSource.TRIGGER, "trigger"),
+    ])
+    def test_source_values(self, enum_member, expected_value):
+        """Test each WorkflowRunSource enum has correct string value."""
+        assert enum_member.value == expected_value
 
 
 # =============================================================================
@@ -328,8 +281,15 @@ class TestListWorkflowRuns:
             assert result.runs[0].run_id == "run_123"
 
     @pytest.mark.asyncio
-    async def test_list_workflow_runs_respects_limit(self, mock_user, mock_workflow, mock_workflow_run):
-        """Test that limit is applied correctly."""
+    @pytest.mark.parametrize("input_limit,expected_limit", [
+        (25, 25),    # Normal value passes through
+        (0, 1),      # Below minimum, clamp to 1
+        (500, 100),  # Above maximum, clamp to 100
+        (1, 1),      # Minimum boundary
+        (100, 100),  # Maximum boundary
+    ])
+    async def test_list_workflow_runs_limit_clamping(self, mock_user, mock_workflow, input_limit, expected_limit):
+        """Test that limit is clamped to valid range [1, 100]."""
         from seer.api.workflows.services.execution import list_workflow_runs
 
         with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
@@ -342,49 +302,9 @@ class TestListWorkflowRuns:
             mock_order_by.limit = AsyncMock(return_value=[])
             mock_run_model.filter.return_value = mock_filter
 
-            await list_workflow_runs(mock_user, "wf_1", limit=25)
+            await list_workflow_runs(mock_user, "wf_1", limit=input_limit)
 
-            mock_order_by.limit.assert_called_once_with(25)
-
-    @pytest.mark.asyncio
-    async def test_list_workflow_runs_limit_clamped_min(self, mock_user, mock_workflow):
-        """Test limit is clamped to minimum of 1."""
-        from seer.api.workflows.services.execution import list_workflow_runs
-
-        with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
-             patch("seer.api.workflows.services.execution.WorkflowRun") as mock_run_model:
-
-            mock_get_wf.return_value = mock_workflow
-            mock_filter = MagicMock()
-            mock_order_by = MagicMock()
-            mock_filter.order_by.return_value = mock_order_by
-            mock_order_by.limit = AsyncMock(return_value=[])
-            mock_run_model.filter.return_value = mock_filter
-
-            await list_workflow_runs(mock_user, "wf_1", limit=0)
-
-            # Limit should be clamped to 1
-            mock_order_by.limit.assert_called_once_with(1)
-
-    @pytest.mark.asyncio
-    async def test_list_workflow_runs_limit_clamped_max(self, mock_user, mock_workflow):
-        """Test limit is clamped to maximum of 100."""
-        from seer.api.workflows.services.execution import list_workflow_runs
-
-        with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
-             patch("seer.api.workflows.services.execution.WorkflowRun") as mock_run_model:
-
-            mock_get_wf.return_value = mock_workflow
-            mock_filter = MagicMock()
-            mock_order_by = MagicMock()
-            mock_filter.order_by.return_value = mock_order_by
-            mock_order_by.limit = AsyncMock(return_value=[])
-            mock_run_model.filter.return_value = mock_filter
-
-            await list_workflow_runs(mock_user, "wf_1", limit=500)
-
-            # Limit should be clamped to 100
-            mock_order_by.limit.assert_called_once_with(100)
+            mock_order_by.limit.assert_called_once_with(expected_limit)
 
     @pytest.mark.asyncio
     async def test_list_workflow_runs_empty_result(self, mock_user, mock_workflow):
@@ -632,6 +552,45 @@ class TestGenerateSampleTriggerEnvelope:
             result = await _generate_sample_trigger_envelope(trigger_spec)
 
             assert result is None
+
+    @pytest.mark.asyncio
+    async def test_generate_envelope_fallback_to_registry_sample_event(self):
+        """Test TriggerSpec falls back to registry's sample_event when spec has none."""
+        from seer.api.workflows.services.execution import _generate_sample_trigger_envelope
+        from seer.core.schema.models import TriggerSpec
+
+        # TriggerSpec with NO sample_event in meta
+        trigger_spec = TriggerSpec(
+            id="trigger_gmail",
+            key="poll.gmail.email_received",
+            mode="polling",
+            ui_meta={"title": "Gmail Inbox"},
+            provider_config={"provider_connection_id": 123},
+            meta={}  # No sample_event in spec
+        )
+
+        # Registry definition HAS sample_event
+        mock_definition = MagicMock()
+        mock_definition.provider = "gmail"
+        mock_definition.meta.sample_event = {"data": {"subject": "Test Email", "from": "test@example.com"}}
+
+        with patch("seer.core.registry.trigger_registry.trigger_registry") as mock_registry, \
+             patch("seer.core.triggers.events.build_event_envelope") as mock_build:
+
+            mock_registry.maybe_get.return_value = mock_definition
+            mock_build.return_value = {
+                "trigger_id": "trigger_gmail",
+                "trigger_key": "poll.gmail.email_received",
+                "payload": {"subject": "Test Email", "from": "test@example.com"}
+            }
+
+            result = await _generate_sample_trigger_envelope(trigger_spec)
+
+            # Should succeed by falling back to registry's sample_event
+            assert result is not None
+            assert result["trigger_id"] == "trigger_gmail"
+            mock_registry.maybe_get.assert_called_once_with("poll.gmail.email_received")
+            mock_build.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_generate_envelope_from_subscription(self):
@@ -1145,3 +1104,320 @@ class TestRunSavedWorkflowValidation:
             mock_gen_envelope.assert_not_called()
             # Run record should NOT be created
             mock_create_run.assert_not_called()
+
+
+# =============================================================================
+# _validate_trigger_envelope Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestValidateTriggerEnvelope:
+    """Tests for _validate_trigger_envelope function."""
+
+    def test_validate_trigger_envelope_valid(self):
+        """Test valid envelope passes validation."""
+        from seer.api.workflows.services.execution import _validate_trigger_envelope
+
+        envelope = {
+            "trigger_key": "poll.gmail.email_received",
+            "data": {"message_id": "123", "subject": "Test"}
+        }
+
+        # Should not raise
+        _validate_trigger_envelope(envelope)
+
+    def test_validate_trigger_envelope_missing_trigger_key(self):
+        """Test envelope missing trigger_key raises error."""
+        from seer.api.workflows.services.execution import _validate_trigger_envelope
+        from fastapi import HTTPException
+
+        envelope = {
+            "data": {"message_id": "123"}
+        }
+
+        with patch("seer.api.workflows.services.execution._raise_problem") as mock_raise:
+            mock_raise.side_effect = HTTPException(status_code=400)
+
+            with pytest.raises(HTTPException):
+                _validate_trigger_envelope(envelope)
+
+            mock_raise.assert_called_once()
+            call_kwargs = mock_raise.call_args[1]
+            assert "trigger_key" in call_kwargs["detail"]
+
+    def test_validate_trigger_envelope_missing_data(self):
+        """Test envelope missing data raises error."""
+        from seer.api.workflows.services.execution import _validate_trigger_envelope
+        from fastapi import HTTPException
+
+        envelope = {
+            "trigger_key": "poll.gmail.email_received"
+        }
+
+        with patch("seer.api.workflows.services.execution._raise_problem") as mock_raise:
+            mock_raise.side_effect = HTTPException(status_code=400)
+
+            with pytest.raises(HTTPException):
+                _validate_trigger_envelope(envelope)
+
+            mock_raise.assert_called_once()
+            call_kwargs = mock_raise.call_args[1]
+            assert "data" in call_kwargs["detail"]
+
+    def test_validate_trigger_envelope_data_not_dict(self):
+        """Test envelope with non-dict data raises error."""
+        from seer.api.workflows.services.execution import _validate_trigger_envelope
+        from fastapi import HTTPException
+
+        envelope = {
+            "trigger_key": "poll.gmail.email_received",
+            "data": "not a dict"
+        }
+
+        with patch("seer.api.workflows.services.execution._raise_problem") as mock_raise:
+            mock_raise.side_effect = HTTPException(status_code=400)
+
+            with pytest.raises(HTTPException):
+                _validate_trigger_envelope(envelope)
+
+            mock_raise.assert_called_once()
+            call_kwargs = mock_raise.call_args[1]
+            assert "object" in call_kwargs["detail"]
+
+
+# =============================================================================
+# run_saved_workflow with trigger_event_override Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestRunSavedWorkflowWithTriggerOverride:
+    """Tests for run_saved_workflow with trigger_event_override parameter."""
+
+    @pytest.mark.asyncio
+    async def test_run_with_trigger_override_single_trigger(self, mock_user, mock_workflow, mock_workflow_version, mock_workflow_run):
+        """Test running workflow with trigger_event_override and single trigger."""
+        from seer.api.workflows.services.execution import run_saved_workflow
+        from seer.api.workflows.models import RunFromWorkflowRequest
+        from seer.core.schema.models import TriggerSpec
+
+        trigger_override = {
+            "trigger_key": "poll.gmail.email_received",
+            "data": {"message_id": "real_123", "subject": "Real Email"}
+        }
+
+        payload = RunFromWorkflowRequest(
+            inputs={},
+            config={},
+            trigger_event_override=trigger_override
+        )
+
+        mock_trigger = MagicMock(spec=TriggerSpec)
+        mock_trigger.id = "trigger_gmail"
+        mock_trigger.key = "poll.gmail.email_received"
+        mock_trigger.ui_meta = {"title": "Gmail Inbox"}
+
+        with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
+             patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
+             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
+             patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock) as mock_create_run, \
+             patch("seer.api.workflows.services.execution.workflow_execution_task") as mock_task, \
+             patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class, \
+             patch("seer.api.workflows.services.triggers.sync_trigger_subscriptions", new_callable=AsyncMock):
+
+            mock_get_wf.return_value = mock_workflow
+            mock_get_draft.return_value = mock_workflow_version
+            mock_spec_class.model_validate.return_value = MagicMock(triggers=[mock_trigger])
+            mock_validate.return_value = None
+            mock_create_run.return_value = mock_workflow_run
+            mock_task.kiq = AsyncMock()
+
+            result = await run_saved_workflow(mock_user, "wf_1", payload)
+
+            # Should create a single run with the override envelope (with updated trigger_id)
+            mock_create_run.assert_called_once()
+            mock_task.kiq.assert_called_once()
+            call_kwargs = mock_task.kiq.call_args[1]
+            # The envelope should have the trigger_id updated to match the target trigger
+            assert call_kwargs["trigger_envelope"]["trigger_id"] == "trigger_gmail"
+            assert call_kwargs["trigger_envelope"]["data"] == trigger_override["data"]
+            assert result.run_id == "run_123"
+
+    @pytest.mark.asyncio
+    async def test_run_with_trigger_override_multiple_triggers_requires_trigger_id(self, mock_user, mock_workflow, mock_workflow_version):
+        """Test that multiple triggers require trigger_id when using override."""
+        from seer.api.workflows.services.execution import run_saved_workflow
+        from seer.api.workflows.models import RunFromWorkflowRequest
+        from seer.core.schema.models import TriggerSpec
+        from fastapi import HTTPException
+
+        trigger_override = {
+            "trigger_key": "poll.gmail.email_received",
+            "data": {"message_id": "real_123"}
+        }
+
+        payload = RunFromWorkflowRequest(
+            inputs={},
+            config={},
+            trigger_event_override=trigger_override
+            # No trigger_id specified
+        )
+
+        mock_trigger1 = MagicMock(spec=TriggerSpec)
+        mock_trigger1.id = "trigger_1"
+        mock_trigger2 = MagicMock(spec=TriggerSpec)
+        mock_trigger2.id = "trigger_2"
+
+        with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
+             patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
+             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
+             patch("seer.api.workflows.services.execution._raise_problem") as mock_raise, \
+             patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class, \
+             patch("seer.api.workflows.services.triggers.sync_trigger_subscriptions", new_callable=AsyncMock):
+
+            mock_get_wf.return_value = mock_workflow
+            mock_get_draft.return_value = mock_workflow_version
+            mock_spec_class.model_validate.return_value = MagicMock(triggers=[mock_trigger1, mock_trigger2])
+            mock_validate.return_value = None
+            mock_raise.side_effect = HTTPException(status_code=400)
+
+            with pytest.raises(HTTPException):
+                await run_saved_workflow(mock_user, "wf_1", payload)
+
+            # Should raise about ambiguous trigger
+            mock_raise.assert_called_once()
+            call_kwargs = mock_raise.call_args[1]
+            assert "Ambiguous trigger" in call_kwargs["title"]
+
+    @pytest.mark.asyncio
+    async def test_run_with_trigger_override_with_trigger_id(self, mock_user, mock_workflow, mock_workflow_version, mock_workflow_run):
+        """Test running workflow with trigger_event_override and explicit trigger_id."""
+        from seer.api.workflows.services.execution import run_saved_workflow
+        from seer.api.workflows.models import RunFromWorkflowRequest
+        from seer.core.schema.models import TriggerSpec
+
+        trigger_override = {
+            "trigger_key": "poll.gmail.email_received",
+            "data": {"message_id": "real_123"}
+        }
+
+        payload = RunFromWorkflowRequest(
+            inputs={},
+            config={},
+            trigger_event_override=trigger_override,
+            trigger_id="trigger_2"
+        )
+
+        mock_trigger1 = MagicMock(spec=TriggerSpec)
+        mock_trigger1.id = "trigger_1"
+        mock_trigger1.key = "poll.gmail.email_received"
+        mock_trigger1.ui_meta = {"title": "Trigger 1"}
+        mock_trigger2 = MagicMock(spec=TriggerSpec)
+        mock_trigger2.id = "trigger_2"
+        mock_trigger2.key = "poll.gmail.email_received"
+        mock_trigger2.ui_meta = {"title": "Trigger 2"}
+
+        with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
+             patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
+             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
+             patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock) as mock_create_run, \
+             patch("seer.api.workflows.services.execution.workflow_execution_task") as mock_task, \
+             patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class, \
+             patch("seer.api.workflows.services.triggers.sync_trigger_subscriptions", new_callable=AsyncMock):
+
+            mock_get_wf.return_value = mock_workflow
+            mock_get_draft.return_value = mock_workflow_version
+            mock_spec_class.model_validate.return_value = MagicMock(triggers=[mock_trigger1, mock_trigger2])
+            mock_validate.return_value = None
+            mock_create_run.return_value = mock_workflow_run
+            mock_task.kiq = AsyncMock()
+
+            result = await run_saved_workflow(mock_user, "wf_1", payload)
+
+            # Should create run with the override (trigger_id updated to trigger_2)
+            mock_create_run.assert_called_once()
+            mock_task.kiq.assert_called_once()
+            call_kwargs = mock_task.kiq.call_args[1]
+            assert call_kwargs["trigger_envelope"]["trigger_id"] == "trigger_2"
+            assert result.run_id == "run_123"
+
+    @pytest.mark.asyncio
+    async def test_run_with_trigger_override_invalid_trigger_id(self, mock_user, mock_workflow, mock_workflow_version):
+        """Test that invalid trigger_id raises error."""
+        from seer.api.workflows.services.execution import run_saved_workflow
+        from seer.api.workflows.models import RunFromWorkflowRequest
+        from seer.core.schema.models import TriggerSpec
+        from fastapi import HTTPException
+
+        trigger_override = {
+            "trigger_key": "poll.gmail.email_received",
+            "data": {"message_id": "real_123"}
+        }
+
+        payload = RunFromWorkflowRequest(
+            inputs={},
+            config={},
+            trigger_event_override=trigger_override,
+            trigger_id="nonexistent_trigger"
+        )
+
+        mock_trigger = MagicMock(spec=TriggerSpec)
+        mock_trigger.id = "trigger_1"
+
+        with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
+             patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
+             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
+             patch("seer.api.workflows.services.execution._raise_problem") as mock_raise, \
+             patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class, \
+             patch("seer.api.workflows.services.triggers.sync_trigger_subscriptions", new_callable=AsyncMock):
+
+            mock_get_wf.return_value = mock_workflow
+            mock_get_draft.return_value = mock_workflow_version
+            mock_spec_class.model_validate.return_value = MagicMock(triggers=[mock_trigger])
+            mock_validate.return_value = None
+            mock_raise.side_effect = HTTPException(status_code=404)
+
+            with pytest.raises(HTTPException):
+                await run_saved_workflow(mock_user, "wf_1", payload)
+
+            mock_raise.assert_called_once()
+            call_kwargs = mock_raise.call_args[1]
+            assert "Trigger not found" in call_kwargs["title"]
+
+    @pytest.mark.asyncio
+    async def test_run_with_invalid_trigger_override_envelope(self, mock_user, mock_workflow, mock_workflow_version):
+        """Test that invalid envelope structure raises error."""
+        from seer.api.workflows.services.execution import run_saved_workflow
+        from seer.api.workflows.models import RunFromWorkflowRequest
+        from fastapi import HTTPException
+
+        # Missing required 'data' field
+        trigger_override = {
+            "trigger_key": "poll.gmail.email_received"
+        }
+
+        payload = RunFromWorkflowRequest(
+            inputs={},
+            config={},
+            trigger_event_override=trigger_override
+        )
+
+        with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
+             patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
+             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
+             patch("seer.api.workflows.services.execution._raise_problem") as mock_raise, \
+             patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class:
+
+            mock_get_wf.return_value = mock_workflow
+            mock_get_draft.return_value = mock_workflow_version
+            mock_spec_class.model_validate.return_value = MagicMock(triggers=[])
+            mock_validate.return_value = None
+            mock_raise.side_effect = HTTPException(status_code=400)
+
+            with pytest.raises(HTTPException):
+                await run_saved_workflow(mock_user, "wf_1", payload)
+
+            mock_raise.assert_called_once()
+            call_kwargs = mock_raise.call_args[1]
+            assert "Invalid trigger envelope" in call_kwargs["title"]
