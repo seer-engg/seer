@@ -42,6 +42,31 @@ _JSON_TYPE_MAP: Dict[str, type] = {
 }
 
 
+def _strip_markdown_fencing(text: str) -> str:
+    """
+    Remove markdown code fences from LLM output.
+
+    Some LLMs (e.g., kimi-k2.5 via OpenRouter) wrap JSON responses in markdown
+    code fences like ```json ... ```. This breaks Pydantic's JSON parser which
+    expects raw JSON. This helper strips those fences before parsing.
+
+    Args:
+        text: Raw LLM output that may contain markdown fencing
+
+    Returns:
+        Cleaned text with markdown fencing removed
+    """
+    text = text.strip()
+    # Handle ```json or ```JSON (case-insensitive language tag)
+    if text.lower().startswith("```json"):
+        text = text[7:]  # Remove ```json
+    elif text.startswith("```"):
+        text = text[3:]  # Remove ``` (generic code fence)
+    if text.endswith("```"):
+        text = text[:-3]
+    return text.strip()
+
+
 def _json_type_to_python(schema: Dict[str, Any]) -> type:
     """
     Map JSON schema type to Python type for Pydantic model generation.
@@ -296,10 +321,22 @@ class BrowserService:
                 browser_session=managed.session,
             )
 
+            # Extract structured data - returns None if extraction failed
+            extracted_data = await self._extract_structured_data(history, extraction_schema)
+
+            # If extraction_schema was provided but extraction failed, return failure
+            # This prevents downstream validation errors on empty extracted_data
+            if extraction_schema and extracted_data is None:
+                logger.warning("Browser agent completed but failed to extract structured data")
+                return {
+                    **self._build_error_result("Failed to extract structured data from agent output"),
+                    "usage": self._extract_usage_metadata(history),
+                }
+
             return {
                 "success": True,
                 "result": str(history) if history else "",
-                "extracted_data": await self._extract_structured_data(history, extraction_schema),
+                "extracted_data": extracted_data if extracted_data is not None else {},
                 "final_url": None,
                 "screenshots": await self._save_screenshots(
                     history=history,
@@ -428,19 +465,21 @@ class BrowserService:
         self,
         history: Any,
         extraction_schema: Optional[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+    ) -> Optional[Dict[str, Any]]:
         """
         Extract structured data from agent history.
 
         When output_model_schema is used (via extraction_schema), the agent's
-        done action returns pure JSON that can be directly parsed.
+        done action returns pure JSON that can be directly parsed. Some LLMs
+        wrap JSON in markdown code fences, which we strip before parsing.
 
         Args:
             history: AgentHistory from BrowserUse agent.run()
             extraction_schema: JSON schema that was used to create the output model
 
         Returns:
-            Dict with extracted data conforming to the schema
+            Dict with extracted data conforming to the schema, or None if
+            extraction_schema was provided but parsing failed (signals failure)
         """
         if not extraction_schema:
             return self._extract_data(history)
@@ -449,17 +488,19 @@ class BrowserService:
             final_result = history.final_result()
             if final_result:
                 if isinstance(final_result, str):
-                    return json.loads(final_result)
+                    # Strip markdown code fences that some LLMs add around JSON
+                    cleaned = _strip_markdown_fencing(final_result)
+                    return json.loads(cleaned)
                 if isinstance(final_result, dict):
                     return final_result
-            logger.debug("No final result from agent history")
-            return {}
+            logger.warning("No final result from agent history - extraction failed")
+            return None  # Signal extraction failure when schema was expected
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse structured output as JSON: {e}")
-            return self._extract_data(history)
+            return None  # Signal extraction failure
         except Exception as e:
             logger.warning(f"Failed to extract structured data: {e}")
-            return {}
+            return None  # Signal extraction failure
 
     async def _save_screenshots(
         self,

@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from seer.services.browser.browser_service import (
     BrowserService,
     _json_type_to_python,
+    _strip_markdown_fencing,
     json_schema_to_pydantic,
 )
 
@@ -73,6 +74,73 @@ def mock_file_system():
     fs = MagicMock()
     fs.store_file_with_record = AsyncMock()
     return fs
+
+
+@pytest.mark.unit
+class TestStripMarkdownFencing:
+    """Test _strip_markdown_fencing function.
+
+    This function fixes the issue where LLMs return JSON wrapped in markdown
+    code fences (```json ... ```), which breaks JSON parsing.
+    Fixes Sentry issue PYTHON-FASTAPI-V.
+    """
+
+    def test_strip_json_fencing(self):
+        """Test stripping ```json prefix and ``` suffix."""
+        text = '```json\n{"name": "test", "value": 42}\n```'
+        result = _strip_markdown_fencing(text)
+        assert result == '{"name": "test", "value": 42}'
+
+    def test_strip_json_fencing_uppercase(self):
+        """Test stripping ```JSON (uppercase) prefix."""
+        text = '```JSON\n{"key": "value"}\n```'
+        result = _strip_markdown_fencing(text)
+        assert result == '{"key": "value"}'
+
+    def test_strip_generic_fencing(self):
+        """Test stripping generic ``` fencing without language tag."""
+        text = '```\n{"data": [1, 2, 3]}\n```'
+        result = _strip_markdown_fencing(text)
+        assert result == '{"data": [1, 2, 3]}'
+
+    def test_no_fencing_passthrough(self):
+        """Test that clean JSON passes through unchanged."""
+        text = '{"already": "clean"}'
+        result = _strip_markdown_fencing(text)
+        assert result == '{"already": "clean"}'
+
+    def test_whitespace_handling(self):
+        """Test that leading/trailing whitespace is stripped."""
+        text = '  \n```json\n{"test": true}\n```  \n'
+        result = _strip_markdown_fencing(text)
+        assert result == '{"test": true}'
+
+    def test_only_closing_fence(self):
+        """Test handling when only closing fence is present."""
+        text = '{"value": 1}\n```'
+        result = _strip_markdown_fencing(text)
+        assert result == '{"value": 1}'
+
+    def test_only_opening_fence(self):
+        """Test handling when only opening fence is present."""
+        text = '```json\n{"value": 1}'
+        result = _strip_markdown_fencing(text)
+        assert result == '{"value": 1}'
+
+    def test_real_world_example_from_sentry(self):
+        """Test with actual format seen in Sentry error PYTHON-FASTAPI-V."""
+        text = '''```json
+{
+  "thinking": "analyzing the page",
+  "shops": [{"name": "Store A", "address": "123 Main St"}]
+}
+```'''
+        result = _strip_markdown_fencing(text)
+        # Should be valid JSON after stripping
+        import json
+        parsed = json.loads(result)
+        assert "thinking" in parsed
+        assert "shops" in parsed
 
 
 @pytest.mark.unit
@@ -383,21 +451,42 @@ class TestExtractStructuredData:
         assert result == {"raw": "data"}
 
     async def test_handles_json_decode_error(self, browser_service, sample_extraction_schema):
+        """Test that JSON decode error returns None to signal extraction failure.
+
+        This is the fix for Sentry issue PYTHON-FASTAPI-V and PYTHON-FASTAPI-W.
+        When extraction fails, we return None instead of {} to prevent downstream
+        validation errors on empty extracted_data.
+        """
         history = MagicMock()
         history.final_result = MagicMock(return_value="not valid json")
 
         result = await browser_service._extract_structured_data(history, sample_extraction_schema)
 
-        # Falls back to _extract_data
-        assert "raw" in result or result == {}
+        # Returns None to signal extraction failure when schema was provided
+        assert result is None
 
     async def test_handles_no_final_result(self, browser_service, sample_extraction_schema):
+        """Test that missing final_result returns None to signal extraction failure."""
         history = MagicMock()
         history.final_result = MagicMock(return_value=None)
 
         result = await browser_service._extract_structured_data(history, sample_extraction_schema)
 
-        assert result == {}
+        # Returns None to signal extraction failure when schema was provided
+        assert result is None
+
+    async def test_strips_markdown_fencing(self, browser_service, sample_extraction_schema):
+        """Test that markdown-fenced JSON is correctly parsed.
+
+        This is the fix for Sentry issue PYTHON-FASTAPI-V where LLM returns
+        JSON wrapped in ```json ... ``` markers.
+        """
+        history = MagicMock()
+        history.final_result = MagicMock(return_value='```json\n{"name": "Widget", "price": 29.99}\n```')
+
+        result = await browser_service._extract_structured_data(history, sample_extraction_schema)
+
+        assert result == {"name": "Widget", "price": 29.99}
 
     async def test_final_result_is_dict(self, browser_service, sample_extraction_schema):
         history = MagicMock()
@@ -762,6 +851,59 @@ class TestExecuteTask:
         assert result["success"] is False
         assert "Browser crashed" in result["result"]
         assert result["usage"] is None
+
+    @patch("seer.services.browser.browser_service.BrowserPoolManager")
+    @patch("seer.services.browser.browser_service.Agent")
+    @patch("seer.services.browser.browser_service.ChatOpenAI")
+    @patch("seer.services.browser.browser_service.config")
+    async def test_execute_task_extraction_failure_with_schema(
+        self, mock_config, mock_openai_cls, mock_agent_cls, mock_pool_cls,
+        browser_service, mock_user, sample_extraction_schema
+    ):
+        """Test that execute_task returns failure when extraction fails with schema.
+
+        This is the fix for Sentry issues PYTHON-FASTAPI-V and PYTHON-FASTAPI-W.
+        When a schema is provided but extraction fails (e.g., invalid JSON from LLM),
+        we return success=False to prevent downstream validation errors.
+        """
+        mock_config.openrouter_api_key = "test-api-key"
+
+        mock_managed = MagicMock()
+        mock_managed.id = "sess-123"
+        mock_managed.session = MagicMock()
+
+        mock_pool = MagicMock()
+        mock_pool.create_session = AsyncMock(return_value=mock_managed)
+        mock_pool.release_session = AsyncMock(return_value=None)
+        mock_pool_cls.get_instance = AsyncMock(return_value=mock_pool)
+
+        # Mock agent that returns history with invalid JSON
+        mock_history = MagicMock()
+        mock_history.final_result = MagicMock(return_value="completely invalid json that can't be parsed")
+        mock_history.usage = MagicMock()
+        mock_history.usage.total_tokens = 100
+        mock_history.usage.total_prompt_tokens = 80
+        mock_history.usage.total_completion_tokens = 20
+        mock_history.usage.entry_count = 3
+
+        mock_agent = MagicMock()
+        mock_agent.run = AsyncMock(return_value=mock_history)
+        mock_agent_cls.return_value = mock_agent
+
+        browser_service._session_context.load_session_state = AsyncMock(return_value=None)
+
+        result = await browser_service.execute_task(
+            user=mock_user,
+            task="Extract shop data",
+            inputs={},
+            extraction_schema=sample_extraction_schema,  # Schema provided
+        )
+
+        # Should return failure because extraction failed
+        assert result["success"] is False
+        assert "Failed to extract structured data" in result["result"]
+        # Usage should still be tracked even on extraction failure
+        assert result["usage"] is not None
 
     @patch("seer.services.browser.browser_service.BrowserPoolManager")
     @patch("seer.services.browser.browser_service.Agent")
