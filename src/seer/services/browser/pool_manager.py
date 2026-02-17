@@ -10,9 +10,12 @@ sessions with automatic reaping of expired ones.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import tempfile
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
@@ -40,6 +43,7 @@ class ManagedSession:
     timeout: int = 300
     recording_id: Optional[str] = None  # RecordingService recording ID for save_recording()
     start_url: Optional[str] = None  # URL session started on (for recording metadata)
+    storage_state_file: Optional[Path] = None  # Temp file for storage state (cleaned up on release)
 
     @property
     def is_expired(self) -> bool:
@@ -113,6 +117,33 @@ class BrowserPoolManager:
         """Look up an active managed session by ID without releasing it."""
         return self._sessions.get(session_id)
 
+    def _prepare_storage_state_file(self, storage_state: Dict[str, Any]) -> Path:
+        """Write storage state to a temp JSON file for browser-use.
+
+        browser-use expects a file path for StorageStateWatchdog, not a dict.
+        If we pass a dict directly, it uses str(dict) as filename, causing
+        [Errno 36] File name too long.
+        """
+        fd, temp_path = tempfile.mkstemp(suffix=".json", prefix="browser_state_")
+        storage_state_file = Path(temp_path)
+        with open(fd, "w", encoding="utf-8") as f:
+            json.dump(storage_state, f)
+        logger.debug(f"Wrote storage state to temp file: {storage_state_file}")
+        return storage_state_file
+
+    async def _apply_cookies_via_cdp(self, browser_session: BrowserSession, cookies: list) -> None:
+        """Apply cookies to browser session via CDP as backup.
+
+        Ensures cookies are applied even if StorageStateWatchdog has issues.
+        """
+        try:
+            # pylint: disable=protected-access
+            # Reason: browser-use doesn't expose public method to set cookies from dict
+            await browser_session._cdp_set_cookies(cookies)
+            logger.info(f"Applied {len(cookies)} cookies to browser context via CDP")
+        except Exception as e:
+            logger.warning(f"Failed to apply cookies via CDP: {e}")
+
     async def create_session(
         self,
         user_id: str,
@@ -142,33 +173,27 @@ class BrowserPoolManager:
         session_id = str(uuid4())
         effective_timeout = timeout or config.browser_pool_default_timeout_seconds
 
+        storage_state_file: Optional[Path] = None
         try:
             # Always use stealth profile for container compatibility (--disable-dev-shm-usage)
             # and anti-detection benefits. Critical for ECS/Docker where /dev/shm is limited.
             profile_kwargs = get_stealth_profile_kwargs()
-            profile_kwargs["storage_state"] = storage_state
             profile_kwargs["keep_alive"] = True
 
             # Log cookie count for debugging persistence issues
-            cookie_count = len(storage_state.get("cookies", [])) if storage_state else 0
             if storage_state:
+                cookie_count = len(storage_state.get("cookies", []))
                 logger.info(f"Creating session with {cookie_count} cookies from storage_state")
+                storage_state_file = self._prepare_storage_state_file(storage_state)
+                profile_kwargs["storage_state"] = str(storage_state_file)
 
             browser_profile = BrowserUseProfile(**profile_kwargs)
             browser_session = BrowserSession(browser_profile=browser_profile)
             await browser_session.start()
 
-            # Apply cookies directly via CDP after session start
-            # browser-use's StorageStateWatchdog only works with file paths, not dict storage_state
+            # Apply cookies directly via CDP after session start as backup
             if storage_state and storage_state.get("cookies"):
-                cookies = storage_state["cookies"]
-                try:
-                    # pylint: disable=protected-access
-                    # Reason: browser-use doesn't expose public method to set cookies from dict
-                    await browser_session._cdp_set_cookies(cookies)
-                    logger.info(f"Applied {len(cookies)} cookies to browser context via CDP")
-                except Exception as e:
-                    logger.warning(f"Failed to apply cookies via CDP: {e}")
+                await self._apply_cookies_via_cdp(browser_session, storage_state["cookies"])
 
             managed = ManagedSession(
                 id=session_id,
@@ -177,6 +202,7 @@ class BrowserPoolManager:
                 profile_id=profile_id,
                 session_type=session_type,
                 timeout=effective_timeout,
+                storage_state_file=storage_state_file,
             )
             self._sessions[session_id] = managed
 
@@ -187,6 +213,12 @@ class BrowserPoolManager:
             return managed
 
         except Exception:
+            # Clean up temp file on failure
+            if storage_state_file and storage_state_file.exists():
+                try:
+                    storage_state_file.unlink()
+                except Exception as e:
+                    logger.warning(f"Failed to clean up temp storage state file: {e}")
             self._semaphore.release()
             raise
 
@@ -216,6 +248,14 @@ class BrowserPoolManager:
             await managed.session.stop()
         except Exception as e:
             logger.warning(f"Failed to stop session {session_id}: {e}")
+
+        # Clean up temp storage state file
+        if managed.storage_state_file and managed.storage_state_file.exists():
+            try:
+                managed.storage_state_file.unlink()
+                logger.debug(f"Cleaned up temp storage state file: {managed.storage_state_file}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up temp storage state file: {e}")
 
         self._semaphore.release()
         logger.info(
