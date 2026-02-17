@@ -161,6 +161,14 @@ class BrowserNodeType(BaseNodeType):
 
         # Execute browser task
         try:
+            logger.info("model=%s, task=%s, inputs=%s, profile_id=%s, max_steps=%s, timeout=%s",
+                node.model or "default",
+                task,
+                inputs,
+                node.browser_profile_id,
+                node.max_steps,
+                node.timeout_seconds,
+            )
             result = await BrowserService.instance().execute_task(
                 user=ctx.runtime_context.user if ctx.runtime_context else None,
                 task=task,
@@ -172,6 +180,7 @@ class BrowserNodeType(BaseNodeType):
                 save_screenshots=node.save_screenshots,
                 file_system=file_system,
                 workflow_run_id=workflow_run_id,
+                model=node.model,
             )
         except Exception as exc:
             trace_key = get_trace_key(node.id, ctx.state, ctx.loop_body_map or {}, ctx.nested_loop_parents or {})
@@ -257,6 +266,8 @@ class BrowserNodeType(BaseNodeType):
             extracted_data_schema = {"type": "object", "additionalProperties": {}}
 
         # Browser always produces the same envelope structure
+        # additionalProperties=False ensures strict type checking catches invalid
+        # references like ${node.shops} when it should be ${node.extracted_data.shops}
         schema = {
             "type": "object",
             "properties": {
@@ -266,7 +277,7 @@ class BrowserNodeType(BaseNodeType):
                 "final_url": {"type": ["string", "null"]},
                 "screenshots": {"type": "array", "items": {"type": "string"}},
             },
-            "additionalProperties": {},
+            "additionalProperties": False,
         }
 
         if node.id:

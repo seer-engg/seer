@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from seer.services.browser.browser_service import (
     BrowserService,
     _json_type_to_python,
+    _strip_markdown_fencing,
     json_schema_to_pydantic,
 )
 
@@ -73,6 +74,73 @@ def mock_file_system():
     fs = MagicMock()
     fs.store_file_with_record = AsyncMock()
     return fs
+
+
+@pytest.mark.unit
+class TestStripMarkdownFencing:
+    """Test _strip_markdown_fencing function.
+
+    This function fixes the issue where LLMs return JSON wrapped in markdown
+    code fences (```json ... ```), which breaks JSON parsing.
+    Fixes Sentry issue PYTHON-FASTAPI-V.
+    """
+
+    def test_strip_json_fencing(self):
+        """Test stripping ```json prefix and ``` suffix."""
+        text = '```json\n{"name": "test", "value": 42}\n```'
+        result = _strip_markdown_fencing(text)
+        assert result == '{"name": "test", "value": 42}'
+
+    def test_strip_json_fencing_uppercase(self):
+        """Test stripping ```JSON (uppercase) prefix."""
+        text = '```JSON\n{"key": "value"}\n```'
+        result = _strip_markdown_fencing(text)
+        assert result == '{"key": "value"}'
+
+    def test_strip_generic_fencing(self):
+        """Test stripping generic ``` fencing without language tag."""
+        text = '```\n{"data": [1, 2, 3]}\n```'
+        result = _strip_markdown_fencing(text)
+        assert result == '{"data": [1, 2, 3]}'
+
+    def test_no_fencing_passthrough(self):
+        """Test that clean JSON passes through unchanged."""
+        text = '{"already": "clean"}'
+        result = _strip_markdown_fencing(text)
+        assert result == '{"already": "clean"}'
+
+    def test_whitespace_handling(self):
+        """Test that leading/trailing whitespace is stripped."""
+        text = '  \n```json\n{"test": true}\n```  \n'
+        result = _strip_markdown_fencing(text)
+        assert result == '{"test": true}'
+
+    def test_only_closing_fence(self):
+        """Test handling when only closing fence is present."""
+        text = '{"value": 1}\n```'
+        result = _strip_markdown_fencing(text)
+        assert result == '{"value": 1}'
+
+    def test_only_opening_fence(self):
+        """Test handling when only opening fence is present."""
+        text = '```json\n{"value": 1}'
+        result = _strip_markdown_fencing(text)
+        assert result == '{"value": 1}'
+
+    def test_real_world_example_from_sentry(self):
+        """Test with actual format seen in Sentry error PYTHON-FASTAPI-V."""
+        text = '''```json
+{
+  "thinking": "analyzing the page",
+  "shops": [{"name": "Store A", "address": "123 Main St"}]
+}
+```'''
+        result = _strip_markdown_fencing(text)
+        # Should be valid JSON after stripping
+        import json
+        parsed = json.loads(result)
+        assert "thinking" in parsed
+        assert "shops" in parsed
 
 
 @pytest.mark.unit
@@ -162,9 +230,11 @@ class TestJsonSchemaToPydantic:
         assert issubclass(model, BaseModel)
 
     def test_custom_model_name(self):
+        """Test that custom model name is used as prefix for generated model."""
         schema = {"type": "object", "properties": {"x": {"type": "number"}}}
         model = json_schema_to_pydantic(schema, model_name="CustomModel")
-        assert model.__name__ == "CustomModel"
+        # Model name includes a counter suffix for uniqueness
+        assert model.__name__.startswith("CustomModel")
 
 
 @pytest.mark.asyncio
@@ -287,7 +357,11 @@ class TestEnhanceTask:
 class TestExtractUsageMetadata:
     """Test _extract_usage_metadata static method."""
 
-    def test_extracts_usage_from_history(self, mock_agent_history):
+    @patch("seer.services.browser.browser_service.config")
+    def test_extracts_usage_with_default_model(self, mock_config, mock_agent_history):
+        """Test usage extraction uses config default when model not specified."""
+        mock_config.default_llm_model = "moonshotai/kimi-k2.5"
+
         result = BrowserService._extract_usage_metadata(mock_agent_history)
 
         assert result is not None
@@ -296,6 +370,28 @@ class TestExtractUsageMetadata:
         assert result["output_tokens"] == 500
         assert result["total_tokens"] == 1500
         assert result["steps_taken"] == 5
+
+    @patch("seer.services.browser.browser_service.config")
+    def test_extracts_usage_with_provided_model(self, mock_config, mock_agent_history):
+        """Test usage extraction uses provided model when specified."""
+        mock_config.default_llm_model = "moonshotai/kimi-k2.5"
+
+        result = BrowserService._extract_usage_metadata(mock_agent_history, model="openai/gpt-4o")
+
+        assert result is not None
+        assert result["model"] == "openai/gpt-4o"
+        assert result["input_tokens"] == 1000
+        assert result["output_tokens"] == 500
+
+    @patch("seer.services.browser.browser_service.config")
+    def test_extracts_usage_falls_back_to_config(self, mock_config, mock_agent_history):
+        """Test usage extraction falls back to config when model is None."""
+        mock_config.default_llm_model = "anthropic/claude-sonnet-4.5"
+
+        result = BrowserService._extract_usage_metadata(mock_agent_history, model=None)
+
+        assert result is not None
+        assert result["model"] == "anthropic/claude-sonnet-4.5"
 
     def test_no_usage_attribute(self):
         history = MagicMock(spec=[])  # No usage attribute
@@ -383,21 +479,42 @@ class TestExtractStructuredData:
         assert result == {"raw": "data"}
 
     async def test_handles_json_decode_error(self, browser_service, sample_extraction_schema):
+        """Test that JSON decode error returns None to signal extraction failure.
+
+        This is the fix for Sentry issue PYTHON-FASTAPI-V and PYTHON-FASTAPI-W.
+        When extraction fails, we return None instead of {} to prevent downstream
+        validation errors on empty extracted_data.
+        """
         history = MagicMock()
         history.final_result = MagicMock(return_value="not valid json")
 
         result = await browser_service._extract_structured_data(history, sample_extraction_schema)
 
-        # Falls back to _extract_data
-        assert "raw" in result or result == {}
+        # Returns None to signal extraction failure when schema was provided
+        assert result is None
 
     async def test_handles_no_final_result(self, browser_service, sample_extraction_schema):
+        """Test that missing final_result returns None to signal extraction failure."""
         history = MagicMock()
         history.final_result = MagicMock(return_value=None)
 
         result = await browser_service._extract_structured_data(history, sample_extraction_schema)
 
-        assert result == {}
+        # Returns None to signal extraction failure when schema was provided
+        assert result is None
+
+    async def test_strips_markdown_fencing(self, browser_service, sample_extraction_schema):
+        """Test that markdown-fenced JSON is correctly parsed.
+
+        This is the fix for Sentry issue PYTHON-FASTAPI-V where LLM returns
+        JSON wrapped in ```json ... ``` markers.
+        """
+        history = MagicMock()
+        history.final_result = MagicMock(return_value='```json\n{"name": "Widget", "price": 29.99}\n```')
+
+        result = await browser_service._extract_structured_data(history, sample_extraction_schema)
+
+        assert result == {"name": "Widget", "price": 29.99}
 
     async def test_final_result_is_dict(self, browser_service, sample_extraction_schema):
         history = MagicMock()
@@ -767,6 +884,59 @@ class TestExecuteTask:
     @patch("seer.services.browser.browser_service.Agent")
     @patch("seer.services.browser.browser_service.ChatOpenAI")
     @patch("seer.services.browser.browser_service.config")
+    async def test_execute_task_extraction_failure_with_schema(
+        self, mock_config, mock_openai_cls, mock_agent_cls, mock_pool_cls,
+        browser_service, mock_user, sample_extraction_schema
+    ):
+        """Test that execute_task returns failure when extraction fails with schema.
+
+        This is the fix for Sentry issues PYTHON-FASTAPI-V and PYTHON-FASTAPI-W.
+        When a schema is provided but extraction fails (e.g., invalid JSON from LLM),
+        we return success=False to prevent downstream validation errors.
+        """
+        mock_config.openrouter_api_key = "test-api-key"
+
+        mock_managed = MagicMock()
+        mock_managed.id = "sess-123"
+        mock_managed.session = MagicMock()
+
+        mock_pool = MagicMock()
+        mock_pool.create_session = AsyncMock(return_value=mock_managed)
+        mock_pool.release_session = AsyncMock(return_value=None)
+        mock_pool_cls.get_instance = AsyncMock(return_value=mock_pool)
+
+        # Mock agent that returns history with invalid JSON
+        mock_history = MagicMock()
+        mock_history.final_result = MagicMock(return_value="completely invalid json that can't be parsed")
+        mock_history.usage = MagicMock()
+        mock_history.usage.total_tokens = 100
+        mock_history.usage.total_prompt_tokens = 80
+        mock_history.usage.total_completion_tokens = 20
+        mock_history.usage.entry_count = 3
+
+        mock_agent = MagicMock()
+        mock_agent.run = AsyncMock(return_value=mock_history)
+        mock_agent_cls.return_value = mock_agent
+
+        browser_service._session_context.load_session_state = AsyncMock(return_value=None)
+
+        result = await browser_service.execute_task(
+            user=mock_user,
+            task="Extract shop data",
+            inputs={},
+            extraction_schema=sample_extraction_schema,  # Schema provided
+        )
+
+        # Should return failure because extraction failed
+        assert result["success"] is False
+        assert "Failed to extract structured data" in result["result"]
+        # Usage should still be tracked even on extraction failure
+        assert result["usage"] is not None
+
+    @patch("seer.services.browser.browser_service.BrowserPoolManager")
+    @patch("seer.services.browser.browser_service.Agent")
+    @patch("seer.services.browser.browser_service.ChatOpenAI")
+    @patch("seer.services.browser.browser_service.config")
     async def test_execute_task_anonymous_user(
         self, mock_config, mock_openai_cls, mock_agent_cls, mock_pool_cls, browser_service, mock_agent_history
     ):
@@ -805,8 +975,10 @@ class TestGetAgentLlm:
 
     @patch("seer.services.browser.browser_service.ChatOpenAI")
     @patch("seer.services.browser.browser_service.config")
-    def test_creates_openrouter_llm(self, mock_config, mock_openai_cls, browser_service):
+    def test_creates_openrouter_llm_with_default_model(self, mock_config, mock_openai_cls, browser_service):
+        """Test LLM creation uses config default when no model specified."""
         mock_config.openrouter_api_key = "test-api-key"
+        mock_config.default_llm_model = "moonshotai/kimi-k2.5"
 
         browser_service._get_agent_llm()
 
@@ -815,6 +987,32 @@ class TestGetAgentLlm:
         assert call_kwargs["api_key"] == "test-api-key"
         assert "openrouter" in call_kwargs["base_url"]
         assert call_kwargs["model"] == "moonshotai/kimi-k2.5"
+
+    @patch("seer.services.browser.browser_service.ChatOpenAI")
+    @patch("seer.services.browser.browser_service.config")
+    def test_uses_provided_model(self, mock_config, mock_openai_cls, browser_service):
+        """Test LLM creation uses provided model when specified."""
+        mock_config.openrouter_api_key = "test-api-key"
+        mock_config.default_llm_model = "moonshotai/kimi-k2.5"
+
+        browser_service._get_agent_llm(model="openai/gpt-4o")
+
+        mock_openai_cls.assert_called_once()
+        call_kwargs = mock_openai_cls.call_args.kwargs
+        assert call_kwargs["model"] == "openai/gpt-4o"
+
+    @patch("seer.services.browser.browser_service.ChatOpenAI")
+    @patch("seer.services.browser.browser_service.config")
+    def test_falls_back_to_config_default_when_model_none(self, mock_config, mock_openai_cls, browser_service):
+        """Test LLM creation falls back to config default when model is None."""
+        mock_config.openrouter_api_key = "test-api-key"
+        mock_config.default_llm_model = "anthropic/claude-sonnet-4.5"
+
+        browser_service._get_agent_llm(model=None)
+
+        mock_openai_cls.assert_called_once()
+        call_kwargs = mock_openai_cls.call_args.kwargs
+        assert call_kwargs["model"] == "anthropic/claude-sonnet-4.5"
 
     @patch("seer.services.browser.browser_service.config")
     def test_raises_on_missing_api_key(self, mock_config, browser_service):
@@ -1100,3 +1298,248 @@ class TestWorkflowRecording:
 
         call_kwargs = mock_recorder.start_recording.call_args[1]
         assert call_kwargs["start_url"] == "https://start-url-example.com"
+
+
+@pytest.mark.unit
+class TestUsesCustomSubmitTool:
+    """Test _uses_custom_submit_tool model detection method."""
+
+    def test_detects_kimi_model(self):
+        """Kimi models should use custom submit_result tool."""
+        assert BrowserService._uses_custom_submit_tool("moonshotai/kimi-k2.5") is True
+        assert BrowserService._uses_custom_submit_tool("kimi-k2.5") is True
+        assert BrowserService._uses_custom_submit_tool("KIMI-K2.5") is True  # Case insensitive
+
+    def test_detects_moonshot_model(self):
+        """Moonshot models should use custom submit_result tool."""
+        assert BrowserService._uses_custom_submit_tool("moonshot-v1") is True
+        assert BrowserService._uses_custom_submit_tool("MOONSHOT-V1") is True
+
+    def test_openai_models_use_standard(self):
+        """OpenAI models should not use custom tool."""
+        assert BrowserService._uses_custom_submit_tool("gpt-4") is False
+        assert BrowserService._uses_custom_submit_tool("gpt-4-turbo") is False
+        assert BrowserService._uses_custom_submit_tool("gpt-3.5-turbo") is False
+
+    def test_anthropic_models_use_standard(self):
+        """Anthropic models should not use custom tool."""
+        assert BrowserService._uses_custom_submit_tool("claude-3-opus") is False
+        assert BrowserService._uses_custom_submit_tool("claude-3-sonnet") is False
+        assert BrowserService._uses_custom_submit_tool("claude-2") is False
+
+    def test_empty_model_name(self):
+        """Empty model name should not use custom tool."""
+        assert BrowserService._uses_custom_submit_tool("") is False
+
+
+@pytest.mark.unit
+class TestEnhanceTaskWithSchema:
+    """Test _enhance_task method with extraction schema parameters."""
+
+    def test_enhance_with_schema_submit_tool(self, browser_service):
+        """Test enhancement with extraction schema and use_submit_tool=True."""
+        task = "Extract product data"
+        schema = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "price": {"type": "number"},
+            },
+        }
+
+        result = browser_service._enhance_task(task, {}, schema, use_submit_tool=True)
+
+        assert "Extract product data" in result
+        assert "submit_result" in result
+        assert "name" in result
+        assert "price" in result
+        assert "MUST call" in result
+
+    def test_enhance_with_schema_standard(self, browser_service):
+        """Test enhancement with extraction schema and use_submit_tool=False."""
+        task = "Extract product data"
+        schema = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+            },
+        }
+
+        result = browser_service._enhance_task(task, {}, schema, use_submit_tool=False)
+
+        assert "Extract product data" in result
+        assert "name" in result
+        assert "submit_result" not in result  # Should NOT mention submit_result
+
+    def test_enhance_with_inputs_and_schema(self, browser_service):
+        """Test enhancement with both inputs and extraction schema."""
+        task = "Navigate and extract"
+        inputs = {"url": "https://example.com"}
+        schema = {"type": "object", "properties": {"data": {"type": "string"}}}
+
+        result = browser_service._enhance_task(task, inputs, schema, use_submit_tool=True)
+
+        assert "Navigate and extract" in result
+        assert "https://example.com" in result
+        assert "submit_result" in result
+        assert "data" in result
+
+    def test_enhance_without_schema_unchanged(self, browser_service):
+        """Test that task without schema doesn't get extraction instructions."""
+        task = "Click the button"
+        inputs = {"url": "https://example.com"}
+
+        result = browser_service._enhance_task(task, inputs, None, use_submit_tool=False)
+
+        assert "Click the button" in result
+        assert "https://example.com" in result
+        assert "submit_result" not in result
+        assert "IMPORTANT" not in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+class TestModelAwareExecution:
+    """Test execute_task with model-aware structured output."""
+
+    @patch("seer.services.browser.browser_service.BrowserPoolManager")
+    @patch("seer.services.browser.browser_service.Agent")
+    @patch("seer.services.browser.browser_service.ChatOpenAI")
+    @patch("seer.services.browser.browser_service.config")
+    async def test_kimi_uses_custom_tools_for_extraction(
+        self, mock_config, mock_openai_cls, mock_agent_cls, mock_pool_cls,
+        browser_service, mock_user, sample_extraction_schema
+    ):
+        """Test that Kimi model uses CustomBrowserTools when extraction_schema is provided."""
+        mock_config.openrouter_api_key = "test-api-key"
+
+        # Mock LLM to return kimi model
+        mock_llm = MagicMock()
+        mock_llm.model = "moonshotai/kimi-k2.5"
+        mock_openai_cls.return_value = mock_llm
+
+        mock_managed = MagicMock()
+        mock_managed.id = "sess-123"
+        mock_managed.session = MagicMock()
+
+        mock_pool = MagicMock()
+        mock_pool.create_session = AsyncMock(return_value=mock_managed)
+        mock_pool.release_session = AsyncMock(return_value=None)
+        mock_pool_cls.get_instance = AsyncMock(return_value=mock_pool)
+
+        # Mock agent with history that has usage
+        mock_history = MagicMock()
+        mock_history.usage = MagicMock()
+        mock_history.usage.total_tokens = 100
+        mock_history.usage.total_prompt_tokens = 80
+        mock_history.usage.total_completion_tokens = 20
+        mock_history.usage.entry_count = 3
+        mock_history.screenshots = MagicMock(return_value=[])
+
+        mock_agent = MagicMock()
+        mock_agent.run = AsyncMock(return_value=mock_history)
+        mock_agent_cls.return_value = mock_agent
+
+        browser_service._session_context.load_session_state = AsyncMock(return_value=None)
+
+        # Execute with extraction schema
+        result = await browser_service.execute_task(
+            user=mock_user,
+            task="Extract data",
+            inputs={},
+            extraction_schema=sample_extraction_schema,
+        )
+
+        # Verify Agent was called with tools parameter (CustomBrowserTools)
+        agent_call = mock_agent_cls.call_args
+        assert agent_call.kwargs.get("tools") is not None
+        # And output_model_schema should be None for custom tool approach
+        assert agent_call.kwargs.get("output_model_schema") is None
+
+    @patch("seer.services.browser.browser_service.BrowserPoolManager")
+    @patch("seer.services.browser.browser_service.Agent")
+    @patch("seer.services.browser.browser_service.ChatOpenAI")
+    @patch("seer.services.browser.browser_service.config")
+    async def test_openai_uses_standard_output_model(
+        self, mock_config, mock_openai_cls, mock_agent_cls, mock_pool_cls,
+        browser_service, mock_user, sample_extraction_schema, mock_agent_history
+    ):
+        """Test that non-Kimi model uses standard output_model_schema."""
+        mock_config.openrouter_api_key = "test-api-key"
+
+        # Mock LLM to return OpenAI model
+        mock_llm = MagicMock()
+        mock_llm.model = "gpt-4"
+        mock_openai_cls.return_value = mock_llm
+
+        mock_managed = MagicMock()
+        mock_managed.id = "sess-123"
+        mock_managed.session = MagicMock()
+
+        mock_pool = MagicMock()
+        mock_pool.create_session = AsyncMock(return_value=mock_managed)
+        mock_pool.release_session = AsyncMock(return_value=None)
+        mock_pool_cls.get_instance = AsyncMock(return_value=mock_pool)
+
+        mock_agent = MagicMock()
+        mock_agent.run = AsyncMock(return_value=mock_agent_history)
+        mock_agent_cls.return_value = mock_agent
+
+        browser_service._session_context.load_session_state = AsyncMock(return_value=None)
+
+        # Execute with extraction schema
+        result = await browser_service.execute_task(
+            user=mock_user,
+            task="Extract data",
+            inputs={},
+            extraction_schema=sample_extraction_schema,
+        )
+
+        # Verify Agent was called with output_model_schema, not tools
+        agent_call = mock_agent_cls.call_args
+        assert agent_call.kwargs.get("output_model_schema") is not None
+        # tools should not be set (or None) for standard approach
+        assert agent_call.kwargs.get("tools") is None
+
+    @patch("seer.services.browser.browser_service.BrowserPoolManager")
+    @patch("seer.services.browser.browser_service.Agent")
+    @patch("seer.services.browser.browser_service.ChatOpenAI")
+    @patch("seer.services.browser.browser_service.config")
+    async def test_kimi_without_schema_no_custom_tools(
+        self, mock_config, mock_openai_cls, mock_agent_cls, mock_pool_cls,
+        browser_service, mock_user, mock_agent_history
+    ):
+        """Test that Kimi without extraction_schema doesn't use CustomBrowserTools."""
+        mock_config.openrouter_api_key = "test-api-key"
+
+        mock_llm = MagicMock()
+        mock_llm.model = "moonshotai/kimi-k2.5"
+        mock_openai_cls.return_value = mock_llm
+
+        mock_managed = MagicMock()
+        mock_managed.id = "sess-123"
+        mock_managed.session = MagicMock()
+
+        mock_pool = MagicMock()
+        mock_pool.create_session = AsyncMock(return_value=mock_managed)
+        mock_pool.release_session = AsyncMock(return_value=None)
+        mock_pool_cls.get_instance = AsyncMock(return_value=mock_pool)
+
+        mock_agent = MagicMock()
+        mock_agent.run = AsyncMock(return_value=mock_agent_history)
+        mock_agent_cls.return_value = mock_agent
+
+        browser_service._session_context.load_session_state = AsyncMock(return_value=None)
+
+        # Execute WITHOUT extraction schema
+        result = await browser_service.execute_task(
+            user=mock_user,
+            task="Click button",
+            inputs={},
+            extraction_schema=None,  # No schema
+        )
+
+        # Verify Agent was called without tools (no custom tools needed)
+        agent_call = mock_agent_cls.call_args
+        assert agent_call.kwargs.get("tools") is None
+        assert agent_call.kwargs.get("output_model_schema") is None

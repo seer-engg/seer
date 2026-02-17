@@ -30,6 +30,37 @@ class FileResolutionError(Exception):
     """Raised when file resolution fails."""
 
 
+def _unwrap_file_wrapper(value: Any) -> Any:
+    """
+    Unwrap nested file reference wrappers from tool outputs.
+
+    Some tools (e.g., google_drive_download_file) return wrapper objects:
+        {"file": {...file_ref...}, "size_bytes": 123, "exported": true}
+
+    When users reference the full output (${download}) as an attachment,
+    we extract the nested file reference automatically.
+
+    Args:
+        value: Input value that might be a wrapper object.
+
+    Returns:
+        The unwrapped file reference if value is a wrapper, otherwise the original value.
+    """
+    if not isinstance(value, dict):
+        return value
+
+    # Check if this looks like a wrapper with a "file" key
+    nested_file = value.get("file")
+    if nested_file is None:
+        return value
+
+    # Only unwrap if the nested value is a valid file reference
+    if is_file_ref(nested_file) or is_static_file_ref(nested_file):
+        return nested_file
+
+    return value
+
+
 async def resolve_file_input(
     value: Any,
     context: Optional["WorkflowRuntimeContext"],
@@ -54,6 +85,10 @@ async def resolve_file_input(
     """
     if value is None:
         raise ValueError("File input cannot be None")
+
+    # Unwrap nested file references from tool output wrappers
+    # (e.g., {"file": {...}, "size_bytes": 123} -> {...})
+    value = _unwrap_file_wrapper(value)
 
     # Case 1: Dynamic WorkflowFileRef from parent node
     if is_file_ref(value):
@@ -165,6 +200,8 @@ def validate_file_input_format(value: Any) -> bool:
     Returns:
         True if the value is a valid file input format.
     """
+    # Unwrap nested file references from tool output wrappers
+    value = _unwrap_file_wrapper(value)
     return is_file_ref(value) or is_static_file_ref(value)
 
 
@@ -189,6 +226,9 @@ async def get_file_metadata(
         FileResolutionError: If the file metadata cannot be retrieved.
         ValueError: If the input format is invalid.
     """
+    # Unwrap nested file references from tool output wrappers
+    value = _unwrap_file_wrapper(value)
+
     if is_file_ref(value):
         return parse_file_ref(value)
 
