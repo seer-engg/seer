@@ -1,5 +1,5 @@
-# pylint: disable=broad-exception-caught,logging-fstring-interpolation,too-many-arguments,too-many-positional-arguments
-# Reason: Browser automation requires flexible exception handling, dynamic logging, and complex configuration
+# pylint: disable=broad-exception-caught,logging-fstring-interpolation,too-many-arguments,too-many-positional-arguments,too-many-lines
+# Reason: Browser automation requires flexible exception handling, dynamic logging, complex configuration, and extensive session/recording logic
 """
 Browser automation service using BrowserUse.
 
@@ -21,6 +21,7 @@ from pydantic import BaseModel, create_model
 
 from seer.config import config
 from seer.database import User
+from seer.services.browser.custom_tools import CustomBrowserTools
 from seer.services.browser.pool_manager import BrowserPoolManager
 from seer.services.browser.recording_service import RecordingService
 from seer.services.browser.session_context_manager import SessionContextManager
@@ -38,8 +39,12 @@ _JSON_TYPE_MAP: Dict[str, type] = {
     "number": float,
     "integer": int,
     "boolean": bool,
-    "object": Dict[str, Any],  # type: ignore[misc]
+    # "object" is handled by recursive model creation in _json_type_to_python
 }
+
+# Counter for generating unique model names to avoid Pydantic model name collisions
+# Using a mutable container to avoid global statement
+_MODEL_COUNTER = [0]
 
 
 def _strip_markdown_fencing(text: str) -> str:
@@ -67,23 +72,36 @@ def _strip_markdown_fencing(text: str) -> str:
     return text.strip()
 
 
-def _json_type_to_python(schema: Dict[str, Any]) -> type:
+def _json_type_to_python(schema: Dict[str, Any], model_name_prefix: str = "Nested") -> type:
     """
     Map JSON schema type to Python type for Pydantic model generation.
 
+    Recursively creates nested Pydantic models for object types with properties.
+    This is required for browser-use's output_model_schema to work correctly with
+    OpenAI's strict JSON Schema validation.
+
     Args:
         schema: JSON schema definition for a single field
+        model_name_prefix: Prefix for generated model names (used for nested objects)
 
     Returns:
         Python type corresponding to the JSON schema type
     """
     json_type = schema.get("type", "any")
 
-    # Handle array type separately due to recursive item type resolution
+    # Handle array type - recursively resolve item type
     if json_type == "array":
         items_schema = schema.get("items", {})
-        item_type = _json_type_to_python(items_schema)
+        item_type = _json_type_to_python(items_schema, f"{model_name_prefix}Item")
         return List[item_type]  # type: ignore[valid-type]
+
+    # Handle object type with properties - create a nested Pydantic model
+    if json_type == "object" and "properties" in schema:
+        return json_schema_to_pydantic(schema, model_name_prefix)
+
+    # Handle object without properties as generic dict (fallback)
+    if json_type == "object":
+        return Dict[str, Any]  # type: ignore[misc]
 
     return _JSON_TYPE_MAP.get(json_type, Any)
 
@@ -92,8 +110,10 @@ def json_schema_to_pydantic(schema: Dict[str, Any], model_name: str = "DynamicMo
     """
     Convert a JSON schema dict to a Pydantic model class.
 
-    Supports basic JSON schema types: string, number, integer, boolean, array, object.
-    This enables BrowserUse's output_model_schema feature which forces structured JSON output.
+    Recursively creates nested Pydantic models for object types with properties.
+    This is required for browser-use's output_model_schema to work correctly with
+    OpenAI's strict JSON Schema validation, which requires properly typed nested models
+    instead of Dict[str, Any].
 
     Args:
         schema: JSON schema dict with "type", "properties", and optional "required"
@@ -107,29 +127,39 @@ def json_schema_to_pydantic(schema: Dict[str, Any], model_name: str = "DynamicMo
             "type": "object",
             "properties": {
                 "name": {"type": "string"},
-                "price": {"type": "number"}
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"id": {"type": "integer"}}
+                    }
+                }
             },
             "required": ["name"]
         }
         Model = json_schema_to_pydantic(schema)
-        # Model is now a Pydantic class with name (required str) and price (optional float)
+        # Model has name: str, items: List[NestedModel] (not List[Dict])
     """
+    _MODEL_COUNTER[0] += 1
+    unique_name = f"{model_name}_{_MODEL_COUNTER[0]}"
+
     if schema.get("type") != "object":
         # For non-object schemas, wrap in a simple model with a "data" field
-        return create_model(model_name, data=(Any, ...))
+        return create_model(unique_name, data=(Any, ...))
 
     properties = schema.get("properties", {})
     required = set(schema.get("required", []))
 
     field_definitions: Dict[str, Any] = {}
     for field_name, field_schema in properties.items():
-        field_type = _json_type_to_python(field_schema)
+        # Pass unique prefix for nested model names
+        field_type = _json_type_to_python(field_schema, f"{unique_name}_{field_name.title()}")
         if field_name in required:
             field_definitions[field_name] = (field_type, ...)
         else:
             field_definitions[field_name] = (Optional[field_type], None)
 
-    return create_model(model_name, **field_definitions)
+    return create_model(unique_name, **field_definitions)
 
 
 class BrowserService:
@@ -197,6 +227,25 @@ class BrowserService:
             "screenshots": [],
         }
 
+    @staticmethod
+    def _uses_custom_submit_tool(model_name: str) -> bool:
+        """
+        Check if model should use custom submit_result tool vs standard structured output.
+
+        Models like Kimi-k2.5 excel at tool-calling but struggle with complex
+        nested schemas like StructuredOutputAction[T]. For these models, we use
+        a simpler submit_result tool approach.
+
+        Args:
+            model_name: The model identifier (e.g., "moonshotai/kimi-k2.5")
+
+        Returns:
+            True if model should use custom submit_result tool
+        """
+        kimi_patterns = ["kimi", "moonshot"]
+        model_lower = model_name.lower()
+        return any(pattern in model_lower for pattern in kimi_patterns)
+
     async def _run_browser_agent(
         self,
         task: str,
@@ -205,11 +254,59 @@ class BrowserService:
         max_steps: int,
         timeout_seconds: int,
         browser_session: "BrowserSession",
-    ) -> Any:
-        """Run the BrowserUse agent with a managed browser session."""
-        llm = self._get_agent_llm()
-        enhanced_task = self._enhance_task(task, inputs)
+        model: Optional[str] = None,
+    ) -> tuple[Any, Optional[Dict[str, Any]]]:
+        """
+        Run the BrowserUse agent with a managed browser session.
+
+        Uses model-aware structured output:
+        - For Kimi/Moonshot: Uses custom submit_result tool for reliable extraction
+        - For OpenAI/Claude: Uses standard output_model_schema
+
+        Args:
+            task: The task description
+            inputs: Additional context data
+            extraction_schema: JSON schema for structured output
+            max_steps: Maximum agent steps
+            timeout_seconds: Task timeout
+            browser_session: The browser session to use
+            model: OpenRouter model identifier. If None, uses config.default_llm_model
+
+        Returns:
+            Tuple of (agent_history, tool_extracted_data).
+            tool_extracted_data is set when using custom submit_result tool.
+        """
+        llm = self._get_agent_llm(model)
+        model_name = getattr(llm, "model", "")
+
+        # Decide approach based on model capabilities
+        use_custom_tool = self._uses_custom_submit_tool(model_name) and extraction_schema
+
+        if use_custom_tool:
+            # Kimi/Moonshot: Use custom submit_result tool
+            custom_tools = CustomBrowserTools(extraction_schema=extraction_schema)
+            enhanced_task = self._enhance_task(task, inputs, extraction_schema, use_submit_tool=True)
+
+            agent = Agent(
+                task=enhanced_task,
+                llm=llm,
+                browser_session=browser_session,
+                tools=custom_tools,
+                output_model_schema=None,  # No standard structured output
+                calculate_cost=True,
+            )
+
+            history = await asyncio.wait_for(
+                agent.run(max_steps=max_steps),
+                timeout=timeout_seconds
+            )
+
+            # Return data from custom tool if available
+            return history, custom_tools.get_extracted_data() if custom_tools.has_extracted_data() else None
+
+        # OpenAI/Claude: Use standard structured output
         output_model = self._create_output_model(extraction_schema)
+        enhanced_task = self._enhance_task(task, inputs, extraction_schema, use_submit_tool=False)
 
         agent = Agent(
             task=enhanced_task,
@@ -219,10 +316,12 @@ class BrowserService:
             calculate_cost=True,
         )
 
-        return await asyncio.wait_for(
+        history = await asyncio.wait_for(
             agent.run(max_steps=max_steps),
             timeout=timeout_seconds
         )
+
+        return history, None  # Standard extraction handled by caller
 
     async def _start_recording_if_enabled(
         self,
@@ -277,6 +376,7 @@ class BrowserService:
         save_screenshots: bool = False,
         file_system: Optional["WorkflowFileSystem"] = None,
         workflow_run_id: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Execute a browser automation task using a pooled browser session.
@@ -296,6 +396,7 @@ class BrowserService:
             save_screenshots: When True, save screenshots to S3 as WorkflowFileRef
             file_system: WorkflowFileSystem for saving screenshots
             workflow_run_id: Run ID for organizing screenshot files
+            model: OpenRouter model identifier. If None, uses config.default_llm_model
 
         Returns:
             Result dict with success, result, extracted_data, final_url, screenshots
@@ -316,27 +417,36 @@ class BrowserService:
         )
 
         try:
-            history = await self._run_browser_agent(
+            history, tool_extracted_data = await self._run_browser_agent(
                 task, inputs, extraction_schema, max_steps, timeout_seconds,
                 browser_session=managed.session,
+                model=model,
             )
 
-            # Extract structured data - returns None if extraction failed
-            extracted_data = await self._extract_structured_data(history, extraction_schema)
+            # Get extracted data - from custom tool (Kimi) or standard extraction
+            if tool_extracted_data is not None:
+                # Kimi: Data from submit_result tool
+                extracted_data = tool_extracted_data
+            elif extraction_schema:
+                # OpenAI/Claude: Standard extraction from history
+                extracted_data = await self._extract_structured_data(history, extraction_schema)
+            else:
+                # No schema: Basic extraction
+                extracted_data = self._extract_data(history)
 
             # If extraction_schema was provided but extraction failed, return failure
             # This prevents downstream validation errors on empty extracted_data
-            if extraction_schema and extracted_data is None:
+            if extraction_schema and not extracted_data:
                 logger.warning("Browser agent completed but failed to extract structured data")
                 return {
                     **self._build_error_result("Failed to extract structured data from agent output"),
-                    "usage": self._extract_usage_metadata(history),
+                    "usage": self._extract_usage_metadata(history, model),
                 }
 
             return {
                 "success": True,
                 "result": str(history) if history else "",
-                "extracted_data": extracted_data if extracted_data is not None else {},
+                "extracted_data": extracted_data if extracted_data else {},
                 "final_url": None,
                 "screenshots": await self._save_screenshots(
                     history=history,
@@ -345,7 +455,7 @@ class BrowserService:
                     workflow_run_id=workflow_run_id,
                     user=user,
                 ),
-                "usage": self._extract_usage_metadata(history),
+                "usage": self._extract_usage_metadata(history, model),
             }
 
         except asyncio.TimeoutError:
@@ -362,28 +472,32 @@ class BrowserService:
                     user, UUID(browser_profile_id), final_state
                 )
 
-    def _get_agent_llm(self) -> Any:
+    def _get_agent_llm(self, model: Optional[str] = None) -> Any:
         """
         Get the LLM instance for the BrowserUse agent.
 
         BrowserUse accesses llm.provider for telemetry and feature detection.
         We add this attribute dynamically to support OpenRouter-backed models.
+
+        Args:
+            model: OpenRouter model identifier. If None, uses config.default_llm_model.
         """
         api_key = config.openrouter_api_key
         if api_key is None or api_key == "":
             raise ValueError("OPENROUTER_API_KEY not found in environment")
 
-        model = 'moonshotai/kimi-k2.5'
-        logger.info(f"Using OpenRouter API | Model: {model} | Base URL: https://openrouter.ai/api/v1")
+        # Use provided model or fall back to config default
+        resolved_model = model if model else config.default_llm_model
+        logger.info(f"Using OpenRouter API | Model: {resolved_model} | Base URL: https://openrouter.ai/api/v1")
         return ChatOpenAI(
-            model=model,
+            model=resolved_model,
             api_key=api_key,
             base_url="https://openrouter.ai/api/v1",
             temperature=0,
         )
 
     @staticmethod
-    def _extract_usage_metadata(history: Any) -> Optional[Dict[str, Any]]:
+    def _extract_usage_metadata(history: Any, model: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Extract LLM usage metadata from browser_use agent history.
 
@@ -392,6 +506,7 @@ class BrowserService:
 
         Args:
             history: AgentHistoryList from browser_use agent.run()
+            model: The model that was used. If None, uses config.default_llm_model.
 
         Returns:
             Usage metadata dict, or None if usage unavailable.
@@ -406,8 +521,11 @@ class BrowserService:
                 logger.debug("Browser agent reported zero token usage")
                 return None
 
+            # Use provided model or fall back to config default
+            resolved_model = model if model else config.default_llm_model
+
             return {
-                "model": "moonshotai/kimi-k2.5",
+                "model": resolved_model,
                 "input_tokens": usage.total_prompt_tokens,
                 "output_tokens": usage.total_completion_tokens,
                 "reasoning_tokens": 0,
@@ -418,24 +536,51 @@ class BrowserService:
             logger.warning(f"Failed to extract usage metadata from browser history: {e}")
             return None
 
-    def _enhance_task(self, task: str, inputs: Dict[str, Any]) -> str:
+    def _enhance_task(
+        self,
+        task: str,
+        inputs: Dict[str, Any],
+        extraction_schema: Optional[Dict[str, Any]] = None,
+        use_submit_tool: bool = False,
+    ) -> str:
         """
-        Enhance task description with input context.
+        Enhance task description with input context and extraction instructions.
 
-        Appends structured context from workflow inputs to help
-        the agent understand the full task requirements.
+        Appends structured context from workflow inputs and provides
+        model-appropriate instructions for structured data extraction.
 
         Args:
             task: Original task description
             inputs: Additional context from workflow
+            extraction_schema: JSON schema for expected output structure
+            use_submit_tool: If True, instruct to use submit_result action (for Kimi)
 
         Returns:
-            Enhanced task string with context
+            Enhanced task string with context and instructions
         """
-        if not inputs:
-            return task
-        inputs_str = json.dumps(inputs, indent=2)
-        return f"{task}\n\nAdditional context:\n{inputs_str}"
+        enhanced = task
+
+        if inputs:
+            inputs_str = json.dumps(inputs, indent=2)
+            enhanced += f"\n\nAdditional context:\n{inputs_str}"
+
+        if extraction_schema:
+            fields = list(extraction_schema.get("properties", {}).keys())
+            fields_str = ", ".join(fields) if fields else "the requested data"
+
+            if use_submit_tool:
+                # Kimi: Explicit instructions to use submit_result tool
+                enhanced += (
+                    f"\n\nIMPORTANT: When you have gathered all the required information, "
+                    f"you MUST call the submit_result action with these fields: {fields_str}. "
+                    f"Do NOT complete the task with the done action until you have called submit_result "
+                    f"with the extracted data."
+                )
+            else:
+                # OpenAI/Claude: Standard instruction (structured output handles it)
+                enhanced += f"\n\nIMPORTANT: Make sure to collect and return: {fields_str}"
+
+        return enhanced
 
     def _extract_data(self, result: Any) -> Dict[str, Any]:
         """
