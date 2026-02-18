@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Dict, Optional
 
 from .base import ResourceProvider, ResourceProviderRegistry
+from .browser import BrowserResourceProvider
 from .discord import DiscordResourceProvider
 from .github import GitHubResourceProvider
 from .google import GoogleResourceProvider
@@ -15,6 +16,7 @@ _registry.register(GitHubResourceProvider())
 _registry.register(SupabaseResourceProvider())
 _registry.register(DiscordResourceProvider())
 _registry.register(SlackResourceProvider())
+_registry.register(BrowserResourceProvider())
 
 
 def register_provider(provider: ResourceProvider) -> None:
