@@ -1,0 +1,80 @@
+name: Mutation Tests
+
+on:
+  # Weekly schedule - Sunday at 2 AM UTC
+  schedule:
+    - cron: '0 2 * * 0'
+
+  # Manual trigger with module selection
+  workflow_dispatch:
+    inputs:
+      module:
+        description: 'Module to test (leave empty for all)'
+        required: false
+        default: ''
+        type: choice
+        options:
+          - ''
+          - 'evaluator'
+          - 'parser'
+          - 'lower_control_flow'
+          - 'emit_langgraph'
+          - 'type_env'
+          - 'validate_refs'
+
+permissions:
+  contents: read
+
+jobs:
+  mutation-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --group dev
+
+      - name: Run mutation tests
+        run: |
+          if [ -n "${{ inputs.module }}" ]; then
+            echo "Running mutation tests on module: ${{ inputs.module }}"
+            uv run python scripts/run_mutation_tests.py run ${{ inputs.module }}
+          else
+            echo "Running mutation tests on all configured modules"
+            uv run mutmut run
+          fi
+
+      - name: Show results
+        if: always()
+        run: uv run mutmut results || true
+
+      - name: Generate HTML report
+        if: always()
+        run: uv run mutmut html || true
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: mutmut-report/
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Upload mutation cache
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutmut-cache
+          path: .mutmut-cache
+          retention-days: 7
+          if-no-files-found: ignore
