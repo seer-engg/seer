@@ -172,8 +172,12 @@ class SlackResourceProvider(ResourceProvider):
             "supports_hierarchy": False,
         }
 
-    async def _get_bot_token_for_workspace(self, user: Any, workspace_id: str) -> str:
-        """Get bot token for a specific workspace."""
+    async def get_bot_token_for_workspace(self, user: Any, workspace_id: str) -> str:
+        """Get bot token for a specific workspace (public API)."""
+        return await self._get_bot_token_for_workspace_internal(user, workspace_id)
+
+    async def _get_bot_token_for_workspace_internal(self, user: Any, workspace_id: str) -> str:
+        """Get bot token for a specific workspace (internal)."""
         # Verify user has access to this workspace
         workspace_resource = await IntegrationResource.get_or_none(
             user=user,
@@ -217,7 +221,7 @@ class SlackResourceProvider(ResourceProvider):
         page_size: int,
     ) -> Dict[str, Any]:
         """List Slack channels for a specific workspace using Slack API."""
-        bot_token = await self._get_bot_token_for_workspace(user, workspace_id)
+        bot_token = await self._get_bot_token_for_workspace_internal(user, workspace_id)
 
         provider_impl = SlackProvider()
         try:
@@ -255,6 +259,7 @@ class SlackResourceProvider(ResourceProvider):
                     "channel_name": ch.get("name"),
                     "is_private": ch.get("is_private", False),
                     "is_archived": ch.get("is_archived", False),
+                    "is_member": ch.get("is_member", False),
                     "workspace_id": workspace_id,
                 },
             }
@@ -280,7 +285,7 @@ class SlackResourceProvider(ResourceProvider):
         page_size: int,
     ) -> Dict[str, Any]:
         """List Slack users for a specific workspace using Slack API."""
-        bot_token = await self._get_bot_token_for_workspace(user, workspace_id)
+        bot_token = await self._get_bot_token_for_workspace_internal(user, workspace_id)
 
         provider_impl = SlackProvider()
         try:

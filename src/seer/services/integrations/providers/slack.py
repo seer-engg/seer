@@ -223,6 +223,80 @@ class SlackProvider(IntegrationProvider):
                 detail=f"Unexpected error fetching Slack channels: {type(exc).__name__}",
             ) from exc
 
+    async def join_channel(
+        self,
+        access_token: str,
+        channel_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Join the bot to a public Slack channel.
+
+        Note: Only works for public channels. Private channels require manual invite.
+
+        Args:
+            access_token: Slack bot token
+            channel_id: Channel ID to join
+
+        Returns:
+            Channel information dictionary
+
+        Raises:
+            HTTPException: If API call fails or channel is private
+        """
+        url = f"{SLACK_API_BASE}/conversations.join"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            async with httpx.AsyncClient() as http_client:
+                resp = await http_client.post(
+                    url,
+                    headers=headers,
+                    json={"channel": channel_id},
+                    timeout=10.0,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+                if not data.get("ok"):
+                    error = data.get("error", "unknown_error")
+                    if error == "method_not_supported_for_channel_type":
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Cannot join private channels. Bot must be manually invited.",
+                        )
+                    if error == "channel_not_found":
+                        raise HTTPException(
+                            status_code=404,
+                            detail="Channel not found",
+                        )
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Slack API error: {error}",
+                    )
+
+                return data.get("channel", {})
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "Slack conversations.join request failed: status=%s, body=%s",
+                exc.response.status_code,
+                exc.response.text[:500],
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to join Slack channel: HTTP {exc.response.status_code}",
+            ) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("Unexpected error joining Slack channel")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Unexpected error joining Slack channel: {type(exc).__name__}",
+            ) from exc
+
     async def fetch_users(
         self,
         access_token: str,

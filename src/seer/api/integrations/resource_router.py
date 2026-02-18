@@ -758,3 +758,63 @@ async def list_trigger_event_types(_request: Request):
             for key, cfg in TRIGGER_BROWSING_CONFIG.items()
         ]
     }
+
+
+# =============================================================================
+# SLACK CHANNEL ACTIONS - For adding bot to channels
+# =============================================================================
+
+@router.post("/resources/slack/channel/{channel_id}/join")
+async def join_slack_channel(
+    request: Request,
+    channel_id: str,
+    workspace_id: str = Query(..., description="Slack workspace ID"),
+):
+    """
+    Join the Slack bot to a channel.
+
+    This allows the bot to monitor messages in the channel for triggers.
+    Only works for public channels - private channels require manual invite.
+
+    Args:
+        channel_id: Slack channel ID to join
+        workspace_id: Slack workspace ID
+
+    Returns:
+        Channel information after joining
+    """
+    from seer.services.integrations.providers.slack import SlackProvider  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
+    from seer.services.integrations.resource_providers.slack import SlackResourceProvider  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
+
+    user: User = request.state.db_user
+
+    # Get bot token for workspace
+    resource_provider = SlackResourceProvider()
+    try:
+        bot_token = await resource_provider.get_bot_token_for_workspace(user, workspace_id)
+    except Exception as exc:
+        logger.error("Failed to get bot token for workspace %s: %s", workspace_id, exc)
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="Workspace access error",
+            detail=str(exc),
+            status=401,
+        )
+        raise  # Unreachable but satisfies type checker
+
+    # Join channel
+    provider = SlackProvider()
+    try:
+        result = await provider.join_channel(bot_token, channel_id)
+        return {
+            "ok": True,
+            "channel": result,
+        }
+    except HTTPException as exc:
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="Failed to join channel",
+            detail=exc.detail,
+            status=exc.status_code,
+        )
+        raise  # Unreachable but satisfies type checker
