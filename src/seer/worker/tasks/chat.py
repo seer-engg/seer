@@ -31,7 +31,7 @@ from seer.api.agents.workflow.chat_services import (
     IncompleteToolCallRecoveryService,
     InterruptHandler,
 )
-from seer.utilities.langfuse_tracing import merge_nexus_langfuse_callbacks
+from seer.utilities.langfuse_tracing import merge_nexus_langfuse_callbacks, langfuse_user_context
 from seer.api.agents.workflow.services import (
     save_chat_message,
 )
@@ -215,11 +215,12 @@ async def chat_execution_task(
         set_chat_runtime_context(runtime_context)
 
         try:
-            # Invoke agent
+            # Invoke agent with Langfuse user context for trace attribution
             user_msg = HumanMessage(content=message)
-            result = await _invoke_agent_with_orchestrator(
-                agent, checkpointer, user_msg, thread_id, max_agent_steps
-            )
+            with langfuse_user_context(user.user_id):
+                result = await _invoke_agent_with_orchestrator(
+                    agent, checkpointer, user_msg, thread_id, max_agent_steps
+                )
 
             # Detect interrupts
             interrupt_required, interrupt_data = InterruptHandler.extract_interrupt_from_result(result)
@@ -418,7 +419,9 @@ async def chat_resume_task(
         # Set thread_id in context variable
         token = _current_thread_id.set(thread_id)
         try:
-            result = await agent.ainvoke(resume_command, config=config_with_langfuse)
+            # Wrap agent invocation with Langfuse user context for trace attribution
+            with langfuse_user_context(user.user_id):
+                result = await agent.ainvoke(resume_command, config=config_with_langfuse)
 
             # Detect interrupts
             interrupt_required, interrupt_data = InterruptHandler.extract_interrupt_from_result(result)

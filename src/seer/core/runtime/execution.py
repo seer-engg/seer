@@ -35,6 +35,7 @@ class CompiledWorkflow:
         self.runtime.bind_context(context)
         effective_config = dict(config or {})
         effective_config = merge_workflow_langfuse_callbacks(effective_config)
+
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "CompiledWorkflow.ainvoke graph config_keys=%s context_present=%s",
@@ -46,7 +47,14 @@ class CompiledWorkflow:
             invoke_kwargs["context"] = context
         # Use provided input (e.g., Command for resume) or empty dict for fresh start
         graph_input = workflow_input if workflow_input is not None else {}
-        final_state = await self.graph.ainvoke(graph_input, **invoke_kwargs)
+
+        # Wrap graph invocation with Langfuse user context for trace attribution
+        # pylint: disable=import-outside-toplevel  # Reason: lazy loading to match module pattern
+        from seer.utilities.langfuse_tracing import langfuse_user_context
+        user_id = context.user.user_id if context and context.user else None
+        with langfuse_user_context(user_id):
+            final_state = await self.graph.ainvoke(graph_input, **invoke_kwargs)
+
         return {
             key: value
             for key, value in final_state.items()
