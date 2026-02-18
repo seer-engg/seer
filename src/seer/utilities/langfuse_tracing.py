@@ -9,6 +9,7 @@ Langfuse v3 Multi-Project Pattern:
 1. Initialize Langfuse clients with full credentials for each project
 2. Create CallbackHandler(public_key=...) to route traces to the correct project
 """
+from contextlib import contextmanager
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -199,6 +200,45 @@ def _merge_callbacks(config_dict: Optional[Dict[str, Any]], langfuse_callbacks: 
         result["callbacks"] = langfuse_callbacks
 
     return result
+
+
+@contextmanager
+def langfuse_user_context(user_id: Optional[str]):
+    """
+    Context manager that propagates user_id to all Langfuse traces within the context.
+
+    Uses Langfuse's propagate_attributes() which is backed by Python's contextvars,
+    making it safe for concurrent async operations. All traces created within this
+    context will be associated with the specified user_id.
+
+    Args:
+        user_id: The user's Clerk ID (e.g., "user_2abc123..."). If None or
+                 empty, the context manager is a no-op passthrough.
+
+    Usage:
+        with langfuse_user_context(user.user_id):
+            result = await agent.ainvoke(...)
+
+    Yields:
+        None - the context manager just sets up the propagation context.
+    """
+    if not config.langfuse_enabled or not user_id:
+        yield
+        return
+
+    try:
+        # pylint: disable=import-outside-toplevel  # Reason: lazy loading to avoid dependency if not used
+        from langfuse import propagate_attributes
+        # propagate_attributes uses contextvars internally, making it async-safe
+        # All child observations automatically inherit the user_id
+        with propagate_attributes(user_id=user_id):  # pylint: disable=not-context-manager  # Reason: langfuse's propagate_attributes is @contextmanager decorated
+            yield
+    except ImportError:
+        logger.warning("langfuse not installed, cannot set Langfuse user context")
+        yield
+    except Exception as exc:  # pylint: disable=broad-exception-caught  # Reason: instrumentation should not break execution
+        logger.debug("Failed to set Langfuse user context: %s", exc)
+        yield
 
 
 # Legacy aliases for backwards compatibility
