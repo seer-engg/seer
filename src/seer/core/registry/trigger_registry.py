@@ -1,6 +1,7 @@
 """
 In-memory registry describing workflow trigger metadata and schemas.
 """
+# pylint: disable=too-many-lines  # Registry contains schema definitions for all builtin triggers
 
 from __future__ import annotations
 
@@ -65,6 +66,7 @@ def _enveloped_event_schema(payload_schema: JsonSchema) -> JsonSchema:
 POLLING_TRIGGERS = [
     "poll.gmail.email_received",
     "poll.discord.message_received",
+    "poll.slack.message_received",
     "schedule.cron",
 ]
 
@@ -110,6 +112,27 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
             meta=TriggerMetadata(
                 sample_event=_discord_message_received_sample_event(),
                 requires_connection=True,
+            ),
+        )
+    )
+    registry.register(
+        TriggerDefinition(
+            key="poll.slack.message_received",
+            title="Slack",
+            provider="slack",
+            mode="polling",
+            description="Poll a Slack channel for newly received messages using OAuth credentials.",
+            schemas=TriggerSchemas(
+                event=_enveloped_event_schema(_slack_message_received_payload_schema()),
+                config=_slack_message_received_config_schema(),
+            ),
+            meta=TriggerMetadata(
+                sample_event=_slack_message_received_sample_event(),
+                requires_connection=True,
+                required_scopes=[
+                    "channels:history",  # Public channel messages
+                    "groups:history",    # Private channel messages
+                ],
             ),
         )
     )
@@ -382,6 +405,114 @@ def _discord_message_received_sample_event() -> Dict[str, Any]:
         "id": "evt_sample_poll_discord_message_received",
         "trigger_key": "poll.discord.message_received",
         "provider": "discord",
+        "account_id": None,
+        "occurred_at": "2025-12-13T10:00:00Z",
+        "received_at": "2025-12-13T10:00:05Z",
+        "data": payload,
+        "raw": payload,
+    }
+
+
+def _slack_message_received_payload_schema() -> JsonSchema:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "message_id": {"type": "string"},
+            "channel_id": {"type": "string"},
+            "workspace_id": {"type": ["string", "null"]},
+            "user": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "id": {"type": ["string", "null"]},
+                    "username": {"type": ["string", "null"]},
+                    "is_bot": {"type": "boolean"},
+                },
+                "required": ["id", "is_bot"],
+            },
+            "text": {"type": ["string", "null"]},
+            "timestamp": {"type": ["string", "null"]},
+            "thread_ts": {"type": ["string", "null"]},
+            "mentions_bot": {"type": "boolean"},
+            "attachments": {"type": "array", "items": {"type": "object"}},
+            "blocks": {"type": "array", "items": {"type": "object"}},
+        },
+        "required": ["message_id", "channel_id", "user", "mentions_bot"],
+    }
+
+
+def _slack_message_received_config_schema() -> JsonSchema:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "workspace_id": {
+                "type": "string",
+                "description": "Slack workspace (team) ID to monitor for new messages.",
+                "x-resource-picker": {
+                    "provider": "slack",
+                    "resource_type": "workspace",
+                    "display_field": "name",
+                    "value_field": "resource_id",
+                    "search_enabled": True,
+                },
+            },
+            "channel_id": {
+                "type": "string",
+                "description": "Slack channel ID within the workspace to monitor for new messages.",
+                "x-resource-picker": {
+                    "provider": "slack",
+                    "resource_type": "channel",
+                    "display_field": "name",
+                    "value_field": "id",
+                    "search_enabled": True,
+                    "depends_on": "workspace_id",
+                },
+            },
+            "include_bot_messages": {
+                "type": "boolean",
+                "default": False,
+                "description": "Whether to include messages sent by bots (defaults to false).",
+            },
+            "only_app_mentions": {
+                "type": "boolean",
+                "default": False,
+                "description": "Only trigger if the app is explicitly mentioned in the message (defaults to false).",
+            },
+            "max_results": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 50,
+                "description": "Maximum number of messages to examine per poll cycle (capped at 100).",
+            },
+        },
+        "required": ["workspace_id", "channel_id"],
+    }
+
+
+def _slack_message_received_sample_event() -> Dict[str, Any]:
+    payload = {
+        "message_id": "1735630123.456789",
+        "channel_id": "C01234567890",
+        "workspace_id": "T01234567890",
+        "user": {
+            "id": "U01234567890",
+            "username": "johndoe",
+            "is_bot": False,
+        },
+        "text": "Hello team!",
+        "timestamp": "2025-12-13T10:00:00+00:00",
+        "thread_ts": None,
+        "mentions_bot": False,
+        "attachments": [],
+        "blocks": [],
+    }
+    return {
+        "id": "evt_sample_poll_slack_message_received",
+        "trigger_key": "poll.slack.message_received",
+        "provider": "slack",
         "account_id": None,
         "occurred_at": "2025-12-13T10:00:00Z",
         "received_at": "2025-12-13T10:00:05Z",

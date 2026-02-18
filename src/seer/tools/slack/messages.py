@@ -17,7 +17,7 @@ class SlackSendChannelMessageTool(SlackAPIClient):
     """Send a message to a Slack channel."""
 
     name = "slack_send_channel_message"
-    description = "Send a message to a Slack channel. Bot must be added to the channel."
+    description = "Send a message to a Slack channel. If the bot isn't in the channel, use slack_join_channel first."
     required_scopes = ["chat:write", "channels:read"]
     integration_type = "slack"
 

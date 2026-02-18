@@ -12,6 +12,7 @@ from seer.tools.slack.messages import (
 from seer.tools.slack.channels import (
     SlackListChannelsTool,
     SlackGetChannelHistoryTool,
+    SlackJoinChannelTool,
 )
 from seer.tools.slack.users import SlackListUsersTool
 from seer.tools.slack.reactions import SlackAddReactionTool
@@ -25,6 +26,7 @@ def register_slack_tools():
     register_tool(SlackListUsersTool())
     register_tool(SlackGetChannelHistoryTool())
     register_tool(SlackAddReactionTool())
+    register_tool(SlackJoinChannelTool())
 
 
 __all__ = [
@@ -35,4 +37,5 @@ __all__ = [
     "SlackListUsersTool",
     "SlackGetChannelHistoryTool",
     "SlackAddReactionTool",
+    "SlackJoinChannelTool",
 ]

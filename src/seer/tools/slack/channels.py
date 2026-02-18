@@ -221,3 +221,90 @@ class SlackGetChannelHistoryTool(SlackAPIClient):
             credentials=credentials,
             params=params
         )
+
+
+class SlackJoinChannelTool(SlackAPIClient):
+    """Join a public Slack channel."""
+
+    name = "slack_join_channel"
+    description = """Join a public Slack channel. Required before sending messages to channels the bot hasn't joined yet.
+    Only works for public channels - private channels require an invite."""
+    required_scopes = ["channels:join"]
+    integration_type = "slack"
+
+    def get_parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "workspace_id": {
+                    "type": "string",
+                    "description": "Slack workspace (team) ID",
+                },
+                "channel_id": {
+                    "type": "string",
+                    "description": "Slack channel ID to join (e.g., C01234567890)",
+                },
+            },
+            "required": ["workspace_id", "channel_id"],
+        }
+
+    def get_resource_pickers(self) -> Dict[str, Any]:
+        return {
+            "workspace_id": {
+                "resource_type": "workspace",
+                "display_field": "name",
+                "value_field": "resource_id",
+                "search_enabled": True,
+                "filter": {"provider": "slack", "resource_type": "workspace"},
+            },
+            "channel_id": {
+                "resource_type": "channel",
+                "display_field": "name",
+                "value_field": "id",
+                "search_enabled": True,
+                "depends_on": "workspace_id",
+                "filter": {"provider": "slack", "resource_type": "channel"},
+            }
+        }
+
+    def get_output_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "ok": {"type": "boolean", "description": "Success status"},
+                "channel": {
+                    "type": "object",
+                    "description": "Channel information",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "name": {"type": "string"},
+                        "is_channel": {"type": "boolean"},
+                        "is_member": {"type": "boolean"},
+                    },
+                },
+            },
+            "required": ["ok", "channel"],
+        }
+
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+        credentials: Optional[ResolvedCredentials] = None,
+    ) -> Dict[str, Any]:
+        workspace_id = str(arguments.get("workspace_id") or "")
+        channel_id = str(arguments.get("channel_id") or "")
+
+        if not workspace_id:
+            raise HTTPException(status_code=400, detail="Parameter 'workspace_id' is required")
+        if not channel_id:
+            raise HTTPException(status_code=400, detail="Parameter 'channel_id' is required")
+
+        logger.info("Joining Slack channel: workspace_id=%s, channel_id=%s", workspace_id, channel_id)
+
+        return await self._make_request(
+            "POST",
+            "conversations.join",
+            credentials=credentials,
+            json_body={"channel": channel_id}
+        )

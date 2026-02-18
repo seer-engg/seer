@@ -58,6 +58,18 @@ def decode_state(state: str) -> dict:
     return json.loads(base64.urlsafe_b64decode(state).decode())
 
 
+def _build_oauth_redirect_uri(request: Request, oauth_provider: str) -> str:
+    """Build OAuth callback redirect URI with webhook_base_url fallback."""
+    if config.webhook_base_url:
+        # pylint: disable=no-member  # Pydantic Field descriptor; actual type is str at runtime
+        return f"{config.webhook_base_url.rstrip('/')}/api/integrations/{oauth_provider}/callback"
+
+    redirect_uri = str(request.url_for('auth_callback', provider=oauth_provider))
+    if config.redirect_uri_scheme == "https" and "http://" in redirect_uri:
+        redirect_uri = redirect_uri.replace("http://", "https://")
+    return redirect_uri
+
+
 def _validate_scope_and_get_provider(scope: str, provider: str):
     if not scope:
         raise_problem(
@@ -439,9 +451,7 @@ async def connect(
     if early_return:
         return early_return
 
-    redirect_uri = request.url_for('auth_callback', provider=oauth_provider)
-    if config.redirect_uri_scheme == "https" and redirect_uri.scheme == "http":
-        redirect_uri = redirect_uri.replace(scheme="https")
+    redirect_uri = _build_oauth_redirect_uri(request, oauth_provider)
 
     logger.info(
         "Starting OAuth flow: provider=%s, integration_type=%s, scopes=%s",
@@ -502,9 +512,7 @@ async def auth_callback(request: Request, provider: str):
     # Manually exchange authorization code for tokens
     # This bypasses Authlib's session-based state validation which fails with multiple workers
     client = oauth.create_client(oauth_provider)
-    redirect_uri = str(request.url_for('auth_callback', provider=oauth_provider))
-    if config.redirect_uri_scheme == "https" and "http://" in redirect_uri:
-        redirect_uri = redirect_uri.replace("http://", "https://")
+    redirect_uri = _build_oauth_redirect_uri(request, oauth_provider)
 
     try:
         token_url = client.server_metadata.get('token_endpoint') or client.access_token_url

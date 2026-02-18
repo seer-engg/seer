@@ -257,6 +257,11 @@ INTEGRATION_CONFIGS: Dict[str, Dict[str, Any]] = {
                 "description": "Send messages as the app"
             },
             {
+                "value": "channels:join",
+                "display_name": "Join channels",
+                "description": "Join public channels in the workspace"
+            },
+            {
                 "value": "users:read",
                 "display_name": "View users",
                 "description": "View people in a workspace"
@@ -265,6 +270,11 @@ INTEGRATION_CONFIGS: Dict[str, Dict[str, Any]] = {
                 "value": "groups:read",
                 "display_name": "View private channels",
                 "description": "View basic information about private channels"
+            },
+            {
+                "value": "groups:history",
+                "display_name": "View private channel messages",
+                "description": "View messages and other content in private channels"
             },
             {
                 "value": "im:write",
