@@ -882,7 +882,7 @@ class TestValidateWorkflowSpec:
 
         with patch("seer.api.workflows.services.execution.WorkflowCompilerSingleton") as mock_singleton, \
              patch("seer.api.workflows.services.execution.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer, \
-             patch("seer.api.workflows.services.execution.raise_problem") as mock_raise_problem:
+             patch("seer.api.workflows.services.execution.raise_compiler_error") as mock_raise_compiler_error:
 
             mock_compiler = MagicMock()
             mock_compiler.compile = AsyncMock(
@@ -890,16 +890,17 @@ class TestValidateWorkflowSpec:
             )
             mock_singleton.instance.return_value = mock_compiler
             mock_checkpointer.return_value = None
-            mock_raise_problem.side_effect = HTTPException(status_code=400, detail="Validation failed")
+            mock_raise_compiler_error.side_effect = HTTPException(status_code=400, detail="Validation failed")
 
             with pytest.raises(HTTPException) as exc_info:
                 await _validate_workflow_spec(mock_user, invalid_spec)
 
             assert exc_info.value.status_code == 400
-            mock_raise_problem.assert_called_once()
-            call_kwargs = mock_raise_problem.call_args[1]
-            assert call_kwargs["status"] == 400
-            assert "Cannot access property 'data' on string" in call_kwargs["detail"]
+            mock_raise_compiler_error.assert_called_once()
+            # Check the error was passed correctly
+            call_args = mock_raise_compiler_error.call_args[0]
+            assert isinstance(call_args[0], WorkflowCompilerError)
+            assert "Cannot access property 'data' on string" in str(call_args[0])
 
     @pytest.mark.asyncio
     async def test_validate_workflow_spec_type_environment_error_raises_400(self, mock_user):
@@ -918,7 +919,7 @@ class TestValidateWorkflowSpec:
 
         with patch("seer.api.workflows.services.execution.WorkflowCompilerSingleton") as mock_singleton, \
              patch("seer.api.workflows.services.execution.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer, \
-             patch("seer.api.workflows.services.execution.raise_problem") as mock_raise_problem:
+             patch("seer.api.workflows.services.execution.raise_compiler_error") as mock_raise_compiler_error:
 
             mock_compiler = MagicMock()
             mock_compiler.compile = AsyncMock(
@@ -926,7 +927,7 @@ class TestValidateWorkflowSpec:
             )
             mock_singleton.instance.return_value = mock_compiler
             mock_checkpointer.return_value = None
-            mock_raise_problem.side_effect = HTTPException(status_code=400, detail="Validation failed")
+            mock_raise_compiler_error.side_effect = HTTPException(status_code=400, detail="Validation failed")
 
             with pytest.raises(HTTPException) as exc_info:
                 await _validate_workflow_spec(mock_user, spec)
@@ -950,7 +951,7 @@ class TestValidateWorkflowSpec:
 
         with patch("seer.api.workflows.services.execution.WorkflowCompilerSingleton") as mock_singleton, \
              patch("seer.api.workflows.services.execution.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer, \
-             patch("seer.api.workflows.services.execution.raise_problem") as mock_raise_problem:
+             patch("seer.api.workflows.services.execution.raise_compiler_error") as mock_raise_compiler_error:
 
             mock_compiler = MagicMock()
             mock_compiler.compile = AsyncMock(
@@ -958,7 +959,7 @@ class TestValidateWorkflowSpec:
             )
             mock_singleton.instance.return_value = mock_compiler
             mock_checkpointer.return_value = None
-            mock_raise_problem.side_effect = HTTPException(status_code=400, detail="Validation failed")
+            mock_raise_compiler_error.side_effect = HTTPException(status_code=400, detail="Validation failed")
 
             with pytest.raises(HTTPException) as exc_info:
                 await _validate_workflow_spec(mock_user, spec)

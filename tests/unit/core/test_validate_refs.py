@@ -1274,3 +1274,207 @@ def test_collect_static_file_refs_ignores_workflow_file_refs():
 
     refs = collect_static_file_refs(spec)
     assert refs == []  # workflow_file_ref should not be collected
+
+
+# =============================================================================
+# NodeError Structured Error Tests
+# =============================================================================
+
+
+def test_validation_error_includes_node_errors():
+    """Test that ValidationPhaseError includes structured NodeError list."""
+    from seer.core.errors import NodeError, ErrorCode
+
+    type_env = TypeEnvironment()
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            ToolNode(
+                id="task1",
+                type="tool",
+                tool="test.tool",
+                inputs={"value": "${undefined_var}"}
+            )
+        ],
+        edges=[]
+    )
+
+    with pytest.raises(ValidationPhaseError) as exc_info:
+        validate_references(spec, type_env)
+
+    # Check that errors list is populated
+    assert exc_info.value.errors is not None
+    assert len(exc_info.value.errors) > 0
+
+    # Check that error has correct node_id
+    error = exc_info.value.errors[0]
+    assert isinstance(error, NodeError)
+    assert error.node_id == "task1"
+    assert error.location == "inputs"
+    assert error.code == ErrorCode.UNDEFINED_REFERENCE
+
+
+def test_validation_error_node_id_for_foreach():
+    """Test that ForEach validation errors have correct node_id."""
+    from seer.core.errors import NodeError
+
+    type_env = TypeEnvironment()
+    type_env.register("not_array", {"type": "string"})
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            ForEachNode(
+                id="loop_node",
+                items="${not_array}",
+                item_var="item",
+                index_var="index"
+            )
+        ],
+        edges=[]
+    )
+
+    with pytest.raises(ValidationPhaseError) as exc_info:
+        validate_references(spec, type_env)
+
+    assert len(exc_info.value.errors) > 0
+    error = exc_info.value.errors[0]
+    assert error.node_id == "loop_node"
+    assert error.location == "items"
+    assert error.expression == "${not_array}"
+
+
+def test_validation_error_node_id_for_if_condition():
+    """Test that IfNode condition validation errors have correct node_id."""
+    from seer.core.errors import NodeError
+
+    type_env = TypeEnvironment()
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            IfNode(
+                id="if_node",
+                condition="${undefined_condition} > 10"
+            )
+        ],
+        edges=[]
+    )
+
+    with pytest.raises(ValidationPhaseError) as exc_info:
+        validate_references(spec, type_env)
+
+    assert len(exc_info.value.errors) > 0
+    error = exc_info.value.errors[0]
+    assert error.node_id == "if_node"
+    assert error.location == "condition"
+
+
+def test_multiple_errors_all_have_node_ids():
+    """Test that multiple validation errors each have their correct node_id."""
+    from seer.core.errors import NodeError
+
+    type_env = TypeEnvironment()
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            ToolNode(
+                id="task_a",
+                type="tool",
+                tool="test.tool",
+                inputs={"value": "${undefined_a}"}
+            ),
+            ToolNode(
+                id="task_b",
+                type="tool",
+                tool="test.tool",
+                inputs={"value": "${undefined_b}"}
+            ),
+            IfNode(
+                id="if_c",
+                condition="${undefined_c} > 0"
+            )
+        ],
+        edges=[]
+    )
+
+    with pytest.raises(ValidationPhaseError) as exc_info:
+        validate_references(spec, type_env)
+
+    # Should have errors for all three nodes
+    assert len(exc_info.value.errors) >= 3
+
+    # Collect node_ids from errors
+    node_ids = {err.node_id for err in exc_info.value.errors}
+    assert "task_a" in node_ids
+    assert "task_b" in node_ids
+    assert "if_c" in node_ids
+
+
+def test_orphaned_trigger_error_has_node_id():
+    """Test that orphaned trigger errors have the trigger ID as node_id."""
+    from seer.core.errors import NodeError, ErrorCode
+
+    type_env = TypeEnvironment()
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[
+            TriggerSpec(
+                id="orphan_trigger",
+                key="test.trigger",
+                mode="polling",
+                event_schema={},
+            )
+        ],
+        nodes=[
+            ToolNode(
+                id="task1",
+                type="tool",
+                tool="test.tool",
+                inputs={"value": "static"}
+            )
+        ],
+        edges=[]  # No edge connecting trigger to node
+    )
+
+    with pytest.raises(ValidationPhaseError) as exc_info:
+        validate_references(spec, type_env)
+
+    # Should have an error for the orphaned trigger
+    orphan_errors = [e for e in exc_info.value.errors if e.code == ErrorCode.ORPHANED_TRIGGER]
+    assert len(orphan_errors) == 1
+    assert orphan_errors[0].node_id == "orphan_trigger"
+
+
+def test_error_message_includes_node_context():
+    """Test that the error message string includes node context."""
+    type_env = TypeEnvironment()
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[],
+        nodes=[
+            ToolNode(
+                id="my_task_node",
+                type="tool",
+                tool="test.tool",
+                inputs={"value": "${nonexistent}"}
+            )
+        ],
+        edges=[]
+    )
+
+    with pytest.raises(ValidationPhaseError) as exc_info:
+        validate_references(spec, type_env)
+
+    # The string representation should include node context
+    error_msg = str(exc_info.value)
+    assert "my_task_node" in error_msg
+    assert "inputs" in error_msg
