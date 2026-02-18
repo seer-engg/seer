@@ -200,12 +200,10 @@ class TestLinkedInCreatePostWithImages:
         mock_post_response.status_code = 201
         mock_post_response.json.return_value = {"id": "urn:li:ugcPost:123456"}
 
-        # Mock file resolution via WorkflowFileSystem
+        # Mock file resolution via resolve_file_input
         image_bytes = b"fake-image-data"
-        with patch("seer.tools.linkedin.linkedin.WorkflowFileSystem") as mock_fs_class:
-            mock_fs = MagicMock()
-            mock_fs.get_file_content = AsyncMock(return_value=image_bytes)
-            mock_fs_class.instance.return_value = mock_fs
+        with patch("seer.tools.linkedin.linkedin.resolve_file_input") as mock_resolve:
+            mock_resolve.return_value = (image_bytes, "image/jpeg", "test.jpg")
 
             with patch("seer.tools.linkedin.linkedin.httpx.AsyncClient") as mock_client:
                 mock_http = AsyncMock()
@@ -236,8 +234,8 @@ class TestLinkedInCreatePostWithImages:
 
                 assert result["id"] == "urn:li:ugcPost:123456"
 
-                # Verify file content was retrieved
-                mock_fs.get_file_content.assert_called_once()
+                # Verify file resolution was called
+                mock_resolve.assert_called_once()
 
                 # Verify Posts API was used (not ugcPosts)
                 post_calls = mock_http.post.call_args_list
@@ -268,10 +266,8 @@ class TestLinkedInCreatePostWithImages:
         ]
         mock_init_response.json.side_effect = init_responses
 
-        with patch("seer.tools.linkedin.linkedin.WorkflowFileSystem") as mock_fs_class:
-            mock_fs = MagicMock()
-            mock_fs.get_file_content = AsyncMock(return_value=b"image-data")
-            mock_fs_class.instance.return_value = mock_fs
+        with patch("seer.tools.linkedin.linkedin.resolve_file_input") as mock_resolve:
+            mock_resolve.return_value = (b"image-data", "image/png", "image.png")
 
             with patch("seer.tools.linkedin.linkedin.httpx.AsyncClient") as mock_client:
                 mock_http = AsyncMock()
@@ -284,7 +280,7 @@ class TestLinkedInCreatePostWithImages:
                 mock_http.put = AsyncMock(return_value=mock_upload_response)
                 mock_client.return_value.__aenter__.return_value = mock_http
 
-                # Provide complete file ref structures for parse_file_ref
+                # Provide complete file ref structures
                 def make_file_ref(file_id: str) -> dict:
                     return {
                         "_type": "workflow_file_ref",
@@ -312,7 +308,7 @@ class TestLinkedInCreatePostWithImages:
 
                 assert result["id"] == "urn:li:ugcPost:789"
                 # Verify 3 file resolutions
-                assert mock_fs.get_file_content.call_count == 3
+                assert mock_resolve.call_count == 3
 
     @pytest.mark.asyncio
     async def test_create_post_max_images_validation(self, create_post_tool):

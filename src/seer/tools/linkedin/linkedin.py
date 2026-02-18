@@ -12,14 +12,13 @@ Image Upload Flow:
 2. PUT binary image bytes to uploadUrl
 3. Reference image URN in post's content.media.id or content.multiImage.images[]
 """
-import base64
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import httpx
 from fastapi import HTTPException
 
-from seer.core.files.models import is_file_ref, parse_file_ref
-from seer.core.files.service import WorkflowFileSystem
+from seer.core.files.resolver import resolve_file_input
+from seer.core.files.schemas import get_file_array_input_property
 from seer.logger import get_logger
 from seer.tools.base import BaseTool, register_tool
 
@@ -70,12 +69,12 @@ class LinkedInTool(BaseTool):
         """Get JSON schema for tool parameters."""
         return self._parameters_schema
 
-    async def execute(
+    async def execute(  # pylint: disable=unused-argument  # Reason: credentials accepted for executor compatibility but access_token is used directly
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
         *,
-        _credentials: Optional["ResolvedCredentials"] = None,
+        credentials: Optional["ResolvedCredentials"] = None,
         context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Any:
         """
@@ -206,30 +205,11 @@ class LinkedInTool(BaseTool):
         return person_urn
 
     async def _resolve_file_to_bytes(
-        self, image_input: Any, _context: Optional["WorkflowRuntimeContext"]
+        self, image_input: Any, context: Optional["WorkflowRuntimeContext"]
     ) -> bytes:
-        """Resolve a file input to raw bytes using WorkflowFileSystem or base64."""
-        # Handle file references from workflow state
-        if is_file_ref(image_input):
-            file_ref = parse_file_ref(image_input)
-            fs = WorkflowFileSystem.instance()
-            return await fs.get_file_content(file_ref)
-
-        # Handle base64 encoded strings
-        if isinstance(image_input, str):
-            try:
-                return base64.b64decode(image_input)
-            except Exception as e:
-                raise ValueError(f"Invalid base64 data: {e}") from e
-
-        # Handle dict with base64 data field (legacy format)
-        if isinstance(image_input, dict) and "data" in image_input:
-            try:
-                return base64.b64decode(image_input["data"])
-            except Exception as e:
-                raise ValueError(f"Invalid base64 data in 'data' field: {e}") from e
-
-        raise ValueError(f"Unsupported image input type: {type(image_input)}")
+        """Resolve a file input to raw bytes using the unified file resolver."""
+        content, _mime_type, _filename = await resolve_file_input(image_input, context)
+        return content
 
     async def _resolve_and_upload_images(
         self,
@@ -527,20 +507,11 @@ def register_linkedin_tools():
                         "enum": ["PUBLIC", "CONNECTIONS"],
                         "default": "PUBLIC"
                     },
-                    "images": {
-                        "type": "array",
-                        "description": (
-                            "Images to attach to the post (max 9). "
-                            "Use file references from parent nodes or base64 strings."
-                        ),
-                        "maxItems": 9,
-                        "items": {
-                            "oneOf": [
-                                {"type": "string", "description": "Base64-encoded image data"},
-                                {"type": "object", "description": "File reference from workflow state"}
-                            ]
-                        }
-                    }
+                    "images": get_file_array_input_property(
+                        description="Images to attach to the post (max 9). Select files from workflow outputs or user storage.",
+                        min_items=0,
+                        max_items=9,
+                    )
                 },
                 "required": ["text"]
             },
