@@ -10,8 +10,9 @@ from seer.api.agents.checkpointer import get_checkpointer
 from seer.api.workflows import models as api_models
 from seer.api.workflows.services.shared import (
     _spec_to_dict,
+    raise_compiler_error,
 )
-from seer.api.core.errors import VALIDATION_PROBLEM, COMPILE_PROBLEM, raise_problem
+from seer.api.core.errors import VALIDATION_PROBLEM, raise_problem
 from seer.config import config as shared_config
 from seer.database import User
 from seer.tools.base import list_tools as registry_list_tools
@@ -124,13 +125,18 @@ async def list_tools(include_schemas: bool = False) -> api_models.ToolRegistryRe
 async def list_triggers(user: User) -> api_models.TriggerCatalogResponse:
     from seer.database.models_oauth import OAuthConnection
     from seer.services.integrations.auth.oauth import get_oauth_provider
+    from seer.services.integrations.auth.helpers import has_required_scopes
 
-    # Batch query: Get all active OAuth providers for this user
-    active_connections = await OAuthConnection.filter(
+    # Get all connections WITH scopes (not just provider names)
+    connections = await OAuthConnection.filter(
         user=user,
         status="active"
-    ).values_list("provider", flat=True)
-    connected_providers: set = set(active_connections)
+    ).all()
+
+    provider_to_scopes = {
+        conn.provider: conn.scopes or ""
+        for conn in connections
+    }
 
     triggers = []
     for definition in trigger_registry.all():
@@ -139,7 +145,18 @@ async def list_triggers(user: User) -> api_models.TriggerCatalogResponse:
             is_connected = True  # No OAuth needed
         else:
             oauth_provider = get_oauth_provider(definition.provider)
-            is_connected = oauth_provider in connected_providers
+
+            if oauth_provider not in provider_to_scopes:
+                is_connected = False
+            else:
+                # Check if connection has required scopes
+                granted_scopes = provider_to_scopes[oauth_provider]
+                required_scopes = definition.meta.required_scopes or []
+
+                if required_scopes:
+                    is_connected = has_required_scopes(granted_scopes, required_scopes)
+                else:
+                    is_connected = True  # No scope requirements
 
         triggers.append(
             api_models.TriggerDescriptor(
@@ -344,12 +361,7 @@ async def compile_spec(user: User, payload: api_models.CompileRequest) -> api_mo
     try:
         compiled = await COMPILER.compile(user, spec_dict, checkpointer=checkpointer)
     except WorkflowCompilerError as exc:
-        raise_problem(
-            type_uri=COMPILE_PROBLEM,
-            title="Compilation failed",
-            detail=str(exc),
-            status=400,
-        )
+        raise_compiler_error(exc, "Compilation failed")
 
     warnings = _collect_warnings_from_nodes(spec.nodes)
     artifacts = api_models.CompileArtifacts()

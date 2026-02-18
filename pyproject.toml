@@ -92,6 +92,7 @@ dev = [
     "pylint>=2.15.0",
     "pyinstrument>=5.1.2",
     "mlflow>=3.8.1",
+    "mutmut>=3.2.0",
 ]
 
 [project.urls]
@@ -199,3 +200,14 @@ exclude_lines = [
 #   - broad-exception-caught: Adapter boundaries converting exceptions to strings
 #   - invalid-name: Framework-required naming (visit_*, _private for patterns)
 # Pull requests with unjustified disables will be rejected in code review
+
+[tool.mutmut]
+paths_to_mutate = [
+    "src/seer/core/expr/",
+    "src/seer/core/compiler/",
+]
+# Copy entire src directory to mutants folder so imports work correctly
+also_copy = ["src/"]
+# Override pytest addopts to avoid conflicts with base config (no coverage, fast failure)
+pytest_add_cli_args = ["-o", "addopts=", "-m", "unit"]
+do_not_mutate = ["*test*.py", "*conftest*.py", "*migration*.py"]

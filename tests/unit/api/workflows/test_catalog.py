@@ -243,7 +243,7 @@ class TestListTriggers:
 
         with patch.object(catalog.trigger_registry, "all", return_value=[mock_definition]):
             with patch("seer.database.models_oauth.OAuthConnection") as mock_oauth:
-                mock_oauth.filter.return_value.values_list = AsyncMock(return_value=[])
+                mock_oauth.filter.return_value.all = AsyncMock(return_value=[])
                 result = await catalog.list_triggers(mock_user)
 
         assert isinstance(result, api_models.TriggerCatalogResponse)
@@ -270,7 +270,7 @@ class TestListTriggers:
 
         with patch.object(catalog.trigger_registry, "all", return_value=[mock_definition]):
             with patch("seer.database.models_oauth.OAuthConnection") as mock_oauth:
-                mock_oauth.filter.return_value.values_list = AsyncMock(return_value=[])
+                mock_oauth.filter.return_value.all = AsyncMock(return_value=[])
                 result = await catalog.list_triggers(mock_user)
 
         trigger = result.triggers[0]
@@ -291,7 +291,7 @@ class TestListTriggers:
 
         with patch.object(catalog.trigger_registry, "all", return_value=[]):
             with patch("seer.database.models_oauth.OAuthConnection") as mock_oauth:
-                mock_oauth.filter.return_value.values_list = AsyncMock(return_value=[])
+                mock_oauth.filter.return_value.all = AsyncMock(return_value=[])
                 result = await catalog.list_triggers(mock_user)
 
         assert result.triggers == []
@@ -309,13 +309,19 @@ class TestListTriggers:
         mock_definition.schemas.filter = None
         mock_definition.schemas.config = None
         mock_definition.meta.requires_connection = True
+        mock_definition.meta.required_scopes = None  # No scope requirements
 
         mock_user = MagicMock()
+
+        # Create mock connection with provider and scopes
+        mock_connection = MagicMock()
+        mock_connection.provider = "google"
+        mock_connection.scopes = ""
 
         with patch.object(catalog.trigger_registry, "all", return_value=[mock_definition]):
             with patch("seer.database.models_oauth.OAuthConnection") as mock_oauth:
                 # User has google connection (gmail maps to google)
-                mock_oauth.filter.return_value.values_list = AsyncMock(return_value=["google"])
+                mock_oauth.filter.return_value.all = AsyncMock(return_value=[mock_connection])
                 with patch("seer.services.integrations.auth.oauth.get_oauth_provider", return_value="google"):
                     result = await catalog.list_triggers(mock_user)
 
@@ -334,17 +340,78 @@ class TestListTriggers:
         mock_definition.schemas.filter = None
         mock_definition.schemas.config = None
         mock_definition.meta.requires_connection = True
+        mock_definition.meta.required_scopes = None
 
         mock_user = MagicMock()
 
         with patch.object(catalog.trigger_registry, "all", return_value=[mock_definition]):
             with patch("seer.database.models_oauth.OAuthConnection") as mock_oauth:
                 # User has no connections
-                mock_oauth.filter.return_value.values_list = AsyncMock(return_value=[])
+                mock_oauth.filter.return_value.all = AsyncMock(return_value=[])
                 with patch("seer.services.integrations.auth.oauth.get_oauth_provider", return_value="discord"):
                     result = await catalog.list_triggers(mock_user)
 
         assert result.triggers[0].is_connected is False
+
+    @pytest.mark.asyncio
+    async def test_list_triggers_is_connected_false_when_missing_required_scopes(self):
+        """Test is_connected is False when user has connection but missing required scopes."""
+        mock_definition = MagicMock()
+        mock_definition.key = "poll.slack.message_received"
+        mock_definition.title = "Slack"
+        mock_definition.provider = "slack"
+        mock_definition.mode = "poll"
+        mock_definition.description = "Slack trigger"
+        mock_definition.schemas.event = {"type": "object"}
+        mock_definition.schemas.filter = None
+        mock_definition.schemas.config = None
+        mock_definition.meta.requires_connection = True
+        mock_definition.meta.required_scopes = ["channels:history", "groups:history"]
+
+        mock_user = MagicMock()
+
+        # Create mock connection with wrong scopes
+        mock_connection = MagicMock()
+        mock_connection.provider = "slack"
+        mock_connection.scopes = "chat:write channels:read"  # Missing required scopes
+
+        with patch.object(catalog.trigger_registry, "all", return_value=[mock_definition]):
+            with patch("seer.database.models_oauth.OAuthConnection") as mock_oauth:
+                mock_oauth.filter.return_value.all = AsyncMock(return_value=[mock_connection])
+                with patch("seer.services.integrations.auth.oauth.get_oauth_provider", return_value="slack"):
+                    result = await catalog.list_triggers(mock_user)
+
+        assert result.triggers[0].is_connected is False
+
+    @pytest.mark.asyncio
+    async def test_list_triggers_is_connected_true_when_has_required_scopes(self):
+        """Test is_connected is True when user has connection with required scopes."""
+        mock_definition = MagicMock()
+        mock_definition.key = "poll.slack.message_received"
+        mock_definition.title = "Slack"
+        mock_definition.provider = "slack"
+        mock_definition.mode = "poll"
+        mock_definition.description = "Slack trigger"
+        mock_definition.schemas.event = {"type": "object"}
+        mock_definition.schemas.filter = None
+        mock_definition.schemas.config = None
+        mock_definition.meta.requires_connection = True
+        mock_definition.meta.required_scopes = ["channels:history", "groups:history"]
+
+        mock_user = MagicMock()
+
+        # Create mock connection with correct scopes
+        mock_connection = MagicMock()
+        mock_connection.provider = "slack"
+        mock_connection.scopes = "channels:history groups:history chat:write"
+
+        with patch.object(catalog.trigger_registry, "all", return_value=[mock_definition]):
+            with patch("seer.database.models_oauth.OAuthConnection") as mock_oauth:
+                mock_oauth.filter.return_value.all = AsyncMock(return_value=[mock_connection])
+                with patch("seer.services.integrations.auth.oauth.get_oauth_provider", return_value="slack"):
+                    result = await catalog.list_triggers(mock_user)
+
+        assert result.triggers[0].is_connected is True
 
 
 # =============================================================================

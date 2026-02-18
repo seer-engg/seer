@@ -58,6 +58,18 @@ def decode_state(state: str) -> dict:
     return json.loads(base64.urlsafe_b64decode(state).decode())
 
 
+def _build_oauth_redirect_uri(request: Request, oauth_provider: str) -> str:
+    """Build OAuth callback redirect URI with webhook_base_url fallback."""
+    if config.webhook_base_url:
+        # pylint: disable=no-member  # Pydantic Field descriptor; actual type is str at runtime
+        return f"{config.webhook_base_url.rstrip('/')}/api/integrations/{oauth_provider}/callback"
+
+    redirect_uri = str(request.url_for('auth_callback', provider=oauth_provider))
+    if config.redirect_uri_scheme == "https" and "http://" in redirect_uri:
+        redirect_uri = redirect_uri.replace("http://", "https://")
+    return redirect_uri
+
+
 def _validate_scope_and_get_provider(scope: str, provider: str):
     if not scope:
         raise_problem(
@@ -177,6 +189,135 @@ def _log_scope_info(token: dict, granted_scopes: str, requested_scope: Optional[
         granted_list,
         storing,
     )
+
+
+async def _handle_discord_post_oauth(
+    connection,
+    state_data: dict,
+    user_id: str,
+    oauth_provider: str,
+    request: Request,
+) -> None:
+    """Handle Discord-specific post-OAuth processing (permissions & guild storage)."""
+    from seer.tools.discord.permissions import calculate_permissions, get_permission_names
+
+    # Calculate and store permissions from requested tools
+    requested_scope = state_data.get('requested_scope', '')
+    tool_names = requested_scope.split() if requested_scope else []
+    calculated_permissions = calculate_permissions(tool_names)
+
+    # Update connection metadata with permissions
+    if connection:
+        metadata = connection.provider_metadata or {}
+
+        # Merge permissions (bitwise OR) with existing permissions
+        existing_perms = metadata.get("permissions", 0)
+        merged_perms = existing_perms | calculated_permissions
+
+        metadata["permissions"] = merged_perms
+        metadata["permission_names"] = list(get_permission_names(merged_perms))
+
+        connection.provider_metadata = metadata
+        await connection.save()
+
+        logger.info(
+            "Stored Discord permissions: existing=%s, calculated=%s, merged=%s, names=%s",
+            existing_perms,
+            calculated_permissions,
+            merged_perms,
+            metadata["permission_names"]
+        )
+
+    # Store guild information
+    guild_id = request.query_params.get('guild_id')
+    if guild_id and config.discord_bot_token:
+        provider_impl = get_integration_provider(oauth_provider)
+        if provider_impl:
+            # Type check for DiscordProvider
+            from seer.services.integrations.providers.discord import DiscordProvider
+            if isinstance(provider_impl, DiscordProvider):
+                try:
+                    guild_info = await provider_impl.fetch_guild_info(
+                        guild_id=guild_id,
+                        bot_token=config.discord_bot_token
+                    )
+
+                    # Store guild as IntegrationResource
+                    from seer.api.integrations.services import _upsert_integration_resource
+                    user = await User.get(user_id=user_id)
+                    await _upsert_integration_resource(
+                        user=user,
+                        oauth_connection=connection,
+                        provider="discord",
+                        resource_type="guild",
+                        resource_id=guild_id,
+                        resource_key=None,
+                        name=guild_info.get("name", f"Discord Server {guild_id}"),
+                        metadata={
+                            "guild_id": guild_id,
+                            "guild_name": guild_info.get("name"),
+                            "icon": guild_info.get("icon"),
+                            "owner_id": guild_info.get("owner_id"),
+                        }
+                    )
+                    logger.info(
+                        "Stored Discord guild: guild_id=%s, name=%s",
+                        guild_id,
+                        guild_info.get("name")
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "Failed to store Discord guild: guild_id=%s, error=%s",
+                        guild_id,
+                        exc,
+                        exc_info=True
+                    )
+                    # Don't fail the OAuth flow if guild storage fails
+                    # The connection is still stored, user can retry later
+
+
+async def _handle_slack_post_oauth(
+    connection,
+    token: dict,
+    user_id: str,
+) -> None:
+    """Handle Slack-specific post-OAuth processing (workspace storage)."""
+    # Slack token response includes team info directly
+    team_info = token.get("team", {})
+    workspace_id = team_info.get("id")
+
+    if workspace_id:
+        try:
+            # Store workspace as IntegrationResource
+            from seer.api.integrations.services import _upsert_integration_resource
+            user = await User.get(user_id=user_id)
+            await _upsert_integration_resource(
+                user=user,
+                oauth_connection=connection,
+                provider="slack",
+                resource_type="workspace",
+                resource_id=workspace_id,
+                resource_key=None,
+                name=team_info.get("name", f"Slack Workspace {workspace_id}"),
+                metadata={
+                    "workspace_id": workspace_id,
+                    "workspace_name": team_info.get("name"),
+                    "bot_user_id": token.get("bot_user_id"),
+                }
+            )
+            logger.info(
+                "Stored Slack workspace: workspace_id=%s, name=%s",
+                workspace_id,
+                team_info.get("name")
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to store Slack workspace: workspace_id=%s, error=%s",
+                workspace_id,
+                exc,
+                exc_info=True
+            )
+            # Don't fail the OAuth flow if workspace storage fails
 
 
 # =============================================================================
@@ -310,9 +451,7 @@ async def connect(
     if early_return:
         return early_return
 
-    redirect_uri = request.url_for('auth_callback', provider=oauth_provider)
-    if config.redirect_uri_scheme == "https" and redirect_uri.scheme == "http":
-        redirect_uri = redirect_uri.replace(scheme="https")
+    redirect_uri = _build_oauth_redirect_uri(request, oauth_provider)
 
     logger.info(
         "Starting OAuth flow: provider=%s, integration_type=%s, scopes=%s",
@@ -373,9 +512,7 @@ async def auth_callback(request: Request, provider: str):
     # Manually exchange authorization code for tokens
     # This bypasses Authlib's session-based state validation which fails with multiple workers
     client = oauth.create_client(oauth_provider)
-    redirect_uri = str(request.url_for('auth_callback', provider=oauth_provider))
-    if config.redirect_uri_scheme == "https" and "http://" in redirect_uri:
-        redirect_uri = redirect_uri.replace("http://", "https://")
+    redirect_uri = _build_oauth_redirect_uri(request, oauth_provider)
 
     try:
         token_url = client.server_metadata.get('token_endpoint') or client.access_token_url
@@ -486,84 +623,12 @@ async def auth_callback(request: Request, provider: str):
         integration_type=integration_type
     )
 
-    # Discord-specific: Store permissions and guild information
+    # Provider-specific post-OAuth processing
     if oauth_provider == "discord":
-        # Calculate and store permissions from requested tools
-        requested_scope = state_data.get('requested_scope', '')
-        from seer.tools.discord.permissions import calculate_permissions, get_permission_names
+        await _handle_discord_post_oauth(connection, state_data, user_id, oauth_provider, request)
 
-        tool_names = requested_scope.split() if requested_scope else []
-        calculated_permissions = calculate_permissions(tool_names)
-
-        # Update connection metadata with permissions
-        if connection:
-            metadata = connection.provider_metadata or {}
-
-            # Merge permissions (bitwise OR) with existing permissions
-            existing_perms = metadata.get("permissions", 0)
-            merged_perms = existing_perms | calculated_permissions
-
-            metadata["permissions"] = merged_perms
-            metadata["permission_names"] = list(get_permission_names(merged_perms))
-
-            connection.provider_metadata = metadata
-            await connection.save()
-
-            logger.info(
-                "Stored Discord permissions: existing=%s, calculated=%s, merged=%s, names=%s",
-                existing_perms,
-                calculated_permissions,
-                merged_perms,
-                metadata["permission_names"]
-            )
-
-        # Store guild information
-
-        guild_id = request.query_params.get('guild_id')
-        if guild_id and config.discord_bot_token:
-            provider_impl = get_integration_provider(oauth_provider)
-            if provider_impl:
-                # Type check for DiscordProvider
-                from seer.services.integrations.providers.discord import DiscordProvider
-                if isinstance(provider_impl, DiscordProvider):
-                    try:
-                        guild_info = await provider_impl.fetch_guild_info(
-                            guild_id=guild_id,
-                            bot_token=config.discord_bot_token
-                        )
-
-                        # Store guild as IntegrationResource
-                        from seer.api.integrations.services import _upsert_integration_resource
-                        user = await User.get(user_id=user_id)
-                        await _upsert_integration_resource(
-                            user=user,
-                            oauth_connection=connection,
-                            provider="discord",
-                            resource_type="guild",
-                            resource_id=guild_id,
-                            resource_key=None,
-                            name=guild_info.get("name", f"Discord Server {guild_id}"),
-                            metadata={
-                                "guild_id": guild_id,
-                                "guild_name": guild_info.get("name"),
-                                "icon": guild_info.get("icon"),
-                                "owner_id": guild_info.get("owner_id"),
-                            }
-                        )
-                        logger.info(
-                            "Stored Discord guild: guild_id=%s, name=%s",
-                            guild_id,
-                            guild_info.get("name")
-                        )
-                    except Exception as exc:
-                        logger.error(
-                            "Failed to store Discord guild: guild_id=%s, error=%s",
-                            guild_id,
-                            exc,
-                            exc_info=True
-                        )
-                        # Don't fail the OAuth flow if guild storage fails
-                        # The connection is still stored, user can retry later
+    if oauth_provider == "slack":
+        await _handle_slack_post_oauth(connection, token, user_id)
 
     connected_param = integration_type or oauth_provider
     return RedirectResponse(url=f"{redirect_to}?connected={connected_param}")
