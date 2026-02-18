@@ -35,7 +35,7 @@ from seer.observability import (
     increment_chat_message_count,
 )
 from seer.observability.exceptions import RunCostCapExceeded
-from seer.utilities.langfuse_tracing import merge_nexus_langfuse_callbacks
+from seer.utilities.langfuse_tracing import merge_nexus_langfuse_callbacks, langfuse_user_context
 
 from .chat_schema import (
     ChatMessage,
@@ -635,10 +635,11 @@ async def chat_with_workflow_endpoint(  # pylint: disable=too-many-locals # Reas
     set_chat_runtime_context(runtime_context)
 
     try:
-        # Invoke agent and get result
-        result = await _invoke_agent_with_orchestrator(
-            agent, checkpointer, user_msg, thread_id, max_agent_steps
-        )
+        # Invoke agent with Langfuse user context for trace attribution
+        with langfuse_user_context(user.user_id):
+            result = await _invoke_agent_with_orchestrator(
+                agent, checkpointer, user_msg, thread_id, max_agent_steps
+            )
 
         # Detect and transform interrupts
         interrupt_required, interrupt_data = _detect_and_transform_interrupts(result)
@@ -966,7 +967,9 @@ async def resume_chat_endpoint(  # pylint: disable=too-many-locals # Reason: Com
     # Set thread_id in context variable
     token = _current_thread_id.set(resume_data.thread_id)
     try:
-        result = await agent.ainvoke(resume_command, config=config_with_langfuse)
+        # Wrap agent invocation with Langfuse user context for trace attribution
+        with langfuse_user_context(user.user_id):
+            result = await agent.ainvoke(resume_command, config=config_with_langfuse)
 
         # Extract response and thinking
         agent_messages = result.get("messages", [])

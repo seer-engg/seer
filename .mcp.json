@@ -3,6 +3,15 @@
     "seer": {
       "command": "uv",
       "args": ["run", "--directory", "/home/lokesh/second/seer", "seer-mcp", "--transport", "stdio"]
+    },
+    "langfuse": {
+      "command": "uvx",
+      "args": ["--python", "3.11", "langfuse-mcp"],
+      "env": {
+        "LANGFUSE_PUBLIC_KEY": "pk-...",
+        "LANGFUSE_SECRET_KEY": "sk-...",
+        "LANGFUSE_HOST": "https://cloud.langfuse.com"
+      }
     }
   }
 }
