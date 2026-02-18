@@ -6,8 +6,10 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from seer.api.core.errors import VALIDATION_PROBLEM
+from seer.api.core.errors import COMPILE_PROBLEM, VALIDATION_PROBLEM
 from seer.api.core.errors import raise_problem as _raise_problem
+from seer.api.workflows import models as api_models
+from seer.core.errors import WorkflowCompilerError
 from seer.database import (
     User,
     Workflow,
@@ -119,3 +121,25 @@ async def _get_workflow(user: User, workflow_id: str) -> Workflow:
             status=404,
         )
     return workflow
+
+
+def raise_compiler_error(exc: WorkflowCompilerError, problem_title: str, type_uri: str = COMPILE_PROBLEM) -> None:
+    """Convert WorkflowCompilerError to API problem response and raise it."""
+    problem_errors = [
+        api_models.ProblemError(
+            code=err.code,
+            message=err.message,
+            node_id=err.node_id,
+            location=err.location,
+            expression=err.expression,
+        )
+        for err in exc.errors
+    ] if exc.errors else None
+
+    _raise_problem(
+        type_uri=type_uri,
+        title=problem_title,
+        detail=str(exc),
+        status=400,
+        errors=problem_errors,
+    )

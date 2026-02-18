@@ -486,7 +486,7 @@ class TestOrphanedTriggerValidation:
         spec = parse_workflow_spec(spec_payload)
         type_env = TypeEnvironment()
 
-        with pytest.raises(ValidationPhaseError, match="Orphaned triggers without edges are not allowed"):
+        with pytest.raises(ValidationPhaseError, match="Trigger 'trigger_1' has no edges"):
             validate_references(spec, type_env)
 
     def test_compiler_rejects_multiple_orphaned_triggers(self):

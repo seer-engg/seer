@@ -10,8 +10,9 @@ from seer.api.agents.checkpointer import get_checkpointer
 from seer.api.workflows import models as api_models
 from seer.api.workflows.services.shared import (
     _spec_to_dict,
+    raise_compiler_error,
 )
-from seer.api.core.errors import VALIDATION_PROBLEM, COMPILE_PROBLEM, raise_problem
+from seer.api.core.errors import VALIDATION_PROBLEM, raise_problem
 from seer.config import config as shared_config
 from seer.database import User
 from seer.tools.base import list_tools as registry_list_tools
@@ -344,12 +345,7 @@ async def compile_spec(user: User, payload: api_models.CompileRequest) -> api_mo
     try:
         compiled = await COMPILER.compile(user, spec_dict, checkpointer=checkpointer)
     except WorkflowCompilerError as exc:
-        raise_problem(
-            type_uri=COMPILE_PROBLEM,
-            title="Compilation failed",
-            detail=str(exc),
-            status=400,
-        )
+        raise_compiler_error(exc, "Compilation failed")
 
     warnings = _collect_warnings_from_nodes(spec.nodes)
     artifacts = api_models.CompileArtifacts()
