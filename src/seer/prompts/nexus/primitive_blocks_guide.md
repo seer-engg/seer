@@ -648,7 +648,7 @@ ForEach nodes use two edge types:
 
 ## 8. BROWSER BLOCK (`type: "browser"`)
 
-**Purpose:** Browser automation using natural language task descriptions
+**Purpose:** Browser automation using natural language task descriptions powered by an LLM-driven agent.
 
 **Schema:**
 ```json
@@ -699,19 +699,133 @@ Browser profiles contain saved login sessions, allowing workflows to interact wi
 - Reference a profile by its UUID in `browser_profile_id`
 - The browser agent loads the profile's cookies/session state before executing the task
 
-**Important Notes:**
-- 🤖 Uses BrowserUse Agent for intelligent browser automation
-- ✅ Natural language tasks - describe WHAT you want, not HOW
-- ✅ `inputs` provide additional context data the agent can reference
-- ✅ Use `expect_outputs` for structured data extraction
-- ⏱️ Default timeout is 5 minutes; increase for complex tasks
+---
 
-**Example - Web Scraping:**
+### Output Format
+
+Browser nodes always return an envelope structure with these fields:
+
+```json
+{
+  "success": true,
+  "result": "Step-by-step history of actions taken",
+  "extracted_data": { "field": "value" },
+  "final_url": "https://example.com/page",
+  "screenshots": [
+    { "id": "uuid", "url": "https://...", "name": "step_1.png" }
+  ],
+  "usage": {
+    "input_tokens": 1500,
+    "output_tokens": 200,
+    "steps_taken": 8
+  }
+}
+```
+
+**Critical Reference Pattern:**
+```
+✅ Correct: ${browser_node.extracted_data.field}
+✅ Correct: ${browser_node.success}
+✅ Correct: ${browser_node.screenshots}
+
+❌ Wrong: ${browser_node.field}  (fields are inside extracted_data!)
+```
+
+---
+
+### Prompting Best Practices
+
+Effective prompting dramatically improves browser automation reliability.
+
+**1. Be Specific, Not Open-Ended**
+
+✅ **Good - Specific steps:**
+```
+1. Go to https://quotes.toscrape.com/
+2. Use extract action to get the first 3 quotes with their authors
+3. Return the results as structured data
+```
+
+❌ **Bad - Vague:**
+```
+Go to the web and find some quotes
+```
+
+**2. Name Actions Directly**
+
+Reference browser actions by name for predictable behavior:
+
+| Action | Description | Example Usage |
+|--------|-------------|---------------|
+| `go_to_url` | Navigate to a URL | "Use go_to_url to navigate to..." |
+| `click` | Click an element | "Click the 'Submit' button" |
+| `type` / `input_text` | Enter text into a field | "Type 'search term' into the search box" |
+| `scroll` | Scroll the page | "Scroll down 2 pages" |
+| `extract` | Extract content | "Use extract action with query 'product prices'" |
+| `send_keys` | Send keyboard input | "Use send_keys with 'Tab Tab Enter'" |
+| `go_back` | Navigate back | "Use go_back to return to previous page" |
+| `wait` | Wait for element/load | "Wait for the results to load" |
+
+**3. Number Your Steps for Complex Tasks**
+
+```
+1. Navigate to https://example.com/login
+2. Type "${inputs.username}" into the username field
+3. Type "${inputs.password}" into the password field
+4. Click the "Sign In" button
+5. Wait for the dashboard to load
+6. Use extract action to get account balance
+```
+
+**4. Handle Interaction Problems via Keyboard**
+
+Sometimes buttons can't be clicked. Use keyboard navigation as fallback:
+
+```
+If the submit button cannot be clicked:
+1. Use send_keys action with "Tab Tab Enter" to navigate and activate
+2. Or use send_keys with "ArrowDown ArrowDown Enter" for dropdown selection
+```
+
+---
+
+### Error Recovery Patterns
+
+Include fallback strategies in complex tasks:
+
+```
+Login and extract account data:
+1. Navigate to dashboard.example.com
+2. If login page appears, enter credentials and submit
+3. If navigation fails due to anti-bot protection:
+   - Use google search to find "example.com dashboard login"
+   - Navigate via search results
+4. If page times out:
+   - Use go_back and try alternative approach
+   - Or refresh the page and wait 5 seconds
+5. Extract the account balance and recent transactions
+```
+
+---
+
+### Cost & Performance Tips
+
+- Browser tasks use multiple LLM calls (one per decision step) - they can be expensive
+- `max_steps` affects both completion probability AND cost - start with defaults
+- Default timeout (5 min) is sufficient for most tasks; increase only for complex multi-page workflows
+- Enable `save_screenshots` only when debugging or documentation is needed
+- For simple extractions, consider using `tool` blocks with scraping tools instead
+
+---
+
+### Examples
+
+**Example 1 - Web Scraping with Specific Actions:**
 ```json
 {
   "id": "scrape_prices",
   "type": "browser",
-  "task": "Navigate to ${inputs.url}, find the pricing table, and extract all plan names and their monthly prices",
+  "task": "1. Navigate to ${inputs.url}\n2. Scroll down to find the pricing table\n3. Use extract action to get all plan names and monthly prices\n4. Return structured data with plans array",
   "inputs": {
     "url": "https://example.com/pricing"
   },
@@ -741,14 +855,14 @@ Browser profiles contain saved login sessions, allowing workflows to interact wi
 }
 ```
 
-**Example - Authenticated Task:**
+**Example 2 - Authenticated Task with Profile:**
 ```json
 {
   "id": "get_slack_messages",
   "type": "browser",
-  "task": "Go to Slack, navigate to the #general channel, and get the last 5 messages",
+  "task": "1. Go to Slack workspace\n2. Navigate to the #general channel using the sidebar\n3. Scroll up to load message history if needed\n4. Use extract action to get the last 5 messages with author, text, and timestamp",
   "browser_profile_id": "abc123-profile-uuid",
-  "max_steps": 20,
+  "max_steps": 25,
   "expect_outputs": {
     "mode": "json",
     "schema": {
@@ -774,12 +888,68 @@ Browser profiles contain saved login sessions, allowing workflows to interact wi
 }
 ```
 
+**Example 3 - Form Submission with Keyboard Fallback:**
+```json
+{
+  "id": "submit_contact_form",
+  "type": "browser",
+  "task": "1. Navigate to ${inputs.form_url}\n2. Type '${inputs.name}' into the Name field\n3. Type '${inputs.email}' into the Email field\n4. Type '${inputs.message}' into the Message textarea\n5. Click the Submit button\n6. If the button cannot be clicked, use send_keys with 'Tab Enter'\n7. Wait for confirmation message\n8. Extract the confirmation text or reference number",
+  "inputs": {
+    "form_url": "https://example.com/contact",
+    "name": "${trigger.data.sender_name}",
+    "email": "${trigger.data.sender_email}",
+    "message": "${trigger.data.message}"
+  },
+  "max_steps": 20,
+  "timeout_seconds": 60
+}
+```
+
+**Example 4 - Screenshot Documentation:**
+```json
+{
+  "id": "capture_dashboard",
+  "type": "browser",
+  "task": "1. Navigate to the analytics dashboard\n2. Wait for all charts to fully load\n3. Scroll through the entire page to capture all sections\n4. The screenshots will document the current state",
+  "browser_profile_id": "analytics-profile-uuid",
+  "save_screenshots": true,
+  "max_steps": 15,
+  "timeout_seconds": 90
+}
+```
+
+**Example 5 - Error Recovery with Fallback:**
+```json
+{
+  "id": "find_ceo_info",
+  "type": "browser",
+  "task": "1. Navigate to openai.com/about\n2. Find and extract the CEO's name and bio\n3. If navigation fails due to anti-bot protection:\n   - Use google search for 'OpenAI CEO name'\n   - Extract the information from search results\n4. If the about page doesn't have CEO info:\n   - Try navigating to openai.com/team\n   - Or search for 'OpenAI leadership team'",
+  "max_steps": 40,
+  "timeout_seconds": 180,
+  "expect_outputs": {
+    "mode": "json",
+    "schema": {
+      "json_schema": {
+        "type": "object",
+        "properties": {
+          "ceo_name": {"type": "string"},
+          "bio": {"type": "string"},
+          "source_url": {"type": "string"}
+        },
+        "required": ["ceo_name"]
+      }
+    }
+  }
+}
+```
+
 **Common Use Cases:**
-- Web scraping and data extraction
-- Form filling and submissions
-- Authenticated website interactions
-- Screenshot capture for documentation
-- E-commerce monitoring
+- Web scraping and structured data extraction
+- Form filling and automated submissions
+- Authenticated website interactions (with browser profiles)
+- Screenshot capture for documentation/monitoring
+- E-commerce price monitoring
+- Multi-step research with fallback strategies
 
 ---
 
