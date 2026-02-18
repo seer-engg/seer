@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import Dict, List, Optional
 
-from seer.core.errors import TypeEnvironmentError
+from seer.core.errors import ErrorCode, NodeError, TypeEnvironmentError
 from seer.core.expr.parser import parse_reference_string, REFERENCE_PATTERN, PathSegment, PropertySegment, IndexSegment
 from seer.core.expr.typecheck import TypeEnvironment
 from seer.core.nodes.base import TypeRegistrationContext
@@ -239,13 +239,30 @@ def _process_node_sync(
     """
     node_impl = node_type_registry.get(node.type)
     if node_impl is None:
-        raise TypeEnvironmentError(f"Unknown node type: '{node.type}' - not registered in node_type_registry")
+        raise TypeEnvironmentError(
+            f"Unknown node type: '{node.type}' - not registered in node_type_registry",
+            errors=[NodeError(
+                code=ErrorCode.UNKNOWN_NODE_TYPE,
+                message=f"Unknown node type: '{node.type}'",
+                node_id=node.id,
+            )]
+        )
 
     ctx = TypeRegistrationContext(
         schema_registry=schema_registry,
         tool_registry=tool_registry,
     )
-    node_impl.register_type_sync(node, env, ctx)
+    try:
+        node_impl.register_type_sync(node, env, ctx)
+    except TypeEnvironmentError as exc:
+        # Enhance with node context if not already present
+        if not exc.errors:
+            exc.errors = [NodeError(
+                code=ErrorCode.VALIDATION_ERROR,
+                message=str(exc),
+                node_id=node.id,
+            )]
+        raise
 
 
 async def _process_node_async(
@@ -264,11 +281,28 @@ async def _process_node_async(
     """
     node_impl = node_type_registry.get(node.type)
     if node_impl is None:
-        raise TypeEnvironmentError(f"Unknown node type: '{node.type}' - not registered in node_type_registry")
+        raise TypeEnvironmentError(
+            f"Unknown node type: '{node.type}' - not registered in node_type_registry",
+            errors=[NodeError(
+                code=ErrorCode.UNKNOWN_NODE_TYPE,
+                message=f"Unknown node type: '{node.type}'",
+                node_id=node.id,
+            )]
+        )
 
     ctx = TypeRegistrationContext(
         schema_registry=schema_registry,
         tool_registry=tool_registry,
         mcp_client_registry=mcp_client_registry,
     )
-    await node_impl.register_type_async(node, env, ctx)
+    try:
+        await node_impl.register_type_async(node, env, ctx)
+    except TypeEnvironmentError as exc:
+        # Enhance with node context if not already present
+        if not exc.errors:
+            exc.errors = [NodeError(
+                code=ErrorCode.VALIDATION_ERROR,
+                message=str(exc),
+                node_id=node.id,
+            )]
+        raise

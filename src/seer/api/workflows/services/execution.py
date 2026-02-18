@@ -7,7 +7,7 @@ import logging
 from typing import Any, Dict, Optional, Union
 
 from seer.api.agents.checkpointer import get_checkpointer
-from seer.api.core.errors import COMPILE_PROBLEM, RUN_PROBLEM, raise_problem
+from seer.api.core.errors import RUN_PROBLEM
 from seer.core.errors import WorkflowCompilerError
 from seer.core.runtime.global_compiler import WorkflowCompilerSingleton
 from seer.api.workflows import models as api_models
@@ -17,6 +17,7 @@ from seer.api.workflows.services.shared import (
     _now,
     _raise_problem,
     _spec_to_dict,
+    raise_compiler_error,
 )
 from seer.core.schema.models import TriggerSpec, WorkflowSpec
 from seer.database import (
@@ -76,12 +77,7 @@ async def _validate_workflow_spec(user: User, spec: WorkflowSpec) -> None:
     try:
         await compiler.compile(user, spec_dict, checkpointer=checkpointer)
     except WorkflowCompilerError as exc:
-        raise_problem(
-            type_uri=COMPILE_PROBLEM,
-            title="Workflow validation failed",
-            detail=str(exc),
-            status=400,
-        )
+        raise_compiler_error(exc, "Workflow validation failed")
 
 
 def _serialize_run(run: WorkflowRun) -> api_models.RunResponse:
