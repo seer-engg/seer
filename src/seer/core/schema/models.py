@@ -395,6 +395,7 @@ class TriggerMetadata(StrictModel):
     """Metadata and defaults for trigger configuration."""
     sample_event: Optional[Dict[str, Any]] = None
     requires_connection: bool = True
+    required_scopes: Optional[List[str]] = None  # OAuth scopes required for this trigger
 
 
 class TriggerIdentity(StrictModel):

@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 
 # Providers that don't require refresh tokens for "connected" status
 # LinkedIn: Non-MDP partners don't get refresh tokens, but 60-day access tokens are sufficient
-PROVIDERS_WITHOUT_REFRESH_TOKENS = {"linkedin"}
+PROVIDERS_WITHOUT_REFRESH_TOKENS = {"linkedin", "slack"}
 
 
 def build_provider_connections_map(connections: List[OAuthConnection]) -> Dict[str, Dict[str, Any]]:

@@ -73,6 +73,40 @@ if config.linkedin_client_id and config.linkedin_client_secret:
         client_kwargs={'scope': 'openid profile email'},  # Minimal default - frontend will override with specific scopes
     )
 
+# Slack OAuth (Bot Token)
+# Slack uses OAuth 2.0 v2 with bot token scopes
+if config.slack_client_id and config.slack_client_secret:
+    oauth.register(
+        name='slack',
+        client_id=config.slack_client_id,
+        client_secret=config.slack_client_secret,
+        authorize_url='https://slack.com/oauth/v2/authorize',
+        access_token_url='https://slack.com/api/oauth.v2.access',
+        api_base_url='https://slack.com/api/',
+        client_kwargs={'scope': 'channels:read chat:write'},  # Minimal default - frontend will override with specific scopes
+    )
+
+
+# Provider mappings: integration_type -> OAuth provider
+_INTEGRATION_TO_PROVIDER: dict[str, str] = {
+    # Google integrations
+    'gmail': 'google',
+    'googlesheets': 'google',
+    'googledrive': 'google',
+    'google': 'google',
+    'google_sheets': 'google',
+    'google_drive': 'google',
+    # GitHub integrations
+    'github': 'github',
+    'pull_request': 'github',
+    # Supabase integrations
+    'supabase': SUPABASE_OAUTH_PROVIDER,
+    'supabase_mgmt': SUPABASE_OAUTH_PROVIDER,
+    # Direct providers
+    'discord': 'discord',
+    'linkedin': 'linkedin',
+    'slack': 'slack',
+}
 
 
 def get_oauth_provider(integration_type: str) -> str:
@@ -86,17 +120,5 @@ def get_oauth_provider(integration_type: str) -> str:
     Returns:
         OAuth provider name (google, github, etc.)
     """
-    google_integrations = ['gmail', 'googlesheets', 'googledrive', 'google', 'google_sheets', 'google_drive']
-    if integration_type in google_integrations:
-        return 'google'
-    github_integrations = ['github', 'pull_request']
-    if integration_type in github_integrations:
-        return 'github'
-    if integration_type in ['supabase', 'supabase_mgmt']:
-        return SUPABASE_OAUTH_PROVIDER
-    if integration_type == 'discord':
-        return 'discord'
-    if integration_type == 'linkedin':
-        return 'linkedin'
-    # For other providers, the integration type is the same as the provider
-    return integration_type
+    # For unmapped providers, the integration type is the same as the provider
+    return _INTEGRATION_TO_PROVIDER.get(integration_type, integration_type)

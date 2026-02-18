@@ -72,6 +72,63 @@ def _strip_markdown_fencing(text: str) -> str:
     return text.strip()
 
 
+def format_browser_history(history: Any) -> Dict[str, Any]:
+    """
+    Format AgentHistoryList into a human-readable summary.
+
+    Transforms verbose browser_use history into a clean format showing:
+    - Steps taken with action types and descriptions
+    - Completion and success status
+    - Any errors encountered
+
+    Args:
+        history: AgentHistoryList from browser_use agent.run()
+
+    Returns:
+        Dict with steps, completed, success, and optional errors
+    """
+    if history is None:
+        return {"steps": [], "completed": False, "success": False}
+
+    steps = []
+
+    try:
+        action_names = history.action_names() if hasattr(history, "action_names") else []
+        action_results = history.action_results() if hasattr(history, "action_results") else []
+
+        for i, action_result in enumerate(action_results):
+            step: Dict[str, Any] = {"action": action_names[i] if i < len(action_names) else "unknown"}
+
+            # Use extracted_content (human-readable) or fall back to long_term_memory
+            if action_result.extracted_content:
+                step["description"] = action_result.extracted_content
+            elif action_result.long_term_memory:
+                step["description"] = action_result.long_term_memory
+            else:
+                step["description"] = f"Performed {step['action']} action"
+
+            if action_result.error:
+                step["error"] = action_result.error
+
+            steps.append(step)
+
+        result: Dict[str, Any] = {
+            "steps": steps,
+            "completed": history.is_done() if hasattr(history, "is_done") else False,
+            "success": history.is_successful() if hasattr(history, "is_successful") else None,
+        }
+
+        if hasattr(history, "has_errors") and history.has_errors():
+            errors = history.errors() if hasattr(history, "errors") else []
+            result["errors"] = [e for e in errors if e is not None]
+
+        return result
+
+    except Exception as e:
+        logger.warning(f"Failed to format browser history: {e}")
+        return {"steps": [], "completed": False, "success": False, "format_error": str(e)}
+
+
 def _json_type_to_python(schema: Dict[str, Any], model_name_prefix: str = "Nested") -> type:
     """
     Map JSON schema type to Python type for Pydantic model generation.
@@ -445,7 +502,7 @@ class BrowserService:
 
             return {
                 "success": True,
-                "result": str(history) if history else "",
+                "result": format_browser_history(history) if history else {},
                 "extracted_data": extracted_data if extracted_data else {},
                 "final_url": None,
                 "screenshots": await self._save_screenshots(

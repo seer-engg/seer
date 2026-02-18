@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 from seer.core.compiler.type_env import build_type_environment
 from seer.core.nodes.hitl_node import _build_hitl_output_schema
 from seer.core.compiler.validate_refs import validate_references, _validate_hitl
+from seer.core.errors import NodeError
 from seer.core.expr.typecheck import TypeEnvironment, Scope
 from seer.core.registry.tool_registry import ToolRegistry
 from seer.core.schema.models import (
@@ -487,7 +488,7 @@ def test_validate_hitl_display_expressions_valid():
     env.register("previous_node.summary", {"type": "string"})
 
     scope = Scope(env=env)
-    errors = []
+    errors: list[NodeError] = []
 
     node = HITLNode(
         id="test",
@@ -509,7 +510,7 @@ def test_validate_hitl_display_expressions_invalid():
     # Don't register 'unknown_node'
 
     scope = Scope(env=env)
-    errors = []
+    errors: list[NodeError] = []
 
     node = HITLNode(
         id="test",
@@ -523,7 +524,7 @@ def test_validate_hitl_display_expressions_invalid():
     _validate_hitl(node, scope, errors)
 
     assert len(errors) == 1
-    assert "unknown_node" in errors[0]
+    assert "unknown_node" in errors[0].message
 
 
 def test_validate_hitl_multiple_display_items():
@@ -534,7 +535,7 @@ def test_validate_hitl_multiple_display_items():
     # Don't register node2
 
     scope = Scope(env=env)
-    errors = []
+    errors: list[NodeError] = []
 
     node = HITLNode(
         id="test",
@@ -549,7 +550,7 @@ def test_validate_hitl_multiple_display_items():
     _validate_hitl(node, scope, errors)
 
     assert len(errors) == 1
-    assert "display[1].value" in errors[0]
+    assert errors[0].location == "display[1].value"
 
 
 def test_validate_references_hitl_in_workflow():
