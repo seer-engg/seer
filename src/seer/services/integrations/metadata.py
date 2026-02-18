@@ -232,6 +232,66 @@ INTEGRATION_CONFIGS: Dict[str, Dict[str, Any]] = {
             "scope_keywords": ["supabase"]
         }
     },
+    # Slack integration
+    "slack": {
+        "display_name": "Slack",
+        "oauth_provider": "slack",
+        "requires_oauth": True,
+        "icon": {"type": "url", "value": "https://img.logo.dev/slack.com?token=pk_Ovp4v2MYQDqQ0D6xdN7OJA"},
+        "brand_color": "#4A154B",
+        "default_scopes": ["channels:read", "chat:write"],
+        "scopes": [
+            {
+                "value": "channels:read",
+                "display_name": "View channels",
+                "description": "View basic information about public channels in a workspace"
+            },
+            {
+                "value": "channels:history",
+                "display_name": "View channel messages",
+                "description": "View messages and other content in public channels"
+            },
+            {
+                "value": "chat:write",
+                "display_name": "Send messages",
+                "description": "Send messages as the app"
+            },
+            {
+                "value": "channels:join",
+                "display_name": "Join channels",
+                "description": "Join public channels in the workspace"
+            },
+            {
+                "value": "users:read",
+                "display_name": "View users",
+                "description": "View people in a workspace"
+            },
+            {
+                "value": "groups:read",
+                "display_name": "View private channels",
+                "description": "View basic information about private channels"
+            },
+            {
+                "value": "groups:history",
+                "display_name": "View private channel messages",
+                "description": "View messages and other content in private channels"
+            },
+            {
+                "value": "im:write",
+                "display_name": "Send direct messages",
+                "description": "Start direct messages with people"
+            },
+            {
+                "value": "reactions:write",
+                "display_name": "Add reactions",
+                "description": "Add emoji reactions to messages"
+            },
+        ],
+        "detection_patterns": {
+            "tool_name_patterns": ["slack_"],
+            "scope_keywords": ["slack", "channels", "chat"]
+        }
+    },
 }
 
 

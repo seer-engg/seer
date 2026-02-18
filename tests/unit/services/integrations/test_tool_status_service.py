@@ -23,11 +23,86 @@ class MockTool:
 
 @pytest.mark.unit
 class TestProviderWithoutRefreshTokens:
-    """Test LinkedIn and other providers without refresh tokens."""
+    """Test LinkedIn, Slack, and other providers without refresh tokens."""
 
     def test_linkedin_in_providers_without_refresh_tokens(self):
         """Verify LinkedIn is in the PROVIDERS_WITHOUT_REFRESH_TOKENS set."""
         assert "linkedin" in PROVIDERS_WITHOUT_REFRESH_TOKENS
+
+    def test_slack_in_providers_without_refresh_tokens(self):
+        """Verify Slack is in the PROVIDERS_WITHOUT_REFRESH_TOKENS set.
+
+        Slack bot tokens (xoxb-*) are permanent and don't use refresh tokens.
+        """
+        assert "slack" in PROVIDERS_WITHOUT_REFRESH_TOKENS
+
+    def test_slack_connected_without_refresh_token(self):
+        """Slack tools should show connected with scopes but no refresh token.
+
+        Slack's OAuth returns permanent bot tokens without refresh_token field.
+        """
+        tool = MockTool(
+            name="slack_send_channel_message",
+            required_scopes=["chat:write", "channels:read"],
+            provider="slack",
+            integration_type="slack"
+        )
+
+        auth_requirements = determine_tool_auth_requirements(tool)
+
+        # Connection with scopes but NO refresh token (Slack's actual behavior)
+        conn_info = {
+            "scopes": "chat:write,channels:read",  # Slack uses comma-separated scopes
+            "has_refresh_token": False,  # Slack doesn't provide refresh tokens
+            "connection_id": "slack:123",
+            "provider_account_id": "T08ABKNJPGT"
+        }
+
+        status = build_tool_status(
+            tool=tool,
+            auth_requirements=auth_requirements,
+            provider="slack",
+            provider_aliases=[],
+            conn_info=conn_info,
+            provider_secrets={}
+        )
+
+        # Should be connected despite no refresh token
+        assert status["connected"] is True
+        assert status["missing_scopes"] == []
+        assert status["connection_id"] == "slack:123"
+
+    def test_slack_not_connected_missing_scopes(self):
+        """Slack tools should show not connected when scopes are missing."""
+        tool = MockTool(
+            name="slack_list_channels",
+            required_scopes=["channels:read", "groups:read"],
+            provider="slack",
+            integration_type="slack"
+        )
+
+        auth_requirements = determine_tool_auth_requirements(tool)
+
+        # Connection without groups:read scope
+        conn_info = {
+            "scopes": "chat:write,channels:read",  # Missing groups:read
+            "has_refresh_token": False,
+            "connection_id": "slack:123",
+            "provider_account_id": "T08ABKNJPGT"
+        }
+
+        status = build_tool_status(
+            tool=tool,
+            auth_requirements=auth_requirements,
+            provider="slack",
+            provider_aliases=[],
+            conn_info=conn_info,
+            provider_secrets={}
+        )
+
+        # Should NOT be connected due to missing scope
+        assert status["connected"] is False
+        assert "groups:read" in status["missing_scopes"]
 
     def test_linkedin_connected_without_refresh_token(self):
         """LinkedIn tools should show connected with scopes but no refresh token."""
