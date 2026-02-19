@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional
 
 from seer.api.agents.checkpointer import get_checkpointer
 from seer.api.core.errors import RUN_PROBLEM
@@ -21,7 +21,6 @@ from seer.api.workflows.services.shared import (
 )
 from seer.core.schema.models import TriggerSpec, WorkflowSpec
 from seer.database import (
-    TriggerSubscription,
     User,
     Workflow,
     WorkflowRun,
@@ -135,93 +134,6 @@ def _validate_trigger_envelope(envelope: Dict[str, Any]) -> None:
         )
 
 
-async def _generate_sample_trigger_envelope(
-    trigger: Union["TriggerSubscription", TriggerSpec],
-) -> Optional[Dict[str, Any]]:
-    """
-    Generate a sample event envelope for a trigger (subscription or spec).
-    Returns None if sample event is unavailable.
-
-    Supports both TriggerSubscription (DB model) and TriggerSpec (from workflow spec).
-    """
-    from seer.core.registry.trigger_registry import trigger_registry  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
-    from seer.core.triggers.events import (  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
-        TriggerEventEnvelopeInput,
-        build_event_envelope,
-    )
-
-    # Extract fields based on type
-    if isinstance(trigger, TriggerSpec):
-        trigger_id = trigger.id
-        trigger_key = trigger.key
-        title = trigger.ui_meta.get("title", trigger.key)
-        provider_connection_id = trigger.provider_config.get("provider_connection_id")
-
-        # Get definition from registry FIRST (needed for fallback and provider)
-        definition = trigger_registry.maybe_get(trigger_key)
-        if definition is None:
-            logger.warning(
-                "Cannot generate sample event: unknown trigger_key",
-                extra={
-                    "trigger_id": trigger_id,
-                    "trigger_key": trigger_key,
-                }
-            )
-            return None
-
-        provider = definition.provider
-        # Fallback to registry's sample_event if spec doesn't have one
-        sample_event = trigger.meta.sample_event or definition.meta.sample_event
-    else:
-        # TriggerSubscription
-        trigger_id = trigger.trigger_id
-        trigger_key = trigger.trigger_key
-        title = trigger.title or trigger.trigger_id
-        provider_connection_id = trigger.provider_connection_id
-
-        # Load trigger definition from registry
-        definition = trigger_registry.maybe_get(trigger_key)
-        if definition is None:
-            logger.warning(
-                "Cannot generate sample event: unknown trigger_key",
-                extra={
-                    "subscription_id": trigger.id,
-                    "trigger_key": trigger_key,
-                }
-            )
-            return None
-
-        provider = definition.provider
-        sample_event = definition.meta.sample_event
-
-    # Get sample event
-    if sample_event is None:
-        logger.warning(
-            "Cannot generate sample event: no sample_event in trigger definition",
-            extra={
-                "trigger_id": trigger_id,
-                "trigger_key": trigger_key,
-            }
-        )
-        return None
-
-    # Build event envelope (reuse existing helper)
-    envelope = build_event_envelope(
-        TriggerEventEnvelopeInput(
-            trigger_id=trigger_id,
-            trigger_key=trigger_key,
-            title=title,
-            provider=provider,
-            provider_connection_id=provider_connection_id,
-            payload=sample_event.get("data", sample_event),  # Handle both wrapped and unwrapped formats
-            raw=sample_event.get("raw"),
-            occurred_at=None,  # Uses current time
-        )
-    )
-
-    return envelope
-
-
 async def list_workflow_runs(
     user: User,
     workflow_id: str,
@@ -326,78 +238,6 @@ async def _handle_trigger_event_override(
     return _serialize_run(run)
 
 
-async def _handle_multi_trigger_runs(
-    user: User,
-    *,
-    workflow: Workflow,
-    workflow_id: str,
-    version: WorkflowVersion,
-    spec: WorkflowSpec,
-    payload: api_models.RunFromWorkflowRequest,
-    trigger_specs: list[TriggerSpec],
-) -> api_models.MultiRunResponse:
-    """Create multiple runs, one per trigger with sample event data."""
-    runs = []
-    for trigger_spec in trigger_specs:
-        trigger_envelope = await _generate_sample_trigger_envelope(trigger_spec)
-        if trigger_envelope is None:
-            logger.warning(
-                "Skipping trigger without sample event",
-                extra={"trigger_id": trigger_spec.id, "workflow_id": workflow_id}
-            )
-            continue
-
-        run = await _create_run_record(
-            user,
-            workflow=workflow,
-            workflow_version=version,
-            spec=spec,
-            inputs=payload.inputs,
-            config_payload=payload.config,
-            source=WorkflowRunSource.MANUAL,
-        )
-
-        try:
-            await workflow_execution_task.kiq(
-                run_id=run.id, user_id=user.id, trigger_envelope=trigger_envelope
-            )
-            trigger_title = trigger_spec.ui_meta.get("title", trigger_spec.key)
-            runs.append({"run": run, "trigger_title": trigger_title})
-        except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: Continue processing other triggers
-            logger.exception(
-                "Failed to enqueue trigger-based run",
-                extra={"workflow_id": workflow_id, "run_id": run.run_id, "trigger_id": trigger_spec.id}
-            )
-            await WorkflowRun.filter(id=run.id).update(
-                status=WorkflowRunStatus.FAILED,
-                finished_at=_now(),
-                error={"detail": f"Failed to enqueue workflow run: {exc}"},
-            )
-
-    if not runs:
-        _raise_problem(
-            type_uri=RUN_PROBLEM,
-            title="No valid triggers",
-            detail="Workflow has triggers but none have valid sample events",
-            status=400,
-        )
-
-    logger.info(
-        "Created multiple runs for workflow with triggers",
-        extra={
-            "workflow_id": workflow_id,
-            "run_count": len(runs),
-            "trigger_titles": [r["trigger_title"] for r in runs],
-        }
-    )
-    return api_models.MultiRunResponse(
-        runs=[
-            api_models.RunWithTrigger(**_serialize_run(r["run"]).model_dump(), trigger_title=r["trigger_title"])
-            for r in runs
-        ]
-    )
-
-
 async def _handle_manual_run(
     user: User,
     *,
@@ -461,11 +301,12 @@ async def run_saved_workflow(
     user: User,
     workflow_id: str,
     payload: api_models.RunFromWorkflowRequest,
-) -> api_models.RunResponse | api_models.MultiRunResponse:
+) -> api_models.RunResponse:
     """
-    Run a workflow. If the workflow has enabled trigger subscriptions,
-    automatically creates one run per trigger with sample event data.
-    Otherwise, creates a single manual run.
+    Run a workflow.
+
+    - If workflow has triggers, requires trigger_event_override with a real event
+    - If workflow has no triggers, creates a manual run
     """
     workflow = await _get_workflow(user, workflow_id)
 
@@ -515,14 +356,12 @@ async def run_saved_workflow(
         )
 
     if trigger_specs:
-        return await _handle_multi_trigger_runs(
-            user,
-            workflow=workflow,
-            workflow_id=workflow_id,
-            version=version,
-            spec=spec,
-            payload=payload,
-            trigger_specs=trigger_specs,
+        # Workflow has triggers but no event provided - require real event selection
+        _raise_problem(
+            type_uri=RUN_PROBLEM,
+            title="Trigger event required",
+            detail="This workflow has triggers. Please select a real event to run with.",
+            status=400,
         )
 
     return await _handle_manual_run(

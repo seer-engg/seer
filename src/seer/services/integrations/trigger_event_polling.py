@@ -23,6 +23,12 @@ from seer.core.triggers.polling.adapters.discord_message_received import (
     DEFAULT_MAX_RESULTS as DISCORD_MAX_RESULTS,
     _parse_discord_timestamp,
 )
+from seer.core.triggers.polling.adapters.slack_message_received import (
+    SLACK_API_BASE,
+    DEFAULT_MAX_RESULTS as SLACK_MAX_RESULTS,
+    SlackMessageReceivedAdapter,
+    _parse_slack_timestamp,
+)
 from seer.database import User
 from seer.logger import get_logger
 from seer.tools.google.gmail.helpers import GMAIL_API_BASE, build_gmail_list_params
@@ -376,4 +382,195 @@ def _handle_discord_error(response: httpx.Response, channel_id: str) -> None:
     raise HTTPException(
         status_code=response.status_code,
         detail=f"Discord API error: {response.text[:200]}",
+    )
+
+
+# =============================================================================
+# Slack Event Browsing
+# =============================================================================
+
+async def list_slack_events(
+    user: User,
+    provider_connection_id: int,
+    options,
+    slack_adapter: SlackMessageReceivedAdapter,
+) -> Dict[str, Any]:
+    """List Slack messages for browsing."""
+    _, access_token = await get_oauth_token(
+        user, connection_id=str(provider_connection_id)
+    )
+
+    channel_id = (options.filter_params or {}).get("channel_id")
+    workspace_id = (options.filter_params or {}).get("workspace_id")
+
+    if not channel_id:
+        raise HTTPException(
+            status_code=400,
+            detail="channel_id is required in filter_params for Slack message browsing",
+        )
+
+    page_size = min(options.page_size, SLACK_MAX_RESULTS)
+
+    try:
+        messages = await _fetch_slack_messages(access_token, channel_id, page_size)
+
+        if not messages:
+            return {
+                "items": [],
+                "next_page_token": None,
+                "trigger_key": options.trigger_key,
+                "supports_search": False,
+            }
+
+        items: List[Dict[str, Any]] = []
+        for message in messages:
+            items.append(_build_slack_event_item(
+                message=message,
+                workspace_id=workspace_id,
+                channel_id=channel_id,
+                trigger_key=options.trigger_key,
+                trigger_id=options.trigger_id,
+                provider_connection_id=provider_connection_id,
+                slack_adapter=slack_adapter,
+            ))
+
+        # Slack doesn't have standard pagination tokens; use oldest message ts
+        oldest_message_ts = messages[-1].get("ts") if messages else None
+
+        return {
+            "items": items,
+            "next_page_token": oldest_message_ts,
+            "trigger_key": options.trigger_key,
+            "supports_search": False,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to list Slack events")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch Slack messages: {str(exc)}"
+        ) from exc
+
+
+async def _fetch_slack_messages(
+    access_token: str, channel_id: str, max_results: int
+) -> List[Dict[str, Any]]:
+    """Fetch messages from Slack API using conversations.history."""
+    params: Dict[str, Any] = {
+        "channel": channel_id,
+        "limit": max_results,
+    }
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json; charset=utf-8",
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(
+            f"{SLACK_API_BASE}/conversations.history",
+            headers=headers,
+            params=params,
+        )
+        _handle_slack_error(resp, channel_id)
+        data = resp.json()
+
+        # Check Slack's ok field
+        if not data.get("ok"):
+            error = data.get("error", "unknown_error")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Slack API error: {error}",
+            )
+
+        messages = data.get("messages", [])
+        if not messages or not isinstance(messages, list):
+            return []
+
+        # Slack returns messages in reverse chronological order (newest first)
+        # Keep this order for browsing (newest first is more intuitive)
+        return messages
+
+
+def _build_slack_event_item(
+    *,
+    message: Dict[str, Any],
+    workspace_id: Optional[str],
+    channel_id: str,
+    trigger_key: str,
+    trigger_id: str,
+    provider_connection_id: int,
+    slack_adapter: SlackMessageReceivedAdapter,
+) -> Dict[str, Any]:
+    """Build a TriggerEventItem from Slack message data."""
+    # Reuse adapter's normalization logic
+    normalized_payload = slack_adapter._normalize_message(message, workspace_id, channel_id, None)  # pylint: disable=protected-access # Reason: Reusing adapter's message normalization
+
+    msg_ts = message.get("ts")
+    text = message.get("text", "")
+    user_info = normalized_payload.get("user", {})
+    username = user_info.get("username") or user_info.get("id") or "Unknown"
+
+    # Build display title
+    if text:
+        display_title = f"{username}: {text[:80]}{'...' if len(text) > 80 else ''}"
+    else:
+        display_title = f"{username}: (attachment or block)"
+
+    # Parse timestamp
+    occurred_at = _parse_slack_timestamp(msg_ts)
+    if not occurred_at:
+        occurred_at = datetime.now(timezone.utc)
+    display_subtitle = occurred_at.strftime("%b %d, %Y %I:%M %p")
+
+    envelope = build_event_envelope(
+        TriggerEventEnvelopeInput(
+            trigger_id=trigger_id,
+            trigger_key=trigger_key,
+            title=f"Slack message from {username}",
+            provider="slack",
+            provider_connection_id=provider_connection_id,
+            payload=normalized_payload,
+            raw=message,
+            occurred_at=occurred_at,
+        )
+    )
+
+    return {
+        "id": msg_ts,
+        "display_title": display_title,
+        "display_subtitle": display_subtitle,
+        "preview": text[:200] if text else None,
+        "envelope": envelope,
+        "metadata": {
+            "user_id": user_info.get("id"),
+            "channel_id": channel_id,
+            "workspace_id": workspace_id,
+        },
+    }
+
+
+def _handle_slack_error(response: httpx.Response, channel_id: str) -> None:
+    """Handle Slack API HTTP errors."""
+    if response.status_code < 400:
+        return
+    if response.status_code in {401, 403}:
+        raise HTTPException(
+            status_code=response.status_code,
+            detail="Slack authentication error. Please reconnect your Slack workspace.",
+        )
+    if response.status_code == 404:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Slack channel {channel_id} not found or bot doesn't have access.",
+        )
+    if response.status_code == 429:
+        raise HTTPException(
+            status_code=429,
+            detail="Slack rate limit exceeded. Please try again later.",
+        )
+    raise HTTPException(
+        status_code=response.status_code,
+        detail=f"Slack API error: {response.text[:200]}",
     )
