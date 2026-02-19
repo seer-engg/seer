@@ -231,6 +231,10 @@ async def save_chat_message(  # pylint: disable=too-many-positional-arguments # 
     """
     Save a chat message to the database.
 
+    This function is idempotent when a proposal is provided - if the proposal
+    already has a linked message, that existing message is returned instead
+    of creating a duplicate.
+
     Args:
         session_id: Session ID
         role: Message role ('user' or 'assistant')
@@ -241,11 +245,22 @@ async def save_chat_message(  # pylint: disable=too-many-positional-arguments # 
         proposal: Optional proposal linked to this message
 
     Returns:
-        Created message
+        Created message (or existing message if proposal already linked)
     """
     session = await WorkflowChatSession.get_or_none(id=session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Chat session not found")
+
+    # Idempotency check: if proposal already linked to a message, return existing
+    # This handles task retry scenarios where the message was already created
+    if proposal is not None:
+        existing_message = await WorkflowChatMessage.get_or_none(proposal=proposal)
+        if existing_message:
+            logger.info(
+                "Proposal %s already linked to message %s, returning existing (task retry)",
+                proposal.id, existing_message.id
+            )
+            return existing_message
 
     # Update session updated_at timestamp
     session.updated_at = datetime.utcnow()
