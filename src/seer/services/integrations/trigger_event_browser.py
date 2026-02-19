@@ -15,11 +15,13 @@ from fastapi import HTTPException
 
 from seer.core.triggers.events import TriggerEventEnvelopeInput, build_event_envelope
 from seer.core.triggers.polling.adapters.gmail_email_received import GmailEmailReceivedAdapter
+from seer.core.triggers.polling.adapters.slack_message_received import SlackMessageReceivedAdapter
 from seer.database import User, TriggerEvent, TriggerSubscription
 from seer.logger import get_logger
 from seer.services.integrations.trigger_event_polling import (
     list_discord_events,
     list_gmail_events,
+    list_slack_events,
 )
 
 logger = get_logger(__name__)
@@ -62,6 +64,7 @@ TRIGGER_BROWSING_CONFIG: Dict[str, TriggerBrowsingConfig] = {
     # Polling triggers - fetch live from external APIs
     "poll.gmail.email_received": TriggerBrowsingConfig("google", "polling", True),
     "poll.discord.message_received": TriggerBrowsingConfig("discord", "polling", False),
+    "poll.slack.message_received": TriggerBrowsingConfig("slack", "polling", False),
     # Persisted triggers - query from TriggerEvent database table
     "webhook.generic": TriggerBrowsingConfig("generic", "persisted", False),
     "webhook.supabase.db_changes": TriggerBrowsingConfig("supabase", "persisted", False),
@@ -96,6 +99,7 @@ class TriggerEventBrowser:
     def __init__(self, user: User):
         self.user = user
         self._gmail_adapter = GmailEmailReceivedAdapter()
+        self._slack_adapter = SlackMessageReceivedAdapter()
 
     @staticmethod
     def get_supported_trigger_keys() -> List[str]:
@@ -162,6 +166,8 @@ class TriggerEventBrowser:
             return await list_gmail_events(self.user, provider_connection_id, options, self._gmail_adapter)
         if trigger_key == "poll.discord.message_received":
             return await list_discord_events(options)
+        if trigger_key == "poll.slack.message_received":
+            return await list_slack_events(self.user, provider_connection_id, options, self._slack_adapter)
         raise ValueError(f"Polling trigger '{trigger_key}' is not yet implemented")
 
     # =========================================================================
