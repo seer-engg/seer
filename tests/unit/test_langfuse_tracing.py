@@ -1,5 +1,8 @@
 """Tests for Langfuse tracing utilities."""
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 class TestLangfuseUserContext:
@@ -124,3 +127,32 @@ class TestLangfuseUserContext:
                     # Should still execute the body even if propagate_attributes fails
                     assert executed
                     mock_logger.debug.assert_called()
+
+    @patch("seer.utilities.langfuse_tracing.config")
+    def test_workflow_exceptions_propagate_correctly(self, mock_config):
+        """
+        Workflow exceptions thrown through the context manager should propagate.
+
+        This tests the fix for the bug where exceptions were suppressed with a yield,
+        causing 'RuntimeError: generator didn't stop after throw()'.
+        """
+        mock_config.langfuse_enabled = True
+
+        # Create a proper mock context manager for propagate_attributes
+        @contextmanager
+        def mock_propagate_attributes(**_kwargs):
+            yield
+
+        mock_langfuse = MagicMock()
+        mock_langfuse.propagate_attributes = mock_propagate_attributes
+
+        with patch.dict("sys.modules", {"langfuse": mock_langfuse}):
+            from seer.utilities import langfuse_tracing
+            import importlib
+            importlib.reload(langfuse_tracing)
+
+            with patch.object(langfuse_tracing, "config", mock_config):
+                # Exception raised inside the context should propagate
+                with pytest.raises(ValueError, match="workflow error"):
+                    with langfuse_tracing.langfuse_user_context("user_123"):
+                        raise ValueError("workflow error")

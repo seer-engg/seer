@@ -353,6 +353,106 @@ class WorkflowCompilerSingleton:
             # Not in async context - safe to use asyncio.run
             return asyncio.run(processor.process_files(file_contents))
 
+    def _invoke_with_files(self, llm: Any, prompt: str, file_contents: list) -> Any:
+        """
+        Invoke LLM with optional file content processing.
+
+        Handles text extraction and multimodal image blocks from file contents.
+
+        Args:
+            llm: The LLM instance (may be structured or regular)
+            prompt: The base prompt text
+            file_contents: List of file content objects to process
+
+        Returns:
+            The LLM response
+        """
+        if not file_contents:
+            return llm.invoke(prompt)
+
+        processed = WorkflowCompilerSingleton._process_file_contents_sync(file_contents)
+
+        # Append extracted document text to prompt
+        if processed["extracted_text"]:
+            prompt = f"{prompt}\n\n{processed['extracted_text']}"
+
+        # Build multimodal message if images are present
+        if processed["image_blocks"]:
+            content: list[Dict[str, Any]] = [{"type": "text", "text": prompt}]
+            content.extend(processed["image_blocks"])
+            message = HumanMessage(content=content)
+            return llm.invoke([message])
+
+        return llm.invoke(prompt)
+
+    @staticmethod
+    def _check_llm_response_error(response: Any, model_id: str) -> tuple[Any, str | None]:
+        """
+        Check LLM response for errors and extract underlying response with metadata.
+
+        Args:
+            response: The LLM response (may be AIMessage or dict from structured output)
+            model_id: Model identifier for error messages
+
+        Returns:
+            Tuple of (underlying_response_with_metadata, finish_reason)
+
+        Raises:
+            ExecutionError: If finish_reason is "error"
+        """
+        underlying_response = None
+        finish_reason = None
+
+        # For structured output, metadata is in _last_response; for regular, it's on response
+        if hasattr(response, "_last_response"):
+            # pylint: disable=protected-access  # Reason: accessing LangChain internal for error detection
+            underlying_response = response._last_response
+        elif hasattr(response, "response_metadata"):
+            underlying_response = response
+
+        if underlying_response is not None and hasattr(underlying_response, "response_metadata"):
+            response_meta = underlying_response.response_metadata
+            finish_reason = response_meta.get("finish_reason")
+            if finish_reason == "error":
+                logger.error(
+                    "LLM returned error finish_reason for model '%s': %s",
+                    model_id,
+                    response_meta,
+                )
+                raise ExecutionError(
+                    f"LLM generation failed with finish_reason='error'. "
+                    f"Model: {model_id}. Check Langfuse trace for details."
+                )
+
+        return underlying_response, finish_reason
+
+    @staticmethod
+    def _extract_usage_metadata_safe(
+        response: Any, underlying_response: Any, model_id: str
+    ) -> Dict[str, Any]:
+        """
+        Extract usage metadata from response with fallback to defaults.
+
+        Args:
+            response: The direct LLM response
+            underlying_response: The underlying response with metadata (may be None)
+            model_id: Model identifier for fallback
+
+        Returns:
+            Usage metadata dict
+        """
+        if underlying_response is not None:
+            return extract_usage_metadata(underlying_response, model_id)
+        if hasattr(response, "usage_metadata") or hasattr(response, "response_metadata"):
+            return extract_usage_metadata(response, model_id)
+        # No metadata available, use empty
+        return {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_tokens": 0,
+            "model": model_id,
+        }
+
     def _build_text_handler(self, model_id: str):
         def handler(invocation: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
             parameters = invocation.get("parameters") or {}
@@ -366,29 +466,27 @@ class WorkflowCompilerSingleton:
                 invocation["prompt"], invocation.get("inputs")
             )
 
-            # Process file inputs if present
-            if file_contents:
-                processed = WorkflowCompilerSingleton._process_file_contents_sync(file_contents)
+            # Invoke LLM with optional file content processing
+            response = self._invoke_with_files(llm, prompt, file_contents)
 
-                # Append extracted document text to prompt
-                if processed["extracted_text"]:
-                    prompt = f"{prompt}\n\n{processed['extracted_text']}"
+            # Check for errors and extract finish_reason
+            _, finish_reason = self._check_llm_response_error(response, model_id)
 
-                # Build multimodal message if images are present
-                if processed["image_blocks"]:
-                    content: list[Dict[str, Any]] = [{"type": "text", "text": prompt}]
-                    content.extend(processed["image_blocks"])
-                    message = HumanMessage(content=content)
-                    response = llm.invoke([message])
-                else:
-                    response = llm.invoke(prompt)
-            else:
-                response = llm.invoke(prompt)
-
-            # Extract usage metadata
+            # Extract usage metadata and text
             usage_metadata = extract_usage_metadata(response, model_id)
-
             text_result = message_to_text(response)
+
+            # Check for empty text response
+            if not text_result or not text_result.strip():
+                logger.error(
+                    "LLM returned empty text for model '%s'. finish_reason=%s",
+                    model_id,
+                    finish_reason,
+                )
+                raise ExecutionError(
+                    f"LLM returned empty text output. Model: {model_id}, finish_reason: {finish_reason}"
+                )
+
             return text_result, usage_metadata
 
         return handler
@@ -417,42 +515,27 @@ class WorkflowCompilerSingleton:
 
             structured_llm = llm.with_structured_output(enriched_schema, method="json_schema")
 
-            # Process file inputs if present
-            if file_contents:
-                processed = WorkflowCompilerSingleton._process_file_contents_sync(file_contents)
+            # Invoke LLM with optional file content processing
+            response = self._invoke_with_files(structured_llm, prompt, file_contents)
 
-                # Append extracted document text to prompt
-                if processed["extracted_text"]:
-                    prompt = f"{prompt}\n\n{processed['extracted_text']}"
+            # Check for errors and extract underlying response (for structured output, check _last_response)
+            underlying_response, finish_reason = self._check_llm_response_error(
+                structured_llm, model_id
+            )
 
-                # Build multimodal message if images are present
-                if processed["image_blocks"]:
-                    content: list[Dict[str, Any]] = [{"type": "text", "text": prompt}]
-                    content.extend(processed["image_blocks"])
-                    message = HumanMessage(content=content)
-                    response = structured_llm.invoke([message])
-                else:
-                    response = structured_llm.invoke(prompt)
-            else:
-                response = structured_llm.invoke(prompt)
+            # Check for empty/None response
+            if response is None or (isinstance(response, dict) and not response):
+                logger.error(
+                    "LLM returned empty response for model '%s'. finish_reason=%s",
+                    model_id,
+                    finish_reason,
+                )
+                raise ExecutionError(
+                    f"LLM returned empty structured output. Model: {model_id}, finish_reason: {finish_reason}"
+                )
 
             # Extract usage metadata
-            # Note: structured output might return dict directly, not AIMessage
-            # Need to check if response has metadata or if it's in underlying call
-            usage_metadata = {}
-            if hasattr(structured_llm, "_last_response"):
-                # pylint: disable=protected-access  # Reason: accessing LangChain internal state for usage metadata
-                usage_metadata = extract_usage_metadata(structured_llm._last_response, model_id)
-            elif hasattr(response, "usage_metadata") or hasattr(response, "response_metadata"):
-                usage_metadata = extract_usage_metadata(response, model_id)
-            else:
-                # No metadata available, use empty
-                usage_metadata = {
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "reasoning_tokens": 0,
-                    "model": model_id,
-                }
+            usage_metadata = self._extract_usage_metadata_safe(response, underlying_response, model_id)
 
             return response, usage_metadata
 

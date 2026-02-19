@@ -229,15 +229,26 @@ def langfuse_user_context(user_id: Optional[str]):
     try:
         # pylint: disable=import-outside-toplevel  # Reason: lazy loading to avoid dependency if not used
         from langfuse import propagate_attributes
-        # propagate_attributes uses contextvars internally, making it async-safe
-        # All child observations automatically inherit the user_id
-        with propagate_attributes(user_id=user_id):  # pylint: disable=not-context-manager  # Reason: langfuse's propagate_attributes is @contextmanager decorated
-            yield
     except ImportError:
         logger.warning("langfuse not installed, cannot set Langfuse user context")
         yield
-    except Exception as exc:  # pylint: disable=broad-exception-caught  # Reason: instrumentation should not break execution
-        logger.debug("Failed to set Langfuse user context: %s", exc)
+        return
+
+    # propagate_attributes uses contextvars internally, making it async-safe
+    # All child observations automatically inherit the user_id
+    # Separate setup errors (suppress) from workflow errors (propagate)
+    try:
+        ctx = propagate_attributes(user_id=user_id)  # pylint: disable=not-context-manager  # Reason: langfuse's propagate_attributes is @contextmanager decorated
+    except Exception as exc: # pylint: disable=broad-exception-caught # Reason: instrumentation should not break agent execution
+        # Langfuse context creation failed - fallback to no-op
+        logger.debug("Failed to create Langfuse context: %s", exc)
+        yield
+        return
+
+    # Enter context and yield; any exceptions from the workflow body will propagate naturally
+    # We don't catch exceptions here - that was the bug that caused
+    # "RuntimeError: generator didn't stop after throw()"
+    with ctx:
         yield
 
 
