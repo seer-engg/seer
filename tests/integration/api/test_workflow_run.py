@@ -2,9 +2,9 @@
 Integration tests for workflow run API (run_saved_workflow).
 
 Tests:
-- Running draft workflows with triggers from spec
+- Running draft workflows with triggers requires trigger_event_override
 - Running workflows without triggers
-- Trigger envelope generation from TriggerSpec
+- Running with trigger_event_override
 """
 import hashlib
 import json
@@ -12,10 +12,10 @@ from typing import Any, Dict
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from seer.api.workflows.services.execution import run_saved_workflow
 from seer.api.workflows import models as api_models
-from seer.core.schema.models import TriggerMetadata, TriggerSpec, WorkflowSpec
 from seer.database.workflow_models import (
     Workflow,
     WorkflowVersion,
@@ -36,20 +36,14 @@ def _hash_spec(spec_dict: Dict[str, Any]) -> str:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_run_draft_workflow_with_triggers_from_spec(db_engine, test_user):
-    """Test that draft workflows read triggers from spec, not TriggerSubscription."""
+async def test_run_draft_workflow_with_triggers_requires_event_override(db_engine, test_user):
+    """Test that draft workflows with triggers require trigger_event_override."""
     # Create workflow
     workflow = await Workflow.create(
         user=test_user,
         name="Test Workflow",
         description="Test",
     )
-
-    # Create draft version with triggers in spec
-    sample_event = {
-        "data": {"message": "Test message", "from": "test@example.com"},
-        "raw": {"raw_data": "example"},
-    }
 
     spec_dict = {
         "version": "2",
@@ -62,7 +56,7 @@ async def test_run_draft_workflow_with_triggers_from_spec(db_engine, test_user):
                 "mode": "webhook",
                 "event_schema": {},
                 "meta": {
-                    "sample_event": sample_event,
+                    "sample_event": {"data": {"test": "data"}},
                     "requires_connection": False,
                 },
                 "filters": {},
@@ -86,50 +80,98 @@ async def test_run_draft_workflow_with_triggers_from_spec(db_engine, test_user):
         with patch("seer.api.workflows.services.triggers.sync_trigger_subscriptions") as mock_sync:
             mock_sync.return_value = None
 
-            # Mock workflow_execution_task to avoid actual task execution
-            with patch("seer.api.workflows.services.execution.workflow_execution_task") as mock_task:
-                mock_task.kiq = AsyncMock()
+            # Run workflow without trigger_event_override - should fail
+            payload = api_models.RunFromWorkflowRequest(
+                inputs={},
+                config={},
+            )
 
-                # Mock trigger_registry to return a definition
-                with patch("seer.core.registry.trigger_registry.trigger_registry") as mock_registry:
-                    mock_definition = AsyncMock()
-                    mock_definition.provider = "webhook"
-                    mock_definition.meta.sample_event = sample_event
-                    mock_registry.maybe_get.return_value = mock_definition
+            with pytest.raises(HTTPException) as exc_info:
+                await run_saved_workflow(test_user, workflow.workflow_id, payload)
 
-                    # Run workflow
-                    payload = api_models.RunFromWorkflowRequest(
-                        inputs={},
-                        config={},
-                    )
-
-                    result = await run_saved_workflow(test_user, workflow.workflow_id, payload)
-
-                    # Verify MultiRunResponse with one run per trigger
-                    assert isinstance(result, api_models.MultiRunResponse)
-                    assert len(result.runs) == 1
-                    assert result.runs[0].trigger_title == "Test Webhook Trigger"
-
-                    # Verify trigger envelope was passed to task
-                    assert mock_task.kiq.called
-                    call_kwargs = mock_task.kiq.call_args[1]
-                    assert "trigger_envelope" in call_kwargs
-                    assert call_kwargs["trigger_envelope"] is not None
+            # Verify 400 error about requiring trigger event
+            assert exc_info.value.status_code == 400
+            assert "Trigger event required" in str(exc_info.value.detail)
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_run_draft_workflow_with_multiple_triggers(db_engine, test_user):
-    """Test running draft workflow with multiple triggers creates multiple runs."""
+async def test_run_draft_workflow_with_trigger_event_override(db_engine, test_user):
+    """Test running draft workflow with trigger_event_override succeeds."""
     workflow = await Workflow.create(
         user=test_user,
         name="Test Workflow",
         description="Test",
     )
 
-    sample_event = {
-        "data": {"test": "data"},
+    spec_dict = {
+        "version": "2",
+        "nodes": [{"id": "node1", "type": "tool", "tool": "test.tool", "inputs": {}}],
+        "edges": [{"source": "trigger_1", "target": "node1", "type": "trigger"}],
+        "triggers": [
+            {
+                "id": "trigger_1",
+                "key": "webhook.custom",
+                "mode": "webhook",
+                "event_schema": {},
+                "meta": {
+                    "requires_connection": False,
+                },
+                "filters": {},
+                "provider_config": {},
+                "ui_meta": {"title": "Test Webhook Trigger"},
+            }
+        ],
     }
+
+    version = await WorkflowVersion.create(
+        workflow=workflow,
+        version_number=1,
+        status=WorkflowVersionStatus.DRAFT,
+        spec=spec_dict,
+        spec_hash=_hash_spec(spec_dict),
+    )
+
+    # Mock _validate_workflow_spec to skip compiler validation (test.tool not registered)
+    with patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock):
+        with patch("seer.api.workflows.services.triggers.sync_trigger_subscriptions") as mock_sync:
+            mock_sync.return_value = None
+
+            with patch("seer.api.workflows.services.execution.workflow_execution_task") as mock_task:
+                mock_task.kiq = AsyncMock()
+
+                # Run workflow WITH trigger_event_override - should succeed
+                payload = api_models.RunFromWorkflowRequest(
+                    inputs={},
+                    config={},
+                    trigger_event_override={
+                        "trigger_key": "webhook.custom",
+                        "data": {"message": "Real event data"},
+                    },
+                )
+
+                result = await run_saved_workflow(test_user, workflow.workflow_id, payload)
+
+                # Verify single RunResponse
+                assert isinstance(result, api_models.RunResponse)
+                assert result.run_id is not None
+
+                # Verify trigger envelope was passed to task
+                assert mock_task.kiq.called
+                call_kwargs = mock_task.kiq.call_args[1]
+                assert "trigger_envelope" in call_kwargs
+                assert call_kwargs["trigger_envelope"]["data"] == {"message": "Real event data"}
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_run_draft_workflow_with_multiple_triggers_requires_trigger_id(db_engine, test_user):
+    """Test running draft workflow with multiple triggers requires trigger_id when using override."""
+    workflow = await Workflow.create(
+        user=test_user,
+        name="Test Workflow",
+        description="Test",
+    )
 
     spec_dict = {
         "version": "2",
@@ -144,10 +186,7 @@ async def test_run_draft_workflow_with_multiple_triggers(db_engine, test_user):
                 "key": "webhook.custom",
                 "mode": "webhook",
                 "event_schema": {},
-                "meta": {
-                    "sample_event": sample_event,
-                    "requires_connection": False,
-                },
+                "meta": {"requires_connection": False},
                 "filters": {},
                 "provider_config": {},
                 "ui_meta": {"title": "Trigger One"},
@@ -157,10 +196,7 @@ async def test_run_draft_workflow_with_multiple_triggers(db_engine, test_user):
                 "key": "webhook.custom",
                 "mode": "webhook",
                 "event_schema": {},
-                "meta": {
-                    "sample_event": sample_event,
-                    "requires_connection": False,
-                },
+                "meta": {"requires_connection": False},
                 "filters": {},
                 "provider_config": {},
                 "ui_meta": {"title": "Trigger Two"},
@@ -181,30 +217,17 @@ async def test_run_draft_workflow_with_multiple_triggers(db_engine, test_user):
         with patch("seer.api.workflows.services.triggers.sync_trigger_subscriptions") as mock_sync:
             mock_sync.return_value = None
 
-            with patch("seer.api.workflows.services.execution.workflow_execution_task") as mock_task:
-                mock_task.kiq = AsyncMock()
+            # Run without trigger_event_override - should fail requiring event
+            payload = api_models.RunFromWorkflowRequest(
+                inputs={},
+                config={},
+            )
 
-                with patch("seer.core.registry.trigger_registry.trigger_registry") as mock_registry:
-                    mock_definition = AsyncMock()
-                    mock_definition.provider = "webhook"
-                    mock_definition.meta.sample_event = sample_event
-                    mock_registry.maybe_get.return_value = mock_definition
+            with pytest.raises(HTTPException) as exc_info:
+                await run_saved_workflow(test_user, workflow.workflow_id, payload)
 
-                    payload = api_models.RunFromWorkflowRequest(
-                        inputs={},
-                        config={},
-                    )
-
-                    result = await run_saved_workflow(test_user, workflow.workflow_id, payload)
-
-                    # Verify two runs created
-                    assert isinstance(result, api_models.MultiRunResponse)
-                    assert len(result.runs) == 2
-                    assert result.runs[0].trigger_title == "Trigger One"
-                    assert result.runs[1].trigger_title == "Trigger Two"
-
-                    # Verify task was enqueued twice
-                    assert mock_task.kiq.call_count == 2
+            assert exc_info.value.status_code == 400
+            assert "Trigger event required" in str(exc_info.value.detail)
 
 
 @pytest.mark.integration
@@ -242,7 +265,7 @@ async def test_run_workflow_without_triggers(db_engine, test_user):
 
         result = await run_saved_workflow(test_user, workflow.workflow_id, payload)
 
-        # Verify single RunResponse (not MultiRunResponse)
+        # Verify single RunResponse
         assert isinstance(result, api_models.RunResponse)
         assert result.run_id is not None
 
@@ -254,8 +277,8 @@ async def test_run_workflow_without_triggers(db_engine, test_user):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_run_workflow_skips_triggers_without_sample_event(db_engine, test_user):
-    """Test that triggers without sample events are skipped."""
+async def test_run_workflow_with_triggers_requires_trigger_event(db_engine, test_user):
+    """Test that workflows with triggers require trigger_event_override."""
     workflow = await Workflow.create(
         user=test_user,
         name="Test Workflow",
@@ -273,12 +296,11 @@ async def test_run_workflow_skips_triggers_without_sample_event(db_engine, test_
                 "mode": "webhook",
                 "event_schema": {},
                 "meta": {
-                    "sample_event": None,  # No sample event
                     "requires_connection": False,
                 },
                 "filters": {},
                 "provider_config": {},
-                "ui_meta": {"title": "No Sample Trigger"},
+                "ui_meta": {"title": "Test Trigger"},
             }
         ],
     }
@@ -296,36 +318,29 @@ async def test_run_workflow_skips_triggers_without_sample_event(db_engine, test_
         with patch("seer.api.workflows.services.triggers.sync_trigger_subscriptions") as mock_sync:
             mock_sync.return_value = None
 
-            with patch("seer.core.registry.trigger_registry.trigger_registry") as mock_registry:
-                mock_definition = AsyncMock()
-                mock_definition.provider = "webhook"
-                mock_definition.meta.sample_event = None  # No sample
-                mock_registry.maybe_get.return_value = mock_definition
+            payload = api_models.RunFromWorkflowRequest(
+                inputs={},
+                config={},
+            )
 
-                payload = api_models.RunFromWorkflowRequest(
-                    inputs={},
-                    config={},
-                )
+            # Should raise error requiring trigger event
+            with pytest.raises(HTTPException) as exc_info:
+                await run_saved_workflow(test_user, workflow.workflow_id, payload)
 
-                # Should raise error since no valid triggers
-                with pytest.raises(Exception) as exc_info:
-                    await run_saved_workflow(test_user, workflow.workflow_id, payload)
-
-                # Verify error message
-                assert "No valid triggers" in str(exc_info.value)
+            # Verify error message
+            assert exc_info.value.status_code == 400
+            assert "Trigger event required" in str(exc_info.value.detail)
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_run_workflow_uses_trigger_key_as_fallback_title(db_engine, test_user):
-    """Test that trigger key is used as fallback when title is missing."""
+async def test_run_workflow_with_trigger_override_uses_fallback_title(db_engine, test_user):
+    """Test that trigger key is used as fallback title in envelope when ui_meta title is missing."""
     workflow = await Workflow.create(
         user=test_user,
         name="Test Workflow",
         description="Test",
     )
-
-    sample_event = {"data": {"test": "data"}}
 
     spec_dict = {
         "version": "2",
@@ -338,7 +353,6 @@ async def test_run_workflow_uses_trigger_key_as_fallback_title(db_engine, test_u
                 "mode": "webhook",
                 "event_schema": {},
                 "meta": {
-                    "sample_event": sample_event,
                     "requires_connection": False,
                 },
                 "filters": {},
@@ -364,19 +378,21 @@ async def test_run_workflow_uses_trigger_key_as_fallback_title(db_engine, test_u
             with patch("seer.api.workflows.services.execution.workflow_execution_task") as mock_task:
                 mock_task.kiq = AsyncMock()
 
-                with patch("seer.core.registry.trigger_registry.trigger_registry") as mock_registry:
-                    mock_definition = AsyncMock()
-                    mock_definition.provider = "webhook"
-                    mock_definition.meta.sample_event = sample_event
-                    mock_registry.maybe_get.return_value = mock_definition
+                # Provide trigger_event_override without title
+                payload = api_models.RunFromWorkflowRequest(
+                    inputs={},
+                    config={},
+                    trigger_event_override={
+                        "trigger_key": "webhook.custom",
+                        "data": {"test": "data"},
+                    },
+                )
 
-                    payload = api_models.RunFromWorkflowRequest(
-                        inputs={},
-                        config={},
-                    )
+                result = await run_saved_workflow(test_user, workflow.workflow_id, payload)
 
-                    result = await run_saved_workflow(test_user, workflow.workflow_id, payload)
+                # Verify run was created
+                assert isinstance(result, api_models.RunResponse)
 
-                    # Verify trigger_key is used as fallback title
-                    assert isinstance(result, api_models.MultiRunResponse)
-                    assert result.runs[0].trigger_title == "webhook.custom"
+                # Verify trigger_key is used as fallback title in envelope
+                call_kwargs = mock_task.kiq.call_args[1]
+                assert call_kwargs["trigger_envelope"]["title"] == "webhook.custom"

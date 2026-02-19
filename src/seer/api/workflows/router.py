@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Union
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
@@ -248,7 +247,7 @@ async def typecheck_expression(request: Request, payload: api_models.ExpressionT
 
 @router.post(
     "/workflows/{workflow_id}/runs",
-    response_model=Union[api_models.RunResponse, api_models.MultiRunResponse],
+    response_model=api_models.RunResponse,
     status_code=status.HTTP_201_CREATED
 )
 async def run_workflow(request: Request, workflow_id: str, payload: api_models.RunFromWorkflowRequest):
