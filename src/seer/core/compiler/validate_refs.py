@@ -116,7 +116,10 @@ def _uses_bare_trigger_reference(spec: WorkflowSpec) -> bool:
         values_to_check = []
 
         if hasattr(node, "inputs"):
-            values_to_check.extend(getattr(node, "inputs").values())
+            inputs = getattr(node, "inputs")
+            if isinstance(inputs, dict):
+                values_to_check.extend(inputs.values())
+            # HITLNode.inputs is List[HITLInputField] - fields don't contain ${} expressions
         if hasattr(node, "value"):
             val = getattr(node, "value")
             if val is not None:
@@ -140,7 +143,10 @@ def _node_uses_trigger_ids(node: Node, trigger_ids: set[str]) -> bool:
     values_to_check = []
 
     if hasattr(node, "inputs"):
-        values_to_check.extend(getattr(node, "inputs").values())
+        inputs = getattr(node, "inputs")
+        if isinstance(inputs, dict):
+            values_to_check.extend(inputs.values())
+        # HITLNode.inputs is List[HITLInputField] - fields don't contain ${} expressions
     if hasattr(node, "value"):
         val = getattr(node, "value")
         if val is not None:
