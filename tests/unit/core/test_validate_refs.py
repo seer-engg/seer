@@ -18,6 +18,10 @@ from seer.core.schema.models import (
     Edge,
     EdgeType,
     ForEachNode,
+    HITLInputField,
+    HITLInputOption,
+    HITLInputType,
+    HITLNode,
     IfNode,
     ToolNode,
     TriggerSpec,
@@ -1478,3 +1482,79 @@ def test_error_message_includes_node_context():
     error_msg = str(exc_info.value)
     assert "my_task_node" in error_msg
     assert "inputs" in error_msg
+
+
+# =============================================================================
+# HITLNode List Inputs Regression Tests
+# =============================================================================
+
+
+def test_validate_references_hitl_node_with_list_inputs():
+    """
+    Regression test: HITLNode.inputs is a List[HITLInputField], not a dict.
+
+    This test ensures that validate_references handles HITLNode correctly.
+    Previously, the code assumed node.inputs was always a dict and called .values(),
+    which crashed with: AttributeError: 'list' object has no attribute 'values'
+    """
+    type_env = TypeEnvironment()
+    type_env.register("t1", {"type": "object", "properties": {"data": {"type": "string"}}})
+    type_env.register("t1.data", {"type": "string"})
+
+    spec = WorkflowSpec(
+        version="2",
+        triggers=[
+            TriggerSpec(id="t1", key="test.trigger", mode="polling", event_schema={})
+        ],
+        nodes=[
+            HITLNode(
+                id="approval_node",
+                type="hitl",
+                title="Approval Required",
+                description="Please review and approve",
+                inputs=[
+                    HITLInputField(
+                        id="decision",
+                        question="Do you approve?",
+                        input_type=HITLInputType.single_choice,
+                        options=[
+                            HITLInputOption(value="yes", label="Yes"),
+                            HITLInputOption(value="no", label="No"),
+                        ]
+                    )
+                ]
+            )
+        ],
+        edges=[
+            Edge(source="t1", target="approval_node", type=EdgeType.trigger)
+        ]
+    )
+
+    # Should not raise AttributeError: 'list' object has no attribute 'values'
+    validate_references(spec, type_env)
+
+
+def test_node_uses_trigger_ids_hitl_node():
+    """Test that _node_uses_trigger_ids handles HITLNode with list inputs."""
+    node = HITLNode(
+        id="hitl1",
+        type="hitl",
+        title="Test HITL",
+        inputs=[
+            HITLInputField(
+                id="choice",
+                question="Pick one",
+                input_type=HITLInputType.single_choice,
+                options=[
+                    HITLInputOption(value="a", label="A"),
+                    HITLInputOption(value="b", label="B"),
+                ]
+            )
+        ]
+    )
+    trigger_ids = {"t1"}
+
+    # Should not crash with AttributeError
+    result = _node_uses_trigger_ids(node, trigger_ids)
+    # HITLNode inputs don't contain ${} expressions, so should return False
+    assert result is False
