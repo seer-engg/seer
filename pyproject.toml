@@ -46,6 +46,7 @@ dependencies = [
     "taskiq-redis>=1.2.1",
     "watchfiles>=1.0.0",  # Required for taskiq worker --reload in local development
     "psycopg[binary]>=3.1.0",  # Required by langgraph-checkpoint-postgres
+    "psycopg2-binary>=2.9.0",  # Required by mem0 pgvector (sync driver)
     "RestrictedPython>=7.0",  # Required for RLM tool sandbox
     "stripe>=10.0.0",  # Stripe payment processing for subscriptions
     "boto3>=1.42.34",
@@ -60,6 +61,9 @@ dependencies = [
     "browser-use>=0.11.9",
     "playwright>=1.58.0",
     "cryptography>=43.0.0",
+    "mem0ai>=0.1.0",  # Memory layer for cross-session context
+    "litellm>=1.0.0",  # Multi-provider LLM interface (for mem0 with OpenRouter)
+    "sentence-transformers>=3.0.0",  # Required for HuggingFace embeddings in mem0
 ]
 
 [tool.hatch.version]

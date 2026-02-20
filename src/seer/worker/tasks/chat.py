@@ -50,6 +50,7 @@ from seer.observability import increment_chat_message_count
 from seer.observability.exceptions import RunCostCapExceeded
 from seer.observability.sentry_client import set_user_context, set_tag, set_context
 from seer.worker.broker_instance import broker
+from seer.worker.tasks.memory import extract_session_memories
 
 logger = get_logger(__name__)
 
@@ -201,11 +202,13 @@ async def chat_execution_task(
         # Set Sentry context for error tracking
         _set_sentry_context_for_chat(user, session_id, workflow_id, thread_id)
 
-        # Create agent
-        agent = create_nexus_chat_agent(
+        # Create agent (with memory context injection if enabled)
+        agent = await create_nexus_chat_agent(
             model=model or config.default_llm_model,
             checkpointer=checkpointer,
             workflow_state=workflow_state,
+            user_id=user.user_id,
+            current_query=message,
         )
 
         # Get user settings and create runtime context
@@ -292,6 +295,10 @@ async def chat_execution_task(
                     "Chat execution completed successfully",
                     extra={"session_id": session_id}
                 )
+
+                # Trigger memory extraction in background (non-blocking)
+                if config.memory_enabled and config.memory_extraction_enabled:
+                    await extract_session_memories.kiq(session_id)
 
         except RunCostCapExceeded as e:
             logger.warning(
@@ -391,11 +398,12 @@ async def chat_resume_task(
         # Set Sentry context for error tracking
         _set_sentry_context_for_chat(user, session_id, workflow_id, thread_id)
 
-        # Create agent
-        agent = create_nexus_chat_agent(
+        # Create agent (with memory context - no query for resume)
+        agent = await create_nexus_chat_agent(
             model=config.default_llm_model,
             checkpointer=checkpointer,
             workflow_state=workflow_state,
+            user_id=user.user_id,
         )
 
         # Build resume command

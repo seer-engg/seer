@@ -88,6 +88,19 @@ services:
       AUTO_OPEN_BROWSER: "${AUTO_OPEN_BROWSER:-true}"
       CHAT_MESSAGES_TOTAL_SELF_HOSTED: "${CHAT_MESSAGES_TOTAL_SELF_HOSTED:--1}"
       redirect_uri_scheme: "http"
+      # Memory layer (Mem0) - set MEMORY_ENABLED=true to enable
+      MEMORY_ENABLED: "${MEMORY_ENABLED:-true}"
+      MEM0_VECTOR_STORE: "${MEM0_VECTOR_STORE:-pgvector}"
+      MEM0_QDRANT_HOST: "${MEM0_QDRANT_HOST:-qdrant}"
+      MEM0_QDRANT_PORT: "${MEM0_QDRANT_PORT:-6333}"
+      MEM0_COLLECTION_NAME: "${MEM0_COLLECTION_NAME:-nexus_user_memories}"
+      MEMORY_CONTEXT_INJECTION_ENABLED: "${MEMORY_CONTEXT_INJECTION_ENABLED:-true}"
+      MEMORY_CONTEXT_MAX_MEMORIES: "${MEMORY_CONTEXT_MAX_MEMORIES:-10}"
+      MEMORY_EXTRACTION_ENABLED: "${MEMORY_EXTRACTION_ENABLED:-true}"
+      MEMORY_EXTRACTION_MODEL: "${MEMORY_EXTRACTION_MODEL:-moonshotai/kimi-k2.5}"
+      MEM0_LLM_PROVIDER: "${MEM0_LLM_PROVIDER:-openrouter}"
+      MEM0_EMBEDDER_PROVIDER: "${MEM0_EMBEDDER_PROVIDER:-huggingface}"
+      MEM0_EMBEDDER_MODEL: "${MEM0_EMBEDDER_MODEL:-sentence-transformers/all-MiniLM-L6-v2}"
     dns:
       - 8.8.8.8
       - 8.8.4.4
@@ -117,6 +130,17 @@ services:
       # MLFLOW_TRACKING_URI: "http://mlflow:5000"
       # MLFLOW_EXPERIMENT_NAME: "seer-worker"
       # MLFLOW_ENABLED: "${MLFLOW_ENABLED:-true}"
+      # Memory layer (Mem0) - required for background extraction
+      MEMORY_ENABLED: "${MEMORY_ENABLED:-true}"
+      MEM0_VECTOR_STORE: "${MEM0_VECTOR_STORE:-pgvector}"
+      MEM0_QDRANT_HOST: "${MEM0_QDRANT_HOST:-qdrant}"
+      MEM0_QDRANT_PORT: "${MEM0_QDRANT_PORT:-6333}"
+      MEM0_COLLECTION_NAME: "${MEM0_COLLECTION_NAME:-nexus_user_memories}"
+      MEMORY_EXTRACTION_ENABLED: "${MEMORY_EXTRACTION_ENABLED:-true}"
+      MEMORY_EXTRACTION_MODEL: "${MEMORY_EXTRACTION_MODEL:-moonshotai/kimi-k2.5}"
+      MEM0_LLM_PROVIDER: "${MEM0_LLM_PROVIDER:-openrouter}"
+      MEM0_EMBEDDER_PROVIDER: "${MEM0_EMBEDDER_PROVIDER:-huggingface}"
+      MEM0_EMBEDDER_MODEL: "${MEM0_EMBEDDER_MODEL:-sentence-transformers/all-MiniLM-L6-v2}"
     volumes:
       - ./:/app
       - /app/.venv
