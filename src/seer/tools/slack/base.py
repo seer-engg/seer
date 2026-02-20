@@ -6,6 +6,7 @@ Provides shared functionality for all Slack API integrations:
 - Consistent error handling
 - Common response parsing
 """
+# pylint: disable=duplicate-code  # Reason: Discord and Slack base classes share similar error handling patterns intentionally
 
 from abc import ABC
 from typing import Any, Dict, Optional

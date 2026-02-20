@@ -18,6 +18,7 @@ from .browser.router import router as browser_router
 from .browser.ws_router import router as browser_session_router
 from .browser.recording_router import router as recording_router
 from .files.router import router as files_router
+from .memory.router import router as memory_router
 
 router = APIRouter(prefix="/api")
 router.include_router(agents_traces_router)
@@ -37,3 +38,4 @@ router.include_router(browser_router)
 router.include_router(browser_session_router)
 router.include_router(recording_router)
 router.include_router(files_router)
+router.include_router(memory_router)

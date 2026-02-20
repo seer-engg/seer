@@ -9,6 +9,7 @@ Provides shared functionality for all Discord API integrations:
 All Discord tools should inherit from DiscordAPIClient to eliminate code
 duplication and ensure consistent behavior.
 """
+# pylint: disable=duplicate-code  # Reason: Discord and Slack base classes share similar error handling patterns intentionally
 
 from abc import ABC
 from typing import Any, Dict, Optional

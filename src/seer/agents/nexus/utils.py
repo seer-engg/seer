@@ -1,10 +1,12 @@
 from typing import Any, Dict, List, Optional
+from seer.config import config
 from seer.logger import get_logger
 from seer.agents.nexus.tools import (
     analyze_workflow,
     submit_workflow_spec,
     ask_clarification_questions,
     web_search,
+    memory_tools,
 )
 
 logger = get_logger(__name__)
@@ -37,6 +39,11 @@ def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:
         ask_clarification_questions,
         web_search,
     ]
+
+    # Add memory tools if memory is enabled
+    if config.memory_enabled:
+        nexus_only_tools.extend(memory_tools)
+        logger.debug("Memory tools enabled: %d tools added", len(memory_tools))
 
     return unified_registry.get_langgraph_tools() + nexus_only_tools
 
