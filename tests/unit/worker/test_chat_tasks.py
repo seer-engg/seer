@@ -417,8 +417,10 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat.langfuse_user_context", mock_langfuse_context), \
              patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
              patch("seer.worker.tasks.chat.clear_chat_runtime_context"), \
+             patch("seer.worker.tasks.chat.extract_session_memories") as mock_extract, \
              patch("seer.worker.tasks.chat.WorkflowProposal") as MockProposal:
 
+            mock_extract.kiq = AsyncMock()
             MockSession.get = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
