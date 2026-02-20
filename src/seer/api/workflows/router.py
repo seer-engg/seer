@@ -30,6 +30,42 @@ async def get_trigger_catalog(request: Request):
     return await services.list_triggers(user)
 
 
+@router.get("/trigger-subscriptions", response_model=api_models.TriggerSubscriptionListItemsResponse)
+async def list_trigger_subscriptions(
+    request: Request,
+    workflow_id: str | None = Query(None),
+    trigger_key: str | None = Query(None),
+    search: str | None = Query(None),
+):
+    """
+    List all trigger subscriptions with extended info for management view.
+
+    Query params:
+    - workflow_id: Filter by specific workflow
+    - trigger_key: Filter by trigger type (e.g., 'webhook.generic', 'poll.gmail.email_received')
+    - search: Search by title
+    """
+    user = _require_user(request)
+    return await services.list_trigger_subscriptions_extended(
+        user, workflow_id=workflow_id, trigger_key=trigger_key, search=search
+    )
+
+
+@router.patch(
+    "/trigger-subscriptions/{subscription_id}",
+    response_model=api_models.TriggerSubscriptionResponse,
+)
+async def toggle_trigger_subscription(
+    request: Request,
+    subscription_id: int,
+    payload: api_models.TriggerSubscriptionToggleRequest,
+):
+    """Toggle the enabled status of a trigger subscription."""
+    user = _require_user(request)
+    update_payload = api_models.TriggerSubscriptionUpdateRequest(enabled=payload.enabled)
+    return await services.update_trigger_subscription(user, subscription_id, update_payload)
+
+
 @router.post(
     "/trigger-subscriptions/{subscription_id}/test",
     response_model=api_models.TriggerSubscriptionTestResponse,
