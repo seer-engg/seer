@@ -272,9 +272,15 @@ class BrowserNodeType(BaseNodeType):
             "type": "object",
             "properties": {
                 "success": {"type": "boolean"},
-                "result": {"type": "string"},
+                "result": {"type": "object"},  # format_browser_history returns object with steps/completed/success
                 "extracted_data": extracted_data_schema,
                 "final_url": {"type": ["string", "null"]},
+                "urls": {"type": "array", "items": {"type": "string"}},
+                "duration_seconds": {"type": ["number", "null"]},
+                "steps_count": {"type": ["integer", "null"]},
+                "extracted_content": {"type": "array", "items": {"type": "string"}},
+                "model_thoughts": {"type": "array", "items": {"type": "object"}},
+                "model_actions": {"type": "array", "items": {"type": "object"}},
                 "screenshots": {"type": "array", "items": {"type": "string"}},
             },
             "additionalProperties": False,

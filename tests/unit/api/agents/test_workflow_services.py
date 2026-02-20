@@ -662,6 +662,68 @@ class TestChatMessageServices:
             assert result[0] == mock_chat_message
             mock_query.order_by.assert_called_once_with("created_at")
 
+    @pytest.mark.asyncio
+    async def test_save_chat_message_idempotent_returns_existing_when_proposal_linked(
+        self, mock_chat_session, mock_chat_message, mock_proposal
+    ):
+        """Test that save_chat_message returns existing message if proposal already linked (task retry scenario)."""
+        from seer.database import WorkflowChatSession, WorkflowChatMessage
+
+        with patch.object(WorkflowChatSession, "get_or_none", new_callable=AsyncMock) as mock_get_session:
+            mock_get_session.return_value = mock_chat_session
+
+            with patch.object(WorkflowChatMessage, "get_or_none", new_callable=AsyncMock) as mock_get_msg:
+                # Simulate existing message already linked to proposal
+                mock_get_msg.return_value = mock_chat_message
+
+                with patch.object(WorkflowChatMessage, "create", new_callable=AsyncMock) as mock_create:
+                    from seer.api.agents.workflow.services import save_chat_message
+
+                    result = await save_chat_message(
+                        session_id=1,
+                        role="assistant",
+                        content="New content that should be ignored",
+                        proposal=mock_proposal,
+                    )
+
+                    # Should return existing message, not create new one
+                    assert result == mock_chat_message
+                    mock_get_msg.assert_called_once_with(proposal=mock_proposal)
+                    mock_create.assert_not_called()
+                    # Session should not be updated on idempotent return
+                    mock_chat_session.save.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_save_chat_message_creates_when_proposal_not_linked(
+        self, mock_chat_session, mock_chat_message, mock_proposal
+    ):
+        """Test that save_chat_message creates new message if proposal not yet linked."""
+        from seer.database import WorkflowChatSession, WorkflowChatMessage
+
+        with patch.object(WorkflowChatSession, "get_or_none", new_callable=AsyncMock) as mock_get_session:
+            mock_get_session.return_value = mock_chat_session
+
+            with patch.object(WorkflowChatMessage, "get_or_none", new_callable=AsyncMock) as mock_get_msg:
+                # No existing message linked to proposal
+                mock_get_msg.return_value = None
+
+                with patch.object(WorkflowChatMessage, "create", new_callable=AsyncMock) as mock_create:
+                    mock_create.return_value = mock_chat_message
+
+                    from seer.api.agents.workflow.services import save_chat_message
+
+                    result = await save_chat_message(
+                        session_id=1,
+                        role="assistant",
+                        content="Hello",
+                        proposal=mock_proposal,
+                    )
+
+                    assert result == mock_chat_message
+                    mock_get_msg.assert_called_once_with(proposal=mock_proposal)
+                    mock_create.assert_called_once()
+                    mock_chat_session.save.assert_called_once()
+
 
 # =============================================================================
 # Proposal Services Tests

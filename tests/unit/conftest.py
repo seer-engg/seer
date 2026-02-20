@@ -204,3 +204,74 @@ def mock_workflow_version():
     version.spec = {"version": "2", "nodes": [], "edges": [], "triggers": []}
     version.save = AsyncMock()
     return version
+
+
+# =============================================================================
+# Worker Task Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def mock_chat_session():
+    """
+    Mock WorkflowChatSession for chat task tests.
+
+    Provides a session with QUEUED status and all required attributes
+    for testing status transitions.
+    """
+    from seer.database.workflow_models import WorkflowChatSession, ChatExecutionStatus
+
+    session = MagicMock(spec=WorkflowChatSession)
+    session.id = 1
+    session.thread_id = "test-thread-123"
+    session.current_execution_status = ChatExecutionStatus.QUEUED
+    session.current_execution_started_at = None
+    session.current_execution_finished_at = None
+    session.current_execution_error = None
+    session.pending_interrupt_type = None
+    session.pending_interrupt_data = None
+    session.save = AsyncMock()
+    return session
+
+
+@pytest.fixture
+def mock_user_settings():
+    """
+    Mock UserSettings for chat task tests.
+
+    Provides default agent step limits and cost cap preferences.
+    """
+    from seer.database.models import UserSettings
+
+    settings = MagicMock(spec=UserSettings)
+    settings.max_agent_steps = 50
+    settings.preferences = {"per_run_cost_cap_usd": 5.0}
+    return settings
+
+
+@pytest.fixture
+def mock_knowledge_document():
+    """
+    Mock KnowledgeDocument for knowledge task tests.
+
+    Includes a mock knowledge_base with default chunking settings.
+    """
+    from seer.database.knowledge_models import KnowledgeDocument
+
+    doc = MagicMock(spec=KnowledgeDocument)
+    doc.id = 1
+    doc.name = "test.txt"
+    doc.mime_type = "text/plain"
+    doc.processing_status = "pending"
+    doc.processing_error = None
+    doc.chunk_count = 0
+    doc.save = AsyncMock()
+
+    # Mock knowledge_base relation
+    kb = MagicMock()
+    kb.id = 1
+    kb.chunk_size = 1000
+    kb.chunk_overlap = 200
+    doc.knowledge_base = kb
+
+    return doc

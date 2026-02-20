@@ -483,6 +483,63 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         default=True, description="Enable Sentry (requires DSN to be set)"
     )
 
+    # ============================================================================
+    # Memory Layer (Mem0) Configuration
+    # ============================================================================
+
+    memory_enabled: bool = Field(
+        default=True,
+        description="Enable Mem0 memory layer for cross-session user context"
+    )
+    mem0_vector_store: str = Field(
+        default="pgvector",
+        description="Vector store provider for Mem0: pgvector (recommended), qdrant, chroma, etc."
+    )
+    mem0_qdrant_host: str = Field(
+        default="localhost",
+        description="Qdrant host for Mem0 vector store"
+    )
+    mem0_qdrant_port: int = Field(
+        default=6333,
+        description="Qdrant port for Mem0 vector store"
+    )
+    mem0_collection_name: str = Field(
+        default="nexus_user_memories",
+        description="Collection name for Mem0 vector store"
+    )
+    memory_context_injection_enabled: bool = Field(
+        default=True,
+        description="Auto-inject relevant memories into agent system prompt"
+    )
+    memory_context_max_memories: int = Field(
+        default=10,
+        description="Maximum number of memories to inject into system prompt"
+    )
+    memory_extraction_enabled: bool = Field(
+        default=True,
+        description="Auto-extract memories from completed chat sessions"
+    )
+    memory_extraction_model: str = Field(
+        default="moonshotai/kimi-k2.5",
+        description="LLM model for memory extraction (used by Mem0, works with OpenRouter)"
+    )
+    mem0_llm_provider: str = Field(
+        default="openrouter",
+        description="LLM provider for Mem0: 'openai', 'openrouter', or 'ollama'"
+    )
+    mem0_llm_base_url: Optional[str] = Field(
+        default=None,
+        description="Custom base URL for Mem0 LLM (auto-set for openrouter)"
+    )
+    mem0_embedder_provider: str = Field(
+        default="huggingface",
+        description="Embedder provider for Mem0: 'openai', 'huggingface', or 'ollama'"
+    )
+    mem0_embedder_model: str = Field(
+        default="sentence-transformers/all-MiniLM-L6-v2",
+        description="Embedding model for Mem0 (default: free HuggingFace model)"
+    )
+
     @classmethod
     def settings_customise_sources(  # pylint: disable=too-many-positional-arguments  # Reason: Method signature is defined by Pydantic's BaseSettings API and cannot be modified
         cls,

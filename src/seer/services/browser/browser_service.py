@@ -281,6 +281,12 @@ class BrowserService:
             "result": message,
             "extracted_data": {},
             "final_url": None,
+            "urls": [],
+            "duration_seconds": None,
+            "steps_count": None,
+            "extracted_content": [],
+            "model_thoughts": [],
+            "model_actions": [],
             "screenshots": [],
         }
 
@@ -493,10 +499,18 @@ class BrowserService:
 
             # If extraction_schema was provided but extraction failed, return failure
             # This prevents downstream validation errors on empty extracted_data
+            # Still include available metadata for debugging
             if extraction_schema and not extracted_data:
                 logger.warning("Browser agent completed but failed to extract structured data")
                 return {
                     **self._build_error_result("Failed to extract structured data from agent output"),
+                    "final_url": self._extract_final_url(history),
+                    "urls": self._extract_urls(history),
+                    "duration_seconds": self._extract_duration(history),
+                    "steps_count": self._extract_steps_count(history),
+                    "extracted_content": self._extract_all_content(history),
+                    "model_thoughts": self._extract_model_thoughts(history),
+                    "model_actions": self._extract_model_actions(history),
                     "usage": self._extract_usage_metadata(history, model),
                 }
 
@@ -504,7 +518,13 @@ class BrowserService:
                 "success": True,
                 "result": format_browser_history(history) if history else {},
                 "extracted_data": extracted_data if extracted_data else {},
-                "final_url": None,
+                "final_url": self._extract_final_url(history),
+                "urls": self._extract_urls(history),
+                "duration_seconds": self._extract_duration(history),
+                "steps_count": self._extract_steps_count(history),
+                "extracted_content": self._extract_all_content(history),
+                "model_thoughts": self._extract_model_thoughts(history),
+                "model_actions": self._extract_model_actions(history),
                 "screenshots": await self._save_screenshots(
                     history=history,
                     save_screenshots=save_screenshots,
@@ -592,6 +612,78 @@ class BrowserService:
         except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Usage extraction must not break workflow
             logger.warning(f"Failed to extract usage metadata from browser history: {e}")
             return None
+
+    @staticmethod
+    def _extract_final_url(history: Any) -> Optional[str]:
+        """Get the last visited URL from browser history."""
+        try:
+            urls = history.urls() if hasattr(history, "urls") else []
+            return urls[-1] if urls else None
+        except Exception:  # pylint: disable=broad-exception-caught  # Reason: URL extraction must not break workflow
+            return None
+
+    @staticmethod
+    def _extract_urls(history: Any) -> List[str]:
+        """Get all visited URLs from browser history."""
+        try:
+            return history.urls() if hasattr(history, "urls") else []
+        except Exception:  # pylint: disable=broad-exception-caught  # Reason: URL extraction must not break workflow
+            return []
+
+    @staticmethod
+    def _extract_duration(history: Any) -> Optional[float]:
+        """Get total execution duration in seconds."""
+        try:
+            if hasattr(history, "total_duration_seconds"):
+                return history.total_duration_seconds()
+            return None
+        except Exception:  # pylint: disable=broad-exception-caught  # Reason: Duration extraction must not break workflow
+            return None
+
+    @staticmethod
+    def _extract_steps_count(history: Any) -> Optional[int]:
+        """Get total number of steps executed."""
+        try:
+            if hasattr(history, "number_of_steps"):
+                return history.number_of_steps()
+            return None
+        except Exception:  # pylint: disable=broad-exception-caught  # Reason: Steps extraction must not break workflow
+            return None
+
+    @staticmethod
+    def _extract_all_content(history: Any) -> List[str]:
+        """Get extracted content from all steps."""
+        try:
+            if hasattr(history, "extracted_content"):
+                content = history.extracted_content()
+                return [c for c in content if c] if content else []
+            return []
+        except Exception:  # pylint: disable=broad-exception-caught  # Reason: Content extraction must not break workflow
+            return []
+
+    @staticmethod
+    def _extract_model_thoughts(history: Any) -> List[Dict[str, Any]]:
+        """Get agent reasoning/brain from all steps."""
+        try:
+            if hasattr(history, "model_thoughts"):
+                thoughts = history.model_thoughts()
+                # Convert AgentBrain objects to dicts
+                return [t.model_dump() if hasattr(t, "model_dump") else dict(t) for t in thoughts if t]
+            return []
+        except Exception:  # pylint: disable=broad-exception-caught  # Reason: Thoughts extraction must not break workflow
+            return []
+
+    @staticmethod
+    def _extract_model_actions(history: Any) -> List[Dict[str, Any]]:
+        """Get detailed action info from all steps."""
+        try:
+            if hasattr(history, "model_actions"):
+                actions = history.model_actions()
+                # Convert action objects to dicts
+                return [a.model_dump() if hasattr(a, "model_dump") else dict(a) for a in actions if a]
+            return []
+        except Exception:  # pylint: disable=broad-exception-caught  # Reason: Actions extraction must not break workflow
+            return []
 
     def _enhance_task(
         self,

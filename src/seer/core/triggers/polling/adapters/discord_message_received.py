@@ -1,4 +1,5 @@
 from __future__ import annotations
+# pylint: disable=duplicate-code  # Reason: Discord and Slack polling adapters share similar config resolution patterns intentionally
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
