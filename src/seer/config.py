@@ -520,7 +520,7 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         description="Auto-extract memories from completed chat sessions"
     )
     memory_extraction_model: str = Field(
-        default="moonshotai/kimi-k2.5",
+        default="gpt-5-mini",
         description="LLM model for memory extraction (used by Mem0, works with OpenRouter)"
     )
     mem0_llm_provider: str = Field(
