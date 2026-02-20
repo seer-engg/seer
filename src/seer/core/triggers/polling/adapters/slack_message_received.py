@@ -4,6 +4,7 @@ Slack message polling adapter.
 Polls a Slack channel for new messages using OAuth credentials.
 Uses message timestamp (ts) as cursor for pagination.
 """
+# pylint: disable=duplicate-code  # Reason: Discord and Slack polling adapters share similar config resolution patterns intentionally
 
 from __future__ import annotations
 
