@@ -60,9 +60,11 @@ from .triggers import (
     get_subscription_event_count,
     get_trigger_subscription,
     list_trigger_subscriptions,
+    list_trigger_subscriptions_extended,
     start_listening_for_trigger,
     test_trigger_subscription,
     sync_trigger_subscriptions,
+    update_trigger_subscription,
 )
 
 # Import from files module
@@ -103,7 +105,9 @@ __all__ = [
     "get_run_status",
     "get_run_history",
     "list_trigger_subscriptions",
+    "list_trigger_subscriptions_extended",
     "get_trigger_subscription",
+    "update_trigger_subscription",
     "delete_trigger_subscription",
     "test_trigger_subscription",
     "sync_trigger_subscriptions",

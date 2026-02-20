@@ -328,6 +328,55 @@ async def list_trigger_subscriptions(
     )
 
 
+async def list_trigger_subscriptions_extended(
+    user: User,
+    *,
+    workflow_id: Optional[str] = None,
+    trigger_key: Optional[str] = None,
+    search: Optional[str] = None,
+) -> api_models.TriggerSubscriptionListItemsResponse:
+    """
+    List trigger subscriptions with extended info for management view.
+
+    Includes workflow title and last event timestamp.
+    """
+    query = TriggerSubscription.filter(user=user).prefetch_related("workflow")
+
+    if workflow_id:
+        workflow = await _get_workflow(user, workflow_id)
+        query = query.filter(workflow=workflow)
+
+    if trigger_key:
+        query = query.filter(trigger_key=trigger_key)
+
+    if search:
+        query = query.filter(title__icontains=search)
+
+    subscriptions = await query.order_by("-created_at")
+
+    # Build response items with last event timestamps
+    items: List[api_models.TriggerSubscriptionListItem] = []
+    for sub in subscriptions:
+        # Get last event for this subscription
+        last_event = await TriggerEvent.filter(
+            subscription_id=sub.id
+        ).order_by("-received_at").first()
+
+        items.append(api_models.TriggerSubscriptionListItem(
+            id=sub.id,
+            trigger_id=sub.trigger_id,
+            trigger_key=sub.trigger_key,
+            title=sub.title or None,
+            enabled=sub.enabled,
+            workflow_id=make_workflow_public_id(sub.workflow_id),
+            workflow_title=sub.workflow.name,
+            last_event_at=last_event.received_at if last_event else None,
+            created_at=sub.created_at,
+        ))
+
+    return api_models.TriggerSubscriptionListItemsResponse(items=items)
+
+
 async def create_trigger_subscription(
     user: User,
     payload: api_models.TriggerSubscriptionCreateRequest,
