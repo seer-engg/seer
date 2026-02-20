@@ -493,6 +493,12 @@ class TestBuildErrorResult:
         assert result["result"] == "Something went wrong"
         assert result["extracted_data"] == {}
         assert result["final_url"] is None
+        assert result["urls"] == []
+        assert result["duration_seconds"] is None
+        assert result["steps_count"] is None
+        assert result["extracted_content"] == []
+        assert result["model_thoughts"] == []
+        assert result["model_actions"] == []
         assert result["screenshots"] == []
 
 
@@ -599,6 +605,171 @@ class TestExtractUsageMetadata:
         result = BrowserService._extract_usage_metadata(history)
 
         assert result is None
+
+
+@pytest.mark.unit
+class TestExtractHistoryData:
+    """Test new browser history extraction helper methods."""
+
+    def test_extract_final_url_success(self):
+        """Test extracting final URL from history."""
+        history = MagicMock()
+        history.urls.return_value = ["https://example.com", "https://example.com/page", "https://example.com/final"]
+
+        result = BrowserService._extract_final_url(history)
+
+        assert result == "https://example.com/final"
+
+    def test_extract_final_url_empty(self):
+        """Test final URL when no URLs visited."""
+        history = MagicMock()
+        history.urls.return_value = []
+
+        result = BrowserService._extract_final_url(history)
+
+        assert result is None
+
+    def test_extract_final_url_no_method(self):
+        """Test final URL when history has no urls method."""
+        history = MagicMock(spec=[])
+
+        result = BrowserService._extract_final_url(history)
+
+        assert result is None
+
+    def test_extract_urls_success(self):
+        """Test extracting all URLs from history."""
+        history = MagicMock()
+        history.urls.return_value = ["https://a.com", "https://b.com"]
+
+        result = BrowserService._extract_urls(history)
+
+        assert result == ["https://a.com", "https://b.com"]
+
+    def test_extract_urls_empty(self):
+        """Test URLs when none visited."""
+        history = MagicMock()
+        history.urls.return_value = []
+
+        result = BrowserService._extract_urls(history)
+
+        assert result == []
+
+    def test_extract_duration_success(self):
+        """Test extracting duration from history."""
+        history = MagicMock()
+        history.total_duration_seconds.return_value = 45.5
+
+        result = BrowserService._extract_duration(history)
+
+        assert result == 45.5
+
+    def test_extract_duration_no_method(self):
+        """Test duration when method doesn't exist."""
+        history = MagicMock(spec=[])
+
+        result = BrowserService._extract_duration(history)
+
+        assert result is None
+
+    def test_extract_steps_count_success(self):
+        """Test extracting step count from history."""
+        history = MagicMock()
+        history.number_of_steps.return_value = 12
+
+        result = BrowserService._extract_steps_count(history)
+
+        assert result == 12
+
+    def test_extract_steps_count_no_method(self):
+        """Test step count when method doesn't exist."""
+        history = MagicMock(spec=[])
+
+        result = BrowserService._extract_steps_count(history)
+
+        assert result is None
+
+    def test_extract_all_content_success(self):
+        """Test extracting content from all steps."""
+        history = MagicMock()
+        history.extracted_content.return_value = ["Found title", None, "Clicked button", ""]
+
+        result = BrowserService._extract_all_content(history)
+
+        # Should filter out None and empty strings
+        assert result == ["Found title", "Clicked button"]
+
+    def test_extract_all_content_empty(self):
+        """Test content when none extracted."""
+        history = MagicMock()
+        history.extracted_content.return_value = []
+
+        result = BrowserService._extract_all_content(history)
+
+        assert result == []
+
+    def test_extract_model_thoughts_success(self):
+        """Test extracting model thoughts (AgentBrain) from history."""
+        history = MagicMock()
+
+        mock_thought1 = MagicMock()
+        mock_thought1.model_dump.return_value = {"evaluation_previous_goal": "Success", "next_action": "click"}
+
+        mock_thought2 = MagicMock()
+        mock_thought2.model_dump.return_value = {"evaluation_previous_goal": "Failed", "next_action": "retry"}
+
+        history.model_thoughts.return_value = [mock_thought1, None, mock_thought2]
+
+        result = BrowserService._extract_model_thoughts(history)
+
+        assert len(result) == 2
+        assert result[0]["evaluation_previous_goal"] == "Success"
+        assert result[1]["evaluation_previous_goal"] == "Failed"
+
+    def test_extract_model_thoughts_no_method(self):
+        """Test thoughts when method doesn't exist."""
+        history = MagicMock(spec=[])
+
+        result = BrowserService._extract_model_thoughts(history)
+
+        assert result == []
+
+    def test_extract_model_actions_success(self):
+        """Test extracting model actions from history."""
+        history = MagicMock()
+
+        mock_action1 = MagicMock()
+        mock_action1.model_dump.return_value = {"action_type": "click", "element_index": 5}
+
+        mock_action2 = MagicMock()
+        mock_action2.model_dump.return_value = {"action_type": "input_text", "text": "hello"}
+
+        history.model_actions.return_value = [mock_action1, None, mock_action2]
+
+        result = BrowserService._extract_model_actions(history)
+
+        assert len(result) == 2
+        assert result[0]["action_type"] == "click"
+        assert result[1]["action_type"] == "input_text"
+
+    def test_extract_model_actions_no_method(self):
+        """Test actions when method doesn't exist."""
+        history = MagicMock(spec=[])
+
+        result = BrowserService._extract_model_actions(history)
+
+        assert result == []
+
+    def test_extract_with_exception(self):
+        """Test that exceptions are caught and return safe defaults."""
+        history = MagicMock()
+        history.urls.side_effect = RuntimeError("Unexpected error")
+        history.total_duration_seconds.side_effect = RuntimeError("Unexpected error")
+
+        # Should not raise, return safe defaults
+        assert BrowserService._extract_final_url(history) is None
+        assert BrowserService._extract_urls(history) == []
+        assert BrowserService._extract_duration(history) is None
 
 
 @pytest.mark.unit

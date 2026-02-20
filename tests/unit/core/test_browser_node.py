@@ -215,7 +215,7 @@ def test_browser_node_timeout_validation():
 
 
 def test_type_env_registers_browser_node_default_schema():
-    """Test that browser node registers default output schema."""
+    """Test that browser node registers default output schema with all fields."""
     env = TypeEnvironment()
     schema_registry = SchemaRegistry()
     tool_registry = ToolRegistry()
@@ -235,10 +235,35 @@ def test_type_env_registers_browser_node_default_schema():
     schema = env.get("browse")
     assert schema is not None
     assert schema["type"] == "object"
+
+    # Core fields
     assert "success" in schema["properties"]
     assert "result" in schema["properties"]
     assert "extracted_data" in schema["properties"]
     assert "final_url" in schema["properties"]
+    assert "screenshots" in schema["properties"]
+
+    # New enhanced output fields
+    assert "urls" in schema["properties"]
+    assert schema["properties"]["urls"]["type"] == "array"
+    assert schema["properties"]["urls"]["items"]["type"] == "string"
+
+    assert "duration_seconds" in schema["properties"]
+    assert "number" in schema["properties"]["duration_seconds"]["type"]
+
+    assert "steps_count" in schema["properties"]
+    assert "integer" in schema["properties"]["steps_count"]["type"]
+
+    assert "extracted_content" in schema["properties"]
+    assert schema["properties"]["extracted_content"]["type"] == "array"
+
+    assert "model_thoughts" in schema["properties"]
+    assert schema["properties"]["model_thoughts"]["type"] == "array"
+    assert schema["properties"]["model_thoughts"]["items"]["type"] == "object"
+
+    assert "model_actions" in schema["properties"]
+    assert schema["properties"]["model_actions"]["type"] == "array"
+    assert schema["properties"]["model_actions"]["items"]["type"] == "object"
 
 
 def test_type_env_browser_node_in_workflow():
@@ -347,6 +372,13 @@ def test_type_env_browser_node_with_expect_outputs():
     assert "result" in schema["properties"]
     assert "final_url" in schema["properties"]
     assert "screenshots" in schema["properties"]
+    # New enhanced fields should also be present
+    assert "urls" in schema["properties"]
+    assert "duration_seconds" in schema["properties"]
+    assert "steps_count" in schema["properties"]
+    assert "extracted_content" in schema["properties"]
+    assert "model_thoughts" in schema["properties"]
+    assert "model_actions" in schema["properties"]
     # User's expect_outputs schema should be in extracted_data
     assert "extracted_data" in schema["properties"]
     assert schema["properties"]["extracted_data"] == product_schema
