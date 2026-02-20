@@ -108,6 +108,29 @@ class TriggerSubscriptionListResponse(BaseModel):
     items: List[TriggerSubscriptionResponse] = Field(default_factory=list)
 
 
+class TriggerSubscriptionListItem(BaseModel):
+    """Extended subscription info for management list view."""
+    id: int
+    trigger_id: str
+    trigger_key: str
+    title: Optional[str] = None
+    enabled: bool
+    workflow_id: str
+    workflow_title: str
+    last_event_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class TriggerSubscriptionListItemsResponse(BaseModel):
+    """Response for trigger subscription list with extended info."""
+    items: List[TriggerSubscriptionListItem] = Field(default_factory=list)
+
+
+class TriggerSubscriptionToggleRequest(BaseModel):
+    """Request to toggle subscription enabled status."""
+    enabled: bool
+
+
 class TriggerSubscriptionTestRequest(BaseModel):
     event: Optional[Dict[str, Any]] = None
 
@@ -504,6 +527,9 @@ __all__ = [
     "TriggerSubscriptionUpdateRequest",
     "TriggerSubscriptionResponse",
     "TriggerSubscriptionListResponse",
+    "TriggerSubscriptionListItem",
+    "TriggerSubscriptionListItemsResponse",
+    "TriggerSubscriptionToggleRequest",
     "TriggerSubscriptionTestRequest",
     "TriggerSubscriptionTestResponse",
     "StartListeningResponse",
