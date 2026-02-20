@@ -15,6 +15,7 @@ from seer.agents.nexus.schema_context import (
 )
 from seer.prompts import get_nexus_system_prompt
 from seer.utilities.ml_flow import _ensure_mlflow_autologging
+
 logger = get_logger(__name__)
 
 WORKFLOW_SPEC_SCHEMA = get_workflow_spec_schema_text()
@@ -22,10 +23,37 @@ WORKFLOW_SPEC_SCHEMA = get_workflow_spec_schema_text()
 if config.mlflow_enabled:
     _ensure_mlflow_autologging()
 
-def create_nexus_chat_agent(
+
+async def _get_memory_context_for_user(user_id: str, current_query: Optional[str] = None) -> str:
+    """
+    Get formatted memory context for injection into agent system prompt.
+
+    Args:
+        user_id: Clerk user_id for memory lookup
+        current_query: Optional current query for relevance-based retrieval
+
+    Returns:
+        Formatted memory context string, or empty string if unavailable
+    """
+    try:
+        from seer.services.memory import UserMemoryService  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
+
+        memory_service = UserMemoryService()
+        return await memory_service.get_context_for_prompt(
+            user_id=user_id,
+            current_query=current_query or "",
+            max_memories=config.memory_context_max_memories,
+        )
+    except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Memory is non-critical, must not block agent creation
+        logger.warning("Failed to get memory context for user %s: %s", user_id, e)
+        return ""
+
+async def create_nexus_chat_agent(
     model: str = "moonshotai/kimi-k2.5",
     checkpointer: Optional[Any] = None,
     workflow_state: Optional[Dict[str, Any]] = None,
+    user_id: Optional[str] = None,
+    current_query: Optional[str] = None,
 ) -> Any:
     """
     Create a LangGraph agent for Nexus chat assistance using create_agent.
@@ -36,6 +64,9 @@ def create_nexus_chat_agent(
     Args:
         model: Model name to use (e.g., 'moonshotai/kimi-k2.5', 'moonshotai/kimi-k2-thinking')
         checkpointer: Optional LangGraph checkpointer for persistence
+        workflow_state: Optional workflow state for context injection
+        user_id: Optional user ID for memory context injection (Clerk user_id)
+        current_query: Optional current user query for memory relevance search
 
     Returns:
         LangGraph agent compiled with tools and middleware
@@ -55,6 +86,14 @@ def create_nexus_chat_agent(
 
     # Compose full system prompt from loaded base + dynamic content
     system_prompt = base_system_prompt + blocks_guide + graph_guide + schema_section
+
+    # Inject user memory context if enabled
+    if user_id and config.memory_enabled and config.memory_context_injection_enabled:
+        memory_context = await _get_memory_context_for_user(user_id, current_query)
+        if memory_context:
+            # Prepend memory context to system prompt
+            system_prompt = memory_context + "\n\n" + system_prompt
+            logger.debug("Injected memory context for user %s (%d chars)", user_id, len(memory_context))
 
     # Get workflow tools (with optional workflow_state injection)
     tools = get_workflow_tools(workflow_state=workflow_state)

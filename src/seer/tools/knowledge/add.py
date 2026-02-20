@@ -1,4 +1,5 @@
 """Knowledge base add text tool."""
+# pylint: disable=duplicate-code  # Reason: Similar error handling and config patterns across platform adapters (Discord/Slack) is intentional
 from __future__ import annotations
 
 import hashlib
