@@ -369,7 +369,7 @@ async def list_trigger_subscriptions_extended(
             title=sub.title or None,
             enabled=sub.enabled,
             workflow_id=make_workflow_public_id(sub.workflow_id),
-            workflow_title=sub.workflow.name,
+            workflow_title=sub.workflow.name if sub.workflow else "Deleted Workflow",
             last_event_at=last_event.received_at if last_event else None,
             created_at=sub.created_at,
         ))

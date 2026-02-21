@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, List
 from seer.core.errors import ErrorCode, NodeError, ValidationPhaseError
 from seer.core.expr import parser
 from seer.core.expr.parser import ReferenceExpr, TemplateReference
+from seer.core.expr.static_validator import validate_condition_expression
 from seer.core.expr.typecheck import (
     Scope,
     TypeCheckError,
@@ -165,6 +166,30 @@ def _node_uses_trigger_ids(node: Node, trigger_ids: set[str]) -> bool:
     return False
 
 
+def _validate_condition_types(
+    condition: str,
+    scope: Scope,
+    errors: List[NodeError],
+    *,
+    node_id: str,
+) -> None:
+    """
+    Perform static type checking on an IfNode condition expression.
+
+    This catches type errors like comparing strings to numbers at compile time
+    rather than waiting for runtime failures.
+    """
+    validation_errors = validate_condition_expression(condition, scope)
+    for err_msg in validation_errors:
+        errors.append(NodeError(
+            code=ErrorCode.TYPE_MISMATCH,
+            message=err_msg,
+            node_id=node_id,
+            location="condition",
+            expression=condition,
+        ))
+
+
 def _validate_node(node: Node, scope: Scope, errors: List[NodeError]) -> None:
     if hasattr(node, "inputs"):
         _validate_value_references(
@@ -186,6 +211,7 @@ def _validate_node(node: Node, scope: Scope, errors: List[NodeError]) -> None:
 
     if isinstance(node, IfNode):
         _validate_value_references(node.condition, scope, errors, node_id=node.id, location="condition")
+        _validate_condition_types(node.condition, scope, errors, node_id=node.id)
         return
 
     if isinstance(node, ForEachNode):
