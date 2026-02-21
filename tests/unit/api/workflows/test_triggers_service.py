@@ -5,6 +5,7 @@ Tests trigger subscription management, validation, and webhook URL building.
 """
 # pylint: disable=redefined-outer-name
 # Reason: pytest fixture pattern requires name reuse
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -525,3 +526,103 @@ class TestSyncTriggerSubscriptions:
         # Verify subscription was re-enabled
         assert mock_subscription.enabled is True
         mock_subscription.save.assert_called_once()
+
+
+# =============================================================================
+# List Trigger Subscriptions Extended Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestListTriggerSubscriptionsExtended:
+    """Tests for list_trigger_subscriptions_extended function."""
+
+    @pytest.mark.asyncio
+    async def test_handles_orphaned_workflow_gracefully(self, mock_user):
+        """Test that orphaned subscriptions (workflow deleted) show fallback title.
+
+        Regression test for: AttributeError: 'NoneType' object has no attribute 'name'
+        when sub.workflow is None due to deleted workflow.
+        """
+        from seer.api.workflows.services.triggers import list_trigger_subscriptions_extended
+
+        # Create a mock subscription with workflow = None (orphaned)
+        mock_subscription = MagicMock()
+        mock_subscription.id = 1
+        mock_subscription.trigger_id = "trigger_1"
+        mock_subscription.trigger_key = "webhook.generic"
+        mock_subscription.title = "My Trigger"
+        mock_subscription.enabled = True
+        mock_subscription.workflow_id = 999  # FK exists but workflow deleted
+        mock_subscription.workflow = None  # Orphaned - workflow was deleted
+        mock_subscription.created_at = datetime.now(timezone.utc)
+
+        # Mock TriggerSubscription query
+        with patch("seer.api.workflows.services.triggers.TriggerSubscription") as MockSub:
+            mock_query = MagicMock()
+            mock_query.prefetch_related = MagicMock(return_value=mock_query)
+            mock_query.filter = MagicMock(return_value=mock_query)
+            mock_query.order_by = AsyncMock(return_value=[mock_subscription])
+            MockSub.filter = MagicMock(return_value=mock_query)
+
+            # Mock TriggerEvent query for last_event
+            with patch("seer.api.workflows.services.triggers.TriggerEvent") as MockEvent:
+                mock_event_query = MagicMock()
+                mock_event_query.order_by = MagicMock(
+                    return_value=MagicMock(first=AsyncMock(return_value=None))
+                )
+                MockEvent.filter = MagicMock(return_value=mock_event_query)
+
+                with patch(
+                    "seer.api.workflows.services.triggers.make_workflow_public_id",
+                    return_value="wf_999"
+                ):
+                    # Should NOT raise AttributeError
+                    result = await list_trigger_subscriptions_extended(mock_user)
+
+        # Verify the orphaned subscription shows "Deleted Workflow" as title
+        assert len(result.items) == 1
+        assert result.items[0].workflow_title == "Deleted Workflow"
+        assert result.items[0].workflow_id == "wf_999"
+
+    @pytest.mark.asyncio
+    async def test_shows_workflow_name_when_present(self, mock_user):
+        """Test that subscription with valid workflow shows the workflow name."""
+        from seer.api.workflows.services.triggers import list_trigger_subscriptions_extended
+
+        # Create a mock subscription with valid workflow
+        mock_workflow = MagicMock()
+        mock_workflow.name = "My Production Workflow"
+
+        mock_subscription = MagicMock()
+        mock_subscription.id = 2
+        mock_subscription.trigger_id = "trigger_2"
+        mock_subscription.trigger_key = "gmail.new_email"
+        mock_subscription.title = "Gmail Trigger"
+        mock_subscription.enabled = True
+        mock_subscription.workflow_id = 100
+        mock_subscription.workflow = mock_workflow
+        mock_subscription.created_at = datetime.now(timezone.utc)
+
+        with patch("seer.api.workflows.services.triggers.TriggerSubscription") as MockSub:
+            mock_query = MagicMock()
+            mock_query.prefetch_related = MagicMock(return_value=mock_query)
+            mock_query.filter = MagicMock(return_value=mock_query)
+            mock_query.order_by = AsyncMock(return_value=[mock_subscription])
+            MockSub.filter = MagicMock(return_value=mock_query)
+
+            with patch("seer.api.workflows.services.triggers.TriggerEvent") as MockEvent:
+                mock_event_query = MagicMock()
+                mock_event_query.order_by = MagicMock(
+                    return_value=MagicMock(first=AsyncMock(return_value=None))
+                )
+                MockEvent.filter = MagicMock(return_value=mock_event_query)
+
+                with patch(
+                    "seer.api.workflows.services.triggers.make_workflow_public_id",
+                    return_value="wf_100"
+                ):
+                    result = await list_trigger_subscriptions_extended(mock_user)
+
+        assert len(result.items) == 1
+        assert result.items[0].workflow_title == "My Production Workflow"

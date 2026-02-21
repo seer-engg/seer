@@ -717,7 +717,7 @@ async def test_workflow_with_multiple_triggers_special_chars():
             {
                 "id": "if1",
                 "type": "if",
-                "condition": "${trigger@webhook.payload} != null"
+                "condition": "${trigger@webhook.payload} != None"
             }
         ],
         "edges": [
