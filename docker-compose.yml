@@ -60,6 +60,35 @@ services:
     command: ["sh", "-c", "uv run aerich upgrade"]
     restart: "no"
 
+  # Optional seed service - only runs with: docker compose --profile seed up
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
+      UV_LINK_MODE: "copy"
+      # AWS credentials for S3 access (required for seeding)
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_REGION: "${AWS_REGION:-us-east-1}"
+      WORKFLOW_FILE_S3_BUCKET: "${WORKFLOW_FILE_S3_BUCKET:-}"
+      WORKFLOW_FILE_S3_ENDPOINT_URL: "${WORKFLOW_FILE_S3_ENDPOINT_URL:-}"
+    volumes:
+      - ./:/app
+      - /app/.venv
+    command: ["sh", "-c", "uv run python scripts/seed_import.py"]
+    restart: "no"
+    profiles:
+      - seed  # Only activate with --profile seed
+
   api:
     build:
       context: .
