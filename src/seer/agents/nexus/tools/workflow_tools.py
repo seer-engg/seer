@@ -197,40 +197,9 @@ def create_bound_analyze_workflow(workflow_id: str):
 
         try:
             response = await get_workflow_service(user, workflow_id)
-            spec = response.spec
-
-            nodes = spec.nodes
-            edges = spec.edges or []
-
-            analysis = {
-                "workflow_id": workflow_id,
-                "workflow_name": response.name,
-                "total_blocks": len(nodes),
-                "total_connections": len(edges),
-                "block_types": {},
-                "blocks": [],
-                "connections": [],
-            }
-
-            for node in nodes:
-                block_type = node.type
-                analysis["block_types"][block_type] = analysis["block_types"].get(block_type, 0) + 1
-                analysis["blocks"].append({
-                    "id": node.id,
-                    "type": block_type,
-                    "config": node.model_dump(mode="json", exclude={"id", "type"}),
-                })
-
-            for edge in edges:
-                analysis["connections"].append({
-                    "source": edge.source,
-                    "target": edge.target,
-                    "type": edge.type,
-                })
-
-            if spec.triggers:
-                analysis["triggers"] = [{"id": t.id, "key": t.key} for t in spec.triggers]
-
+            # Use shared analysis helper
+            from seer.services.workflows.analysis import build_workflow_analysis  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+            analysis = build_workflow_analysis(workflow_id, response.name, response.spec)
             return json.dumps(analysis, indent=2)
 
         except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Return friendly error
