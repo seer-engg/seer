@@ -1,6 +1,7 @@
 """
 Slack reaction operations - adding emoji reactions to messages.
 """
+# pylint: disable=duplicate-code  # Reason: Resource picker patterns are intentionally shared across Slack tools
 
 from typing import Any, Dict, Optional
 

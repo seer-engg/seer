@@ -1,6 +1,7 @@
 """
 Slack channel operations - listing channels and getting message history.
 """
+# pylint: disable=duplicate-code  # Reason: Resource picker patterns are intentionally shared across Slack tools
 
 from typing import Any, Dict, Optional
 
