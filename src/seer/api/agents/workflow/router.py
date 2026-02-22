@@ -4,8 +4,7 @@
 Workflow API router for CRUD and execution endpoints.
 """
 import uuid
-from copy import deepcopy
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from fastapi import APIRouter, Query, Request
 from langgraph.types import Command
@@ -75,22 +74,6 @@ def _require_user(request: Request) -> User:
     # Type guard: raise_problem raises an exception, so this will never execute if user is None
     assert user is not None
     return user
-
-
-async def _prepare_workflow_state(workflow, request_workflow_state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Prepare workflow state by merging saved and provided states."""
-    workflow_state = deepcopy(await workflow_state_snapshot(workflow))
-
-    if request_workflow_state:
-        workflow_state["nodes"] = request_workflow_state.get("nodes") or workflow_state.get("nodes", [])
-        workflow_state["edges"] = request_workflow_state.get("edges") or workflow_state.get("edges", [])
-        for key, value in request_workflow_state.items():
-            if key not in ["nodes", "edges"]:
-                workflow_state[key] = value
-
-    workflow_state.setdefault("nodes", [])
-    workflow_state.setdefault("edges", [])
-    return workflow_state
 
 
 def _transform_clarification_interrupt(interrupt_data: Dict[str, Any]) -> None:
@@ -329,9 +312,8 @@ async def chat_with_workflow_endpoint(
             status=409
         )
 
-    # Prepare workflow state and save to session
-    workflow_state = await _prepare_workflow_state(workflow, chat_request.workflow_state)
-    session.current_workflow_state = workflow_state
+    # Save current workflow state to session for UI/persistence
+    session.current_workflow_state = await workflow_state_snapshot(workflow)
     await session.save(update_fields=['current_workflow_state'])
 
     # Save user message first (before async execution)
@@ -362,7 +344,6 @@ async def chat_with_workflow_endpoint(
         user_id=user.id,
         message=chat_request.message,
         workflow_id=workflow.id,
-        workflow_state=workflow_state,
         model=model,
     )
 
@@ -579,9 +560,6 @@ async def resume_chat_endpoint(
     assert session is not None
     session_id = session.id
 
-    # Get current workflow state
-    workflow_state = deepcopy(await workflow_state_snapshot(workflow))
-
     # Build resume command (validates answer)
     resume_command = await _build_resume_command(resume_data, checkpointer, session_id)
 
@@ -604,7 +582,6 @@ async def resume_chat_endpoint(
         thread_id=resume_data.thread_id,
         resume_command_data=resume_command.resume,
         workflow_id=workflow.id,
-        workflow_state=workflow_state,
     )
 
     # Save task ID to session

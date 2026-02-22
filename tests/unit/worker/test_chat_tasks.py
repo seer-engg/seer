@@ -392,7 +392,6 @@ class TestChatExecutionTask:
                 user_id=1,
                 message="Hello",
                 workflow_id=1,
-                workflow_state={},
             )
 
         # First save should set RUNNING
@@ -434,7 +433,6 @@ class TestChatExecutionTask:
                 user_id=1,
                 message="Hello",
                 workflow_id=1,
-                workflow_state={},
             )
 
         assert mock_chat_session.current_execution_status == ChatExecutionStatus.COMPLETED
@@ -472,7 +470,6 @@ class TestChatExecutionTask:
                 user_id=1,
                 message="Hello",
                 workflow_id=1,
-                workflow_state={},
             )
 
         assert mock_chat_session.current_execution_status == ChatExecutionStatus.FAILED
@@ -498,7 +495,6 @@ class TestChatExecutionTask:
                 user_id=1,
                 message="Hello",
                 workflow_id=1,
-                workflow_state={},
             )
 
         assert mock_chat_session.current_execution_status == ChatExecutionStatus.FAILED
@@ -537,7 +533,6 @@ class TestChatExecutionTask:
                 user_id=1,
                 message="Hello",
                 workflow_id=1,
-                workflow_state={},
             )
 
         assert mock_chat_session.current_execution_status == ChatExecutionStatus.INTERRUPTED
@@ -581,7 +576,6 @@ class TestChatExecutionTask:
                 user_id=1,
                 message="Hello",
                 workflow_id=1,
-                workflow_state={},
             )
 
         mock_save_msg.assert_called_once()
@@ -625,7 +619,6 @@ class TestChatExecutionTask:
                 user_id=1,
                 message="Hello",
                 workflow_id=1,
-                workflow_state={},
             )
 
         mock_increment.assert_called_once_with(mock_user)
@@ -672,7 +665,6 @@ class TestChatExecutionTask:
                 user_id=1,
                 message="Hello",
                 workflow_id=1,
-                workflow_state={},
             )
 
         call_kwargs = mock_save_msg.call_args.kwargs
@@ -712,7 +704,6 @@ class TestChatExecutionTask:
                 user_id=1,
                 message="Hello",
                 workflow_id=1,
-                workflow_state={},
             )
 
         mock_clear.assert_called_once()
@@ -747,7 +738,6 @@ class TestChatExecutionTask:
                 user_id=1,
                 message="Hello",
                 workflow_id=1,
-                workflow_state={},
             )
 
         mock_clear.assert_called_once()
@@ -786,7 +776,6 @@ class TestChatExecutionTask:
                 user_id=1,
                 message="Hello",
                 workflow_id=1,
-                workflow_state={},
             )
 
         mock_sentry.assert_called_once_with(mock_user, 1, 1, mock_chat_session.thread_id)
@@ -824,7 +813,6 @@ class TestChatExecutionTask:
                 user_id=1,
                 message="Hello",
                 workflow_id=1,
-                workflow_state={},
                 model="gpt-4-turbo",
             )
 
@@ -885,7 +873,6 @@ class TestChatResumeTask:
                 thread_id="thread-123",
                 resume_command_data={"approved": True},
                 workflow_id=1,
-                workflow_state={},
             )
 
         assert mock_chat_session.pending_interrupt_type is None
@@ -932,7 +919,6 @@ class TestChatResumeTask:
                 thread_id="thread-xyz",
                 resume_command_data={},
                 workflow_id=1,
-                workflow_state={},
             )
 
         mock_thread_var.set.assert_called_with("thread-xyz")
@@ -981,7 +967,6 @@ class TestChatResumeTask:
                 thread_id="thread-123",
                 resume_command_data={},
                 workflow_id=1,
-                workflow_state={},
             )
 
         mock_thread_var.reset.assert_called_with(mock_token)
@@ -1025,7 +1010,6 @@ class TestChatResumeTask:
                 thread_id="thread-123",
                 resume_command_data={},
                 workflow_id=1,
-                workflow_state={},
             )
 
         assert mock_chat_session.current_execution_status == ChatExecutionStatus.INTERRUPTED
@@ -1072,7 +1056,6 @@ class TestChatResumeTask:
                 thread_id="thread-123",
                 resume_command_data={},
                 workflow_id=1,
-                workflow_state={},
             )
 
         assert mock_chat_session.current_execution_status == ChatExecutionStatus.COMPLETED
@@ -1096,7 +1079,6 @@ class TestChatResumeTask:
                 thread_id="thread-123",
                 resume_command_data={},
                 workflow_id=1,
-                workflow_state={},
             )
 
         assert mock_chat_session.current_execution_status == ChatExecutionStatus.FAILED

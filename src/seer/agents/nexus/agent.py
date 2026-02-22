@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any
+from typing import Optional, Any
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
     SummarizationMiddleware,
@@ -51,9 +51,9 @@ async def _get_memory_context_for_user(user_id: str, current_query: Optional[str
 async def create_nexus_chat_agent(
     model: str = "moonshotai/kimi-k2.5",
     checkpointer: Optional[Any] = None,
-    workflow_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
     current_query: Optional[str] = None,
+    workflow_id: Optional[str] = None,
 ) -> Any:
     """
     Create a LangGraph agent for Nexus chat assistance using create_agent.
@@ -64,9 +64,9 @@ async def create_nexus_chat_agent(
     Args:
         model: Model name to use (e.g., 'moonshotai/kimi-k2.5', 'moonshotai/kimi-k2-thinking')
         checkpointer: Optional LangGraph checkpointer for persistence
-        workflow_state: Optional workflow state for context injection
         user_id: Optional user ID for memory context injection (Clerk user_id)
         current_query: Optional current user query for memory relevance search
+        workflow_id: Optional workflow ID for pre-bound workflow tools (e.g., 'wf_abc123')
 
     Returns:
         LangGraph agent compiled with tools and middleware
@@ -95,8 +95,8 @@ async def create_nexus_chat_agent(
             system_prompt = memory_context + "\n\n" + system_prompt
             logger.debug("Injected memory context for user %s (%d chars)", user_id, len(memory_context))
 
-    # Get workflow tools (with optional workflow_state injection)
-    tools = get_workflow_tools(workflow_state=workflow_state)
+    # Get workflow tools (with pre-bound workflow_id if provided)
+    tools = get_workflow_tools(workflow_id=workflow_id)
 
     # Create summarization model (use same model with lower max tokens)
     summarization_model = get_llm(
