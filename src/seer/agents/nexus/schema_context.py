@@ -28,7 +28,7 @@ from seer.logger import get_logger
 logger = get_logger(__name__)
 
 # Keys that keep the schema digestible while conveying the structure.
-_SCHEMA_KEYS = ("title", "type", "properties", "required", "definitions", "default")
+_SCHEMA_KEYS = ("title", "type", "properties", "required", "definitions", "$defs", "default")
 
 
 @lru_cache(maxsize=1)

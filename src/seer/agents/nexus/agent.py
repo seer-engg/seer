@@ -12,6 +12,7 @@ from seer.agents.nexus.schema_context import (
     get_workflow_spec_schema_text,
     generate_primitive_blocks_guide,
     generate_graph_structure_guide,
+    generate_trigger_reference,
 )
 from seer.prompts import get_nexus_system_prompt
 from seer.utilities.ml_flow import _ensure_mlflow_autologging
@@ -83,9 +84,10 @@ async def create_nexus_chat_agent(
     schema_section = f"\n\nWorkflowSpec schema excerpt (trimmed):\n{WORKFLOW_SPEC_SCHEMA}"
     blocks_guide = f"\n\n{generate_primitive_blocks_guide()}"
     graph_guide = f"\n\n{generate_graph_structure_guide()}"
+    trigger_guide = f"\n\n{generate_trigger_reference()}"
 
     # Compose full system prompt from loaded base + dynamic content
-    system_prompt = base_system_prompt + blocks_guide + graph_guide + schema_section
+    system_prompt = base_system_prompt + blocks_guide + graph_guide + trigger_guide + schema_section
 
     # Inject user memory context if enabled
     if user_id and config.memory_enabled and config.memory_context_injection_enabled:
