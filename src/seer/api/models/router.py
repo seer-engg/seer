@@ -3,8 +3,6 @@ from typing import List
 
 from fastapi import APIRouter
 
-from seer.config import config
-
 from .schema import ModelInfo
 
 router = APIRouter(prefix="/models", tags=["models"])
@@ -13,25 +11,11 @@ router = APIRouter(prefix="/models", tags=["models"])
 @router.get("", response_model=List[ModelInfo])
 async def list_models():
     """
-    List available models based on configured API keys.
+    List available models for the Chat Agent.
 
-    Returns a list of models that are available based on which API keys
-    are configured in the environment.
+    Returns Kimi series models only.
     """
-    models = []
-
-    if config.anthropic_api_key:
-        models.extend([
-            ModelInfo(id="claude-sonnet-4.5", provider="anthropic", name="Claude Sonnet 4.5", available=True),
-            ModelInfo(id="claude-opus-4.5", provider="anthropic", name="Claude Opus 4.5", available=True),
-        ])
-
-    if config.openrouter_api_key:
-        models.extend([
-            ModelInfo(id="moonshotai/kimi-k2.5", provider="openrouter", name="Kimi K2.5", available=True),
-            ModelInfo(id="moonshotai/kimi-k2-thinking", provider="openrouter", name="Kimi K2 Thinking", available=True),
-            ModelInfo(id="sourceful/riverflow-v2-fast", provider="openrouter", name="Riverflow V2 Fast (Image)", available=True),
-            ModelInfo(id="google/gemini-2.5-flash-image", provider="openrouter", name="Gemini 2.5 Flash Image", available=True),
-        ])
-
-    return models
+    return [
+        ModelInfo(id="moonshotai/kimi-k2.5", provider="openrouter", name="Kimi K2.5", available=True),
+        ModelInfo(id="moonshotai/kimi-k2-thinking", provider="openrouter", name="Kimi K2 Thinking", available=True),
+    ]
