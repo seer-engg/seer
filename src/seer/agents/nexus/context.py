@@ -1,5 +1,5 @@
 # Context variable to track current thread_id in tool execution
-from typing import Optional, Dict, Any, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 from contextvars import ContextVar
 
 _current_thread_id: ContextVar[Optional[str]] = ContextVar('_current_thread_id', default=None)
@@ -7,21 +7,6 @@ _current_thread_id: ContextVar[Optional[str]] = ContextVar('_current_thread_id',
 if TYPE_CHECKING:
     from seer.api.user.models import User
     from seer.database.workflow_models import WorkflowChatSession, WorkflowDiscoveryChatSession
-
-
-async def get_workflow_state_for_thread(thread_id: str) -> Optional[Dict[str, Any]]:
-    """
-    Get workflow state for a specific thread from the database.
-
-    Looks up the WorkflowChatSession by thread_id and returns its current_workflow_state.
-    """
-    # Import here to avoid circular dependency at module load time
-    from seer.database.workflow_models import WorkflowChatSession  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
-
-    session = await WorkflowChatSession.get_or_none(thread_id=thread_id)
-    if session and session.current_workflow_state:
-        return session.current_workflow_state
-    return None
 
 
 async def get_user_for_thread(thread_id: str) -> Optional["User"]:

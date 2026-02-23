@@ -268,6 +268,22 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     )
 
     # ============================================================================
+    # Database Seeding
+    # ============================================================================
+    seed_database_on_startup: bool = Field(
+        default=False,
+        description=(
+            "If True, import seed data from S3 on API server startup. "
+            "Requires WORKFLOW_FILE_S3_BUCKET to be configured. "
+            "Use for initial environment setup or credential migration."
+        ),
+    )
+    seed_data_filename: str = Field(
+        default="oauth-seed-data.json",
+        description="Filename for seed data in S3 (within seed-data/ prefix)",
+    )
+
+    # ============================================================================
     # Request Profiling
     # ============================================================================
     request_profiling_enabled: bool = Field(

@@ -160,7 +160,6 @@ async def chat_execution_task(
     user_id: int,
     message: str,
     workflow_id: int,
-    workflow_state: Dict[str, Any],
     model: Optional[str] = None,
 ) -> None:
     """
@@ -171,7 +170,6 @@ async def chat_execution_task(
         user_id: User database ID
         message: User's chat message
         workflow_id: Workflow database ID (not public workflow_id)
-        workflow_state: Current workflow graph state
         model: Optional model name override
     """
     logger.info(
@@ -195,7 +193,7 @@ async def chat_execution_task(
     try:
         # Fetch related entities
         user = await User.get(id=user_id)
-        await Workflow.get(id=workflow_id)  # Verify workflow exists
+        workflow = await Workflow.get(id=workflow_id)
         checkpointer = await get_checkpointer()
         thread_id = session.thread_id
 
@@ -206,9 +204,9 @@ async def chat_execution_task(
         agent = await create_nexus_chat_agent(
             model=model or config.default_llm_model,
             checkpointer=checkpointer,
-            workflow_state=workflow_state,
             user_id=user.user_id,
             current_query=message,
+            workflow_id=workflow.workflow_id,  # Public workflow ID for pre-bound tools
         )
 
         # Get user settings and create runtime context
@@ -354,7 +352,6 @@ async def chat_resume_task(
     thread_id: str,
     resume_command_data: Dict[str, Any],
     workflow_id: int,
-    workflow_state: Dict[str, Any],
 ) -> None:
     """
     Resume chat execution after interrupt.
@@ -365,7 +362,6 @@ async def chat_resume_task(
         thread_id: LangGraph thread ID
         resume_command_data: Serialized Command data (resume value)
         workflow_id: Workflow database ID (not public workflow_id)
-        workflow_state: Current workflow graph state
     """
     logger.info(
         "Starting async chat resume",
@@ -392,7 +388,7 @@ async def chat_resume_task(
     try:
         # Fetch related entities
         user = await User.get(id=user_id)
-        await Workflow.get(id=workflow_id)  # Verify workflow exists
+        workflow = await Workflow.get(id=workflow_id)
         checkpointer = await get_checkpointer()
 
         # Set Sentry context for error tracking
@@ -402,8 +398,8 @@ async def chat_resume_task(
         agent = await create_nexus_chat_agent(
             model=config.default_llm_model,
             checkpointer=checkpointer,
-            workflow_state=workflow_state,
             user_id=user.user_id,
+            workflow_id=workflow.workflow_id,  # Public workflow ID for pre-bound tools
         )
 
         # Build resume command
