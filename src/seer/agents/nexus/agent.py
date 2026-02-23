@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any
+from typing import Optional, Any
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
     SummarizationMiddleware,
@@ -12,6 +12,7 @@ from seer.agents.nexus.schema_context import (
     get_workflow_spec_schema_text,
     generate_primitive_blocks_guide,
     generate_graph_structure_guide,
+    generate_trigger_reference,
 )
 from seer.prompts import get_nexus_system_prompt
 from seer.utilities.ml_flow import _ensure_mlflow_autologging
@@ -51,9 +52,9 @@ async def _get_memory_context_for_user(user_id: str, current_query: Optional[str
 async def create_nexus_chat_agent(
     model: str = "moonshotai/kimi-k2.5",
     checkpointer: Optional[Any] = None,
-    workflow_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
     current_query: Optional[str] = None,
+    workflow_id: Optional[str] = None,
 ) -> Any:
     """
     Create a LangGraph agent for Nexus chat assistance using create_agent.
@@ -64,9 +65,9 @@ async def create_nexus_chat_agent(
     Args:
         model: Model name to use (e.g., 'moonshotai/kimi-k2.5', 'moonshotai/kimi-k2-thinking')
         checkpointer: Optional LangGraph checkpointer for persistence
-        workflow_state: Optional workflow state for context injection
         user_id: Optional user ID for memory context injection (Clerk user_id)
         current_query: Optional current user query for memory relevance search
+        workflow_id: Optional workflow ID for pre-bound workflow tools (e.g., 'wf_abc123')
 
     Returns:
         LangGraph agent compiled with tools and middleware
@@ -83,9 +84,10 @@ async def create_nexus_chat_agent(
     schema_section = f"\n\nWorkflowSpec schema excerpt (trimmed):\n{WORKFLOW_SPEC_SCHEMA}"
     blocks_guide = f"\n\n{generate_primitive_blocks_guide()}"
     graph_guide = f"\n\n{generate_graph_structure_guide()}"
+    trigger_guide = f"\n\n{generate_trigger_reference()}"
 
     # Compose full system prompt from loaded base + dynamic content
-    system_prompt = base_system_prompt + blocks_guide + graph_guide + schema_section
+    system_prompt = base_system_prompt + blocks_guide + graph_guide + trigger_guide + schema_section
 
     # Inject user memory context if enabled
     if user_id and config.memory_enabled and config.memory_context_injection_enabled:
@@ -95,8 +97,8 @@ async def create_nexus_chat_agent(
             system_prompt = memory_context + "\n\n" + system_prompt
             logger.debug("Injected memory context for user %s (%d chars)", user_id, len(memory_context))
 
-    # Get workflow tools (with optional workflow_state injection)
-    tools = get_workflow_tools(workflow_state=workflow_state)
+    # Get workflow tools (with pre-bound workflow_id if provided)
+    tools = get_workflow_tools(workflow_id=workflow_id)
 
     # Create summarization model (use same model with lower max tokens)
     summarization_model = get_llm(
