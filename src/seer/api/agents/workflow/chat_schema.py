@@ -29,7 +29,6 @@ class QuestionType(str, Enum):
 class ChatRequest(BaseModel):
     """Request model for chat endpoint."""
     message: str = Field(..., description="User's chat message")
-    workflow_state: Dict[str, Any] = Field(..., description="Legacy workflow state snapshot (ReactFlow schema)")
     model: Optional[str] = Field(default=None, description="Model to use for chat (e.g., 'gpt-5.2', 'claude-opus-4-5')")
     session_id: Optional[int] = Field(default=None, description="Chat session ID to resume conversation")
     thread_id: Optional[str] = Field(default=None, description="LangGraph thread ID to resume conversation")

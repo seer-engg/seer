@@ -1,19 +1,21 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 from seer.config import config
 from seer.logger import get_logger
 from seer.agents.nexus.tools import (
-    analyze_workflow,
     submit_workflow_spec,
     ask_clarification_questions,
     web_search,
     memory_tools,
 )
+from seer.agents.nexus.tools.workflow_tools import (
+    create_bound_get_workflow,
+    create_bound_analyze_workflow,
+)
 
 logger = get_logger(__name__)
 
 
-# pylint: disable=unused-argument # Reason: Reserved for future state injection feature
-def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:
+def get_workflow_tools(workflow_id: Optional[str] = None) -> List:
     """
     Get all workflow manipulation tools and dynamic discovery tools.
 
@@ -21,12 +23,9 @@ def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:
     plus Nexus-only tools that are tightly coupled to the agent context.
 
     Args:
-        workflow_state: Reserved for future use. Planned: inject workflow state into tool context
-                        so tools can access state without requiring it as a parameter.
+        workflow_id: If provided, creates get_workflow and analyze_workflow tools
+                     with the workflow_id pre-bound so the agent doesn't need to pass it.
     """
-    # TODO: Implement workflow_state injection when tool context system is ready
-    # Currently, tools use _current_thread_id context instead of explicit state parameter
-
     # Register unified tools (idempotent) and get LangGraph-compatible versions
     from seer.tools.unified_tools import register_unified_tools  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
     register_unified_tools()
@@ -34,11 +33,18 @@ def get_workflow_tools(workflow_state: Optional[Dict[str, Any]] = None) -> List:
 
     # Nexus-only tools (tightly coupled to agent context, not in factory)
     nexus_only_tools = [
-        analyze_workflow,
         submit_workflow_spec,
         ask_clarification_questions,
         web_search,
     ]
+
+    # Add workflow-aware tools if workflow_id is provided
+    if workflow_id:
+        nexus_only_tools.extend([
+            create_bound_get_workflow(workflow_id),
+            create_bound_analyze_workflow(workflow_id),
+        ])
+        logger.debug("Created workflow-bound tools for workflow_id=%s", workflow_id)
 
     # Add memory tools if memory is enabled
     if config.memory_enabled:

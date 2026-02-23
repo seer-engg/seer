@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field
 
 from seer.agents.nexus.context import (
     _current_thread_id,
-    get_workflow_state_for_thread,
     get_user_for_thread,
 )
 from seer.agents.nexus.schema_context import (
@@ -138,71 +137,76 @@ Provide a summary and reasoning for your design decisions."""
     return proposal
 
 
-async def _resolve_workflow_state(
-    workflow_state: Optional[Dict[str, Any]],
-) -> Optional[Dict[str, Any]]:
-    """Use explicit workflow_state if provided otherwise fall back to thread context."""
-    if workflow_state is not None:
-        return workflow_state
-    thread_id = _current_thread_id.get()
-    if thread_id:
-        return await get_workflow_state_for_thread(thread_id)
-    return None
-
-
-@tool
-async def analyze_workflow(
-    workflow_state: Optional[Dict[str, Any]] = None,
-) -> str:
+def create_bound_get_workflow(workflow_id: str):
     """
-    Analyze the current workflow structure.
+    Create a get_workflow tool with workflow_id pre-bound.
 
-    Returns a JSON string describing the workflow's blocks, connections, and configuration.
+    The returned tool fetches the workflow spec from the database using
+    the pre-bound workflow_id, so the agent doesn't need to pass it.
     """
-    resolved_state = await _resolve_workflow_state(workflow_state)
-    if resolved_state is None:
-        return json.dumps({"error": "Workflow state not available"})
+    @tool
+    async def get_workflow() -> str:
+        """
+        Get the current workflow specification.
 
-    nodes = resolved_state.get("nodes", [])
-    edges = resolved_state.get("edges", [])
+        Returns the full workflow including nodes, edges, and triggers as JSON.
+        """
+        # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+        from seer.api.workflows.services.lifecycle import get_workflow as get_workflow_service
 
-    analysis = {
-        "total_blocks": len(nodes),
-        "total_connections": len(edges),
-        "block_types": {},
-        "blocks": [],
-        "connections": [],
-    }
+        thread_id = _current_thread_id.get()
+        user = await get_user_for_thread(thread_id) if thread_id else None
+        if not user:
+            return json.dumps({"error": "User context not available"})
 
-    for node in nodes:
-        block_type = node.get("type", "unknown")
-        analysis["block_types"][block_type] = analysis["block_types"].get(block_type, 0) + 1
-        analysis["blocks"].append(
-            {
-                "id": node.get("id"),
-                "type": block_type,
-                "label": node.get("data", {}).get("label", ""),
-                "config": node.get("data", {}).get("config", {}),
-            }
-        )
+        try:
+            response = await get_workflow_service(user, workflow_id)
+            return json.dumps({
+                "workflow_id": response.workflow_id,
+                "name": response.name,
+                "spec": response.spec.model_dump(mode="json"),
+            }, indent=2)
+        except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Return friendly error
+            logger.exception("Error getting workflow: %s", e)
+            return json.dumps({"error": "not_found", "message": str(e)})
 
-    for edge in edges:
-        analysis["connections"].append(
-            {
-                "source": edge.get("source"),
-                "target": edge.get("target"),
-                "branch": edge.get("data", {}).get("branch"),
-            }
-        )
+    return get_workflow
 
-    if resolved_state.get("block_aliases"):
-        analysis["block_aliases"] = resolved_state["block_aliases"]
-    if resolved_state.get("template_reference_examples"):
-        analysis["template_reference_examples"] = resolved_state["template_reference_examples"]
-    if resolved_state.get("input_variables"):
-        analysis["input_variables"] = resolved_state["input_variables"]
 
-    return json.dumps(analysis, indent=2)
+def create_bound_analyze_workflow(workflow_id: str):
+    """
+    Create an analyze_workflow tool with workflow_id pre-bound.
+
+    The returned tool analyzes the workflow structure using the pre-bound
+    workflow_id, so the agent doesn't need to pass it.
+    """
+    @tool
+    async def analyze_workflow() -> str:
+        """
+        Analyze the current workflow structure.
+
+        Returns block types, connections, triggers, and configuration breakdown as JSON.
+        """
+        # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+        from seer.api.workflows.services.lifecycle import get_workflow as get_workflow_service
+
+        thread_id = _current_thread_id.get()
+        user = await get_user_for_thread(thread_id) if thread_id else None
+        if not user:
+            return json.dumps({"error": "User context not available"})
+
+        try:
+            response = await get_workflow_service(user, workflow_id)
+            # Use shared analysis helper
+            from seer.services.workflows.analysis import build_workflow_analysis  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+            analysis = build_workflow_analysis(workflow_id, response.name, response.spec)
+            return json.dumps(analysis, indent=2)
+
+        except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Return friendly error
+            logger.exception("Error analyzing workflow: %s", e)
+            return json.dumps({"error": "analysis_failed", "message": str(e)})
+
+    return analyze_workflow
 
 
 def _coerce_spec_payload(raw_spec: Any) -> Optional[Dict[str, Any]]:
