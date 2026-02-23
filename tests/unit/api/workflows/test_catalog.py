@@ -433,8 +433,8 @@ class TestListModels:
         assert len(result.models) >= 2
 
         model_ids = [m.id for m in result.models]
-        assert "moonshotai/kimi-k2.5" in model_ids
-        assert "moonshotai/kimi-k2-thinking" in model_ids
+        assert "gpt-5-mini" in model_ids
+        assert "gpt-5" in model_ids
 
     @pytest.mark.asyncio
     async def test_list_models_includes_custom_default(self):
