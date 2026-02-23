@@ -36,17 +36,12 @@ class TestDBContextPersistence:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             yield client, test_workflow
 
-    async def test_workflow_state_persistence(self, workflow_client):
-        """Test that workflow state is saved to database and can be retrieved."""
+    async def test_session_creation_on_chat(self, workflow_client):
+        """Test that chat session is created in database on chat request."""
         from seer.database.workflow_models import WorkflowChatSession
         from unittest.mock import patch
 
         client, workflow = workflow_client
-
-        workflow_state = {
-            "nodes": [{"id": "node1", "type": "tool", "data": {"label": "Test Node"}}],
-            "edges": [{"id": "edge1", "source": "node1", "target": "node2"}]
-        }
 
         # Mock the taskiq task's kiq method to avoid broker connection
         mock_task_result = MagicMock()
@@ -58,12 +53,11 @@ class TestDBContextPersistence:
             mock_checkpointer.return_value = AsyncMock()
             mock_chat_task.kiq = AsyncMock(return_value=mock_task_result)
 
-            # Send chat message with workflow state (async mode - the default)
+            # Send chat message (async mode - the default)
             response = await client.post(
                 f"/nexus/{workflow.workflow_id}/chat",
                 json={
-                    "message": "Test message",
-                    "workflow_state": workflow_state
+                    "message": "Test message"
                 }
             )
 
@@ -71,12 +65,12 @@ class TestDBContextPersistence:
             data = response.json()
             thread_id = data["thread_id"]
 
-            # Verify workflow state was saved to database (happens before async task is enqueued)
+            # Verify session was created in database
             session = await WorkflowChatSession.get_or_none(thread_id=thread_id)
             assert session is not None
+            assert session.workflow_id == workflow.id
+            # Router populates current_workflow_state from the actual workflow spec
             assert session.current_workflow_state is not None
-            assert session.current_workflow_state["nodes"] == workflow_state["nodes"]
-            assert session.current_workflow_state["edges"] == workflow_state["edges"]
 
     async def test_proposal_creation_by_thread(self, workflow_client):
         """Test that proposals are created with thread_id and can be queried."""
@@ -196,34 +190,3 @@ class TestDBContextPersistence:
 
         assert retrieved_session1.current_workflow_state["nodes"][0]["id"] == "node1"
         assert retrieved_session2.current_workflow_state["nodes"][0]["id"] == "node2"
-
-    async def test_workflow_state_retrieval_by_tools(self, workflow_client):
-        """Test that tools can retrieve workflow state from database."""
-        from seer.agents.nexus.context import get_workflow_state_for_thread
-        from seer.api.agents.workflow.services import create_chat_session
-        from seer.database import User
-
-        client, workflow = workflow_client
-
-        user = await User.get(id=workflow.user_id)
-        session = await create_chat_session(
-            workflow=workflow,
-            user=user,
-            thread_id="test-thread-state-retrieval",
-            title="State Retrieval Test"
-        )
-
-        # Set workflow state
-        workflow_state = {
-            "nodes": [{"id": "test_node", "type": "tool"}],
-            "edges": [{"id": "edge1", "source": "test_node", "target": "end"}]
-        }
-        session.current_workflow_state = workflow_state
-        await session.save(update_fields=['current_workflow_state'])
-
-        # Retrieve via context function
-        retrieved_state = await get_workflow_state_for_thread(session.thread_id)
-
-        assert retrieved_state is not None
-        assert retrieved_state["nodes"] == workflow_state["nodes"]
-        assert retrieved_state["edges"] == workflow_state["edges"]

@@ -102,8 +102,7 @@ class TestClarificationFlow:
             response = await client.post(
                 f"/nexus/{workflow.workflow_id}/chat",
                 json={
-                    "message": "Set up email integration",
-                    "workflow_state": {"nodes": [], "edges": []}
+                    "message": "Set up email integration"
                 }
             )
 
@@ -132,7 +131,6 @@ class TestClarificationFlow:
                 user_id=workflow.user_id,
                 message="Set up email integration",
                 workflow_id=workflow.id,
-                workflow_state={"nodes": [], "edges": []},
             )
 
         # Now check the session state - should have interrupt
@@ -244,7 +242,6 @@ class TestClarificationFlow:
                 thread_id=thread_id,
                 resume_command_data=captured_task_args["resume_command_data"],
                 workflow_id=workflow.id,
-                workflow_state=captured_task_args.get("workflow_state", {}),
             )
 
         # Verify session completed (no interrupt)
@@ -477,7 +474,6 @@ class TestClarificationFlow:
                 thread_id=thread_id,
                 resume_command_data=captured_task_args["resume_command_data"],
                 workflow_id=workflow.id,
-                workflow_state=captured_task_args.get("workflow_state", {}),
             )
 
         # Verify session completed
@@ -540,8 +536,7 @@ class TestClarificationFlow:
             response = await client.post(
                 f"/nexus/{workflow.workflow_id}/chat",
                 json={
-                    "message": "Enable integrations",
-                    "workflow_state": {"nodes": [], "edges": []}
+                    "message": "Enable integrations"
                 }
             )
 
@@ -561,7 +556,6 @@ class TestClarificationFlow:
                 user_id=workflow.user_id,
                 message="Enable integrations",
                 workflow_id=workflow.id,
-                workflow_state={"nodes": [], "edges": []},
             )
 
         # Verify session has multi-choice interrupt
@@ -641,8 +635,7 @@ class TestClarificationFlow:
             response = await client.post(
                 f"/nexus/{workflow.workflow_id}/chat",
                 json={
-                    "message": "Set up email and notifications",
-                    "workflow_state": {"nodes": [], "edges": []}
+                    "message": "Set up email and notifications"
                 }
             )
 
@@ -661,7 +654,6 @@ class TestClarificationFlow:
                 user_id=workflow.user_id,
                 message="Set up email and notifications",
                 workflow_id=workflow.id,
-                workflow_state={"nodes": [], "edges": []},
             )
 
         # Verify session has batch questions
@@ -734,7 +726,6 @@ class TestClarificationFlow:
                 thread_id=session.thread_id,
                 resume_command_data=captured_task_args["resume_command_data"],
                 workflow_id=workflow.id,
-                workflow_state=captured_task_args.get("workflow_state", {}),
             )
 
         await session.refresh_from_db()
