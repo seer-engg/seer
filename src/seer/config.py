@@ -137,7 +137,7 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
 
 
 
-    default_llm_model: str = Field(default="moonshotai/kimi-k2.5", description="Default LLM model")
+    default_llm_model: str = Field(default="gpt-5-mini", description="Default LLM model")
 
     # Taskiq / Valkey configuration
     redis_url: str = Field(
