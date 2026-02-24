@@ -93,12 +93,9 @@ NODE_TYPE_DESCRIPTORS = api_models.NodeTypeResponse(
 )
 
 DEFAULT_MODEL_REGISTRY = [
-    # OpenRouter - Kimi models
-    api_models.ModelDescriptor(id="moonshotai/kimi-k2.5", title="Kimi K2.5", supports_json_schema=True),
-    api_models.ModelDescriptor(id="moonshotai/kimi-k2-thinking", title="Kimi K2 Thinking", supports_json_schema=True),
-
-    #openai models
+    # OpenAI models
     api_models.ModelDescriptor(id="gpt-5-mini", title="GPT-5 Mini", supports_json_schema=True),
+    api_models.ModelDescriptor(id="gpt-5", title="GPT-5", supports_json_schema=True),
 ]
 
 
