@@ -18,6 +18,7 @@ from seer.prompts import (
     get_skill_guide,
     list_available_skills,
 )
+from seer.agents.nexus.schema_context import generate_trigger_reference
 from seer.logger import get_logger
 
 logger = get_logger(__name__)
@@ -55,7 +56,8 @@ async def get_workflow_guide(
         section: Optional section to retrieve:
                  - "blocks" - Block types reference (tool, llm, if, for_each)
                  - "graph" - Graph structure and edge types
-                 - None (default) - Returns both blocks and graph guides
+                 - "triggers" - Trigger specification and required fields
+                 - None (default) - Returns blocks, graph, and trigger guides
         integration: Optional integration name for integration-specific guide.
                      Use "list" to see available integrations.
                      Examples: "gmail", "slack", "supabase"
@@ -64,10 +66,11 @@ async def get_workflow_guide(
         Markdown documentation with schemas, examples, and best practices.
 
     Examples:
-        get_workflow_guide()                    # Full blocks + graph guide
-        get_workflow_guide(section="blocks")    # Just block types
-        get_workflow_guide(integration="gmail") # Gmail tools and patterns
-        get_workflow_guide(integration="list")  # List available integrations
+        get_workflow_guide()                      # Full blocks + graph + triggers guide
+        get_workflow_guide(section="blocks")      # Just block types
+        get_workflow_guide(section="triggers")    # Trigger spec and required fields
+        get_workflow_guide(integration="gmail")   # Gmail tools and patterns
+        get_workflow_guide(integration="list")    # List available integrations
     """
     # If integration requested, return integration-specific guide
     if integration:
@@ -78,8 +81,11 @@ async def get_workflow_guide(
         return get_primitive_blocks_guide()
     if section == "graph":
         return get_graph_structure_guide()
+    if section == "triggers":
+        return generate_trigger_reference()
 
     # Return combined guide (default)
     blocks = get_primitive_blocks_guide()
     graph = get_graph_structure_guide()
-    return f"{blocks}\n\n---\n\n{graph}"
+    triggers = generate_trigger_reference()
+    return f"{blocks}\n\n---\n\n{graph}\n\n---\n\n{triggers}"
