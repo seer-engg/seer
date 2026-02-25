@@ -5,7 +5,6 @@ Tests:
 - UsageLimitMiddleware.dispatch: Limit enforcement
 - Workflow creation limit check
 - Monthly run limit check
-- Chat message limit check
 - Polling interval validation
 """
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -38,12 +37,9 @@ def mock_limits():
     limits = MagicMock()
     limits.workflows = 10
     limits.runs_monthly = 100
-    limits.chat_messages_total = 1000
     limits.poll_min_interval_seconds = 60
     limits.has_unlimited_workflows = False
     limits.has_unlimited_runs = False
-    limits.has_unlimited_chat = False
-    limits.is_chat_disabled = False
     return limits
 
 
@@ -53,12 +49,9 @@ def unlimited_limits():
     limits = MagicMock()
     limits.workflows = 999999
     limits.runs_monthly = 999999
-    limits.chat_messages_total = 999999
     limits.poll_min_interval_seconds = 1
     limits.has_unlimited_workflows = True
     limits.has_unlimited_runs = True
-    limits.has_unlimited_chat = True
-    limits.is_chat_disabled = False
     return limits
 
 
@@ -368,82 +361,6 @@ class TestWorkflowRunLimit:
 
 
 # =============================================================================
-# Chat Message Limit Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestChatMessageLimit:
-    """Tests for chat message limit enforcement."""
-
-    @pytest.mark.asyncio
-    async def test_chat_message_within_limit(self, mock_request, mock_user, mock_limits):
-        """Test that chat message is allowed within limit."""
-        mock_request.state.db_user = mock_user
-        mock_request.method = "POST"
-        mock_request.url.path = "/api/nexus/session_123/chat"
-        call_next = AsyncMock(return_value=MagicMock())
-
-        with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits, \
-             patch("seer.api.core.middleware.usage_limit.get_total_chat_message_count") as mock_get_count:
-
-            mock_is_public.return_value = False
-            mock_get_limits.return_value = mock_limits
-            mock_get_count.return_value = 500  # Under limit of 1000
-
-            middleware = UsageLimitMiddleware(app=MagicMock())
-
-            await middleware.dispatch(mock_request, call_next)
-
-            call_next.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_chat_message_at_limit(self, mock_request, mock_user, mock_limits):
-        """Test that chat message is blocked at limit."""
-        mock_request.state.db_user = mock_user
-        mock_request.method = "POST"
-        mock_request.url.path = "/api/nexus/session_123/chat"
-
-        with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits, \
-             patch("seer.api.core.middleware.usage_limit.get_total_chat_message_count") as mock_get_count, \
-             patch("seer.api.core.middleware.usage_limit.resolve_user_tier") as mock_resolve_tier:
-
-            mock_is_public.return_value = False
-            mock_get_limits.return_value = mock_limits
-            mock_get_count.return_value = 1000  # At limit
-            mock_resolve_tier.return_value = MagicMock(value="free")
-
-            middleware = UsageLimitMiddleware(app=MagicMock())
-
-            result = await middleware.dispatch(mock_request, AsyncMock())
-
-            assert result.status_code == 402
-
-    @pytest.mark.asyncio
-    async def test_chat_disabled_returns_403(self, mock_request, mock_user, mock_limits):
-        """Test that disabled chat returns 403."""
-        mock_request.state.db_user = mock_user
-        mock_request.method = "POST"
-        mock_request.url.path = "/api/nexus/session_123/chat"
-
-        mock_limits.is_chat_disabled = True
-
-        with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits:
-
-            mock_is_public.return_value = False
-            mock_get_limits.return_value = mock_limits
-
-            middleware = UsageLimitMiddleware(app=MagicMock())
-
-            result = await middleware.dispatch(mock_request, AsyncMock())
-
-            assert result.status_code == 403
-
-
-# =============================================================================
 # Polling Interval Validation Tests
 # =============================================================================
 
@@ -521,6 +438,127 @@ class TestPollingIntervalValidation:
 
             # Should pass through even with invalid JSON
             call_next.assert_called_once()
+
+
+# =============================================================================
+# Chat LLM Credit Limit Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestChatLLMCreditLimit:
+    """Tests for chat LLM credit limit enforcement."""
+
+    @pytest.mark.asyncio
+    async def test_chat_endpoint_allowed_when_under_limit(self, mock_request, mock_user, mock_limits):
+        """Test that chat requests are allowed when under credit limit."""
+        mock_request.state.db_user = mock_user
+        mock_request.method = "POST"
+        mock_request.url.path = "/nexus/wf_123/chat"
+        call_next = AsyncMock(return_value=MagicMock())
+
+        with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
+             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits, \
+             patch("seer.api.core.middleware.usage_limit.check_credit_limit") as mock_check_credit:
+
+            mock_is_public.return_value = False
+            mock_get_limits.return_value = mock_limits
+            # check_credit_limit returns None when under limit (no exception)
+
+            middleware = UsageLimitMiddleware(app=MagicMock())
+
+            await middleware.dispatch(mock_request, call_next)
+
+            call_next.assert_called_once()
+            mock_check_credit.assert_called_once_with(mock_user)
+
+    @pytest.mark.asyncio
+    async def test_chat_endpoint_blocked_when_over_limit(self, mock_request, mock_user, mock_limits):
+        """Test that chat requests are blocked when credit limit exceeded."""
+        from seer.observability.exceptions import CreditLimitExceeded, LimitPeriod
+        from seer.database.subscription_models import SubscriptionTier
+
+        mock_request.state.db_user = mock_user
+        mock_request.method = "POST"
+        mock_request.url.path = "/nexus/wf_123/chat"
+
+        with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
+             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits, \
+             patch("seer.api.core.middleware.usage_limit.check_credit_limit") as mock_check_credit:
+
+            mock_is_public.return_value = False
+            mock_get_limits.return_value = mock_limits
+            # Simulate credit limit exceeded
+            mock_check_credit.side_effect = CreditLimitExceeded(
+                limit=0.02,
+                current=0.04,
+                tier=SubscriptionTier.PRO,
+                period=LimitPeriod.MONTHLY,
+            )
+
+            middleware = UsageLimitMiddleware(app=MagicMock())
+
+            result = await middleware.dispatch(mock_request, AsyncMock())
+
+            assert result.status_code == 402
+            import json
+            body = json.loads(result.body.decode())
+            assert body["error"] == "usage_limit_exceeded"
+            assert body["resource"] == "llm_credits"
+            assert body["period"] == "monthly"
+
+    @pytest.mark.asyncio
+    async def test_chat_resume_endpoint_blocked_when_over_limit(self, mock_request, mock_user, mock_limits):
+        """Test that chat resume requests are also blocked when credit limit exceeded."""
+        from seer.observability.exceptions import CreditLimitExceeded, LimitPeriod
+        from seer.database.subscription_models import SubscriptionTier
+
+        mock_request.state.db_user = mock_user
+        mock_request.method = "POST"
+        mock_request.url.path = "/nexus/wf_123/chat/resume"
+
+        with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
+             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits, \
+             patch("seer.api.core.middleware.usage_limit.check_credit_limit") as mock_check_credit:
+
+            mock_is_public.return_value = False
+            mock_get_limits.return_value = mock_limits
+            mock_check_credit.side_effect = CreditLimitExceeded(
+                limit=5.00,
+                current=6.50,
+                tier=SubscriptionTier.PRO,
+                period=LimitPeriod.WEEKLY,
+            )
+
+            middleware = UsageLimitMiddleware(app=MagicMock())
+
+            result = await middleware.dispatch(mock_request, AsyncMock())
+
+            assert result.status_code == 402
+
+    @pytest.mark.asyncio
+    async def test_chat_status_endpoint_not_blocked(self, mock_request, mock_user, mock_limits):
+        """Test that GET status endpoint is not subject to credit limit checks."""
+        mock_request.state.db_user = mock_user
+        mock_request.method = "GET"  # GET requests don't trigger the check
+        mock_request.url.path = "/nexus/wf_123/chat/status/123"
+        call_next = AsyncMock(return_value=MagicMock())
+
+        with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
+             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits, \
+             patch("seer.api.core.middleware.usage_limit.check_credit_limit") as mock_check_credit:
+
+            mock_is_public.return_value = False
+            mock_get_limits.return_value = mock_limits
+
+            middleware = UsageLimitMiddleware(app=MagicMock())
+
+            await middleware.dispatch(mock_request, call_next)
+
+            # Should pass through - GET requests don't trigger POST path checks
+            call_next.assert_called_once()
+            # Credit check should NOT be called for GET requests
+            mock_check_credit.assert_not_called()
 
 
 # =============================================================================
