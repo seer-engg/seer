@@ -517,3 +517,280 @@ class TestCreditGate:
 
             # Should have logged a warning
             assert "approaching" in caplog.text.lower() or "5_hour" in caplog.text
+
+
+# =============================================================================
+# Credit Gate Overage Allowance Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestCreditGateOverageAllowance:
+    """Tests for credit gate overage allowance flow."""
+
+    @pytest.fixture
+    def mock_user(self):
+        """Create mock user."""
+        from seer.database import User
+
+        user = MagicMock(spec=User)
+        user.id = 1
+        user.user_id = "user_123"
+        return user
+
+    async def test_monthly_limit_allows_overage_when_enabled(self, mock_user):
+        """Test that monthly limit allows usage when overage is enabled with remaining cap."""
+        from seer.observability.credit_gate import check_credit_limit
+
+        with (
+            patch("seer.observability.credit_gate.get_limits_for_user") as mock_get_limits,
+            patch("seer.observability.credit_gate.resolve_user_tier") as mock_resolve_tier,
+            patch("seer.observability.credit_gate.get_5h_llm_credits_used") as mock_5h,
+            patch("seer.observability.credit_gate.get_weekly_llm_credits_used") as mock_weekly,
+            patch("seer.observability.credit_gate.get_monthly_llm_credits_used") as mock_monthly,
+            patch("seer.observability.credit_gate._check_overage_allowance") as mock_overage,
+        ):
+            mock_limits = MagicMock()
+            mock_limits.has_unlimited_credits = False
+            mock_limits.has_unlimited_5h_credits = False
+            mock_limits.has_unlimited_weekly_credits = False
+            mock_limits.llm_credits_5h = 1.0
+            mock_limits.llm_credits_weekly = 3.0
+            mock_limits.llm_credits_monthly = 5.0
+            mock_get_limits.return_value = mock_limits
+
+            mock_resolve_tier.return_value = SubscriptionTier.PRO
+
+            # Under short-term limits but over monthly (at 120%)
+            mock_5h.return_value = Decimal("0.50")
+            mock_weekly.return_value = Decimal("2.00")
+            mock_monthly.return_value = Decimal("6.00")  # At 120% of monthly
+
+            # Overage is allowed
+            from seer.observability.credit_gate import OverageCheckResult
+            mock_overage.return_value = OverageCheckResult(
+                allowed=True,
+                overage_enabled=True,
+                overage_cap_reached=False,
+                remaining_cap_cents=5000,
+            )
+
+            # Should NOT raise because overage is allowed
+            await check_credit_limit(mock_user)
+
+    async def test_monthly_limit_blocks_when_overage_cap_reached(self, mock_user):
+        """Test that monthly limit blocks when overage cap is reached."""
+        from seer.observability.credit_gate import check_credit_limit
+        from seer.observability.exceptions import CreditLimitExceeded
+
+        with (
+            patch("seer.observability.credit_gate.get_limits_for_user") as mock_get_limits,
+            patch("seer.observability.credit_gate.resolve_user_tier") as mock_resolve_tier,
+            patch("seer.observability.credit_gate.get_5h_llm_credits_used") as mock_5h,
+            patch("seer.observability.credit_gate.get_weekly_llm_credits_used") as mock_weekly,
+            patch("seer.observability.credit_gate.get_monthly_llm_credits_used") as mock_monthly,
+            patch("seer.observability.credit_gate._check_overage_allowance") as mock_overage,
+        ):
+            mock_limits = MagicMock()
+            mock_limits.has_unlimited_credits = False
+            mock_limits.has_unlimited_5h_credits = False
+            mock_limits.has_unlimited_weekly_credits = False
+            mock_limits.llm_credits_5h = 1.0
+            mock_limits.llm_credits_weekly = 3.0
+            mock_limits.llm_credits_monthly = 5.0
+            mock_get_limits.return_value = mock_limits
+
+            mock_resolve_tier.return_value = SubscriptionTier.PRO
+
+            # Over monthly limit
+            mock_5h.return_value = Decimal("0.50")
+            mock_weekly.return_value = Decimal("2.00")
+            mock_monthly.return_value = Decimal("6.50")
+
+            # Overage cap reached
+            from seer.observability.credit_gate import OverageCheckResult
+            mock_overage.return_value = OverageCheckResult(
+                allowed=False,
+                overage_enabled=True,
+                overage_cap_reached=True,
+                remaining_cap_cents=0,
+            )
+
+            with pytest.raises(CreditLimitExceeded) as exc_info:
+                await check_credit_limit(mock_user)
+
+            assert exc_info.value.overage_cap_reached is True
+
+    async def test_monthly_limit_blocks_when_overage_not_enabled(self, mock_user):
+        """Test that monthly limit blocks when overage is not enabled."""
+        from seer.observability.credit_gate import check_credit_limit
+        from seer.observability.exceptions import CreditLimitExceeded
+
+        with (
+            patch("seer.observability.credit_gate.get_limits_for_user") as mock_get_limits,
+            patch("seer.observability.credit_gate.resolve_user_tier") as mock_resolve_tier,
+            patch("seer.observability.credit_gate.get_5h_llm_credits_used") as mock_5h,
+            patch("seer.observability.credit_gate.get_weekly_llm_credits_used") as mock_weekly,
+            patch("seer.observability.credit_gate.get_monthly_llm_credits_used") as mock_monthly,
+            patch("seer.observability.credit_gate._check_overage_allowance") as mock_overage,
+        ):
+            mock_limits = MagicMock()
+            mock_limits.has_unlimited_credits = False
+            mock_limits.has_unlimited_5h_credits = False
+            mock_limits.has_unlimited_weekly_credits = False
+            mock_limits.llm_credits_5h = 1.0
+            mock_limits.llm_credits_weekly = 3.0
+            mock_limits.llm_credits_monthly = 5.0
+            mock_get_limits.return_value = mock_limits
+
+            mock_resolve_tier.return_value = SubscriptionTier.FREE
+
+            # Over monthly limit
+            mock_5h.return_value = Decimal("0.50")
+            mock_weekly.return_value = Decimal("2.00")
+            mock_monthly.return_value = Decimal("6.00")
+
+            # Overage not enabled
+            from seer.observability.credit_gate import OverageCheckResult
+            mock_overage.return_value = OverageCheckResult(
+                allowed=False,
+                overage_enabled=False,
+                overage_cap_reached=False,
+                remaining_cap_cents=0,
+            )
+
+            with pytest.raises(CreditLimitExceeded) as exc_info:
+                await check_credit_limit(mock_user)
+
+            assert exc_info.value.overage_enabled is False
+
+
+@pytest.mark.asyncio
+class TestCheckOverageAllowance:
+    """Tests for _check_overage_allowance internal function."""
+
+    @pytest.fixture
+    def mock_user(self):
+        """Create mock user."""
+        from seer.database import User
+
+        user = MagicMock(spec=User)
+        user.id = 1
+        user.user_id = "user_123"
+        return user
+
+    async def test_returns_not_allowed_when_no_overage_settings(self, mock_user):
+        """Test returns not allowed when user has no overage settings."""
+        from seer.observability.credit_gate import _check_overage_allowance
+
+        with patch(
+            "seer.observability.credit_gate._get_user_overage_settings"
+        ) as mock_get_settings:
+            mock_get_settings.return_value = None
+
+            result = await _check_overage_allowance(
+                user=mock_user,
+                credits_used=Decimal("6.00"),
+                subscription_limit=5.0,
+            )
+
+            assert result.allowed is False
+            assert result.overage_enabled is False
+            assert result.overage_cap_reached is False
+
+    async def test_returns_allowed_when_under_spending_cap(self, mock_user):
+        """Test returns allowed when under spending cap."""
+        from seer.observability.credit_gate import _check_overage_allowance
+
+        mock_settings = MagicMock()
+        mock_settings.remaining_cap_cents = 5000  # $50 remaining
+
+        with patch(
+            "seer.observability.credit_gate._get_user_overage_settings"
+        ) as mock_get_settings:
+            mock_get_settings.return_value = mock_settings
+
+            result = await _check_overage_allowance(
+                user=mock_user,
+                credits_used=Decimal("6.00"),
+                subscription_limit=5.0,
+            )
+
+            assert result.allowed is True
+            assert result.overage_enabled is True
+            assert result.overage_cap_reached is False
+            assert result.remaining_cap_cents == 5000
+
+    async def test_returns_not_allowed_when_cap_reached(self, mock_user):
+        """Test returns not allowed when spending cap is reached."""
+        from seer.observability.credit_gate import _check_overage_allowance
+
+        mock_settings = MagicMock()
+        mock_settings.remaining_cap_cents = 0  # Cap exhausted
+
+        with patch(
+            "seer.observability.credit_gate._get_user_overage_settings"
+        ) as mock_get_settings:
+            mock_get_settings.return_value = mock_settings
+
+            result = await _check_overage_allowance(
+                user=mock_user,
+                credits_used=Decimal("55.00"),
+                subscription_limit=5.0,
+            )
+
+            assert result.allowed is False
+            assert result.overage_enabled is True
+            assert result.overage_cap_reached is True
+            assert result.remaining_cap_cents == 0
+
+
+# =============================================================================
+# CreditLimitExceeded Overage Fields Tests
+# =============================================================================
+
+
+class TestCreditLimitExceededOverageFields:
+    """Tests for CreditLimitExceeded overage-specific fields."""
+
+    def test_overage_enabled_in_to_dict(self):
+        """Test overage_enabled is included in to_dict output."""
+        exc = CreditLimitExceeded(
+            limit=5.0,
+            current=7.0,
+            tier=SubscriptionTier.PRO,
+            period=LimitPeriod.MONTHLY,
+            overage_enabled=True,
+            overage_cap_reached=False,
+        )
+        data = exc.to_dict()
+
+        assert "overage_enabled" in data
+        assert data["overage_enabled"] is True
+        assert data["overage_cap_reached"] is False
+
+    def test_overage_cap_reached_message(self):
+        """Test error message when overage cap is reached."""
+        exc = CreditLimitExceeded(
+            limit=5.0,
+            current=55.0,
+            tier=SubscriptionTier.PRO,
+            period=LimitPeriod.MONTHLY,
+            overage_enabled=True,
+            overage_cap_reached=True,
+        )
+
+        assert "spending cap" in exc.message.lower()
+
+    def test_overage_not_enabled_message(self):
+        """Test error message suggests enabling overage pricing."""
+        exc = CreditLimitExceeded(
+            limit=5.0,
+            current=7.0,
+            tier=SubscriptionTier.PRO,
+            period=LimitPeriod.MONTHLY,
+            overage_enabled=False,
+            overage_cap_reached=False,
+        )
+
+        assert "usage-based pricing" in exc.message.lower() or "upgrade" in exc.message.lower()
