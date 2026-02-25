@@ -1,7 +1,7 @@
 """Knowledge base query tool for semantic search."""
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fastapi import HTTPException
 
@@ -11,6 +11,10 @@ from seer.services.knowledge.embedding_service import get_embedding_service
 from seer.services.knowledge.vector_store import get_vector_store
 from seer.tools.base import BaseTool, ResourcePickerConfig
 from seer.tools.knowledge.common import KNOWLEDGE_BASE_PICKER
+
+if TYPE_CHECKING:
+    from seer.core.runtime.context import WorkflowRuntimeContext
+    from seer.tools.credential_resolver import ResolvedCredentials
 
 logger = get_logger("tools.knowledge.query")
 
@@ -82,8 +86,12 @@ class KnowledgeBaseQueryTool(BaseTool):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
-        _credentials: Optional[Any] = None,
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Any:
+        # access_token, credentials, context unused but required for interface consistency
+        _ = access_token, credentials, context
         kb_id = arguments["kb_id"]
         query = arguments["query"]
         top_k = arguments.get("top_k", 5)

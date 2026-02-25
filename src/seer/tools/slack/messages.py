@@ -3,13 +3,16 @@ Slack message operations - sending channel messages and direct messages.
 """
 # pylint: disable=duplicate-code  # Reason: Resource picker patterns are intentionally shared across Slack tools
 
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fastapi import HTTPException
 
 from seer.logger import get_logger
 from seer.tools.credential_resolver import ResolvedCredentials
 from seer.tools.slack.base import SlackAPIClient
+
+if TYPE_CHECKING:
+    from seer.core.runtime.context import WorkflowRuntimeContext
 
 logger = get_logger("shared.tools.slack.messages")
 
@@ -88,8 +91,11 @@ class SlackSendChannelMessageTool(SlackAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
         credentials: Optional[ResolvedCredentials] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Dict[str, Any]:
+        _ = access_token, context  # unused but required for interface consistency
         workspace_id = str(arguments.get("workspace_id") or "")
         channel_id = str(arguments.get("channel_id") or "")
         text = arguments.get("text")
@@ -190,8 +196,11 @@ class SlackSendDirectMessageTool(SlackAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
         credentials: Optional[ResolvedCredentials] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Dict[str, Any]:
+        _ = access_token, context  # unused but required for interface consistency
         workspace_id = str(arguments.get("workspace_id") or "")
         user_id = str(arguments.get("user_id") or "")
         text = arguments.get("text")

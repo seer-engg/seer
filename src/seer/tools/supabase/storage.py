@@ -19,6 +19,7 @@ from seer.tools.supabase.common import (
 
 if TYPE_CHECKING:
     from seer.core.runtime.context import WorkflowRuntimeContext
+    from seer.tools.credential_resolver import ResolvedCredentials
 
 logger = get_logger("shared.tools.supabase.storage")
 
@@ -46,7 +47,16 @@ class SupabaseStorageListBucketsTool(SupabaseProjectTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return {"type": "array", "items": {"type": "object", "additionalProperties": True}}
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any], credentials: Optional[Any] = None) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Any:
+        # access_token and context unused but required for interface consistency
+        _ = access_token, context
         resource, service_key = _require_project_and_key(credentials)
         storage_url = _resolve_storage_url(resource)
         if not storage_url:
@@ -85,7 +95,16 @@ class SupabaseStorageCreateBucketTool(SupabaseProjectTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return {"type": "object", "additionalProperties": True}
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any], credentials: Optional[Any] = None) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Any:
+        # access_token and context unused but required for interface consistency
+        _ = access_token, context
         resource, service_key = _require_project_and_key(credentials)
         storage_url = _resolve_storage_url(resource)
         if not storage_url:
@@ -138,10 +157,12 @@ class SupabaseStorageUploadObjectTool(SupabaseProjectTool):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
-        credentials: Optional[Any] = None,
         *,
+        credentials: Optional["ResolvedCredentials"] = None,
         context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Any:
+        # access_token unused but required for interface consistency
+        _ = access_token
         resource, service_key = _require_project_and_key(credentials)
         storage_url = _resolve_storage_url(resource)
         if not storage_url:
@@ -251,10 +272,12 @@ class SupabaseStorageDownloadObjectTool(SupabaseProjectTool):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
-        credentials: Optional[Any] = None,
         *,
+        credentials: Optional["ResolvedCredentials"] = None,
         context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Any:
+        # access_token unused but required for interface consistency
+        _ = access_token
         resource, service_key = _require_project_and_key(credentials)
         storage_url = _resolve_storage_url(resource)
         if not storage_url:
@@ -305,7 +328,16 @@ class SupabaseStorageCreateSignedObjectUrlTool(SupabaseProjectTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return {"type": "object", "additionalProperties": True}
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any], credentials: Optional[Any] = None) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Any:
+        # access_token and context unused but required for interface consistency
+        _ = access_token, context
         resource, service_key = _require_project_and_key(credentials)
         storage_url = _resolve_storage_url(resource)
         if not storage_url:

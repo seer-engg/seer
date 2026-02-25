@@ -4,7 +4,7 @@ Gmail management operations - labels, trash, delete.
 
 # pylint: disable=duplicate-code
 # Reason: Schema definitions intentionally mirror send endpoint to maintain consistent payload shapes
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from fastapi import HTTPException
 
@@ -18,6 +18,10 @@ from seer.tools.google.gmail.helpers import (
     _schema_with_defs,
     _schema_ref,
 )
+
+if TYPE_CHECKING:
+    from seer.core.runtime.context import WorkflowRuntimeContext
+    from seer.tools.credential_resolver import ResolvedCredentials
 
 logger = get_logger("shared.tools.gmail.manage")
 
@@ -61,7 +65,11 @@ class GmailModifyMessageLabelsTool(GoogleAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
-    ) ->Dict[str, Any]:
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Dict[str, Any]:
+        _ = credentials, context  # unused but required for interface consistency
         message_id = str(arguments.get("message_id") or "").strip()
         if not message_id:
             raise HTTPException(status_code=400, detail="Parameter 'message_id' is required")
@@ -104,7 +112,11 @@ class GmailTrashMessageTool(GoogleAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
-    ) ->Dict[str, Any]:
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Dict[str, Any]:
+        _ = credentials, context  # unused but required for interface consistency
         message_id = str(arguments.get("message_id") or "").strip()
         if not message_id:
             raise HTTPException(status_code=400, detail="Parameter 'message_id' is required")
@@ -149,7 +161,11 @@ class GmailDeleteMessageTool(GoogleAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
-    ) ->Dict[str, Any]:
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Dict[str, Any]:
+        _ = credentials, context  # unused but required for interface consistency
         message_id = str(arguments.get("message_id") or "").strip()
         if not message_id:
             raise HTTPException(status_code=400, detail="Parameter 'message_id' is required")
@@ -183,7 +199,11 @@ class GmailListLabelsTool(GoogleAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],  # pylint: disable=unused-argument  # Reason: Required by base class signature
-    ) ->List[Dict[str, Any]]:
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> List[Dict[str, Any]]:
+        _ = credentials, context  # unused but required for interface consistency
         resp = await self._make_request(
             "GET",
             f"{GMAIL_API_BASE}/labels",
@@ -229,7 +249,11 @@ class GmailCreateLabelTool(GoogleAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
-    ) ->Dict[str, Any]:
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Dict[str, Any]:
+        _ = credentials, context  # unused but required for interface consistency
         name = str(arguments.get("name") or "").strip()
         if not name:
             raise HTTPException(status_code=400, detail="Parameter 'name' is required")
@@ -281,7 +305,11 @@ class GmailDeleteLabelTool(GoogleAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
-    ) ->Dict[str, Any]:
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Dict[str, Any]:
+        _ = credentials, context  # unused but required for interface consistency
         label_id = str(arguments.get("label_id") or "").strip()
         if not label_id:
             raise HTTPException(status_code=400, detail="Parameter 'label_id' is required")
