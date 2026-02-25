@@ -373,7 +373,6 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat._invoke_agent_with_orchestrator", new_callable=AsyncMock) as mock_invoke, \
              patch("seer.worker.tasks.chat.InterruptHandler") as MockInterrupt, \
              patch("seer.worker.tasks.chat.save_chat_message", new_callable=AsyncMock), \
-             patch("seer.worker.tasks.chat.increment_chat_message_count", new_callable=AsyncMock), \
              patch("seer.worker.tasks.chat.langfuse_user_context", mock_langfuse_context), \
              patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
              patch("seer.worker.tasks.chat.clear_chat_runtime_context"), \
@@ -412,7 +411,6 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat._invoke_agent_with_orchestrator", new_callable=AsyncMock) as mock_invoke, \
              patch("seer.worker.tasks.chat.InterruptHandler") as MockInterrupt, \
              patch("seer.worker.tasks.chat.save_chat_message", new_callable=AsyncMock), \
-             patch("seer.worker.tasks.chat.increment_chat_message_count", new_callable=AsyncMock), \
              patch("seer.worker.tasks.chat.langfuse_user_context", mock_langfuse_context), \
              patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
              patch("seer.worker.tasks.chat.clear_chat_runtime_context"), \
@@ -552,7 +550,6 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat._invoke_agent_with_orchestrator", new_callable=AsyncMock) as mock_invoke, \
              patch("seer.worker.tasks.chat.InterruptHandler") as MockInterrupt, \
              patch("seer.worker.tasks.chat.save_chat_message", new_callable=AsyncMock) as mock_save_msg, \
-             patch("seer.worker.tasks.chat.increment_chat_message_count", new_callable=AsyncMock), \
              patch("seer.worker.tasks.chat.extract_thinking_from_messages") as mock_thinking, \
              patch("seer.worker.tasks.chat.langfuse_user_context", mock_langfuse_context), \
              patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
@@ -585,45 +582,6 @@ class TestChatExecutionTask:
         assert call_kwargs["content"] == "I can help with that!"
 
     @pytest.mark.asyncio
-    async def test_increments_chat_message_count(self, mock_user, mock_workflow, mock_chat_session):
-        """Test that chat message count is incremented on success."""
-        from seer.worker.tasks.chat import chat_execution_task
-
-        with patch("seer.worker.tasks.chat.WorkflowChatSession") as MockSession, \
-             patch("seer.worker.tasks.chat.User") as MockUser, \
-             patch("seer.worker.tasks.chat.Workflow") as MockWorkflow, \
-             patch("seer.worker.tasks.chat.get_checkpointer", new_callable=AsyncMock), \
-             patch("seer.worker.tasks.chat.create_nexus_chat_agent"), \
-             patch("seer.worker.tasks.chat._get_user_settings_and_context", new_callable=AsyncMock) as mock_settings, \
-             patch("seer.worker.tasks.chat._invoke_agent_with_orchestrator", new_callable=AsyncMock) as mock_invoke, \
-             patch("seer.worker.tasks.chat.InterruptHandler") as MockInterrupt, \
-             patch("seer.worker.tasks.chat.save_chat_message", new_callable=AsyncMock), \
-             patch("seer.worker.tasks.chat.increment_chat_message_count", new_callable=AsyncMock) as mock_increment, \
-             patch("seer.worker.tasks.chat.extract_thinking_from_messages") as mock_thinking, \
-             patch("seer.worker.tasks.chat.langfuse_user_context", mock_langfuse_context), \
-             patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
-             patch("seer.worker.tasks.chat.clear_chat_runtime_context"), \
-             patch("seer.worker.tasks.chat.WorkflowProposal") as MockProposal:
-
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
-            MockUser.get = AsyncMock(return_value=mock_user)
-            MockWorkflow.get = AsyncMock(return_value=mock_workflow)
-            mock_settings.return_value = (50, MagicMock())
-            mock_invoke.return_value = {"messages": []}
-            MockInterrupt.extract_interrupt_from_result.return_value = (False, None)
-            mock_thinking.return_value = []
-            MockProposal.get_or_none.return_value.prefetch_related = AsyncMock(return_value=None)
-
-            await chat_execution_task(
-                session_id=1,
-                user_id=1,
-                message="Hello",
-                workflow_id=1,
-            )
-
-        mock_increment.assert_called_once_with(mock_user)
-
-    @pytest.mark.asyncio
     async def test_includes_proposal_in_message(self, mock_user, mock_workflow, mock_chat_session):
         """Test that proposal spec is included in saved message."""
         from seer.worker.tasks.chat import chat_execution_task
@@ -640,7 +598,6 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat._invoke_agent_with_orchestrator", new_callable=AsyncMock) as mock_invoke, \
              patch("seer.worker.tasks.chat.InterruptHandler") as MockInterrupt, \
              patch("seer.worker.tasks.chat.save_chat_message", new_callable=AsyncMock) as mock_save_msg, \
-             patch("seer.worker.tasks.chat.increment_chat_message_count", new_callable=AsyncMock), \
              patch("seer.worker.tasks.chat.extract_thinking_from_messages") as mock_thinking, \
              patch("seer.worker.tasks.chat.langfuse_user_context", mock_langfuse_context), \
              patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
@@ -685,7 +642,6 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat._invoke_agent_with_orchestrator", new_callable=AsyncMock) as mock_invoke, \
              patch("seer.worker.tasks.chat.InterruptHandler") as MockInterrupt, \
              patch("seer.worker.tasks.chat.save_chat_message", new_callable=AsyncMock), \
-             patch("seer.worker.tasks.chat.increment_chat_message_count", new_callable=AsyncMock), \
              patch("seer.worker.tasks.chat.langfuse_user_context", mock_langfuse_context), \
              patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
              patch("seer.worker.tasks.chat.clear_chat_runtime_context") as mock_clear, \
@@ -756,7 +712,6 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat._invoke_agent_with_orchestrator", new_callable=AsyncMock) as mock_invoke, \
              patch("seer.worker.tasks.chat.InterruptHandler") as MockInterrupt, \
              patch("seer.worker.tasks.chat.save_chat_message", new_callable=AsyncMock), \
-             patch("seer.worker.tasks.chat.increment_chat_message_count", new_callable=AsyncMock), \
              patch("seer.worker.tasks.chat.langfuse_user_context", mock_langfuse_context), \
              patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
              patch("seer.worker.tasks.chat.clear_chat_runtime_context"), \
@@ -794,7 +749,6 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat._invoke_agent_with_orchestrator", new_callable=AsyncMock) as mock_invoke, \
              patch("seer.worker.tasks.chat.InterruptHandler") as MockInterrupt, \
              patch("seer.worker.tasks.chat.save_chat_message", new_callable=AsyncMock), \
-             patch("seer.worker.tasks.chat.increment_chat_message_count", new_callable=AsyncMock), \
              patch("seer.worker.tasks.chat.langfuse_user_context", mock_langfuse_context), \
              patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
              patch("seer.worker.tasks.chat.clear_chat_runtime_context"), \
