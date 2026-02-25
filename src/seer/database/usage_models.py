@@ -2,7 +2,7 @@
 Database models for usage tracking and enforcement.
 
 These models track resource consumption across different dimensions
-(workflows, runs, messages, LLM credits) to enforce subscription limits.
+(workflows, runs, LLM credits) to enforce subscription limits.
 """
 from enum import Enum
 
@@ -14,7 +14,6 @@ class ResourceType(str, Enum):
 
     WORKFLOWS = "workflows"  # Total workflow count
     RUNS = "runs"  # Workflow execution runs
-    CHAT_MESSAGES = "chat_messages"  # Chat AI messages
     LLM_CREDITS = "llm_credits"  # LLM usage cost in USD
 
 
@@ -28,7 +27,6 @@ class UsageCounter(models.Model):
     Example queries:
     - Total workflows for user: resource_type=WORKFLOWS, period_start=None
     - Runs this month: resource_type=RUNS, period_start=2024-01-01, period_end=2024-02-01
-    - Chat messages for workflow: resource_type=CHAT_MESSAGES, reference_id=workflow_id
     """
 
     id = fields.IntField(primary_key=True)
@@ -52,7 +50,7 @@ class UsageCounter(models.Model):
     # Monetary value (for LLM_CREDITS resource type, in USD)
     value = fields.DecimalField(max_digits=10, decimal_places=2, default=0.0)
 
-    # Optional reference to specific resource (e.g., workflow_id for chat messages)
+    # Optional reference to specific resource (e.g., workflow_id)
     reference_id = fields.CharField(max_length=255, null=True, db_index=True)
 
     created_at = fields.DatetimeField(auto_now_add=True)
@@ -63,7 +61,7 @@ class UsageCounter(models.Model):
         indexes = [
             # Primary lookup: user + resource + period
             ("user_id", "resource_type", "period_start"),
-            # Chat message lookup: user + workflow
+            # Lookup by resource reference
             ("user_id", "resource_type", "reference_id"),
         ]
 

@@ -259,4 +259,3 @@ class TestSubscriptionSync:
         assert SubscriptionTier.FREE.value == "free"
         assert SubscriptionTier.PRO.value == "pro"
         assert SubscriptionTier.PRO_PLUS.value == "pro_plus"
-        assert SubscriptionTier.ULTRA.value == "ultra"

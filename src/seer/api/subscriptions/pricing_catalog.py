@@ -7,7 +7,7 @@ product names, features, or display labels live in this module.
 Stripe metadata conventions
 ---------------------------
 **Product metadata** (set on each Stripe Product):
-    tier (required)            : "pro" / "pro_plus" / "ultra"
+    tier (required)            : "pro" / "pro_plus"
     display_name (required)    : "Pro" / "Pro+"
     features (required)        : JSON array, e.g. '["Unlimited workflows","Priority support"]'
     sort_order                 : "1", "2" — display ordering
@@ -100,6 +100,15 @@ class _CachedPrice:  # pylint: disable=too-many-instance-attributes  # Reason: m
 
 
 @dataclass
+class _CachedMeteredPrice:
+    """Parsed metered price for usage-based billing (e.g., overage)."""
+
+    price_id: str
+    lookup_key: Optional[str] = None
+    unit_amount: int = 0  # amount per unit in cents
+
+
+@dataclass
 class _PricingCache:
     """In-memory cache holding parsed Stripe products and prices."""
 
@@ -107,6 +116,7 @@ class _PricingCache:
     prices: list[_CachedPrice] = field(default_factory=list)
     price_id_to_tier: dict[str, str] = field(default_factory=dict)
     lookup_key_to_price_id: dict[str, str] = field(default_factory=dict)
+    overage_metered_price: Optional[_CachedMeteredPrice] = None
     expires_at: Optional[datetime] = None
 
 
@@ -240,21 +250,56 @@ def _fetch_products_from_stripe() -> dict[str, _CachedProduct]:
     return products_by_tier
 
 
-def _fetch_prices_from_stripe() -> tuple[list[_CachedPrice], dict[str, str], dict[str, str]]:
+def _parse_overage_metered_price(price: dict) -> Optional[_CachedMeteredPrice]:
+    """Parse a Stripe Price dict as an overage metered price.
+
+    Identifies overage prices by:
+    1. usage_type == "metered" in recurring
+    2. lookup_key contains "overage" OR metadata.type == "overage"
+    """
+    recurring = price.get("recurring") or {}
+    if recurring.get("usage_type") != "metered":
+        return None
+
+    lookup_key = price.get("lookup_key") or ""
+    metadata = price.get("metadata") or {}
+
+    # Check if this is an overage price
+    is_overage = "overage" in lookup_key.lower() or metadata.get("type") == "overage"
+    if not is_overage:
+        return None
+
+    return _CachedMeteredPrice(
+        price_id=price["id"],
+        lookup_key=lookup_key or None,
+        unit_amount=price.get("unit_amount") or 0,
+    )
+
+
+def _fetch_prices_from_stripe() -> tuple[list[_CachedPrice], dict[str, str], dict[str, str], Optional[_CachedMeteredPrice]]:
     """
     Fetch and parse all active prices from Stripe.
 
     Returns:
-        Tuple of (prices list, price_id_to_tier mapping, lookup_key_to_price_id mapping)
+        Tuple of (prices list, price_id_to_tier mapping, lookup_key_to_price_id mapping, overage_metered_price)
     """
     prices: list[_CachedPrice] = []
     price_id_to_tier: dict[str, str] = {}
     lookup_key_to_price_id: dict[str, str] = {}
+    overage_metered_price: Optional[_CachedMeteredPrice] = None
 
     try:
         price_response = stripe.Price.list(active=True, limit=100, expand=["data.product"])
         price_data = price_response.data if hasattr(price_response, "data") else price_response.get("data", [])
         for raw_price in price_data:
+            # Try to parse as overage metered price first
+            overage = _parse_overage_metered_price(raw_price)
+            if overage:
+                overage_metered_price = overage
+                logger.info("Found overage metered price: %s (lookup_key: %s)", overage.price_id, overage.lookup_key)
+                continue
+
+            # Parse as regular subscription price
             parsed = _parse_price(raw_price)
             if parsed:
                 prices.append(parsed)
@@ -264,7 +309,7 @@ def _fetch_prices_from_stripe() -> tuple[list[_CachedPrice], dict[str, str], dic
     except stripe.error.StripeError as exc:
         logger.error("Failed to list Stripe prices: %s", exc)
 
-    return prices, price_id_to_tier, lookup_key_to_price_id
+    return prices, price_id_to_tier, lookup_key_to_price_id, overage_metered_price
 
 
 def _fetch_and_cache_from_stripe() -> None:
@@ -279,7 +324,7 @@ def _fetch_and_cache_from_stripe() -> None:
 
     # Fetch products and prices from Stripe
     products_by_tier = _fetch_products_from_stripe()
-    prices, price_id_to_tier, lookup_key_to_price_id = _fetch_prices_from_stripe()
+    prices, price_id_to_tier, lookup_key_to_price_id, overage_metered_price = _fetch_prices_from_stripe()
 
     # Build and store cache
     _cache = _PricingCache(
@@ -287,13 +332,15 @@ def _fetch_and_cache_from_stripe() -> None:
         prices=prices,
         price_id_to_tier=price_id_to_tier,
         lookup_key_to_price_id=lookup_key_to_price_id,
+        overage_metered_price=overage_metered_price,
         expires_at=datetime.now(timezone.utc) + _CACHE_TTL,
     )
 
     logger.info(
-        "Pricing cache refreshed: %d products, %d prices",
+        "Pricing cache refreshed: %d products, %d prices, overage_price=%s",
         len(products_by_tier),
         len(prices),
+        overage_metered_price.price_id if overage_metered_price else None,
     )
 
 
@@ -403,3 +450,19 @@ def get_price_id_to_tier_map() -> dict[str, str]:
     """Return a mapping ``{stripe_price_id: tier}`` for webhook tier resolution."""
     _ensure_cache()
     return dict(_cache.price_id_to_tier)
+
+
+def get_overage_metered_price_id() -> Optional[str]:
+    """Return the Stripe price ID for overage metered billing.
+
+    This is a metered price identified by:
+    - usage_type == "metered"
+    - lookup_key contains "overage" OR metadata.type == "overage"
+
+    Returns:
+        The Stripe price ID, or None if no overage price is configured.
+    """
+    _ensure_cache()
+    if _cache.overage_metered_price:
+        return _cache.overage_metered_price.price_id
+    return None

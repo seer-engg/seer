@@ -43,6 +43,11 @@ from seer.database.subscription_models import (
     StripeWebhookEvent,
     StripeWebhookEventStatus,
 )
+from seer.database.overage_models import (
+    OverageRecordStatus,
+    OverageSettings,
+    OverageUsageRecord,
+)
 from seer.database.template_models import (
     TemplateCategory,
     TemplateSource,
@@ -122,6 +127,10 @@ __all__ = [
     "SubscriptionStatus",
     "StripeWebhookEvent",
     "StripeWebhookEventStatus",
+    # Overage domain
+    "OverageRecordStatus",
+    "OverageSettings",
+    "OverageUsageRecord",
     # Template domain
     "WorkflowTemplate",
     "WorkflowTemplatePublic",
