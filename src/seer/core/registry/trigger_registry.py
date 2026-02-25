@@ -70,6 +70,21 @@ POLLING_TRIGGERS = [
     "schedule.cron",
 ]
 
+
+def _webhook_generic_config_schema() -> JsonSchema:
+    """
+    Config schema for generic webhooks.
+
+    Generic webhooks don't require any provider configuration.
+    """
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {},
+        "description": "Generic webhooks do not require provider configuration.",
+    }
+
+
 def _register_builtin_triggers(registry: TriggerRegistry) -> None:
     registry.register(
         TriggerDefinition(
@@ -78,7 +93,10 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
             provider="generic",
             mode="webhook",
             description="Accepts arbitrary JSON payloads via signed webhook requests.",
-            schemas=TriggerSchemas(event=_default_event_envelope_schema()),
+            schemas=TriggerSchemas(
+                event=_default_event_envelope_schema(),
+                config=_webhook_generic_config_schema(),
+            ),
             meta=TriggerMetadata(
                 requires_connection=False,
             ),
@@ -179,7 +197,10 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
                 "Create a public form with custom fields that non-technical users can "
                 "fill out to trigger workflows."
             ),
-            schemas=TriggerSchemas(event=_enveloped_event_schema(_form_hosted_payload_schema())),
+            schemas=TriggerSchemas(
+                event=_enveloped_event_schema(_form_hosted_payload_schema()),
+                config=_form_trigger_config_schema(),
+            ),
             meta=TriggerMetadata(
                 sample_event=_form_hosted_sample_event(),
                 requires_connection=False,
@@ -197,7 +218,10 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
                 "Auto-generated form for Human-in-the-Loop workflow responses. "
                 "Created when a workflow hits an HITL node with Gmail delivery channel."
             ),
-            schemas=TriggerSchemas(event=_enveloped_event_schema(_form_hosted_payload_schema())),
+            schemas=TriggerSchemas(
+                event=_enveloped_event_schema(_form_hosted_payload_schema()),
+                config=_form_trigger_config_schema(),
+            ),
             meta=TriggerMetadata(
                 sample_event=_form_hitl_sample_event(),
                 requires_connection=False,
@@ -650,6 +674,24 @@ def _supabase_db_changes_sample_event() -> Dict[str, Any]:
         "received_at": "2026-01-06T10:00:01Z",
         "data": payload,
         "raw": {"payload": payload},
+    }
+
+
+def _form_trigger_config_schema() -> JsonSchema:
+    """
+    Config schema for form triggers (form.hosted, form.hitl).
+
+    Form configuration (title, fields, description) should be in ui_meta.form_config,
+    NOT in provider_config. This schema enforces an empty provider_config.
+    """
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {},
+        "description": (
+            "Form triggers do not use provider_config. "
+            "Place form configuration in ui_meta.form_config instead."
+        ),
     }
 
 

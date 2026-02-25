@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 from functools import lru_cache
-from pathlib import Path
 from typing import Any, Dict, List
 
 from seer.core.schema.models import (
@@ -52,34 +51,6 @@ def get_workflow_spec_schema_text(max_chars: int = 4000) -> str:
         schema_text = schema_text[: max_chars - 3] + "..."
     return schema_text
 
-
-@lru_cache(maxsize=1)
-def get_workflow_templates() -> List[Dict[str, Any]]:
-    """
-    Load all workflow templates from the templates directory.
-    Templates provide common workflow patterns that the agent can suggest or use as starting points.
-
-    Returns:
-        List of template dictionaries with name, description, tags, customization_guide, and spec
-    """
-    templates_dir = Path(__file__).parent / "templates"
-    templates = []
-
-    if not templates_dir.exists():
-        logger.warning("Templates directory not found at %s", templates_dir)
-        return templates
-
-    for template_file in templates_dir.glob("*.json"):
-        try:
-            with open(template_file, "r", encoding="utf-8") as file:
-                template_data = json.load(file)
-                templates.append(template_data)
-        except (json.JSONDecodeError, IOError) as exc:
-            logger.warning("Failed to load template %s: %s", template_file.name, exc)
-            continue
-
-    logger.info("Loaded %d workflow templates", len(templates))
-    return templates
 
 
 def _format_node_type_usage_notes(node_type: str) -> List[str]:

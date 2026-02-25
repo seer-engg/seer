@@ -94,19 +94,19 @@ def test_register_triggers_with_default_schema():
             id="t1",
             key="test.trigger",
             mode="polling",
-            # Use default (empty dict) for event_schema
+            # Use default (empty) for event_schema
         )
     ]
 
     _register_triggers(triggers, env)
 
-    # Should use default schema with additionalProperties: {} (dict, not boolean)
+    # Should use default schema with additionalProperties: True
     # This allows property access on the trigger in expressions like ${t1.anyProperty}
     symbols = env.as_dict()
     assert "t1" in symbols
     schema = symbols["t1"]
     assert schema["type"] == "object"
-    assert schema.get("additionalProperties") == {}
+    assert schema.get("additionalProperties") is True
 
 
 def test_register_triggers_duplicate_id_allowed_different_titles():
@@ -796,12 +796,12 @@ def test_for_each_loop_variable_uses_permissive_fallback_when_no_items_schema():
 
     symbols = env.as_dict()
 
-    # Loop variable should have permissive schema (dict additionalProperties)
+    # Loop variable should have permissive schema (additionalProperties: True)
     assert "item" in symbols
     item_schema = symbols["item"]
     assert item_schema["type"] == "object"
-    # additionalProperties should be {} (empty dict) to allow any property access
-    assert item_schema.get("additionalProperties") == {}
+    # additionalProperties should be True to allow any property access
+    assert item_schema.get("additionalProperties") is True
 
 
 def test_for_each_loop_variable_uses_permissive_fallback_for_unknown_source():
@@ -835,7 +835,7 @@ def test_for_each_loop_variable_uses_permissive_fallback_for_unknown_source():
     assert "item" in symbols
     item_schema = symbols["item"]
     assert item_schema["type"] == "object"
-    assert item_schema.get("additionalProperties") == {}
+    assert item_schema.get("additionalProperties") is True
 
 
 def test_for_each_loop_variable_infers_type_from_llm_node_output():

@@ -93,12 +93,10 @@ def _register_triggers(triggers: List[TriggerSpec], env: TypeEnvironment) -> Non
     """
     # Always register by trigger ID (explicit, works for all cases)
     for trigger in triggers:
-        # Get event schema
-        # Note: Using {} as additionalProperties (not True) because the typecheck code
-        # at _resolve_property() requires additionalProperties to be a dict for property access
+        # Get event schema - fallback to permissive schema if none provided
         event_schema = trigger.event_schema if trigger.event_schema else {
             "type": "object",
-            "additionalProperties": {}
+            "additionalProperties": True
         }
 
         # Register ID as symbol
@@ -131,7 +129,11 @@ def _navigate_property_segment(schema: Dict, key: str) -> Dict | None:
     if key in properties:
         return properties[key]
     additional = schema.get("additionalProperties")
-    return additional if isinstance(additional, dict) else None
+    if isinstance(additional, dict):
+        return additional
+    if additional is True:
+        return {}  # Permissive schema - allows any type
+    return None
 
 
 def _navigate_index_segment(schema: Dict, index: int | str) -> Dict | None:
@@ -144,7 +146,11 @@ def _navigate_index_segment(schema: Dict, index: int | str) -> Dict | None:
     if index in properties:
         return properties[index]
     additional = schema.get("additionalProperties")
-    return additional if isinstance(additional, dict) else None
+    if isinstance(additional, dict):
+        return additional
+    if additional is True:
+        return {}  # Permissive schema - allows any type
+    return None
 
 
 def _infer_item_schema_from_items_expression(items_expr: str, env: TypeEnvironment) -> Dict | None:
@@ -205,9 +211,7 @@ def _register_loop_variables(spec: WorkflowSpec, env: TypeEnvironment) -> None:
         return
 
     # Permissive fallback schema that allows any property access
-    # Note: Using {} as additionalProperties (not True) because the typecheck code
-    # at _resolve_property() requires additionalProperties to be a dict, not a boolean
-    permissive_schema: Dict = {"type": "object", "additionalProperties": {}}
+    permissive_schema: Dict = {"type": "object", "additionalProperties": True}
 
     # For each ForEachNode, register its loop variables
     for node in for_each_nodes.values():

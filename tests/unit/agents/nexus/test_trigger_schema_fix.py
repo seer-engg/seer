@@ -12,6 +12,7 @@ from seer.tools.trigger_schema_fix import (
     _schemas_differ,
     _extract_available_fields,
     _build_example_expressions,
+    _detect_misplaced_properties,
     fix_trigger_event_schemas,
 )
 
@@ -374,3 +375,193 @@ class TestFixTriggerEventSchemas:
         assert "example_expressions" in fixes[0]
         # Should contain expressions using the trigger id
         assert any("email.data." in expr for expr in fixes[0]["example_expressions"])
+
+
+@pytest.mark.unit
+class TestDetectMisplacedProperties:
+    """Test _detect_misplaced_properties function."""
+
+    def test_detects_root_level_custom_properties(self):
+        """Should detect properties at root level that belong in data."""
+        spec_schema = {
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string"},
+                "context": {"type": "string"},
+                "style": {"type": "string"},
+            }
+        }
+        canonical_schema = {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "trigger_key": {"type": "string"},
+                "data": {"type": "object", "additionalProperties": True},
+            }
+        }
+
+        result = _detect_misplaced_properties(spec_schema, canonical_schema)
+
+        assert "topic" in result
+        assert "context" in result
+        assert "style" in result
+
+    def test_ignores_envelope_fields(self):
+        """Should not flag standard envelope fields as misplaced."""
+        spec_schema = {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "trigger_key": {"type": "string"},
+                "data": {"type": "object"},
+                "topic": {"type": "string"},  # This is misplaced
+            }
+        }
+        canonical_schema = {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "trigger_key": {"type": "string"},
+                "data": {"type": "object"},
+            }
+        }
+
+        result = _detect_misplaced_properties(spec_schema, canonical_schema)
+
+        assert "id" not in result
+        assert "trigger_key" not in result
+        assert "data" not in result
+        assert "topic" in result
+
+    def test_returns_empty_for_none_schema(self):
+        """Should return empty list for None spec schema."""
+        result = _detect_misplaced_properties(None, {"properties": {}})
+        assert result == []
+
+    def test_returns_empty_for_empty_schema(self):
+        """Should return empty list for empty spec schema."""
+        result = _detect_misplaced_properties({}, {"properties": {}})
+        assert result == []
+
+    def test_returns_sorted_list(self):
+        """Should return sorted list of misplaced properties."""
+        spec_schema = {
+            "properties": {
+                "zebra": {"type": "string"},
+                "alpha": {"type": "string"},
+                "middle": {"type": "string"},
+            }
+        }
+        canonical_schema = {"properties": {"data": {}}}
+
+        result = _detect_misplaced_properties(spec_schema, canonical_schema)
+
+        assert result == ["alpha", "middle", "zebra"]
+
+
+@pytest.mark.unit
+class TestFixTriggerEventSchemasStrippedProperties:
+    """Test fix_trigger_event_schemas with misplaced properties detection."""
+
+    def test_fix_includes_stripped_properties_warning(self):
+        """Fix record should include warning about stripped root-level properties."""
+        canonical_schema = {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "trigger_key": {"type": "string"},
+                "data": {"type": "object", "additionalProperties": True},
+            }
+        }
+
+        mock_def = MagicMock()
+        mock_def.schemas.event = canonical_schema
+
+        # Schema with properties at WRONG level (root instead of data)
+        incorrect_schema = {
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string"},
+                "context": {"type": "string"},
+            }
+        }
+
+        spec_dict = {
+            "triggers": [
+                {
+                    "id": "form_input",
+                    "key": "form.hosted",
+                    "event_schema": incorrect_schema
+                }
+            ]
+        }
+
+        with patch("seer.tools.trigger_schema_fix.trigger_registry") as mock_registry:
+            mock_registry.maybe_get.return_value = mock_def
+
+            _, fixes = fix_trigger_event_schemas(spec_dict)
+
+        assert len(fixes) == 1
+        fix = fixes[0]
+
+        # Should include stripped properties
+        assert "stripped_properties" in fix
+        assert "topic" in fix["stripped_properties"]
+        assert "context" in fix["stripped_properties"]
+
+        # Should include warning
+        assert "warning" in fix
+        assert "root level" in fix["warning"]
+        assert "data" in fix["warning"]
+
+        # Should include correct structure hint
+        assert "correct_structure_hint" in fix
+        hint = fix["correct_structure_hint"]
+        assert "event_schema" in hint
+        assert "properties" in hint["event_schema"]
+        assert "data" in hint["event_schema"]["properties"]
+        # Hint should include the actual stripped property names
+        hint_data_props = hint["event_schema"]["properties"]["data"]["properties"]
+        assert "topic" in hint_data_props
+        assert "context" in hint_data_props
+
+    def test_no_warning_when_no_misplaced_properties(self):
+        """Fix record should NOT include warning when properties are correctly placed."""
+        canonical_schema = {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "data": {
+                    "type": "object",
+                    "additionalProperties": True,
+                    "properties": {}
+                },
+            }
+        }
+
+        mock_def = MagicMock()
+        mock_def.schemas.event = canonical_schema
+
+        # Empty schema (no misplaced properties)
+        spec_dict = {
+            "triggers": [
+                {
+                    "id": "t1",
+                    "key": "form.hosted",
+                    "event_schema": {}
+                }
+            ]
+        }
+
+        with patch("seer.tools.trigger_schema_fix.trigger_registry") as mock_registry:
+            mock_registry.maybe_get.return_value = mock_def
+
+            _, fixes = fix_trigger_event_schemas(spec_dict)
+
+        assert len(fixes) == 1
+        fix = fixes[0]
+
+        # Should NOT have stripped_properties or warning
+        assert fix.get("stripped_properties") is None or fix.get("stripped_properties") == []
+        assert fix.get("warning") is None
+        assert fix.get("correct_structure_hint") is None

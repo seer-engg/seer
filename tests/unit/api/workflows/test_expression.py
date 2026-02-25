@@ -376,6 +376,61 @@ class TestResolveSchemaPath:
         with pytest.raises(TypeCheckError, match="only valid on array"):
             resolve_schema_path(schema, segments)
 
+    def test_resolve_property_with_additional_properties_true(self):
+        """Property access allowed when additionalProperties is true (boolean)."""
+        schema = {
+            "type": "object",
+            "additionalProperties": True
+        }
+        segments = [PropertySegment("anyField")]
+        result = resolve_schema_path(schema, segments)
+        assert result == {}  # Permissive empty schema
+
+    def test_resolve_nested_with_additional_properties_true(self):
+        """Nested property access through additionalProperties: true."""
+        schema = {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "object",
+                    "additionalProperties": True
+                }
+            }
+        }
+        segments = [PropertySegment("data"), PropertySegment("customField")]
+        result = resolve_schema_path(schema, segments)
+        assert result == {}
+
+    def test_form_hosted_trigger_pattern(self):
+        """Real-world pattern: form.hosted event_schema with custom fields."""
+        # This is the exact schema structure from trigger_registry.py
+        schema = {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "trigger_key": {"type": "string"},
+                "data": {
+                    "type": "object",
+                    "description": "Form submission data with custom field values",
+                    "additionalProperties": True
+                }
+            }
+        }
+        # Should resolve ${trigger.data.topic} for custom form fields
+        segments = [PropertySegment("data"), PropertySegment("topic")]
+        result = resolve_schema_path(schema, segments)
+        assert result == {}
+
+    def test_string_index_with_additional_properties_true(self):
+        """String index access allowed when additionalProperties is true."""
+        schema = {
+            "type": "object",
+            "additionalProperties": True
+        }
+        segments = [IndexSegment("dynamicKey")]
+        result = resolve_schema_path(schema, segments)
+        assert result == {}
+
 
 @pytest.mark.unit
 class TestTypecheckReference:
