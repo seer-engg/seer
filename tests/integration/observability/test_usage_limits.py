@@ -52,7 +52,6 @@ async def test_subscription_resolver_no_subscription(db_engine):
 # - resolve_user_tier with active/canceled/trialing subscriptions
 # - get_limits_for_user in cloud vs self-hosted mode
 # - increment_monthly_run_count
-# - increment_chat_message_count
 # - track_llm_usage
 # - is_trial_expired
 # - get_subscription_for_user

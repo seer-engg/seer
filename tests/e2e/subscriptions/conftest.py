@@ -25,8 +25,6 @@ from .helpers import (
 def _infer_tier_from_name(name: str) -> str:
     """Infer tier slug from a Stripe product name (e.g. 'Pro Plus' → 'pro_plus')."""
     lowered = name.lower().strip()
-    if "ultra" in lowered:
-        return "ultra"
     if "pro_plus" in lowered or "pro plus" in lowered:
         return "pro_plus"
     return "pro"

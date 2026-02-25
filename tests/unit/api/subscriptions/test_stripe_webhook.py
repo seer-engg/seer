@@ -155,7 +155,11 @@ class TestProcessEvent:
         """Test routing customer.subscription.deleted to handler."""
         with patch(
             "seer.api.subscriptions.stripe_webhook_controller.stripe_service"
-        ) as mock_service:
+        ) as mock_service, patch.object(
+            webhook_controller,
+            "_handle_subscription_deleted_overage",
+            new_callable=AsyncMock
+        ) as mock_overage_cleanup:
             mock_service.handle_subscription_deleted = AsyncMock()
             await webhook_controller.process_event(
                 "customer.subscription.deleted",
@@ -163,6 +167,10 @@ class TestProcessEvent:
             )
             mock_service.handle_subscription_deleted.assert_called_once_with(
                 mock_subscription_event
+            )
+            # Verify overage cleanup is called with customer_id
+            mock_overage_cleanup.assert_called_once_with(
+                mock_subscription_event.get("customer")
             )
 
     @pytest.mark.asyncio
@@ -365,6 +373,10 @@ class TestHandleInvoiceEvent:
             "_resolve_subscription_for_invoice",
             new_callable=AsyncMock,
             return_value="sub_123"
+        ), patch.object(
+            webhook_controller,
+            "_handle_invoice_paid",
+            new_callable=AsyncMock
         ), patch(
             "seer.api.subscriptions.stripe_webhook_controller.stripe_service"
         ) as mock_service:
@@ -384,6 +396,10 @@ class TestHandleInvoiceEvent:
             "_resolve_subscription_for_invoice",
             new_callable=AsyncMock,
             return_value=None
+        ), patch.object(
+            webhook_controller,
+            "_handle_invoice_paid",
+            new_callable=AsyncMock
         ), patch(
             "seer.api.subscriptions.stripe_webhook_controller.stripe_service"
         ) as mock_service, patch(
@@ -740,7 +756,11 @@ class TestWebhookEventFlow:
 
         with patch(
             "seer.api.subscriptions.stripe_webhook_controller.stripe_service"
-        ) as mock_service:
+        ) as mock_service, patch.object(
+            webhook_controller,
+            "_handle_invoice_paid",
+            new_callable=AsyncMock
+        ) as mock_invoice_paid:
             mock_service.sync_subscription_from_stripe = AsyncMock()
 
             await webhook_controller.process_event(
@@ -750,6 +770,8 @@ class TestWebhookEventFlow:
             )
 
             mock_service.sync_subscription_from_stripe.assert_called_once_with("sub_123")
+            # Verify overage reset handler is called
+            mock_invoice_paid.assert_called_once_with(invoice_data)
 
     @pytest.mark.asyncio
     async def test_setup_intent_succeeded_full_flow(self, webhook_controller):

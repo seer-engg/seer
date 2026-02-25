@@ -15,7 +15,6 @@ from seer.config import config
 from seer.database import User, UserPublic
 from seer.database.workflow_models import WorkflowCreationMode
 from seer.logger import get_logger
-from seer.observability import increment_chat_message_count
 
 from .chat_schema import (
     ChatMessage,
@@ -292,7 +291,7 @@ async def chat_with_workflow_endpoint(
     user = _require_user(request)
     workflow = await get_workflow(user, workflow_id)
 
-    # Chat limit check moved to UsageLimitMiddleware
+    # LLM credit limit check enforced by UsageLimitMiddleware
     model = chat_request.model or config.default_llm_model
 
     # Get or create session
@@ -323,8 +322,6 @@ async def chat_with_workflow_endpoint(
         content=chat_request.message,
     )
 
-    # Track user message (global count, not per-workflow)
-    await increment_chat_message_count(user)
 
     # Update session status to QUEUED
     session.current_execution_status = ChatExecutionStatus.QUEUED

@@ -7,9 +7,11 @@ Provides functions to:
 - Track LLM usage and costs
 - Support Valkey/Redis caching for performance
 - Query analytics breakdowns (by model, operation, daily trend, workflow)
+- Handle overage tracking and Stripe reporting
 """
+# pylint: disable=too-many-lines  # Tracking module aggregates related usage functions
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -17,43 +19,18 @@ from tortoise.expressions import F
 from tortoise.functions import Count, Sum
 
 from seer.database.models import User
+from seer.database.overage_models import OverageSettings
+from seer.database.subscription_models import BillingProfile
 from seer.database.usage_models import (
     LLMUsageRecord,
     ResourceType,
     UsageCounter,
 )
 from seer.database import Workflow, WorkflowRun, WorkflowRunStatus, make_workflow_public_id, parse_run_public_id
-from seer.observability.service import get_billing_period_for_user
+from seer.observability.service import get_billing_period_for_user, get_limits_for_user
 from seer.logger import get_logger
 
 logger = get_logger(__name__)
-
-async def increment_chat_message_count(user: User) -> int:
-    """
-    Increment the global chat message count for a user.
-
-    Changed from per-workflow to global tracking (across all workflows).
-
-    Args:
-        user: The user to increment count for
-
-    Returns:
-        The new total message count for this user
-    """
-    counter, _ = await UsageCounter.get_or_create(
-        user=user,
-        resource_type=ResourceType.CHAT_MESSAGES,
-        reference_id=None,  # Global, not per-workflow
-        period_start=None,  # All-time counter
-        period_end=None,
-        defaults={"count": 0},
-    )
-
-    await UsageCounter.filter(id=counter.id).update(count=F("count") + 1)
-
-    await counter.refresh_from_db()
-    return counter.count
-
 
 async def get_workflow_count(user: User) -> int:
     """
@@ -89,41 +66,6 @@ async def get_monthly_run_count(user: User) -> int:
     ).count()
 
     return count
-
-
-async def get_total_chat_message_count(user: User) -> int:
-    """
-    Get the total chat message count for a user across ALL workflows.
-
-    Changed from per-workflow to global tracking.
-
-    Args:
-        user: The user to get count for
-
-    Returns:
-        Total message count across all workflows
-    """
-    counter = await UsageCounter.get_or_none(
-        user=user,
-        resource_type=ResourceType.CHAT_MESSAGES,
-        reference_id=None,  # Global, not per-workflow
-        period_start=None,
-        period_end=None,
-    )
-
-    return counter.count if counter else 0
-
-
-# Deprecated: Use get_total_chat_message_count instead
-async def get_chat_message_count(user: User) -> int:
-    """
-    DEPRECATED: Use get_total_chat_message_count() instead.
-
-    This function is kept for backwards compatibility but will be removed.
-    Chat limits are now tracked globally per user, not per workflow.
-    """
-    # For backwards compat, just return global count
-    return await get_total_chat_message_count(user)
 
 
 async def track_llm_usage(  # pylint: disable=too-many-arguments,too-many-positional-arguments  # Reason: essential parameters for LLM tracking
@@ -193,7 +135,114 @@ async def track_llm_usage(  # pylint: disable=too-many-arguments,too-many-positi
         value=F("value") + cost,  # Total cost
     )
 
+    # Check if this usage triggers overage billing
+    await _handle_potential_overage(user, record, cost)
+
     return record
+
+
+async def _get_user_overage_settings(user: User) -> Optional[OverageSettings]:
+    """
+    Get enabled overage settings for a user.
+
+    Args:
+        user: The user to check.
+
+    Returns:
+        OverageSettings if enabled, None otherwise.
+    """
+    try:
+        billing_profile = await BillingProfile.get_or_none(owner_user=user)
+        if not billing_profile:
+            return None
+
+        overage_settings = await OverageSettings.get_or_none(
+            billing_profile=billing_profile,
+            enabled=True,
+        )
+        return overage_settings
+    except Exception:  # pylint: disable=broad-except  # reason: graceful degradation
+        return None
+
+
+async def _handle_potential_overage(
+    user: User,
+    llm_record: LLMUsageRecord,
+    cost: Decimal,
+) -> None:
+    """
+    Handle potential overage billing after LLM usage is tracked.
+
+    Called after each LLM usage record is created. Determines if the usage
+    pushes the user into overage territory and reports to Stripe if so.
+
+    Args:
+        user: The user who incurred the cost.
+        llm_record: The LLM usage record that was created.
+        cost: The cost in USD.
+    """
+    # Get overage settings (only if enabled)
+    overage_settings = await _get_user_overage_settings(user)
+    if not overage_settings:
+        return
+
+    # Get user limits
+    limits = await get_limits_for_user(user)
+    if limits.has_unlimited_credits:
+        return
+
+    monthly_limit = Decimal(str(limits.llm_credits_monthly))
+
+    # Get current monthly usage
+    _period_start, _period_end = await get_billing_period_for_user(user)  # Period bounds unused here
+    current_usage = await get_monthly_llm_credits_used(user)
+
+    # Check if we're in overage territory (over 100% of subscription limit)
+    if current_usage <= monthly_limit:
+        return
+
+    # Calculate overage portion of this usage
+    # The overage is the amount over the subscription limit
+    previous_usage = current_usage - cost
+    overage_start = max(monthly_limit, previous_usage)
+    overage_amount = current_usage - overage_start
+
+    if overage_amount <= 0:
+        return
+
+    # Calculate billed amount with margin
+    margin = overage_settings.margin_multiplier
+    base_cost_cents = int(overage_amount * 100)
+    billed_amount_cents = int(float(overage_amount) * float(margin) * 100)
+
+    # Report to Stripe
+    await _report_overage_to_stripe(overage_settings, llm_record, base_cost_cents, billed_amount_cents)
+
+
+async def _report_overage_to_stripe(
+    overage_settings: OverageSettings,
+    llm_record: LLMUsageRecord,
+    base_cost_cents: int,
+    billed_amount_cents: int,
+) -> None:
+    """
+    Report overage usage to Stripe.
+
+    Args:
+        overage_settings: The overage settings for the user.
+        llm_record: The LLM usage record that triggered the overage.
+        base_cost_cents: The actual LLM cost in cents.
+        billed_amount_cents: The billed amount (cost × margin) in cents.
+    """
+    # pylint: disable=import-outside-toplevel  # Avoid circular import
+    from seer.api.subscriptions.overage_service import report_usage_to_stripe
+
+    await report_usage_to_stripe(
+        overage_settings=overage_settings,
+        llm_record=llm_record,
+        base_cost_cents=base_cost_cents,
+        billed_amount_cents=billed_amount_cents,
+    )
 
 
 async def get_monthly_llm_credits_used(user: User) -> Decimal:
@@ -216,6 +265,61 @@ async def get_monthly_llm_credits_used(user: User) -> Decimal:
     )
 
     return counter.value if counter else Decimal("0.0")
+
+
+async def get_rolling_llm_credits_used(user: User, window: timedelta) -> Decimal:
+    """
+    Get total LLM credits used in a rolling time window.
+
+    Queries LLMUsageRecord directly using the (user_id, created_at) index
+    for efficient rolling window calculations.
+
+    Args:
+        user: The user to get credits for
+        window: The time window to query (e.g., timedelta(hours=5))
+
+    Returns:
+        Total credits used in USD during the rolling window
+    """
+    cutoff = datetime.now(timezone.utc) - window
+    result = await LLMUsageRecord.filter(
+        user=user,
+        created_at__gte=cutoff,
+    ).annotate(total_cost=Sum("cost")).values("total_cost")
+
+    if result and result[0]["total_cost"]:
+        return Decimal(str(result[0]["total_cost"]))
+    return Decimal("0.0")
+
+
+async def get_5h_llm_credits_used(user: User) -> Decimal:
+    """
+    Get total LLM credits used in the last 5 hours.
+
+    Uses a rolling window for burst protection.
+
+    Args:
+        user: The user to get credits for
+
+    Returns:
+        Total credits used in USD during the last 5 hours
+    """
+    return await get_rolling_llm_credits_used(user, timedelta(hours=5))
+
+
+async def get_weekly_llm_credits_used(user: User) -> Decimal:
+    """
+    Get total LLM credits used in the last 7 days.
+
+    Uses a rolling window to prevent front-loading usage.
+
+    Args:
+        user: The user to get credits for
+
+    Returns:
+        Total credits used in USD during the last 7 days
+    """
+    return await get_rolling_llm_credits_used(user, timedelta(days=7))
 
 
 async def get_monthly_llm_credits_detailed(user: User) -> dict:
