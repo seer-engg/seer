@@ -85,25 +85,16 @@ async def _execute_with_optional_credentials(
     context: Optional["WorkflowRuntimeContext"] = None,
 ) -> Any:
     """
-    Execute tool with credentials and optional runtime context.
+    Execute tool with credentials and runtime context.
 
-    Tries to pass both credentials and context kwargs; falls back to simpler
-    signatures for backward compatibility with older tools.
+    All tools now implement the standardized execute signature:
+        execute(access_token, arguments, *, credentials=None, context=None)
+
+    This allows direct invocation without signature detection fallbacks.
     """
-    try:
-        return await tool.execute(resolved.access_token, arguments, credentials=resolved, context=context)
-    except TypeError as exc:
-        message = str(exc)
-        # Try without context kwarg
-        if "context" in message and "unexpected keyword argument" in message:
-            try:
-                return await tool.execute(resolved.access_token, arguments, credentials=resolved)
-            except TypeError as inner_exc:
-                inner_message = str(inner_exc)
-                if "credentials" in inner_message and "unexpected keyword argument" in inner_message:
-                    return await tool.execute(resolved.access_token, arguments)
-                raise
-        # Try without credentials kwarg
-        if "credentials" in message and "unexpected keyword argument" in message:
-            return await tool.execute(resolved.access_token, arguments)
-        raise
+    return await tool.execute(
+        resolved.access_token,
+        arguments,
+        credentials=resolved,
+        context=context,
+    )

@@ -3,7 +3,7 @@
 Google Docs write operations - creating and updating documents.
 """
 
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fastapi import HTTPException
 
@@ -13,6 +13,10 @@ from seer.tools.google.gdocs.helpers import (
     _document_output_schema,
     _batch_update_response_schema,
 )
+
+if TYPE_CHECKING:
+    from seer.core.runtime.context import WorkflowRuntimeContext
+    from seer.tools.credential_resolver import ResolvedCredentials
 
 logger = get_logger("shared.tools.gdocs.write")
 
@@ -63,7 +67,11 @@ class GoogleDocsWriteTool(GoogleAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Any:
+        _ = credentials, context  # unused but required for interface consistency
         document_id = arguments.get("document_id")
         requests = arguments.get("requests")
 
@@ -113,7 +121,11 @@ class GoogleDocsCreateTool(GoogleAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Any:
+        _ = credentials, context  # unused but required for interface consistency
         title = arguments.get("title")
 
         if not title:

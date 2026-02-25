@@ -2,13 +2,16 @@
 Discord user operations - finding users by username or ID.
 """
 
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fastapi import HTTPException
 
 from seer.logger import get_logger
 from seer.tools.credential_resolver import ResolvedCredentials
 from seer.tools.discord.base import DISCORD_API_BASE, DiscordAPIClient
+
+if TYPE_CHECKING:
+    from seer.core.runtime.context import WorkflowRuntimeContext
 
 logger = get_logger("shared.tools.discord.users")
 
@@ -167,8 +170,12 @@ class DiscordFindUserTool(DiscordAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
         credentials: Optional[ResolvedCredentials] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Dict[str, Any]:
+        # access_token and context unused but required for interface consistency
+        _ = access_token, context
         guild_id = str(arguments.get("guild_id") or "")
         query = str(arguments.get("query") or "").strip()
 

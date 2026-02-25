@@ -69,7 +69,11 @@ class GoogleDriveListFilesTool(GoogleDriveMetadataScopeTool):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Any:
+        _ = credentials, context  # unused but required for interface consistency
         params: Dict[str, Any] = {
             "q": arguments.get("q", "trashed=false"),
             "pageSize": arguments.get("page_size", 100),
@@ -126,7 +130,11 @@ class GoogleDriveGetFileMetadataTool(GoogleDriveMetadataScopeTool):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Any:
+        _ = credentials, context  # unused but required for interface consistency
         file_id = arguments.get("file_id")
         if not file_id:
             raise HTTPException(status_code=400, detail="file_id is required")

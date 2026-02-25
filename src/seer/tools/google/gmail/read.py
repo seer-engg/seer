@@ -3,7 +3,7 @@ Gmail read operations - fetching emails, threads, and attachments.
 """
 
 import base64
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from seer.logger import get_logger
 from seer.tools.google.base import GoogleAPIClient
@@ -17,6 +17,10 @@ from seer.tools.google.gmail.helpers import (
     _header_dict_from_payload,
     _extract_text_body,
 )
+
+if TYPE_CHECKING:
+    from seer.core.runtime.context import WorkflowRuntimeContext
+    from seer.tools.credential_resolver import ResolvedCredentials
 
 logger = get_logger("shared.tools.gmail.read")
 
@@ -81,11 +85,15 @@ class GmailReadTool(GoogleAPIClient):
             "required": []
         }
 
-    async def execute(
+    async def execute(  # pylint: disable=too-many-locals  # Reason: Gmail API fetch requires many variables for request params and response processing
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> List[Dict[str, Any]]:
+        _ = credentials, context  # unused but required for interface consistency
         max_results = _coerce_int(arguments.get("max_results", 10), 10, min_value=1, max_value=100)
         label_ids = arguments.get("label_ids", ["INBOX"])
         query = arguments.get("q")
@@ -204,7 +212,11 @@ class GmailGetMessageTool(GoogleAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Dict[str, Any]:
+        _ = credentials, context  # unused but required for interface consistency
         message_id = arguments.get("message_id")
         if not message_id:
             raise ValueError("message_id is required")
@@ -289,7 +301,11 @@ class GmailListThreadsTool(GoogleAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Dict[str, Any]:
+        _ = credentials, context  # unused but required for interface consistency
         max_results = _coerce_int(arguments.get("max_results", 10), 10, min_value=1, max_value=100)
         label_ids = arguments.get("label_ids")
         query = arguments.get("q")
@@ -338,7 +354,11 @@ class GmailGetThreadTool(GoogleAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Dict[str, Any]:
+        _ = credentials, context  # unused but required for interface consistency
         thread_id = arguments.get("thread_id")
         if not thread_id:
             raise ValueError("thread_id is required")
@@ -391,7 +411,11 @@ class GmailGetAttachmentTool(GoogleAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Dict[str, Any]:
+        _ = credentials, context  # unused but required for interface consistency
         message_id = arguments.get("message_id")
         attachment_id = arguments.get("attachment_id")
         decode_bytes = arguments.get("decode_bytes", False)
