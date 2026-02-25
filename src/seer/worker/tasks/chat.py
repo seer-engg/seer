@@ -46,7 +46,6 @@ from seer.database.workflow_models import (
     WorkflowProposal,
 )
 from seer.logger import get_logger
-from seer.observability import increment_chat_message_count
 from seer.observability.exceptions import RunCostCapExceeded
 from seer.observability.sentry_client import set_user_context, set_tag, set_context
 from seer.worker.broker_instance import broker
@@ -276,8 +275,6 @@ async def chat_execution_task(
                     suggested_edits=proposal.spec if proposal else None,
                     proposal=proposal,
                 )
-
-                await increment_chat_message_count(user)
 
                 # Mark as completed
                 session.current_execution_status = ChatExecutionStatus.COMPLETED

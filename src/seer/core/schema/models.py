@@ -166,7 +166,7 @@ class IfNode(NodeBase):
     Branch targets are defined by edges with type=conditional_true/conditional_false.
     """
     type: Literal["if"] = "if"
-    condition: str = Field(min_length=1)
+    condition: str = ""
 
 
 class ForEachNode(NodeBase):

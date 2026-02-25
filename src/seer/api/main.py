@@ -25,7 +25,7 @@ from seer.api.tools.router import router as tools_router
 from seer.config import config
 from seer.database import db_lifespan
 from seer.logger import get_logger
-from seer.observability.exceptions import ChatDisabledError, UsageLimitError
+from seer.observability.exceptions import UsageLimitError
 
 # Initialize Sentry BEFORE app creation for proper ASGI integration
 if config.is_sentry_configured:
@@ -231,20 +231,6 @@ async def usage_limit_exception_handler(request: Request, exc: UsageLimitError):
     """
     return JSONResponse(
         status_code=402,  # Payment Required
-        content=exc.to_dict(),
-    )
-
-
-@app.exception_handler(ChatDisabledError)
-# pylint: disable=unused-argument # Reason: FastAPI requires request parameter in exception handler signature
-async def chat_disabled_exception_handler(request: Request, exc: ChatDisabledError):
-    """
-    Handle chat disabled errors (self-hosted mode) with 403 Forbidden.
-
-    This is not an upgradeable limitation, so we return 403 instead of 402.
-    """
-    return JSONResponse(
-        status_code=403,  # Forbidden
         content=exc.to_dict(),
     )
 

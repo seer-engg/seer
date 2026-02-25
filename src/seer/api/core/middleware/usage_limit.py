@@ -15,16 +15,15 @@ from seer.api.core.middleware.path_allowlist import is_public_path, is_payment_e
 from seer.database import User
 from seer.logger import get_logger
 from seer.observability import (
-    ChatDisabledError,
-    MessageLimitExceeded,
     RunLimitExceeded,
     WorkflowLimitExceeded,
     get_limits_for_user,
     get_monthly_run_count,
-    get_total_chat_message_count,
     get_workflow_count,
     resolve_user_tier,
 )
+from seer.observability.credit_gate import check_credit_limit
+from seer.observability.exceptions import CreditLimitExceeded
 
 logger = get_logger(__name__)
 
@@ -43,8 +42,8 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
     Enforcement Points:
     1. Workflow creation: POST /api/v1/workflows
     2. Workflow runs: POST /api/v1/workflows/{id}/run
-    3. Chat messages: POST /api/nexus/{id}/chat
-    4. Polling intervals: POST /api/v1/trigger-subscriptions (soft enforcement)
+    3. Polling intervals: POST /api/v1/trigger-subscriptions (soft enforcement)
+    4. Chat LLM credits: POST /nexus/{id}/chat and /nexus/{id}/chat/resume
     """
 
     # pylint: disable=too-complex,too-many-return-statements # Reason: Middleware dispatch with multiple path-based enforcement points
@@ -99,15 +98,15 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
             if response:
                 return response
 
-        # 3. Chat Message Limit (PER USER, not per workflow)
-        elif method == "POST" and "/chat" in path and "/api/nexus/" in path:
-            response = await self._check_chat_message_limit(user, limits)
-            if response:
-                return response
-
-        # 4. Polling Frequency Validation (reads request body for soft enforcement)
+        # 3. Polling Frequency Validation (reads request body for soft enforcement)
         elif method == "POST" and "trigger-subscriptions" in path:
             await self._validate_polling_interval(request, user, limits)
+
+        # 4. Chat LLM Credit Limit (before chat execution starts)
+        elif method == "POST" and "/nexus/" in path and "/chat" in path:
+            response = await self._check_llm_credit_limit(user)
+            if response:
+                return response
 
         # All checks passed - proceed to handler
         return await call_next(request)
@@ -147,33 +146,20 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
                 return JSONResponse(status_code=402, content=error.to_dict())
         return None
 
-    async def _check_chat_message_limit(self, user: User, limits) -> Optional[JSONResponse]:
-        """Check if user has exceeded chat message limit or if chat is disabled."""
-        # Check if chat is enabled
-        if limits.is_chat_disabled:
-            error = ChatDisabledError()
-            logger.info("Chat access denied for user %s (self-hosted mode)", user.id)
-            return JSONResponse(status_code=403, content=error.to_dict())
-
-        if not limits.has_unlimited_chat:
-            # Count ALL chat messages for this user (across all workflows)
-            current = await get_total_chat_message_count(user)
-            if current >= limits.chat_messages_total:
-                tier = await resolve_user_tier(user)
-                error = MessageLimitExceeded(
-                    limit=limits.chat_messages_total,
-                    current=current,
-                    tier=tier,
-                )
-                logger.warning(
-                    "Chat message limit exceeded for user %s (tier=%s, current=%d, limit=%d)",
-                    user.id,
-                    tier.value,
-                    current,
-                    limits.chat_messages_total,
-                )
-                return JSONResponse(status_code=402, content=error.to_dict())
-        return None
+    async def _check_llm_credit_limit(self, user: User) -> Optional[JSONResponse]:
+        """Check if user has exceeded LLM credit limit before chat execution."""
+        try:
+            await check_credit_limit(user)
+            return None
+        except CreditLimitExceeded as exc:
+            logger.warning(
+                "LLM credit limit exceeded for user %s (period=%s, current=$%.2f, limit=$%.2f)",
+                user.id,
+                exc.period.value,
+                exc.current,
+                exc.limit,
+            )
+            return JSONResponse(status_code=402, content=exc.to_dict())
 
     async def _validate_polling_interval(self, request: Request, user: User, limits) -> None:
         """
