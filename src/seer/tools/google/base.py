@@ -75,7 +75,7 @@ class GoogleAPIClient(BaseTool, ABC):
             required_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
             integration_type = "gmail"
 
-            async def execute(self, access_token, arguments):
+            async def execute(self, access_token, arguments, *, credentials=None, context=None):
                 resp = await self._make_request(
                     "GET",
                     "https://www.googleapis.com/gmail/v1/users/me/messages",

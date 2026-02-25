@@ -129,6 +129,8 @@ def mock_limits():
         account_day_limit=30,
         poll_min_interval_seconds=60,
         llm_credits_monthly=10.0,
+        llm_credits_5h=2.0,
+        llm_credits_weekly=5.0,
     )
 
 

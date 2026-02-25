@@ -7,9 +7,7 @@ usage limits across different tiers (Self-Hosted, Cloud Free, Cloud Pro/Pro+/Ult
 Also provides Sentry error monitoring utilities for error capture and context enrichment.
 """
 from seer.observability.exceptions import (
-    ChatDisabledError,
     CreditLimitExceeded,
-    MessageLimitExceeded,
     PollingIntervalTooFast,
     RunLimitExceeded,
     TrialExpiredError,
@@ -26,7 +24,7 @@ from seer.observability.service import (
     resolve_user_tier,
 )
 from seer.observability.tracking import (
-    get_chat_message_count,  # Deprecated - use get_total_chat_message_count
+    get_5h_llm_credits_used,
     get_llm_usage_by_model,
     get_llm_usage_by_operation,
     get_llm_usage_by_workflow,
@@ -35,9 +33,8 @@ from seer.observability.tracking import (
     get_monthly_llm_credits_detailed,
     get_monthly_llm_credits_used,
     get_monthly_run_count,
-    get_total_chat_message_count,
+    get_weekly_llm_credits_used,
     get_workflow_count,
-    increment_chat_message_count,
     reset_monthly_counters,
     track_llm_usage,
 )
@@ -63,13 +60,12 @@ __all__ = [
     "is_trial_expired",
     "get_subscription_for_user",
     # Tracking functions
-    "increment_chat_message_count",
     "get_workflow_count",
     "get_monthly_run_count",
-    "get_chat_message_count",  # Deprecated
-    "get_total_chat_message_count",
     "track_llm_usage",
     "get_monthly_llm_credits_used",
+    "get_5h_llm_credits_used",
+    "get_weekly_llm_credits_used",
     "get_monthly_llm_credits_detailed",
     "reset_monthly_counters",
     # Analytics query functions
@@ -82,11 +78,9 @@ __all__ = [
     "UsageLimitError",
     "WorkflowLimitExceeded",
     "RunLimitExceeded",
-    "MessageLimitExceeded",
     "TrialExpiredError",
     "CreditLimitExceeded",
     "PollingIntervalTooFast",
-    "ChatDisabledError",
     # Sentry error monitoring
     "init_sentry",
     "sentry_capture_exception",

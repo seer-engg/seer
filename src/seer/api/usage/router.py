@@ -7,7 +7,7 @@ and LLM credits so the frontend can display upgrade nudges and remaining quota.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional, Union
 
@@ -18,6 +18,7 @@ from seer.config import config
 from seer.database import User
 from seer.database.subscription_models import SubscriptionStatus, SubscriptionTier
 from seer.observability import (
+    get_5h_llm_credits_used,
     get_limits_for_user,
     get_llm_usage_by_model,
     get_llm_usage_by_operation,
@@ -27,7 +28,7 @@ from seer.observability import (
     get_monthly_llm_credits_used,
     get_monthly_run_count,
     get_subscription_for_user,
-    get_total_chat_message_count,
+    get_weekly_llm_credits_used,
     get_workflow_count,
     resolve_user_tier,
 )
@@ -52,9 +53,10 @@ class UsageMetric(BaseModel):
 class UsageBreakdown(BaseModel):
     """All usage metrics returned to the client."""
 
-    chat_messages: UsageMetric
     workflow_runs: UsageMetric
     llm_credits: UsageMetric
+    llm_credits_5h: UsageMetric
+    llm_credits_weekly: UsageMetric
     workflows: UsageMetric
 
 
@@ -146,24 +148,20 @@ def _serialize_subscription(
     )
 
 
-def _build_usage_breakdown(
+def _build_usage_breakdown(  # pylint: disable=too-many-arguments,too-many-positional-arguments  # Reason: essential parameters for usage breakdown
     *,
     limits: TierLimits,
-    chat_messages_used: int,
     runs_used: int,
     workflows_used: int,
     llm_credits_used: Decimal,
+    llm_credits_5h_used: Decimal,
+    llm_credits_weekly_used: Decimal,
     reset_at: datetime,
+    reset_at_5h: datetime,
+    reset_at_weekly: datetime,
 ) -> UsageBreakdown:
     """Assemble the usage payload for all metered resources."""
     return UsageBreakdown(
-        chat_messages=_build_usage_metric(
-            used=chat_messages_used,
-            limit_value=limits.chat_messages_total,
-            is_unlimited=limits.has_unlimited_chat,
-            disabled=limits.is_chat_disabled,
-            unit="messages",
-        ),
         workflow_runs=_build_usage_metric(
             used=runs_used,
             limit_value=limits.runs_monthly,
@@ -176,6 +174,20 @@ def _build_usage_breakdown(
             limit_value=limits.llm_credits_monthly,
             is_unlimited=limits.has_unlimited_credits,
             reset_at=reset_at,
+            unit="usd",
+        ),
+        llm_credits_5h=_build_usage_metric(
+            used=llm_credits_5h_used,
+            limit_value=limits.llm_credits_5h,
+            is_unlimited=limits.has_unlimited_5h_credits,
+            reset_at=reset_at_5h,
+            unit="usd",
+        ),
+        llm_credits_weekly=_build_usage_metric(
+            used=llm_credits_weekly_used,
+            limit_value=limits.llm_credits_weekly,
+            is_unlimited=limits.has_unlimited_weekly_credits,
+            reset_at=reset_at_weekly,
             unit="usd",
         ),
         workflows=_build_usage_metric(
@@ -197,19 +209,29 @@ async def get_usage_summary(request: Request) -> UsageResponse:
     tier = await resolve_user_tier(user)
     subscription = await get_subscription_for_user(user)
 
-    chat_messages_used = await get_total_chat_message_count(user)
     monthly_runs_used = await get_monthly_run_count(user)
     workflows_used = await get_workflow_count(user)
     llm_credits_used = await get_monthly_llm_credits_used(user)
+    llm_credits_5h_used = await get_5h_llm_credits_used(user)
+    llm_credits_weekly_used = await get_weekly_llm_credits_used(user)
 
     _, reset_at = await get_billing_period_for_user(user, subscription)
+
+    # Rolling windows reset relative to now (Claude-style countdown display)
+    now = datetime.now(timezone.utc)
+    reset_at_5h = now + timedelta(hours=5)
+    reset_at_weekly = now + timedelta(days=7)
+
     usage_breakdown = _build_usage_breakdown(
         limits=limits,
-        chat_messages_used=chat_messages_used,
         runs_used=monthly_runs_used,
         workflows_used=workflows_used,
         llm_credits_used=llm_credits_used,
+        llm_credits_5h_used=llm_credits_5h_used,
+        llm_credits_weekly_used=llm_credits_weekly_used,
         reset_at=reset_at,
+        reset_at_5h=reset_at_5h,
+        reset_at_weekly=reset_at_weekly,
     )
 
     return UsageResponse(

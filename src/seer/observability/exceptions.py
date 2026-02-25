@@ -5,7 +5,21 @@ Provides structured exceptions that include metadata for upgrade prompts
 and detailed error responses.
 """
 
+from enum import Enum
+
 from seer.database.subscription_models import SubscriptionTier
+
+
+class LimitPeriod(str, Enum):
+    """
+    Time period for credit limits.
+
+    Used to indicate which rolling window limit was exceeded.
+    """
+
+    FIVE_HOUR = "5_hour"
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
 
 
 class UsageLimitError(Exception):
@@ -111,34 +125,6 @@ class RunLimitExceeded(UsageLimitError):
         )
 
 
-class MessageLimitExceeded(UsageLimitError):
-    """
-    Raised when user attempts to send more chat messages than allowed GLOBALLY.
-
-    Changed from per-workflow to global (across all workflows) limit.
-    """
-
-    def __init__(
-        self,
-        limit: int,
-        current: int,
-        tier: SubscriptionTier,
-        upgrade_url: str = "/pricing",
-    ):
-        message = (
-            f"You've reached your limit of {limit} total chat messages on the {tier.value} plan. "
-            "Upgrade to Pro for unlimited chat messages."
-        )
-        super().__init__(
-            resource="chat_messages",
-            limit=limit,
-            current=current,
-            tier=tier,
-            message=message,
-            upgrade_url=upgrade_url,
-        )
-
-
 class TrialExpiredError(UsageLimitError):
     """
     Raised when a Cloud Free user's 14-day trial has expired.
@@ -165,26 +151,52 @@ class TrialExpiredError(UsageLimitError):
 
 class CreditLimitExceeded(UsageLimitError):
     """
-    Raised when user has exhausted their monthly LLM credit allowance.
+    Raised when user has exhausted their LLM credit allowance for a given period.
+
+    Supports monthly, weekly, and 5-hour rolling window limits.
+    Also supports overage pricing information for paid tier users.
     """
+
+    # Map periods to human-readable names
+    _PERIOD_NAMES = {
+        LimitPeriod.FIVE_HOUR: "5-hour",
+        LimitPeriod.WEEKLY: "weekly",
+        LimitPeriod.MONTHLY: "monthly",
+    }
 
     def __init__(
         self,
         limit: float,
         current: float,
         tier: SubscriptionTier,
+        period: LimitPeriod = LimitPeriod.MONTHLY,
         is_soft_limit: bool = False,
         upgrade_url: str = "/pricing",
-    ):  # pylint: disable=too-many-positional-arguments  # Exception classes need structured error data
+        overage_enabled: bool = False,
+        overage_cap_reached: bool = False,
+    ):  # pylint: disable=too-many-positional-arguments,too-many-arguments  # Exception classes need structured error data
+        period_name = self._PERIOD_NAMES.get(period, period.value)
         if is_soft_limit:
             message = (
-                f"Warning: You've used ${current:.2f} of your ${limit:.2f} monthly LLM credit allowance "
+                f"Warning: You've used ${current:.2f} of your ${limit:.2f} {period_name} LLM credit allowance "
                 f"on the {tier.value} plan. You're approaching your limit."
+            )
+        elif overage_cap_reached:
+            message = (
+                f"You've reached your overage spending cap. "
+                f"You've used ${current:.2f} beyond your ${limit:.2f} {period_name} allowance. "
+                "Increase your spending cap to continue using LLM credits."
+            )
+        elif overage_enabled:
+            # This shouldn't normally happen if overage is enabled but not cap-reached
+            message = (
+                f"You've exhausted your ${limit:.2f} {period_name} LLM credit allowance on the {tier.value} plan. "
+                "Check your overage settings."
             )
         else:
             message = (
-                f"You've exhausted your ${limit:.2f} monthly LLM credit allowance on the {tier.value} plan. "
-                "Upgrade to increase your LLM credits."
+                f"You've exhausted your ${limit:.2f} {period_name} LLM credit allowance on the {tier.value} plan. "
+                "Upgrade to increase your LLM credits or enable usage-based pricing."
             )
         super().__init__(
             resource="llm_credits",
@@ -194,16 +206,22 @@ class CreditLimitExceeded(UsageLimitError):
             message=message,
             upgrade_url=upgrade_url,
         )
+        self.period = period
         self.is_soft_limit = is_soft_limit
         self.actual_limit = limit
         self.actual_current = current
+        self.overage_enabled = overage_enabled
+        self.overage_cap_reached = overage_cap_reached
 
     def to_dict(self) -> dict:
         """Add credit-specific fields to error response."""
         data = super().to_dict()
         data["limit"] = self.actual_limit
         data["current"] = self.actual_current
+        data["period"] = self.period.value
         data["is_soft_limit"] = self.is_soft_limit
+        data["overage_enabled"] = self.overage_enabled
+        data["overage_cap_reached"] = self.overage_cap_reached
         return data
 
 
@@ -277,26 +295,3 @@ class PollingIntervalTooFast(UsageLimitError):
         data["min_interval"] = self.min_interval
         data["clamped_to"] = self.min_interval
         return data
-
-
-class ChatDisabledError(Exception):
-    """
-    Raised when chat AI is accessed in self-hosted mode where it's disabled.
-
-    Returns HTTP 403 Forbidden (not 402) since this isn't an upgradeable limitation.
-    """
-
-    def __init__(self):
-        message = (
-            "Chat AI is not available in self-hosted mode. "
-            "Use your own LLM API keys (BYOK) for AI functionality."
-        )
-        super().__init__(message)
-
-    def to_dict(self) -> dict:
-        """Convert to structured error response."""
-        return {
-            "error": "feature_disabled",
-            "resource": "chat_ai",
-            "message": str(self),
-        }

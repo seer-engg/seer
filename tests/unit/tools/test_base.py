@@ -5,6 +5,7 @@ Tests BaseTool class, tool registry, and helper functions.
 """
 # pylint: disable=redefined-outer-name
 # Reason: pytest fixture pattern requires name reuse
+import inspect
 from typing import Any, Dict, Optional
 from unittest.mock import MagicMock
 
@@ -374,3 +375,104 @@ class TestToolRegistry:
 
         clear_registry()
         assert len(list_tools()) == 0
+
+
+# =============================================================================
+# Tool Signature Verification Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestToolSignatureStandard:
+    """Tests to verify all tools have the standardized execute() signature.
+
+    This test class was added as part of the 2024-02 RCA to prevent future
+    regressions where tools are added/modified without the correct signature.
+
+    Required signature:
+        async def execute(
+            self,
+            access_token: Optional[str],
+            arguments: Dict[str, Any],
+            *,
+            credentials: Optional["ResolvedCredentials"] = None,
+            context: Optional["WorkflowRuntimeContext"] = None,
+        ) -> Any
+    """
+
+    @staticmethod
+    def _load_all_tools():
+        """Import all tool modules to trigger registration."""
+        # pylint: disable=import-outside-toplevel,unused-import
+        import seer.tools.google  # noqa: F401
+        import seer.tools.slack  # noqa: F401
+        import seer.tools.discord  # noqa: F401
+        import seer.tools.knowledge  # noqa: F401
+        import seer.tools.github.github  # noqa: F401
+        import seer.tools.supabase  # noqa: F401
+
+    def test_all_tools_have_credentials_parameter(self):
+        """Verify all registered tools have 'credentials' as a keyword parameter."""
+        from seer.tools.base import list_tools
+
+        # Ensure tools are loaded
+        self._load_all_tools()
+
+        tools = list_tools()
+        missing_credentials = []
+
+        for tool in tools:
+            sig = inspect.signature(tool.execute)
+            params = list(sig.parameters.keys())
+
+            if "credentials" not in params:
+                missing_credentials.append(tool.name)
+
+        if missing_credentials:
+            pytest.fail(
+                f"The following tools are missing 'credentials' parameter: {missing_credentials}"
+            )
+
+    def test_all_tools_have_context_parameter(self):
+        """Verify all registered tools have 'context' as a keyword parameter."""
+        from seer.tools.base import list_tools
+
+        # Ensure tools are loaded
+        self._load_all_tools()
+
+        tools = list_tools()
+        missing_context = []
+
+        for tool in tools:
+            sig = inspect.signature(tool.execute)
+            params = list(sig.parameters.keys())
+
+            if "context" not in params:
+                missing_context.append(tool.name)
+
+        if missing_context:
+            pytest.fail(
+                f"The following tools are missing 'context' parameter: {missing_context}"
+            )
+
+    def test_all_tools_credentials_is_keyword_only(self):
+        """Verify 'credentials' parameter is keyword-only (after *)."""
+        from seer.tools.base import list_tools
+
+        # Ensure tools are loaded
+        self._load_all_tools()
+
+        tools = list_tools()
+        not_keyword_only = []
+
+        for tool in tools:
+            sig = inspect.signature(tool.execute)
+            param = sig.parameters.get("credentials")
+
+            if param and param.kind != inspect.Parameter.KEYWORD_ONLY:
+                not_keyword_only.append(tool.name)
+
+        if not_keyword_only:
+            pytest.fail(
+                f"The following tools have 'credentials' as positional (should be keyword-only after *): {not_keyword_only}"
+            )

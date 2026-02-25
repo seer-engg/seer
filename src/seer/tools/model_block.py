@@ -6,7 +6,7 @@ Model block tool for running LLM inference.
 Uses LangChain/LangGraph to run model inference with optional structured output.
 """
 import json
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fastapi import HTTPException
 from langchain_core.messages import HumanMessage
@@ -14,6 +14,10 @@ from langchain_core.messages import HumanMessage
 from seer.llm import get_llm
 from seer.logger import get_logger
 from seer.tools.base import BaseTool, register_tool
+
+if TYPE_CHECKING:
+    from seer.core.runtime.context import WorkflowRuntimeContext
+    from seer.tools.credential_resolver import ResolvedCredentials
 
 logger = get_logger("shared.tools.model_block")
 
@@ -64,17 +68,28 @@ class ModelBlockTool(BaseTool):
             "required": ["prompt"]
         }
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Dict[str, Any]:
         """
         Execute model block tool.
 
         Args:
             access_token: Not used (no OAuth required)
             arguments: Tool arguments
+            credentials: Resolved credentials (unused, for interface consistency)
+            context: Workflow runtime context (unused, for interface consistency)
 
         Returns:
             Dict with "output" (text) and optionally "structured_output" (dict)
         """
+        # access_token, credentials, and context are unused but required for interface consistency
+        _ = access_token, credentials, context
         prompt = arguments.get("prompt")
         if not prompt:
             raise HTTPException(

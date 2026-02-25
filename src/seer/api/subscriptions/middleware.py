@@ -16,7 +16,6 @@ TIER_ORDER = {
     SubscriptionTier.FREE: 0,
     SubscriptionTier.PRO: 1,
     SubscriptionTier.PRO_PLUS: 2,
-    SubscriptionTier.ULTRA: 3,
 }
 
 
@@ -28,7 +27,7 @@ def require_subscription(min_tier: SubscriptionTier = SubscriptionTier.PRO) -> C
         @router.post("/advanced-feature")
         @require_subscription(min_tier=SubscriptionTier.PRO_PLUS)
         async def advanced_feature(request: Request):
-            # Only Pro+ and Ultra users can access this
+            # Only Pro+ users can access this
             pass
 
     Args:

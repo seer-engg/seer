@@ -1,13 +1,17 @@
 """Knowledge base list tool."""
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from tortoise.functions import Count
 
 from seer.database.knowledge_models import KnowledgeBase
 from seer.logger import get_logger
 from seer.tools.base import BaseTool
+
+if TYPE_CHECKING:
+    from seer.core.runtime.context import WorkflowRuntimeContext
+    from seer.tools.credential_resolver import ResolvedCredentials
 
 logger = get_logger("tools.knowledge.list")
 
@@ -51,8 +55,12 @@ class KnowledgeBaseListTool(BaseTool):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
-        _credentials: Optional[Any] = None,
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Any:
+        # access_token, arguments, credentials, context unused but required for interface consistency
+        _ = access_token, arguments, credentials, context
         # Note: In workflow context, we need to get user_id from the credentials or workflow context
         # For now, list all KBs (access control should be handled at workflow level)
         # In production, this would filter by user from workflow context

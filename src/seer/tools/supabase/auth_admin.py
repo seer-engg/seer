@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fastapi import HTTPException
 
@@ -9,6 +9,10 @@ from seer.tools.supabase.common import (
     _require_project_and_key,
     _resolve_auth_url,
 )
+
+if TYPE_CHECKING:
+    from seer.core.runtime.context import WorkflowRuntimeContext
+    from seer.tools.credential_resolver import ResolvedCredentials
 
 logger = get_logger("shared.tools.supabase.auth_admin")
 
@@ -35,7 +39,16 @@ class SupabaseAuthAdminListUsersTool(SupabaseProjectTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return {"type": "object", "additionalProperties": True}
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any], credentials: Optional[Any] = None) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Any:
+        # access_token and context unused but required for interface consistency
+        _ = access_token, context
         resource, service_key = _require_project_and_key(credentials)
         auth_url = _resolve_auth_url(resource)
         if not auth_url:
@@ -70,7 +83,16 @@ class SupabaseAuthAdminCreateUserTool(SupabaseProjectTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return {"type": "object", "additionalProperties": True}
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any], credentials: Optional[Any] = None) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Any:
+        # access_token and context unused but required for interface consistency
+        _ = access_token, context
         resource, service_key = _require_project_and_key(credentials)
         auth_url = _resolve_auth_url(resource)
         if not auth_url:
@@ -110,7 +132,16 @@ class SupabaseAuthAdminDeleteUserTool(SupabaseProjectTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return {"type": "object", "additionalProperties": True}
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any], credentials: Optional[Any] = None) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Any:
+        # access_token and context unused but required for interface consistency
+        _ = access_token, context
         resource, service_key = _require_project_and_key(credentials)
         auth_url = _resolve_auth_url(resource)
         if not auth_url:

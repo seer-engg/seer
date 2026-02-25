@@ -2,7 +2,7 @@
 Google Drive permission operations - sharing and account info.
 """
 
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fastapi import HTTPException
 
@@ -15,6 +15,10 @@ from seer.tools.google.gdrive.helpers import (
     _drive_permission_schema,
     _drive_about_schema,
 )
+
+if TYPE_CHECKING:
+    from seer.core.runtime.context import WorkflowRuntimeContext
+    from seer.tools.credential_resolver import ResolvedCredentials
 
 logger = get_logger("shared.tools.gdrive.permissions")
 
@@ -59,7 +63,11 @@ class GoogleDriveCreatePermissionTool(GoogleDriveFileScopeTool):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Any:
+        _ = credentials, context  # unused but required for interface consistency
         file_id = arguments.get("file_id")
         if not file_id:
             raise HTTPException(status_code=400, detail="file_id is required")
@@ -127,7 +135,11 @@ class GoogleDriveAboutGetTool(GoogleDriveMetadataScopeTool):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Any:
+        _ = credentials, context  # unused but required for interface consistency
         params = {
             "fields": arguments.get("fields", "user,storageQuota,importFormats,exportFormats,maxUploadSize,canCreateDrives")
         }

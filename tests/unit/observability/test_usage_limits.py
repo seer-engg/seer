@@ -39,3 +39,5 @@ def test_constants_match_tier_limits():
     assert free.account_day_limit == tiered_usage_limits.ACCOUNT_DAY_LIMIT_FREE
     assert free.poll_min_interval_seconds == tiered_usage_limits.POLL_MIN_INTERVAL_FREE
     assert free.llm_credits_monthly == tiered_usage_limits.LLM_CREDITS_FREE
+    assert free.llm_credits_5h == tiered_usage_limits.LLM_CREDITS_5H_FREE
+    assert free.llm_credits_weekly == tiered_usage_limits.LLM_CREDITS_WEEKLY_FREE
