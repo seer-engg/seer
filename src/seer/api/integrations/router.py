@@ -535,6 +535,7 @@ async def connect(
     redirect_to: str = Query(None),
     scope: str = Query(...),
     integration_type: str = Query(None),
+    force_new_account: bool = Query(False),
 ):
     """
     Start OAuth flow for a provider.
@@ -576,11 +577,13 @@ async def connect(
     scope_string = provider_impl.get_oauth_scope(authorize_context)
     normalized_scope_list = list(parse_scopes(scope_string))
 
-    early_return = _check_existing_scopes(
-        existing_connection, normalized_scope_list, oauth_provider, redirect_to, integration_type
-    )
-    if early_return:
-        return early_return
+    # Skip early return check when forcing new account (user wants to add another OAuth account)
+    if not force_new_account:
+        early_return = _check_existing_scopes(
+            existing_connection, normalized_scope_list, oauth_provider, redirect_to, integration_type
+        )
+        if early_return:
+            return early_return
 
     redirect_uri = _build_oauth_redirect_uri(request, oauth_provider)
 
