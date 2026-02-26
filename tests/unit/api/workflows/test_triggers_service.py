@@ -270,6 +270,52 @@ class TestValidateProviderConfig:
 
         mock_raise.assert_called_once()
 
+    def test_validate_provider_config_excludes_provider_connection_id(self):
+        """Test that provider_connection_id is excluded from schema validation.
+
+        Regression test: provider_connection_id is an infrastructure field that specifies
+        which OAuth connection to use. It should not be validated against the trigger's
+        config schema (which has additionalProperties: false for most triggers).
+        """
+        from seer.api.workflows.services.triggers import _validate_provider_config
+
+        mock_definition = MagicMock()
+        mock_definition.schemas.config = {
+            "type": "object",
+            "additionalProperties": False,  # Strict schema - no extra properties allowed
+            "properties": {
+                "label_ids": {"type": "array", "items": {"type": "string"}},
+                "query": {"type": "string"},
+            }
+        }
+
+        # Should NOT raise even though provider_connection_id is not in schema
+        # because it's an infrastructure field that should be excluded from validation
+        _validate_provider_config(
+            {"provider_connection_id": 1, "query": "is:unread"},
+            mock_definition
+        )
+
+    def test_validate_provider_config_only_provider_connection_id_passes(self):
+        """Test that provider_config with ONLY provider_connection_id passes validation.
+
+        When provider_config only contains the infrastructure field, validation should pass
+        since there's nothing else to validate.
+        """
+        from seer.api.workflows.services.triggers import _validate_provider_config
+
+        mock_definition = MagicMock()
+        mock_definition.schemas.config = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "some_field": {"type": "string"},
+            }
+        }
+
+        # Should not raise - only infrastructure field present
+        _validate_provider_config({"provider_connection_id": 42}, mock_definition)
+
 
 # =============================================================================
 # Is Expression Tests

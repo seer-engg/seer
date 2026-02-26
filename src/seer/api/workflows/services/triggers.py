@@ -114,14 +114,22 @@ def _validate_filters_payload(filters: Dict[str, Any], definition) -> None:
 
 
 def _validate_provider_config(provider_config: Dict[str, Any], definition) -> None:
-    """Validate provider_config against trigger's config schema."""
+    """Validate provider_config against trigger's config schema.
+
+    Note: provider_connection_id is an infrastructure field (specifies which OAuth connection
+    to use) and is excluded from schema validation since it's not a user-configurable trigger option.
+    """
     if not provider_config:
         return
     schema = definition.schemas.config
     if not schema:
         return
+    # Exclude infrastructure fields that aren't part of the trigger's user-facing config schema
+    config_to_validate = {k: v for k, v in provider_config.items() if k != "provider_connection_id"}
+    if not config_to_validate:
+        return
     validator = Draft7Validator(schema)
-    errors = list(validator.iter_errors(provider_config))
+    errors = list(validator.iter_errors(config_to_validate))
     if errors:
         detail = errors[0].message
         _raise_problem(
