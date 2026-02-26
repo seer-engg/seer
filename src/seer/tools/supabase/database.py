@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import httpx
 from fastapi import HTTPException
@@ -11,6 +11,10 @@ from seer.tools.supabase.common import (
     _resolve_rest_url,
     _service_headers,
 )
+
+if TYPE_CHECKING:
+    from seer.core.runtime.context import WorkflowRuntimeContext
+    from seer.tools.credential_resolver import ResolvedCredentials
 
 logger = get_logger("shared.tools.supabase.database")
 
@@ -69,12 +73,16 @@ class SupabaseTableQueryTool(SupabaseProjectTool):
             "items": {"type": "object", "additionalProperties": True},
         }
 
-    async def execute(
+    async def execute(  # pylint: disable=too-many-locals  # Reason: Database query operation requires many intermediate variables for clarity
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
-        credentials: Optional[Any] = None,
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Any:
+        # access_token and context unused but required for interface consistency
+        _ = access_token, context
         if not credentials or not credentials.resource:
             raise HTTPException(status_code=400, detail="Supabase project binding is required.")
         resource = credentials.resource
@@ -160,7 +168,16 @@ class SupabaseTableInsertTool(SupabaseProjectTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return {"type": "array", "items": {"type": "object", "additionalProperties": True}}
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any], credentials: Optional[Any] = None) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Any:
+        # access_token and context unused but required for interface consistency
+        _ = access_token, context
         resource, service_key = _require_project_and_key(credentials)
         rest_url = _resolve_rest_url(resource)
         if not rest_url:
@@ -215,7 +232,16 @@ class SupabaseTableUpsertTool(SupabaseProjectTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return {"type": "array", "items": {"type": "object", "additionalProperties": True}}
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any], credentials: Optional[Any] = None) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Any:
+        # access_token and context unused but required for interface consistency
+        _ = access_token, context
         resource, service_key = _require_project_and_key(credentials)
         rest_url = _resolve_rest_url(resource)
         if not rest_url:
@@ -274,7 +300,16 @@ class SupabaseTableUpdateTool(SupabaseProjectTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return {"type": "array", "items": {"type": "object", "additionalProperties": True}}
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any], credentials: Optional[Any] = None) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Any:
+        # access_token and context unused but required for interface consistency
+        _ = access_token, context
         resource, service_key = _require_project_and_key(credentials)
         rest_url = _resolve_rest_url(resource)
         if not rest_url:
@@ -333,7 +368,16 @@ class SupabaseTableDeleteTool(SupabaseProjectTool):
             "description": "Either {ok:true} or deleted rows (if return_rows).",
         }
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any], credentials: Optional[Any] = None) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Any:
+        # access_token and context unused but required for interface consistency
+        _ = access_token, context
         resource, service_key = _require_project_and_key(credentials)
         rest_url = _resolve_rest_url(resource)
         if not rest_url:
@@ -383,7 +427,16 @@ class SupabaseRpcCallTool(SupabaseProjectTool):
     def get_output_schema(self) -> Dict[str, Any]:
         return {"type": "object", "additionalProperties": True}
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any], credentials: Optional[Any] = None) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Any:
+        # access_token and context unused but required for interface consistency
+        _ = access_token, context
         resource, service_key = _require_project_and_key(credentials)
         rest_url = _resolve_rest_url(resource)
         if not rest_url:

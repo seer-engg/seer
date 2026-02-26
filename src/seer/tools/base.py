@@ -29,9 +29,13 @@ The frontend will detect `x-resource-picker` and render a ResourcePicker compone
 that calls /api/integrations/{provider}/resources/{resource_type} to list resources.
 """
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, NotRequired, Optional, Set, TypedDict
+from typing import TYPE_CHECKING, Any, Dict, List, NotRequired, Optional, Set, TypedDict
 
 from seer.logger import get_logger
+
+if TYPE_CHECKING:
+    from seer.core.runtime.context import WorkflowRuntimeContext
+    from seer.tools.credential_resolver import ResolvedCredentials
 
 logger = get_logger("shared.tools.base")
 
@@ -111,13 +115,22 @@ class BaseTool(ABC):
     default_resource: Optional[DefaultResourceRequirement] = None
 
     @abstractmethod
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Any:
         """
         Execute the tool.
 
         Args:
             access_token: OAuth access token (None for non-OAuth tools)
             arguments: Tool-specific arguments
+            credentials: Resolved credentials including OAuth connection, resource, and secrets
+            context: Workflow runtime context for accessing workflow state and services
 
         Returns:
             Tool execution result (any serializable type)

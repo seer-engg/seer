@@ -147,15 +147,18 @@ def webhook_workflow_create_payload():
                     "id": "t1",
                     "key": "webhook.generic",
                     "mode": "webhook",
-                    "enabled": True,
+                    "provider_config": {},  # webhook.generic requires empty provider_config
                 }
             ],
             "nodes": [
                 {
                     "id": "n1",
-                    "type": "task",
-                    "kind": "set",
-                    "value": {"result": "test"},
+                    "type": "llm",
+                    "inputs": {
+                        "model": "test-model",
+                        "prompt": "Process the trigger data",
+                    },
+                    "outputs": {"mode": "text"},
                 }
             ],
             "edges": [
@@ -186,9 +189,12 @@ def simple_workflow_create_payload():
             "nodes": [
                 {
                     "id": "n1",
-                    "type": "task",
-                    "kind": "set",
-                    "value": {"result": "test"},
+                    "type": "llm",
+                    "inputs": {
+                        "model": "test-model",
+                        "prompt": "Process the input data",
+                    },
+                    "outputs": {"mode": "text"},
                 }
             ],
             "edges": [],

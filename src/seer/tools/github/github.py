@@ -3,13 +3,17 @@ GitHub Tool Wrappers
 
 GitHub tools that call the GitHub API directly.
 """
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import httpx
 from fastapi import HTTPException
 
 from seer.logger import get_logger
 from seer.tools.base import BaseTool, register_tool
+
+if TYPE_CHECKING:
+    from seer.core.runtime.context import WorkflowRuntimeContext
+    from seer.tools.credential_resolver import ResolvedCredentials
 
 logger = get_logger("shared.tools.github")
 
@@ -49,17 +53,28 @@ class GitHubTool(BaseTool):
         """Get JSON schema for tool parameters."""
         return self._parameters_schema
 
-    async def execute(self, access_token: Optional[str], arguments: Dict[str, Any]) -> Any:
+    async def execute(
+        self,
+        access_token: Optional[str],
+        arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
+    ) -> Any:
         """
         Execute GitHub tool by calling GitHub API directly.
 
         Args:
             access_token: OAuth access token (required for GitHub API)
             arguments: Tool arguments
+            credentials: Resolved credentials (unused, for interface consistency)
+            context: Workflow runtime context (unused, for interface consistency)
 
         Returns:
             Tool execution result
         """
+        # credentials and context are unused but required for interface consistency
+        _ = credentials, context
         if not access_token:
             raise HTTPException(
                 status_code=401,

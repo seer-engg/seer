@@ -113,6 +113,25 @@ def _validate_filters_payload(filters: Dict[str, Any], definition) -> None:
         )
 
 
+def _validate_provider_config(provider_config: Dict[str, Any], definition) -> None:
+    """Validate provider_config against trigger's config schema."""
+    if not provider_config:
+        return
+    schema = definition.schemas.config
+    if not schema:
+        return
+    validator = Draft7Validator(schema)
+    errors = list(validator.iter_errors(provider_config))
+    if errors:
+        detail = errors[0].message
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Invalid trigger configuration",
+            detail=f"Provider config did not match schema: {detail}",
+            status=400,
+        )
+
+
 def _is_expression(value: Any) -> bool:
     return isinstance(value, str) and value.strip().startswith("${") and value.strip().endswith("}")
 
@@ -386,6 +405,7 @@ async def create_trigger_subscription(
     filters = dict(payload.filters or {})
     provider_config = dict(payload.provider_config or {})
     _validate_filters_payload(filters, definition)
+    _validate_provider_config(provider_config, definition)
     secret = None
     if _should_emit_webhook_url(payload.trigger_key):
         secret = _generate_subscription_secret()
@@ -443,7 +463,9 @@ def _apply_subscription_updates(
     if payload.provider_connection_id is not None:
         subscription.provider_connection_id = payload.provider_connection_id
     if payload.provider_config is not None:
-        subscription.provider_config = dict(payload.provider_config or {})
+        new_provider_config = dict(payload.provider_config or {})
+        _validate_provider_config(new_provider_config, definition)
+        subscription.provider_config = new_provider_config
     if payload.enabled is not None:
         subscription.enabled = payload.enabled
     if _should_emit_webhook_url(subscription.trigger_key) and not subscription.secret_token:
@@ -709,6 +731,8 @@ async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-lo
         provider_config = dict(trigger_spec.provider_config or {})
 
         _validate_filters_payload(filters, definition)
+        if not skip_validation:
+            _validate_provider_config(provider_config, definition)
 
         # Extract form configuration from ui_meta (for form triggers)
         form_suffix, form_fields, form_config = _extract_form_config_from_spec(trigger_spec)

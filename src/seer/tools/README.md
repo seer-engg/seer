@@ -38,7 +38,9 @@ class BaseTool(ABC):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
-        credentials: Optional[ResolvedCredentials] = None
+        *,
+        credentials: Optional[ResolvedCredentials] = None,
+        context: Optional[WorkflowRuntimeContext] = None,
     ) -> Any:
         """Execute the tool and return result"""
 
@@ -160,7 +162,7 @@ class MyTool(BaseTool):
             "required": ["input_text"]
         }
 
-    async def execute(self, access_token, arguments, credentials=None):
+    async def execute(self, access_token, arguments, *, credentials=None, context=None):
         input_text = arguments.get("input_text")
 
         # Use access_token for OAuth API calls
@@ -223,7 +225,7 @@ class GmailSendEmail(BaseTool):
     required_scopes = ["https://www.googleapis.com/auth/gmail.send"]
     provider = "google"
 
-    async def execute(self, access_token, arguments, credentials=None):
+    async def execute(self, access_token, arguments, *, credentials=None, context=None):
         # access_token is automatically refreshed if expired
         headers = {"Authorization": f"Bearer {access_token}"}
         # Make API call...
@@ -327,7 +329,7 @@ class TextTransform(BaseTool):
             "required": ["text"]
         }
 
-    async def execute(self, access_token, arguments, credentials=None):
+    async def execute(self, access_token, arguments, *, credentials=None, context=None):
         return {"result": arguments["text"].upper()}
 ```
 
@@ -341,7 +343,7 @@ class GitHubGetRepo(BaseTool):
     integration_type = "github"
     provider = "github"
 
-    async def execute(self, access_token, arguments, credentials=None):
+    async def execute(self, access_token, arguments, *, credentials=None, context=None):
         owner = arguments["owner"]
         repo = arguments["repo"]
 
@@ -361,7 +363,6 @@ class GitHubGetRepo(BaseTool):
 - [ ] **Pydantic parameter schemas**: Replace verbose JSON schema with Pydantic auto-generation
 - [ ] **Defensive type checking**: Remove 30+ line type gymnastics in Gmail tools, use validation
 - [ ] **OAuth consolidation**: Unify `oauth_manager.py` and parts of `credential_resolver.py`
-- [ ] **Tool signature inconsistency**: Some tools don't accept `credentials` kwarg (backwards compatibility hack in executor.py:103-109)
 
 ## Related Documentation
 

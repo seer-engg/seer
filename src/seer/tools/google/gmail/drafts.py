@@ -3,7 +3,7 @@
 Gmail draft operations - creating, listing, sending drafts.
 """
 
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fastapi import HTTPException
 
@@ -21,6 +21,10 @@ from seer.tools.google.gmail.helpers import (
     _schema_with_defs,
     _schema_ref,
 )
+
+if TYPE_CHECKING:
+    from seer.core.runtime.context import WorkflowRuntimeContext
+    from seer.tools.credential_resolver import ResolvedCredentials
 
 logger = get_logger("shared.tools.gmail.drafts")
 
@@ -71,7 +75,11 @@ class GmailCreateDraftTool(GoogleAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Dict[str, Any]:
+        _ = credentials, context  # unused but required for interface consistency
         to = _coerce_str_list(arguments.get("to"), [])
         if not to:
             raise HTTPException(status_code=400, detail="Parameter 'to' must be a non-empty list")
@@ -149,7 +157,11 @@ class GmailListDraftsTool(GoogleAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Dict[str, Any]:
+        _ = credentials, context  # unused but required for interface consistency
         max_results = _coerce_int(arguments.get("max_results", 10), 10, min_value=1, max_value=100)
         q = arguments.get("q")
         page_token = arguments.get("page_token")
@@ -201,7 +213,11 @@ class GmailGetDraftTool(GoogleAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Dict[str, Any]:
+        _ = credentials, context  # unused but required for interface consistency
         draft_id = str(arguments.get("draft_id") or "").strip()
         if not draft_id:
             raise HTTPException(status_code=400, detail="Parameter 'draft_id' is required")
@@ -251,7 +267,11 @@ class GmailSendDraftTool(GoogleAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Dict[str, Any]:
+        _ = credentials, context  # unused but required for interface consistency
         draft_id = str(arguments.get("draft_id") or "").strip()
         if not draft_id:
             raise HTTPException(status_code=400, detail="Parameter 'draft_id' is required")
@@ -315,7 +335,11 @@ class GmailDeleteDraftTool(GoogleAPIClient):
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
+        *,
+        credentials: Optional["ResolvedCredentials"] = None,
+        context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Dict[str, Any]:
+        _ = credentials, context  # unused but required for interface consistency
         draft_id = str(arguments.get("draft_id") or "").strip()
         if not draft_id:
             raise HTTPException(status_code=400, detail="Parameter 'draft_id' is required")

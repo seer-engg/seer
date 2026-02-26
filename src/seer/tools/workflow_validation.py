@@ -126,6 +126,47 @@ def validate_trigger_references(spec: Any) -> List[str]:
     return errors
 
 
+def validate_trigger_provider_configs(spec: Any) -> List[str]:
+    """
+    Validate provider_config for each trigger against its config schema.
+
+    Args:
+        spec: Workflow spec (dict or Pydantic model)
+
+    Returns:
+        List of error messages for invalid provider_config values
+    """
+    # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module level
+    from seer.core.registry.trigger_registry import trigger_registry
+    from jsonschema import Draft7Validator
+
+    errors = []
+    triggers = _get_attr_or_key(spec, "triggers", [])
+
+    for trigger in triggers:
+        trigger_key = _get_attr_or_key(trigger, "key")
+        provider_config = _get_attr_or_key(trigger, "provider_config", {})
+
+        if not trigger_key or not provider_config:
+            continue
+
+        definition = trigger_registry.maybe_get(trigger_key)
+        if not definition or not definition.schemas.config:
+            continue
+
+        validator = Draft7Validator(definition.schemas.config)
+        validation_errors = list(validator.iter_errors(provider_config))
+
+        if validation_errors:
+            trigger_id = _get_attr_or_key(trigger, "id", trigger_key)
+            for err in validation_errors:
+                errors.append(
+                    f"Trigger '{trigger_id}' ({trigger_key}): {err.message}"
+                )
+
+    return errors
+
+
 def validate_tools_and_triggers(spec: Any) -> List[str]:
     """
     Validate both tool and trigger references.
@@ -294,6 +335,18 @@ async def run_full_validation(
                 "reference_validation",
                 "Workflow references non-existent tools or triggers",
                 "\n".join(ref_errors) + "\nUse search_tools() and list_triggers() to find valid names",
+            ),
+        )
+
+    # Step 2.5: Trigger provider_config validation
+    config_errors = validate_trigger_provider_configs(spec_dict)
+    if config_errors:
+        return ValidationResult(
+            success=False,
+            error=ValidationError(
+                "provider_config_validation",
+                "Trigger configuration is invalid",
+                "\n".join(config_errors),
             ),
         )
 
