@@ -16,18 +16,22 @@ class TestGetWorkflowGuide:
     @pytest.mark.asyncio
     @patch("seer.mcp.tools.guides.get_primitive_blocks_guide")
     @patch("seer.mcp.tools.guides.get_graph_structure_guide")
-    async def test_returns_combined_guide_by_default(self, mock_graph, mock_blocks):
+    @patch("seer.mcp.tools.guides.generate_trigger_reference")
+    async def test_returns_combined_guide_by_default(self, mock_triggers, mock_graph, mock_blocks):
         """Test that combined guide is returned when no section specified."""
         mock_blocks.return_value = "# Blocks Guide\nTool nodes are..."
         mock_graph.return_value = "# Graph Guide\nEdge types include..."
+        mock_triggers.return_value = "# Trigger Guide\nTriggers define when..."
 
         from seer.mcp.tools.guides import get_workflow_guide
         result = await get_workflow_guide.fn()
 
         assert "Blocks Guide" in result
         assert "Graph Guide" in result
+        assert "Trigger Guide" in result
         mock_blocks.assert_called_once()
         mock_graph.assert_called_once()
+        mock_triggers.assert_called_once()
 
     @pytest.mark.asyncio
     @patch("seer.mcp.tools.guides.get_primitive_blocks_guide")
@@ -52,6 +56,19 @@ class TestGetWorkflowGuide:
 
         assert "Graph Structure" in result
         mock_graph.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("seer.mcp.tools.guides.generate_trigger_reference")
+    async def test_triggers_section(self, mock_triggers):
+        """Test triggers section filter returns trigger specification docs."""
+        mock_triggers.return_value = "### Trigger Specification\nRequired fields: id, key, mode"
+
+        from seer.mcp.tools.guides import get_workflow_guide
+        result = await get_workflow_guide.fn(section="triggers")
+
+        assert "Trigger Specification" in result
+        assert "id, key, mode" in result
+        mock_triggers.assert_called_once()
 
     @pytest.mark.asyncio
     @patch("seer.mcp.tools.guides.list_available_skills")

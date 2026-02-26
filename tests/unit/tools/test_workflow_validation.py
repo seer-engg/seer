@@ -11,11 +11,13 @@ from seer.tools.workflow_validation import (
     _get_attr_or_key,
     validate_tool_references,
     validate_trigger_references,
+    validate_trigger_provider_configs,
     validate_tools_and_triggers,
     detect_extra_fields,
     format_validation_errors,
     run_full_validation,
 )
+from seer.tools.trigger_schema_fix import fix_trigger_event_schemas
 
 
 @pytest.mark.unit
@@ -144,6 +146,154 @@ class TestValidateTriggerReferences:
         errors = validate_trigger_references(spec)
         assert errors == []
         mock_registry.maybe_get.assert_not_called()
+
+
+@pytest.mark.unit
+class TestValidateTriggerProviderConfigs:
+    """Tests for validate_trigger_provider_configs."""
+
+    @patch("seer.core.registry.trigger_registry.trigger_registry")
+    def test_returns_empty_for_no_triggers(self, mock_registry):
+        """Test returns empty list when no triggers defined."""
+        spec = {"triggers": []}
+        errors = validate_trigger_provider_configs(spec)
+        assert errors == []
+
+    @patch("seer.core.registry.trigger_registry.trigger_registry")
+    def test_returns_empty_for_no_provider_config(self, mock_registry):
+        """Test returns empty list when trigger has no provider_config."""
+        spec = {
+            "triggers": [
+                {"id": "t1", "key": "webhook.generic", "provider_config": {}}
+            ]
+        }
+        errors = validate_trigger_provider_configs(spec)
+        assert errors == []
+
+    @patch("seer.core.registry.trigger_registry.trigger_registry")
+    def test_returns_empty_for_no_config_schema(self, mock_registry):
+        """Test returns empty list when trigger has no config schema."""
+        mock_definition = MagicMock()
+        mock_definition.schemas.config = None
+        mock_registry.maybe_get.return_value = mock_definition
+
+        spec = {
+            "triggers": [
+                {"id": "t1", "key": "webhook.generic", "provider_config": {"any": "value"}}
+            ]
+        }
+        errors = validate_trigger_provider_configs(spec)
+        assert errors == []
+
+    @patch("seer.core.registry.trigger_registry.trigger_registry")
+    def test_returns_empty_for_valid_config(self, mock_registry):
+        """Test returns empty list for valid provider_config."""
+        mock_definition = MagicMock()
+        mock_definition.schemas.config = {
+            "type": "object",
+            "properties": {
+                "channel_id": {"type": "string"},
+                "guild_id": {"type": "string"}
+            },
+            "required": ["channel_id", "guild_id"]
+        }
+        mock_registry.maybe_get.return_value = mock_definition
+
+        spec = {
+            "triggers": [
+                {
+                    "id": "t1",
+                    "key": "poll.discord.message_received",
+                    "provider_config": {"channel_id": "123", "guild_id": "456"}
+                }
+            ]
+        }
+        errors = validate_trigger_provider_configs(spec)
+        assert errors == []
+
+    @patch("seer.core.registry.trigger_registry.trigger_registry")
+    def test_returns_error_for_missing_required_field(self, mock_registry):
+        """Test returns error when required field is missing."""
+        mock_definition = MagicMock()
+        mock_definition.schemas.config = {
+            "type": "object",
+            "properties": {
+                "cron_expression": {"type": "string"},
+                "timezone": {"type": "string"}
+            },
+            "required": ["cron_expression", "timezone"]
+        }
+        mock_registry.maybe_get.return_value = mock_definition
+
+        spec = {
+            "triggers": [
+                {
+                    "id": "my_cron",
+                    "key": "schedule.cron",
+                    "provider_config": {"cron_expression": "0 * * * *"}  # Missing timezone
+                }
+            ]
+        }
+        errors = validate_trigger_provider_configs(spec)
+        assert len(errors) == 1
+        assert "my_cron" in errors[0]
+        assert "schedule.cron" in errors[0]
+        assert "timezone" in errors[0]
+
+    @patch("seer.core.registry.trigger_registry.trigger_registry")
+    def test_returns_error_for_wrong_type(self, mock_registry):
+        """Test returns error when field has wrong type."""
+        mock_definition = MagicMock()
+        mock_definition.schemas.config = {
+            "type": "object",
+            "properties": {
+                "max_results": {"type": "integer"}
+            }
+        }
+        mock_registry.maybe_get.return_value = mock_definition
+
+        spec = {
+            "triggers": [
+                {
+                    "id": "t1",
+                    "key": "poll.gmail.email_received",
+                    "provider_config": {"max_results": "not_an_integer"}
+                }
+            ]
+        }
+        errors = validate_trigger_provider_configs(spec)
+        assert len(errors) == 1
+        assert "t1" in errors[0]
+        assert "not of type 'integer'" in errors[0]
+
+    @patch("seer.core.registry.trigger_registry.trigger_registry")
+    def test_returns_multiple_errors_for_multiple_issues(self, mock_registry):
+        """Test returns multiple errors for multiple validation issues."""
+        mock_definition = MagicMock()
+        mock_definition.schemas.config = {
+            "type": "object",
+            "properties": {
+                "workspace_id": {"type": "string"},
+                "channel_id": {"type": "string"}
+            },
+            "required": ["workspace_id", "channel_id"]
+        }
+        mock_registry.maybe_get.return_value = mock_definition
+
+        spec = {
+            "triggers": [
+                {
+                    "id": "slack_trigger",
+                    "key": "poll.slack.message_received",
+                    # Has some config but missing required fields
+                    "provider_config": {"include_bot_messages": False}
+                }
+            ]
+        }
+        errors = validate_trigger_provider_configs(spec)
+        # Should have errors for both missing required fields
+        assert len(errors) == 2
+        assert all("slack_trigger" in err for err in errors)
 
 
 @pytest.mark.unit
@@ -332,3 +482,138 @@ class TestRunFullValidation:
 
         assert result.success is False
         assert "metadata" in result.error.hint
+
+    @pytest.mark.asyncio
+    @patch("seer.tools.workflow_validation.validate_trigger_provider_configs")
+    @patch("seer.tools.workflow_validation.validate_tools_and_triggers")
+    @patch("seer.core.compiler.parse.parse_workflow_spec")
+    async def test_returns_provider_config_error_for_invalid_trigger_config(
+        self, mock_parse, mock_ref, mock_config
+    ):
+        """Step 2.5 failure: invalid trigger provider_config yields provider_config_validation error."""
+        mock_parse.return_value = MagicMock()
+        mock_ref.return_value = []  # No tool/trigger reference errors
+        mock_config.return_value = ["Trigger 'my_cron' (schedule.cron): 'timezone' is a required property"]
+        mock_user = MagicMock()
+
+        result = await run_full_validation(
+            mock_user,
+            {"version": "2", "nodes": [], "triggers": [{"key": "schedule.cron"}]}
+        )
+
+        assert result.success is False
+        assert result.error.error_type == "provider_config_validation"
+        assert "timezone" in result.error.hint
+        assert "my_cron" in result.error.hint
+
+
+@pytest.mark.unit
+class TestFixTriggerEventSchemas:
+    """Tests for fix_trigger_event_schemas and custom data property merging."""
+
+    def test_fix_trigger_preserves_custom_data_properties(self):
+        """Auto-fix should merge custom data.properties into canonical schema."""
+        spec_dict = {
+            "triggers": [{
+                "id": "form_input",
+                "key": "form.hosted",
+                "event_schema": {
+                    "type": "object",
+                    "properties": {
+                        "data": {
+                            "type": "object",
+                            "properties": {
+                                "topic": {"type": "string"},
+                                "tone": {"type": "string"}
+                            }
+                        }
+                    }
+                }
+            }]
+        }
+
+        fixed_spec, fixes = fix_trigger_event_schemas(spec_dict)
+
+        # Should have applied a fix
+        assert len(fixes) == 1
+        assert "custom data fields preserved" in fixes[0]["reason"]
+
+        # Custom properties should be merged
+        data_schema = fixed_spec["triggers"][0]["event_schema"]["properties"]["data"]
+        assert data_schema.get("additionalProperties") is True  # Still flexible
+        assert "topic" in data_schema.get("properties", {})
+        assert "tone" in data_schema.get("properties", {})
+
+    def test_fix_trigger_replaces_entirely_when_no_custom_properties(self):
+        """Auto-fix should replace entirely when spec has no custom data.properties."""
+        spec_dict = {
+            "triggers": [{
+                "id": "webhook_trigger",
+                "key": "webhook.generic",
+                "event_schema": {
+                    "type": "object",
+                    "properties": {
+                        "wrong_field": {"type": "string"}
+                    }
+                }
+            }]
+        }
+
+        fixed_spec, fixes = fix_trigger_event_schemas(spec_dict)
+
+        # Should have applied a fix
+        assert len(fixes) == 1
+        assert "replaced with canonical schema" in fixes[0]["reason"]
+
+    def test_fix_trigger_no_change_when_schema_matches(self):
+        """No fix applied when spec schema matches canonical exactly."""
+        # First, get the canonical schema
+        from seer.core.registry.trigger_registry import trigger_registry
+
+        canonical_def = trigger_registry.get("form.hosted")
+        canonical_schema = canonical_def.schemas.event
+
+        spec_dict = {
+            "triggers": [{
+                "id": "form_input",
+                "key": "form.hosted",
+                "event_schema": canonical_schema  # Exact match
+            }]
+        }
+
+        fixed_spec, fixes = fix_trigger_event_schemas(spec_dict)
+
+        # No fixes should be applied
+        assert len(fixes) == 0
+
+    def test_fix_trigger_available_fields_include_custom_properties(self):
+        """Feedback should show custom fields in available_fields."""
+        spec_dict = {
+            "triggers": [{
+                "id": "content_form",
+                "key": "form.hosted",
+                "event_schema": {
+                    "type": "object",
+                    "properties": {
+                        "data": {
+                            "type": "object",
+                            "properties": {
+                                "topic": {"type": "string"},
+                                "tone": {"type": "string"},
+                                "key_points": {"type": "string"}
+                            }
+                        }
+                    }
+                }
+            }]
+        }
+
+        _, fixes = fix_trigger_event_schemas(spec_dict)
+
+        # Custom fields should appear in available_fields
+        assert "topic" in fixes[0]["available_fields"]["data"]
+        assert "tone" in fixes[0]["available_fields"]["data"]
+        assert "key_points" in fixes[0]["available_fields"]["data"]
+
+        # Example expressions should use custom fields
+        assert "${content_form.data.topic}" in fixes[0]["example_expressions"]

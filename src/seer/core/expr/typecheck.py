@@ -125,6 +125,8 @@ def _resolve_property(schema: JsonSchema, key: str, schema_type) -> JsonSchema:
     additional = schema.get("additionalProperties")
     if isinstance(additional, dict):
         return additional
+    if additional is True:
+        return {}  # Permissive schema - allows any type (e.g., form.hosted custom fields)
     raise TypeCheckError(f"Property '{key}' not declared in schema")
 
 
@@ -148,6 +150,8 @@ def _resolve_string_index(schema: JsonSchema, index: str, schema_type) -> JsonSc
     additional = schema.get("additionalProperties")
     if isinstance(additional, dict):
         return additional
+    if additional is True:
+        return {}  # Permissive schema - allows any type (e.g., form.hosted custom fields)
     raise TypeCheckError(f"Key '{index}' not present in schema")
 
 

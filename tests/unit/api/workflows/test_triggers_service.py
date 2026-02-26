@@ -174,6 +174,104 @@ class TestValidateFiltersPayload:
 
 
 # =============================================================================
+# Validate Provider Config Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestValidateProviderConfig:
+    """Tests for _validate_provider_config function."""
+
+    def test_validate_provider_config_empty_passes(self):
+        """Test empty provider_config always passes validation."""
+        from seer.api.workflows.services.triggers import _validate_provider_config
+
+        mock_definition = MagicMock()
+        mock_definition.schemas.config = {"type": "object", "required": ["channel_id"]}
+
+        # Should not raise - empty config skips validation
+        _validate_provider_config({}, mock_definition)
+        _validate_provider_config(None, mock_definition)
+
+    def test_validate_provider_config_no_schema_passes(self):
+        """Test validation passes when no config schema defined."""
+        from seer.api.workflows.services.triggers import _validate_provider_config
+
+        mock_definition = MagicMock()
+        mock_definition.schemas.config = None
+
+        # Should not raise
+        _validate_provider_config({"any": "value"}, mock_definition)
+
+    def test_validate_provider_config_valid_passes(self):
+        """Test valid provider_config passes schema validation."""
+        from seer.api.workflows.services.triggers import _validate_provider_config
+
+        mock_definition = MagicMock()
+        mock_definition.schemas.config = {
+            "type": "object",
+            "properties": {
+                "channel_id": {"type": "string"},
+                "guild_id": {"type": "string"}
+            },
+            "required": ["channel_id", "guild_id"]
+        }
+
+        # Should not raise
+        _validate_provider_config(
+            {"channel_id": "123", "guild_id": "456"},
+            mock_definition
+        )
+
+    def test_validate_provider_config_invalid_raises_problem(self):
+        """Test invalid provider_config raises validation problem."""
+        from seer.api.workflows.services.triggers import _validate_provider_config
+
+        mock_definition = MagicMock()
+        mock_definition.schemas.config = {
+            "type": "object",
+            "properties": {
+                "cron_expression": {"type": "string"},
+                "timezone": {"type": "string"}
+            },
+            "required": ["cron_expression", "timezone"]
+        }
+
+        with patch("seer.api.workflows.services.triggers._raise_problem") as mock_raise:
+            mock_raise.side_effect = Exception("Validation failed")
+
+            # Missing required "timezone" field
+            with pytest.raises(Exception, match="Validation failed"):
+                _validate_provider_config({"cron_expression": "0 * * * *"}, mock_definition)
+
+        mock_raise.assert_called_once()
+        call_kwargs = mock_raise.call_args[1]
+        assert call_kwargs["status"] == 400
+        assert "Invalid trigger configuration" in call_kwargs["title"]
+
+    def test_validate_provider_config_wrong_type_raises_problem(self):
+        """Test provider_config with wrong type raises validation problem."""
+        from seer.api.workflows.services.triggers import _validate_provider_config
+
+        mock_definition = MagicMock()
+        mock_definition.schemas.config = {
+            "type": "object",
+            "properties": {
+                "max_results": {"type": "integer"}
+            }
+        }
+
+        with patch("seer.api.workflows.services.triggers._raise_problem") as mock_raise:
+            mock_raise.side_effect = Exception("Validation failed")
+
+            # max_results should be integer, not string
+            with pytest.raises(Exception, match="Validation failed"):
+                _validate_provider_config({"max_results": "not_an_integer"}, mock_definition)
+
+        mock_raise.assert_called_once()
+
+
+# =============================================================================
 # Is Expression Tests
 # =============================================================================
 

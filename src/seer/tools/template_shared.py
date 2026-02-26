@@ -4,7 +4,6 @@ Used by both Nexus agent tools and MCP tools.
 """
 from typing import Any, Dict, List
 
-from seer.agents.nexus.schema_context import get_workflow_templates
 
 
 def search_templates(query: str) -> Dict[str, Any]:
@@ -17,7 +16,8 @@ def search_templates(query: str) -> Dict[str, Any]:
     Returns:
         Dict with matches, count, message, and optionally available_templates/suggestion
     """
-    templates = get_workflow_templates()
+    #TODO query from DB
+    templates =[]
     query_lower = query.lower()
 
     matches: List[Dict[str, Any]] = []
@@ -66,7 +66,7 @@ def list_all_templates() -> Dict[str, Any]:
     Returns:
         Dict with templates list and total count
     """
-    templates = get_workflow_templates()
+    templates = []  #TODO query from DB
 
     template_list = [
         {
