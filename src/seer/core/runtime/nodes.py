@@ -43,6 +43,11 @@ class RuntimeServices:
     type_env: TypeEnvironment
     mcp_client_registry: Optional[MCPClientRegistry] = None
 
+    # Auto-resolved connection IDs for nodes in single-account OAuth scenarios.
+    # Maps node_id -> connection_id. Set during compilation when user has exactly
+    # one connection for a provider and the node doesn't specify connection_id.
+    resolved_connections: Dict[str, int] | None = None
+
 
 class NodeRuntime:
     def __init__(self, services: RuntimeServices) -> None:

@@ -28,6 +28,71 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# Helper Functions
+# =============================================================================
+
+
+def _evaluate_inputs(node: ToolNode, ctx: NodeExecutionContext) -> Dict[str, Any]:
+    """Evaluate input expressions against current state."""
+    # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
+    from seer.core.expr.evaluator import EvaluationContext, evaluate_value
+    from seer.core.runtime.state import INTERNAL_STATE_PREFIX
+
+    visible_state = {k: v for k, v in ctx.state.items() if not k.startswith(INTERNAL_STATE_PREFIX)}
+    eval_ctx = EvaluationContext(
+        state=visible_state,
+        locals=ctx.locals_ctx or {},
+        config=ctx.config,
+        trigger=ctx.trigger,
+    )
+
+    inputs: Dict[str, Any] = {}
+    for key, expr in node.inputs.items():
+        try:
+            inputs[key] = evaluate_value(eval_ctx, expr)
+        except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Capture eval error in trace instead of failing
+            inputs[key] = {"__error__": str(e), "__expression__": expr}
+    return inputs
+
+
+def _resolve_connection_id(
+    node: ToolNode,
+    services: "RuntimeServices",
+) -> int | None:
+    """Resolve connection_id for multi-account OAuth scenarios."""
+    connection_id = node.connection_id
+    if connection_id is None and services.resolved_connections:
+        connection_id = services.resolved_connections.get(node.id)
+    return connection_id
+
+
+def _build_trace_data(
+    node_id: str,
+    inputs: Dict[str, Any],
+    result: Any,
+    ctx: NodeExecutionContext,
+    *,
+    status: str,
+    error: Exception | None = None,
+) -> Dict[str, Any]:
+    """Build trace data for tool execution (success or failure)."""
+    trace_key = get_trace_key(node_id, ctx.state, ctx.loop_body_map or {}, ctx.nested_loop_parents or {})
+    trace_entry: Dict[str, Any] = {
+        "node_id": node_id,
+        "node_type": "tool",
+        "inputs": inputs,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": status,
+    }
+    if error:
+        trace_entry["error"] = {"type": error.__class__.__name__, "message": str(error)}
+    else:
+        trace_entry["output"] = result
+        trace_entry["output_key"] = node_id
+    return {trace_key: trace_entry}
+
+
+# =============================================================================
 # Node Type Implementation
 # =============================================================================
 
@@ -42,7 +107,7 @@ class ToolNodeType(BaseNodeType):
     def model_class(self) -> type["NodeBase"]:
         return ToolNode
 
-    async def execute_async(  # pylint: disable=too-many-locals  # Reason: Node execution requires many context variables
+    async def execute_async(
         self,
         node: ToolNode,  # type: ignore[override]
         ctx: NodeExecutionContext,
@@ -59,52 +124,15 @@ class ToolNodeType(BaseNodeType):
         5. Return state updates with trace data
         """
         # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
-        from seer.core.expr.evaluator import EvaluationContext, evaluate_value
         from seer.core.runtime.state import INTERNAL_STATE_PREFIX
         from seer.core.runtime.validate_output import validate_against_schema
 
-        # Build evaluation context
-        visible_state = {k: v for k, v in ctx.state.items() if not k.startswith(INTERNAL_STATE_PREFIX)}
-        eval_ctx = EvaluationContext(
-            state=visible_state,
-            locals=ctx.locals_ctx or {},
-            config=ctx.config,
-            trigger=ctx.trigger,
-        )
+        inputs = _evaluate_inputs(node, ctx)
 
-        # Evaluate input expressions
-        inputs: Dict[str, Any] = {}
-        for key, expr in node.inputs.items():
-            try:
-                inputs[key] = evaluate_value(eval_ctx, expr)
-            except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Capture eval error in trace instead of failing
-                inputs[key] = {"__error__": str(e), "__expression__": expr}
-
-        # Execute tool
         try:
-            tool_def = services.tool_registry.get(node.tool)
-
-            # Apply schema-driven coercion (see BUG FIX comment in runtime/nodes.py)
-            inputs = coerce_arguments(inputs, tool_def.input_schema)
-
-            if tool_def.async_handler is None:
-                raise ExecutionError(f"Tool '{node.tool}' has no async handler registered")
-
-            result = await tool_def.async_handler(inputs, dict(ctx.config), ctx.runtime_context)
-
+            result = await self._execute_tool(node, inputs, ctx, services)
         except Exception as exc:
-            # Build error trace for failed execution (loop-aware key)
-            trace_key = get_trace_key(node.id, ctx.state, ctx.loop_body_map or {}, ctx.nested_loop_parents or {})
-            error_trace = {
-                trace_key: {
-                    "node_id": node.id,
-                    "node_type": "tool",
-                    "inputs": inputs,
-                    "error": {"type": exc.__class__.__name__, "message": str(exc)},
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "status": "failed",
-                }
-            }
+            error_trace = _build_trace_data(node.id, inputs, None, ctx, status="failed", error=exc)
             ctx.state.update(error_trace)  # type: ignore[arg-type]
             raise ExecutionError(f"Tool '{node.tool}' failed: {exc}", trace_data=error_trace) from exc
 
@@ -118,18 +146,7 @@ class ToolNodeType(BaseNodeType):
             raise ExecutionError(f"Node IDs starting with '{INTERNAL_STATE_PREFIX}' are reserved")
 
         output = {node.id: result}
-
-        # Add trace data (loop-aware key for nested loop support)
-        trace_key = get_trace_key(node.id, ctx.state, ctx.loop_body_map or {}, ctx.nested_loop_parents or {})
-        output[trace_key] = {
-            "node_id": node.id,
-            "node_type": "tool",
-            "inputs": inputs,
-            "output": result,
-            "output_key": node.id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "status": "succeeded",
-        }
+        output.update(_build_trace_data(node.id, inputs, result, ctx, status="succeeded"))
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
@@ -140,6 +157,27 @@ class ToolNodeType(BaseNodeType):
             )
 
         return output
+
+    async def _execute_tool(
+        self,
+        node: ToolNode,
+        inputs: Dict[str, Any],
+        ctx: NodeExecutionContext,
+        services: "RuntimeServices",
+    ) -> Any:
+        """Execute the tool handler with coerced inputs and resolved connection."""
+        tool_def = services.tool_registry.get(node.tool)
+        inputs = coerce_arguments(inputs, tool_def.input_schema)
+
+        if tool_def.async_handler is None:
+            raise ExecutionError(f"Tool '{node.tool}' has no async handler registered")
+
+        tool_config = dict(ctx.config)
+        connection_id = _resolve_connection_id(node, services)
+        if connection_id is not None:
+            tool_config["connection_id"] = str(connection_id)
+
+        return await tool_def.async_handler(inputs, tool_config, ctx.runtime_context)
 
     def register_type_sync(
         self,

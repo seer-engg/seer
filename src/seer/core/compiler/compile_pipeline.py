@@ -47,6 +47,7 @@ async def compile_parsed_workflow(
             model_registry=context.model_registry,
             type_env=type_env,
             mcp_client_registry=context.mcp_client_registry,
+            resolved_connections=context.resolved_connections or None,
         )
     )
 
