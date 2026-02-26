@@ -508,6 +508,112 @@ class TestRunFullValidation:
 
 
 @pytest.mark.unit
+class TestTriggerProviderConfigIntegration:
+    """Integration tests for trigger provider_config validation with real registry."""
+
+    def test_gmail_trigger_with_provider_connection_id_passes(self):
+        """Test Gmail trigger with provider_connection_id is valid (no mocking)."""
+        spec = {
+            "version": "2",
+            "triggers": [{
+                "id": "gmail_trigger",
+                "key": "poll.gmail.email_received",
+                "mode": "polling",
+                "provider_config": {
+                    "provider_connection_id": 1
+                }
+            }],
+            "nodes": [],
+            "edges": []
+        }
+
+        errors = validate_trigger_provider_configs(spec)
+        assert not errors, f"Unexpected validation errors: {errors}"
+
+    def test_slack_trigger_with_provider_connection_id_passes(self):
+        """Test Slack trigger with provider_connection_id is valid (no mocking)."""
+        spec = {
+            "version": "2",
+            "triggers": [{
+                "id": "slack_trigger",
+                "key": "poll.slack.message_received",
+                "mode": "polling",
+                "provider_config": {
+                    "workspace_id": "T12345",
+                    "channel_id": "C67890",
+                    "provider_connection_id": 42
+                }
+            }],
+            "nodes": [],
+            "edges": []
+        }
+
+        errors = validate_trigger_provider_configs(spec)
+        assert not errors, f"Unexpected validation errors: {errors}"
+
+    def test_discord_trigger_with_provider_connection_id_passes(self):
+        """Test Discord trigger with provider_connection_id is valid (no mocking)."""
+        spec = {
+            "version": "2",
+            "triggers": [{
+                "id": "discord_trigger",
+                "key": "poll.discord.message_received",
+                "mode": "polling",
+                "provider_config": {
+                    "guild_id": "123456789",
+                    "channel_id": "987654321",
+                    "provider_connection_id": 7
+                }
+            }],
+            "nodes": [],
+            "edges": []
+        }
+
+        errors = validate_trigger_provider_configs(spec)
+        assert not errors, f"Unexpected validation errors: {errors}"
+
+    def test_google_calendar_trigger_with_provider_connection_id_passes(self):
+        """Test Google Calendar trigger with provider_connection_id is valid (no mocking)."""
+        spec = {
+            "version": "2",
+            "triggers": [{
+                "id": "gcal_trigger",
+                "key": "poll.google_calendar.event_changed",
+                "mode": "polling",
+                "provider_config": {
+                    "calendar_id": "primary",
+                    "provider_connection_id": 3
+                }
+            }],
+            "nodes": [],
+            "edges": []
+        }
+
+        errors = validate_trigger_provider_configs(spec)
+        assert not errors, f"Unexpected validation errors: {errors}"
+
+    def test_provider_connection_id_must_be_integer_integration(self):
+        """Test that provider_connection_id validation rejects non-integer values."""
+        spec = {
+            "version": "2",
+            "triggers": [{
+                "id": "gmail_trigger",
+                "key": "poll.gmail.email_received",
+                "mode": "polling",
+                "provider_config": {
+                    "provider_connection_id": "not-an-integer"  # Wrong type
+                }
+            }],
+            "nodes": [],
+            "edges": []
+        }
+
+        errors = validate_trigger_provider_configs(spec)
+        assert len(errors) == 1
+        assert "not of type 'integer'" in errors[0]
+
+
+@pytest.mark.unit
 class TestFixTriggerEventSchemas:
     """Tests for fix_trigger_event_schemas and custom data property merging."""
 

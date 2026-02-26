@@ -58,7 +58,10 @@ def _format_node_type_usage_notes(node_type: str) -> List[str]:
     notes_map = {
         "tool": [
             "**Important:** Tool nodes do NOT have an `outputs` field. "
-            "Tool output schema is determined by the tool registry."
+            "Tool output schema is determined by the tool registry.",
+            "**OAuth:** For OAuth tools (gmail, google, slack, github, discord, etc.), "
+            "use `get_tool_accounts(tool_name)` first. If multiple accounts exist, "
+            "include `connection_id` in the node to specify which account to use.",
         ],
         "llm": [
             "**Important:** LLM nodes require `model` and `prompt` in inputs. "
@@ -269,6 +272,15 @@ def generate_trigger_reference() -> str:
     lines.append("- Use edge with `type=trigger` to connect trigger to first node")
     lines.append("- Trigger data accessed via `${trigger.data}` in downstream nodes")
     lines.append("- Provider-specific config goes in `provider_config` object")
+    lines.append("")
+    lines.append("**OAuth Account Selection:**")
+    lines.append("- For OAuth-based triggers (gmail, googlesheets, slack, etc.), use `get_trigger_accounts(trigger_key)` first")
+    lines.append("- If user has multiple accounts, use `ask_clarification_questions` to let them choose")
+    lines.append("- Include `provider_connection_id` in trigger spec when user selected:")
+    lines.append("```json")
+    lines.append('{"id": "t1", "key": "poll.gmail.email_received", "provider_connection_id": 123}')
+    lines.append("```")
+    lines.append("- If only one account exists, the system auto-selects it (omit the field)")
     lines.append("")
 
     return "\n".join(lines)
