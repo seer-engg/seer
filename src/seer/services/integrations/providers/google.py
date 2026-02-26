@@ -35,7 +35,7 @@ class GoogleProvider(IntegrationProvider):
             "state": state,
             "scope": scope,
             "access_type": "offline",
-            "prompt": "consent",
+            "prompt": "select_account consent",
         }
         connection = context.existing_connection
         helpers = context.helpers
