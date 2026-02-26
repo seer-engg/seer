@@ -30,6 +30,24 @@ async def get_trigger_catalog(request: Request):
     return await services.list_triggers(user)
 
 
+@router.get("/triggers/{trigger_key}/accounts", response_model=api_models.TriggerAccountsResponse)
+async def get_trigger_accounts(request: Request, trigger_key: str):
+    """
+    Get available OAuth accounts for a specific trigger.
+
+    Used by frontend to let users select which account to use
+    when they have multiple accounts for the same provider.
+
+    Args:
+        trigger_key: Trigger key (e.g., "poll.gmail.email_received")
+
+    Returns:
+        TriggerAccountsResponse with list of accounts and whether selection is required
+    """
+    user = _require_user(request)
+    return await services.get_trigger_accounts(user, trigger_key)
+
+
 @router.get("/trigger-subscriptions", response_model=api_models.TriggerSubscriptionListItemsResponse)
 async def list_trigger_subscriptions(
     request: Request,

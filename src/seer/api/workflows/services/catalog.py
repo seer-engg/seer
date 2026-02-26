@@ -171,6 +171,82 @@ async def list_triggers(user: User) -> api_models.TriggerCatalogResponse:
     return api_models.TriggerCatalogResponse(triggers=triggers)
 
 
+async def get_trigger_accounts(user: User, trigger_key: str) -> api_models.TriggerAccountsResponse:
+    """
+    Get available OAuth accounts for a specific trigger.
+
+    Used by frontend to let users select which account to use
+    when they have multiple accounts for the same provider.
+
+    Similar to get_tool_accounts but for triggers.
+    """
+    from seer.database.models_oauth import OAuthConnection
+    from seer.services.integrations.auth.helpers import (
+        get_connection_display_name,
+        has_required_scopes,
+        parse_scopes,
+    )
+    from seer.services.integrations.auth.oauth import get_oauth_provider
+
+    definition = trigger_registry.get(trigger_key)
+    if definition is None:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Trigger not found",
+            detail=f"Trigger '{trigger_key}' not found in registry",
+            status=404,
+        )
+
+    # If trigger doesn't require OAuth, return empty response
+    if not definition.meta.requires_connection:
+        return api_models.TriggerAccountsResponse(
+            trigger_key=trigger_key,
+            provider=definition.provider,
+            accounts=[],
+            requires_selection=False,
+        )
+
+    oauth_provider = get_oauth_provider(definition.provider)
+    required_scopes = definition.meta.required_scopes or []
+
+    # Get all connections for this provider
+    connections = await OAuthConnection.filter(
+        user=user,
+        provider=oauth_provider,
+        status="active"
+    ).all()
+
+    accounts = []
+    for conn in connections:
+        # Check scope coverage
+        missing = []
+        if conn.scopes:
+            conn_has_scopes = has_required_scopes(conn.scopes, required_scopes)
+            if not conn_has_scopes:
+                granted_set = parse_scopes(conn.scopes)
+                for scope in required_scopes:
+                    if scope not in granted_set:
+                        missing.append(scope)
+        else:
+            conn_has_scopes = not required_scopes  # True if no scopes required
+            missing = list(required_scopes)
+
+        accounts.append(api_models.TriggerAccountInfo(
+            id=conn.id,
+            provider_account_id=conn.provider_account_id or f"ID:{conn.id}",
+            display_name=get_connection_display_name(conn),
+            has_required_scopes=conn_has_scopes,
+            missing_scopes=missing,
+        ))
+
+    return api_models.TriggerAccountsResponse(
+        trigger_key=trigger_key,
+        provider=definition.provider,
+        accounts=accounts,
+        requires_selection=len(accounts) > 1,
+    )
+
+
 async def list_models() -> api_models.ModelRegistryResponse:
     models = list(DEFAULT_MODEL_REGISTRY)
     default_id = shared_config.default_llm_model

@@ -3,25 +3,24 @@ Unit tests for auto-selecting provider connections for triggers.
 
 Tests:
 - Auto-selection with single active connection
-- Auto-selection with multiple connections (verifies most recent selected)
-- Error when no connections exist
+- Auto-selection raises MultipleAccountsError with multiple connections
+- Returns None when no connections exist
 - Provider mapping (gmail -> google)
 - Skip validation mode bypasses auto-selection
 - Non-required triggers skip auto-selection
 """
-from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from seer.api.workflows.services.triggers import (
     _auto_select_provider_connection,
+    MultipleAccountsError,
 )
 from seer.core.schema.models import (
     TriggerDefinition,
 )
 from seer.database import User
-from tests.unit.helpers import utcnow
 
 
 # =============================================================================
@@ -50,18 +49,18 @@ async def test_auto_select_single_active_connection():
     mock_connection.provider = "google"
     mock_connection.status = "active"
 
-    with patch("seer.database.models_oauth.OAuthConnection.filter") as mock_filter:
-        # Create properly chained mock for ORM pattern
+    with patch("seer.api.workflows.services.triggers.OAuthConnection") as MockOAuthConnection:
+        # Create properly chained mock for ORM pattern - uses .all() now
         mock_order_by = MagicMock()
-        mock_order_by.first = AsyncMock(return_value=mock_connection)
+        mock_order_by.all = AsyncMock(return_value=[mock_connection])  # Single connection
         mock_queryset = MagicMock()
         mock_queryset.order_by.return_value = mock_order_by
-        mock_filter.return_value = mock_queryset
+        MockOAuthConnection.filter.return_value = mock_queryset
 
         connection_id = await _auto_select_provider_connection(user, trigger_def)
 
         assert connection_id == 123
-        mock_filter.assert_called_once_with(
+        MockOAuthConnection.filter.assert_called_once_with(
             user=user,
             provider="google",
             status="active"
@@ -70,8 +69,8 @@ async def test_auto_select_single_active_connection():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_auto_select_most_recent_connection():
-    """Test that auto-selection picks the most recently created connection."""
+async def test_auto_select_raises_error_with_multiple_connections():
+    """Test that auto-selection raises MultipleAccountsError with multiple connections."""
     from seer.database.models_oauth import OAuthConnection
 
     user = MagicMock(spec=User)
@@ -81,23 +80,33 @@ async def test_auto_select_most_recent_connection():
     trigger_def.provider = "gmail"
     trigger_def.key = "gmail.new_email"
 
-    # Mock the most recent connection (created last)
-    mock_connection = MagicMock(spec=OAuthConnection)
-    mock_connection.id = 456  # Most recent
-    mock_connection.created_at = utcnow()
+    # Mock multiple connections
+    mock_conn1 = MagicMock(spec=OAuthConnection)
+    mock_conn1.id = 123
+    mock_conn1.provider = "google"
+    mock_conn1.provider_account_id = "111"
+    mock_conn1.provider_metadata = {"email": "alice@gmail.com"}
 
-    with patch("seer.database.models_oauth.OAuthConnection.filter") as mock_filter:
+    mock_conn2 = MagicMock(spec=OAuthConnection)
+    mock_conn2.id = 456
+    mock_conn2.provider = "google"
+    mock_conn2.provider_account_id = "222"
+    mock_conn2.provider_metadata = {"email": "bob@gmail.com"}
+
+    with patch("seer.api.workflows.services.triggers.OAuthConnection") as MockOAuthConnection:
         # Create properly chained mock for ORM pattern
         mock_order_by = MagicMock()
-        mock_order_by.first = AsyncMock(return_value=mock_connection)
+        mock_order_by.all = AsyncMock(return_value=[mock_conn1, mock_conn2])  # Multiple
         mock_queryset = MagicMock()
         mock_queryset.order_by.return_value = mock_order_by
-        mock_filter.return_value = mock_queryset
+        MockOAuthConnection.filter.return_value = mock_queryset
 
-        connection_id = await _auto_select_provider_connection(user, trigger_def)
+        with pytest.raises(MultipleAccountsError) as exc_info:
+            await _auto_select_provider_connection(user, trigger_def)
 
-        assert connection_id == 456
-        mock_queryset.order_by.assert_called_once_with("-created_at")
+        assert exc_info.value.provider == "google"
+        assert "alice@gmail.com" in exc_info.value.account_names
+        assert "bob@gmail.com" in exc_info.value.account_names
 
 
 @pytest.mark.unit
@@ -111,13 +120,13 @@ async def test_auto_select_no_connections_returns_none():
     trigger_def.provider = "gmail"
     trigger_def.key = "gmail.new_email"
 
-    with patch("seer.database.models_oauth.OAuthConnection.filter") as mock_filter:
+    with patch("seer.api.workflows.services.triggers.OAuthConnection") as MockOAuthConnection:
         # Create properly chained mock for ORM pattern
         mock_order_by = MagicMock()
-        mock_order_by.first = AsyncMock(return_value=None)  # No connections
+        mock_order_by.all = AsyncMock(return_value=[])  # No connections
         mock_queryset = MagicMock()
         mock_queryset.order_by.return_value = mock_order_by
-        mock_filter.return_value = mock_queryset
+        MockOAuthConnection.filter.return_value = mock_queryset
 
         connection_id = await _auto_select_provider_connection(user, trigger_def)
 
@@ -148,19 +157,22 @@ async def test_auto_select_provider_mapping():
 
         mock_connection = MagicMock(spec=OAuthConnection)
         mock_connection.id = 123
+        mock_connection.provider = "google"
+        mock_connection.provider_account_id = "111"
+        mock_connection.provider_metadata = {"email": "test@gmail.com"}
 
-        with patch("seer.database.models_oauth.OAuthConnection.filter") as mock_filter:
+        with patch("seer.api.workflows.services.triggers.OAuthConnection") as MockOAuthConnection:
             # Create properly chained mock for ORM pattern
             mock_order_by = MagicMock()
-            mock_order_by.first = AsyncMock(return_value=mock_connection)
+            mock_order_by.all = AsyncMock(return_value=[mock_connection])  # Single
             mock_queryset = MagicMock()
             mock_queryset.order_by.return_value = mock_order_by
-            mock_filter.return_value = mock_queryset
+            MockOAuthConnection.filter.return_value = mock_queryset
 
             await _auto_select_provider_connection(user, trigger_def)
 
             # Verify correct OAuth provider was used
-            call_args = mock_filter.call_args
+            call_args = MockOAuthConnection.filter.call_args
             assert call_args[1]["provider"] == expected_oauth_provider, \
                 f"Expected {expected_oauth_provider} for {trigger_provider}"
 

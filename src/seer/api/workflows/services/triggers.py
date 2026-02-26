@@ -43,8 +43,21 @@ from seer.core.schema.models import (
     WorkflowSpec,
 )
 from seer.services.integrations.auth.oauth import get_oauth_provider
+from seer.services.integrations.auth.helpers import get_connection_display_name
 
 logger = get_logger(__name__)
+
+
+class MultipleAccountsError(Exception):
+    """Raised when multiple OAuth accounts exist and explicit selection is required."""
+
+    def __init__(self, provider: str, account_names: List[str]):
+        self.provider = provider
+        self.account_names = account_names
+        super().__init__(
+            f"Multiple {provider} accounts available. "
+            f"Please specify provider_connection_id. Available: {', '.join(account_names)}"
+        )
 
 
 async def _auto_select_provider_connection(
@@ -54,21 +67,25 @@ async def _auto_select_provider_connection(
     """
     Auto-select an active OAuth connection for a trigger's provider.
 
-    Returns the most recently created active connection ID, or None if not found.
+    Returns the connection ID if exactly one account exists.
+    Raises MultipleAccountsError if multiple accounts exist (requires explicit selection).
+    Returns None if no accounts exist.
     """
-
-
     # Map trigger provider to OAuth provider (e.g., "gmail" -> "google")
     oauth_provider = get_oauth_provider(trigger_definition.provider)
 
-    # Query for active connections, ordered by most recent first
-    connection = await OAuthConnection.filter(
+    # Query for all active connections
+    connections = await OAuthConnection.filter(
         user=user,
         provider=oauth_provider,
         status="active"
-    ).order_by("-created_at").first()
+    ).order_by("-created_at").all()
 
-    if connection:
+    if len(connections) == 0:
+        return None
+
+    if len(connections) == 1:
+        connection = connections[0]
         logger.info(
             "Auto-selected provider connection for trigger",
             extra={
@@ -80,7 +97,9 @@ async def _auto_select_provider_connection(
         )
         return connection.id
 
-    return None
+    # Multiple connections - require explicit selection
+    account_names = [get_connection_display_name(c) for c in connections]
+    raise MultipleAccountsError(oauth_provider, account_names)
 
 
 def _load_trigger_definition(trigger_key: str):
@@ -189,7 +208,7 @@ def _build_form_url(subscription: TriggerSubscription) -> Optional[str]:
     return f"{base}/forms/{subscription.form_suffix}"
 
 
-def _serialize_subscription(
+async def _serialize_subscription(
     subscription: TriggerSubscription,
 ) -> api_models.TriggerSubscriptionResponse:
     webhook_url = None
@@ -202,11 +221,19 @@ def _serialize_subscription(
     if subscription.trigger_key == "form.hosted":
         form_url = _build_form_url(subscription)
 
+    # Fetch connection display name if connection is set
+    connection_display_name = None
+    if subscription.provider_connection_id:
+        conn = await OAuthConnection.get_or_none(id=subscription.provider_connection_id)
+        if conn:
+            connection_display_name = get_connection_display_name(conn)
+
     return api_models.TriggerSubscriptionResponse(
         subscription_id=subscription.id,
         workflow_id=make_workflow_public_id(subscription.workflow_id),
         trigger_key=subscription.trigger_key,
         provider_connection_id=subscription.provider_connection_id,
+        connection_display_name=connection_display_name,
         enabled=subscription.enabled,
         filters=dict(subscription.filters or {}),
         provider_config=dict(subscription.provider_config or {}),
@@ -350,8 +377,9 @@ async def list_trigger_subscriptions(
         workflow = await _get_workflow(user, workflow_id)
         query = query.filter(workflow=workflow)
     subscriptions = await query.order_by("-created_at")
+    serialized_items = [await _serialize_subscription(item) for item in subscriptions]
     return api_models.TriggerSubscriptionListResponse(
-        items=[_serialize_subscription(item) for item in subscriptions],
+        items=serialized_items,
     )
 
 
@@ -414,6 +442,33 @@ async def create_trigger_subscription(
     provider_config = dict(payload.provider_config or {})
     _validate_filters_payload(filters, definition)
     _validate_provider_config(provider_config, definition)
+
+    # Validate provider connection for triggers that require it
+    provider_connection_id = payload.provider_connection_id
+    if definition.meta.requires_connection:
+        if provider_connection_id is None:
+            # Attempt auto-selection (only works with single account)
+            try:
+                provider_connection_id = await _auto_select_provider_connection(user, definition)
+            except MultipleAccountsError as exc:
+                _raise_problem(
+                    type_uri=VALIDATION_PROBLEM,
+                    title="Multiple accounts available",
+                    detail=str(exc),
+                    status=422,
+                )
+
+            if provider_connection_id is None:
+                _raise_problem(
+                    type_uri=VALIDATION_PROBLEM,
+                    title="Missing trigger connection",
+                    detail=(
+                        f"Trigger '{payload.trigger_key}' requires a provider connection. "
+                        f"Please connect your {definition.provider} account first."
+                    ),
+                    status=400,
+                )
+
     secret = None
     if _should_emit_webhook_url(payload.trigger_key):
         secret = _generate_subscription_secret()
@@ -436,7 +491,7 @@ async def create_trigger_subscription(
         user=user,
         workflow=workflow,
         trigger_key=payload.trigger_key,
-        provider_connection_id=payload.provider_connection_id,
+        provider_connection_id=provider_connection_id,
         enabled=payload.enabled,
         filters=filters,
         provider_config=provider_config,
@@ -448,7 +503,7 @@ async def create_trigger_subscription(
     )
     if payload.trigger_key == "webhook.supabase.db_changes" and secret:
         await _create_supabase_webhook(subscription, secret)
-    return _serialize_subscription(subscription)
+    return await _serialize_subscription(subscription)
 
 
 async def get_trigger_subscription(
@@ -456,7 +511,7 @@ async def get_trigger_subscription(
     subscription_id: int,
 ) -> api_models.TriggerSubscriptionResponse:
     subscription = await _get_trigger_subscription(user, subscription_id)
-    return _serialize_subscription(subscription)
+    return await _serialize_subscription(subscription)
 
 
 def _apply_subscription_updates(
@@ -489,7 +544,7 @@ async def update_trigger_subscription(
     definition = _load_trigger_definition(subscription.trigger_key)
     _apply_subscription_updates(subscription, payload, definition)
     await subscription.save()
-    return _serialize_subscription(subscription)
+    return await _serialize_subscription(subscription)
 
 
 async def delete_trigger_subscription(user: User, subscription_id: int) -> None:
@@ -718,8 +773,16 @@ async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-lo
 
         if not skip_validation and definition.meta.requires_connection:
             if provider_connection_id is None:
-                # Attempt auto-selection
-                provider_connection_id = await _auto_select_provider_connection(user, definition)
+                # Attempt auto-selection (only works with single account)
+                try:
+                    provider_connection_id = await _auto_select_provider_connection(user, definition)
+                except MultipleAccountsError as exc:
+                    _raise_problem(
+                        type_uri=VALIDATION_PROBLEM,
+                        title="Multiple accounts available",
+                        detail=str(exc),
+                        status=422,
+                    )
 
                 if provider_connection_id is None:
                     _raise_problem(
