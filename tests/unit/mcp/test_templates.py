@@ -15,25 +15,24 @@ class TestGetWorkflowTemplate:
     """Tests for get_workflow_template_impl — unified canonical implementation."""
 
     @pytest.mark.asyncio
-    @patch("seer.tools.template_shared.get_workflow_templates")
-    async def test_get_template_finds_matching(self, mock_get_templates):
+    @patch("seer.tools.template_shared.search_templates")
+    async def test_get_template_finds_matching(self, mock_search):
         """Test that get_workflow_template_impl finds matching templates."""
-        mock_get_templates.return_value = [
-            {
-                "name": "Supabase to Gmail Welcome",
-                "description": "Send welcome email on Supabase signup",
-                "tags": ["supabase", "gmail", "welcome"],
-                "customization_guide": "Update email content",
-                "spec": {"version": "2", "nodes": [], "edges": []}
-            },
-            {
-                "name": "Slack Notification",
-                "description": "Send Slack notifications",
-                "tags": ["slack", "notification"],
-                "customization_guide": "Update channel",
-                "spec": {"version": "2", "nodes": [], "edges": []}
-            },
-        ]
+        # search_templates returns a dict with matches, count, message
+        mock_search.return_value = {
+            "query": "gmail",
+            "matches": [
+                {
+                    "name": "Supabase to Gmail Welcome",
+                    "description": "Send welcome email on Supabase signup",
+                    "tags": ["supabase", "gmail", "welcome"],
+                    "customization_guide": "Update email content",
+                    "spec": {"version": "2", "nodes": [], "edges": []}
+                }
+            ],
+            "count": 1,
+            "message": "Found 1 template(s) matching 'gmail'"
+        }
 
         from seer.tools.unified_tools import get_workflow_template_impl
         result = await get_workflow_template_impl("gmail")
@@ -44,17 +43,17 @@ class TestGetWorkflowTemplate:
         assert "gmail" in data["matches"][0]["name"].lower()
 
     @pytest.mark.asyncio
-    @patch("seer.tools.template_shared.get_workflow_templates")
-    async def test_get_template_no_matches(self, mock_get_templates):
+    @patch("seer.tools.template_shared.search_templates")
+    async def test_get_template_no_matches(self, mock_search):
         """Test that get_workflow_template_impl handles no matches."""
-        mock_get_templates.return_value = [
-            {
-                "name": "Test Template",
-                "description": "A test template",
-                "tags": ["test"],
-                "spec": {}
-            }
-        ]
+        # search_templates returns a dict with empty matches when no results
+        mock_search.return_value = {
+            "query": "nonexistent",
+            "matches": [],
+            "message": "No templates found matching 'nonexistent'",
+            "available_templates": [{"name": "Test Template", "tags": ["test"]}],
+            "suggestion": "Try searching with integration names"
+        }
 
         from seer.tools.unified_tools import get_workflow_template_impl
         result = await get_workflow_template_impl("nonexistent")
@@ -70,13 +69,17 @@ class TestListWorkflowTemplates:
     """Tests for list_workflow_templates_impl — unified canonical implementation."""
 
     @pytest.mark.asyncio
-    @patch("seer.tools.template_shared.get_workflow_templates")
-    async def test_list_templates_returns_all(self, mock_get_templates):
+    @patch("seer.tools.template_shared.list_all_templates")
+    async def test_list_templates_returns_all(self, mock_list):
         """Test that list_workflow_templates_impl returns all templates."""
-        mock_get_templates.return_value = [
-            {"name": "Template 1", "description": "Desc 1", "tags": ["t1"]},
-            {"name": "Template 2", "description": "Desc 2", "tags": ["t2"]},
-        ]
+        # list_all_templates returns a dict with templates list and total
+        mock_list.return_value = {
+            "templates": [
+                {"name": "Template 1", "description": "Desc 1", "tags": ["t1"]},
+                {"name": "Template 2", "description": "Desc 2", "tags": ["t2"]},
+            ],
+            "total": 2
+        }
 
         from seer.tools.unified_tools import list_workflow_templates_impl
         result = await list_workflow_templates_impl()
@@ -86,10 +89,14 @@ class TestListWorkflowTemplates:
         assert len(data["templates"]) == 2
 
     @pytest.mark.asyncio
-    @patch("seer.tools.template_shared.get_workflow_templates")
-    async def test_list_templates_empty(self, mock_get_templates):
+    @patch("seer.tools.template_shared.list_all_templates")
+    async def test_list_templates_empty(self, mock_list):
         """Test that list_workflow_templates_impl handles empty list."""
-        mock_get_templates.return_value = []
+        # list_all_templates returns a dict with empty templates list
+        mock_list.return_value = {
+            "templates": [],
+            "total": 0
+        }
 
         from seer.tools.unified_tools import list_workflow_templates_impl
         result = await list_workflow_templates_impl()
