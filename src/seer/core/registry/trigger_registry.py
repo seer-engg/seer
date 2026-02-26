@@ -67,6 +67,7 @@ POLLING_TRIGGERS = [
     "poll.gmail.email_received",
     "poll.discord.message_received",
     "poll.slack.message_received",
+    "poll.google_calendar.event_changed",
     "schedule.cron",
 ]
 
@@ -114,6 +115,24 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
                 config=_gmail_email_received_config_schema(),
             ),
             meta=TriggerMetadata(sample_event=_gmail_email_received_sample_event()),
+        )
+    )
+    registry.register(
+        TriggerDefinition(
+            key="poll.google_calendar.event_changed",
+            title="Google Calendar",
+            provider="google",
+            mode="polling",
+            description="Poll a Google Calendar for newly created or updated events.",
+            schemas=TriggerSchemas(
+                event=_enveloped_event_schema(_google_calendar_event_changed_payload_schema()),
+                config=_google_calendar_event_changed_config_schema(),
+            ),
+            meta=TriggerMetadata(
+                sample_event=_google_calendar_event_changed_sample_event(),
+                requires_connection=True,
+                required_scopes=["https://www.googleapis.com/auth/calendar.readonly"],
+            ),
         )
     )
     registry.register(
@@ -322,6 +341,132 @@ def _gmail_email_received_sample_event() -> Dict[str, Any]:
         "account_id": None,
         "occurred_at": "2025-12-13T10:00:00Z",
         "received_at": "2025-12-13T10:00:05Z",
+        "data": payload,
+        "raw": {"payload": payload},
+    }
+
+
+def _google_calendar_event_changed_payload_schema() -> JsonSchema:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "event_id": {"type": "string", "description": "Google Calendar event ID"},
+            "event_type": {
+                "type": "string",
+                "enum": ["created", "updated"],
+                "description": "Whether the event was newly created or updated",
+            },
+            "calendar_id": {"type": "string", "description": "Calendar being monitored"},
+            "summary": {"type": ["string", "null"], "description": "Event title"},
+            "description": {"type": ["string", "null"], "description": "Event description"},
+            "location": {"type": ["string", "null"], "description": "Event location"},
+            "status": {"type": ["string", "null"], "description": "Event status (confirmed/tentative/cancelled)"},
+            "html_link": {"type": ["string", "null"], "description": "URL to view in Google Calendar"},
+            "start": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "datetime": {"type": ["string", "null"], "description": "Start time (RFC3339 or date)"},
+                    "timezone": {"type": ["string", "null"], "description": "IANA timezone"},
+                },
+            },
+            "end": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "datetime": {"type": ["string", "null"], "description": "End time (RFC3339 or date)"},
+                    "timezone": {"type": ["string", "null"], "description": "IANA timezone"},
+                },
+            },
+            "organizer": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "email": {"type": ["string", "null"]},
+                    "display_name": {"type": ["string", "null"]},
+                    "self": {"type": "boolean"},
+                },
+            },
+            "attendees": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "email": {"type": ["string", "null"]},
+                        "display_name": {"type": ["string", "null"]},
+                        "response_status": {"type": ["string", "null"]},
+                        "optional": {"type": "boolean"},
+                        "self": {"type": "boolean"},
+                    },
+                },
+            },
+            "is_all_day": {"type": "boolean", "description": "Whether this is an all-day event"},
+            "recurring_event_id": {"type": ["string", "null"], "description": "Parent event if recurring instance"},
+            "created": {"type": ["string", "null"], "description": "Event creation timestamp (RFC3339)"},
+            "updated": {"type": ["string", "null"], "description": "Event last modified timestamp (RFC3339)"},
+        },
+        "required": ["event_id", "event_type", "calendar_id"],
+    }
+
+
+def _google_calendar_event_changed_config_schema() -> JsonSchema:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "calendar_id": {
+                "type": "string",
+                "description": "Calendar ID to monitor for events (defaults to primary calendar).",
+                "default": "primary",
+                "x-resource-picker": {
+                    "provider": "google_calendar",
+                    "resource_type": "google_calendar",
+                    "display_field": "name",
+                    "value_field": "id",
+                    "search_enabled": False,
+                },
+            },
+            "max_results": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50,
+                "default": 50,
+                "description": "Maximum events to examine per poll cycle (capped at 50).",
+            },
+        },
+    }
+
+
+def _google_calendar_event_changed_sample_event() -> Dict[str, Any]:
+    payload = {
+        "event_id": "abc123def456",
+        "event_type": "created",
+        "calendar_id": "primary",
+        "summary": "Team Meeting",
+        "description": "Weekly sync with the engineering team",
+        "location": "Conference Room A",
+        "status": "confirmed",
+        "html_link": "https://www.google.com/calendar/event?eid=abc123",
+        "start": {"datetime": "2026-01-15T10:00:00-05:00", "timezone": "America/New_York"},
+        "end": {"datetime": "2026-01-15T11:00:00-05:00", "timezone": "America/New_York"},
+        "organizer": {"email": "organizer@example.com", "display_name": "Jane Doe", "self": False},
+        "attendees": [
+            {"email": "attendee@example.com", "display_name": "John Smith", "response_status": "accepted", "optional": False, "self": True},
+        ],
+        "is_all_day": False,
+        "recurring_event_id": None,
+        "created": "2026-01-10T09:00:00Z",
+        "updated": "2026-01-10T09:00:00Z",
+    }
+    return {
+        "id": "evt_sample_poll_google_calendar_event_changed",
+        "trigger_key": "poll.google_calendar.event_changed",
+        "provider": "google",
+        "account_id": None,
+        "occurred_at": "2026-01-10T09:00:00Z",
+        "received_at": "2026-01-10T09:00:05Z",
         "data": payload,
         "raw": {"payload": payload},
     }

@@ -108,6 +108,30 @@ INTEGRATION_CONFIGS: Dict[str, Dict[str, Any]] = {
             "scope_keywords": ["spreadsheets"]
         }
     },
+    "google_calendar": {
+        "display_name": "Google Calendar",
+        "oauth_provider": "google",
+        "requires_oauth": True,
+        "icon": {"type": "url", "value": "https://img.logo.dev/calendar.google.com?token=pk_Ovp4v2MYQDqQ0D6xdN7OJA"},
+        "brand_color": "#4285F4",
+        "default_scopes": ["https://www.googleapis.com/auth/calendar.readonly"],
+        "scopes": [
+            {
+                "value": "https://www.googleapis.com/auth/calendar.readonly",
+                "display_name": "Read calendars",
+                "description": "View calendar events and settings"
+            },
+            {
+                "value": "https://www.googleapis.com/auth/calendar.events",
+                "display_name": "Manage events",
+                "description": "Create, edit, and delete calendar events"
+            },
+        ],
+        "detection_patterns": {
+            "tool_name_patterns": ["google_calendar_", "gcalendar_"],
+            "scope_keywords": ["calendar"]
+        }
+    },
     # GitHub integrations
     "github": {
         "display_name": "GitHub",

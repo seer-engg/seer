@@ -13,7 +13,7 @@ logger = get_logger(__name__)
 
 class GoogleProvider(IntegrationProvider):
     provider = "google"
-    aliases = {"gmail", "googlesheets", "googledrive"}
+    aliases = {"gmail", "googlesheets", "googledrive", "googlecalendar"}
     _required_openid_scopes = ["openid", "email", "profile"]
 
     def get_oauth_scope(self, context: OAuthAuthorizeContext) -> str:

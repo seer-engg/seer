@@ -96,6 +96,7 @@ _INTEGRATION_TO_PROVIDER: dict[str, str] = {
     'google': 'google',
     'google_sheets': 'google',
     'google_drive': 'google',
+    'google_calendar': 'google',
     # GitHub integrations
     'github': 'github',
     'pull_request': 'github',

@@ -19,7 +19,7 @@ logger = get_logger(__name__)
 
 class GoogleResourceProvider(ResourceProvider):
     provider = "google"
-    aliases = {"gmail", "googlesheets", "googledrive", "googledocs"}
+    aliases = {"gmail", "googlesheets", "googledrive", "googledocs", "googlecalendar"}
     resource_configs: Dict[str, Dict[str, Any]] = {
         "google_drive_file": {
             "list_endpoint": "https://www.googleapis.com/drive/v3/files",
@@ -67,6 +67,13 @@ class GoogleResourceProvider(ResourceProvider):
         "gmail_label": {
             "list_endpoint": "https://gmail.googleapis.com/gmail/v1/users/me/labels",
             "display_field": "name",
+            "value_field": "id",
+            "supports_hierarchy": False,
+            "supports_search": False,
+        },
+        "google_calendar": {
+            "list_endpoint": "https://www.googleapis.com/calendar/v3/users/me/calendarList",
+            "display_field": "summary",
             "value_field": "id",
             "supports_hierarchy": False,
             "supports_search": False,
@@ -140,6 +147,8 @@ class GoogleResourceProvider(ResourceProvider):
             return await self._list_google_sheet_tabs(access_token, spreadsheet_id)
         if resource_type == "gmail_label":
             return await self._list_gmail_labels(access_token)
+        if resource_type == "google_calendar":
+            return await self._list_google_calendars(access_token)
 
         raise HTTPException(status_code=400, detail=f"Unhandled Google resource type '{resource_type}'")
 
@@ -270,6 +279,38 @@ class GoogleResourceProvider(ResourceProvider):
                     "display_name": label.get("name"),
                     "type": "label",
                     "label_type": label.get("type"),
+                }
+            )
+
+        return {"items": items, "supports_hierarchy": False, "supports_search": False}
+
+    async def _list_google_calendars(self, access_token: str) -> Dict[str, Any]:
+        url = "https://www.googleapis.com/calendar/v3/users/me/calendarList"
+        headers = {"Authorization": f"Bearer {access_token}"}
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url, headers=headers)
+        except Exception as exc:
+            logger.exception("Error listing Google calendars: %s", exc)
+            return {"items": [], "error": str(exc)}
+
+        if response.status_code != 200:
+            logger.error("Google Calendar API error: %s - %s", response.status_code, response.text[:200])
+            return {"items": [], "error": f"API error: {response.status_code}"}
+
+        data = response.json()
+        items = []
+        for calendar in data.get("items", []):
+            items.append(
+                {
+                    "id": calendar.get("id"),
+                    "name": calendar.get("summary"),
+                    "display_name": calendar.get("summary"),
+                    "type": "calendar",
+                    "primary": calendar.get("primary", False),
+                    "access_role": calendar.get("accessRole"),
+                    "background_color": calendar.get("backgroundColor"),
                 }
             )
 
