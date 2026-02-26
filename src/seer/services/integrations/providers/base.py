@@ -136,14 +136,39 @@ class IntegrationProvider:
         _ = context  # Context available for overrides; unused in base implementation
         return {"state": state, "scope": scope}
 
-    def resolve_granted_scopes(
+    # pylint: disable=unused-argument
+    # Reason: Base class stub - parameters are used by provider-specific overrides
+    async def introspect_token(
+        self,
+        *,
+        access_token: str,
+        client_id: str,
+        client_secret: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Call provider's token introspection endpoint to get actual granted scopes.
+
+        Override in providers that support token introspection (e.g., LinkedIn, Google).
+        Returns the introspection response dict on success, or None on failure.
+
+        This method should handle all errors gracefully and return None rather than
+        raising exceptions, allowing the OAuth flow to fall back to other scope sources.
+        """
+        return None
+
+    async def resolve_granted_scopes(
         self,
         *,
         token: Dict[str, Any],
         state_data: Dict[str, Any],
     ) -> str:
-        """Determine which scopes should be persisted."""
-        return state_data.get("requested_scope") or token.get("scope") or ""
+        """
+        Determine which scopes should be persisted.
+
+        Default behavior: prefer token response scope, fall back to requested scope.
+        Providers can override to use token introspection for more accurate scope data.
+        """
+        return token.get("scope") or state_data.get("requested_scope") or ""
 
     async def fetch_user_profile(
         self,
