@@ -1,4 +1,11 @@
 from seer.tools.base import register_tool
+from seer.tools.google.gcalendar import (
+    GoogleCalendarCreateEventTool,
+    GoogleCalendarDeleteEventTool,
+    GoogleCalendarGetEventTool,
+    GoogleCalendarListEventsTool,
+    GoogleCalendarUpdateEventTool,
+)
 from seer.tools.google.gdocs import (
     GoogleDocsCreateTool,
     GoogleDocsReadTool,
@@ -51,6 +58,12 @@ def register_google_tools():
     register_tool(GmailReadTool())
     register_tool(GoogleSheetsAppendTool())
     register_tool(GoogleDriveListFilesTool())
+    # Google Calendar
+    register_tool(GoogleCalendarListEventsTool())
+    register_tool(GoogleCalendarGetEventTool())
+    register_tool(GoogleCalendarCreateEventTool())
+    register_tool(GoogleCalendarUpdateEventTool())
+    register_tool(GoogleCalendarDeleteEventTool())
     # Google Docs
     register_tool(GoogleDocsReadTool())
     register_tool(GoogleDocsWriteTool())

@@ -1,9 +1,10 @@
 """
-Polling-based trigger event browsers for Gmail and Discord.
+Polling-based trigger event browsers for Gmail, Discord, Slack, and Google Calendar.
 
-Extracted from trigger_event_browser to keep module sizes manageable (C0302).
+Extracted from trigger_event_browser to keep module sizes manageable.
 These functions fetch live events from external APIs for trigger event browsing.
 """
+# pylint: disable=too-many-lines # Reason: Further splitting would fragment related event browsing code across multiple modules; cohesion is preferred over arbitrary line limits
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -28,6 +29,13 @@ from seer.core.triggers.polling.adapters.slack_message_received import (
     DEFAULT_MAX_RESULTS as SLACK_MAX_RESULTS,
     SlackMessageReceivedAdapter,
     _parse_slack_timestamp,
+)
+from seer.core.triggers.polling.adapters.google_calendar_event_changed import (
+    CALENDAR_API_BASE,
+    MAX_EVENTS_PER_POLL as CALENDAR_MAX_EVENTS,
+    GoogleCalendarEventChangedAdapter,
+    _normalize_event as _normalize_calendar_event,
+    _parse_rfc3339,
 )
 from seer.database import User
 from seer.logger import get_logger
@@ -573,4 +581,174 @@ def _handle_slack_error(response: httpx.Response, channel_id: str) -> None:
     raise HTTPException(
         status_code=response.status_code,
         detail=f"Slack API error: {response.text[:200]}",
+    )
+
+
+# =============================================================================
+# Google Calendar Event Browsing
+# =============================================================================
+
+
+async def list_google_calendar_events(
+    user: User,
+    provider_connection_id: int,
+    options,
+    _gcal_adapter: GoogleCalendarEventChangedAdapter,  # pylint: disable=unused-argument # Reason: Interface consistency with other list_*_events functions
+) -> Dict[str, Any]:
+    """List Google Calendar events for browsing."""
+    _, access_token = await get_oauth_token(
+        user, connection_id=str(provider_connection_id)
+    )
+
+    calendar_id = (options.filter_params or {}).get("calendar_id", "primary")
+    query = (options.filter_params or {}).get("query", "")
+    page_size = min(options.page_size, CALENDAR_MAX_EVENTS)
+
+    params: Dict[str, Any] = {
+        "maxResults": page_size,
+        "singleEvents": True,
+        "orderBy": "startTime",
+    }
+    if query:
+        params["q"] = query
+    if options.page_token:
+        params["pageToken"] = options.page_token
+
+    headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{CALENDAR_API_BASE}/calendars/{calendar_id}/events",
+                headers=headers,
+                params=params,
+            )
+            if resp.status_code >= 400:
+                _handle_google_calendar_error(resp, calendar_id)
+
+            data = resp.json()
+            events = data.get("items", []) or []
+            next_page_token = data.get("nextPageToken")
+
+            if not events:
+                return {
+                    "items": [],
+                    "next_page_token": None,
+                    "trigger_key": options.trigger_key,
+                    "supports_search": True,
+                }
+
+            items: List[Dict[str, Any]] = []
+            for event in events:
+                # Skip cancelled events
+                if event.get("status") == "cancelled":
+                    continue
+                items.append(_build_google_calendar_event_item(
+                    event=event,
+                    calendar_id=calendar_id,
+                    trigger_key=options.trigger_key,
+                    trigger_id=options.trigger_id,
+                    provider_connection_id=provider_connection_id,
+                ))
+
+            return {
+                "items": items,
+                "next_page_token": next_page_token,
+                "trigger_key": options.trigger_key,
+                "supports_search": True,
+            }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to list Google Calendar events")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch Calendar events: {str(exc)}"
+        ) from exc
+
+
+def _build_google_calendar_event_item(
+    *,
+    event: Dict[str, Any],
+    calendar_id: str,
+    trigger_key: str,
+    trigger_id: str,
+    provider_connection_id: int,
+) -> Dict[str, Any]:
+    """Build a TriggerEventItem from Google Calendar event data."""
+    # Reuse adapter's normalization
+    normalized_payload = _normalize_calendar_event(event, calendar_id)
+
+    summary = normalized_payload.get("summary") or "(No title)"
+    start_info = normalized_payload.get("start", {})
+    start_dt_str = start_info.get("datetime", "")
+
+    # Parse start time for display
+    occurred_at = _parse_rfc3339(event.get("updated")) or datetime.now(timezone.utc)
+
+    # Format display subtitle from start time
+    start_dt = _parse_rfc3339(start_dt_str)
+    if start_dt:
+        display_subtitle = start_dt.strftime("%b %d, %Y %I:%M %p")
+    else:
+        # All-day event - just show date
+        display_subtitle = start_dt_str if start_dt_str else occurred_at.strftime("%b %d, %Y")
+
+    location = normalized_payload.get("location") or ""
+    description = normalized_payload.get("description") or ""
+    preview = location if location else (description[:200] if description else None)
+
+    envelope = build_event_envelope(
+        TriggerEventEnvelopeInput(
+            trigger_id=trigger_id,
+            trigger_key=trigger_key,
+            title=summary,
+            provider="google_calendar",
+            provider_connection_id=provider_connection_id,
+            payload=normalized_payload,
+            raw=event,
+            occurred_at=occurred_at,
+        )
+    )
+
+    return {
+        "id": normalized_payload.get("event_id"),
+        "display_title": summary,
+        "display_subtitle": display_subtitle,
+        "preview": preview,
+        "envelope": envelope,
+        "metadata": {
+            "calendar_id": calendar_id,
+            "event_type": normalized_payload.get("event_type"),
+            "is_all_day": normalized_payload.get("is_all_day"),
+            "status": normalized_payload.get("status"),
+        },
+    }
+
+
+def _handle_google_calendar_error(response: httpx.Response, calendar_id: str) -> None:
+    """Handle Google Calendar API errors."""
+    if response.status_code == 401:
+        raise HTTPException(
+            status_code=401,
+            detail="Google Calendar authentication failed. Please reconnect your Google account.",
+        )
+    if response.status_code == 403:
+        raise HTTPException(
+            status_code=403,
+            detail="Google Calendar access denied. Please ensure you have granted Calendar permissions.",
+        )
+    if response.status_code == 404:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Calendar '{calendar_id}' not found or not accessible.",
+        )
+    if response.status_code == 429:
+        raise HTTPException(
+            status_code=429,
+            detail="Google Calendar rate limit exceeded. Please try again later.",
+        )
+    raise HTTPException(
+        status_code=response.status_code,
+        detail=f"Google Calendar API error: {response.text[:200]}",
     )
