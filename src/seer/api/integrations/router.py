@@ -729,7 +729,7 @@ async def auth_callback(request: Request, provider: str):
             status=400
         )
 
-    granted_scopes = provider_impl.resolve_granted_scopes(
+    granted_scopes = await provider_impl.resolve_granted_scopes(
         token=token, state_data=state_data
     )
     _log_scope_info(token, granted_scopes, state_data.get('requested_scope'))
