@@ -309,6 +309,12 @@ class HITLNode(NodeBase):
 # -----------------------------
 # Browser Automation Node
 # -----------------------------
+ALLOWED_IMAGE_GEN_MODELS = frozenset({
+    "sourceful/riverflow-v2-fast",
+    "google/gemini-2.5-flash-image",
+})
+
+
 class ImageGenNode(NodeBase):
     """
     Image generation node using OpenRouter image generation models.
@@ -326,6 +332,15 @@ class ImageGenNode(NodeBase):
         missing = [k for k in required if k not in self.inputs]
         if missing:
             raise ValueError(f'ImageGenNode requires {", ".join(missing)} in inputs')
+
+        # pylint: disable=no-member  # Pydantic resolves Field() to dict at runtime
+        model = self.inputs.get("model")
+        if model not in ALLOWED_IMAGE_GEN_MODELS:
+            allowed = ", ".join(sorted(ALLOWED_IMAGE_GEN_MODELS))
+            raise ValueError(
+                f"ImageGenNode model '{model}' is not allowed. "
+                f"Allowed models: {allowed}"
+            )
         return self
 
 
