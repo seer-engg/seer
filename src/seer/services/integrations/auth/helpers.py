@@ -11,6 +11,44 @@ from seer.services.integrations.auth.oauth import get_oauth_provider
 
 logger = get_logger(__name__)
 
+
+def get_connection_display_name(connection: OAuthConnection) -> str:
+    """
+    Extract human-readable display name from OAuth connection metadata.
+
+    Returns email for Google/LinkedIn, username for GitHub, etc.
+    Falls back to provider_account_id if no display name found in metadata.
+
+    Args:
+        connection: OAuthConnection database model with provider_metadata
+
+    Returns:
+        Human-readable display name (email, username, etc.)
+    """
+    metadata = connection.provider_metadata or {}
+    provider = connection.provider
+
+    if provider == "google":
+        return metadata.get("email") or connection.provider_account_id or f"ID:{connection.id}"
+    elif provider == "github":
+        return metadata.get("login") or metadata.get("name") or connection.provider_account_id or f"ID:{connection.id}"
+    elif provider == "slack":
+        team = metadata.get("team", {})
+        return team.get("name") or connection.provider_account_id or f"ID:{connection.id}"
+    elif provider == "discord":
+        return metadata.get("username") or connection.provider_account_id or f"ID:{connection.id}"
+    elif provider == "linkedin":
+        return metadata.get("email") or metadata.get("name") or connection.provider_account_id or f"ID:{connection.id}"
+    else:
+        # Generic fallback: try common fields
+        return (
+            metadata.get("email") or
+            metadata.get("login") or
+            metadata.get("name") or
+            connection.provider_account_id or
+            f"ID:{connection.id}"
+        )
+
 def parse_scopes(scopes_str: str) -> Set[str]:
     """
     Parse a scopes string into a set of individual scopes.

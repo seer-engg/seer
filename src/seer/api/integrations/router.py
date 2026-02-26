@@ -39,10 +39,16 @@ from .services import (
     serialize_integration_resource,
 )
 from seer.services.integrations.auth.oauth import get_oauth_provider
-from .models import ToolsStatusResponse
+from .models import ToolsStatusResponse, AccountInfo, ConnectionsByProvider, ToolAccountInfo, ToolAccountsResponse
 from .metadata_models import IntegrationMetadataResponse
 logger = get_logger("api.integrations.router")
-from seer.services.integrations.auth.helpers import parse_scopes, has_required_scopes, list_connections, store_oauth_connection
+from seer.services.integrations.auth.helpers import (
+    get_connection_display_name,
+    has_required_scopes,
+    list_connections,
+    parse_scopes,
+    store_oauth_connection,
+)
 from seer.services.integrations.tool_status_service import get_tools_connection_status_for_user, PROVIDERS_WITHOUT_REFRESH_TOKENS
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
@@ -371,6 +377,131 @@ async def get_tools_connection_status(request: Request):
     user: User = request.state.db_user
     results = await get_tools_connection_status_for_user(user)
     return {"tools": results}
+
+
+@router.get("/connections", response_model=ConnectionsByProvider)
+async def list_connections_grouped(request: Request):
+    """
+    List all connections grouped by OAuth provider.
+
+    Returns connections organized by provider, useful for multi-account scenarios
+    where users need to see all their connected accounts per provider.
+
+    Example response:
+    {
+        "connections": {
+            "google": [
+                {"id": 123, "provider_account_id": "alice@gmail.com", ...},
+                {"id": 124, "provider_account_id": "bob@gmail.com", ...}
+            ],
+            "github": [
+                {"id": 125, "provider_account_id": "alice", ...}
+            ]
+        }
+    }
+    """
+    user: User = request.state.db_user
+    connections = await list_connections(user)
+
+    grouped: dict = {}
+    for conn in connections:
+        provider = conn.provider
+        if provider not in grouped:
+            grouped[provider] = []
+        grouped[provider].append(AccountInfo(
+            id=conn.id,
+            provider=conn.provider,
+            provider_account_id=conn.provider_account_id or f"ID:{conn.id}",
+            display_name=get_connection_display_name(conn),
+            status=conn.status,
+            scopes=conn.scopes,
+        ))
+
+    return ConnectionsByProvider(connections=grouped)
+
+
+@router.get("/tools/{tool_name}/accounts", response_model=ToolAccountsResponse)
+async def get_tool_accounts(request: Request, tool_name: str):
+    """
+    Get available OAuth accounts for a specific tool.
+
+    Returns all user accounts that can be used with this tool, including
+    scope validation status for each account.
+
+    Used by frontend workflow builder to let users select which account
+    to use when they have multiple accounts for the same provider.
+
+    Args:
+        tool_name: Name of the tool (e.g., "google.gmail.send_email")
+
+    Returns:
+        ToolAccountsResponse with list of accounts and whether selection is required
+    """
+    from seer.tools.base import get_tool  # pylint: disable=import-outside-toplevel
+
+    user: User = request.state.db_user
+
+    tool = get_tool(tool_name)
+    if tool is None:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Tool not found",
+            detail=f"Tool '{tool_name}' not found",
+            status=404
+        )
+
+    # If tool doesn't require OAuth, return empty response
+    if not tool.required_scopes:
+        return ToolAccountsResponse(
+            tool_name=tool_name,
+            provider=tool.provider,
+            accounts=[],
+            requires_selection=False,
+        )
+
+    provider = tool.provider
+    if not provider:
+        return ToolAccountsResponse(
+            tool_name=tool_name,
+            provider=None,
+            accounts=[],
+            requires_selection=False,
+        )
+
+    # Get all connections for this provider
+    connections = await list_connections(user)
+    provider_connections = [c for c in connections if c.provider == provider]
+
+    accounts = []
+    for conn in provider_connections:
+        # Check scope coverage
+        missing = []
+        if conn.scopes:
+            has_scopes = has_required_scopes(conn.scopes, tool.required_scopes)
+            if not has_scopes:
+                # Find which scopes are missing
+                granted_set = parse_scopes(conn.scopes)
+                for scope in tool.required_scopes:
+                    if scope not in granted_set:
+                        missing.append(scope)
+        else:
+            has_scopes = False
+            missing = list(tool.required_scopes)
+
+        accounts.append(ToolAccountInfo(
+            id=conn.id,
+            provider_account_id=conn.provider_account_id or f"ID:{conn.id}",
+            display_name=get_connection_display_name(conn),
+            has_required_scopes=has_scopes,
+            missing_scopes=missing,
+        ))
+
+    return ToolAccountsResponse(
+        tool_name=tool_name,
+        provider=provider,
+        accounts=accounts,
+        requires_selection=len(accounts) > 1,
+    )
 
 
 @router.get("/metadata", response_model=IntegrationMetadataResponse)

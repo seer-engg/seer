@@ -124,6 +124,12 @@ class ToolNode(NodeBase):
     # But allow client to assert expected schema (optional safety/version check).
     expect_outputs: Optional[OutputContract] = None
 
+    # Explicit OAuth connection ID for multi-account scenarios.
+    # When user has multiple accounts for the same provider (e.g., personal + work Gmail),
+    # this field specifies which account to use. If omitted and only one account exists,
+    # it's auto-selected. If omitted with multiple accounts, validation fails.
+    connection_id: Optional[int] = None
+
 
 class MCPNode(NodeBase):
     """

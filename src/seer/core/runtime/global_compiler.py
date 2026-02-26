@@ -21,6 +21,7 @@ from seer.tools.executor import execute_tool
 from seer.core.compiler.compile_pipeline import compile_parsed_workflow
 from seer.core.compiler.context import CompilerContext
 from seer.core.compiler.parse import parse_workflow_spec
+from seer.core.compiler.validate_connections import validate_connections_and_raise
 from seer.core.errors import ExecutionError, WorkflowCompilerError
 from seer.core.registry.mcp_client_registry import MCPClientRegistry
 from seer.core.registry.model_registry import ModelDefinition, ModelRegistry
@@ -129,7 +130,21 @@ class WorkflowCompilerSingleton:
 
         spec = parse_workflow_spec(workflow_spec)
         self._ensure_dependencies(spec)
-        compiled = await self._compile_spec(spec, checkpointer=checkpointer)
+
+        # Validate OAuth connections for multi-account scenarios
+        # This returns auto-resolved connection_ids for single-account cases
+        resolved_connections = await validate_connections_and_raise(spec, user)
+        if resolved_connections:
+            logger.debug(
+                "Auto-resolved connections for nodes: %s",
+                list(resolved_connections.keys()),
+            )
+
+        compiled = await self._compile_spec(
+            spec,
+            checkpointer=checkpointer,
+            resolved_connections=resolved_connections,
+        )
         return UserBoundCompiledWorkflow(workflow=compiled, user=user)
 
     def ensure_tool(self, tool_name: str) -> ToolDefinition:
@@ -549,12 +564,14 @@ class WorkflowCompilerSingleton:
         spec: WorkflowSpec,
         *,
         checkpointer: AsyncPostgresSaver | None = None,
+        resolved_connections: Dict[str, int] | None = None,
     ) -> CompiledWorkflow:
         context = CompilerContext(
             schema_registry=self._schema_registry,
             tool_registry=self._tool_registry,
             model_registry=self._model_registry,
             mcp_client_registry=self._mcp_client_registry,
+            resolved_connections=resolved_connections or {},
         )
 
         return await compile_parsed_workflow(
