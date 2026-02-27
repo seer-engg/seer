@@ -108,6 +108,41 @@ Common resource picker providers and types:
 - discord: guild, channel
 - github: repository, branch
 - supabase_mgmt: project, database
+- slack: workspace, channel
+
+**IMPORTANT for dependent resources:** When a resource picker has `depends_on_field`:
+1. Ask for the PARENT resource FIRST (workspace, guild, project, etc.)
+2. Ask for the DEPENDENT resource SECOND
+3. Set `depends_on: "q_N"` where N is the parent question's position (0-indexed)
+4. Include the `depends_on_field` value (e.g., "workspace_id", "guild_id")
+
+Example dependency chains:
+- Slack: workspace (first) → channel (depends_on: "q_0", depends_on_field: "workspace_id")
+- Discord: guild (first) → channel (depends_on: "q_0", depends_on_field: "guild_id")
+- GitHub: repo (first) → branch (depends_on: "q_0", depends_on_field: "repo")
+
+For Slack channel selection (requires workspace first):
+```python
+ask_clarification_questions([
+    {
+        "question": "Which Slack workspace?",
+        "question_type": "resource_picker",
+        "provider": "slack",
+        "resource_type": "workspace",
+        "value_field": "id",
+        "reasoning": "Need to select workspace first"
+    },
+    {
+        "question": "Which channel in that workspace?",
+        "question_type": "resource_picker",
+        "provider": "slack",
+        "resource_type": "channel",
+        "depends_on": "q_0",  # References the workspace question
+        "depends_on_field": "workspace_id",
+        "reasoning": "Select channel from the chosen workspace"
+    }
+])
+```
 
 **WorkflowSpec v2 Schema (STRICT)**
 ONLY these top-level fields are allowed:
@@ -164,6 +199,44 @@ Before submit_workflow_spec():
 **Tools**
 - search_tools(query) → discover tools
 - search_triggers(query) → discover triggers
+- get_tool_accounts(tool_name) → check OAuth accounts for a tool
+- get_trigger_accounts(trigger_key) → check OAuth accounts for a trigger
 - submit_workflow_spec(spec, summary) → submit JSON
 - analyze_workflow() → inspect existing workflow
 - ask_clarification_questions([...]) → ask user one or more questions at once
+
+**OAuth Account Selection**
+OAuth-based tools and triggers may require checking account status when users have multiple accounts.
+
+**For Tools (gmail_send_email, google_sheets_read, slack_send_message, etc.):**
+1. After finding an OAuth tool with search_tools(), call get_tool_accounts(tool_name)
+2. Handle the response:
+   - accounts=[] → "Please connect your [provider] account first"
+   - requires_selection=false (1 account) → Continue, system auto-selects
+   - requires_selection=true (multiple) → Use ask_clarification_questions:
+
+```python
+ask_clarification_questions([{
+    "question": "Which Google account should we use for sending emails?",
+    "question_type": "single_choice",
+    "options": [
+        {"value": "1", "label": "alice@gmail.com"},
+        {"value": "4", "label": "bob@work.com"},
+    ],
+    "reasoning": "You have multiple Google accounts connected"
+}])
+```
+
+3. Include connection_id in tool node ONLY when user selected:
+```json
+{"id": "send_email", "type": "tool", "tool": "gmail_send_email", "connection_id": 1, "inputs": {...}}
+```
+
+**For Triggers (poll.gmail.email_received, poll.googlesheets.row_added, etc.):**
+Same flow but use get_trigger_accounts(trigger_key) and include provider_connection_id:
+```json
+{"id": "trigger1", "key": "poll.gmail.email_received", "provider_connection_id": 1, ...}
+```
+
+**OAuth Providers requiring account check:**
+gmail, googlesheets, googledrive, google, slack, github, discord, notion

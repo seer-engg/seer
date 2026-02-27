@@ -86,6 +86,24 @@ def _webhook_generic_config_schema() -> JsonSchema:
     }
 
 
+def _oauth_connection_property() -> Dict[str, Any]:
+    """
+    Common property for specifying which OAuth account to use.
+
+    OAuth-based triggers (Gmail, Slack, Google Calendar, Discord) may have multiple
+    accounts connected. This property allows specifying which account to use.
+    """
+    return {
+        "provider_connection_id": {
+            "type": "integer",
+            "description": (
+                "OAuth connection ID when user has multiple accounts connected. "
+                "Required when get_trigger_accounts() returns requires_selection: true."
+            ),
+        }
+    }
+
+
 def _register_builtin_triggers(registry: TriggerRegistry) -> None:
     registry.register(
         TriggerDefinition(
@@ -317,6 +335,7 @@ def _gmail_email_received_config_schema() -> JsonSchema:
                     "dedupe safety."
                 ),
             },
+            **_oauth_connection_property(),
         },
     }
 
@@ -435,6 +454,7 @@ def _google_calendar_event_changed_config_schema() -> JsonSchema:
                 "default": 50,
                 "description": "Maximum events to examine per poll cycle (capped at 50).",
             },
+            **_oauth_connection_property(),
         },
     }
 
@@ -547,6 +567,7 @@ def _discord_message_received_config_schema() -> JsonSchema:
                 "default": 50,
                 "description": "Maximum number of messages to examine per poll cycle (capped at 100).",
             },
+            **_oauth_connection_property(),
         },
         "required": ["guild_id", "channel_id"],
     }
@@ -656,6 +677,7 @@ def _slack_message_received_config_schema() -> JsonSchema:
                 "default": 50,
                 "description": "Maximum number of messages to examine per poll cycle (capped at 100).",
             },
+            **_oauth_connection_property(),
         },
         "required": ["workspace_id", "channel_id"],
     }
