@@ -36,7 +36,7 @@ from .services import (
     serialize_integration_resource,
 )
 from seer.services.integrations.auth.oauth import get_oauth_provider
-from .models import ToolsStatusResponse, AccountInfo, ConnectionsByProvider, ToolAccountInfo, ToolAccountsResponse
+from .models import ToolsStatusResponse, AccountInfo, ConnectionsByProvider, ToolAccountInfo, ToolAccountsResponse, SingleToolStatusResponse
 from .metadata_models import IntegrationMetadataResponse
 logger = get_logger("api.integrations.router")
 from seer.services.integrations.auth.helpers import (
@@ -46,7 +46,11 @@ from seer.services.integrations.auth.helpers import (
     parse_scopes,
     store_oauth_connection,
 )
-from seer.services.integrations.tool_status_service import get_tools_connection_status_for_user, PROVIDERS_WITHOUT_REFRESH_TOKENS
+from seer.services.integrations.tool_status_service import (
+    get_tools_connection_status_for_user,
+    get_single_tool_status,
+    PROVIDERS_WITHOUT_REFRESH_TOKENS
+)
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 from seer.api.integrations.resource_router import router as resource_router
@@ -318,6 +322,44 @@ async def get_tools_connection_status(request: Request):
     user: User = request.state.db_user
     results = await get_tools_connection_status_for_user(user)
     return {"tools": results}
+
+
+@router.get("/tools/{tool_name}/status", response_model=SingleToolStatusResponse)
+async def get_tool_status(
+    request: Request,
+    tool_name: str,
+    connection_id: Optional[int] = Query(None, description="Specific OAuth connection ID to check"),
+):
+    """
+    Get connection status for a specific tool, optionally for a specific connection.
+
+    This endpoint allows checking the connection status for a single tool.
+    When connection_id is provided, it validates that specific connection's scopes
+    instead of using any available connection for the provider.
+
+    Use cases:
+    - Canvas tool blocks checking status for their configured connection_id
+    - Side panel showing connection status when switching accounts
+
+    Args:
+        tool_name: Name of the tool (e.g., "gmail_send_email")
+        connection_id: Optional specific OAuth connection ID to validate against
+
+    Returns:
+        SingleToolStatusResponse with connection status for the tool
+    """
+    user: User = request.state.db_user
+    result = await get_single_tool_status(user, tool_name, connection_id)
+
+    if result is None:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Tool not found",
+            detail=f"Tool '{tool_name}' not found",
+            status=404
+        )
+
+    return result
 
 
 @router.get("/connections", response_model=ConnectionsByProvider)
