@@ -146,7 +146,8 @@ class TestRedisSessionBackend:
         backend = RedisSessionBackend("redis://localhost:6379/0")
 
         mock_redis = AsyncMock()
-        mock_redis.get.side_effect = Exception("Redis connection error")
+        # Use ConnectionError - a specific exception type the code handles
+        mock_redis.get.side_effect = ConnectionError("Redis connection error")
 
         with patch.object(backend, "_get_redis", return_value=mock_redis):
             result = await backend.read("test_session_id")
