@@ -316,6 +316,46 @@ INTEGRATION_CONFIGS: Dict[str, Dict[str, Any]] = {
             "scope_keywords": ["slack", "channels", "chat"]
         }
     },
+    # Airtable integration
+    "airtable": {
+        "display_name": "Airtable",
+        "oauth_provider": "airtable",
+        "requires_oauth": True,
+        "icon": {"type": "url", "value": "https://img.logo.dev/airtable.com?token=pk_Ovp4v2MYQDqQ0D6xdN7OJA"},
+        "brand_color": "#FCBC2E",
+        "default_scopes": ["data.records:read", "schema.bases:read"],
+        "scopes": [
+            {
+                "value": "data.records:read",
+                "display_name": "Read records",
+                "description": "Read records from tables in your bases"
+            },
+            {
+                "value": "data.records:write",
+                "display_name": "Write records",
+                "description": "Create, update, and delete records in your bases"
+            },
+            {
+                "value": "schema.bases:read",
+                "display_name": "Read base schema",
+                "description": "View base and table structure including field definitions"
+            },
+            {
+                "value": "schema.bases:write",
+                "display_name": "Write base schema",
+                "description": "Create and modify bases and tables"
+            },
+            {
+                "value": "user.email:read",
+                "display_name": "Read email",
+                "description": "Access your account email address"
+            },
+        ],
+        "detection_patterns": {
+            "tool_name_patterns": ["airtable_"],
+            "scope_keywords": ["airtable"]
+        }
+    },
 }
 
 

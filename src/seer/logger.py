@@ -376,13 +376,13 @@ class SlackHandler(logging.Handler):
                 self._http_client = None
 
 
-def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
+def get_logger(name: str, level: Optional[int] = None) -> logging.Logger:
     """
     Get a logger that outputs colored, structured logs to console.
 
     Args:
         name: Logger name (typically __name__ or component name)
-        level: Logging level (default: INFO)
+        level: Logging level (default: from LOG_LEVEL env var, or INFO)
 
     Returns:
         Configured logger instance
@@ -390,6 +390,11 @@ def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
     # Return cached logger if it exists
     if name in _loggers:
         return _loggers[name]
+
+    # Determine log level from environment variable or default to INFO
+    if level is None:
+        log_level_str = os.environ.get("LOG_LEVEL", "INFO").upper()
+        level = getattr(logging, log_level_str, logging.INFO)
 
     # Create new logger
     log = logging.getLogger(name)

@@ -106,6 +106,7 @@ services:
       - .env
     environment:
       PYTHONDONTWRITEBYTECODE: 1
+      LOG_LEVEL: "${LOG_LEVEL:-DEBUG}"
       DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
       REDIS_URL: "redis://valkey:6379/0"
       UV_LINK_MODE: "copy"  # Use copy mode to avoid hardlink warnings in Docker volumes
@@ -153,6 +154,7 @@ services:
       - .env
     environment:
       PYTHONDONTWRITEBYTECODE: 1
+      LOG_LEVEL: "${LOG_LEVEL:-DEBUG}"
       DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
       REDIS_URL: "redis://valkey:6379/0"
       UV_LINK_MODE: "copy"

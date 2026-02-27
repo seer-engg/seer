@@ -14,12 +14,9 @@
 
 # pylint: disable=wrong-import-position,wrong-import-order
 # Reason: Imports organized by logical grouping for router setup
-import base64
-import json
-import time
 from typing import Optional
 
-import httpx
+from authlib.integrations.base_client import OAuthError
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import RedirectResponse
 
@@ -53,15 +50,6 @@ from seer.services.integrations.tool_status_service import get_tools_connection_
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 from seer.api.integrations.resource_router import router as resource_router
-
-
-
-def encode_state(data: dict) -> str:
-    return base64.urlsafe_b64encode(json.dumps(data).encode()).decode()
-
-
-def decode_state(state: str) -> dict:
-    return json.loads(base64.urlsafe_b64decode(state).decode())
 
 
 def _build_oauth_redirect_uri(request: Request, oauth_provider: str) -> str:
@@ -123,53 +111,6 @@ def _check_existing_scopes(
             connected_param = integration_type or oauth_provider
             return RedirectResponse(url=f"{final_redirect}?connected={connected_param}")
     return None
-
-
-def _build_oauth_state(
-    user: User,
-    redirect_to: Optional[str],
-    oauth_provider: str,
-    integration_type: Optional[str],
-    scope_string: str,
-) -> str:
-    state_data = {
-        'user_id': user.user_id,
-        'user_email': user.email,
-        'redirect_to': redirect_to or f"{config.frontend_url}/settings/integrations",
-        'oauth_provider': oauth_provider,
-        'integration_type': integration_type or oauth_provider,
-        'requested_scope': scope_string,
-    }
-    return encode_state(state_data)
-
-
-def _extract_and_validate_state(request: Request):
-    state = request.query_params.get('state')
-    if not state:
-        raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Missing state parameter",
-            detail="Missing state",
-            status=400
-        )
-    try:
-        state_data = decode_state(state)
-    except Exception:
-        raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Invalid state parameter",
-            detail="Invalid state",
-            status=400
-        )
-    user_id = state_data.get('user_id')
-    if not user_id:
-        raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Missing user_id",
-            detail="Missing user_id in state",
-            status=400
-        )
-    return state_data
 
 
 def _log_token_structure(token: dict) -> None:
@@ -593,17 +534,45 @@ async def connect(
         integration_type,
         scope_string[:100],
     )
-    state = _build_oauth_state(
-        user, redirect_to, oauth_provider, integration_type, scope_string
+
+    # Clean up old Authlib state keys to prevent session/cookie bloat
+    # These accumulate from incomplete OAuth flows and can cause cookie size issues
+    if hasattr(request.session, 'keys'):
+        old_state_keys = [k for k in list(request.session.keys()) if k.startswith('_state_')]
+        for key in old_state_keys:
+            request.session.pop(key, None)
+        if old_state_keys:
+            logger.debug("Cleaned up %d old OAuth state keys", len(old_state_keys))
+
+    # Store custom OAuth data in session (Authlib handles state/PKCE automatically)
+    # This data will be retrieved in the callback to complete the connection
+    oauth_data = {
+        'user_id': user.user_id,
+        'user_email': user.email,
+        'redirect_to': redirect_to or f"{config.frontend_url}/settings/integrations",
+        'oauth_provider': oauth_provider,
+        'integration_type': integration_type or oauth_provider,
+        'requested_scope': scope_string,
+    }
+    request.session['oauth_data'] = oauth_data
+
+    logger.debug(
+        "Stored oauth_data in session: user_id=%s, session_keys=%s",
+        user.user_id,
+        list(request.session.keys()) if hasattr(request.session, 'keys') else 'N/A',
     )
 
     client = oauth.create_client(oauth_provider)
+
+    # Get provider-specific authorize kwargs (e.g., incremental auth for Google)
     authorize_kwargs = provider_impl.build_authorize_kwargs(
-        authorize_context, state=state, scope=scope_string
+        authorize_context, state="", scope=scope_string  # state is handled by Authlib
     )
-    authorize_kwargs.setdefault("state", state)
+    # Remove state from kwargs - Authlib will generate its own
+    authorize_kwargs.pop("state", None)
     authorize_kwargs.setdefault("scope", scope_string)
 
+    # Authlib handles state generation, PKCE (if configured), and redirect
     return await client.authorize_redirect(request, redirect_uri, **authorize_kwargs)
 
 
@@ -612,115 +581,83 @@ async def auth_callback(request: Request, provider: str):
     """
     Handle OAuth callback from provider.
 
+    Uses Authlib's authorize_access_token() which handles:
+    - State validation (CSRF protection)
+    - PKCE code_verifier submission (if configured)
+    - Token exchange with proper auth method
+
     Stores connection with OAuth provider (e.g., 'google'), merging scopes
     if a connection already exists for this provider.
     """
     oauth_provider = get_oauth_provider(provider)
 
-    # Validate custom state FIRST (before Authlib's session-based validation)
-    # This allows stateless OAuth that works across multiple workers
-    state_data = _extract_and_validate_state(request)
-    user_id = state_data['user_id']
-    redirect_to = state_data.get('redirect_to')
-    integration_type = state_data.get('integration_type')
-
+    # Debug: log session and cookie state
+    session_keys = list(request.session.keys()) if hasattr(request.session, 'keys') else 'N/A'
+    session_cookie = request.cookies.get('session', 'NOT_FOUND')
     logger.info(
-        "OAuth callback received: provider=%s, integration_type=%s, validating state",
+        "OAuth callback: provider=%s, session_keys=%s, session_cookie_present=%s",
         oauth_provider,
-        integration_type,
+        session_keys,
+        session_cookie != 'NOT_FOUND',
     )
 
-    # Extract authorization code from callback
-    code = request.query_params.get('code')
-    if not code:
-        error = request.query_params.get('error')
-        error_description = request.query_params.get('error_description', 'No authorization code received')
-        logger.error("OAuth callback missing code: error=%s, description=%s", error, error_description)
+    # Retrieve custom OAuth data stored in session during /connect
+    oauth_data = request.session.get('oauth_data', {})
+    user_id = oauth_data.get('user_id')
+    redirect_to = oauth_data.get('redirect_to', f"{config.frontend_url}/settings/integrations")
+    integration_type = oauth_data.get('integration_type')
+
+    if not user_id:
+        # Session expired or not found - user needs to restart OAuth flow
+        logger.warning(
+            "OAuth callback missing session data for provider=%s, session_keys=%s",
+            oauth_provider,
+            session_keys,
+        )
         raise_problem(
-            type_uri=INTEGRATION_PROBLEM,
-            title="OAuth callback error",
-            detail=f"{error}: {error_description}" if error else error_description,
+            type_uri=VALIDATION_PROBLEM,
+            title="Session expired",
+            detail="OAuth session expired. Please try connecting again.",
             status=400
         )
 
-    # Manually exchange authorization code for tokens
-    # This bypasses Authlib's session-based state validation which fails with multiple workers
-    client = oauth.create_client(oauth_provider)
-    redirect_uri = _build_oauth_redirect_uri(request, oauth_provider)
-
-    try:
-        token_url = client.server_metadata.get('token_endpoint') or client.access_token_url
-
-        async with httpx.AsyncClient() as http_client:
-            response = await http_client.post(
-                token_url,
-                data={
-                    'grant_type': 'authorization_code',
-                    'code': code,
-                    'redirect_uri': redirect_uri,
-                    'client_id': client.client_id,
-                    'client_secret': client.client_secret,
-                },
-                headers={'Accept': 'application/json'},
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            token = response.json()
-
-        # Convert expires_in (seconds) to expires_at (timestamp)
-        # This matches Authlib's token handling behavior
-        if 'expires_in' in token and 'expires_at' not in token:
-            token['expires_at'] = int(time.time()) + token['expires_in']
-
-        logger.info("OAuth token exchange successful: provider=%s", oauth_provider)
-
-    except httpx.HTTPStatusError as exc:
-        # Specific handler for HTTP errors (400, 401, 500, etc.)
-        logger.error(
-            "OAuth token exchange failed",
-            extra={
-                "url": token_url,
-                "status_code": exc.response.status_code,
-                "body": exc.response.text[:500],
-                "provider": oauth_provider,
-            },
-        )
-        raise_problem(
-            type_uri=INTEGRATION_PROBLEM,
-            title="OAuth token exchange error",
-            detail=f"Token endpoint returned {exc.response.status_code}: {exc.response.text[:200]}",
-            status=400,
-        )
-    except json.JSONDecodeError:
-        # Specific handler for invalid JSON responses
-        logger.error(
-            "Invalid JSON response from token endpoint",
-            extra={"url": token_url, "provider": oauth_provider},
-        )
-        raise_problem(
-            type_uri=INTEGRATION_PROBLEM,
-            title="OAuth token exchange error",
-            detail="Invalid response format from OAuth provider",
-            status=400,
-        )
-    except Exception as exc:
-        # Catch-all for unexpected errors (network, timeout, etc.)
-        logger.exception(
-            "Unexpected error during token exchange",
-            extra={"url": token_url, "provider": oauth_provider},
-        )
-        raise_problem(
-            type_uri=INTEGRATION_PROBLEM,
-            title="OAuth token exchange error",
-            detail=f"Unexpected error: {type(exc).__name__}",
-            status=500,
-        )
-
     logger.info(
-        "OAuth callback: provider=%s, integration_type=%s",
+        "OAuth callback received: provider=%s, integration_type=%s",
         oauth_provider,
         integration_type,
     )
+
+    # Check for OAuth errors from provider
+    error = request.query_params.get('error')
+    if error:
+        error_description = request.query_params.get('error_description', 'Authorization denied')
+        logger.error("OAuth callback error: error=%s, description=%s", error, error_description)
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="OAuth authorization error",
+            detail=f"{error}: {error_description}",
+            status=400
+        )
+
+    client = oauth.create_client(oauth_provider)
+
+    # Authlib handles state validation, PKCE verification, and token exchange
+    try:
+        token = await client.authorize_access_token(request)
+        logger.info("OAuth token exchange successful: provider=%s", oauth_provider)
+    except OAuthError as exc:
+        logger.error(
+            "OAuth token exchange failed: provider=%s, error=%s",
+            oauth_provider,
+            str(exc),
+        )
+        raise_problem(
+            type_uri=INTEGRATION_PROBLEM,
+            title="OAuth token exchange error",
+            detail=str(exc),
+            status=400,
+        )
+
     _log_token_structure(token)
 
     provider_impl = get_integration_provider(oauth_provider)
@@ -731,6 +668,9 @@ async def auth_callback(request: Request, provider: str):
             detail=f"OAuth provider '{oauth_provider}' is not configured",
             status=400
         )
+
+    # Use oauth_data as state_data for provider methods (backward compatible)
+    state_data = oauth_data
 
     granted_scopes = await provider_impl.resolve_granted_scopes(
         token=token, state_data=state_data
@@ -763,6 +703,9 @@ async def auth_callback(request: Request, provider: str):
 
     if oauth_provider == "slack":
         await _handle_slack_post_oauth(connection, token, user_id)
+
+    # Clear OAuth session data after successful connection
+    request.session.pop('oauth_data', None)
 
     connected_param = integration_type or oauth_provider
     return RedirectResponse(url=f"{redirect_to}?connected={connected_param}")
