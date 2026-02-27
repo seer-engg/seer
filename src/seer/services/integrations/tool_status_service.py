@@ -211,3 +211,60 @@ async def get_tools_connection_status_for_user(user: User) -> List[Dict[str, Any
             provider_secrets=provider_secrets,
         ))
     return results
+
+
+async def get_single_tool_status(
+    user: User,
+    tool_name: str,
+    connection_id: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Get connection status for a single tool, optionally for a specific connection.
+
+    Args:
+        user: Current user
+        tool_name: Name of the tool to get status for
+        connection_id: Optional specific OAuth connection ID to check against
+
+    Returns:
+        Tool status dict or None if tool not found
+    """
+    from seer.tools.base import get_tool  # pylint: disable=import-outside-toplevel # Reason: Avoids circular import
+
+    tool = get_tool(tool_name)
+    if tool is None:
+        return None
+
+    auth_requirements = determine_tool_auth_requirements(tool)
+    tool_provider = tool.provider or tool.integration_type
+    oauth_provider = get_oauth_provider(tool_provider) if tool_provider else None
+
+    conn_info = None
+    if oauth_provider:
+        if connection_id is not None:
+            # Fetch the specific connection by ID
+            conn = await OAuthConnection.get_or_none(id=connection_id, user=user, status="active")
+            if conn and conn.provider == oauth_provider:
+                conn_info = {
+                    "scopes": conn.scopes or "",
+                    "connection_id": f"{conn.provider}:{conn.id}",
+                    "provider_account_id": conn.provider_account_id,
+                    "has_refresh_token": bool(conn.refresh_token_enc),
+                    "connection": conn,
+                }
+        else:
+            # Fallback to existing behavior - get any connection for this provider
+            connections = await list_connections(user)
+            provider_connections = build_provider_connections_map(connections)
+            conn_info = provider_connections.get(oauth_provider)
+
+    provider_secrets = await build_provider_secrets_map(user)
+
+    return build_tool_status(
+        tool=tool,
+        auth_requirements=auth_requirements,
+        provider=oauth_provider,
+        provider_aliases=[tool_provider] if tool_provider else [],
+        conn_info=conn_info,
+        provider_secrets=provider_secrets,
+    )

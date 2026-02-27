@@ -89,3 +89,7 @@ class ToolAccountsResponse(BaseModel):
         ...,
         description="True if user must select an account (multiple available)"
     )
+
+
+# Alias for single tool status endpoint - reuses ToolStatus which has all required fields
+SingleToolStatusResponse = ToolStatus
