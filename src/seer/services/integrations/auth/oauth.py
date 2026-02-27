@@ -86,6 +86,25 @@ if config.slack_client_id and config.slack_client_secret:
         client_kwargs={'scope': 'channels:read chat:write'},  # Minimal default - frontend will override with specific scopes
     )
 
+# Airtable OAuth (requires PKCE)
+# Airtable uses OAuth 2.0 with PKCE (Proof Key for Code Exchange)
+# Important: Airtable requires Basic Auth for token endpoint
+# Authlib handles PKCE automatically when code_challenge_method is set
+if config.airtable_client_id and config.airtable_client_secret:
+    oauth.register(
+        name='airtable',
+        client_id=config.airtable_client_id,
+        client_secret=config.airtable_client_secret,
+        authorize_url='https://airtable.com/oauth2/v1/authorize',
+        access_token_url='https://airtable.com/oauth2/v1/token',
+        api_base_url='https://api.airtable.com/',
+        token_endpoint_auth_method='client_secret_basic',  # Required: Airtable needs Basic Auth header
+        client_kwargs={
+            'scope': 'data.records:read schema.bases:read',
+            'code_challenge_method': 'S256',  # Authlib handles PKCE automatically
+        },
+    )
+
 
 # Provider mappings: integration_type -> OAuth provider
 _INTEGRATION_TO_PROVIDER: dict[str, str] = {
@@ -107,6 +126,7 @@ _INTEGRATION_TO_PROVIDER: dict[str, str] = {
     'discord': 'discord',
     'linkedin': 'linkedin',
     'slack': 'slack',
+    'airtable': 'airtable',
 }
 
 
