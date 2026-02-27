@@ -49,3 +49,43 @@ class ToolStatus(BaseModel):
 
 class ToolsStatusResponse(BaseModel):
     tools: List[ToolStatus]
+
+
+# Multi-account OAuth models
+
+class AccountInfo(BaseModel):
+    """Information about a connected OAuth account."""
+    id: int = Field(..., description="Database ID of the OAuth connection")
+    provider: str = Field(..., description="OAuth provider (e.g., 'google', 'github')")
+    provider_account_id: str = Field(..., description="Provider's internal account identifier")
+    display_name: str = Field(..., description="Human-readable account name (email, username)")
+    status: str = Field(default="active", description="Connection status")
+    scopes: Optional[str] = Field(default=None, description="Granted OAuth scopes")
+
+
+class ConnectionsByProvider(BaseModel):
+    """Connections grouped by OAuth provider."""
+    connections: dict = Field(
+        default_factory=dict,
+        description="Dict mapping provider -> list of AccountInfo"
+    )
+
+
+class ToolAccountInfo(BaseModel):
+    """Account information for a specific tool."""
+    id: int = Field(..., description="Database ID of the OAuth connection")
+    provider_account_id: str = Field(..., description="Provider's internal account identifier")
+    display_name: str = Field(..., description="Human-readable account name (email, username)")
+    has_required_scopes: bool = Field(..., description="Whether account has all required scopes")
+    missing_scopes: List[str] = Field(default_factory=list, description="List of missing scopes")
+
+
+class ToolAccountsResponse(BaseModel):
+    """Response for tool accounts endpoint."""
+    tool_name: str
+    provider: Optional[str]
+    accounts: List[ToolAccountInfo] = Field(default_factory=list)
+    requires_selection: bool = Field(
+        ...,
+        description="True if user must select an account (multiple available)"
+    )

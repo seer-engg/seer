@@ -31,8 +31,8 @@ class TestAutoSelectProviderConnection:
         return definition
 
     @pytest.mark.asyncio
-    async def test_auto_select_finds_connection(self, mock_user, mock_trigger_definition):
-        """Test auto-select finds most recent active connection."""
+    async def test_auto_select_finds_single_connection(self, mock_user, mock_trigger_definition):
+        """Test auto-select finds connection when only one account exists."""
         from seer.api.workflows.services.triggers import _auto_select_provider_connection
 
         mock_connection = MagicMock()
@@ -41,7 +41,9 @@ class TestAutoSelectProviderConnection:
         with patch("seer.api.workflows.services.triggers.get_oauth_provider", return_value="google"):
             with patch("seer.api.workflows.services.triggers.OAuthConnection") as MockOAuthConnection:
                 mock_query = MagicMock()
-                mock_query.order_by = MagicMock(return_value=MagicMock(first=AsyncMock(return_value=mock_connection)))
+                mock_query.order_by = MagicMock(
+                    return_value=MagicMock(all=AsyncMock(return_value=[mock_connection]))
+                )
                 MockOAuthConnection.filter = MagicMock(return_value=mock_query)
 
                 result = await _auto_select_provider_connection(mock_user, mock_trigger_definition)
@@ -56,7 +58,9 @@ class TestAutoSelectProviderConnection:
         with patch("seer.api.workflows.services.triggers.get_oauth_provider", return_value="google"):
             with patch("seer.api.workflows.services.triggers.OAuthConnection") as MockOAuthConnection:
                 mock_query = MagicMock()
-                mock_query.order_by = MagicMock(return_value=MagicMock(first=AsyncMock(return_value=None)))
+                mock_query.order_by = MagicMock(
+                    return_value=MagicMock(all=AsyncMock(return_value=[]))
+                )
                 MockOAuthConnection.filter = MagicMock(return_value=mock_query)
 
                 result = await _auto_select_provider_connection(mock_user, mock_trigger_definition)
@@ -270,6 +274,52 @@ class TestValidateProviderConfig:
 
         mock_raise.assert_called_once()
 
+    def test_validate_provider_config_excludes_provider_connection_id(self):
+        """Test that provider_connection_id is excluded from schema validation.
+
+        Regression test: provider_connection_id is an infrastructure field that specifies
+        which OAuth connection to use. It should not be validated against the trigger's
+        config schema (which has additionalProperties: false for most triggers).
+        """
+        from seer.api.workflows.services.triggers import _validate_provider_config
+
+        mock_definition = MagicMock()
+        mock_definition.schemas.config = {
+            "type": "object",
+            "additionalProperties": False,  # Strict schema - no extra properties allowed
+            "properties": {
+                "label_ids": {"type": "array", "items": {"type": "string"}},
+                "query": {"type": "string"},
+            }
+        }
+
+        # Should NOT raise even though provider_connection_id is not in schema
+        # because it's an infrastructure field that should be excluded from validation
+        _validate_provider_config(
+            {"provider_connection_id": 1, "query": "is:unread"},
+            mock_definition
+        )
+
+    def test_validate_provider_config_only_provider_connection_id_passes(self):
+        """Test that provider_config with ONLY provider_connection_id passes validation.
+
+        When provider_config only contains the infrastructure field, validation should pass
+        since there's nothing else to validate.
+        """
+        from seer.api.workflows.services.triggers import _validate_provider_config
+
+        mock_definition = MagicMock()
+        mock_definition.schemas.config = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "some_field": {"type": "string"},
+            }
+        }
+
+        # Should not raise - only infrastructure field present
+        _validate_provider_config({"provider_connection_id": 42}, mock_definition)
+
 
 # =============================================================================
 # Is Expression Tests
@@ -344,7 +394,8 @@ class TestBuildWebhookUrl:
 class TestSerializeSubscription:
     """Tests for _serialize_subscription function."""
 
-    def test_serialize_subscription_basic_fields(self):
+    @pytest.mark.asyncio
+    async def test_serialize_subscription_basic_fields(self):
         """Test serialization includes all basic fields."""
         from seer.api.workflows.services.triggers import _serialize_subscription
 
@@ -363,8 +414,15 @@ class TestSerializeSubscription:
         mock_subscription.created_at = MagicMock()
         mock_subscription.updated_at = MagicMock()
 
+        mock_conn = MagicMock()
+        mock_conn.provider = "google"
+        mock_conn.provider_account_id = "123"
+        mock_conn.provider_metadata = {"email": "test@example.com"}
+
         with patch("seer.api.workflows.services.triggers.make_workflow_public_id", return_value="wf_abc123"):
-            result = _serialize_subscription(mock_subscription)
+            with patch("seer.api.workflows.services.triggers.OAuthConnection") as MockOAuthConnection:
+                MockOAuthConnection.get_or_none = AsyncMock(return_value=mock_conn)
+                result = await _serialize_subscription(mock_subscription)
 
         assert result.subscription_id == 1
         assert result.workflow_id == "wf_abc123"
@@ -372,8 +430,10 @@ class TestSerializeSubscription:
         assert result.provider_connection_id == 50
         assert result.enabled is True
         assert result.filters == {"key": "value"}
+        assert result.connection_display_name == "test@example.com"
 
-    def test_serialize_subscription_with_webhook_url(self):
+    @pytest.mark.asyncio
+    async def test_serialize_subscription_with_webhook_url(self):
         """Test serialization includes webhook URL for webhook triggers."""
         from seer.api.workflows.services.triggers import _serialize_subscription
 
@@ -393,12 +453,14 @@ class TestSerializeSubscription:
         mock_subscription.updated_at = MagicMock()
 
         with patch("seer.api.workflows.services.triggers.make_workflow_public_id", return_value="wf_xyz"):
-            result = _serialize_subscription(mock_subscription)
+            result = await _serialize_subscription(mock_subscription)
 
         assert result.webhook_url == "/v1/webhooks/generic/123"
         assert result.secret_token == "secret_abc"
+        assert result.connection_display_name is None
 
-    def test_serialize_subscription_with_form_url(self):
+    @pytest.mark.asyncio
+    async def test_serialize_subscription_with_form_url(self):
         """Test serialization includes form URL for form triggers."""
         from seer.api.workflows.services.triggers import _serialize_subscription
 
@@ -420,7 +482,7 @@ class TestSerializeSubscription:
         with patch("seer.api.workflows.services.triggers.make_workflow_public_id", return_value="wf_form"):
             with patch("seer.api.workflows.services.triggers.shared_config") as mock_config:
                 mock_config.frontend_url = "https://app.example.com"
-                result = _serialize_subscription(mock_subscription)
+                result = await _serialize_subscription(mock_subscription)
 
         assert result.form_url == "https://app.example.com/forms/contact-form"
         assert result.form_suffix == "contact-form"

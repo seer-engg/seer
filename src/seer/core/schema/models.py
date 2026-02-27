@@ -124,6 +124,12 @@ class ToolNode(NodeBase):
     # But allow client to assert expected schema (optional safety/version check).
     expect_outputs: Optional[OutputContract] = None
 
+    # Explicit OAuth connection ID for multi-account scenarios.
+    # When user has multiple accounts for the same provider (e.g., personal + work Gmail),
+    # this field specifies which account to use. If omitted and only one account exists,
+    # it's auto-selected. If omitted with multiple accounts, validation fails.
+    connection_id: Optional[int] = None
+
 
 class MCPNode(NodeBase):
     """
@@ -303,6 +309,12 @@ class HITLNode(NodeBase):
 # -----------------------------
 # Browser Automation Node
 # -----------------------------
+ALLOWED_IMAGE_GEN_MODELS = frozenset({
+    "sourceful/riverflow-v2-fast",
+    "google/gemini-2.5-flash-image",
+})
+
+
 class ImageGenNode(NodeBase):
     """
     Image generation node using OpenRouter image generation models.
@@ -320,6 +332,15 @@ class ImageGenNode(NodeBase):
         missing = [k for k in required if k not in self.inputs]
         if missing:
             raise ValueError(f'ImageGenNode requires {", ".join(missing)} in inputs')
+
+        # pylint: disable=no-member  # Pydantic resolves Field() to dict at runtime
+        model = self.inputs.get("model")
+        if model not in ALLOWED_IMAGE_GEN_MODELS:
+            allowed = ", ".join(sorted(ALLOWED_IMAGE_GEN_MODELS))
+            raise ValueError(
+                f"ImageGenNode model '{model}' is not allowed. "
+                f"Allowed models: {allowed}"
+            )
         return self
 
 

@@ -5,7 +5,7 @@ Each tool has ONE canonical async implementation used by both surfaces. Shared
 parameters like 'reasoning' have defaults so MCP callers can ignore them while
 Nexus agents can populate them for tracing.
 
-All 7 tools are registered via register_unified_tools() which is idempotent
+All tools are registered via register_unified_tools() which is idempotent
 and safe to call from both MCP and Nexus startup paths.
 """
 # pylint: disable=duplicate-code  # Reason: Canonical implementations intentionally consolidate MCP + Nexus formatting
@@ -13,14 +13,77 @@ and safe to call from both MCP and Nexus startup paths.
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from seer.tools.tool_factory import ToolDefinition, ToolSurface, unified_registry
 from seer.logger import get_logger
 
+if TYPE_CHECKING:
+    from seer.database import User
+
 logger = get_logger(__name__)
 
 _REGISTERED = False
+
+
+# ---------------------------------------------------------------------------
+# User context resolution (supports both MCP and Nexus contexts)
+# ---------------------------------------------------------------------------
+
+
+async def _get_unified_user() -> Optional["User"]:
+    """
+    Get the current user from either MCP or Nexus context.
+
+    Order of resolution:
+    1. MCP authenticated user (from MCPAuthMiddleware context variable)
+    2. Nexus thread context (from _current_thread_id context variable)
+    3. MCP system user fallback (for stdio transport)
+
+    Returns:
+        User object if found, None if no context available
+    """
+    # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+    from seer.database import User, init_db
+    from tortoise import Tortoise
+
+    # Ensure DB is initialized
+    # pylint: disable=protected-access # Reason: Tortoise doesn't expose public init check
+    if not Tortoise._inited:
+        await init_db()
+
+    # Try MCP authenticated user first
+    try:
+        from seer.mcp.auth import get_mcp_authenticated_user
+        verified_token = get_mcp_authenticated_user()
+        if verified_token:
+            user, _ = await User.get_or_create(
+                user_id=verified_token.user_id,
+                defaults={
+                    "email": verified_token.email,
+                    "first_name": verified_token.first_name,
+                    "last_name": verified_token.last_name,
+                    "claims": verified_token.claims,
+                }
+            )
+            return user
+    except ImportError:
+        pass  # MCP auth module not available
+
+    # Try Nexus thread context
+    try:
+        from seer.agents.nexus.context import _current_thread_id, get_user_for_thread
+        thread_id = _current_thread_id.get()
+        if thread_id:
+            user = await get_user_for_thread(thread_id)
+            if user:
+                return user
+    except ImportError:
+        pass  # Nexus context module not available
+
+    # Fallback to system user (for MCP stdio transport without auth)
+    system_user = await User.get_or_none(id=1)
+    return system_user
 
 
 # ---------------------------------------------------------------------------
@@ -294,6 +357,151 @@ async def get_workflow_schema_impl() -> str:
         })
 
 
+async def get_tool_accounts_impl(
+    tool_name: str,
+    reasoning: str = "",
+) -> str:
+    """
+    Get available OAuth accounts for a tool.
+
+    Call this BEFORE building workflow specs with OAuth-based tools
+    (gmail_send_email, google_sheets_read, slack_send_message, etc.) to check
+    if the user has connected accounts and if account selection is required.
+
+    Args:
+        tool_name: The tool name (e.g., "gmail_send_email", "google_sheets_read")
+        reasoning: Why you need to check accounts (helps with tracing)
+
+    Returns:
+        JSON with:
+        - tool_name: The tool name queried
+        - provider: The OAuth provider name (e.g., "google", "slack")
+        - accounts: List of available accounts with id, display_name, scope status
+        - requires_selection: True if user must choose (multiple accounts)
+
+    Usage:
+        1. If accounts=[] → Tell user to connect their account first
+        2. If requires_selection=false and len(accounts)==1 → Use that account's id as connection_id
+        3. If requires_selection=true → Use ask_clarification_questions to let user pick
+        4. Include connection_id in tool node ONLY when user selected from multiple accounts
+    """
+    # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+    from seer.tools.base import get_tool
+    from seer.services.integrations.auth.helpers import list_connections
+    from seer.tools.account_helpers import (
+        build_account_entry,
+        make_error_response,
+        make_no_oauth_response,
+    )
+
+    try:
+        user = await _get_unified_user()
+        if not user:
+            return json.dumps(make_error_response("tool_name", tool_name, "User context not available"))
+
+        tool = get_tool(tool_name)
+        if tool is None:
+            return json.dumps(make_error_response("tool_name", tool_name, f"Tool '{tool_name}' not found"))
+
+        if not tool.required_scopes:
+            return json.dumps(make_no_oauth_response(
+                "tool_name", tool_name, tool.provider, "This tool does not require OAuth authentication"
+            ))
+
+        provider = tool.provider
+        if not provider:
+            return json.dumps(make_no_oauth_response(
+                "tool_name", tool_name, None, "This tool does not have a configured OAuth provider"
+            ))
+
+        connections = await list_connections(user)
+        provider_connections = [c for c in connections if c.provider == provider]
+        accounts = [build_account_entry(conn, tool.required_scopes) for conn in provider_connections]
+
+        return json.dumps({
+            "tool_name": tool_name,
+            "provider": provider,
+            "accounts": accounts,
+            "requires_selection": len(accounts) > 1,
+            "reasoning": reasoning,
+        }, indent=2)
+
+    except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Return friendly JSON error
+        logger.exception("Error getting tool accounts: %s", e)
+        return json.dumps(make_error_response("tool_name", tool_name, str(e)))
+
+
+async def get_trigger_accounts_impl(
+    trigger_key: str,
+    reasoning: str = "",
+) -> str:
+    """
+    Get available OAuth accounts for a trigger.
+
+    Call this BEFORE building workflow specs with OAuth-based triggers
+    (poll.gmail.email_received, poll.googlesheets.row_added, etc.) to check
+    if the user has connected accounts and if account selection is required.
+
+    Args:
+        trigger_key: The trigger key (e.g., "poll.gmail.email_received")
+        reasoning: Why you need to check accounts (helps with tracing)
+
+    Returns:
+        JSON with:
+        - trigger_key: The trigger key queried
+        - provider: The OAuth provider name (e.g., "google", "slack")
+        - accounts: List of available accounts with id, display_name, scope status
+        - requires_selection: True if user must choose (multiple accounts)
+
+    Usage:
+        1. If accounts=[] → Tell user to connect their account first
+        2. If requires_selection=false and len(accounts)==1 → System auto-selects (omit provider_connection_id)
+        3. If requires_selection=true → Use ask_clarification_questions to let user pick
+        4. Include provider_connection_id in trigger spec ONLY when user selected from multiple accounts
+    """
+    # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+    from seer.core.registry.trigger_registry import trigger_registry
+    from seer.services.integrations.auth.oauth import get_oauth_provider
+    from seer.database.models_oauth import OAuthConnection
+    from seer.tools.account_helpers import (
+        build_account_entry,
+        make_error_response,
+        make_no_oauth_response,
+    )
+
+    try:
+        user = await _get_unified_user()
+        if not user:
+            return json.dumps(make_error_response("trigger_key", trigger_key, "User context not available"))
+
+        definition = trigger_registry.get(trigger_key)
+        if definition is None:
+            return json.dumps(make_error_response("trigger_key", trigger_key, f"Trigger '{trigger_key}' not found in registry"))
+
+        if not definition.meta.requires_connection:
+            return json.dumps(make_no_oauth_response(
+                "trigger_key", trigger_key, definition.provider, "This trigger does not require OAuth authentication"
+            ))
+
+        oauth_provider = get_oauth_provider(definition.provider)
+        required_scopes = definition.meta.required_scopes or []
+
+        connections = await OAuthConnection.filter(user=user, provider=oauth_provider, status="active").all()
+        accounts = [build_account_entry(conn, required_scopes) for conn in connections]
+
+        return json.dumps({
+            "trigger_key": trigger_key,
+            "provider": definition.provider,
+            "accounts": accounts,
+            "requires_selection": len(accounts) > 1,
+            "reasoning": reasoning,
+        }, indent=2)
+
+    except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Return friendly JSON error
+        logger.exception("Error getting trigger accounts: %s", e)
+        return json.dumps(make_error_response("trigger_key", trigger_key, str(e)))
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -301,7 +509,7 @@ async def get_workflow_schema_impl() -> str:
 
 def register_unified_tools() -> None:
     """
-    Register all 7 unified tool definitions. Idempotent — safe to call multiple times.
+    Register all unified tool definitions. Idempotent — safe to call multiple times.
 
     Called from both MCP server startup (_register_tools) and Nexus agent startup
     (get_workflow_tools). The first call registers; subsequent calls are no-ops.
@@ -369,4 +577,23 @@ def register_unified_tools() -> None:
         implementation=get_workflow_schema_impl,
         surface=ToolSurface.BOTH,
         mcp_tracking_name="get_workflow_schema",
+    ))
+
+    # OAuth account discovery tools
+    unified_registry.register(ToolDefinition(
+        name="get_tool_accounts",
+        description=get_tool_accounts_impl.__doc__ or "",
+        implementation=get_tool_accounts_impl,
+        surface=ToolSurface.BOTH,
+        nexus_name="get_tool_accounts",
+        mcp_tracking_name="get_tool_accounts",
+    ))
+
+    unified_registry.register(ToolDefinition(
+        name="get_trigger_accounts",
+        description=get_trigger_accounts_impl.__doc__ or "",
+        implementation=get_trigger_accounts_impl,
+        surface=ToolSurface.BOTH,
+        nexus_name="get_trigger_accounts",
+        mcp_tracking_name="get_trigger_accounts",
     ))

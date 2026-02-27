@@ -21,7 +21,7 @@ from seer.core.registry.model_registry import ModelRegistry
 from seer.core.registry.tool_registry import ToolRegistry
 from seer.core.runtime.execution import CompiledWorkflow
 from seer.core.runtime.nodes import NodeRuntime, RuntimeServices
-from seer.core.schema.models import ImageGenNode
+from seer.core.schema.models import ImageGenNode, ALLOWED_IMAGE_GEN_MODELS
 from seer.core.schema.schema_registry import SchemaRegistry
 
 pytestmark = pytest.mark.unit
@@ -77,9 +77,63 @@ class TestImageGenNodeModel:
         """ImageGenNode type should be 'image_gen'."""
         node = ImageGenNode(
             id="img-6",
-            inputs={"model": "test-model", "prompt": "test"},
+            inputs={"model": "sourceful/riverflow-v2-fast", "prompt": "test"},
         )
         assert node.type == "image_gen"
+
+
+class TestImageGenNodeModelValidation:
+    """Tests for ImageGenNode model validation (allowed models)."""
+
+    def test_valid_model_riverflow(self):
+        """Should accept sourceful/riverflow-v2-fast model."""
+        node = ImageGenNode(
+            id="img-1",
+            inputs={"model": "sourceful/riverflow-v2-fast", "prompt": "test"}
+        )
+        assert node.inputs["model"] == "sourceful/riverflow-v2-fast"
+
+    def test_valid_model_gemini(self):
+        """Should accept google/gemini-2.5-flash-image model."""
+        node = ImageGenNode(
+            id="img-1",
+            inputs={"model": "google/gemini-2.5-flash-image", "prompt": "test"}
+        )
+        assert node.inputs["model"] == "google/gemini-2.5-flash-image"
+
+    def test_invalid_model_raises_error(self):
+        """Should raise ValueError for invalid model."""
+        with pytest.raises(ValueError, match="not allowed"):
+            ImageGenNode(
+                id="img-1",
+                inputs={"model": "invalid/model", "prompt": "test"}
+            )
+
+    def test_error_message_lists_allowed_models(self):
+        """Error message should list all allowed models."""
+        with pytest.raises(ValueError) as exc_info:
+            ImageGenNode(
+                id="img-1",
+                inputs={"model": "bad-model", "prompt": "test"}
+            )
+        for model in ALLOWED_IMAGE_GEN_MODELS:
+            assert model in str(exc_info.value)
+
+    def test_invalid_model_with_similar_name(self):
+        """Should reject models with similar but incorrect names."""
+        with pytest.raises(ValueError, match="not allowed"):
+            ImageGenNode(
+                id="img-1",
+                inputs={"model": "sourceful/riverflow-v2", "prompt": "test"}  # Missing '-fast'
+            )
+
+    def test_invalid_model_openai(self):
+        """Should reject non-allowed models like OpenAI DALL-E."""
+        with pytest.raises(ValueError, match="not allowed"):
+            ImageGenNode(
+                id="img-1",
+                inputs={"model": "openai/dall-e-3", "prompt": "test"}
+            )
 
 
 # ---------------------------------------------------------------------------

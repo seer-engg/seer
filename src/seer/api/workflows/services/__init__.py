@@ -8,6 +8,7 @@ Provides backwards-compatible imports for the router.
 from .catalog import (
     compile_spec,
     generate_schema_metadata,
+    get_trigger_accounts,
     list_mcp_tools,
     list_models,
     list_node_types,
@@ -81,6 +82,7 @@ __all__ = [
     "list_mcp_tools",
     "list_models",
     "list_triggers",
+    "get_trigger_accounts",
     "resolve_schema",
     "validate_spec",
     "compile_spec",

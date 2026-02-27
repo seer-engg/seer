@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import uuid
 from enum import Enum
-from typing import List
+from typing import List, Optional
 
 from langchain_core.tools import tool
 from langgraph.types import interrupt
@@ -19,6 +19,85 @@ from pydantic import BaseModel
 from seer.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _parse_question_ref(ref: str, total_questions: int) -> Optional[int]:
+    """
+    Parse a question reference like 'q_0' into an index.
+
+    Args:
+        ref: Question reference string (e.g., "q_0", "q_1")
+        total_questions: Total number of questions in the batch
+
+    Returns:
+        Integer index if valid, None otherwise
+    """
+    if ref.startswith("q_"):
+        try:
+            idx = int(ref[2:])
+            if 0 <= idx < total_questions:
+                return idx
+        except ValueError:
+            pass
+    return None
+
+
+def _validate_resource_picker_dependencies(questions: List[dict]) -> None:
+    """
+    Validate resource picker dependency chains.
+
+    This function ensures that when a resource picker has `depends_on_field` set
+    (indicating it depends on another resource), it also has a valid `depends_on`
+    reference pointing to an earlier question.
+
+    Raises:
+        ValueError: If any of the following conditions are met:
+            1. A resource_picker has depends_on_field but no depends_on reference
+            2. A depends_on reference points to a question that comes AFTER it
+            3. A depends_on reference points to a non-existent question
+    """
+    # Build index of resource pickers by position
+    resource_pickers = {}
+    for idx, q in enumerate(questions):
+        if q.get("question_type") == "resource_picker":
+            resource_type = q.get("resource_type", "")
+            provider = q.get("provider", "")
+            key = f"{provider}:{resource_type}"
+            resource_pickers[key] = {
+                "idx": idx,
+                "depends_on": q.get("depends_on"),
+                "depends_on_field": q.get("depends_on_field"),
+                "question": q.get("question", "")[:50],
+            }
+
+    # Validate each dependent resource picker
+    for key, info in resource_pickers.items():
+        depends_on_field = info.get("depends_on_field")
+        depends_on = info.get("depends_on")
+
+        if depends_on_field and not depends_on:
+            raise ValueError(
+                f"Resource picker '{key}' has depends_on_field='{depends_on_field}' "
+                f"but no depends_on reference. You must specify depends_on to reference "
+                f"the parent question (e.g., 'q_0' for the first question). "
+                f"Also ensure the parent question comes BEFORE this one in the list."
+            )
+
+        if depends_on:
+            # Check if depends_on points to a valid earlier question
+            ref_idx = _parse_question_ref(depends_on, len(questions))
+            if ref_idx is None:
+                raise ValueError(
+                    f"Resource picker '{key}' has depends_on='{depends_on}' which "
+                    f"doesn't match any question. Use 'q_0', 'q_1', etc. to reference "
+                    f"questions by position."
+                )
+            if ref_idx >= info["idx"]:
+                raise ValueError(
+                    f"Resource picker '{key}' depends on question at position {ref_idx}, "
+                    f"but it appears at position {info['idx']}. "
+                    f"Parent questions must come BEFORE dependent questions."
+                )
 
 
 class QuestionType(str, Enum):
@@ -168,6 +247,9 @@ def ask_clarification_questions(
 
     if len(questions) > 10:
         raise ValueError("Maximum 10 questions allowed per batch")
+
+    # Validate resource picker dependencies before processing
+    _validate_resource_picker_dependencies(questions)
 
     # Build questions with unique IDs
     questions_payload = []

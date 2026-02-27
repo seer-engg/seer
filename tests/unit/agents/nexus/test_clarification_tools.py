@@ -11,6 +11,8 @@ from seer.agents.nexus.tools.clarification_tools import (
     ask_clarification_questions,
     QuestionType,
     QuestionOption,
+    _validate_resource_picker_dependencies,
+    _parse_question_ref,
 )
 
 
@@ -468,3 +470,231 @@ class TestResourcePickerQuestions:
         result_data = json.loads(result)
         assert result_data[0]["selected_values"] == ["daily"]
         assert result_data[1]["selected_values"] == ["sheet_abc"]
+
+
+@pytest.mark.unit
+class TestResourcePickerValidation:
+    """Tests for resource picker dependency validation."""
+
+    def test_valid_dependency_chain(self):
+        """Test valid dependency chain passes validation."""
+        questions = [
+            {
+                "question": "Which workspace?",
+                "question_type": "resource_picker",
+                "provider": "slack",
+                "resource_type": "workspace",
+            },
+            {
+                "question": "Which channel?",
+                "question_type": "resource_picker",
+                "provider": "slack",
+                "resource_type": "channel",
+                "depends_on": "q_0",
+                "depends_on_field": "workspace_id",
+            },
+        ]
+        # Should not raise
+        _validate_resource_picker_dependencies(questions)
+
+    def test_missing_depends_on_raises(self):
+        """Test that depends_on_field without depends_on raises error."""
+        questions = [
+            {
+                "question": "Which channel?",
+                "question_type": "resource_picker",
+                "provider": "slack",
+                "resource_type": "channel",
+                "depends_on_field": "workspace_id",  # Missing depends_on!
+            },
+        ]
+        with pytest.raises(ValueError, match="no depends_on reference"):
+            _validate_resource_picker_dependencies(questions)
+
+    def test_wrong_order_raises(self):
+        """Test that dependent question before parent raises error."""
+        questions = [
+            {
+                "question": "Which channel?",
+                "question_type": "resource_picker",
+                "provider": "slack",
+                "resource_type": "channel",
+                "depends_on": "q_1",  # Points to later question
+                "depends_on_field": "workspace_id",
+            },
+            {
+                "question": "Which workspace?",
+                "question_type": "resource_picker",
+                "provider": "slack",
+                "resource_type": "workspace",
+            },
+        ]
+        with pytest.raises(ValueError, match="must come BEFORE"):
+            _validate_resource_picker_dependencies(questions)
+
+    def test_invalid_depends_on_ref_raises(self):
+        """Test that invalid depends_on reference raises error."""
+        questions = [
+            {
+                "question": "Which channel?",
+                "question_type": "resource_picker",
+                "provider": "slack",
+                "resource_type": "channel",
+                "depends_on": "q_99",  # Invalid reference
+                "depends_on_field": "workspace_id",
+            },
+        ]
+        with pytest.raises(ValueError, match="doesn't match any question"):
+            _validate_resource_picker_dependencies(questions)
+
+    def test_non_resource_picker_skipped(self):
+        """Test that non-resource_picker questions are not validated."""
+        questions = [
+            {
+                "question": "Which email provider?",
+                "question_type": "single_choice",
+                "options": [{"value": "gmail", "label": "Gmail"}],
+            },
+        ]
+        # Should not raise
+        _validate_resource_picker_dependencies(questions)
+
+    def test_resource_picker_without_dependencies_ok(self):
+        """Test that resource picker without any dependency fields passes."""
+        questions = [
+            {
+                "question": "Which spreadsheet?",
+                "question_type": "resource_picker",
+                "provider": "google",
+                "resource_type": "google_spreadsheet",
+            },
+        ]
+        # Should not raise
+        _validate_resource_picker_dependencies(questions)
+
+    def test_depends_on_only_without_field_ok(self):
+        """Test that depends_on without depends_on_field passes validation."""
+        # This could happen if someone just wants ordering without a specific field
+        questions = [
+            {
+                "question": "Which workspace?",
+                "question_type": "resource_picker",
+                "provider": "slack",
+                "resource_type": "workspace",
+            },
+            {
+                "question": "Which channel?",
+                "question_type": "resource_picker",
+                "provider": "slack",
+                "resource_type": "channel",
+                "depends_on": "q_0",  # Has depends_on but no depends_on_field
+            },
+        ]
+        # Should not raise - depends_on without depends_on_field is allowed
+        _validate_resource_picker_dependencies(questions)
+
+    def test_multiple_dependency_chains(self):
+        """Test validation with multiple valid dependency chains."""
+        questions = [
+            {
+                "question": "Which workspace?",
+                "question_type": "resource_picker",
+                "provider": "slack",
+                "resource_type": "workspace",
+            },
+            {
+                "question": "Which channel?",
+                "question_type": "resource_picker",
+                "provider": "slack",
+                "resource_type": "channel",
+                "depends_on": "q_0",
+                "depends_on_field": "workspace_id",
+            },
+            {
+                "question": "Which Discord server?",
+                "question_type": "resource_picker",
+                "provider": "discord",
+                "resource_type": "guild",
+            },
+            {
+                "question": "Which Discord channel?",
+                "question_type": "resource_picker",
+                "provider": "discord",
+                "resource_type": "channel",
+                "depends_on": "q_2",
+                "depends_on_field": "guild_id",
+            },
+        ]
+        # Should not raise
+        _validate_resource_picker_dependencies(questions)
+
+    def test_self_reference_raises(self):
+        """Test that a question referencing itself raises error."""
+        questions = [
+            {
+                "question": "Which channel?",
+                "question_type": "resource_picker",
+                "provider": "slack",
+                "resource_type": "channel",
+                "depends_on": "q_0",  # References itself
+                "depends_on_field": "workspace_id",
+            },
+        ]
+        with pytest.raises(ValueError, match="must come BEFORE"):
+            _validate_resource_picker_dependencies(questions)
+
+
+@pytest.mark.unit
+class TestParseQuestionRef:
+    """Tests for question reference parsing."""
+
+    def test_valid_refs(self):
+        """Test parsing valid question references."""
+        assert _parse_question_ref("q_0", 5) == 0
+        assert _parse_question_ref("q_3", 5) == 3
+        assert _parse_question_ref("q_4", 5) == 4
+
+    def test_out_of_range(self):
+        """Test that out of range references return None."""
+        assert _parse_question_ref("q_5", 5) is None
+        assert _parse_question_ref("q_10", 5) is None
+
+    def test_invalid_format(self):
+        """Test that invalid formats return None."""
+        assert _parse_question_ref("invalid", 5) is None
+        assert _parse_question_ref("q_abc", 5) is None
+        assert _parse_question_ref("", 5) is None
+
+    def test_negative_index(self):
+        """Test that negative indices don't match."""
+        assert _parse_question_ref("q_-1", 5) is None
+
+    def test_boundary_values(self):
+        """Test boundary values for question references."""
+        # Last valid index
+        assert _parse_question_ref("q_9", 10) == 9
+        # First valid index
+        assert _parse_question_ref("q_0", 1) == 0
+        # Just over boundary
+        assert _parse_question_ref("q_1", 1) is None
+
+
+@pytest.mark.unit
+class TestValidationIntegration:
+    """Test that validation is properly integrated into ask_clarification_questions."""
+
+    def test_validation_error_blocks_question_asking(self):
+        """Test that validation errors prevent questions from being asked."""
+        questions = [
+            {
+                "question": "Which channel?",
+                "question_type": "resource_picker",
+                "provider": "slack",
+                "resource_type": "channel",
+                "depends_on_field": "workspace_id",  # Missing depends_on!
+            },
+        ]
+
+        # Should raise before even trying to call interrupt
+        with pytest.raises(ValueError, match="no depends_on reference"):
+            ask_clarification_questions.invoke({"questions": questions})

@@ -65,6 +65,25 @@ class TriggerCatalogResponse(BaseModel):
     triggers: List[TriggerDescriptor]
 
 
+class TriggerAccountInfo(BaseModel):
+    """Account information for a specific trigger."""
+
+    id: int = Field(..., description="Database ID of the OAuth connection")
+    provider_account_id: str = Field(..., description="Provider's internal account identifier")
+    display_name: str = Field(..., description="Human-readable account name (email, username)")
+    has_required_scopes: bool = Field(..., description="Whether account has all required scopes")
+    missing_scopes: List[str] = Field(default_factory=list, description="List of missing scopes")
+
+
+class TriggerAccountsResponse(BaseModel):
+    """Response for trigger accounts endpoint."""
+
+    trigger_key: str
+    provider: Optional[str]
+    accounts: List[TriggerAccountInfo] = Field(default_factory=list)
+    requires_selection: bool = Field(..., description="True if user must select an account (multiple available)")
+
+
 class TriggerSubscriptionCreateRequest(BaseModel):
     workflow_id: str
     trigger_key: str
@@ -90,6 +109,7 @@ class TriggerSubscriptionResponse(BaseModel):
     workflow_id: str
     trigger_key: str
     provider_connection_id: Optional[int] = None
+    connection_display_name: Optional[str] = None  # Human-readable account name (email, username)
     enabled: bool
     filters: Dict[str, Any] = Field(default_factory=dict)
     provider_config: Dict[str, Any] = Field(default_factory=dict)
@@ -427,9 +447,6 @@ class WorkflowExportResponse(BaseModel):
     metadata: Dict[str, Any]
 
 
-# -----------------------------
-# HITL (Human-In-The-Loop) Models
-# -----------------------------
 class HITLResumeRequest(BaseModel):
     """Request payload to resume a workflow from an HITL interrupt."""
     responses: Dict[str, Any] = Field(
@@ -468,10 +485,6 @@ class HITLInterruptResponse(BaseModel):
     expires_at: Optional[str] = None
     is_expired: bool = False
 
-
-# ============================================================================
-# Workflow File Models
-# ============================================================================
 
 
 class WorkflowFileItem(BaseModel):
@@ -523,6 +536,8 @@ __all__ = [
     "ToolRegistryResponse",
     "TriggerDescriptor",
     "TriggerCatalogResponse",
+    "TriggerAccountInfo",
+    "TriggerAccountsResponse",
     "TriggerSubscriptionCreateRequest",
     "TriggerSubscriptionUpdateRequest",
     "TriggerSubscriptionResponse",
@@ -577,7 +592,6 @@ __all__ = [
     "HITLInterruptDisplayItem",
     "HITLInterruptInputField",
     "HITLInterruptResponse",
-    # Workflow Files
     "WorkflowFileItem",
     "WorkflowFileListResponse",
     "WorkflowFileResponse",

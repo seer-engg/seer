@@ -69,7 +69,7 @@ class SlackProvider(IntegrationProvider):
             # Don't request user_scope - we only need bot token
         }
 
-    def resolve_granted_scopes(
+    async def resolve_granted_scopes(
         self,
         *,
         token: Dict[str, Any],
