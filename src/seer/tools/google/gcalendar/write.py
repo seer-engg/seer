@@ -9,6 +9,10 @@ from seer.tools.google.base import GoogleAPIClient
 from seer.tools.google.gcalendar.helpers import (
     CALENDAR_API_BASE,
     CALENDAR_EVENT_SCHEMA,
+    CALENDAR_ID_PARAM_SCHEMA,
+    CALENDAR_ID_RESOURCE_PICKER,
+    EVENT_ID_PARAM_SCHEMA,
+    GCALENDAR_INTEGRATION_TYPE,
 )
 
 if TYPE_CHECKING:
@@ -40,18 +44,10 @@ class GoogleCalendarCreateEventTool(GoogleAPIClient):
     name = "google_calendar_create_event"
     description = "Create a new event in a Google Calendar."
     required_scopes = ["https://www.googleapis.com/auth/calendar.events"]
-    integration_type = "google_calendar"
+    integration_type = GCALENDAR_INTEGRATION_TYPE
 
     def get_resource_pickers(self) -> Dict[str, Any]:
-        return {
-            "calendar_id": {
-                "resource_type": "google_calendar",
-                "display_field": "summary",
-                "value_field": "id",
-                "search_enabled": False,
-                "hierarchy": False,
-            }
-        }
+        return CALENDAR_ID_RESOURCE_PICKER.copy()
 
     def get_output_schema(self) -> Dict[str, Any]:
         return CALENDAR_EVENT_SCHEMA
@@ -189,18 +185,10 @@ class GoogleCalendarUpdateEventTool(GoogleAPIClient):
     name = "google_calendar_update_event"
     description = "Update an existing event in a Google Calendar."
     required_scopes = ["https://www.googleapis.com/auth/calendar.events"]
-    integration_type = "google_calendar"
+    integration_type = GCALENDAR_INTEGRATION_TYPE
 
     def get_resource_pickers(self) -> Dict[str, Any]:
-        return {
-            "calendar_id": {
-                "resource_type": "google_calendar",
-                "display_field": "summary",
-                "value_field": "id",
-                "search_enabled": False,
-                "hierarchy": False,
-            }
-        }
+        return CALENDAR_ID_RESOURCE_PICKER.copy()
 
     def get_output_schema(self) -> Dict[str, Any]:
         return CALENDAR_EVENT_SCHEMA
@@ -209,15 +197,8 @@ class GoogleCalendarUpdateEventTool(GoogleAPIClient):
         return {
             "type": "object",
             "properties": {
-                "calendar_id": {
-                    "type": "string",
-                    "description": "Calendar ID containing the event (default: 'primary')",
-                    "default": "primary",
-                },
-                "event_id": {
-                    "type": "string",
-                    "description": "Event ID to update",
-                },
+                "calendar_id": CALENDAR_ID_PARAM_SCHEMA,
+                "event_id": EVENT_ID_PARAM_SCHEMA,
                 "summary": {
                     "type": "string",
                     "description": "New event title",
@@ -343,18 +324,10 @@ class GoogleCalendarDeleteEventTool(GoogleAPIClient):
     name = "google_calendar_delete_event"
     description = "Delete an event from a Google Calendar."
     required_scopes = ["https://www.googleapis.com/auth/calendar.events"]
-    integration_type = "google_calendar"
+    integration_type = GCALENDAR_INTEGRATION_TYPE
 
     def get_resource_pickers(self) -> Dict[str, Any]:
-        return {
-            "calendar_id": {
-                "resource_type": "google_calendar",
-                "display_field": "summary",
-                "value_field": "id",
-                "search_enabled": False,
-                "hierarchy": False,
-            }
-        }
+        return CALENDAR_ID_RESOURCE_PICKER.copy()
 
     def get_output_schema(self) -> Dict[str, Any]:
         return {
@@ -370,15 +343,8 @@ class GoogleCalendarDeleteEventTool(GoogleAPIClient):
         return {
             "type": "object",
             "properties": {
-                "calendar_id": {
-                    "type": "string",
-                    "description": "Calendar ID containing the event (default: 'primary')",
-                    "default": "primary",
-                },
-                "event_id": {
-                    "type": "string",
-                    "description": "Event ID to delete",
-                },
+                "calendar_id": CALENDAR_ID_PARAM_SCHEMA,
+                "event_id": EVENT_ID_PARAM_SCHEMA,
                 "send_updates": {
                     "type": "string",
                     "description": "Notification mode: 'all', 'externalOnly', or 'none'",

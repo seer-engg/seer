@@ -7,6 +7,33 @@ from typing import Any, Dict
 # Google Calendar API base URL
 CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3"
 
+# Common integration type for all Google Calendar tools
+GCALENDAR_INTEGRATION_TYPE = "google_calendar"
+
+# Shared resource picker configuration for calendar_id parameter
+CALENDAR_ID_RESOURCE_PICKER: Dict[str, Any] = {
+    "calendar_id": {
+        "resource_type": "google_calendar",
+        "display_field": "summary",
+        "value_field": "id",
+        "search_enabled": False,
+        "hierarchy": False,
+    }
+}
+
+# Common parameter schema for calendar_id
+CALENDAR_ID_PARAM_SCHEMA: Dict[str, Any] = {
+    "type": "string",
+    "description": "Calendar ID (default: 'primary')",
+    "default": "primary",
+}
+
+# Common parameter schema for event_id
+EVENT_ID_PARAM_SCHEMA: Dict[str, Any] = {
+    "type": "string",
+    "description": "Event ID",
+}
+
 
 # Calendar event schema for output
 CALENDAR_EVENT_SCHEMA: Dict[str, Any] = {
