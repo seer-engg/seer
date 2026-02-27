@@ -131,6 +131,13 @@ def build_tool_status(
         granted_scopes = conn_info["scopes"] if conn_info else ""
         has_refresh_token = conn_info["has_refresh_token"] if conn_info else False
         has_scopes = has_required_scopes(granted_scopes, required_scopes) if conn_info else False
+        if tool.integration_type == "youtube":
+            logger.info(
+                "YouTube tool status: name=%s, has_refresh=%s, has_scopes=%s, "
+                "granted=%s, required=%s",
+                tool.name, has_refresh_token, has_scopes,
+                granted_scopes[:100] if granted_scopes else None, required_scopes
+            )
         if conn_info:
             missing_scopes = [
                 scope for scope in required_scopes
