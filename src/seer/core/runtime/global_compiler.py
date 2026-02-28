@@ -30,6 +30,7 @@ from seer.core.runtime.context import WorkflowRuntimeContext
 from seer.core.runtime.execution import CompiledWorkflow
 from seer.core.schema.jsonschema_adapter import SchemaError, check_schema
 from seer.core.schema.models import (
+    AgentNode,
     ImageGenNode,
     LLMNode,
     MCPNode,
@@ -194,6 +195,10 @@ class WorkflowCompilerSingleton:
             elif isinstance(node, MCPNode):
                 mcp_acc.add((node.server, node.server_type))
             elif isinstance(node, ImageGenNode):
+                model = node.inputs.get("model")
+                if model and isinstance(model, str):
+                    model_acc.add(model)
+            elif isinstance(node, AgentNode):
                 model = node.inputs.get("model")
                 if model and isinstance(model, str):
                     model_acc.add(model)
