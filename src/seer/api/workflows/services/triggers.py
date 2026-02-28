@@ -173,8 +173,9 @@ def _extract_event_path(expression: str) -> List[str]:
     return segments[1:]
 
 
-def _generate_subscription_secret() -> str:
-    return secrets.token_urlsafe(24)
+def _generate_webhook_slug() -> str:
+    """Generate a URL-safe random slug for webhook URLs (256 bits entropy)."""
+    return secrets.token_urlsafe(32)
 
 
 def _generate_form_suffix() -> str:
@@ -190,11 +191,12 @@ def _should_emit_webhook_url(trigger_key: str) -> bool:
     return trigger_key.startswith("webhook.")
 
 
-def _build_webhook_url(subscription_id: int, trigger_key: str) -> Optional[str]:
+def _build_webhook_url(webhook_slug: str, trigger_key: str) -> Optional[str]:
+    """Build webhook URL path using the unique slug."""
     if trigger_key == "webhook.generic":
-        return f"/v1/webhooks/generic/{subscription_id}"
+        return f"/api/v1/webhooks/generic/{webhook_slug}"
     if trigger_key == "webhook.supabase.db_changes":
-        return f"/v1/webhooks/generic/{subscription_id}"
+        return f"/api/v1/webhooks/generic/{webhook_slug}"
     return None
 
 
@@ -214,8 +216,8 @@ async def _serialize_subscription(
     webhook_url = None
     form_url = None
 
-    if _should_emit_webhook_url(subscription.trigger_key):
-        webhook_url = _build_webhook_url(subscription.id, subscription.trigger_key)
+    if _should_emit_webhook_url(subscription.trigger_key) and subscription.webhook_slug:
+        webhook_url = _build_webhook_url(subscription.webhook_slug, subscription.trigger_key)
 
     # Build form URL for form triggers
     if subscription.trigger_key == "form.hosted":
@@ -237,7 +239,7 @@ async def _serialize_subscription(
         enabled=subscription.enabled,
         filters=dict(subscription.filters or {}),
         provider_config=dict(subscription.provider_config or {}),
-        secret_token=subscription.secret_token,
+        secret_token=None,  # Deprecated: slug-based URLs don't need secrets
         webhook_url=webhook_url,
         form_url=form_url,
         form_suffix=subscription.form_suffix,
@@ -342,16 +344,15 @@ async def _validate_and_adjust_poll_interval(
     return requested_interval, None
 
 
-async def _create_supabase_webhook(
-    subscription: TriggerSubscription, secret: str
-) -> None:
+async def _create_supabase_webhook(subscription: TriggerSubscription) -> None:
+    """Create a Supabase database webhook using the subscription's webhook_slug."""
+    if not subscription.webhook_slug:
+        raise ValueError("webhook_slug is required for Supabase webhooks")
     webhook_base_url = shared_config.webhook_base_url or "http://localhost:8000"
     base = webhook_base_url.rstrip("/")
-    full_url = f"{base}/api/v1/webhooks/generic/{subscription.id}"
+    full_url = f"{base}/api/v1/webhooks/generic/{subscription.webhook_slug}"
     try:
-        metadata = await create_database_webhook(
-            subscription, full_url, secret=secret
-        )
+        metadata = await create_database_webhook(subscription, full_url)
         logger.info(
             "Created Supabase webhook",
             extra={"subscription_id": subscription.id, "metadata": metadata},
@@ -469,9 +470,9 @@ async def create_trigger_subscription(
                     status=400,
                 )
 
-    secret = None
+    webhook_slug = None
     if _should_emit_webhook_url(payload.trigger_key):
-        secret = _generate_subscription_secret()
+        webhook_slug = _generate_webhook_slug()
     _validate_form_suffix(payload.form_suffix)
 
     # Phase 2: Polling Frequency Gate
@@ -495,14 +496,14 @@ async def create_trigger_subscription(
         enabled=payload.enabled,
         filters=filters,
         provider_config=provider_config,
-        secret_token=secret,
+        webhook_slug=webhook_slug,
         form_suffix=payload.form_suffix,
         form_fields=payload.form_fields,
         form_config=payload.form_config,
         poll_interval_seconds=adjusted_interval,
     )
-    if payload.trigger_key == "webhook.supabase.db_changes" and secret:
-        await _create_supabase_webhook(subscription, secret)
+    if payload.trigger_key == "webhook.supabase.db_changes" and webhook_slug:
+        await _create_supabase_webhook(subscription)
     return await _serialize_subscription(subscription)
 
 
@@ -531,8 +532,8 @@ def _apply_subscription_updates(
         subscription.provider_config = new_provider_config
     if payload.enabled is not None:
         subscription.enabled = payload.enabled
-    if _should_emit_webhook_url(subscription.trigger_key) and not subscription.secret_token:
-        subscription.secret_token = _generate_subscription_secret()
+    if _should_emit_webhook_url(subscription.trigger_key) and not subscription.webhook_slug:
+        subscription.webhook_slug = _generate_webhook_slug()
 
 
 async def update_trigger_subscription(
@@ -823,10 +824,10 @@ async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-lo
             )
 
         existing_subscription = existing.get(trigger_spec.id)
-        previous_secret = getattr(existing_subscription, "secret_token", None)
-        secret = previous_secret
-        if _should_emit_webhook_url(trigger_spec.key) and not secret:
-            secret = _generate_subscription_secret()
+        previous_slug = getattr(existing_subscription, "webhook_slug", None)
+        webhook_slug = previous_slug
+        if _should_emit_webhook_url(trigger_spec.key) and not webhook_slug:
+            webhook_slug = _generate_webhook_slug()
 
         if existing_subscription:
             existing_subscription.trigger_key = trigger_spec.key  # Update type reference
@@ -835,7 +836,7 @@ async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-lo
             existing_subscription.enabled = True  # Always enabled when in spec
             existing_subscription.filters = filters
             existing_subscription.provider_config = provider_config
-            existing_subscription.secret_token = secret
+            existing_subscription.webhook_slug = webhook_slug
             existing_subscription.poll_interval_seconds = adjusted_interval
             # Sync form data for form triggers — preserve auto-generated suffix
             if form_suffix:
@@ -846,14 +847,14 @@ async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-lo
             existing_subscription.form_config = form_config
             await existing_subscription.save()
 
-            # If we generated a new secret for Supabase, ensure webhook is created.
+            # If we generated a new slug for Supabase, ensure webhook is created.
             if (
                 not skip_validation
                 and trigger_spec.key == "webhook.supabase.db_changes"
-                and secret
-                and not previous_secret
+                and webhook_slug
+                and not previous_slug
             ):
-                await _create_supabase_webhook(existing_subscription, secret)
+                await _create_supabase_webhook(existing_subscription)
         else:
             is_polling = trigger_spec.key in POLLING_TRIGGERS
             # Auto-generate form suffix if not provided and this is a form trigger
@@ -868,7 +869,7 @@ async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-lo
                 enabled=True,
                 filters=filters,
                 provider_config=provider_config,
-                secret_token=secret,
+                webhook_slug=webhook_slug,
                 poll_interval_seconds=adjusted_interval,
                 is_polling=is_polling,
                 # Set form data for form triggers
@@ -876,8 +877,8 @@ async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-lo
                 form_fields=form_fields,
                 form_config=form_config,
             )
-            if not skip_validation and trigger_spec.key == "webhook.supabase.db_changes" and secret:
-                await _create_supabase_webhook(subscription, secret)
+            if not skip_validation and trigger_spec.key == "webhook.supabase.db_changes" and webhook_slug:
+                await _create_supabase_webhook(subscription)
 
 
 async def _provision_form_listening(
@@ -939,12 +940,12 @@ async def _provision_webhook_listening(
     existing: Optional[TriggerSubscription],
 ) -> api_models.StartListeningResponse:
     """Provision or update a webhook trigger subscription and return the webhook URL."""
-    if existing and existing.secret_token:
+    if existing and existing.webhook_slug:
         subscription = existing
     else:
-        secret = _generate_subscription_secret()
+        webhook_slug = _generate_webhook_slug()
         if existing:
-            existing.secret_token = secret
+            existing.webhook_slug = webhook_slug
             existing.enabled = True
             await existing.save()
             subscription = existing
@@ -959,10 +960,10 @@ async def _provision_webhook_listening(
                 enabled=True,
                 filters=dict(trigger_spec.filters or {}),
                 provider_config=dict(trigger_spec.provider_config or {}),
-                secret_token=secret,
+                webhook_slug=webhook_slug,
             )
 
-    webhook_url = _build_webhook_url(subscription.id, subscription.trigger_key)
+    webhook_url = _build_webhook_url(subscription.webhook_slug, subscription.trigger_key)
     if not webhook_url:
         _raise_problem(
             type_uri=VALIDATION_PROBLEM,
@@ -976,7 +977,7 @@ async def _provision_webhook_listening(
 
     return api_models.StartListeningResponse(
         webhook_url=full_url,
-        secret_token=subscription.secret_token,
+        secret_token=None,  # Deprecated: slug-based URLs don't need secrets
         subscription_id=subscription.id,
     )
 

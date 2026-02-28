@@ -320,7 +320,8 @@ class TriggerSubscription(models.Model):
     ## feild for webhook type triggers
     filters = fields.JSONField(null=True)
     provider_config = fields.JSONField(null=True)
-    secret_token = fields.CharField(max_length=255, null=True)
+    secret_token = fields.CharField(max_length=255, null=True)  # Deprecated: use webhook_slug
+    webhook_slug = fields.CharField(max_length=64, null=True, unique=True, db_index=True)
     event_data_schema = fields.JSONField(null=True)
 
     ## fields for form type triggers

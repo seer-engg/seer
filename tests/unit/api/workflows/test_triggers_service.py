@@ -364,24 +364,24 @@ class TestBuildWebhookUrl:
     """Tests for _build_webhook_url function."""
 
     def test_build_webhook_url_generic(self):
-        """Test building URL for generic webhook."""
+        """Test building URL for generic webhook using slug."""
         from seer.api.workflows.services.triggers import _build_webhook_url
 
-        result = _build_webhook_url(123, "webhook.generic")
-        assert result == "/v1/webhooks/generic/123"
+        result = _build_webhook_url("test_slug_abc123", "webhook.generic")
+        assert result == "/api/v1/webhooks/generic/test_slug_abc123"
 
     def test_build_webhook_url_supabase(self):
-        """Test building URL for Supabase webhook."""
+        """Test building URL for Supabase webhook using slug."""
         from seer.api.workflows.services.triggers import _build_webhook_url
 
-        result = _build_webhook_url(456, "webhook.supabase.db_changes")
-        assert result == "/v1/webhooks/generic/456"
+        result = _build_webhook_url("supabase_slug_xyz789", "webhook.supabase.db_changes")
+        assert result == "/api/v1/webhooks/generic/supabase_slug_xyz789"
 
     def test_build_webhook_url_unknown_type(self):
         """Test building URL for unknown trigger type returns None."""
         from seer.api.workflows.services.triggers import _build_webhook_url
 
-        result = _build_webhook_url(789, "schedule.cron")
+        result = _build_webhook_url("any_slug", "schedule.cron")
         assert result is None
 
 
@@ -407,7 +407,7 @@ class TestSerializeSubscription:
         mock_subscription.enabled = True
         mock_subscription.filters = {"key": "value"}
         mock_subscription.provider_config = {"cron": "* * * * *"}
-        mock_subscription.secret_token = None
+        mock_subscription.webhook_slug = None  # Not a webhook trigger
         mock_subscription.form_suffix = None
         mock_subscription.form_fields = None
         mock_subscription.form_config = None
@@ -445,7 +445,7 @@ class TestSerializeSubscription:
         mock_subscription.enabled = True
         mock_subscription.filters = {}
         mock_subscription.provider_config = {}
-        mock_subscription.secret_token = "secret_abc"
+        mock_subscription.webhook_slug = "test_slug_abc123"
         mock_subscription.form_suffix = None
         mock_subscription.form_fields = None
         mock_subscription.form_config = None
@@ -455,8 +455,8 @@ class TestSerializeSubscription:
         with patch("seer.api.workflows.services.triggers.make_workflow_public_id", return_value="wf_xyz"):
             result = await _serialize_subscription(mock_subscription)
 
-        assert result.webhook_url == "/v1/webhooks/generic/123"
-        assert result.secret_token == "secret_abc"
+        assert result.webhook_url == "/api/v1/webhooks/generic/test_slug_abc123"
+        assert result.secret_token is None  # Deprecated: slug-based URLs don't need secrets
         assert result.connection_display_name is None
 
     @pytest.mark.asyncio
@@ -472,7 +472,7 @@ class TestSerializeSubscription:
         mock_subscription.enabled = True
         mock_subscription.filters = {}
         mock_subscription.provider_config = {}
-        mock_subscription.secret_token = None
+        mock_subscription.webhook_slug = None  # Form triggers don't use webhook_slug
         mock_subscription.form_suffix = "contact-form"
         mock_subscription.form_fields = [{"name": "email", "type": "email"}]
         mock_subscription.form_config = {"title": "Contact Us"}

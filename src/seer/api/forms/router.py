@@ -7,7 +7,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, HTTPException, Request, status
 
 from seer.api.forms.validation import validate_form_data
-from seer.api.webhooks.services import handle_generic_webhook
+from seer.api.webhooks.services import handle_webhook_for_subscription
 from seer.database import TriggerSubscription, WorkflowRun, WorkflowRunStatus
 from seer.logger import get_logger
 
@@ -120,14 +120,10 @@ async def submit_form(suffix: str, request: Request) -> Dict[str, Any]:
             return await _handle_hitl_form_submission(subscription, data, hitl_run_id)
 
         # Regular form - trigger webhook to start new workflow run
-        # Skip secret verification — form submissions are public endpoints
-        event = await handle_generic_webhook(
-            subscription.id,
+        event = await handle_webhook_for_subscription(
+            subscription,
             payload=data,
             headers=dict(request.headers),
-            secret=None,
-            provider_event_id=None,
-            skip_secret_verification=True,
         )
 
         return {

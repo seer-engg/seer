@@ -113,7 +113,11 @@ class TriggerSubscriptionResponse(BaseModel):
     enabled: bool
     filters: Dict[str, Any] = Field(default_factory=dict)
     provider_config: Dict[str, Any] = Field(default_factory=dict)
-    secret_token: Optional[str] = None
+    secret_token: Optional[str] = Field(
+        default=None,
+        deprecated=True,
+        description="Deprecated: webhook URLs now use slug-based security. Always returns None.",
+    )
     webhook_url: Optional[str] = None
     form_url: Optional[str] = None
     # Form trigger fields
@@ -162,7 +166,11 @@ class TriggerSubscriptionTestResponse(BaseModel):
 
 class StartListeningResponse(BaseModel):
     webhook_url: Optional[str] = None
-    secret_token: Optional[str] = None
+    secret_token: Optional[str] = Field(
+        default=None,
+        deprecated=True,
+        description="Deprecated: webhook URLs now use slug-based security. Always returns None.",
+    )
     subscription_id: int
     form_url: Optional[str] = None
 
@@ -486,7 +494,6 @@ class HITLInterruptResponse(BaseModel):
     is_expired: bool = False
 
 
-
 class WorkflowFileItem(BaseModel):
     """File metadata for a workflow run file."""
     file_id: str
@@ -527,74 +534,27 @@ class WorkflowFileDeleteResponse(BaseModel):
 
 
 __all__ = [
-    "ProblemDetails",
-    "ProblemError",
-    "NodeFieldDescriptor",
-    "NodeTypeDescriptor",
-    "NodeTypeResponse",
-    "ToolDescriptor",
-    "ToolRegistryResponse",
-    "TriggerDescriptor",
-    "TriggerCatalogResponse",
-    "TriggerAccountInfo",
-    "TriggerAccountsResponse",
-    "TriggerSubscriptionCreateRequest",
-    "TriggerSubscriptionUpdateRequest",
-    "TriggerSubscriptionResponse",
-    "TriggerSubscriptionListResponse",
-    "TriggerSubscriptionListItem",
-    "TriggerSubscriptionListItemsResponse",
-    "TriggerSubscriptionToggleRequest",
-    "TriggerSubscriptionTestRequest",
-    "TriggerSubscriptionTestResponse",
-    "StartListeningResponse",
-    "PendingEventItem",
-    "PendingEventsResponse",
-    "SubscriptionEventCountResponse",
-    "ModelDescriptor",
-    "ModelRegistryResponse",
-    "SchemaResponse",
-    "SchemaMetadataGenerateRequest",
-    "SchemaMetadataGenerateResponse",
-    "WorkflowWarning",
-    "ValidateRequest",
-    "ValidateResponse",
-    "CompileOptions",
-    "CompileRequest",
-    "CompileResponse",
-    "CompileArtifacts",
-    "WorkflowCreateRequest",
-    "WorkflowUpdateRequest",
-    "WorkflowDraftPatchRequest",
-    "WorkflowPublishRequest",
-    "WorkflowVersionRestoreRequest",
-    "WorkflowResponse",
-    "WorkflowSummary",
-    "WorkflowListResponse",
-    "WorkflowVersionSummary",
-    "WorkflowVersionListResponse",
-    "WorkflowVersionListItem",
-    "RunFromSpecRequest",
-    "RunFromWorkflowRequest",
-    "RunResponse",
-    "RunResultResponse",
-    "RunHistoryResponse",
-    "WorkflowRunSummary",
-    "WorkflowRunListResponse",
-    "ExpressionSuggestRequest",
-    "ExpressionSuggestResponse",
-    "ExpressionTypecheckRequest",
-    "ExpressionTypecheckResponse",
-    "ExpressionSuggestion",
-    "WorkflowImportRequest",
-    "WorkflowExportResponse",
-    "HITLResumeRequest",
-    "HITLInterruptDisplayItem",
-    "HITLInterruptInputField",
-    "HITLInterruptResponse",
-    "WorkflowFileItem",
-    "WorkflowFileListResponse",
-    "WorkflowFileResponse",
-    "WorkflowFileDownloadResponse",
-    "WorkflowFileDeleteResponse",
+    "ProblemDetails", "ProblemError", "NodeFieldDescriptor", "NodeTypeDescriptor",
+    "NodeTypeResponse", "ToolDescriptor", "ToolRegistryResponse", "TriggerDescriptor",
+    "TriggerCatalogResponse", "TriggerAccountInfo", "TriggerAccountsResponse",
+    "TriggerSubscriptionCreateRequest", "TriggerSubscriptionUpdateRequest",
+    "TriggerSubscriptionResponse", "TriggerSubscriptionListResponse",
+    "TriggerSubscriptionListItem", "TriggerSubscriptionListItemsResponse",
+    "TriggerSubscriptionToggleRequest", "TriggerSubscriptionTestRequest",
+    "TriggerSubscriptionTestResponse", "StartListeningResponse", "PendingEventItem",
+    "PendingEventsResponse", "SubscriptionEventCountResponse", "ModelDescriptor",
+    "ModelRegistryResponse", "SchemaResponse", "SchemaMetadataGenerateRequest",
+    "SchemaMetadataGenerateResponse", "WorkflowWarning", "ValidateRequest",
+    "ValidateResponse", "CompileOptions", "CompileRequest", "CompileResponse",
+    "CompileArtifacts", "WorkflowCreateRequest", "WorkflowUpdateRequest",
+    "WorkflowDraftPatchRequest", "WorkflowPublishRequest", "WorkflowVersionRestoreRequest",
+    "WorkflowResponse", "WorkflowSummary", "WorkflowListResponse", "WorkflowVersionSummary",
+    "WorkflowVersionListResponse", "WorkflowVersionListItem", "RunFromSpecRequest",
+    "RunFromWorkflowRequest", "RunResponse", "RunResultResponse", "RunHistoryResponse",
+    "WorkflowRunSummary", "WorkflowRunListResponse", "ExpressionSuggestRequest",
+    "ExpressionSuggestResponse", "ExpressionTypecheckRequest", "ExpressionTypecheckResponse",
+    "ExpressionSuggestion", "WorkflowImportRequest", "WorkflowExportResponse",
+    "HITLResumeRequest", "HITLInterruptDisplayItem", "HITLInterruptInputField",
+    "HITLInterruptResponse", "WorkflowFileItem", "WorkflowFileListResponse",
+    "WorkflowFileResponse", "WorkflowFileDownloadResponse", "WorkflowFileDeleteResponse",
 ]
