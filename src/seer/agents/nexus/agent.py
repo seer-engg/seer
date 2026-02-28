@@ -3,6 +3,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import (
     SummarizationMiddleware,
 )
+from seer.agents.nexus.tool_call_sanitizer import ToolCallSanitizationMiddleware
 
 from seer.config import config
 from seer.logger import get_logger
@@ -107,7 +108,10 @@ async def create_nexus_chat_agent(
     )
 
     # Build middleware list
+    # ToolCallSanitizationMiddleware runs first to sanitize tool_call_ids
+    # before they're processed or stored in checkpoints
     middleware = [
+        ToolCallSanitizationMiddleware(),
         SummarizationMiddleware(
             model=summarization_model,
             max_tokens_before_summary=256000/2,  #Model Limit 256k

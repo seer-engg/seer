@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from seer.api.core.errors import VALIDATION_PROBLEM, raise_problem
 from seer.logger import get_logger
 from seer.utilities.langfuse_tracing import merge_nexus_langfuse_callbacks
+from seer.utilities.message_sanitizer import sanitize_tool_call_id
 
 from .services import (
     create_chat_session,
@@ -114,7 +115,7 @@ class IncompleteToolCallDetector:
             for tc in message.tool_calls:
                 tool_call_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
                 if tool_call_id:
-                    tool_call_ids.add(tool_call_id)
+                    tool_call_ids.add(sanitize_tool_call_id(tool_call_id))
 
         return tool_call_ids
 
@@ -127,11 +128,11 @@ class IncompleteToolCallDetector:
             if isinstance(m, ToolMessage):
                 tool_call_id = getattr(m, "tool_call_id", None)
                 if tool_call_id:
-                    tool_response_ids.add(tool_call_id)
+                    tool_response_ids.add(sanitize_tool_call_id(tool_call_id))
             elif isinstance(m, dict) and m.get("type") == "tool":
                 tool_call_id = m.get("tool_call_id")
                 if tool_call_id:
-                    tool_response_ids.add(tool_call_id)
+                    tool_response_ids.add(sanitize_tool_call_id(tool_call_id))
 
         return tool_response_ids
 
@@ -182,7 +183,7 @@ class IncompleteToolCallRecoveryService:
             for tc in tool_calls:
                 tool_call_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
                 if tool_call_id:
-                    tool_call_ids.add(tool_call_id)
+                    tool_call_ids.add(sanitize_tool_call_id(tool_call_id))
 
         return tool_call_ids
 
@@ -195,13 +196,13 @@ class IncompleteToolCallRecoveryService:
             if isinstance(m, ToolMessage):
                 tool_call_id = getattr(m, "tool_call_id", None)
                 if tool_call_id:
-                    response_ids.add(tool_call_id)
+                    response_ids.add(sanitize_tool_call_id(tool_call_id))
             elif isinstance(m, dict):
                 m_type = m.get("type") or m.get("role", "")
                 if m_type == "tool":
                     tool_call_id = m.get("tool_call_id")
                     if tool_call_id:
-                        response_ids.add(tool_call_id)
+                        response_ids.add(sanitize_tool_call_id(tool_call_id))
 
         return response_ids
 
