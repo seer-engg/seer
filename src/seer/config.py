@@ -1,4 +1,4 @@
-# pylint: disable=duplicate-code  # Reason: SettingsConfigDict block shared with observability.constants for consistent env loading
+# pylint: disable=duplicate-code,too-many-lines  # Reason: SettingsConfigDict block shared with observability.constants; config contains many env vars
 """
 Type-safe configuration for Seer using Pydantic Settings.
 
@@ -165,6 +165,19 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         description="Enable TCP keepalive for Redis connections to prevent idle timeout disconnections.",
     )
 
+    # ============================================================================
+    # Session Configuration (for OAuth flows)
+    # ============================================================================
+
+    session_backend: str = Field(
+        default="redis",
+        description="Session backend: 'cookie' (default, uses signed cookies) or 'redis' (for multi-worker deployments)",
+    )
+    session_ttl_seconds: int = Field(
+        default=600,
+        description="Session time-to-live in seconds (default: 10 minutes, used for OAuth flows)",
+    )
+
     google_client_id: str = Field(default="", description="Google OAuth client ID")
     google_client_secret: str = Field(default="", description="Google OAuth client secret")
 
@@ -208,6 +221,13 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     )
     slack_client_secret: Optional[str] = Field(
         default=None, description="Slack OAuth client secret"
+    )
+
+    airtable_client_id: Optional[str] = Field(
+        default=None, description="Airtable OAuth client ID"
+    )
+    airtable_client_secret: Optional[str] = Field(
+        default=None, description="Airtable OAuth client secret"
     )
 
     # ============================================================================

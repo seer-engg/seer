@@ -52,6 +52,14 @@ from seer.tools.google.gsheets import (
     GoogleSheetsReadTool,
     GoogleSheetsWriteTool,
 )
+from seer.tools.google.youtube import (
+    YouTubeGetChannelTool,
+    YouTubeGetPlaylistItemsTool,
+    YouTubeGetVideoTool,
+    YouTubeListPlaylistsTool,
+    YouTubeSearchTool,
+    YouTubeUploadVideoTool,
+)
 
 
 def register_google_tools():
@@ -102,6 +110,14 @@ def register_google_tools():
     register_tool(GoogleSheetsReadTool())
     register_tool(GoogleSheetsBatchReadTool())
     register_tool(GoogleSheetsGetSpreadsheetTool())
+    # YouTube - read operations
+    register_tool(YouTubeSearchTool())
+    register_tool(YouTubeGetVideoTool())
+    register_tool(YouTubeGetChannelTool())
+    register_tool(YouTubeListPlaylistsTool())
+    register_tool(YouTubeGetPlaylistItemsTool())
+    # YouTube - upload operations
+    register_tool(YouTubeUploadVideoTool())
 
 
 __all__ = [

@@ -202,7 +202,28 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
-app.add_middleware(SessionMiddleware, secret_key=os.getenv("SECRET_KEY", "dev_secret_key"))
+# Session middleware - use Redis for multi-worker deployments, cookie for dev
+# OAuth flows require proper cookie settings for cross-origin redirects
+if config.session_backend == "redis":
+    from seer.api.core.middleware.redis_sessions import RedisSessionMiddleware  # pylint: disable=ungrouped-imports # Reason: Conditional import based on config
+    app.add_middleware(
+        RedisSessionMiddleware,
+        redis_url=config.redis_url,
+        session_ttl=config.session_ttl_seconds,
+        cookie_secure=config.redirect_uri_scheme == "https",
+    )
+    logger.info("Redis session middleware enabled (TTL=%ds)", config.session_ttl_seconds)
+else:
+    # Configure SessionMiddleware with OAuth-compatible settings
+    # same_site="lax" allows cookies on top-level navigations (OAuth redirects)
+    # max_age matches our default session TTL
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=os.getenv("SECRET_KEY", "dev_secret_key"),
+        same_site="lax",
+        max_age=config.session_ttl_seconds,
+        https_only=config.redirect_uri_scheme == "https",
+    )
 
 # PyInstrument profiling middleware - writes HTML reports for inspection
 if config.request_profiling_enabled:

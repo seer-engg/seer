@@ -1,5 +1,5 @@
-# pylint: disable=no-else-return,broad-exception-caught,logging-fstring-interpolation,too-many-positional-arguments,ungrouped-imports
-# Reason: OAuth helper has if/elif patterns, broad exception handling, legacy f-string logging, many OAuth params
+# pylint: disable=no-else-return,broad-exception-caught,logging-fstring-interpolation,too-many-positional-arguments,ungrouped-imports,too-many-return-statements,too-complex
+# Reason: OAuth helper has if/elif patterns for per-provider logic, broad exception handling, legacy f-string logging, many OAuth params
 from typing import Set, Optional, List
 from datetime import datetime, timezone
 from typing import Dict, Any
@@ -39,6 +39,9 @@ def get_connection_display_name(connection: OAuthConnection) -> str:
         return metadata.get("username") or connection.provider_account_id or f"ID:{connection.id}"
     elif provider == "linkedin":
         return metadata.get("email") or metadata.get("name") or connection.provider_account_id or f"ID:{connection.id}"
+    elif provider == "airtable":
+        # Airtable profile contains 'email' from user.email:read scope
+        return metadata.get("email") or connection.provider_account_id or f"ID:{connection.id}"
     else:
         # Generic fallback: try common fields
         return (
@@ -267,6 +270,15 @@ def extract_provider_account_id(oauth_provider: str, profile: Dict[str, Any]) ->
         if provider_id is None:
             raise ValueError(
                 f"Discord profile missing required field 'id'. "
+                f"Profile keys: {list(profile.keys())}"
+            )
+        return str(provider_id)
+    elif oauth_provider == 'airtable':
+        # Airtable whoami response contains 'id' field (user ID)
+        provider_id = profile.get('id')
+        if provider_id is None:
+            raise ValueError(
+                f"Airtable profile missing required field 'id'. "
                 f"Profile keys: {list(profile.keys())}"
             )
         return str(provider_id)
