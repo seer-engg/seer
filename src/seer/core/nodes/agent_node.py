@@ -1,9 +1,10 @@
 """
 AgentNode - Multi-step autonomous task execution with tool access.
 
-Uses LangGraph's react_agent internally to enable reasoning, tool calling,
+Uses LangChain's create_agent internally to enable reasoning, tool calling,
 and iteration until the task is complete. Supports state resolution,
-OAuth credential binding for tools, and comprehensive tracing.
+OAuth credential binding for tools, structured output via response_format,
+and comprehensive tracing.
 """
 
 from __future__ import annotations
@@ -14,11 +15,11 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
+from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import StructuredTool
-from langgraph.prebuilt import create_react_agent  # pylint: disable=no-name-in-module  # Reason: Import location is valid in langgraph 1.0+
-from pydantic import BaseModel, create_model
-
+from pydantic import BaseModel, Field, create_model
 from seer.core.errors import ExecutionError
 from seer.core.expr.typecheck import schema_from_output_contract
 from seer.core.nodes.base import BaseNodeType, NodeExecutionContext, TypeRegistrationContext, get_trace_key
@@ -79,6 +80,30 @@ def _create_tool_input_model(tool_name: str, input_schema: Dict[str, Any]) -> ty
     return create_model(model_name, **field_definitions)
 
 
+def _create_output_model_from_schema(node_id: str, schema: Dict[str, Any]) -> type[BaseModel]:
+    """
+    Create a Pydantic model from output JSON schema for structured output.
+
+    Args:
+        node_id: The node identifier (used for model naming)
+        schema: JSON schema with 'properties' field
+
+    Returns:
+        Dynamically created Pydantic model class
+    """
+    properties = schema.get("properties", {})
+
+    field_definitions: Dict[str, Any] = {}
+    for prop_name, prop_schema in properties.items():
+        python_type = _json_schema_to_pydantic_type(prop_schema)
+        description = prop_schema.get("description", "")
+        field_definitions[prop_name] = (python_type, Field(description=description))
+
+    # Create a valid Python class name from node_id
+    model_name = f"{node_id.replace('-', '_').replace('.', '_').title()}Output"
+    return create_model(model_name, **field_definitions)
+
+
 def _parse_tool_spec(spec: Any) -> tuple[str, Optional[int]]:
     """
     Parse a tool specification into (tool_name, connection_id).
@@ -104,17 +129,7 @@ def _make_tool_executor(
     connection_id: Optional[int],
     ctx: NodeExecutionContext,
 ) -> Any:
-    """
-    Create a tool executor closure with credential resolution.
-
-    Args:
-        base_tool: The BaseTool instance
-        connection_id: Optional connection ID for OAuth
-        ctx: Execution context with runtime context
-
-    Returns:
-        Async function that executes the tool with resolved credentials
-    """
+    """Create a tool executor closure with credential resolution."""
     # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
     from seer.tools.credential_resolver import CredentialResolver
 
@@ -156,17 +171,7 @@ async def _bind_tools_for_agent(
     services: "RuntimeServices",  # pylint: disable=unused-argument  # Reason: Reserved for future use with ToolRegistry
     ctx: NodeExecutionContext,
 ) -> List[StructuredTool]:
-    """
-    Convert tool specifications to LangChain StructuredTools with credentials.
-
-    Args:
-        tool_specs: List of tool names (str) or {name, connection_id} objects
-        services: Runtime services containing tool registry
-        ctx: Execution context with runtime context for credential resolution
-
-    Returns:
-        List of LangChain StructuredTool instances ready for agent use
-    """
+    """Convert tool specifications to LangChain StructuredTools with credentials."""
     # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
     from seer.tools.base import get_tool
 
@@ -274,18 +279,7 @@ def _extract_json_from_markdown(text: str) -> str:
 
 
 def _extract_agent_config(node: "AgentNode") -> Dict[str, Any]:
-    """
-    Extract and validate agent configuration from node inputs.
-
-    Args:
-        node: The AgentNode instance
-
-    Returns:
-        Dictionary with model_id, prompt_template, tool_specs, max_iterations, temperature
-
-    Raises:
-        ExecutionError: If required config is missing or invalid
-    """
+    """Extract and validate agent configuration from node inputs."""
     model_id = node.inputs.get("model")
     if not isinstance(model_id, str):
         raise ExecutionError(f"AgentNode {node.id}: 'model' must be a string in inputs")
@@ -332,19 +326,7 @@ def _build_agent_trace(
     success_data: Optional[Dict[str, Any]] = None,
     error: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
-    """
-    Build trace data for agent execution.
-
-    Args:
-        node_id: The node identifier
-        inputs: Input configuration for the agent
-        status: "succeeded" or "failed"
-        success_data: Dict with prompt, tool_names, steps, result_value (for success)
-        error: Optional error dict with type and message (for failure)
-
-    Returns:
-        Trace dictionary for state storage
-    """
+    """Build trace data for agent execution."""
     trace: Dict[str, Any] = {
         "node_id": node_id,
         "node_type": "agent",
@@ -375,7 +357,7 @@ def _build_agent_trace(
 
 
 class AgentNodeType(BaseNodeType):
-    """Implementation of the agent node type using LangGraph's react_agent."""
+    """Implementation of the agent node type using LangChain's create_agent."""
 
     @property
     def type_literal(self) -> str:
@@ -430,6 +412,48 @@ class AgentNodeType(BaseNodeType):
         except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Log scheduling error without crashing workflow
             logger.error("Failed to schedule agent usage tracking: %s", e)
 
+    def _resolve_response_format(
+        self,
+        node: AgentNode,
+        services: "RuntimeServices",
+    ) -> Optional[ToolStrategy]:
+        """Return ToolStrategy for structured output, or None for text mode."""
+        if node.outputs.mode != OutputMode.json:
+            return None
+        schema = services.type_env.get(node.id)
+        if schema is None:
+            return None
+        return ToolStrategy(_create_output_model_from_schema(node.id, schema))
+
+    async def _handle_json_output(
+        self,
+        node: AgentNode,
+        services: "RuntimeServices",
+        result: Dict[str, Any],
+        final_output: str,
+    ) -> Any:
+        """Parse and validate JSON output from agent when in json output mode."""
+        # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
+        from seer.core.runtime.validate_output import validate_against_schema
+
+        if node.outputs.mode != OutputMode.json:
+            return final_output
+        schema = services.type_env.get(node.id)
+        if schema is None:
+            return final_output
+        structured_response = result.get("structured_response")
+        if structured_response is not None:
+            result_value = structured_response.model_dump() if isinstance(structured_response, BaseModel) else structured_response
+        else:
+            try:
+                result_value = json.loads(_extract_json_from_markdown(final_output))
+            except json.JSONDecodeError as e:
+                raise ExecutionError(
+                    f"Agent node '{node.id}' expected JSON output but got invalid JSON: {e}"
+                ) from e
+        validate_against_schema(schema, result_value, schema_id=node.id)
+        return result_value
+
     # pylint: disable=too-many-locals  # Reason: Agent execution requires many context variables
     async def execute_async(
         self,
@@ -437,22 +461,10 @@ class AgentNodeType(BaseNodeType):
         ctx: NodeExecutionContext,
         services: "RuntimeServices",
     ) -> Dict[str, Any]:
-        """
-        Execute agent node with credit checking and usage tracking.
-
-        Steps:
-        1. Check credit limit
-        2. Build evaluation context and resolve prompt
-        3. Bind tools with credentials
-        4. Get LLM chat model
-        5. Create and run react_agent
-        6. Extract output and build trace
-        7. Validate JSON output if specified
-        """
+        """Execute agent node with credit checking and usage tracking."""
         # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
         from seer.core.expr.evaluator import EvaluationContext, render_template
         from seer.core.runtime.state import INTERNAL_STATE_PREFIX
-        from seer.core.runtime.validate_output import validate_against_schema
 
         # Check credit limit
         await self._check_credit_limit(ctx.runtime_context)
@@ -487,10 +499,14 @@ class AgentNodeType(BaseNodeType):
             model_def = services.model_registry.get(model_id)
             llm = model_def.get_chat_model(temperature=temperature if isinstance(temperature, (int, float)) else 0.2)
 
-            # Create react agent
-            agent = create_react_agent(
+            # Determine response_format for structured output
+            response_format = self._resolve_response_format(node, services)
+
+            # Create agent with optional structured output
+            agent = create_agent(
                 model=llm,
                 tools=bound_tools,
+                response_format=response_format,
             )
 
             # Execute agent with recursion limit based on max_iterations
@@ -518,18 +534,7 @@ class AgentNodeType(BaseNodeType):
             raise ExecutionError(f"Agent node '{node.id}' failed: {exc}", trace_data=error_trace) from exc
 
         # Handle JSON output mode if specified
-        result_value: Any = final_output
-        if node.outputs.mode == OutputMode.json:
-            schema = services.type_env.get(node.id)
-            if schema is not None:
-                try:
-                    json_str = _extract_json_from_markdown(final_output)
-                    result_value = json.loads(json_str)
-                    validate_against_schema(schema, result_value, schema_id=node.id)
-                except json.JSONDecodeError as e:
-                    raise ExecutionError(
-                        f"Agent node '{node.id}' expected JSON output but got invalid JSON: {e}"
-                    ) from e
+        result_value: Any = await self._handle_json_output(node, services, result, final_output)
 
         # Build output with trace
         trace_key = get_trace_key(node.id, ctx.state, ctx.loop_body_map or {}, ctx.nested_loop_parents or {})

@@ -786,3 +786,75 @@ class TestListTriggerSubscriptionsExtended:
 
         assert len(result.items) == 1
         assert result.items[0].workflow_title == "My Production Workflow"
+
+
+# =============================================================================
+# Generate Cron Event Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestGenerateCronEvent:
+    """Tests for generate_cron_event function."""
+
+    def test_generate_cron_event_basic(self):
+        """Test generating a basic cron event envelope."""
+        from seer.api.workflows.services.triggers import generate_cron_event
+
+        result = generate_cron_event("trigger_123", {})
+
+        # Verify envelope structure
+        assert "id" in result
+        assert result["id"].startswith("evt_")
+        assert result["trigger_id"] == "trigger_123"
+        assert result["trigger_key"] == "schedule.cron"
+        assert result["title"] == "Manual Trigger"
+        assert result["provider"] == "schedule"
+        assert result["account_id"] is None
+        assert "occurred_at" in result
+        assert "received_at" in result
+
+        # Verify payload defaults
+        assert result["data"]["cron_expression"] == "* * * * *"
+        assert result["data"]["timezone"] == "UTC"
+        assert result["data"]["manual"] is True
+
+    def test_generate_cron_event_with_config(self):
+        """Test generating a cron event with provider config."""
+        from seer.api.workflows.services.triggers import generate_cron_event
+
+        provider_config = {
+            "cron_expression": "0 9 * * MON-FRI",
+            "timezone": "America/New_York"
+        }
+
+        result = generate_cron_event("trigger_456", provider_config)
+
+        assert result["trigger_id"] == "trigger_456"
+        assert result["data"]["cron_expression"] == "0 9 * * MON-FRI"
+        assert result["data"]["timezone"] == "America/New_York"
+        assert result["data"]["manual"] is True
+
+    def test_generate_cron_event_timestamps(self):
+        """Test that cron event has valid ISO timestamps."""
+        from seer.api.workflows.services.triggers import generate_cron_event
+
+        result = generate_cron_event("trigger_789", {})
+
+        # Verify timestamps are valid ISO format
+        scheduled_time = datetime.fromisoformat(result["data"]["scheduled_time"])
+        actual_time = datetime.fromisoformat(result["data"]["actual_time"])
+        occurred_at = datetime.fromisoformat(result["occurred_at"])
+        received_at = datetime.fromisoformat(result["received_at"])
+
+        # All timestamps should be close to now (within a second)
+        assert all(t.tzinfo is not None for t in [scheduled_time, actual_time, occurred_at, received_at])
+
+    def test_generate_cron_event_unique_ids(self):
+        """Test that each generated event has a unique ID."""
+        from seer.api.workflows.services.triggers import generate_cron_event
+
+        event1 = generate_cron_event("trigger_1", {})
+        event2 = generate_cron_event("trigger_1", {})
+
+        assert event1["id"] != event2["id"]
