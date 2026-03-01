@@ -13,11 +13,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Optional
-
 from seer.database.models import User
-from seer.database.overage_models import OverageSettings
-from seer.database.subscription_models import BillingProfile, SubscriptionTier
+from seer.database.subscription_models import SubscriptionTier
 from seer.observability.constants import tiered_usage_limits
 from seer.observability.exceptions import CreditLimitExceeded, LimitPeriod
 from seer.observability.service import get_limits_for_user, resolve_user_tier
@@ -25,6 +22,7 @@ from seer.observability.tracking import (
     get_5h_llm_credits_used,
     get_monthly_llm_credits_used,
     get_weekly_llm_credits_used,
+    _get_user_overage_settings,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,30 +36,6 @@ class OverageCheckResult:
     overage_enabled: bool
     overage_cap_reached: bool
     remaining_cap_cents: int
-
-
-async def _get_user_overage_settings(user: User) -> Optional[OverageSettings]:
-    """
-    Get overage settings for a user if they exist and are enabled.
-
-    Args:
-        user: The user to check.
-
-    Returns:
-        OverageSettings if enabled, None otherwise.
-    """
-    try:
-        billing_profile = await BillingProfile.get_or_none(owner_user=user)
-        if not billing_profile:
-            return None
-
-        overage_settings = await OverageSettings.get_or_none(
-            billing_profile=billing_profile,
-            enabled=True,
-        )
-        return overage_settings
-    except Exception:  # pylint: disable=broad-except  # reason: graceful degradation
-        return None
 
 
 async def _check_overage_allowance(

@@ -364,7 +364,7 @@ async def test_agent_node_basic_execution():
         ],
     }
 
-    # Mock create_react_agent to return a simple agent
+    # Mock create_agent to return a simple agent
     mock_agent = AsyncMock()
     mock_agent.ainvoke.return_value = {
         "messages": [
@@ -373,7 +373,7 @@ async def test_agent_node_basic_execution():
         ]
     }
 
-    with patch("seer.core.nodes.agent_node.create_react_agent", return_value=mock_agent):
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
         compiled = await _compile_agent_workflow(spec, [model_def])
         trigger_envelope = {"trigger_key": "test.agent"}
         result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
@@ -450,7 +450,7 @@ async def test_agent_node_with_tool_calls():
         ]
     }
 
-    with patch("seer.core.nodes.agent_node.create_react_agent", return_value=mock_agent):
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
         compiled = await _compile_agent_workflow(spec, [model_def])
         trigger_envelope = {"trigger_key": "test.tool_agent"}
         result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
@@ -533,7 +533,7 @@ async def test_agent_node_with_prompt_template():
         ]
     }
 
-    with patch("seer.core.nodes.agent_node.create_react_agent", return_value=mock_agent):
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
         compiled = await _compile_agent_workflow(spec, [model_def])
         trigger_envelope = {
             "id": "data_trigger",
@@ -611,7 +611,7 @@ async def test_agent_node_json_output_mode():
         ]
     }
 
-    with patch("seer.core.nodes.agent_node.create_react_agent", return_value=mock_agent):
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
         compiled = await _compile_agent_workflow(spec, [model_def])
         trigger_envelope = {"trigger_key": "test.json"}
         result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
@@ -681,7 +681,7 @@ async def test_agent_node_after_other_node():
         ]
     }
 
-    with patch("seer.core.nodes.agent_node.create_react_agent", return_value=mock_agent):
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
         compiled = await _compile_agent_workflow(spec, [model_def], [mock_tool])
         trigger_envelope = {"trigger_key": "test.chain"}
         result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
@@ -692,3 +692,94 @@ async def test_agent_node_after_other_node():
     # Verify the prompt was correctly resolved with the previous node's output
     trace = result["_trace_process_agent"]
     assert "prepared data" in trace["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_agent_node_json_output_with_structured_response():
+    """Test AgentNode with JSON output mode using structured_response from ToolStrategy."""
+    from langchain_core.messages import AIMessage, HumanMessage
+    from pydantic import BaseModel
+
+    mock_chat_model = MagicMock()
+
+    def mock_json_handler(invocation, schema):
+        return {"email_1": "email 1 summary", "email_2": "email 2 summary"}, {}
+
+    model_def = ModelDefinition(
+        model_id="test-model",
+        json_handler=mock_json_handler,
+        chat_model_factory=lambda: mock_chat_model,
+    )
+
+    spec = {
+        "version": "2",
+        "triggers": [
+            {
+                "id": "structured_trigger",
+                "key": "test.structured",
+                "mode": "webhook",
+                "event_schema": {"type": "object"},
+            }
+        ],
+        "nodes": [
+            {
+                "id": "structured_agent",
+                "type": "agent",
+                "inputs": {
+                    "model": "test-model",
+                    "prompt": "Summarize my last 2 emails",
+                    "tools": [],
+                },
+                "outputs": {
+                    "mode": "json",
+                    "schema": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "email_1": {"type": "string", "description": "Summary of first email"},
+                                "email_2": {"type": "string", "description": "Summary of second email"},
+                            },
+                        }
+                    },
+                },
+            }
+        ],
+        "edges": [
+            {"source": "structured_trigger", "target": "structured_agent", "type": "trigger"},
+        ],
+    }
+
+    # Create a mock Pydantic model to simulate ToolStrategy output
+    class MockStructuredOutput(BaseModel):
+        email_1: str
+        email_2: str
+
+    mock_structured_output = MockStructuredOutput(
+        email_1="First email is about a meeting",
+        email_2="Second email is about a project update"
+    )
+
+    mock_agent = AsyncMock()
+    # Agent returns structured_response when using ToolStrategy
+    mock_agent.ainvoke.return_value = {
+        "messages": [
+            HumanMessage(content="Summarize my last 2 emails"),
+            AIMessage(content="I've summarized the emails."),
+        ],
+        "structured_response": mock_structured_output,  # This is set by ToolStrategy
+    }
+
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
+        compiled = await _compile_agent_workflow(spec, [model_def])
+        trigger_envelope = {"trigger_key": "test.structured"}
+        result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
+
+    assert "structured_agent" in result
+    # Verify structured output was extracted from Pydantic model
+    assert result["structured_agent"]["email_1"] == "First email is about a meeting"
+    assert result["structured_agent"]["email_2"] == "Second email is about a project update"
+
+    # Verify trace
+    trace = result["_trace_structured_agent"]
+    assert trace["status"] == "succeeded"
+    assert trace["output"]["email_1"] == "First email is about a meeting"
