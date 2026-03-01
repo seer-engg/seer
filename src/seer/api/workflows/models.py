@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from seer.api.workflows import trigger_models as _trigger_models
 from seer.api.workflows.trigger_models import (
     PendingEventItem,
     PendingEventsResponse,
@@ -416,6 +417,7 @@ class WorkflowFileDeleteResponse(BaseModel):
 
 
 __all__ = [
+    *_trigger_models.__all__,
     "ProblemDetails",
     "ProblemError",
     "NodeFieldDescriptor",
@@ -423,23 +425,6 @@ __all__ = [
     "NodeTypeResponse",
     "ToolDescriptor",
     "ToolRegistryResponse",
-    "TriggerDescriptor",
-    "TriggerCatalogResponse",
-    "TriggerAccountInfo",
-    "TriggerAccountsResponse",
-    "TriggerSubscriptionCreateRequest",
-    "TriggerSubscriptionUpdateRequest",
-    "TriggerSubscriptionResponse",
-    "TriggerSubscriptionListResponse",
-    "TriggerSubscriptionListItem",
-    "TriggerSubscriptionListItemsResponse",
-    "TriggerSubscriptionToggleRequest",
-    "TriggerSubscriptionTestRequest",
-    "TriggerSubscriptionTestResponse",
-    "StartListeningResponse",
-    "PendingEventItem",
-    "PendingEventsResponse",
-    "SubscriptionEventCountResponse",
     "ModelDescriptor",
     "ModelRegistryResponse",
     "SchemaResponse",
@@ -486,6 +471,4 @@ __all__ = [
     "WorkflowFileResponse",
     "WorkflowFileDownloadResponse",
     "WorkflowFileDeleteResponse",
-    "TriggerEventGenerateRequest",
-    "TriggerEventGenerateResponse",
 ]
