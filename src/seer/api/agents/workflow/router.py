@@ -104,6 +104,14 @@ def _transform_clarification_interrupt(interrupt_data: Dict[str, Any]) -> None:
             question_kwargs["depends_on_field"] = q.get("depends_on_field")
             # Resource pickers don't have traditional options
             question_kwargs["options"] = []
+        elif question_type == QuestionType.ACCOUNT_PICKER:
+            # Account picker specific fields
+            tool_name = q.get("tool_name")
+            question_kwargs["tool_name"] = tool_name
+            # Note: accounts list is populated by frontend via API call to /tools/{tool_name}/accounts
+            # We pass tool_name so frontend knows which tool's accounts to fetch
+            question_kwargs["accounts"] = None  # Frontend fetches dynamically
+            question_kwargs["options"] = []  # Account pickers don't use traditional options
         else:
             # Choice type specific fields
             question_kwargs["options"] = [
@@ -134,6 +142,27 @@ def _validate_single_answer(answer: ClarificationAnswer, question_data: Dict[str
                 type_uri=VALIDATION_PROBLEM,
                 title="Selection required",
                 detail=f"At least one resource must be selected for question {answer.question_id}",
+                status=400
+            )
+        return
+
+    # Account picker answers: selected_values contains connection_id
+    if question_type == QuestionType.ACCOUNT_PICKER.value:
+        if not answer.selected_values:
+            raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Account selection required",
+                detail=f"An account must be selected for question {answer.question_id}",
+                status=400
+            )
+        # Validate that selected_values[0] is a valid integer connection_id
+        try:
+            int(answer.selected_values[0])
+        except (ValueError, IndexError):
+            raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Invalid account selection",
+                detail=f"Invalid connection_id format for question {answer.question_id}",
                 status=400
             )
         return
