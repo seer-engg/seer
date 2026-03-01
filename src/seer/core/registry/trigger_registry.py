@@ -64,6 +64,7 @@ def _enveloped_event_schema(payload_schema: JsonSchema) -> JsonSchema:
 
 
 POLLING_TRIGGERS = [
+    "poll.airtable.new_record_in_view",
     "poll.gmail.email_received",
     "poll.discord.message_received",
     "poll.slack.message_received",
@@ -104,6 +105,104 @@ def _oauth_connection_property() -> Dict[str, Any]:
     }
 
 
+def _airtable_new_record_in_view_payload_schema() -> JsonSchema:
+    """Payload schema for Airtable new record in view trigger."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "record_id": {"type": "string", "description": "Airtable record ID"},
+            "created_time": {"type": ["string", "null"], "format": "date-time", "description": "Record creation timestamp"},
+            "fields": {"type": "object", "additionalProperties": True, "description": "Record field values"},
+            "base_id": {"type": "string", "description": "Airtable base ID"},
+            "table_id": {"type": "string", "description": "Airtable table ID"},
+            "view_id": {"type": "string", "description": "Airtable view ID being monitored"},
+        },
+        "required": ["record_id", "fields"],
+    }
+
+
+def _airtable_new_record_in_view_config_schema() -> JsonSchema:
+    """Config schema for Airtable new record in view trigger."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "base_id": {
+                "type": "string",
+                "description": "Airtable base ID (e.g., 'appXXXXXXXXXXXXXX')",
+                "x-resource-picker": {
+                    "provider": "airtable",
+                    "resource_type": "base",
+                    "display_field": "name",
+                    "value_field": "id",
+                    "search_enabled": True,
+                },
+            },
+            "table_id": {
+                "type": "string",
+                "description": "Table ID within the base (e.g., 'tblXXXXXXXXXXXXXX')",
+                "x-resource-picker": {
+                    "provider": "airtable",
+                    "resource_type": "table",
+                    "display_field": "name",
+                    "value_field": "id",
+                    "search_enabled": True,
+                    "depends_on": "base_id",
+                },
+            },
+            "view_id": {
+                "type": "string",
+                "description": "View ID to monitor for new records",
+                "x-resource-picker": {
+                    "provider": "airtable",
+                    "resource_type": "view",
+                    "display_field": "name",
+                    "value_field": "id",
+                    "search_enabled": True,
+                    "depends_on": "table_id",
+                },
+            },
+            "max_records": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 100,
+                "description": "Maximum records to fetch per poll (for cursor state management).",
+            },
+            **_oauth_connection_property(),
+        },
+        "required": ["base_id", "table_id", "view_id"],
+    }
+
+
+def _airtable_new_record_in_view_sample_event() -> Dict[str, Any]:
+    """Sample event for Airtable new record in view trigger."""
+    payload = {
+        "record_id": "recABC123XYZ456",
+        "created_time": "2026-02-27T10:00:00.000Z",
+        "fields": {
+            "Name": "New Task",
+            "Status": "To Do",
+            "Priority": "High",
+            "Assignee": "John Doe",
+        },
+        "base_id": "appXXXXXXXXXXXXXX",
+        "table_id": "tblYYYYYYYYYYYYYY",
+        "view_id": "viwZZZZZZZZZZZZZZ",
+    }
+    return {
+        "id": "evt_sample_poll_airtable_new_record_in_view",
+        "trigger_key": "poll.airtable.new_record_in_view",
+        "provider": "airtable",
+        "account_id": None,
+        "occurred_at": "2026-02-27T10:00:00Z",
+        "received_at": "2026-02-27T10:00:05Z",
+        "data": payload,
+        "raw": {"id": "recABC123XYZ456", "createdTime": "2026-02-27T10:00:00.000Z", "fields": payload["fields"]},
+    }
+
+
 def _register_builtin_triggers(registry: TriggerRegistry) -> None:
     registry.register(
         TriggerDefinition(
@@ -133,6 +232,24 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
                 config=_gmail_email_received_config_schema(),
             ),
             meta=TriggerMetadata(sample_event=_gmail_email_received_sample_event()),
+        )
+    )
+    registry.register(
+        TriggerDefinition(
+            key="poll.airtable.new_record_in_view",
+            title="Airtable View",
+            provider="airtable",
+            mode="polling",
+            description="Poll an Airtable view for new records (newly created or moved into view).",
+            schemas=TriggerSchemas(
+                event=_enveloped_event_schema(_airtable_new_record_in_view_payload_schema()),
+                config=_airtable_new_record_in_view_config_schema(),
+            ),
+            meta=TriggerMetadata(
+                sample_event=_airtable_new_record_in_view_sample_event(),
+                requires_connection=True,
+                required_scopes=["data.records:read", "schema.bases:read"],
+            ),
         )
     )
     registry.register(

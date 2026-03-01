@@ -46,6 +46,14 @@ class AirtableResourceProvider(ResourceProvider):
             "depends_on": "base_id",
             "source": "api",
         },
+        "view": {
+            "display_field": "name",
+            "value_field": "id",
+            "supports_search": True,
+            "supports_hierarchy": False,
+            "depends_on": "table_id",
+            "source": "api",
+        },
     }
 
     async def list_resources(
@@ -93,6 +101,24 @@ class AirtableResourceProvider(ResourceProvider):
             return await self._list_tables(
                 user=context.user,
                 base_id=str(base_id),
+                query=query,
+                page_token=page_token,
+                page_size=page_size,
+            )
+        if resource_type == "view":
+            base_id = (depends_on_values or {}).get("base_id")
+            table_id = (depends_on_values or {}).get("table_id")
+            if not base_id or not table_id:
+                raise_problem(
+                    type_uri=VALIDATION_PROBLEM,
+                    title="Missing required parameter",
+                    detail="base_id and table_id are required to list Airtable views. Please select a base and table first.",
+                    status=400
+                )
+            return await self._list_views(
+                user=context.user,
+                base_id=str(base_id),
+                table_id=str(table_id),
                 query=query,
                 page_token=page_token,
                 page_size=page_size,
@@ -254,6 +280,93 @@ class AirtableResourceProvider(ResourceProvider):
         ]
 
         next_page_token = str(offset + page_size) if offset + page_size < len(filtered_tables) else None
+
+        return {
+            "items": items,
+            "next_page_token": next_page_token,
+            "supports_search": True,
+            "supports_hierarchy": False,
+        }
+
+    async def _list_views(
+        self,
+        user: Any,
+        base_id: str,
+        table_id: str,
+        query: Optional[str],
+        page_token: Optional[str],
+        page_size: int,
+    ) -> Dict[str, Any]:
+        """List views in an Airtable table using the API.
+
+        Views are included in the table schema response from the tables endpoint.
+        """
+        access_token = await self._get_access_token(user)
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(
+                    f"{AIRTABLE_API_BASE}/meta/bases/{base_id}/tables",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                raise_problem(
+                    type_uri=INTEGRATION_PROBLEM,
+                    title="Base not found",
+                    detail=f"Airtable base '{base_id}' not found or you don't have access to it",
+                    status=404
+                )
+            raise_problem(
+                type_uri=INTEGRATION_PROBLEM,
+                title="Failed to fetch views",
+                detail=f"Airtable API error: {exc.response.status_code}",
+                status=exc.response.status_code
+            )
+
+        # Find the specific table and extract its views
+        tables: List[Dict[str, Any]] = data.get("tables", [])
+        target_table = next((t for t in tables if t.get("id") == table_id), None)
+
+        if not target_table:
+            raise_problem(
+                type_uri=INTEGRATION_PROBLEM,
+                title="Table not found",
+                detail=f"Airtable table '{table_id}' not found in base '{base_id}'",
+                status=404
+            )
+
+        views: List[Dict[str, Any]] = target_table.get("views", [])
+
+        # Filter by query if provided
+        if query:
+            q_lower = query.lower()
+            views = [v for v in views if q_lower in (v.get("name") or "").lower()]
+
+        # Apply pagination
+        offset = parse_offset(page_token)
+        paged_views = views[offset:offset + page_size]
+
+        items = [
+            {
+                "id": v.get("id", ""),
+                "name": v.get("name") or f"View {v.get('id', '')}",
+                "display_name": v.get("name") or f"View {v.get('id', '')}",
+                "type": "view",
+                "metadata": {
+                    "view_id": v.get("id", ""),
+                    "view_name": v.get("name"),
+                    "view_type": v.get("type"),
+                    "base_id": base_id,
+                    "table_id": table_id,
+                },
+            }
+            for v in paged_views
+        ]
+
+        next_page_token = str(offset + page_size) if offset + page_size < len(views) else None
 
         return {
             "items": items,
