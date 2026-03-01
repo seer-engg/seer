@@ -396,8 +396,64 @@ class BrowserNode(NodeBase):
     )
 
 
+class AgentNode(NodeBase):
+    """
+    Agent node for autonomous multi-step task execution with tool access.
+
+    Uses LangGraph's react_agent internally to enable reasoning, tool calling,
+    and iteration until the task is complete. Supports state resolution,
+    OAuth credential binding for tools, and comprehensive tracing.
+
+    Example:
+        {
+            "id": "research_agent",
+            "type": "agent",
+            "inputs": {
+                "model": "gpt-4",
+                "prompt": "Find information about ${topic} and summarize the key points",
+                "tools": ["web_search", {"name": "gmail_send_email", "connection_id": 42}],
+                "max_iterations": 10
+            },
+            "outputs": {"mode": "text"}
+        }
+    """
+    type: Literal["agent"] = "agent"
+    inputs: Dict[str, JSONValue] = Field(default_factory=dict)
+    outputs: OutputContract = Field(default_factory=lambda: OutputContract(mode=OutputMode.text))
+
+    @model_validator(mode="after")
+    def _validate_agent_inputs(self) -> "AgentNode":
+        """Validate required inputs and tool format."""
+        required = ["model", "prompt"]
+        missing = [k for k in required if k not in self.inputs]
+        if missing:
+            raise ValueError(f'AgentNode requires {", ".join(missing)} in inputs')
+
+        # Validate tools format if provided
+        # pylint: disable-next=no-member  # Reason: Pydantic converts Field to actual Dict at runtime
+        tools = self.inputs.get("tools", [])
+        if not isinstance(tools, list):
+            raise ValueError("AgentNode 'tools' must be a list")
+
+        for i, tool in enumerate(tools):
+            if isinstance(tool, dict):
+                if "name" not in tool:
+                    raise ValueError(f"AgentNode tool at index {i} must have 'name' field")
+            elif not isinstance(tool, str):
+                raise ValueError(f"AgentNode tool at index {i} must be string or {{name, connection_id}} object")
+
+        # Validate max_iterations if provided
+        # pylint: disable-next=no-member  # Reason: Pydantic converts Field to actual Dict at runtime
+        max_iterations = self.inputs.get("max_iterations")
+        if max_iterations is not None:
+            if not isinstance(max_iterations, int) or max_iterations < 1:
+                raise ValueError("AgentNode 'max_iterations' must be a positive integer")
+
+        return self
+
+
 Node = Annotated[
-    Union[ToolNode, LLMNode, MCPNode, IfNode, ForEachNode, HITLNode, ImageGenNode, BrowserNode],
+    Union[ToolNode, LLMNode, MCPNode, IfNode, ForEachNode, HITLNode, ImageGenNode, BrowserNode, AgentNode],
     Field(discriminator="type"),
 ]
 
