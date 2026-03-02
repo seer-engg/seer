@@ -75,7 +75,7 @@ async def test_run_draft_workflow_with_triggers_requires_event_override(db_engin
     )
 
     # Mock _validate_workflow_spec to skip compiler validation (test.tool not registered)
-    with patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock):
+    with patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock):
         # Mock sync_trigger_subscriptions to avoid actual sync
         with patch("seer.api.workflows.services.triggers.sync_trigger_subscriptions") as mock_sync:
             mock_sync.return_value = None
@@ -133,7 +133,7 @@ async def test_run_draft_workflow_with_trigger_event_override(db_engine, test_us
     )
 
     # Mock _validate_workflow_spec to skip compiler validation (test.tool not registered)
-    with patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock):
+    with patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock):
         with patch("seer.api.workflows.services.triggers.sync_trigger_subscriptions") as mock_sync:
             mock_sync.return_value = None
 
@@ -213,7 +213,7 @@ async def test_run_draft_workflow_with_multiple_triggers_requires_trigger_id(db_
     )
 
     # Mock _validate_workflow_spec to skip compiler validation (test.tool not registered)
-    with patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock):
+    with patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock):
         with patch("seer.api.workflows.services.triggers.sync_trigger_subscriptions") as mock_sync:
             mock_sync.return_value = None
 
@@ -314,7 +314,7 @@ async def test_run_workflow_with_triggers_requires_trigger_event(db_engine, test
     )
 
     # Mock _validate_workflow_spec to skip compiler validation (test.tool not registered)
-    with patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock):
+    with patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock):
         with patch("seer.api.workflows.services.triggers.sync_trigger_subscriptions") as mock_sync:
             mock_sync.return_value = None
 
@@ -371,7 +371,7 @@ async def test_run_workflow_with_trigger_override_uses_fallback_title(db_engine,
     )
 
     # Mock _validate_workflow_spec to skip compiler validation (test.tool not registered)
-    with patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock):
+    with patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock):
         with patch("seer.api.workflows.services.triggers.sync_trigger_subscriptions") as mock_sync:
             mock_sync.return_value = None
 

@@ -18,6 +18,7 @@ from seer.database import (
     parse_workflow_public_id,
 )
 from seer.core.schema.models import WorkflowSpec
+from seer.core.runtime.global_compiler import WorkflowCompilerSingleton
 
 
 def _now() -> datetime:
@@ -143,3 +144,18 @@ def raise_compiler_error(exc: WorkflowCompilerError, problem_title: str, type_ur
         status=400,
         errors=problem_errors,
     )
+
+
+async def validate_workflow_spec(user: User, spec: WorkflowSpec) -> None:
+    """
+    Validate workflow spec by running the compiler pipeline.
+    Raises HTTP 400 if validation fails.
+    """
+    from seer.api.agents.checkpointer import get_checkpointer  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import at module load
+    compiler = WorkflowCompilerSingleton.instance()
+    spec_dict = _spec_to_dict(spec)
+    checkpointer = await get_checkpointer()
+    try:
+        await compiler.compile(user, spec_dict, checkpointer=checkpointer)
+    except WorkflowCompilerError as exc:
+        raise_compiler_error(exc, "Workflow validation failed")
