@@ -7,19 +7,18 @@ from seer.api.webhooks import services as webhook_services
 router = APIRouter(prefix="/v1/webhooks", tags=["webhooks"])
 
 
-@router.post("/generic/{subscription_id}", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/generic/{webhook_slug}", status_code=status.HTTP_202_ACCEPTED)
 async def generic_webhook(
-    subscription_id: int,
+    webhook_slug: str,
     request: Request,
-    seer_secret: str | None = Header(default=None, alias="X-Seer-Webhook-Secret"),
     provider_event_id: str | None = Header(default=None, alias="X-Provider-Event-Id"),
 ):
+    """Handle incoming webhook events using slug-based URL security."""
     payload = await request.json()
-    event = await webhook_services.handle_generic_webhook(
-        subscription_id,
+    event = await webhook_services.handle_generic_webhook_by_slug(
+        webhook_slug,
         payload=payload,
         headers=request.headers,
-        secret=seer_secret,
         provider_event_id=provider_event_id,
     )
     return {"ok": True, "event_id": event.id}

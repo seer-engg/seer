@@ -440,6 +440,7 @@ async def get_tool_accounts(request: Request, tool_name: str):
             provider=tool.provider,
             accounts=[],
             requires_selection=False,
+            required_scopes=[],
         )
 
     provider = tool.provider
@@ -449,6 +450,7 @@ async def get_tool_accounts(request: Request, tool_name: str):
             provider=None,
             accounts=[],
             requires_selection=False,
+            required_scopes=list(tool.required_scopes),
         )
 
     # Get all connections for this provider
@@ -484,6 +486,7 @@ async def get_tool_accounts(request: Request, tool_name: str):
         provider=provider,
         accounts=accounts,
         requires_selection=len(accounts) > 1,
+        required_scopes=list(tool.required_scopes),
     )
 
 

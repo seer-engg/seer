@@ -424,6 +424,7 @@ def _build_history_response(
         "created_at": _serialize_datetime(run.created_at),
         "started_at": _serialize_datetime(run.started_at),
         "finished_at": _serialize_datetime(run.finished_at),
+        "error": run.error,
         "nodes": nodes,
         "execution_graph": execution_graph,
     }]
@@ -485,6 +486,10 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
     try:
         state_tuple = await _fetch_checkpoint_state(checkpointer, config, run)
         if not state_tuple:
+            run_status = run.status if isinstance(run.status, WorkflowRunStatus) else WorkflowRunStatus(run.status)
+            if run_status in (WorkflowRunStatus.FAILED, WorkflowRunStatus.CANCELLED):
+                history = _build_history_response(run, [], workflow_spec)
+                return api_models.RunHistoryResponse(run_id=run.run_id, history=history)
             raise_problem(
                 type_uri=RUN_PROBLEM,
                 title="Run history not found",

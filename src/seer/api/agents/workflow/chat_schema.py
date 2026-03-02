@@ -24,6 +24,15 @@ class QuestionType(str, Enum):
     SINGLE_CHOICE = "single_choice"
     MULTI_CHOICE = "multi_choice"
     RESOURCE_PICKER = "resource_picker"
+    ACCOUNT_PICKER = "account_picker"
+
+
+class AccountPickerAccountInfo(BaseModel):
+    """Account information for account picker questions."""
+    id: int = Field(..., description="Database ID of the OAuth connection")
+    display_name: str = Field(..., description="Human-readable account name (email, username)")
+    has_required_scopes: bool = Field(..., description="Whether account has all required scopes for the tool")
+    missing_scopes: List[str] = Field(default_factory=list, description="List of missing scopes if any")
 
 
 class ChatRequest(BaseModel):
@@ -118,6 +127,11 @@ class ClarificationQuestion(BaseModel):
     hierarchy: Optional[bool] = Field(default=False, description="Whether folder navigation is supported")
     depends_on: Optional[str] = Field(default=None, description="Question ID this depends on (for cascading pickers)")
     depends_on_field: Optional[str] = Field(default=None, description="Field name from the dependent resource")
+
+    # Account picker specific fields (only used when question_type is account_picker)
+    tool_name: Optional[str] = Field(default=None, description="Tool name requiring OAuth (e.g., 'gmail_send_email')")
+    accounts: Optional[List[AccountPickerAccountInfo]] = Field(default=None, description="Available OAuth accounts for the tool")
+    required_scopes: Optional[List[str]] = Field(default=None, description="Required scopes for display purposes")
 
 
 class ClarificationQuestions(BaseModel):
