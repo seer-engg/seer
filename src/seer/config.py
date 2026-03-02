@@ -344,6 +344,10 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         default=None,
         description="Stripe webhook signing secret (whsec_...)"
     )
+    trial_period_days: int = Field(
+        default=14,
+        description="Number of free trial days for new subscriptions"
+    )
     clerk_secret_key: Optional[str] = Field(
         default=None,
         description="Clerk secret key for updating user metadata"
