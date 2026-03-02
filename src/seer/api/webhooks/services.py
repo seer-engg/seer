@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional
 
 from fastapi import HTTPException, status
-from tortoise.exceptions import DoesNotExist
 
 from seer.database import (
     TriggerEvent,
@@ -22,31 +21,20 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def _get_active_subscription(subscription_id: int) -> TriggerSubscription:
-    try:
-        subscription = await TriggerSubscription.get(id=subscription_id)
-    except DoesNotExist:
+async def _get_active_subscription_by_slug(webhook_slug: str) -> TriggerSubscription:
+    """Look up an active subscription by its unique webhook slug."""
+    subscription = await TriggerSubscription.filter(webhook_slug=webhook_slug).first()
+    if subscription is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Subscription not found",
-        ) from None
+        )
     if not subscription.enabled:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Subscription not active",
         )
     return subscription
-
-
-def _verify_secret(subscription: TriggerSubscription, provided: Optional[str]) -> None:
-    expected = subscription.secret_token
-    if not expected:
-        return
-    if not provided or provided.strip() != expected:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid webhook secret",
-        )
 
 
 def _load_trigger_provider(trigger_key: str) -> str:
@@ -60,22 +48,14 @@ def _load_trigger_provider(trigger_key: str) -> str:
 
 
 
-async def handle_generic_webhook(
-    subscription_id: int,
+async def _handle_webhook_event(
+    subscription: TriggerSubscription,
     *,
     payload: Dict[str, Any],
     headers: Mapping[str, str],
-    secret: Optional[str],
     provider_event_id: Optional[str],
-    skip_secret_verification: bool = False,
 ) -> TriggerEvent:
-    logger.info(
-        "Handling generic webhook",
-        extra={"subscription_id": subscription_id, "provider_event_id": provider_event_id},
-    )
-    subscription = await _get_active_subscription(subscription_id)
-    if not skip_secret_verification:
-        _verify_secret(subscription, secret)
+    """Core webhook event handler (no auth checks - caller must verify access)."""
     provider = _load_trigger_provider(subscription.trigger_key)
     raw_payload = {
         "headers": dict(headers),
@@ -103,3 +83,49 @@ async def handle_generic_webhook(
     if created:
         await dispatch_trigger_event(subscription, event, envelope)
     return event
+
+
+async def handle_generic_webhook_by_slug(
+    webhook_slug: str,
+    *,
+    payload: Dict[str, Any],
+    headers: Mapping[str, str],
+    provider_event_id: Optional[str],
+) -> TriggerEvent:
+    """Handle a webhook event using slug-based URL security (no secret verification needed)."""
+    logger.info(
+        "Handling generic webhook by slug",
+        extra={"webhook_slug": webhook_slug, "provider_event_id": provider_event_id},
+    )
+    subscription = await _get_active_subscription_by_slug(webhook_slug)
+    return await _handle_webhook_event(
+        subscription,
+        payload=payload,
+        headers=headers,
+        provider_event_id=provider_event_id,
+    )
+
+
+async def handle_webhook_for_subscription(
+    subscription: TriggerSubscription,
+    *,
+    payload: Dict[str, Any],
+    headers: Mapping[str, str],
+    provider_event_id: Optional[str] = None,
+) -> TriggerEvent:
+    """Handle a webhook event for a known subscription (e.g., form submissions)."""
+    logger.info(
+        "Handling webhook for subscription",
+        extra={"subscription_id": subscription.id, "provider_event_id": provider_event_id},
+    )
+    if not subscription.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subscription not active",
+        )
+    return await _handle_webhook_event(
+        subscription,
+        payload=payload,
+        headers=headers,
+        provider_event_id=provider_event_id,
+    )
