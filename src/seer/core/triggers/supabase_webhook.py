@@ -23,18 +23,21 @@ class SupabaseWebhookError(Exception):
     """Raised when Supabase webhook operations fail."""
 
 
-# pylint: disable=too-complex,broad-exception-caught,too-many-positional-arguments
+# pylint: disable=too-complex,broad-exception-caught
 # Reason: Webhook creation involves SQL generation, HTTP requests, and error handling for multiple scenarios
 async def create_database_webhook(
     subscription: TriggerSubscription,
     webhook_url: str,
-    secret: str,
 ) -> Dict[str, Any]:
     """
     Creates a Postgres trigger in the Supabase project that sends webhook events.
+
+    Uses slug-based URL security - the webhook_url itself is unguessable, so no
+    additional secret header is needed.
+
     Args:
         subscription: The trigger subscription containing configuration
-        webhook_url: The full URL to POST webhook events to (includes subscription_id and secret)
+        webhook_url: The full URL to POST webhook events to (includes webhook_slug)
     Returns:
         Dict with metadata about the created trigger
     Raises:
@@ -98,7 +101,6 @@ async def create_database_webhook(
         schema_name=schema_name,
         events=events,
         webhook_url=webhook_url,
-        secret=secret,
     )
 
     # Execute the SQL via Management API
@@ -205,12 +207,15 @@ def _build_trigger_sql(
     trigger_name: str,
     table_name: str,
     schema_name: str,
+    *,
     events: List[str],
     webhook_url: str,
-    secret: str,
 ) -> str:
     """
     Generates SQL to create a Postgres trigger that sends webhook events.
+
+    Security is handled via the webhook_url itself containing an unguessable slug,
+    so no additional secret header is needed.
     """
     # Validate events
     valid_events = {"INSERT", "UPDATE", "DELETE"}
@@ -239,10 +244,10 @@ BEGIN
     'record', CASE WHEN TG_OP = 'DELETE' THEN NULL ELSE row_to_json(NEW) END,
     'old_record', CASE WHEN TG_OP IN ('UPDATE', 'DELETE') THEN row_to_json(OLD) ELSE NULL END
   );
-  -- Send webhook using pg_net extension
+  -- Send webhook using pg_net extension (URL is slug-secured, no secret header needed)
   SELECT INTO request_id net.http_post(
     url := '{webhook_url}',
-    headers := '{{"Content-Type": "application/json", "X-Seer-Webhook-Secret": "{secret}"}}'::jsonb,
+    headers := '{{"Content-Type": "application/json"}}'::jsonb,
     body := payload
   );
   -- Return appropriate value based on operation

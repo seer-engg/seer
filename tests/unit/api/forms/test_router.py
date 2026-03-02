@@ -150,7 +150,7 @@ class TestSubmitForm:
             MockSubscription.filter = MagicMock(return_value=mock_query)
 
             with patch("seer.api.forms.router.validate_form_data", return_value=[]):
-                with patch("seer.api.forms.router.handle_generic_webhook", new_callable=AsyncMock, return_value=mock_event):
+                with patch("seer.api.forms.router.handle_webhook_for_subscription", new_callable=AsyncMock, return_value=mock_event):
                     result = await submit_form("contact-form", mock_request)
 
         assert result["ok"] is True
@@ -238,7 +238,7 @@ class TestSubmitForm:
             MockSubscription.filter = MagicMock(return_value=mock_query)
 
             with patch("seer.api.forms.router.validate_form_data", return_value=[]):
-                with patch("seer.api.forms.router.handle_generic_webhook", new_callable=AsyncMock, return_value=mock_event):
+                with patch("seer.api.forms.router.handle_webhook_for_subscription", new_callable=AsyncMock, return_value=mock_event):
                     result = await submit_form("any-form", mock_request)
 
         assert result["ok"] is True
@@ -259,7 +259,7 @@ class TestSubmitForm:
             MockSubscription.filter = MagicMock(return_value=mock_query)
 
             with patch("seer.api.forms.router.validate_form_data", return_value=[]):
-                with patch("seer.api.forms.router.handle_generic_webhook", new_callable=AsyncMock, side_effect=RuntimeError("Webhook failed")):
+                with patch("seer.api.forms.router.handle_webhook_for_subscription", new_callable=AsyncMock, side_effect=RuntimeError("Webhook failed")):
                     with pytest.raises(HTTPException) as exc_info:
                         await submit_form("contact-form", mock_request)
 
