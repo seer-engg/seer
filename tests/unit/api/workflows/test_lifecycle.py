@@ -7,10 +7,12 @@ parsing, hashing, cursor handling, and version management.
 from datetime import datetime, timezone
 import hashlib
 import json
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 
+from seer.core.errors import WorkflowCompilerError, NodeError
 from seer.database import (
     WorkflowVersionStatus,
     parse_workflow_public_id,
@@ -617,3 +619,112 @@ class TestCreateWorkflowLogic:
         result_name = name or "Untitled Workflow"
 
         assert result_name == "Untitled Workflow"
+
+
+# =============================================================================
+# Publish Workflow Validation Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestPublishWorkflowValidation:
+    """Tests that publish_workflow blocks on compiler errors."""
+
+    @pytest.mark.asyncio
+    async def test_publish_blocks_on_undefined_reference(self):
+        """Compiler raising WorkflowCompilerError should cause HTTP 400 on publish."""
+        from seer.core.errors import NodeError
+        from seer.api.workflows.services.shared import validate_workflow_spec
+        from seer.core.schema.models import WorkflowSpec
+
+        spec = WorkflowSpec(version="2", nodes=[], edges=[])
+        user = MagicMock()
+
+        compiler_error = WorkflowCompilerError(
+            "Undefined reference",
+            errors=[NodeError(code="UNDEFINED_REFERENCE", message="Variable ${nonexistent.output} is not defined", node_id="n1")],
+        )
+
+        with patch("seer.api.workflows.services.shared.WorkflowCompilerSingleton") as mock_singleton, \
+             patch("seer.api.workflows.services.shared.validate_workflow_spec.__wrapped__", create=True), \
+             patch("seer.api.agents.checkpointer.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer:
+            mock_compiler = AsyncMock()
+            mock_singleton.instance.return_value = mock_compiler
+            mock_compiler.compile.side_effect = compiler_error
+            mock_checkpointer.return_value = MagicMock()
+
+            with pytest.raises(HTTPException) as exc_info:
+                await validate_workflow_spec(user, spec)
+
+        assert exc_info.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_publish_blocks_on_missing_oauth_connection(self):
+        """Tool node with invalid connection_id raises HTTP 400 during publish validation."""
+        from seer.core.errors import NodeError
+        from seer.api.workflows.services.shared import validate_workflow_spec
+        from seer.core.schema.models import WorkflowSpec
+
+        spec = WorkflowSpec(version="2", nodes=[], edges=[])
+        user = MagicMock()
+
+        compiler_error = WorkflowCompilerError(
+            "OAuth connection not found",
+            errors=[NodeError(code="VALIDATION_ERROR", message="Connection 'invalid_conn' not found", node_id="tool_node_1")],
+        )
+
+        with patch("seer.api.workflows.services.shared.WorkflowCompilerSingleton") as mock_singleton, \
+             patch("seer.api.agents.checkpointer.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer:
+            mock_compiler = AsyncMock()
+            mock_singleton.instance.return_value = mock_compiler
+            mock_compiler.compile.side_effect = compiler_error
+            mock_checkpointer.return_value = MagicMock()
+
+            with pytest.raises(HTTPException) as exc_info:
+                await validate_workflow_spec(user, spec)
+
+        assert exc_info.value.status_code == 400
+        detail = exc_info.value.detail
+        assert detail["title"] == "Workflow validation failed"
+
+    @pytest.mark.asyncio
+    async def test_validate_workflow_spec_succeeds_with_valid_spec(self):
+        """validate_workflow_spec passes through without error for a valid spec."""
+        from seer.api.workflows.services.shared import validate_workflow_spec
+        from seer.core.schema.models import WorkflowSpec
+
+        spec = WorkflowSpec(version="2", nodes=[], edges=[])
+        user = MagicMock()
+
+        with patch("seer.api.workflows.services.shared.WorkflowCompilerSingleton") as mock_singleton, \
+             patch("seer.api.agents.checkpointer.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer:
+            mock_compiler = AsyncMock()
+            mock_singleton.instance.return_value = mock_compiler
+            mock_compiler.compile.return_value = None  # Successful compilation
+            mock_checkpointer.return_value = MagicMock()
+
+            # Should complete without raising
+            await validate_workflow_spec(user, spec)
+
+        mock_compiler.compile.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_publish_with_no_draft_but_published_version_gives_clear_error(self):
+        """When no draft exists but a published version does, error says 'already published'."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from seer.api.workflows.services.lifecycle import publish_workflow
+        from seer.api.workflows import models as api_models
+
+        user = MagicMock()
+        payload = api_models.WorkflowPublishRequest()
+
+        mock_workflow = MagicMock()
+
+        with patch("seer.api.workflows.services.lifecycle._get_workflow", new=AsyncMock(return_value=mock_workflow)), \
+             patch("seer.api.workflows.services.lifecycle._get_draft_version", new=AsyncMock(return_value=None)), \
+             patch("seer.api.workflows.services.lifecycle.get_published_version", new=AsyncMock(return_value=MagicMock())):
+            with pytest.raises(HTTPException) as exc_info:
+                await publish_workflow(user, "wf_1", payload)
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail["title"] == "Workflow already published"

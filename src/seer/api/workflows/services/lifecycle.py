@@ -20,6 +20,7 @@ from seer.api.workflows.services.shared import (
     _spec_to_dict,
     _update_draft_version,
     get_published_version,
+    validate_workflow_spec,
 )
 from seer.database import (
     User,
@@ -398,6 +399,14 @@ async def publish_workflow(
     # Get existing DRAFT version (must exist to publish)
     draft_version = await _get_draft_version(workflow, create_if_missing=False)
     if not draft_version:
+        published = await get_published_version(workflow)
+        if published:
+            _raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Workflow already published",
+                detail="No pending changes to publish. Edit the workflow before publishing again.",
+                status=400,
+            )
         _raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="No draft to publish",
@@ -407,6 +416,9 @@ async def publish_workflow(
 
     # Validate spec
     spec = WorkflowSpec.model_validate(draft_version.spec)
+
+    # Run full compilation validation (same checks as /runs)
+    await validate_workflow_spec(user, spec)
 
     # Sync trigger subscriptions
     # pylint: disable=import-outside-toplevel
