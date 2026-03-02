@@ -105,6 +105,7 @@ class QuestionType(str, Enum):
     SINGLE_CHOICE = "single_choice"
     MULTI_CHOICE = "multi_choice"
     RESOURCE_PICKER = "resource_picker"
+    ACCOUNT_PICKER = "account_picker"
 
 
 class QuestionOption(BaseModel):
@@ -140,6 +141,25 @@ def _build_choice_question_payload(q: dict, question_payload: dict) -> None:
     question_payload["max_selections"] = q.get("max_selections")
 
 
+def _build_account_picker_payload(q: dict, question_payload: dict) -> None:
+    """Add account picker specific fields to question payload.
+
+    Account pickers allow users to select an OAuth account for a tool.
+    The accounts list is populated from the tool's connected accounts.
+    """
+    tool_name = q.get("tool_name")
+    if not tool_name:
+        raise ValueError(
+            "account_picker question requires 'tool_name' field specifying "
+            "the tool that needs OAuth (e.g., 'gmail_send_email')"
+        )
+
+    question_payload["tool_name"] = tool_name
+    # Provider and accounts will be populated by the router when transforming
+    # the interrupt data for the frontend
+    question_payload["options"] = []  # Empty - frontend fetches accounts dynamically
+
+
 def _resolve_depends_on_reference(
     depends_on_ref: str,
     question_id_map: dict,
@@ -173,7 +193,7 @@ def ask_clarification_questions(
     Args:
         questions: List of question objects, each containing:
             - question: The question text to display
-            - question_type: "single_choice", "multi_choice", or "resource_picker"
+            - question_type: "single_choice", "multi_choice", "resource_picker", or "account_picker"
             - options: List of options with value, label, and optional is_wildcard (for choice types)
             - reasoning: Explain why you're asking this question
             - min_selections: Minimum number of selections (for multi-choice, default 1)
@@ -188,6 +208,12 @@ def ask_clarification_questions(
             - hierarchy: Whether folder navigation is supported (default: False)
             - depends_on: Question ID this depends on (for cascading pickers)
             - depends_on_field: Field name from the dependent resource
+
+            For account_picker type, include:
+            - tool_name: The tool requiring OAuth (e.g., "gmail_send_email")
+            - System will show available OAuth accounts for this tool
+            - Users can select an existing account or connect a new one
+            - Returns connection_id of selected account in selected_values
 
     Returns:
         JSON string containing list of answers, one per question in the same order.
@@ -241,6 +267,18 @@ def ask_clarification_questions(
                 "reasoning": "Select channel from the chosen server"
             }
         ])
+
+    Example for account picker (selecting OAuth account for a tool):
+        ask_clarification_questions([
+            {
+                "question": "Which Gmail account should we use to send emails?",
+                "question_type": "account_picker",
+                "tool_name": "gmail_send_email",
+                "reasoning": "You have multiple Google accounts connected"
+            }
+        ])
+        # Returns: [{"question_id": "...", "selected_values": ["123"], ...}]
+        # The selected_values[0] is the connection_id to use for the tool
     """
     if not questions:
         raise ValueError("At least one question is required")
@@ -272,6 +310,8 @@ def ask_clarification_questions(
 
         if question_type == QuestionType.RESOURCE_PICKER.value:
             _build_resource_picker_payload(q, question_payload)
+        elif question_type == QuestionType.ACCOUNT_PICKER.value:
+            _build_account_picker_payload(q, question_payload)
         else:
             _build_choice_question_payload(q, question_payload)
 

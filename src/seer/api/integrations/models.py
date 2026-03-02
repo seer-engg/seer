@@ -89,6 +89,10 @@ class ToolAccountsResponse(BaseModel):
         ...,
         description="True if user must select an account (multiple available)"
     )
+    required_scopes: List[str] = Field(
+        default_factory=list,
+        description="OAuth scopes required by this tool (for initiating new connections)"
+    )
 
 
 # Alias for single tool status endpoint - reuses ToolStatus which has all required fields

@@ -698,3 +698,108 @@ class TestValidationIntegration:
         # Should raise before even trying to call interrupt
         with pytest.raises(ValueError, match="no depends_on reference"):
             ask_clarification_questions.invoke({"questions": questions})
+
+
+@pytest.mark.unit
+class TestAccountPickerQuestions:
+    """Test account picker question type."""
+
+    @patch('seer.agents.nexus.tools.clarification_tools.interrupt')
+    @patch('seer.agents.nexus.tools.clarification_tools.uuid.uuid4')
+    def test_account_picker_question(self, mock_uuid, mock_interrupt):
+        """Test asking an account picker question."""
+        mock_uuid.return_value = MagicMock(hex="ap001234")
+
+        mock_interrupt.return_value = [
+            {"question_id": "q_ap001234", "selected_values": ["123"], "custom_input": None},
+        ]
+
+        questions = [
+            {
+                "question": "Which Gmail account should we use?",
+                "question_type": "account_picker",
+                "tool_name": "gmail_send_email",
+                "reasoning": "You have multiple Google accounts connected"
+            }
+        ]
+
+        result = ask_clarification_questions.invoke({"questions": questions})
+
+        mock_interrupt.assert_called_once()
+        call_args = mock_interrupt.call_args[0][0]
+
+        assert call_args["type"] == "clarification_questions"
+        assert len(call_args["questions"]) == 1
+
+        q = call_args["questions"][0]
+        assert q["question_id"] == "q_ap001234"
+        assert q["question_type"] == "account_picker"
+        assert q["tool_name"] == "gmail_send_email"
+        assert q["options"] == []  # Account pickers don't have traditional options
+
+        result_data = json.loads(result)
+        assert len(result_data) == 1
+        assert result_data[0]["selected_values"] == ["123"]
+
+    def test_account_picker_missing_tool_name_raises(self):
+        """Test that account_picker without tool_name raises an error."""
+        questions = [
+            {
+                "question": "Which account?",
+                "question_type": "account_picker",
+                # Missing tool_name!
+                "reasoning": "Need to select an account"
+            }
+        ]
+
+        with pytest.raises(ValueError, match="requires 'tool_name' field"):
+            ask_clarification_questions.invoke({"questions": questions})
+
+    @patch('seer.agents.nexus.tools.clarification_tools.interrupt')
+    @patch('seer.agents.nexus.tools.clarification_tools.uuid.uuid4')
+    def test_mixed_account_and_resource_picker(self, mock_uuid, mock_interrupt):
+        """Test batch with both account and resource picker questions."""
+        mock_uuid.side_effect = [
+            MagicMock(hex="mixap001"),
+            MagicMock(hex="mixrp001"),
+        ]
+
+        mock_interrupt.return_value = [
+            {"question_id": "q_mixap001", "selected_values": ["123"], "custom_input": None},
+            {"question_id": "q_mixrp001", "selected_values": ["spreadsheet_456"], "custom_input": None},
+        ]
+
+        questions = [
+            {
+                "question": "Which Gmail account?",
+                "question_type": "account_picker",
+                "tool_name": "gmail_send_email",
+                "reasoning": "Select account for email"
+            },
+            {
+                "question": "Which spreadsheet?",
+                "question_type": "resource_picker",
+                "provider": "google",
+                "resource_type": "google_spreadsheet",
+                "reasoning": "Select spreadsheet to read"
+            }
+        ]
+
+        result = ask_clarification_questions.invoke({"questions": questions})
+
+        call_args = mock_interrupt.call_args[0][0]
+        assert len(call_args["questions"]) == 2
+
+        # First question is account picker
+        q1 = call_args["questions"][0]
+        assert q1["question_type"] == "account_picker"
+        assert q1["tool_name"] == "gmail_send_email"
+
+        # Second question is resource picker
+        q2 = call_args["questions"][1]
+        assert q2["question_type"] == "resource_picker"
+        assert q2["provider"] == "google"
+
+        result_data = json.loads(result)
+        assert result_data[0]["selected_values"] == ["123"]
+        assert result_data[1]["selected_values"] == ["spreadsheet_456"]

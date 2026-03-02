@@ -110,6 +110,42 @@ Common resource picker providers and types:
 - supabase_mgmt: project, database
 - slack: workspace, channel
 
+**Account Picker Questions**
+When a user has multiple OAuth accounts and you need them to select which one to use, use
+`question_type: "account_picker"` instead of manually building choice options.
+
+Use account_picker when:
+- A tool requires OAuth and the user has multiple accounts for that provider
+- You need to ask which account to use for a specific tool (e.g., "Which Gmail account?")
+
+Example for account picker:
+```python
+ask_clarification_questions([
+    {
+        "question": "Which Gmail account should we use to send emails?",
+        "question_type": "account_picker",
+        "tool_name": "gmail_send_email",
+        "reasoning": "You have multiple Google accounts connected"
+    }
+])
+```
+
+The frontend will:
+- Show a dropdown with all connected accounts for the tool's provider
+- Display warning icons for accounts missing required scopes
+- Allow connecting new accounts directly from the picker
+- Return the `connection_id` in `selected_values[0]`
+
+When resumed, use the connection_id in the tool node:
+```json
+{"id": "send_email", "type": "tool", "tool": "gmail_send_email", "connection_id": 123, "inputs": {...}}
+```
+
+Prefer account_picker over manual choice questions because:
+- It shows actual account display names (emails/usernames)
+- It validates scope compatibility
+- It allows connecting new accounts inline
+
 **IMPORTANT for dependent resources:** When a resource picker has `depends_on_field`:
 1. Ask for the PARENT resource FIRST (workspace, guild, project, etc.)
 2. Ask for the DEPENDENT resource SECOND
