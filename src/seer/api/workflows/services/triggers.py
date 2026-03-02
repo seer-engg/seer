@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import re
 import secrets
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 from jsonschema import Draft7Validator
+
+from seer.core.triggers.events import TriggerEventEnvelopeInput, build_event_envelope
 
 from seer.core.triggers.supabase_webhook import (
     SupabaseWebhookError,
@@ -1113,3 +1116,29 @@ async def get_subscription_event_count(
         event_count=event_count,
         has_events=event_count > 0,
     )
+
+
+def generate_cron_event(trigger_id: str, provider_config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Generate a synthetic cron event for immediate workflow execution.
+
+    This allows users to trigger cron-based workflows on demand without
+    waiting for the next scheduled run.
+    """
+    now = datetime.now(timezone.utc)
+    return build_event_envelope(TriggerEventEnvelopeInput(
+        trigger_id=trigger_id,
+        trigger_key="schedule.cron",
+        title="Manual Trigger",
+        provider="schedule",
+        provider_connection_id=None,
+        payload={
+            "scheduled_time": now.isoformat(),
+            "actual_time": now.isoformat(),
+            "cron_expression": provider_config.get("cron_expression", "* * * * *"),
+            "timezone": provider_config.get("timezone", "UTC"),
+            "manual": True,
+        },
+        raw=None,
+        occurred_at=now,
+    ))

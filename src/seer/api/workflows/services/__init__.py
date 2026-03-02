@@ -57,6 +57,7 @@ from .lifecycle import (
 # Import from triggers module
 from .triggers import (
     delete_trigger_subscription,
+    generate_cron_event,
     get_pending_events,
     get_subscription_event_count,
     get_trigger_subscription,
@@ -116,6 +117,7 @@ __all__ = [
     "start_listening_for_trigger",
     "get_pending_events",
     "get_subscription_event_count",
+    "generate_cron_event",
     "_create_run_record",
     # File management
     "list_run_files",

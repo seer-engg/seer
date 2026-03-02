@@ -142,6 +142,38 @@ async def get_subscription_event_count(
     return await services.get_subscription_event_count(user, subscription_id)
 
 
+@router.post(
+    "/triggers/{trigger_key}/generate-event",
+    response_model=api_models.TriggerEventGenerateResponse,
+)
+async def generate_trigger_event(
+    request: Request,
+    trigger_key: str,
+    payload: api_models.TriggerEventGenerateRequest,
+):
+    """
+    Generate a synthetic trigger event for immediate workflow execution.
+
+    Currently supports:
+    - schedule.cron: Generate a synthetic cron event for manual triggering
+
+    Returns an event envelope that can be used with the run workflow endpoint.
+    """
+    _require_user(request)
+
+    if trigger_key != "schedule.cron":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Trigger '{trigger_key}' does not support instant triggering"
+        )
+
+    envelope = services.generate_cron_event(payload.trigger_id, payload.provider_config)
+    return api_models.TriggerEventGenerateResponse(
+        envelope=envelope,
+        display_title="Manual Trigger"
+    )
+
+
 @router.get("/registries/tools", response_model=api_models.ToolRegistryResponse)
 async def get_tool_registry(request: Request, include_schemas: bool = Query(False)):
     _require_user(request)
