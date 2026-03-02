@@ -483,7 +483,7 @@ class TestRunSavedWorkflow:
              patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock) as mock_create_run, \
              patch("seer.api.workflows.services.execution.workflow_execution_task") as mock_task, \
              patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class, \
-             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate:
+             patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock) as mock_validate:
 
             mock_get_wf.return_value = mock_workflow
             mock_get_draft.return_value = mock_workflow_version
@@ -514,7 +514,7 @@ class TestRunSavedWorkflow:
              patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock) as mock_create_run, \
              patch("seer.api.workflows.services.execution.workflow_execution_task") as mock_task, \
              patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class, \
-             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate:
+             patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock) as mock_validate:
 
             mock_get_wf.return_value = mock_workflow
             mock_version_model.filter.return_value.first = AsyncMock(return_value=mock_workflow_version)
@@ -548,7 +548,7 @@ class TestRunSavedWorkflow:
              patch("seer.api.workflows.services.execution.WorkflowRun") as mock_run_model, \
              patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class, \
              patch("seer.api.workflows.services.execution._raise_problem") as mock_raise, \
-             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate:
+             patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock) as mock_validate:
 
             mock_get_wf.return_value = mock_workflow
             mock_get_draft.return_value = mock_workflow_version
@@ -584,7 +584,7 @@ class TestRunSavedWorkflow:
 
         with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
              patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
-             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
+             patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
              patch("seer.api.workflows.services.execution._raise_problem") as mock_raise, \
              patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock) as mock_create_run, \
              patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class, \
@@ -706,7 +706,7 @@ class TestValidateWorkflowSpec:
     @pytest.mark.asyncio
     async def test_validate_workflow_spec_valid_workflow(self, mock_user):
         """Test that valid workflow passes validation."""
-        from seer.api.workflows.services.execution import _validate_workflow_spec
+        from seer.api.workflows.services.shared import validate_workflow_spec
         from seer.core.schema.models import WorkflowSpec
 
         valid_spec = WorkflowSpec(
@@ -716,8 +716,8 @@ class TestValidateWorkflowSpec:
             triggers=[]
         )
 
-        with patch("seer.api.workflows.services.execution.WorkflowCompilerSingleton") as mock_singleton, \
-             patch("seer.api.workflows.services.execution.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer:
+        with patch("seer.api.workflows.services.shared.WorkflowCompilerSingleton") as mock_singleton, \
+             patch("seer.api.agents.checkpointer.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer:
 
             mock_compiler = MagicMock()
             mock_compiler.compile = AsyncMock(return_value=MagicMock())
@@ -725,14 +725,14 @@ class TestValidateWorkflowSpec:
             mock_checkpointer.return_value = None
 
             # Should not raise any exception
-            await _validate_workflow_spec(mock_user, valid_spec)
+            await validate_workflow_spec(mock_user, valid_spec)
 
             mock_compiler.compile.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_validate_workflow_spec_invalid_expression_raises_400(self, mock_user):
         """Test that invalid expression reference raises HTTP 400."""
-        from seer.api.workflows.services.execution import _validate_workflow_spec
+        from seer.api.workflows.services.shared import validate_workflow_spec
         from seer.core.schema.models import WorkflowSpec
         from seer.core.errors import WorkflowCompilerError
         from fastapi import HTTPException
@@ -744,9 +744,9 @@ class TestValidateWorkflowSpec:
             triggers=[]
         )
 
-        with patch("seer.api.workflows.services.execution.WorkflowCompilerSingleton") as mock_singleton, \
-             patch("seer.api.workflows.services.execution.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer, \
-             patch("seer.api.workflows.services.execution.raise_compiler_error") as mock_raise_compiler_error:
+        with patch("seer.api.workflows.services.shared.WorkflowCompilerSingleton") as mock_singleton, \
+             patch("seer.api.agents.checkpointer.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer, \
+             patch("seer.api.workflows.services.shared.raise_compiler_error") as mock_raise_compiler_error:
 
             mock_compiler = MagicMock()
             mock_compiler.compile = AsyncMock(
@@ -757,7 +757,7 @@ class TestValidateWorkflowSpec:
             mock_raise_compiler_error.side_effect = HTTPException(status_code=400, detail="Validation failed")
 
             with pytest.raises(HTTPException) as exc_info:
-                await _validate_workflow_spec(mock_user, invalid_spec)
+                await validate_workflow_spec(mock_user, invalid_spec)
 
             assert exc_info.value.status_code == 400
             mock_raise_compiler_error.assert_called_once()
@@ -769,7 +769,7 @@ class TestValidateWorkflowSpec:
     @pytest.mark.asyncio
     async def test_validate_workflow_spec_type_environment_error_raises_400(self, mock_user):
         """Test that type environment error raises HTTP 400."""
-        from seer.api.workflows.services.execution import _validate_workflow_spec
+        from seer.api.workflows.services.shared import validate_workflow_spec
         from seer.core.schema.models import WorkflowSpec
         from seer.core.errors import TypeEnvironmentError
         from fastapi import HTTPException
@@ -781,9 +781,9 @@ class TestValidateWorkflowSpec:
             triggers=[]
         )
 
-        with patch("seer.api.workflows.services.execution.WorkflowCompilerSingleton") as mock_singleton, \
-             patch("seer.api.workflows.services.execution.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer, \
-             patch("seer.api.workflows.services.execution.raise_compiler_error") as mock_raise_compiler_error:
+        with patch("seer.api.workflows.services.shared.WorkflowCompilerSingleton") as mock_singleton, \
+             patch("seer.api.agents.checkpointer.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer, \
+             patch("seer.api.workflows.services.shared.raise_compiler_error") as mock_raise_compiler_error:
 
             mock_compiler = MagicMock()
             mock_compiler.compile = AsyncMock(
@@ -794,14 +794,14 @@ class TestValidateWorkflowSpec:
             mock_raise_compiler_error.side_effect = HTTPException(status_code=400, detail="Validation failed")
 
             with pytest.raises(HTTPException) as exc_info:
-                await _validate_workflow_spec(mock_user, spec)
+                await validate_workflow_spec(mock_user, spec)
 
             assert exc_info.value.status_code == 400
 
     @pytest.mark.asyncio
     async def test_validate_workflow_spec_validation_phase_error_raises_400(self, mock_user):
         """Test that validation phase error raises HTTP 400."""
-        from seer.api.workflows.services.execution import _validate_workflow_spec
+        from seer.api.workflows.services.shared import validate_workflow_spec
         from seer.core.schema.models import WorkflowSpec
         from seer.core.errors import ValidationPhaseError
         from fastapi import HTTPException
@@ -813,9 +813,9 @@ class TestValidateWorkflowSpec:
             triggers=[]
         )
 
-        with patch("seer.api.workflows.services.execution.WorkflowCompilerSingleton") as mock_singleton, \
-             patch("seer.api.workflows.services.execution.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer, \
-             patch("seer.api.workflows.services.execution.raise_compiler_error") as mock_raise_compiler_error:
+        with patch("seer.api.workflows.services.shared.WorkflowCompilerSingleton") as mock_singleton, \
+             patch("seer.api.agents.checkpointer.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer, \
+             patch("seer.api.workflows.services.shared.raise_compiler_error") as mock_raise_compiler_error:
 
             mock_compiler = MagicMock()
             mock_compiler.compile = AsyncMock(
@@ -826,7 +826,7 @@ class TestValidateWorkflowSpec:
             mock_raise_compiler_error.side_effect = HTTPException(status_code=400, detail="Validation failed")
 
             with pytest.raises(HTTPException) as exc_info:
-                await _validate_workflow_spec(mock_user, spec)
+                await validate_workflow_spec(mock_user, spec)
 
             assert exc_info.value.status_code == 400
 
@@ -852,7 +852,7 @@ class TestRunSavedWorkflowValidation:
 
         with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
              patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
-             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
+             patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
              patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock) as mock_create_run, \
              patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class:
 
@@ -881,7 +881,7 @@ class TestRunSavedWorkflowValidation:
 
         with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
              patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
-             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
+             patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
              patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock) as mock_create_run, \
              patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class:
 
@@ -911,7 +911,7 @@ class TestRunSavedWorkflowValidation:
 
         with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
              patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
-             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
+             patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
              patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock) as mock_create_run, \
              patch("seer.api.workflows.services.execution.workflow_execution_task") as mock_task, \
              patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class:
@@ -948,7 +948,7 @@ class TestRunSavedWorkflowValidation:
 
         with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
              patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
-             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
+             patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
              patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock) as mock_create_run, \
              patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class, \
              patch("seer.api.workflows.services.triggers.sync_trigger_subscriptions", new_callable=AsyncMock):
@@ -1082,7 +1082,7 @@ class TestRunSavedWorkflowWithTriggerOverride:
 
         with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
              patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
-             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
+             patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
              patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock) as mock_create_run, \
              patch("seer.api.workflows.services.execution.workflow_execution_task") as mock_task, \
              patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class, \
@@ -1133,7 +1133,7 @@ class TestRunSavedWorkflowWithTriggerOverride:
 
         with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
              patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
-             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
+             patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
              patch("seer.api.workflows.services.execution._raise_problem") as mock_raise, \
              patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class, \
              patch("seer.api.workflows.services.triggers.sync_trigger_subscriptions", new_callable=AsyncMock):
@@ -1182,7 +1182,7 @@ class TestRunSavedWorkflowWithTriggerOverride:
 
         with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
              patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
-             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
+             patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
              patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock) as mock_create_run, \
              patch("seer.api.workflows.services.execution.workflow_execution_task") as mock_task, \
              patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class, \
@@ -1229,7 +1229,7 @@ class TestRunSavedWorkflowWithTriggerOverride:
 
         with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
              patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
-             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
+             patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
              patch("seer.api.workflows.services.execution._raise_problem") as mock_raise, \
              patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class, \
              patch("seer.api.workflows.services.triggers.sync_trigger_subscriptions", new_callable=AsyncMock):
@@ -1267,7 +1267,7 @@ class TestRunSavedWorkflowWithTriggerOverride:
 
         with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
              patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
-             patch("seer.api.workflows.services.execution._validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
+             patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
              patch("seer.api.workflows.services.execution._raise_problem") as mock_raise, \
              patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class:
 

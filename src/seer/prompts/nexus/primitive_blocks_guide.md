@@ -1,7 +1,7 @@
 # Primitive Workflow Blocks Reference
 
 ## Overview
-Seer workflows are built from 8 primitive block types: **tool**, **llm**, **mcp**, **if**, **for_each**, **hitl**, **image_gen**, and **browser**.
+Seer workflows are built from 9 primitive block types: **tool**, **llm**, **mcp**, **if**, **for_each**, **hitl**, **image_gen**, **browser**, and **agent**.
 Each block is a node in the workflow graph, connected by edges that define execution flow.
 
 ---
@@ -953,6 +953,208 @@ Login and extract account data:
 
 ---
 
+## 9. AGENT BLOCK (`type: "agent"`)
+
+**Purpose:** Multi-step autonomous task execution with tool access. The agent reasons, calls tools, and iterates until the task is complete.
+
+**Schema:**
+```json
+{
+  "id": "unique_node_id",
+  "type": "agent",
+  "inputs": {
+    "model": "gpt-4",
+    "prompt": "Research ${topic} and compile a summary with key findings",
+    "tools": ["web_search", "gmail_send_email"],
+    "max_iterations": 10,
+    "temperature": 0.3
+  },
+  "outputs": {
+    "mode": "text"
+  }
+}
+```
+
+**Required Fields:**
+- `id` (string): Unique identifier for this node
+- `type`: Must be `"agent"`
+- `inputs` (object): Must contain:
+  - `model` (string): Model ID (e.g., `"gpt-4"`, `"gpt-4o"`, `"gpt-5-mini"`)
+  - `prompt` (string): Task description with `${...}` expressions for dynamic content
+
+**Optional Input Fields:**
+- `tools` (array): List of tools the agent can call autonomously
+  - Simple format: `["tool_name", "another_tool"]`
+  - With OAuth: `[{"name": "gmail_send_email", "connection_id": 42}]`
+- `max_iterations` (number): Maximum reasoning/tool-calling steps (default: 10)
+- `temperature` (number): LLM temperature for agent reasoning (default: 0.2)
+
+**Output Configuration:**
+- `outputs` (object): Defines output format (same as LLM nodes)
+  - `mode`: `"text"` (default) or `"json"`
+  - `schema`: Required if `mode="json"`, contains JSON Schema
+
+**Tool Format:**
+Tools can be specified in two formats:
+
+1. **Simple string** - tool name only:
+```json
+"tools": ["web_search", "supabase_select_rows", "gmail_get_message"]
+```
+
+2. **Object with connection_id** - for OAuth tools with multiple accounts:
+```json
+"tools": [
+  "web_search",
+  {"name": "gmail_send_email", "connection_id": 42},
+  {"name": "slack_send_message", "connection_id": 15}
+]
+```
+
+**Important Notes:**
+- ✅ Use `search_tools(query)` to discover available tools and their exact names
+- ✅ For OAuth tools (gmail, slack, google, etc.), call `get_tool_accounts(tool_name)` first
+- ✅ If user has multiple OAuth accounts, include `connection_id` in the tool spec
+- ✅ Agent output is accessed via `${node_id}` or `${node_id.field}` (if JSON mode)
+- ⚠️ Agents can be expensive - each iteration involves LLM calls and potentially tool execution
+- ⚠️ Use `max_iterations` to prevent runaway execution (default: 10)
+
+**Output Modes:**
+
+1. **Text Mode** (default - freeform text):
+```json
+{
+  "outputs": {
+    "mode": "text"
+  }
+}
+```
+
+2. **JSON Mode** (structured data):
+```json
+{
+  "outputs": {
+    "mode": "json",
+    "schema": {
+      "json_schema": {
+        "type": "object",
+        "properties": {
+          "summary": {"type": "string"},
+          "findings": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "confidence": {"type": "number"}
+        },
+        "required": ["summary", "findings"]
+      }
+    }
+  }
+}
+```
+
+**Example 1 - Research Agent:**
+```json
+{
+  "id": "research_agent",
+  "type": "agent",
+  "inputs": {
+    "model": "gpt-4",
+    "prompt": "Research the company ${trigger.data.company_name}. Find their:\n1. Main products/services\n2. Recent news or announcements\n3. Key leadership\n\nCompile a brief executive summary.",
+    "tools": ["web_search"],
+    "max_iterations": 15
+  },
+  "outputs": {
+    "mode": "json",
+    "schema": {
+      "json_schema": {
+        "type": "object",
+        "properties": {
+          "company": {"type": "string"},
+          "products": {"type": "array", "items": {"type": "string"}},
+          "recent_news": {"type": "array", "items": {"type": "string"}},
+          "leadership": {"type": "array", "items": {"type": "string"}},
+          "summary": {"type": "string"}
+        },
+        "required": ["company", "summary"]
+      }
+    }
+  }
+}
+```
+
+**Example 2 - Email Processing Agent with OAuth:**
+```json
+{
+  "id": "email_processor",
+  "type": "agent",
+  "inputs": {
+    "model": "gpt-4o",
+    "prompt": "Process the email thread ${email_thread.id}:\n1. Read all messages in the thread\n2. Summarize the key points\n3. Draft a professional response addressing the main concerns\n4. Save the draft (do not send)",
+    "tools": [
+      {"name": "gmail_get_thread", "connection_id": 42},
+      {"name": "gmail_create_draft", "connection_id": 42}
+    ],
+    "max_iterations": 10,
+    "temperature": 0.3
+  },
+  "outputs": {"mode": "text"}
+}
+```
+
+**Example 3 - Data Enrichment Agent:**
+```json
+{
+  "id": "enrich_contact",
+  "type": "agent",
+  "inputs": {
+    "model": "gpt-5-mini",
+    "prompt": "Enrich the contact information for ${item.email}:\n1. Search for their LinkedIn profile\n2. Find their current company and title\n3. Look for recent professional activity\nReturn structured data.",
+    "tools": ["web_search"],
+    "max_iterations": 8
+  },
+  "outputs": {
+    "mode": "json",
+    "schema": {
+      "json_schema": {
+        "type": "object",
+        "properties": {
+          "email": {"type": "string"},
+          "name": {"type": "string"},
+          "company": {"type": "string"},
+          "title": {"type": "string"},
+          "linkedin_url": {"type": "string"}
+        },
+        "required": ["email"]
+      }
+    }
+  }
+}
+```
+
+**Agent vs LLM Node:**
+| Aspect | LLM Node | Agent Node |
+|--------|----------|------------|
+| Tool access | None | Yes (via `tools` list) |
+| Iterations | Single pass | Multiple (up to `max_iterations`) |
+| Use case | Classification, extraction, generation | Research, multi-step tasks, autonomous workflows |
+| Cost | Lower (single LLM call) | Higher (multiple LLM + tool calls) |
+| Complexity | Deterministic | Non-deterministic (agent decides) |
+
+**When to Use Agent vs LLM:**
+- Use **LLM** for: classification, data extraction, content generation, single-step decisions
+- Use **Agent** for: research tasks, multi-step data gathering, tasks requiring tool chaining, autonomous workflows
+
+**Common Use Cases:**
+- Research and information gathering
+- Multi-step data processing pipelines
+- Automated email/message handling with context
+- Data enrichment from multiple sources
+- Complex decision-making with tool access
+- Report generation with live data
+
+---
+
 ## Expression Syntax Reference
 
 All blocks support `${...}` expressions for dynamic data:
@@ -1108,5 +1310,6 @@ Arithmetic works in `if` conditions!
 | `hitl` | Human-In-The-Loop | `id`, `title` | `${node_id.input_field_id}` |
 | `image_gen` | Generate images | `id`, `inputs.model`, `inputs.prompt` | `${node_id}` (image URL) |
 | `browser` | Browser automation | `id`, `task` | `${node_id}`, `${node_id.field}` |
+| `agent` | Autonomous task execution | `id`, `inputs.model`, `inputs.prompt` | `${node_id}`, `${node_id.field}` |
 
 ---

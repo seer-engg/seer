@@ -19,6 +19,7 @@ from seer.core.schema.models import (
     HITLNode,
     ImageGenNode,
     BrowserNode,
+    AgentNode,
     TriggerSpec,
     Edge,
 )
@@ -91,6 +92,13 @@ def _format_node_type_usage_notes(node_type: str) -> List[str]:
             "**Important:** Browser nodes use natural language task descriptions. "
             "Use `browser_profile_id` for authenticated automation with saved sessions."
         ],
+        "agent": [
+            "**Important:** Agent nodes require `model` and `prompt` in inputs. "
+            "Use `tools` to specify which tools the agent can call autonomously.",
+            "**OAuth:** For OAuth tools in the `tools` list, use `get_tool_accounts(tool_name)` first. "
+            "Specify tools as `{name, connection_id}` when user has multiple accounts.",
+            "**Iterations:** Use `max_iterations` to limit autonomous steps (default: 10).",
+        ],
     }
     return notes_map.get(node_type, [])
 
@@ -115,6 +123,7 @@ def generate_node_type_reference() -> str:
         "hitl": (HITLNode, "Human-In-The-Loop for collecting user input"),
         "image_gen": (ImageGenNode, "Generate images using AI models"),
         "browser": (BrowserNode, "Browser automation with natural language tasks"),
+        "agent": (AgentNode, "Multi-step autonomous task execution with tool access"),
     }
 
     lines = []
@@ -194,11 +203,12 @@ def generate_validation_checklist_from_model() -> str:
 
     lines.append("Node requirements:")
     lines.append("- Each node must have unique `id` (string, min 1 char)")
-    lines.append("- Each node must have `type` field: tool, llm, if, or for_each")
+    lines.append("- Each node must have `type` field: tool, llm, mcp, if, for_each, hitl, image_gen, browser, or agent")
     lines.append("- Tool nodes: require `tool` (string) and `inputs` (object)")
     lines.append("- LLM nodes: require `inputs` with `model` and `prompt` fields")
     lines.append("- If nodes: require `condition` (boolean expression)")
     lines.append("- ForEach nodes: require `items` (list expression)")
+    lines.append("- Agent nodes: require `inputs` with `model` and `prompt` fields; optional `tools` list")
     lines.append("- Tool nodes MUST NOT have `outputs` field (derived from registry)")
     lines.append("- Node outputs accessed via variable syntax: `${node_id}` or `${node_id.field}`")
     lines.append("")

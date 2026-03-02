@@ -6,10 +6,7 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional
 
-from seer.api.agents.checkpointer import get_checkpointer
 from seer.api.core.errors import RUN_PROBLEM
-from seer.core.errors import WorkflowCompilerError
-from seer.core.runtime.global_compiler import WorkflowCompilerSingleton
 from seer.api.workflows import models as api_models
 from seer.api.workflows.services.shared import (
     _get_draft_version,
@@ -17,7 +14,7 @@ from seer.api.workflows.services.shared import (
     _now,
     _raise_problem,
     _spec_to_dict,
-    raise_compiler_error,
+    validate_workflow_spec,
 )
 from seer.core.schema.models import TriggerSpec, WorkflowSpec
 from seer.database import (
@@ -64,19 +61,6 @@ async def _create_run_record(
     run.thread_id = run.run_id
     return run
 
-
-async def _validate_workflow_spec(user: User, spec: WorkflowSpec) -> None:
-    """
-    Validate workflow spec by running the compiler pipeline.
-    Raises HTTP 400 if validation fails.
-    """
-    compiler = WorkflowCompilerSingleton.instance()
-    spec_dict = _spec_to_dict(spec)
-    checkpointer = await get_checkpointer()
-    try:
-        await compiler.compile(user, spec_dict, checkpointer=checkpointer)
-    except WorkflowCompilerError as exc:
-        raise_compiler_error(exc, "Workflow validation failed")
 
 
 def _serialize_run(run: WorkflowRun) -> api_models.RunResponse:
@@ -341,7 +325,7 @@ async def run_saved_workflow(
             await sync_trigger_subscriptions(user, workflow, spec, skip_validation=True)
 
     spec = WorkflowSpec.model_validate(version.spec)
-    await _validate_workflow_spec(user, spec)
+    await validate_workflow_spec(user, spec)
     trigger_specs = spec.triggers or []
 
     if payload.trigger_event_override:
