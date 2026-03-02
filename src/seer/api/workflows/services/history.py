@@ -17,6 +17,7 @@ from seer.config import config as shared_config
 from seer.database import (
     User,
     WorkflowRun,
+    WorkflowRunSource,
     WorkflowRunStatus,
     parse_run_public_id,
 )
@@ -408,6 +409,39 @@ def _parse_workflow_spec(run: WorkflowRun) -> Optional[WorkflowSpec]:
         return None
 
 
+def _build_trigger_info(run: WorkflowRun) -> Dict[str, Any]:
+    """
+    Build trigger metadata for the history response.
+
+    For trigger-initiated runs, returns subscription and event data.
+    For manual runs (or runs where trigger data is unavailable), returns
+    only the source field to allow graceful degradation.
+    """
+    source_value = run.source.value if isinstance(run.source, WorkflowRunSource) else run.source
+
+    if source_value != WorkflowRunSource.TRIGGER.value:
+        return {"source": "manual"}
+
+    trigger_info: Dict[str, Any] = {"source": "trigger"}
+
+    subscription = getattr(run, "subscription", None)
+    if subscription is not None:
+        trigger_info["trigger_id"] = subscription.trigger_id
+        trigger_info["trigger_key"] = subscription.trigger_key
+        trigger_info["title"] = subscription.title
+
+    trigger_event = getattr(run, "trigger_event", None)
+    if trigger_event is not None:
+        if "trigger_key" not in trigger_info:
+            trigger_info["trigger_key"] = trigger_event.trigger_key
+        event_envelope = trigger_event.event or {}
+        trigger_info["event_data"] = event_envelope.get("data")
+        trigger_info["occurred_at"] = _serialize_datetime(trigger_event.occurred_at)
+        trigger_info["received_at"] = _serialize_datetime(trigger_event.received_at)
+
+    return trigger_info
+
+
 def _build_history_response(
     run: WorkflowRun,
     nodes: List[Dict[str, Any]],
@@ -427,6 +461,7 @@ def _build_history_response(
         "error": run.error,
         "nodes": nodes,
         "execution_graph": execution_graph,
+        "trigger": _build_trigger_info(run),
     }]
 
 
@@ -447,7 +482,7 @@ async def _get_run(user: User, run_id: str) -> WorkflowRun:
             status=400,
         )
     # Use filter().prefetch_related().first() instead of .get() to prefetch workflow
-    run = await WorkflowRun.filter(id=pk, user=user).prefetch_related('workflow').first()
+    run = await WorkflowRun.filter(id=pk, user=user).prefetch_related('workflow', 'subscription', 'trigger_event').first()
     if not run:
         raise_problem(
             type_uri=RUN_PROBLEM,
