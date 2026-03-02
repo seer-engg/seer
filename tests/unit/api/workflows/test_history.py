@@ -900,7 +900,7 @@ class TestHistoryWorkflowIntegration:
         expected_keys = {
             "run_id", "workflow_id", "status",
             "created_at", "started_at", "finished_at",
-            "nodes", "execution_graph"
+            "error", "nodes", "execution_graph"
         }
         assert set(response[0].keys()) == expected_keys
 
