@@ -210,10 +210,11 @@ async def _handle_trigger_event_override(
         source=WorkflowRunSource.MANUAL,
     )
 
-    # Link trigger metadata to the run
+    # Link trigger metadata to the run (use _id suffix — queryset .update() cannot
+    # resolve FK instances to their PK when the value is None)
     await WorkflowRun.filter(id=run.id).update(
-        subscription=linked_subscription,
-        trigger_event=trigger_event_record,
+        subscription_id=linked_subscription.id if linked_subscription else None,
+        trigger_event_id=trigger_event_record.id,
     )
 
     try:
