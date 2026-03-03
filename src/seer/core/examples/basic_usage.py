@@ -159,7 +159,7 @@ def build_workflow_spec() -> Dict[str, Any]:
                 "then": [
                     {
                         "id": "summarize",
-                        "type": "llm",
+                        "type": "agent",
                         "inputs": {
                             "model": "demo-text-model",
                             "prompt": "Summarize issue: ${issue_search.items[0].title}",

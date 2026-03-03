@@ -16,9 +16,9 @@ def test_primitive_blocks_guide_generation():
     # Guide should be non-empty
     assert len(guide) > 1000, "Guide should contain substantial content"
 
-    # Should contain all 5 primitive block types
+    # Should contain primitive block types (llm removed, agent is the AI node type)
     assert "TOOL BLOCK" in guide
-    assert "LLM BLOCK" in guide
+    assert "AGENT BLOCK" in guide
     assert "MCP BLOCK" in guide
     assert "IF BLOCK" in guide
     assert "FOR_EACH BLOCK" in guide
@@ -30,7 +30,7 @@ def test_primitive_blocks_guide_content():
 
     # Should have overview
     assert "Overview" in guide
-    assert "9 primitive block types" in guide
+    assert "8 primitive block types" in guide
 
     # Should document schemas
     assert "Schema:" in guide
@@ -64,7 +64,7 @@ def test_each_block_has_complete_documentation():
     """Test that each primitive block has comprehensive documentation."""
     guide = generate_primitive_blocks_guide()
 
-    block_types = ["tool", "llm", "mcp", "if", "for_each"]
+    block_types = ["tool", "agent", "mcp", "if", "for_each"]
 
     for block_type in block_types:
         # Each block should have purpose

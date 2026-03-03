@@ -235,10 +235,6 @@ class NodeRuntime:
             trigger=self._current_trigger,
         )
 
-        # LLM nodes need credit check before execution
-        if node.type == "llm":
-            await self._check_llm_credit_limit_async()
-
         return await node_impl.execute_async(node, ctx, self.services)
 
     # ------------------------------------------------------------------

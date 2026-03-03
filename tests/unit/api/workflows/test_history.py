@@ -11,10 +11,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from seer.core.schema.models import (
+    AgentNode,
     Edge,
     EdgeType,
     InlineSchema,
-    LLMNode,
     Node,
     OutputContract,
     OutputMode,
@@ -26,7 +26,6 @@ from seer.api.workflows.services.history import (
     _build_node_label,
     _find_node_in_spec,
     _enrich_with_tool_node,
-    _enrich_with_llm_node,
     _enrich_node_with_spec,
     _collect_graph_nodes,
     _build_execution_graph,
@@ -59,14 +58,14 @@ class TestBuildNodeLabel:
         label = _build_node_label(node)
         assert label == "my_tool (github.create_issue)"
 
-    def test_build_node_label_llm_node(self):
-        """Test building label for LLMNode shows (LLM) suffix."""
-        node = LLMNode(
+    def test_build_node_label_agent_node(self):
+        """Test building label for AgentNode returns node ID."""
+        node = AgentNode(
             id="ai_agent",
             inputs={"model": "gpt-4", "prompt": "Test prompt"}
         )
         label = _build_node_label(node)
-        assert label == "ai_agent (LLM)"
+        assert label == "ai_agent"
 
     def test_build_node_label_tool_node_with_complex_tool_name(self):
         """Test label with complex tool identifier."""
@@ -92,7 +91,7 @@ class TestFindNodeInSpec:
         """Test finding existing node in spec nodes list."""
         nodes: List[Node] = [
             ToolNode(id="n1", tool="test.tool", inputs={}),
-            LLMNode(id="n2", inputs={"model": "gpt-4", "prompt": "test"}),
+            AgentNode(id="n2", inputs={"model": "gpt-4", "prompt": "test"}),
         ]
 
         found = _find_node_in_spec(nodes, "n1")
@@ -123,14 +122,14 @@ class TestFindNodeInSpec:
         """Test finding LLM node."""
         nodes: List[Node] = [
             ToolNode(id="tool_1", tool="test.tool", inputs={}),
-            LLMNode(id="llm_1", inputs={"model": "gpt-4", "prompt": "test"}),
+            AgentNode(id="llm_1", inputs={"model": "gpt-4", "prompt": "test"}),
         ]
 
         found = _find_node_in_spec(nodes, "llm_1")
 
         assert found is not None
         assert found.id == "llm_1"
-        assert isinstance(found, LLMNode)
+        assert isinstance(found, AgentNode)
 
 
 # =============================================================================
@@ -190,69 +189,6 @@ class TestEnrichWithToolNode:
 
         assert enriched["tool_name"] == "test.tool"
         assert "expect_outputs" not in enriched
-
-
-@pytest.mark.unit
-class TestEnrichWithLLMNode:
-    """Tests for _enrich_with_llm_node function."""
-
-    def test_enrich_with_llm_node_basic(self):
-        """Test enriching dict with LLMNode metadata."""
-        node = LLMNode(
-            id="llm-1",
-            inputs={
-                "model": "moonshotai/kimi-k2.5",
-                "prompt": "You are a helpful assistant",
-                "temperature": 0.7
-            },
-            outputs=OutputContract(mode=OutputMode.text)
-        )
-
-        enriched = {}
-        _enrich_with_llm_node(enriched, node)
-
-        assert enriched["model"] == "moonshotai/kimi-k2.5"
-        assert enriched["prompt_template"] == "You are a helpful assistant"
-        assert enriched["temperature"] == 0.7
-        assert "output_schema" in enriched
-
-    def test_enrich_with_llm_node_with_output_schema(self):
-        """Test enriching with output schema present."""
-        node = LLMNode(
-            id="llm-1",
-            inputs={
-                "model": "moonshotai/kimi-k2.5",
-                "prompt": "Test"
-            },
-            outputs=OutputContract(
-                mode=OutputMode.json,
-                schema=InlineSchema(schema={"type": "object", "properties": {"analysis": {"type": "string"}}})
-            )
-        )
-
-        enriched = {}
-        _enrich_with_llm_node(enriched, node)
-
-        assert enriched["model"] == "moonshotai/kimi-k2.5"
-        assert "output_schema" in enriched
-        assert enriched["output_schema"]["mode"] == "json"
-        assert "temperature" not in enriched
-
-    def test_enrich_with_llm_node_minimal(self):
-        """Test enriching LLM node with minimal data."""
-        node = LLMNode(
-            id="llm-1",
-            inputs={"model": "claude-sonnet-4.5", "prompt": "Minimal prompt"},
-            outputs=OutputContract(mode=OutputMode.text)
-        )
-
-        enriched = {}
-        _enrich_with_llm_node(enriched, node)
-
-        assert enriched["model"] == "claude-sonnet-4.5"
-        assert enriched["prompt_template"] == "Minimal prompt"
-        assert "temperature" not in enriched
-        assert "output_schema" in enriched
 
 
 @pytest.mark.unit
@@ -334,21 +270,21 @@ class TestCollectGraphNodes:
 
     def test_collect_graph_nodes_llm_node(self):
         """Test collecting LLM node info for graph."""
-        node = LLMNode(id="ai_chat", inputs={"model": "gpt-4", "prompt": "test"})
+        node = AgentNode(id="ai_chat", inputs={"model": "gpt-4", "prompt": "test"})
         nodes_list = []
 
         _collect_graph_nodes(node, nodes_list)
 
         assert len(nodes_list) == 1
         assert nodes_list[0]["id"] == "ai_chat"
-        assert nodes_list[0]["type"] == "llm"
-        assert nodes_list[0]["label"] == "ai_chat (LLM)"
+        assert nodes_list[0]["type"] == "agent"
+        assert nodes_list[0]["label"] == "ai_chat"
 
     def test_collect_graph_nodes_multiple(self):
         """Test collecting multiple nodes."""
         nodes = [
             ToolNode(id="t1", tool="tool1", inputs={}),
-            LLMNode(id="l1", inputs={"model": "gpt-4", "prompt": "test"}),
+            AgentNode(id="l1", inputs={"model": "gpt-4", "prompt": "test"}),
         ]
         nodes_list = []
 
@@ -389,7 +325,7 @@ class TestBuildExecutionGraph:
             version="2",
             nodes=[
                 ToolNode(id="n1", tool="tool1", inputs={}),
-                LLMNode(id="n2", inputs={"model": "gpt-4", "prompt": "test"}),
+                AgentNode(id="n2", inputs={"model": "gpt-4", "prompt": "test"}),
             ],
             edges=[
                 Edge(source="n1", target="n2", type=EdgeType.default),
@@ -402,7 +338,7 @@ class TestBuildExecutionGraph:
         assert graph["nodes"][0]["id"] == "n1"
         assert graph["nodes"][0]["type"] == "tool"
         assert graph["nodes"][1]["id"] == "n2"
-        assert graph["nodes"][1]["type"] == "llm"
+        assert graph["nodes"][1]["type"] == "agent"
 
         assert len(graph["edges"]) == 1
         assert graph["edges"][0]["source"] == "n1"
@@ -618,7 +554,7 @@ class TestParseWorkflowSpec:
             "version": "2",
             "nodes": [
                 {"id": "tool_1", "type": "tool", "tool": "github.issues", "inputs": {"repo": "test"}},
-                {"id": "llm_1", "type": "llm", "inputs": {"model": "gpt-4", "prompt": "Analyze"}},
+                {"id": "llm_1", "type": "agent", "inputs": {"model": "gpt-4", "prompt": "Analyze"}},
             ],
             "edges": [
                 {"source": "tool_1", "target": "llm_1", "type": "default"}
@@ -631,7 +567,7 @@ class TestParseWorkflowSpec:
         assert len(spec.nodes) == 2
         assert len(spec.edges) == 1
         assert isinstance(spec.nodes[0], ToolNode)
-        assert isinstance(spec.nodes[1], LLMNode)
+        assert isinstance(spec.nodes[1], AgentNode)
 
 
 # =============================================================================
@@ -701,7 +637,7 @@ class TestBuildHistoryResponse:
             version="2",
             nodes=[
                 ToolNode(id="n1", tool="test.tool", inputs={}),
-                LLMNode(id="n2", inputs={"model": "gpt-4", "prompt": "test"}),
+                AgentNode(id="n2", inputs={"model": "gpt-4", "prompt": "test"}),
             ],
             edges=[Edge(source="n1", target="n2")],
         )
@@ -820,26 +756,10 @@ class TestHistoryWorkflowIntegration:
         mock_tool_node.tool = "api.fetch"
         mock_tool_node.expect_outputs = None
 
-        mock_llm_node = MagicMock()
-        mock_llm_node.id = "analyze"
-        mock_llm_node.inputs = {
-            "model": "gpt-4",
-            "prompt": "Analyze the data",
-            "temperature": 0.7
-        }
-        mock_llm_node.outputs = None
-
         # Test tool node enrichment
         tool_enriched = {}
         _enrich_with_tool_node(tool_enriched, mock_tool_node)
         assert tool_enriched["tool_name"] == "api.fetch"
-
-        # Test LLM node enrichment
-        llm_enriched = {}
-        _enrich_with_llm_node(llm_enriched, mock_llm_node)
-        assert llm_enriched["model"] == "gpt-4"
-        assert llm_enriched["prompt_template"] == "Analyze the data"
-        assert llm_enriched["temperature"] == 0.7
 
     def test_execution_graph_matches_spec_structure(self):
         """Test that execution graph accurately represents spec structure."""

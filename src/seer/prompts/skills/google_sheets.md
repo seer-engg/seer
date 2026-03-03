@@ -192,7 +192,7 @@ Instead of trying to access array indices directly, use an LLM node to parse the
 ```json
 {
   "id": "parse_row",
-  "type": "llm",
+  "type": "agent",
   "inputs": {
     "model": "gpt-5-mini",
     "prompt": "Parse this spreadsheet row: ${item}\n\nExpected columns:\n- Index 0: Name\n- Index 1: Email\n- Index 2: Status\n\nReturn as JSON with name, email, status fields."
@@ -245,7 +245,7 @@ Now you can access `${parse_row.name}`, `${parse_row.email}`, `${parse_row.statu
     },
     {
       "id": "parse_contact",
-      "type": "llm",
+      "type": "agent",
       "inputs": {
         "model": "gpt-5-mini",
         "prompt": "Parse spreadsheet row: ${row}. Columns: Name (0), Email (1), Company (2). Return JSON."
@@ -277,7 +277,7 @@ Now you can access `${parse_row.name}`, `${parse_row.email}`, `${parse_row.statu
     },
     {
       "id": "complete",
-      "type": "llm",
+      "type": "agent",
       "inputs": {
         "model": "gpt-5-mini",
         "prompt": "Summarize: All contacts have been emailed."
@@ -361,7 +361,7 @@ Now you can access `${parse_row.name}`, `${parse_row.email}`, `${parse_row.statu
   "nodes": [
     {
       "id": "generate_summary",
-      "type": "llm",
+      "type": "agent",
       "inputs": {
         "model": "gpt-5-mini",
         "prompt": "Generate daily metrics summary for ${daily_schedule.data.scheduled_time}. Include: date, revenue, orders, customers."
