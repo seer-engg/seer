@@ -21,7 +21,7 @@ from seer.core.schema.models import (
     ToolNode,
     WorkflowSpec,
 )
-from seer.database import WorkflowRunStatus
+from seer.database import WorkflowRunSource, WorkflowRunStatus
 from seer.api.workflows.services.history import (
     _build_node_label,
     _find_node_in_spec,
@@ -32,6 +32,7 @@ from seer.api.workflows.services.history import (
     _serialize_datetime,
     _snapshot_to_dict,
     _parse_workflow_spec,
+    _build_trigger_info,
     _build_history_response,
     _get_error_traces_from_database,
     _merge_checkpoint_and_database_traces,
@@ -571,6 +572,124 @@ class TestParseWorkflowSpec:
 
 
 # =============================================================================
+# Trigger Info Building Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestBuildTriggerInfo:
+    """Tests for _build_trigger_info function."""
+
+    def _make_run(self, source=WorkflowRunSource.MANUAL, subscription=None, trigger_event=None):
+        run = MagicMock()
+        run.source = source
+        run.subscription = subscription
+        run.trigger_event = trigger_event
+        return run
+
+    def test_manual_run_returns_source_only(self):
+        """Manual run returns only source=manual."""
+        run = self._make_run(source=WorkflowRunSource.MANUAL)
+        result = _build_trigger_info(run)
+        assert result == {"source": "manual"}
+
+    def test_manual_run_string_source(self):
+        """Plain string 'manual' source is handled correctly."""
+        run = self._make_run(source="manual")
+        result = _build_trigger_info(run)
+        assert result == {"source": "manual"}
+
+    def test_trigger_run_no_subscription_no_event(self):
+        """Trigger source with no subscription or event returns only source=trigger."""
+        run = self._make_run(source=WorkflowRunSource.TRIGGER, subscription=None, trigger_event=None)
+        result = _build_trigger_info(run)
+        assert result == {"source": "trigger"}
+
+    def test_trigger_run_with_subscription_only(self):
+        """Trigger run with subscription but no event returns subscription fields."""
+        subscription = MagicMock()
+        subscription.trigger_id = "abc123"
+        subscription.trigger_key = "poll.gmail.email_received"
+        subscription.title = "Gmail Inbox"
+        run = self._make_run(source=WorkflowRunSource.TRIGGER, subscription=subscription, trigger_event=None)
+
+        result = _build_trigger_info(run)
+
+        assert result["source"] == "trigger"
+        assert result["trigger_id"] == "abc123"
+        assert result["trigger_key"] == "poll.gmail.email_received"
+        assert result["title"] == "Gmail Inbox"
+        assert "event_data" not in result
+        assert "occurred_at" not in result
+
+    def test_trigger_run_with_full_data(self):
+        """Trigger run with both subscription and event returns full response."""
+        from datetime import datetime, timezone
+        subscription = MagicMock()
+        subscription.trigger_id = "abc123"
+        subscription.trigger_key = "poll.gmail.email_received"
+        subscription.title = "Gmail Inbox"
+
+        trigger_event = MagicMock()
+        trigger_event.trigger_key = "poll.gmail.email_received"
+        trigger_event.event = {"data": {"subject": "Hello", "from": "test@example.com"}}
+        trigger_event.occurred_at = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+        trigger_event.received_at = datetime(2024, 6, 1, 12, 0, 1, tzinfo=timezone.utc)
+
+        run = self._make_run(source=WorkflowRunSource.TRIGGER, subscription=subscription, trigger_event=trigger_event)
+        result = _build_trigger_info(run)
+
+        assert result["source"] == "trigger"
+        assert result["trigger_id"] == "abc123"
+        assert result["trigger_key"] == "poll.gmail.email_received"
+        assert result["title"] == "Gmail Inbox"
+        assert result["event_data"] == {"subject": "Hello", "from": "test@example.com"}
+        assert result["occurred_at"] == "2024-06-01T12:00:00+00:00"
+        assert result["received_at"] == "2024-06-01T12:00:01+00:00"
+
+    def test_trigger_run_event_with_null_occurred_at(self):
+        """Trigger event with occurred_at=None serializes to None."""
+        trigger_event = MagicMock()
+        trigger_event.trigger_key = "poll.gmail.email_received"
+        trigger_event.event = {"data": {}}
+        trigger_event.occurred_at = None
+        trigger_event.received_at = None
+
+        run = self._make_run(source=WorkflowRunSource.TRIGGER, trigger_event=trigger_event, subscription=None)
+        result = _build_trigger_info(run)
+
+        assert result["occurred_at"] is None
+        assert result["received_at"] is None
+
+    def test_trigger_run_event_with_empty_event_envelope(self):
+        """Event envelope with no 'data' key returns event_data=None."""
+        trigger_event = MagicMock()
+        trigger_event.trigger_key = "poll.gmail.email_received"
+        trigger_event.event = {}
+        trigger_event.occurred_at = None
+        trigger_event.received_at = None
+
+        run = self._make_run(source=WorkflowRunSource.TRIGGER, trigger_event=trigger_event, subscription=None)
+        result = _build_trigger_info(run)
+
+        assert result["event_data"] is None
+
+    def test_trigger_run_fallback_trigger_key_from_event(self):
+        """When no subscription, trigger_key is taken from the event."""
+        trigger_event = MagicMock()
+        trigger_event.trigger_key = "webhook.github"
+        trigger_event.event = {"data": {"action": "push"}}
+        trigger_event.occurred_at = None
+        trigger_event.received_at = None
+
+        run = self._make_run(source=WorkflowRunSource.TRIGGER, subscription=None, trigger_event=trigger_event)
+        result = _build_trigger_info(run)
+
+        assert result["trigger_key"] == "webhook.github"
+        assert "trigger_id" not in result
+
+
+# =============================================================================
 # History Response Building Tests
 # =============================================================================
 
@@ -676,10 +795,57 @@ class TestBuildHistoryResponse:
         run.created_at = None
         run.started_at = None
         run.finished_at = None
+        run.source = WorkflowRunSource.MANUAL
+        run.subscription = None
+        run.trigger_event = None
 
         response = _build_history_response(run, [], None)
 
         assert response[0]["status"] == "cancelled"
+
+    def test_build_history_response_includes_trigger_key_for_manual(self):
+        """Verify 'trigger' key is present and manual for non-trigger runs."""
+        run = MagicMock()
+        run.run_id = "run_manual"
+        run.workflow = None
+        run.status = WorkflowRunStatus.SUCCEEDED
+        run.created_at = None
+        run.started_at = None
+        run.finished_at = None
+        run.source = WorkflowRunSource.MANUAL
+        run.subscription = None
+        run.trigger_event = None
+
+        response = _build_history_response(run, [], None)
+
+        assert "trigger" in response[0]
+        assert response[0]["trigger"] == {"source": "manual"}
+
+    def test_build_history_response_includes_trigger_key_for_trigger_run(self):
+        """Verify 'trigger' key is populated for trigger-initiated runs."""
+        subscription = MagicMock()
+        subscription.trigger_id = "sub_xyz"
+        subscription.trigger_key = "poll.gmail.email_received"
+        subscription.title = "My Gmail"
+
+        run = MagicMock()
+        run.run_id = "run_triggered"
+        run.workflow = None
+        run.status = WorkflowRunStatus.SUCCEEDED
+        run.created_at = None
+        run.started_at = None
+        run.finished_at = None
+        run.source = WorkflowRunSource.TRIGGER
+        run.subscription = subscription
+        run.trigger_event = None
+
+        response = _build_history_response(run, [], None)
+
+        assert "trigger" in response[0]
+        assert response[0]["trigger"]["source"] == "trigger"
+        assert response[0]["trigger"]["trigger_id"] == "sub_xyz"
+        assert response[0]["trigger"]["trigger_key"] == "poll.gmail.email_received"
+        assert response[0]["trigger"]["title"] == "My Gmail"
 
 
 # =============================================================================
@@ -805,6 +971,9 @@ class TestHistoryWorkflowIntegration:
         run.created_at = utcnow()
         run.started_at = utcnow()
         run.finished_at = utcnow()
+        run.source = WorkflowRunSource.MANUAL
+        run.subscription = None
+        run.trigger_event = None
 
         spec = WorkflowSpec(
             version="2",
@@ -820,13 +989,16 @@ class TestHistoryWorkflowIntegration:
         expected_keys = {
             "run_id", "workflow_id", "status",
             "created_at", "started_at", "finished_at",
-            "error", "nodes", "execution_graph"
+            "error", "nodes", "execution_graph", "trigger"
         }
         assert set(response[0].keys()) == expected_keys
 
         # Verify execution_graph structure
         assert "nodes" in response[0]["execution_graph"]
         assert "edges" in response[0]["execution_graph"]
+
+        # Verify trigger structure for manual run
+        assert response[0]["trigger"] == {"source": "manual"}
 
 
 # =============================================================================

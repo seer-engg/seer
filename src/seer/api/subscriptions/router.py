@@ -30,7 +30,6 @@ from .pricing_catalog import (
     TierPricing,
     get_price_id_for_checkout,
     get_pricing_catalog,
-    get_trial_period_days,
 )
 from .stripe_service import (
     create_checkout_session,
@@ -405,7 +404,7 @@ async def create_subscription_with_trial(
 
     This endpoint is used during onboarding to start a trial subscription
     after the user has added their payment method via Setup Intent.
-    The trial period is automatically applied from the price configuration.
+    The trial period is applied from application configuration (trial_period_days).
 
     Args:
         body: Request containing tier and interval selection
@@ -444,13 +443,12 @@ async def create_subscription_with_trial(
         # Verify customer has a payment method and get the default one
         default_payment_method_id = _verify_and_get_payment_method(customer_id)
 
-        # Create subscription with trial period from Stripe price metadata
-        trial_days = get_trial_period_days(body.tier, body.interval)
+        # Create subscription with trial period from application config
         stripe_subscription = _create_trial_subscription(
             customer_id=customer_id,
             price_id=price_id,
             user=user,
-            trial_days=trial_days,
+            trial_days=config.trial_period_days,
         )
 
         # Update subscription to use the default payment method
