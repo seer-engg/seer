@@ -783,3 +783,183 @@ async def test_agent_node_json_output_with_structured_response():
     trace = result["_trace_structured_agent"]
     assert trace["status"] == "succeeded"
     assert trace["output"]["email_1"] == "First email is about a meeting"
+
+
+# =============================================================================
+# File Input Resolution Tests
+# (Ported from test_llm_file_inputs.py — function now lives in agent_node.py)
+# =============================================================================
+
+
+from datetime import datetime, timezone
+
+from seer.core.files.models import WorkflowFileRef, is_file_ref
+from seer.core.nodes.agent_node import _resolve_llm_file_inputs
+from seer.core.runtime.context import WorkflowRuntimeContext
+from seer.database import User
+
+
+def _create_file_ref(
+    file_id: str = "test-file-123",
+    filename: str = "document.pdf",
+    mime_type: str = "application/pdf",
+    size_bytes: int = 1024,
+) -> dict:
+    """Create a file reference dict for testing."""
+    ref = WorkflowFileRef(
+        file_id=file_id,
+        storage_path=f"s3://bucket/user/run/{file_id}/{filename}",
+        filename=filename,
+        mime_type=mime_type,
+        size_bytes=size_bytes,
+        workflow_run_id="run_123",
+        created_at=datetime.now(timezone.utc),
+    )
+    return ref.to_dict()
+
+
+def _create_mock_context_with_file_system() -> MagicMock:
+    """Create a mock workflow context with file system."""
+    mock_user = MagicMock(spec=User)
+    mock_user.user_id = "usr_test"
+
+    context = MagicMock(spec=WorkflowRuntimeContext)
+    context.user = mock_user
+    context.workflow_run_id = "run_test123"
+
+    mock_fs = AsyncMock()
+    mock_fs.get_file_content = AsyncMock(return_value=b"file content bytes")
+    context.file_system = mock_fs
+    context.has_file_system = True
+
+    return context
+
+
+class TestAgentNodeFileInputResolution:
+    """Tests for _resolve_llm_file_inputs ported to agent_node.py."""
+
+    @pytest.mark.asyncio
+    async def test_resolve_single_file_ref(self):
+        """Single file reference is resolved correctly."""
+        context = _create_mock_context_with_file_system()
+        file_ref = _create_file_ref(filename="report.pdf", mime_type="application/pdf", size_bytes=2048)
+
+        auxiliary = {"document": file_ref, "other_param": "string value"}
+        resolved, file_contents = await _resolve_llm_file_inputs(auxiliary, context)
+
+        assert "_resolved_file" in resolved["document"]
+        assert resolved["document"]["_resolved_file"] == "report.pdf"
+        assert resolved["other_param"] == "string value"
+        assert len(file_contents) == 1
+        assert file_contents[0]["filename"] == "report.pdf"
+        assert file_contents[0]["content"] == b"file content bytes"
+
+    @pytest.mark.asyncio
+    async def test_resolve_list_of_file_refs(self):
+        """List of file references is resolved correctly."""
+        context = _create_mock_context_with_file_system()
+        file_ref1 = _create_file_ref(filename="image1.png", mime_type="image/png")
+        file_ref2 = _create_file_ref(filename="image2.png", mime_type="image/png")
+
+        auxiliary = {"attachments": [file_ref1, file_ref2]}
+        resolved, file_contents = await _resolve_llm_file_inputs(auxiliary, context)
+
+        assert len(resolved["attachments"]) == 2
+        assert resolved["attachments"][0]["_resolved_file"] == "image1.png"
+        assert len(file_contents) == 2
+
+    @pytest.mark.asyncio
+    async def test_no_file_refs_returns_original(self):
+        """When no file refs, original inputs returned unchanged."""
+        context = _create_mock_context_with_file_system()
+        auxiliary = {"param1": "value1", "param2": 123}
+
+        resolved, file_contents = await _resolve_llm_file_inputs(auxiliary, context)
+
+        assert resolved == auxiliary
+        assert file_contents == []
+
+    @pytest.mark.asyncio
+    async def test_no_context_returns_original(self):
+        """Without context, original inputs returned unchanged."""
+        file_ref = _create_file_ref()
+        auxiliary = {"document": file_ref}
+
+        resolved, file_contents = await _resolve_llm_file_inputs(auxiliary, None)
+
+        assert resolved == auxiliary
+        assert file_contents == []
+
+    @pytest.mark.asyncio
+    async def test_context_without_file_system(self):
+        """Context without file system returns original inputs."""
+        mock_user = MagicMock(spec=User)
+        context = WorkflowRuntimeContext(user=mock_user)
+
+        file_ref = _create_file_ref()
+        auxiliary = {"document": file_ref}
+
+        with patch.object(WorkflowRuntimeContext, "has_file_system", new_callable=lambda: property(lambda self: False)):
+            resolved, file_contents = await _resolve_llm_file_inputs(auxiliary, context)
+
+        assert resolved == auxiliary
+        assert file_contents == []
+
+    @pytest.mark.asyncio
+    async def test_file_contents_added_to_trace_inputs(self):
+        """File contents info is added to trace inputs when files are present."""
+        from langchain_core.messages import AIMessage, HumanMessage
+
+        context = _create_mock_context_with_file_system()
+        file_ref = _create_file_ref(filename="data.pdf", mime_type="application/pdf")
+
+        mock_chat_model = MagicMock()
+        model_def = ModelDefinition(
+            model_id="test-model",
+            text_handler=lambda inv: ("result", {}),
+            chat_model_factory=lambda: mock_chat_model,
+        )
+
+        spec = {
+            "version": "2",
+            "triggers": [
+                {
+                    "id": "file_trigger",
+                    "key": "test.file",
+                    "mode": "webhook",
+                    "event_schema": {"type": "object"},
+                }
+            ],
+            "nodes": [
+                {
+                    "id": "file_agent",
+                    "type": "agent",
+                    "inputs": {
+                        "model": "test-model",
+                        "prompt": "Analyze the document",
+                        "tools": [],
+                    },
+                    "outputs": {"mode": "text"},
+                }
+            ],
+            "edges": [
+                {"source": "file_trigger", "target": "file_agent", "type": "trigger"},
+            ],
+        }
+
+        mock_agent = AsyncMock()
+        mock_agent.ainvoke.return_value = {
+            "messages": [
+                HumanMessage(content="Analyze the document"),
+                AIMessage(content="Document analyzed."),
+            ]
+        }
+
+        with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
+            compiled = await _compile_agent_workflow(spec, [model_def])
+            trigger_envelope = {"trigger_key": "test.file"}
+            # Inject file_ref into state manually via context to simulate file input
+            result = await compiled.ainvoke(config=None, context=context, trigger=trigger_envelope)
+
+        assert "file_agent" in result
+        assert result["file_agent"] == "Document analyzed."

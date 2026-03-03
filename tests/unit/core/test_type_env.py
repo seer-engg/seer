@@ -15,8 +15,8 @@ from seer.core.compiler.type_env import (
 from seer.core.expr.typecheck import TypeEnvironment
 from seer.core.registry.tool_registry import ToolRegistry
 from seer.core.schema.models import (
+    AgentNode,
     ForEachNode,
-    LLMNode,
     OutputContract,
     OutputMode,
     TriggerSpec,
@@ -266,9 +266,8 @@ def test_build_type_environment_with_llm_node():
         version="2",
         triggers=[],
         nodes=[
-            LLMNode(
+            AgentNode(
                 id="llm1",
-                type="llm",
                 inputs={"model": "gpt-4", "prompt": "Generate a response"},
                 outputs=OutputContract(mode=OutputMode.json, schema={"schema": {"type": "object"}})
             )
@@ -298,9 +297,8 @@ def test_build_type_environment_node_with_output():
         version="2",
         triggers=[],
         nodes=[
-            LLMNode(
+            AgentNode(
                 id="llm1",
-                type="llm",
                 inputs={"model": "gpt-4", "prompt": "test"}
             )
         ],
@@ -848,9 +846,8 @@ def test_for_each_loop_variable_infers_type_from_llm_node_output():
         version="2",
         triggers=[],
         nodes=[
-            LLMNode(
+            AgentNode(
                 id="prepare_data",
-                type="llm",
                 inputs={"model": "gpt-4", "prompt": "Generate organizations"},
                 outputs=OutputContract(
                     mode=OutputMode.json,
