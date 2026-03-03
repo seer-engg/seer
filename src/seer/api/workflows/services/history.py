@@ -413,16 +413,12 @@ def _build_trigger_info(run: WorkflowRun) -> Dict[str, Any]:
     """
     Build trigger metadata for the history response.
 
-    For trigger-initiated runs, returns subscription and event data.
-    For manual runs (or runs where trigger data is unavailable), returns
-    only the source field to allow graceful degradation.
+    Surfaces trigger data whenever a TriggerEvent FK is linked to the run,
+    regardless of whether the run was initiated automatically (source=trigger)
+    or manually with a real event selected (source=manual + trigger_event_override).
     """
     source_value = run.source.value if isinstance(run.source, WorkflowRunSource) else run.source
-
-    if source_value != WorkflowRunSource.TRIGGER.value:
-        return {"source": "manual"}
-
-    trigger_info: Dict[str, Any] = {"source": "trigger"}
+    trigger_info: Dict[str, Any] = {"source": source_value}
 
     subscription = getattr(run, "subscription", None)
     if subscription is not None:
