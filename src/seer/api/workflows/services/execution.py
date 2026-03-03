@@ -18,6 +18,9 @@ from seer.api.workflows.services.shared import (
 )
 from seer.core.schema.models import TriggerSpec, WorkflowSpec
 from seer.database import (
+    TriggerEvent,
+    TriggerEventStatus,
+    TriggerSubscription,
     User,
     Workflow,
     WorkflowRun,
@@ -178,6 +181,25 @@ async def _handle_trigger_event_override(
         if not effective_envelope.get("title"):
             effective_envelope["title"] = target_trigger.ui_meta.get("title", target_trigger.key)
 
+    # Look up the TriggerSubscription if we have a resolved target trigger
+    linked_subscription = None
+    if target_trigger:
+        linked_subscription = await TriggerSubscription.filter(
+            workflow=workflow,
+            trigger_id=target_trigger.id,
+        ).first()
+
+    # Persist the override envelope as a TriggerEvent so the history API can
+    # surface it. Mark PROCESSED immediately — this is a test event and must
+    # never be re-dispatched by the polling worker.
+    trigger_key = effective_envelope.get("trigger_key", "")
+    trigger_event_record = await TriggerEvent.create(
+        trigger_key=trigger_key,
+        event=effective_envelope,
+        status=TriggerEventStatus.PROCESSED,
+        subscription_id=linked_subscription.id if linked_subscription else None,
+    )
+
     run = await _create_run_record(
         user,
         workflow=workflow,
@@ -186,6 +208,13 @@ async def _handle_trigger_event_override(
         inputs=payload.inputs,
         config_payload=payload.config,
         source=WorkflowRunSource.MANUAL,
+    )
+
+    # Link trigger metadata to the run (use _id suffix — queryset .update() cannot
+    # resolve FK instances to their PK when the value is None)
+    await WorkflowRun.filter(id=run.id).update(
+        subscription_id=linked_subscription.id if linked_subscription else None,
+        trigger_event_id=trigger_event_record.id,
     )
 
     try:
