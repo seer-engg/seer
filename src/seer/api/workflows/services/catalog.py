@@ -20,7 +20,6 @@ from seer.core.errors import WorkflowCompilerError
 from seer.core.registry.trigger_registry import trigger_registry
 from seer.core.runtime.global_compiler import WorkflowCompilerSingleton
 from seer.core.schema.models import (
-    LLMNode,
     Node,
     ToolNode,
     WorkflowSpec,
@@ -31,18 +30,6 @@ COMPILER = WorkflowCompilerSingleton.instance()
 
 NODE_TYPE_DESCRIPTORS = api_models.NodeTypeResponse(
     node_types=[
-        api_models.NodeTypeDescriptor(
-            type="llm",
-            title="LLM",
-            fields=[
-                api_models.NodeFieldDescriptor(name="id", kind="string", required=True),
-                api_models.NodeFieldDescriptor(name="model", kind="select", required=True, source="models"),
-                api_models.NodeFieldDescriptor(name="prompt", kind="textarea", required=True),
-                api_models.NodeFieldDescriptor(name="in", kind="json"),
-                api_models.NodeFieldDescriptor(name="out", kind="string"),
-                api_models.NodeFieldDescriptor(name="output", kind="output_contract", required=True),
-            ],
-        ),
         api_models.NodeTypeDescriptor(
             type="if_else",
             title="If/Else",
@@ -85,6 +72,18 @@ NODE_TYPE_DESCRIPTORS = api_models.NodeTypeResponse(
                 api_models.NodeFieldDescriptor(name="display", kind="hitl_display"),
                 api_models.NodeFieldDescriptor(name="inputs", kind="hitl_inputs"),
                 api_models.NodeFieldDescriptor(name="timeout_seconds", kind="number"),
+            ],
+        ),
+        api_models.NodeTypeDescriptor(
+            type="agent",
+            title="AI Agent",
+            fields=[
+                api_models.NodeFieldDescriptor(name="id", kind="string", required=True),
+                api_models.NodeFieldDescriptor(name="model", kind="model_select", required=True),
+                api_models.NodeFieldDescriptor(name="prompt", kind="textarea", required=True),
+                api_models.NodeFieldDescriptor(name="tools", kind="tools_list"),
+                api_models.NodeFieldDescriptor(name="max_iterations", kind="number"),
+                api_models.NodeFieldDescriptor(name="outputs", kind="output_contract"),
             ],
         ),
         # Note: 'task' node type is not supported in the frontend builder UI
@@ -402,7 +401,7 @@ async def list_mcp_tools(payload: api_models.McpToolsRequest) -> api_models.McpT
 def _collect_warnings_from_nodes(nodes: Iterable[Node]) -> List[api_models.WorkflowWarning]:
     warnings: List[api_models.WorkflowWarning] = []
     for node in nodes:
-        if isinstance(node, (ToolNode, LLMNode)) and not node.out:
+        if isinstance(node, ToolNode) and not node.out:
             warnings.append(
                 api_models.WorkflowWarning(
                     code="OUT_MISSING",

@@ -8,19 +8,18 @@ state propagation between nodes.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, List
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from langchain_core.messages import AIMessage
 
 from seer.core.registry.model_registry import ModelDefinition
 
 from .conftest import (
     compile_workflow,
     create_echo_tool,
-    create_mock_json_llm_handler,
-    create_mock_text_llm_handler,
     create_tracking_tool,
-    create_transform_tool,
     simple_trigger_spec,
 )
 
@@ -366,26 +365,26 @@ async def test_execute_workflow_accumulates_state_across_nodes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_workflow_with_llm_text_output() -> None:
+async def test_execute_workflow_with_agent_text_output() -> None:
     """
-    Test execution with LLM node in text mode.
+    Test execution with agent node in text mode.
     """
     call_tracker: List[Any] = []
     tracking_tool = create_tracking_tool(call_tracker)
 
     model_def = ModelDefinition(
         model_id="test-model",
-        text_handler=create_mock_text_llm_handler("Generated text response"),
+        chat_model_factory=lambda: MagicMock(),
     )
 
-    # LLM node uses inputs for model/prompt and outputs for mode
+    # Agent node uses inputs for model/prompt and outputs for mode
     spec = {
         "version": "2",
         "triggers": [simple_trigger_spec()],
         "nodes": [
             {
                 "id": "generate",
-                "type": "llm",
+                "type": "agent",
                 "inputs": {
                     "model": "test-model",
                     "prompt": "Generate something for: ${test_trigger.message}",
@@ -417,37 +416,37 @@ async def test_execute_workflow_with_llm_text_output() -> None:
         "message": "test input",
     }
 
-    result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
+    mock_agent = AsyncMock()
+    mock_agent.ainvoke.return_value = {"messages": [AIMessage(content="Generated text response")]}
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
+        result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
-    # Verify LLM output was captured and passed to next node
+    # Verify agent output was captured and passed to next node
     assert "Generated text response" in call_tracker
     assert result["generate"] == "Generated text response"
 
 
 @pytest.mark.asyncio
-async def test_execute_workflow_with_llm_json_output() -> None:
+async def test_execute_workflow_with_agent_json_output() -> None:
     """
-    Test execution with LLM node in JSON mode with schema validation.
+    Test execution with agent node in JSON mode with schema validation.
     """
     call_tracker: List[Any] = []
     tracking_tool = create_tracking_tool(call_tracker)
 
     model_def = ModelDefinition(
         model_id="test-model",
-        json_handler=create_mock_json_llm_handler({
-            "name": "Test Name",
-            "score": 95,
-        }),
+        chat_model_factory=lambda: MagicMock(),
     )
 
-    # LLM node uses inputs for model/prompt and outputs for mode/schema
+    # Agent node uses inputs for model/prompt and outputs for mode/schema
     spec = {
         "version": "2",
         "triggers": [simple_trigger_spec()],
         "nodes": [
             {
                 "id": "generate",
-                "type": "llm",
+                "type": "agent",
                 "inputs": {
                     "model": "test-model",
                     "prompt": "Extract data from: ${test_trigger.message}",
@@ -490,9 +489,14 @@ async def test_execute_workflow_with_llm_json_output() -> None:
         "message": "some text",
     }
 
-    result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
+    mock_agent = AsyncMock()
+    mock_agent.ainvoke.return_value = {
+        "messages": [AIMessage(content='{"name": "Test Name", "score": 95}')]
+    }
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
+        result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
-    # Verify LLM JSON output structure
+    # Verify agent JSON output structure
     assert result["generate"]["name"] == "Test Name"
     assert result["generate"]["score"] == 95
 

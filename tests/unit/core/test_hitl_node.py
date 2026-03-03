@@ -19,8 +19,8 @@ from seer.core.schema.models import (
     HITLInputField,
     HITLInputOption,
     HITLInputType,
+    AgentNode,
     HITLNode,
-    LLMNode,
     ToolNode,
     WorkflowSpec,
 )
@@ -559,9 +559,8 @@ def test_validate_references_hitl_in_workflow():
         version="2",
         triggers=[],
         nodes=[
-            LLMNode(
+            AgentNode(
                 id="llm1",
-                type="llm",
                 inputs={"model": "gpt-4", "prompt": "Generate text"},
             ),
             HITLNode(
@@ -626,9 +625,8 @@ def test_workflow_spec_mixed_nodes():
     spec = WorkflowSpec(
         version="2",
         nodes=[
-            LLMNode(
+            AgentNode(
                 id="llm1",
-                type="llm",
                 inputs={"model": "gpt-4", "prompt": "Generate"},
             ),
             HITLNode(
@@ -656,7 +654,7 @@ def test_workflow_spec_mixed_nodes():
     )
 
     assert len(spec.nodes) == 2
-    assert spec.nodes[0].type == "llm"
+    assert spec.nodes[0].type == "agent"
     assert spec.nodes[1].type == "hitl"
 
 

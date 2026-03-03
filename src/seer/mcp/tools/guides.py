@@ -54,7 +54,7 @@ async def get_workflow_guide(
 
     Args:
         section: Optional section to retrieve:
-                 - "blocks" - Block types reference (tool, llm, agent, if, for_each, etc.)
+                 - "blocks" - Block types reference (tool, agent, mcp, if, for_each, etc.)
                  - "graph" - Graph structure and edge types
                  - "triggers" - Trigger specification and required fields
                  - None (default) - Returns blocks, graph, and trigger guides

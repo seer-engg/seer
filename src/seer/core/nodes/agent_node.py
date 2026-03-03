@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # Reason: Single-responsibility file; splitting would harm cohesion
 """
 AgentNode - Multi-step autonomous task execution with tool access.
 
@@ -278,6 +279,65 @@ def _extract_json_from_markdown(text: str) -> str:
     return text
 
 
+async def _resolve_llm_file_inputs(
+    auxiliary: Dict[str, Any],
+    context: Any,  # WorkflowRuntimeContext
+) -> tuple[Dict[str, Any], list[Dict[str, Any]]]:
+    """
+    Scan auxiliary inputs for file references and resolve to content.
+
+    File references (WorkflowFileRef) in the inputs are detected using the
+    is_file_ref() function and resolved via the WorkflowFileSystem.
+    """
+    from seer.core.files.models import is_file_ref, parse_file_ref  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+
+    if not context or not context.has_file_system:
+        return auxiliary, []
+
+    file_contents: list[Dict[str, Any]] = []
+    resolved: Dict[str, Any] = {}
+
+    for key, value in auxiliary.items():
+        if is_file_ref(value):
+            file_ref = parse_file_ref(value)
+            content = await context.file_system.get_file_content(file_ref)
+            file_contents.append({
+                "key": key,
+                "mime_type": file_ref.mime_type,
+                "filename": file_ref.filename,
+                "content": content,
+            })
+            resolved[key] = {
+                "_resolved_file": file_ref.filename,
+                "mime_type": file_ref.mime_type,
+                "size_bytes": file_ref.size_bytes,
+            }
+        elif isinstance(value, list):
+            # Handle list of file refs
+            resolved_list = []
+            for item in value:
+                if is_file_ref(item):
+                    file_ref = parse_file_ref(item)
+                    content = await context.file_system.get_file_content(file_ref)
+                    file_contents.append({
+                        "key": key,
+                        "mime_type": file_ref.mime_type,
+                        "filename": file_ref.filename,
+                        "content": content,
+                    })
+                    resolved_list.append({
+                        "_resolved_file": file_ref.filename,
+                        "mime_type": file_ref.mime_type,
+                    })
+                else:
+                    resolved_list.append(item)
+            resolved[key] = resolved_list
+        else:
+            resolved[key] = value
+
+    return resolved, file_contents
+
+
 def _extract_agent_config(node: "AgentNode") -> Dict[str, Any]:
     """Extract and validate agent configuration from node inputs."""
     model_id = node.inputs.get("model")
@@ -485,11 +545,43 @@ class AgentNodeType(BaseNodeType):
         max_iterations = config["max_iterations"]
         temperature = config["temperature"]
 
+        # Evaluate auxiliary inputs (non-reserved keys) and resolve file references
+        from seer.core.expr.evaluator import evaluate_value  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+        reserved_keys = {"model", "prompt", "tools", "max_iterations", "temperature"}
+        auxiliary = {
+            key: evaluate_value(eval_ctx, value)
+            for key, value in node.inputs.items()
+            if key not in reserved_keys
+        }
+        _, file_contents = await _resolve_llm_file_inputs(auxiliary, ctx.runtime_context)
+
         # Build inputs for trace
         inputs = _build_inputs_for_trace(config)
+        if file_contents:
+            inputs["file_inputs"] = [{"key": f["key"], "filename": f["filename"]} for f in file_contents]
 
         # Render prompt with state values
         prompt = render_template(eval_ctx, config["prompt_template"])
+
+        # Build HumanMessage, incorporating file contents if present
+        human_message: Any
+        if file_contents:
+            from seer.core.runtime.file_processor import FileContentProcessor  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
+            processor = FileContentProcessor()
+            processed = await processor.process_files(file_contents)
+            image_blocks = processed.get("image_blocks", [])
+            extracted_text = processed.get("extracted_text", "")
+
+            if extracted_text:
+                prompt = f"{prompt}\n\n{extracted_text}"
+
+            if image_blocks:
+                content: List[Any] = [{"type": "text", "text": prompt}] + image_blocks
+                human_message = HumanMessage(content=content)
+            else:
+                human_message = HumanMessage(content=prompt)
+        else:
+            human_message = HumanMessage(content=prompt)
 
         try:
             # Bind tools with credentials
@@ -515,7 +607,7 @@ class AgentNodeType(BaseNodeType):
             recursion_limit = max_iterations * 3 if isinstance(max_iterations, int) else 30
 
             result = await agent.ainvoke(
-                {"messages": [HumanMessage(content=prompt)]},
+                {"messages": [human_message]},
                 config={"recursion_limit": recursion_limit},
             )
 

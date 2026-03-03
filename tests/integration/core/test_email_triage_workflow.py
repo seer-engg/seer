@@ -18,9 +18,12 @@ Key investigation points:
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from langchain_core.messages import AIMessage
 
 from seer.core.registry.model_registry import ModelDefinition
 from seer.core.registry.tool_registry import ToolDefinition
@@ -92,7 +95,7 @@ EMAIL_TRIAGE_WORKFLOW_SPEC: Dict[str, Any] = {
         },
         {
             "id": "analyze_and_generate_response",
-            "type": "llm",
+            "type": "agent",
             "inputs": {
                 "model": "test-model",
                 "prompt": """You are an AI assistant helping to triage incoming emails.
@@ -427,6 +430,55 @@ def create_mock_no_reply_handler():
     return handler
 
 
+_INQUIRY_RESPONSE = {
+    "classification": "inquiry",
+    "should_reply": True,
+    "reasoning": "This is a product question that deserves a helpful response.",
+    "sender_email": "testuser@example.com",
+    "sender_name": "Test User",
+    "reply_to_email": "testuser@example.com",
+    "reply_subject": "Re: Question about your product",
+    "reply_body": (
+        "Hello Test User,\n\n"
+        "Thank you for your question about our automatic triage feature! "
+        "The system uses machine learning to analyze email content, sender history, "
+        "and urgency indicators to determine priority.\n\n"
+        "Let me know if you have any other questions.\n\n"
+        "Best regards,\n"
+        "AI Assistant"
+    ),
+}
+
+_NO_REPLY_RESPONSE = {
+    "classification": "spam",
+    "should_reply": False,
+    "reasoning": "This appears to be spam and does not require a response.",
+    "sender_email": "spammer@example.com",
+    "sender_name": "Spammer",
+    "reply_to_email": "spammer@example.com",
+    "reply_subject": "",
+    "reply_body": "",
+}
+
+
+def _create_inquiry_mock_agent() -> AsyncMock:
+    """Create a mock agent that returns an inquiry classification response."""
+    mock_agent = AsyncMock()
+    mock_agent.ainvoke.return_value = {
+        "messages": [AIMessage(content=json.dumps(_INQUIRY_RESPONSE))]
+    }
+    return mock_agent
+
+
+def _create_no_reply_mock_agent() -> AsyncMock:
+    """Create a mock agent that returns a no-reply (spam) classification response."""
+    mock_agent = AsyncMock()
+    mock_agent.ainvoke.return_value = {
+        "messages": [AIMessage(content=json.dumps(_NO_REPLY_RESPONSE))]
+    }
+    return mock_agent
+
+
 # =============================================================================
 # E2E TESTS
 # =============================================================================
@@ -459,10 +511,10 @@ async def test_email_triage_workflow_full_execution() -> None:
     gmail_get_tool = create_gmail_get_message_tool(call_tracker)
     gmail_send_tool = create_gmail_send_email_tool(call_tracker)
 
-    # Create mock LLM model with JSON handler for classification
+    # Create mock model for agent node
     model_def = ModelDefinition(
         model_id="test-model",
-        json_handler=create_mock_email_classification_handler(),
+        chat_model_factory=lambda: MagicMock(),
     )
 
     # Compile the workflow
@@ -488,7 +540,8 @@ async def test_email_triage_workflow_full_execution() -> None:
     }
 
     # Execute the workflow
-    result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=_create_inquiry_mock_agent()):
+        result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # ==========================================================================
     # Verification: Tool Execution Order
@@ -559,10 +612,10 @@ async def test_email_triage_workflow_no_reply_branch() -> None:
     gmail_get_tool = create_gmail_get_message_tool(call_tracker)
     gmail_send_tool = create_gmail_send_email_tool(call_tracker)
 
-    # Create mock LLM that returns should_reply=False
+    # Create mock model for agent node that returns should_reply=False
     model_def = ModelDefinition(
         model_id="test-model",
-        json_handler=create_mock_no_reply_handler(),
+        chat_model_factory=lambda: MagicMock(),
     )
 
     compiled = await compile_workflow(
@@ -584,7 +637,8 @@ async def test_email_triage_workflow_no_reply_branch() -> None:
         "labels": ["INBOX", "SPAM"],
     }
 
-    result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=_create_no_reply_mock_agent()):
+        result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Verify both fetch tools executed
     google_docs_calls = [c for c in call_tracker if c.startswith("google_docs_read:")]
@@ -622,7 +676,7 @@ async def test_email_triage_parallel_tool_execution() -> None:
 
     model_def = ModelDefinition(
         model_id="test-model",
-        json_handler=create_mock_email_classification_handler(),
+        chat_model_factory=lambda: MagicMock(),
     )
 
     compiled = await compile_workflow(
@@ -644,7 +698,8 @@ async def test_email_triage_parallel_tool_execution() -> None:
         "labels": ["INBOX"],
     }
 
-    result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=_create_inquiry_mock_agent()):
+        result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Both tools should have executed
     assert "fetch_product_spec" in result
@@ -674,7 +729,7 @@ async def test_email_triage_trigger_data_access() -> None:
 
     model_def = ModelDefinition(
         model_id="test-model",
-        json_handler=create_mock_email_classification_handler(),
+        chat_model_factory=lambda: MagicMock(),
     )
 
     compiled = await compile_workflow(
@@ -697,7 +752,8 @@ async def test_email_triage_trigger_data_access() -> None:
         "labels": ["INBOX"],
     }
 
-    await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=_create_inquiry_mock_agent()):
+        await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Verify gmail_get_message received the correct message_id from trigger
     gmail_get_calls = [c for c in call_tracker if c.startswith("gmail_get_message:")]
@@ -725,7 +781,7 @@ async def test_email_triage_state_accumulation() -> None:
 
     model_def = ModelDefinition(
         model_id="test-model",
-        json_handler=create_mock_email_classification_handler(),
+        chat_model_factory=lambda: MagicMock(),
     )
 
     compiled = await compile_workflow(
@@ -747,7 +803,8 @@ async def test_email_triage_state_accumulation() -> None:
         "labels": ["INBOX"],
     }
 
-    result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=_create_inquiry_mock_agent()):
+        result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Verify all expected node outputs are in final state
     expected_nodes = [
@@ -778,20 +835,15 @@ async def test_email_triage_llm_receives_tool_outputs() -> None:
     to verify the prompt contains resolved tool outputs.
     """
     call_tracker: List[str] = []
-    llm_invocations: List[Dict[str, Any]] = []
+    agent_invocations: List[Dict[str, Any]] = []
 
     google_docs_tool = create_google_docs_read_tool(call_tracker)
     gmail_get_tool = create_gmail_get_message_tool(call_tracker)
     gmail_send_tool = create_gmail_send_email_tool(call_tracker)
 
-    def capturing_json_handler(invocation: Dict[str, Any], schema: Dict[str, Any]) -> tuple[Any, Dict[str, Any]]:
-        """Capture the LLM invocation for inspection."""
-        llm_invocations.append(invocation)
-        return create_mock_email_classification_handler()(invocation, schema)
-
     model_def = ModelDefinition(
         model_id="test-model",
-        json_handler=capturing_json_handler,
+        chat_model_factory=lambda: MagicMock(),
     )
 
     compiled = await compile_workflow(
@@ -813,20 +865,32 @@ async def test_email_triage_llm_receives_tool_outputs() -> None:
         "labels": ["INBOX"],
     }
 
-    await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
+    # Create a capturing mock agent that records its inputs
+    mock_agent = AsyncMock()
 
-    # Verify LLM was invoked
-    assert len(llm_invocations) == 1, "Expected exactly one LLM invocation"
+    async def capturing_ainvoke(inputs: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
+        """Capture the agent invocation for inspection."""
+        agent_invocations.append(inputs)
+        return {"messages": [AIMessage(content=json.dumps(_INQUIRY_RESPONSE))]}
 
-    # The prompt should contain resolved tool outputs
-    prompt = llm_invocations[0].get("prompt", "")
+    mock_agent.ainvoke = capturing_ainvoke
+
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
+        await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
+
+    # Verify agent was invoked
+    assert len(agent_invocations) == 1, "Expected exactly one agent invocation"
+
+    # The prompt should contain resolved tool outputs (first message is the HumanMessage with rendered prompt)
+    first_message = agent_invocations[0].get("messages", [{}])[0]
+    prompt = first_message.content if hasattr(first_message, "content") else ""
 
     # These strings come from our mock tool outputs
     assert "Product Specification" in prompt or "AI-powered email assistant" in prompt, (
-        f"LLM prompt should contain fetch_product_spec output. Got prompt: {prompt[:500]}..."
+        f"Agent prompt should contain fetch_product_spec output. Got prompt: {prompt[:500]}..."
     )
-    assert "Question about your product" in prompt or "automatic triage" in prompt, (
-        f"LLM prompt should contain fetch_full_email output. Got prompt: {prompt[:500]}..."
+    assert "Question about your product" in prompt or "automatic triage" in prompt or "LLM Input Test" in prompt, (
+        f"Agent prompt should contain fetch_full_email output. Got prompt: {prompt[:500]}..."
     )
 
 
