@@ -14,9 +14,9 @@ from seer.core.nodes.registry import node_type_registry
 from seer.core.expr.typecheck import TypeEnvironment
 from seer.core.registry.tool_registry import ToolRegistry
 from seer.core.schema.models import (
+    AgentNode,
     BrowserNode,
     Edge,
-    LLMNode,
     OutputContract,
     OutputMode,
     WorkflowSpec,
@@ -275,7 +275,7 @@ def test_type_env_browser_node_in_workflow():
                 id="scrape",
                 task="Go to example.com and get the title",
             ),
-            LLMNode(
+            AgentNode(
                 id="process",
                 inputs={
                     "model": "gpt-4o",
@@ -412,7 +412,7 @@ def test_type_env_browser_node_extracted_data_reference():
                     },
                 ),
             ),
-            LLMNode(
+            AgentNode(
                 id="llm-1",
                 inputs={
                     "model": "gpt-4o",
@@ -470,7 +470,7 @@ def test_type_env_browser_node_rejects_invalid_property_access():
                     },
                 ),
             ),
-            LLMNode(
+            AgentNode(
                 id="format_data",
                 inputs={
                     "model": "gpt-4o",
@@ -548,7 +548,7 @@ def test_workflow_spec_browser_with_llm_chain():
             },
             {
                 "id": "summarize",
-                "type": "llm",
+                "type": "agent",
                 "inputs": {
                     "model": "gpt-4o",
                     "prompt": "Summarize these messages: ${scrape_slack.result}",
@@ -566,7 +566,7 @@ def test_workflow_spec_browser_with_llm_chain():
 
     assert len(spec.nodes) == 2
     assert isinstance(spec.nodes[0], BrowserNode)
-    assert isinstance(spec.nodes[1], LLMNode)
+    assert isinstance(spec.nodes[1], AgentNode)
 
 
 def test_workflow_spec_browser_node_minimal():
@@ -689,7 +689,7 @@ def test_node_discriminator_identifies_browser():
         "nodes": [
             {"id": "n1", "type": "browser", "task": "Test task"},
             {"id": "n2", "type": "tool", "tool": "test_tool"},
-            {"id": "n3", "type": "llm", "inputs": {"model": "gpt-4o", "prompt": "Hello"}},
+            {"id": "n3", "type": "agent", "inputs": {"model": "gpt-4o", "prompt": "Hello"}},
         ],
         "edges": [],
     }

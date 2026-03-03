@@ -522,11 +522,11 @@ async def test_compile_with_multiple_triggers() -> None:
 
 
 @pytest.mark.asyncio
-async def test_compile_workflow_with_llm_node() -> None:
+async def test_compile_workflow_with_agent_node() -> None:
     """
-    Test compilation of workflow with LLM node.
+    Test compilation of workflow with agent node (supersedes LLM node).
 
-    Verifies that LLM nodes compile correctly with model registry lookup.
+    Verifies that agent nodes compile correctly with model registry lookup.
     """
     call_tracker: List[Any] = []
     tracking_tool = create_tracking_tool(call_tracker)
@@ -537,14 +537,14 @@ async def test_compile_workflow_with_llm_node() -> None:
         json_handler=create_mock_json_llm_handler({"result": "ok"}),
     )
 
-    # LLM node uses inputs for model/prompt and outputs for mode/schema
+    # Agent node uses inputs for model/prompt and outputs for mode/schema
     spec = {
         "version": "2",
         "triggers": [simple_trigger_spec()],
         "nodes": [
             {
                 "id": "generate",
-                "type": "llm",
+                "type": "agent",
                 "inputs": {
                     "model": "test-model",
                     "prompt": "Process: ${test_trigger.message}",

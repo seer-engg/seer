@@ -110,9 +110,9 @@ class TestNodeRuntimeBuildRunner:
 
     def test_build_runner_runnable_name(self, node_runtime):
         """Test runner has correct name from node ID."""
-        from seer.core.schema.models import LLMNode
+        from seer.core.schema.models import AgentNode
 
-        node = LLMNode(id="llm_node_abc", inputs={"model": "gpt-4", "prompt": "test"})
+        node = AgentNode(id="llm_node_abc", inputs={"model": "gpt-4", "prompt": "test"})
         runner = node_runtime.build_runner(node)
 
         assert "llm_node_abc" in runner.name
@@ -273,23 +273,21 @@ class TestRunNodeAsyncDispatch:
         assert result == {"async_result": "ok"}
 
     @pytest.mark.asyncio
-    async def test_run_node_async_llm_dispatch(self, node_runtime):
-        """Test _run_node_async dispatches LLMNode with credit check through registry."""
-        from seer.core.schema.models import LLMNode
+    async def test_run_node_async_agent_dispatch(self, node_runtime):
+        """Test _run_node_async dispatches AgentNode through registry."""
+        from seer.core.schema.models import AgentNode
         from seer.core.nodes.registry import node_type_registry
 
-        node = LLMNode(id="llm_async_1", inputs={"model": "gpt-4", "prompt": "test"})
+        node = AgentNode(id="agent_async_1", inputs={"model": "gpt-4", "prompt": "test"})
         state = {}
 
-        # Get the registered LLM node type and mock its execute_async
-        llm_node_type = node_type_registry.get("llm")
-        with patch.object(node_runtime, "_check_llm_credit_limit_async", new_callable=AsyncMock) as mock_credit:
-            with patch.object(llm_node_type, "execute_async", new_callable=AsyncMock, return_value={"llm_output": "response"}) as mock_exec:
-                result = await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
+        # Get the registered agent node type and mock its execute_async
+        agent_node_type = node_type_registry.get("agent")
+        with patch.object(agent_node_type, "execute_async", new_callable=AsyncMock, return_value={"agent_output": "response"}) as mock_exec:
+            result = await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
 
-        mock_credit.assert_called_once()
         mock_exec.assert_called_once()
-        assert result == {"llm_output": "response"}
+        assert result == {"agent_output": "response"}
 
 
 # =============================================================================
@@ -542,25 +540,23 @@ class TestErrorTraceCapture:
         assert result[trace_key]["status"] == "succeeded"
 
     @pytest.mark.asyncio
-    async def test_llm_node_failure_writes_error_trace(self, node_runtime, mock_services):
-        """Test that LLM node failures include error trace in exception."""
+    async def test_agent_node_failure_writes_error_trace(self, node_runtime, mock_services):
+        """Test that agent node failures include error trace in exception."""
         from seer.core.errors import ExecutionError
-        from seer.core.schema.models import LLMNode, OutputContract, OutputMode
+        from seer.core.schema.models import AgentNode, OutputContract, OutputMode
 
-        node = LLMNode(
+        node = AgentNode(
             id="llm_fail",
             inputs={"model": "gpt-4", "prompt": "Hello ${user}"},
             outputs=OutputContract(mode=OutputMode.text),
         )
         state = {"user": "Alice"}
 
-        # Setup mock model that raises
-        mock_model_def = MagicMock()
-        mock_model_def.text_handler = MagicMock(side_effect=RuntimeError("API rate limit exceeded"))
-        mock_services.model_registry.get.return_value = mock_model_def
-
-        with pytest.raises(ExecutionError) as exc_info:
-            await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
+        mock_agent = MagicMock()
+        mock_agent.ainvoke = AsyncMock(side_effect=RuntimeError("API rate limit exceeded"))
+        with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
+            with pytest.raises(ExecutionError) as exc_info:
+                await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
 
         # Verify error trace is attached
         assert exc_info.value.trace_data is not None
@@ -568,29 +564,28 @@ class TestErrorTraceCapture:
         assert trace_key in exc_info.value.trace_data
         trace = exc_info.value.trace_data[trace_key]
         assert trace["node_id"] == "llm_fail"
-        assert trace["node_type"] == "llm"
+        assert trace["node_type"] == "agent"
         assert trace["status"] == "failed"
         assert trace["error"]["type"] == "RuntimeError"
         assert "API rate limit exceeded" in trace["error"]["message"]
 
     @pytest.mark.asyncio
     async def test_llm_node_success_has_status_succeeded(self, node_runtime, mock_services):
-        """Test that successful LLM execution includes status: succeeded."""
-        from seer.core.schema.models import LLMNode, OutputContract, OutputMode
+        """Test that successful agent execution includes status: succeeded."""
+        from langchain_core.messages import AIMessage
+        from seer.core.schema.models import AgentNode, OutputContract, OutputMode
 
-        node = LLMNode(
+        node = AgentNode(
             id="llm_success",
             inputs={"model": "gpt-4", "prompt": "Hello"},
             outputs=OutputContract(mode=OutputMode.text),
         )
         state = {}
 
-        # Setup mock model that succeeds
-        mock_model_def = MagicMock()
-        mock_model_def.text_handler = MagicMock(return_value=("Hello response", {"input_tokens": 10, "output_tokens": 5}))
-        mock_services.model_registry.get.return_value = mock_model_def
-
-        result = await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
+        mock_agent = MagicMock()
+        mock_agent.ainvoke = AsyncMock(return_value={"messages": [AIMessage(content="Hello response")]})
+        with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
+            result = await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
 
         # Verify success trace has status
         trace_key = "_trace_llm_success"
@@ -707,38 +702,35 @@ class TestErrorTraceStatePersistence:
         assert 'async error' in trace['error']['message']
 
     @pytest.mark.asyncio
-    async def test_llm_failure_updates_state_with_error_trace(self, node_runtime, mock_services):
-        """Verify LLM node failures write error trace to state before raising."""
+    async def test_agent_failure_updates_state_with_error_trace(self, node_runtime, mock_services):
+        """Verify agent node failures write error trace to state before raising."""
         from seer.core.errors import ExecutionError
-        from seer.core.schema.models import LLMNode, OutputContract, OutputMode
+        from seer.core.schema.models import AgentNode, OutputContract, OutputMode
 
-        node = LLMNode(
+        node = AgentNode(
             id='failing_llm',
             inputs={'prompt': 'test prompt', 'model': 'gpt-4'},
             outputs=OutputContract(mode=OutputMode.text),
         )
         state = {}
 
-        # Setup mock model that raises (text_handler returns tuple, so we raise during the call)
-        mock_model_def = MagicMock()
-        mock_model_def.text_handler = MagicMock(side_effect=RuntimeError("Model unavailable"))
-        mock_services.model_registry.get.return_value = mock_model_def
-
-        with pytest.raises(ExecutionError):
-            await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
+        mock_agent = MagicMock()
+        mock_agent.ainvoke = AsyncMock(side_effect=RuntimeError("Model unavailable"))
+        with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
+            with pytest.raises(ExecutionError):
+                await node_runtime._run_node_async(node, state, {}, locals_ctx=None, context=None)
 
         # VERIFY: State dict was updated with error trace
         assert '_trace_failing_llm' in state
         trace = state['_trace_failing_llm']
 
         assert trace['node_id'] == 'failing_llm'
-        assert trace['node_type'] == 'llm'
+        assert trace['node_type'] == 'agent'
         assert trace['status'] == 'failed'
         assert 'error' in trace
         assert trace['error']['type'] == 'RuntimeError'
         assert 'Model unavailable' in trace['error']['message']
         assert 'timestamp' in trace
-        assert 'prompt_template' in trace['inputs']  # LLM uses prompt_template key
 
     @pytest.mark.asyncio
     async def test_mcp_failure_updates_state_with_error_trace(self):

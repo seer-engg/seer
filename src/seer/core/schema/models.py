@@ -149,22 +149,6 @@ class MCPNode(NodeBase):
     expect_outputs: Optional[OutputContract] = None
 
 
-class LLMNode(NodeBase):
-    type: Literal["llm"] = "llm"
-    inputs: Dict[str, JSONValue] = Field(default_factory=dict)
-
-    # Key addition: explicitly declare response mode + schema for structured outputs
-    outputs: OutputContract = Field(default_factory=lambda: OutputContract(mode=OutputMode.text))
-
-    @model_validator(mode="after")
-    def _validate_llm_inputs(self) -> "LLMNode":
-        required = ["model", "prompt"]
-        missing = [k for k in required if k not in self.inputs]
-        if missing:
-            raise ValueError(f'LLMNode requires {", ".join(missing)} in inputs')
-        return self
-
-
 class IfNode(NodeBase):
     """
     Conditional node that routes to different branches based on condition.
@@ -453,7 +437,7 @@ class AgentNode(NodeBase):
 
 
 Node = Annotated[
-    Union[ToolNode, LLMNode, MCPNode, IfNode, ForEachNode, HITLNode, ImageGenNode, BrowserNode, AgentNode],
+    Union[ToolNode, MCPNode, IfNode, ForEachNode, HITLNode, ImageGenNode, BrowserNode, AgentNode],
     Field(discriminator="type"),
 ]
 

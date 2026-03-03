@@ -15,6 +15,8 @@ Tests cover:
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
 from seer.core.compiler.emit_langgraph import emit_langgraph
@@ -756,15 +758,14 @@ async def test_for_each_without_explicit_back_edge() -> None:
 async def test_for_each_loop_iteration_traces() -> None:
     """Test that for_each loop creates separate trace keys for each iteration."""
 
-    # Define a mock model for testing
-    def mock_text_handler(invocation):
-        # Handler returns (result, usage_metadata)
-        prompt = invocation.get("prompt", "")
-        return f"Response: {prompt}", {}
+    from langchain_core.messages import AIMessage
+
+    # Define a mock chat model for the agent node
+    mock_chat_model = MagicMock()
 
     model_def = ModelDefinition(
         model_id="gpt-5-nano",
-        text_handler=mock_text_handler,
+        chat_model_factory=lambda: mock_chat_model,
     )
 
     spec = {
@@ -790,7 +791,7 @@ async def test_for_each_loop_iteration_traces() -> None:
             },
             {
                 "id": "process",
-                "type": "llm",
+                "type": "agent",
                 "inputs": {
                     "model": "gpt-5-nano",
                     "prompt": "Say: ${item}",
@@ -821,7 +822,12 @@ async def test_for_each_loop_iteration_traces() -> None:
         "trigger_key": "test.trigger",
         "items": ["apple", "banana", "cherry"]
     }
-    result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
+
+    mock_agent = AsyncMock()
+    mock_agent.ainvoke.return_value = {"messages": [AIMessage(content="Response from agent")]}
+
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
+        result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Verify loop completed
     assert result["done"] == "complete"

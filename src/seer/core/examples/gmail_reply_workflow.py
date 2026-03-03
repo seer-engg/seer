@@ -144,7 +144,7 @@ def build_workflow_spec(reply_schema: JsonSchema, read_schema: JsonSchema, draft
             },
             {
                 "id": "draft_reply",
-                "type": "llm",
+                "type": "agent",
                 "inputs": {
                     "model": MODEL_ID,
                     "prompt": (

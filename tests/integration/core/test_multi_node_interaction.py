@@ -9,17 +9,16 @@ interact correctly in complex workflow scenarios.
 from __future__ import annotations
 
 from typing import Any, List
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from langchain_core.messages import AIMessage
 
 from seer.core.registry.model_registry import ModelDefinition
 
 from .conftest import (
     compile_workflow,
     create_echo_tool,
-    create_mock_array_llm_handler,
-    create_mock_json_llm_handler,
-    create_mock_text_llm_handler,
     create_tracking_tool,
     create_transform_tool,
     simple_trigger_spec,
@@ -79,9 +78,9 @@ async def test_tool_to_tool_pipeline() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tool_to_llm_to_tool_pipeline() -> None:
+async def test_tool_to_agent_to_tool_pipeline() -> None:
     """
-    Test mixed node type chain: Tool -> LLM -> Tool.
+    Test mixed node type chain: Tool -> Agent -> Tool.
 
     Verifies data flows correctly through different node types.
     """
@@ -91,10 +90,10 @@ async def test_tool_to_llm_to_tool_pipeline() -> None:
 
     model_def = ModelDefinition(
         model_id="test-model",
-        text_handler=create_mock_text_llm_handler("LLM processed the data"),
+        chat_model_factory=lambda: MagicMock(),
     )
 
-    # LLM node uses inputs for model/prompt and outputs for mode
+    # Agent node uses inputs for model/prompt and outputs for mode
     spec = {
         "version": "2",
         "triggers": [simple_trigger_spec()],
@@ -107,7 +106,7 @@ async def test_tool_to_llm_to_tool_pipeline() -> None:
             },
             {
                 "id": "process_llm",
-                "type": "llm",
+                "type": "agent",
                 "inputs": {
                     "model": "test-model",
                     "prompt": "Process: ${fetch.message}",
@@ -140,7 +139,10 @@ async def test_tool_to_llm_to_tool_pipeline() -> None:
         "message": "initial data",
     }
 
-    result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
+    mock_agent = AsyncMock()
+    mock_agent.ainvoke.return_value = {"messages": [AIMessage(content="LLM processed the data")]}
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
+        result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
     # Verify chain executed correctly
     assert result["fetch"]["message"] == "initial data"
@@ -149,9 +151,9 @@ async def test_tool_to_llm_to_tool_pipeline() -> None:
 
 
 @pytest.mark.asyncio
-async def test_llm_generates_data_for_loop_iteration() -> None:
+async def test_agent_generates_data_for_loop_iteration() -> None:
     """
-    Test LLM generates object with array -> ForEach iterates -> Tool processes each.
+    Test Agent generates object with array -> ForEach iterates -> Tool processes each.
 
     Note: OpenAI structured outputs require root type 'object', not 'array'.
     So we wrap the array in an object with a 'tasks' property.
@@ -159,13 +161,12 @@ async def test_llm_generates_data_for_loop_iteration() -> None:
     call_tracker: List[Any] = []
     tracking_tool = create_tracking_tool(call_tracker)
 
-    # Return object with tasks array (required by OpenAI structured outputs)
     model_def = ModelDefinition(
         model_id="test-model",
-        json_handler=create_mock_json_llm_handler({"tasks": ["task1", "task2", "task3"]}),
+        chat_model_factory=lambda: MagicMock(),
     )
 
-    # LLM node uses inputs for model/prompt and outputs for mode/schema
+    # Agent node uses inputs for model/prompt and outputs for mode/schema
     # Schema must have root type 'object' per OpenAI constraints
     spec = {
         "version": "2",
@@ -173,7 +174,7 @@ async def test_llm_generates_data_for_loop_iteration() -> None:
         "nodes": [
             {
                 "id": "generate_tasks",
-                "type": "llm",
+                "type": "agent",
                 "inputs": {
                     "model": "test-model",
                     "prompt": "Generate tasks for: ${test_trigger.message}",
@@ -231,9 +232,14 @@ async def test_llm_generates_data_for_loop_iteration() -> None:
         "message": "project",
     }
 
-    result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
+    mock_agent = AsyncMock()
+    mock_agent.ainvoke.return_value = {
+        "messages": [AIMessage(content='{"tasks": ["task1", "task2", "task3"]}')]
+    }
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
+        result = await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
 
-    # Verify LLM generated object with tasks array
+    # Verify agent generated object with tasks array
     assert result["generate_tasks"]["tasks"] == ["task1", "task2", "task3"]
 
     # Verify each task was processed
