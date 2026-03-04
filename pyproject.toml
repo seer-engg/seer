@@ -64,6 +64,7 @@ dependencies = [
     "mem0ai>=0.1.0",  # Memory layer for cross-session context
     "litellm>=1.0.0",  # Multi-provider LLM interface (for mem0 with OpenRouter)
     "sentence-transformers>=3.0.0",  # Required for HuggingFace embeddings in mem0
+    "markdown>=3.10.2",
 ]
 
 [tool.hatch.version]

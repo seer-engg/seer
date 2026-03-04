@@ -60,7 +60,7 @@ class BaseNodeType(ABC):
     """
     Abstract base class for node type implementations.
 
-    Each node type (tool, llm, if, for_each, hitl, browser, mcp) implements
+    Each node type (tool, agent, if, for_each, hitl, browser, mcp) implements
     this interface. This centralizes all node-related logic:
     - Pydantic model class for validation
     - Execution logic (sync and async)
@@ -72,7 +72,7 @@ class BaseNodeType(ABC):
     @property
     @abstractmethod
     def type_literal(self) -> str:
-        """Return the node type identifier ('tool', 'llm', 'if', etc.)."""
+        """Return the node type identifier ('tool', 'agent', 'if', etc.)."""
 
     @property
     @abstractmethod

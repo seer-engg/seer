@@ -260,8 +260,8 @@ def test_build_type_environment_with_foreach_node():
     assert "loop1" in symbols
 
 
-def test_build_type_environment_with_llm_node():
-    """Test building type environment with LLM node."""
+def test_build_type_environment_with_agent_node():
+    """Test building type environment with agent node."""
     spec = WorkflowSpec(
         version="2",
         triggers=[],
@@ -836,10 +836,10 @@ def test_for_each_loop_variable_uses_permissive_fallback_for_unknown_source():
     assert item_schema.get("additionalProperties") is True
 
 
-def test_for_each_loop_variable_infers_type_from_llm_node_output():
-    """Test that for_each loop variables inherit type from LLM node's JSON output schema.
+def test_for_each_loop_variable_infers_type_from_agent_node_output():
+    """Test that for_each loop variables inherit type from agent node's JSON output schema.
 
-    This is the key use case from the developer review - when an LLM node outputs
+    This is the key use case from the developer review - when an agent node outputs
     a structured JSON array, loop variables should be able to access its properties.
     """
     spec = WorkflowSpec(

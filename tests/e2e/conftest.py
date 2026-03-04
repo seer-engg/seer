@@ -153,7 +153,7 @@ def webhook_workflow_create_payload():
             "nodes": [
                 {
                     "id": "n1",
-                    "type": "llm",
+                    "type": "agent",
                     "inputs": {
                         "model": "test-model",
                         "prompt": "Process the trigger data",
@@ -189,7 +189,7 @@ def simple_workflow_create_payload():
             "nodes": [
                 {
                     "id": "n1",
-                    "type": "llm",
+                    "type": "agent",
                     "inputs": {
                         "model": "test-model",
                         "prompt": "Process the input data",
