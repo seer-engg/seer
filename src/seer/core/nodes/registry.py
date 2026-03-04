@@ -18,7 +18,7 @@ class NodeTypeRegistry:
     """
     Registry for node type implementations.
 
-    Each node type (tool, llm, if, for_each, etc.) registers its implementation
+    Each node type (tool, agent, if, for_each, etc.) registers its implementation
     here. The runtime and compiler look up node types by their type literal
     to dispatch execution and type registration.
     """
@@ -40,7 +40,7 @@ class NodeTypeRegistry:
         Get a node type implementation by its type literal.
 
         Args:
-            type_literal: The node type identifier ('tool', 'llm', etc.)
+            type_literal: The node type identifier ('tool', 'agent', etc.)
 
         Returns:
             The node type implementation, or None if not found

@@ -51,13 +51,23 @@ _JSON_TYPE_TO_PYTHON: Dict[str, type] = {
 }
 
 
-def _json_schema_to_pydantic_type(prop_schema: Dict[str, Any]) -> type:
+def _json_schema_to_pydantic_type(prop_schema: Dict[str, Any], model_name_prefix: str = "nested") -> type:
     """Convert JSON schema type to Python type for Pydantic model creation."""
     prop_type = prop_schema.get("type", "string")
 
     # Union types (list of types) - default to Any
     if isinstance(prop_type, list):
         return Any  # type: ignore[return-value]
+
+    # Recurse into nested object schemas to preserve field structure
+    if prop_type == "object" and prop_schema.get("properties"):
+        return _create_output_model_from_schema(model_name_prefix, prop_schema)
+
+    # Recurse into array item schemas so the LLM sees typed list elements
+    if prop_type == "array":
+        items_schema = prop_schema.get("items", {})
+        item_type = _json_schema_to_pydantic_type(items_schema, f"{model_name_prefix}_item")
+        return List[item_type]  # type: ignore[valid-type]
 
     # Look up in type map, default to str
     return _JSON_TYPE_TO_PYTHON.get(prop_type, str)
@@ -81,6 +91,37 @@ def _create_tool_input_model(tool_name: str, input_schema: Dict[str, Any]) -> ty
     return create_model(model_name, **field_definitions)
 
 
+def _strip_null_optional_fields(data: Any, schema: Dict[str, Any]) -> Any:
+    """
+    Recursively remove None values for non-required fields so jsonschema validation
+    does not reject null entries that the LLM emits for optional fields.
+
+    JSON Schema allows absent optional properties; it does NOT allow null unless
+    the schema explicitly declares 'type': ['string', 'null']. Stripping the key
+    is semantically equivalent to 'not provided'.
+    """
+    if not isinstance(data, dict) or not isinstance(schema, dict):
+        return data
+
+    required = set(schema.get("required", []))
+    properties = schema.get("properties", {})
+    result: Dict[str, Any] = {}
+    for key, value in data.items():
+        if value is None and key not in required:
+            continue  # Omit null optional fields — absent ≡ not provided
+        prop_schema = properties.get(key, {})
+        if isinstance(value, dict):
+            value = _strip_null_optional_fields(value, prop_schema)
+        elif isinstance(value, list):
+            items_schema = prop_schema.get("items", {})
+            value = [
+                _strip_null_optional_fields(item, items_schema) if isinstance(item, dict) else item
+                for item in value
+            ]
+        result[key] = value
+    return result
+
+
 def _create_output_model_from_schema(node_id: str, schema: Dict[str, Any]) -> type[BaseModel]:
     """
     Create a Pydantic model from output JSON schema for structured output.
@@ -93,12 +134,18 @@ def _create_output_model_from_schema(node_id: str, schema: Dict[str, Any]) -> ty
         Dynamically created Pydantic model class
     """
     properties = schema.get("properties", {})
+    required_fields = set(schema.get("required", []))
 
     field_definitions: Dict[str, Any] = {}
     for prop_name, prop_schema in properties.items():
-        python_type = _json_schema_to_pydantic_type(prop_schema)
+        model_name_prefix = f"{node_id}_{prop_name}"
+        python_type = _json_schema_to_pydantic_type(prop_schema, model_name_prefix)
         description = prop_schema.get("description", "")
-        field_definitions[prop_name] = (python_type, Field(description=description))
+
+        if prop_name in required_fields:
+            field_definitions[prop_name] = (python_type, Field(description=description))
+        else:
+            field_definitions[prop_name] = (Optional[python_type], Field(default=None, description=description))
 
     # Create a valid Python class name from node_id
     model_name = f"{node_id.replace('-', '_').replace('.', '_').title()}Output"
@@ -511,6 +558,7 @@ class AgentNodeType(BaseNodeType):
                 raise ExecutionError(
                     f"Agent node '{node.id}' expected JSON output but got invalid JSON: {e}"
                 ) from e
+        result_value = _strip_null_optional_fields(result_value, schema)
         validate_against_schema(schema, result_value, schema_id=node.id)
         return result_value
 

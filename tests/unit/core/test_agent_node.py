@@ -963,3 +963,284 @@ class TestAgentNodeFileInputResolution:
 
         assert "file_agent" in result
         assert result["file_agent"] == "Document analyzed."
+
+
+# =============================================================================
+# _create_output_model_from_schema / _json_schema_to_pydantic_type unit tests
+# =============================================================================
+
+from typing import List, get_args, get_origin
+
+from pydantic import BaseModel, ValidationError
+
+from seer.core.nodes.agent_node import _create_output_model_from_schema, _strip_null_optional_fields
+
+
+def test_create_output_model_flat_required_optional():
+    """Flat schema: required fields have no default; optional ones default to None."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "age": {"type": "integer"},
+            "nickname": {"type": "string"},
+        },
+        "required": ["name", "age"],
+    }
+
+    Model = _create_output_model_from_schema("test_node", schema)
+    fields = Model.model_fields
+
+    # Required fields have no default
+    assert fields["name"].is_required()
+    assert fields["age"].is_required()
+
+    # Optional field has None default
+    assert not fields["nickname"].is_required()
+    assert fields["nickname"].default is None
+
+
+def test_create_output_model_nested_object():
+    """A property with type:object and properties becomes a nested BaseModel, not dict."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "address": {
+                "type": "object",
+                "properties": {
+                    "street": {"type": "string"},
+                    "city": {"type": "string"},
+                },
+            }
+        },
+        "required": ["address"],
+    }
+
+    Model = _create_output_model_from_schema("test_node", schema)
+    address_annotation = Model.model_fields["address"].annotation
+
+    # Should be a Pydantic BaseModel subclass, not plain dict
+    assert isinstance(address_annotation, type)
+    assert issubclass(address_annotation, BaseModel)
+    assert "street" in address_annotation.model_fields
+
+
+def test_create_output_model_array_of_objects():
+    """An array of objects becomes List[NestedBaseModel], not plain list."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "integer"},
+                        "label": {"type": "string"},
+                    },
+                },
+            }
+        },
+        "required": ["items"],
+    }
+
+    Model = _create_output_model_from_schema("test_node", schema)
+    items_annotation = Model.model_fields["items"].annotation
+
+    # Should be List[SomeBaseModel]
+    assert get_origin(items_annotation) is list
+    (item_type,) = get_args(items_annotation)
+    assert isinstance(item_type, type)
+    assert issubclass(item_type, BaseModel)
+    assert "id" in item_type.model_fields
+    assert "label" in item_type.model_fields
+
+
+def test_create_output_model_leads_regression():
+    """
+    Regression: the LLM must see the exact required fields for nested lead objects.
+    Bad LLM output using invented field names (description/score) must raise ValidationError.
+    """
+    leads_schema = {
+        "type": "object",
+        "properties": {
+            "leads": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "company_name": {"type": "string"},
+                        "industry": {"type": "string"},
+                        "why_billboard_good_fit": {"type": "string"},
+                        "billboard_potential_score": {"type": "integer"},
+                    },
+                    "required": ["company_name", "industry", "why_billboard_good_fit", "billboard_potential_score"],
+                },
+            }
+        },
+        "required": ["leads"],
+    }
+
+    Model = _create_output_model_from_schema("analyze_leads_llm", leads_schema)
+
+    # Correct output — should not raise
+    good_data = {
+        "leads": [
+            {
+                "company_name": "Acme Corp",
+                "industry": "Retail",
+                "why_billboard_good_fit": "High foot traffic location",
+                "billboard_potential_score": 85,
+            }
+        ]
+    }
+    instance = Model(**good_data)
+    assert instance.leads[0].company_name == "Acme Corp"
+
+    # Bad LLM output with invented field names — must fail validation
+    bad_data = {
+        "leads": [
+            {
+                "company_name": "Acme Corp",
+                "industry": "Retail",
+                "description": "some desc",  # Wrong field name
+                "score": 85,  # Wrong field name
+            }
+        ]
+    }
+    with pytest.raises(ValidationError):
+        Model(**bad_data)
+
+
+# =============================================================================
+# _strip_null_optional_fields unit tests
+# =============================================================================
+
+
+def test_strip_null_optional_fields_removes_optional_nulls():
+    """None values for non-required fields are removed."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "website": {"type": "string"},
+        },
+        "required": ["name"],
+    }
+    data = {"name": "Acme", "website": None}
+    result = _strip_null_optional_fields(data, schema)
+    assert result == {"name": "Acme"}
+    assert "website" not in result
+
+
+def test_strip_null_optional_fields_keeps_required_nulls():
+    """None values for required fields are preserved (schema author's intent)."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+        },
+        "required": ["name"],
+    }
+    data = {"name": None}
+    result = _strip_null_optional_fields(data, schema)
+    assert "name" in result
+    assert result["name"] is None
+
+
+def test_strip_null_optional_fields_nested_object():
+    """Stripping recurses into nested objects."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "address": {
+                "type": "object",
+                "properties": {
+                    "street": {"type": "string"},
+                    "suite": {"type": "string"},
+                },
+                "required": ["street"],
+            }
+        },
+        "required": ["address"],
+    }
+    data = {"address": {"street": "123 Main St", "suite": None}}
+    result = _strip_null_optional_fields(data, schema)
+    assert result["address"] == {"street": "123 Main St"}
+    assert "suite" not in result["address"]
+
+
+def test_strip_null_optional_fields_array_of_objects():
+    """Stripping applies to each item inside arrays."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "integer"},
+                        "note": {"type": "string"},
+                    },
+                    "required": ["id"],
+                },
+            }
+        },
+        "required": ["items"],
+    }
+    data = {"items": [{"id": 1, "note": None}, {"id": 2, "note": "hello"}]}
+    result = _strip_null_optional_fields(data, schema)
+    assert "note" not in result["items"][0]
+    assert result["items"][1]["note"] == "hello"
+
+
+def test_strip_null_optional_fields_leads_regression():
+    """Regression: leads with None website pass validation after stripping."""
+    import jsonschema
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "leads": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "company_name": {"type": "string"},
+                        "industry": {"type": "string"},
+                        "why_billboard_good_fit": {"type": "string"},
+                        "billboard_potential_score": {"type": "integer"},
+                        "website": {"type": "string"},
+                        "phone": {"type": "string"},
+                    },
+                    "required": ["company_name", "industry", "why_billboard_good_fit", "billboard_potential_score"],
+                },
+            }
+        },
+        "required": ["leads"],
+    }
+    data = {
+        "leads": [
+            {
+                "company_name": "Acme Corp",
+                "industry": "Retail",
+                "why_billboard_good_fit": "High foot traffic",
+                "billboard_potential_score": 8,
+                "website": None,  # LLM doesn't know the website
+                "phone": None,
+            }
+        ]
+    }
+
+    # Before stripping: should fail jsonschema validation
+    with pytest.raises(jsonschema.exceptions.ValidationError):
+        jsonschema.validate(data, schema)
+
+    # After stripping: should pass
+    stripped = _strip_null_optional_fields(data, schema)
+    assert "website" not in stripped["leads"][0]
+    assert "phone" not in stripped["leads"][0]
+    # Required fields untouched
+    assert stripped["leads"][0]["company_name"] == "Acme Corp"
+    jsonschema.validate(stripped, schema)  # Should not raise

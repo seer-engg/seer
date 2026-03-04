@@ -76,7 +76,7 @@ class TestNexusPrompts:
 
         # Should contain all block types
         assert "TOOL BLOCK" in guide
-        assert "LLM BLOCK" in guide
+        assert "AGENT BLOCK" in guide
         assert "MCP BLOCK" in guide
         assert "IF BLOCK" in guide
         assert "FOR_EACH BLOCK" in guide

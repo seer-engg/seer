@@ -99,10 +99,8 @@ def sample_spec_dict():
             },
             {
                 "id": "n2",
-                "type": "llm",
-                "model": "gpt-4",
-                "prompt": "Test",
-                "output": {},
+                "type": "agent",
+                "inputs": {"model": "gpt-4", "prompt": "Test"},
                 "meta": {"label": "Node 2", "position": {"x": 200, "y": 200}},
             },
         ],

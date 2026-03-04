@@ -688,6 +688,48 @@ class TestBuildTriggerInfo:
         assert result["trigger_key"] == "webhook.github"
         assert "trigger_id" not in result
 
+    def test_manual_run_with_trigger_event_returns_event_data(self):
+        """Manual run WITH a linked TriggerEvent surfaces trigger data (trigger_event_override flow)."""
+        from datetime import datetime, timezone
+
+        trigger_event = MagicMock()
+        trigger_event.trigger_key = "poll.gmail.email_received"
+        trigger_event.event = {"trigger_key": "poll.gmail.email_received", "data": {"subject": "Hello", "from": "test@example.com"}}
+        trigger_event.occurred_at = None
+        trigger_event.received_at = datetime(2026, 3, 3, 7, 39, 19, tzinfo=timezone.utc)
+
+        run = self._make_run(source=WorkflowRunSource.MANUAL, subscription=None, trigger_event=trigger_event)
+        result = _build_trigger_info(run)
+
+        assert result["source"] == "manual"
+        assert result["trigger_key"] == "poll.gmail.email_received"
+        assert result["event_data"] == {"subject": "Hello", "from": "test@example.com"}
+        assert result["occurred_at"] is None
+        assert result["received_at"] == "2026-03-03T07:39:19+00:00"
+        assert "trigger_id" not in result
+
+    def test_manual_run_with_trigger_event_and_subscription(self):
+        """Manual run with linked subscription AND trigger_event returns full metadata."""
+        subscription = MagicMock()
+        subscription.trigger_id = "abc123"
+        subscription.trigger_key = "poll.gmail.email_received"
+        subscription.title = "Gmail Inbox"
+
+        trigger_event = MagicMock()
+        trigger_event.trigger_key = "poll.gmail.email_received"
+        trigger_event.event = {"data": {"subject": "Test"}}
+        trigger_event.occurred_at = None
+        trigger_event.received_at = None
+
+        run = self._make_run(source=WorkflowRunSource.MANUAL, subscription=subscription, trigger_event=trigger_event)
+        result = _build_trigger_info(run)
+
+        assert result["source"] == "manual"
+        assert result["trigger_id"] == "abc123"
+        assert result["trigger_key"] == "poll.gmail.email_received"
+        assert result["title"] == "Gmail Inbox"
+        assert result["event_data"] == {"subject": "Test"}
+
 
 # =============================================================================
 # History Response Building Tests
@@ -1056,9 +1098,9 @@ class TestGetErrorTracesFromDatabase:
                 "status": "failed",
                 "error": {"type": "KeyError", "message": "'kb_id'"},
             },
-            "_trace_llm-1": {
-                "node_id": "llm-1",
-                "node_type": "llm",
+            "_trace_agent-1": {
+                "node_id": "agent-1",
+                "node_type": "agent",
                 "status": "succeeded",  # Should be excluded
                 "output": "Hello",
             },
