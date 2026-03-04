@@ -42,7 +42,7 @@ class TestTemplateValidation:
         # Verify conditional nodes exist
         node_types = {node["type"] for node in spec["nodes"]}
         assert "if" in node_types, "Should have conditional branching"
-        assert "llm" in node_types, "Should have LLM classification"
+        assert "agent" in node_types, "Should have agent classification"
         assert "tool" in node_types, "Should have tool nodes"
 
         logger.info("✅ Customer support template structure valid")
@@ -61,7 +61,7 @@ class TestTemplateValidation:
         # Verify conditional routing
         node_types = {node["type"] for node in spec["nodes"]}
         assert "if" in node_types, "Should have conditional quality routing"
-        assert "llm" in node_types, "Should have AI scoring"
+        assert "agent" in node_types, "Should have AI scoring"
 
         logger.info("✅ Lead generation template structure valid")
 
@@ -78,7 +78,7 @@ class TestTemplateValidation:
         # Verify KB search pattern
         node_types = {node["type"] for node in spec["nodes"]}
         assert "if" in node_types, "Should have conditional KB routing"
-        assert "llm" in node_types, "Should have AI response generation"
+        assert "agent" in node_types, "Should have AI response generation"
 
         # Check for KB-specific nodes
         node_ids = {node["id"] for node in spec["nodes"]}
