@@ -8755,6 +8755,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "asyncclick" },
     { name = "faker" },
     { name = "ipykernel" },
     { name = "langgraph-cli", extra = ["inmem"] },
@@ -8828,6 +8829,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "asyncclick", specifier = ">=8.3.0.7" },
     { name = "faker", specifier = ">=30.0.0" },
     { name = "ipykernel", specifier = ">=7.1.0" },
     { name = "langgraph-cli", extras = ["inmem"], specifier = ">=0.4.7" },

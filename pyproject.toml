@@ -98,6 +98,7 @@ dev = [
     "pyinstrument>=5.1.2",
     "mlflow>=3.8.1",
     "mutmut>=3.2.0",
+    "asyncclick>=8.3.0.7",
 ]
 
 [project.urls]
