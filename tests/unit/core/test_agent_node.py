@@ -785,6 +785,95 @@ async def test_agent_node_json_output_with_structured_response():
     assert trace["output"]["email_1"] == "First email is about a meeting"
 
 
+@pytest.mark.asyncio
+async def test_agent_node_json_validation_failure_includes_trace():
+    """Regression: JSON schema validation failure must include trace_data in ExecutionError.
+
+    When _handle_json_output raises (e.g. required field is None), the except block
+    must catch it and attach trace_data so the run history persists the failed node.
+    """
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from seer.core.errors import ExecutionError
+
+    mock_chat_model = MagicMock()
+
+    def mock_json_handler(invocation, schema):
+        return {"website": None}, {}
+
+    model_def = ModelDefinition(
+        model_id="test-model",
+        json_handler=mock_json_handler,
+        chat_model_factory=lambda: mock_chat_model,
+    )
+
+    spec = {
+        "version": "2",
+        "triggers": [
+            {
+                "id": "leads_trigger",
+                "key": "test.leads",
+                "mode": "webhook",
+                "event_schema": {"type": "object"},
+            }
+        ],
+        "nodes": [
+            {
+                "id": "analyze_leads_llm",
+                "type": "agent",
+                "inputs": {
+                    "model": "test-model",
+                    "prompt": "Analyze leads",
+                    "tools": [],
+                },
+                "outputs": {
+                    "mode": "json",
+                    "schema": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["website"],
+                            "properties": {
+                                "website": {"type": "string"},
+                            },
+                        }
+                    },
+                },
+            }
+        ],
+        "edges": [
+            {"source": "leads_trigger", "target": "analyze_leads_llm", "type": "trigger"},
+        ],
+    }
+
+    mock_agent = AsyncMock()
+    # structured_response is a plain dict with a required string field set to None —
+    # this passes through _strip_null_optional_fields unchanged (required fields are kept)
+    # and causes validate_against_schema to raise ExecutionError.
+    mock_agent.ainvoke.return_value = {
+        "messages": [
+            HumanMessage(content="Analyze leads"),
+            AIMessage(content="Done."),
+        ],
+        "structured_response": {"website": None},
+    }
+
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
+        compiled = await _compile_agent_workflow(spec, [model_def])
+        trigger_envelope = {"trigger_key": "test.leads"}
+        with pytest.raises(ExecutionError) as exc_info:
+            await compiled.ainvoke(config=None, context=None, trigger=trigger_envelope)
+
+    exc = exc_info.value
+    assert exc.trace_data is not None, "ExecutionError must carry trace_data for history persistence"
+    trace_keys = list(exc.trace_data.keys())
+    assert any("analyze_leads_llm" in k for k in trace_keys), (
+        f"trace_data must contain the failing node id, got keys: {trace_keys}"
+    )
+    # The persisted trace should show the node failed
+    node_trace = next(v for k, v in exc.trace_data.items() if "analyze_leads_llm" in k)
+    assert node_trace["status"] == "failed"
+
+
 # =============================================================================
 # File Input Resolution Tests
 # (Ported from test_llm_file_inputs.py — function now lives in agent_node.py)

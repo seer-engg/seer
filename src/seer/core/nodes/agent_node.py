@@ -663,6 +663,9 @@ class AgentNodeType(BaseNodeType):
             messages = result.get("messages", [])
             final_output, steps = _parse_agent_result(messages)
 
+            # Handle JSON output mode if specified
+            result_value: Any = await self._handle_json_output(node, services, result, final_output)
+
         except Exception as exc:
             trace_key = get_trace_key(node.id, ctx.state, ctx.loop_body_map or {}, ctx.nested_loop_parents or {})
             trace_data = _build_agent_trace(
@@ -672,9 +675,6 @@ class AgentNodeType(BaseNodeType):
             error_trace = {trace_key: trace_data}
             ctx.state.update(error_trace)  # type: ignore[arg-type]
             raise ExecutionError(f"Agent node '{node.id}' failed: {exc}", trace_data=error_trace) from exc
-
-        # Handle JSON output mode if specified
-        result_value: Any = await self._handle_json_output(node, services, result, final_output)
 
         # Build output with trace
         trace_key = get_trace_key(node.id, ctx.state, ctx.loop_body_map or {}, ctx.nested_loop_parents or {})
