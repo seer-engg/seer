@@ -19,6 +19,7 @@ Usage:
       [--local-user-id 1]        # local postgres user to remap into, default: 1
       [--dry-run]                # print counts, don't insert
       [--truncate-existing]      # wipe previously cloned data first
+      [--include-credentials]    # also clone oauth_connections, integration_resources, integration_secrets
 
     # Override URLs directly instead of using SSM / .env
     uv run scripts/clone_user_from_prod.py \\
@@ -35,6 +36,8 @@ Examples:
 
     # Wipe and re-clone
     uv run scripts/clone_user_from_prod.py --source-user user_2abc123 --truncate-existing
+
+    # Checkpoint data (LangGraph) is cloned automatically — no extra flag needed.
 """
 
 import argparse
@@ -43,7 +46,6 @@ import json
 import re
 import sys
 import traceback
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -92,6 +94,14 @@ class TableConfig:
     encrypted_cols: list[str] = field(default_factory=list)
     # True if this table has a workflow_run_id CharField (e.g. "run_123") to remap
     workflow_run_id_str: bool = False
+
+
+# Tables skipped by default — tokens are encrypted with prod key and won't work locally
+CREDENTIAL_TABLES: frozenset[str] = frozenset({
+    "oauth_connections",
+    "integration_resources",
+    "integration_secrets",
+})
 
 
 # Insertion order: parents before children (respects all FK dependencies)
@@ -368,12 +378,10 @@ def remap_row(  # pylint: disable=too-complex  # Reason: 5 sequential flat remap
     d = dict(row)
     old_pk = d[config.pk_col]
 
-    # Replace PK: UUID tables get a fresh UUID; int tables drop the PK so
-    # Postgres assigns the next sequence value via RETURNING id.
+    # Preserve prod PKs so thread_id / run_id references stay consistent.
+    # (UUID values come back as uuid.UUID objects; stringify for downstream use)
     if config.pk_type == "uuid":
-        d[config.pk_col] = str(uuid.uuid4())
-    else:
-        del d[config.pk_col]
+        d[config.pk_col] = str(old_pk)
 
     # Required user FK columns → always local_user_id
     for col in config.user_cols:
@@ -442,16 +450,113 @@ async def insert_row(
 
 
 # ---------------------------------------------------------------------------
+# Checkpoint cloning (LangGraph AsyncPostgresSaver tables)
+# ---------------------------------------------------------------------------
+
+
+async def clone_checkpoint_tables(
+    prod_conn: asyncpg.Connection,
+    local_conn: asyncpg.Connection,
+    thread_ids: list[str],
+    dry_run: bool,
+) -> int:
+    """
+    Clone LangGraph checkpoint rows for the given thread_ids from prod to local.
+
+    Handles checkpoints, checkpoint_blobs, checkpoint_writes.
+    checkpoint_migrations is skipped — it stores schema versioning only, not user data.
+
+    Returns total number of rows cloned (or that would be cloned in dry-run).
+    """
+    if not thread_ids:
+        print("  (no thread_ids found — skipping checkpoint tables)")
+        return 0
+
+    checkpoint_tables = ["checkpoints", "checkpoint_blobs", "checkpoint_writes"]
+    total = 0
+
+    for table in checkpoint_tables:
+        col_names = await get_column_names(prod_conn, table)
+        if not col_names:
+            print(f"  {table}: not found in prod DB, skipping.")
+            continue
+
+        rows = await prod_conn.fetch(
+            f"SELECT * FROM {table} WHERE thread_id = ANY($1::text[])",
+            thread_ids,
+        )
+
+        if dry_run:
+            print(f"  {table}: {len(rows)} rows  [dry-run]")
+            total += len(rows)
+            continue
+
+        if not rows:
+            print(f"  {table}: 0 rows")
+            continue
+
+        col_list = ", ".join(col_names)
+        placeholders = ", ".join(f"${i + 1}" for i in range(len(col_names)))
+        sql = (
+            f"INSERT INTO {table} ({col_list}) "
+            f"VALUES ({placeholders}) "
+            f"ON CONFLICT DO NOTHING"
+        )
+
+        inserted = 0
+        try:
+            async with local_conn.transaction():
+                for row in rows:
+                    values = [row[col] for col in col_names]
+                    await local_conn.execute(sql, *values)
+                    inserted += 1
+            print(f"  {table}: {inserted} rows inserted")
+            total += inserted
+        except Exception as exc:  # pylint: disable=broad-exception-caught  # Reason: one bad checkpoint table must not abort the full clone
+            print(f"  {table}: ERROR — {exc}")
+            traceback.print_exc()
+
+    return total
+
+
+# ---------------------------------------------------------------------------
 # Truncate
 # ---------------------------------------------------------------------------
 
 
-async def truncate_user_data(conn: asyncpg.Connection, local_user_id: int) -> None:
+async def truncate_user_data(  # pylint: disable=too-complex  # Reason: sequential FK-ordered deletion across many tables; splitting would obscure the deletion order
+    conn: asyncpg.Connection, local_user_id: int) -> None:
     """
     Delete all previously cloned rows for local_user_id in reverse FK order.
     Uses subqueries for child-only tables that have no direct user FK.
     """
     print(f"Truncating existing data for local user id={local_user_id} ...")
+
+    # ── Collect thread_ids BEFORE deleting app rows ───────────────────────
+    _all_thread_ids: list[str] = []
+    for _t in ("workflow_runs", "workflow_chat_sessions", "workflow_discovery_chat_sessions"):
+        try:
+            _rows = await conn.fetch(
+                f"SELECT thread_id FROM {_t} WHERE user_id = $1 AND thread_id IS NOT NULL",
+                local_user_id,
+            )
+            _all_thread_ids.extend(r["thread_id"] for r in _rows)
+        except Exception:  # pylint: disable=broad-exception-caught  # Reason: thread_id column may not exist in older local envs
+            pass
+
+    if _all_thread_ids:
+        for _ckpt in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):
+            try:
+                _status = await conn.execute(
+                    f"DELETE FROM {_ckpt} WHERE thread_id = ANY($1::text[])",
+                    _all_thread_ids,
+                )
+                _count = _status.split()[-1] if _status else "0"
+                if _count != "0":
+                    print(f"  {_ckpt}: deleted {_count} rows")
+            except Exception:  # pylint: disable=broad-exception-caught  # Reason: checkpoint tables may not exist in fresh local envs
+                pass
+
     queries: list[tuple[str, str]] = [
         # Deepest leaves first
         ("workflow_templates", "DELETE FROM workflow_templates WHERE created_by_id = $1"),
@@ -573,7 +678,7 @@ def resolve_local_db_url() -> str:
 # ---------------------------------------------------------------------------
 
 
-async def main(  # pylint: disable=too-complex,too-many-statements  # Reason: CLI entrypoint — URL resolve → connect → validate → clone loop → summary; splitting would hurt readability
+async def main(  # pylint: disable=too-complex,too-many-statements,too-many-locals,too-many-branches  # Reason: CLI entrypoint — URL resolve → connect → validate → clone loop → summary; splitting would hurt readability
     args: argparse.Namespace,
 ) -> int:
     # ── Resolve DB URLs ────────────────────────────────────────────────────
@@ -636,6 +741,11 @@ async def main(  # pylint: disable=too-complex,too-many-statements  # Reason: CL
         total_errors = 0
 
         for config in TABLE_CONFIGS:
+            if not args.include_credentials and config.table in CREDENTIAL_TABLES:
+                id_map[config.table] = {}  # empty map so FK children know to null out these FKs
+                print(f"  {config.table}: skipped (use --include-credentials to clone)")
+                continue
+
             rows = await fetch_rows(prod_conn, config, source_user_id, id_map)
             total_rows += len(rows)
 
@@ -668,16 +778,52 @@ async def main(  # pylint: disable=too-complex,too-many-statements  # Reason: CL
                 id_map[config.table] = {}  # children will see empty map and skip
                 total_errors += 1
 
+        # ── Advance sequences after explicit-PK inserts ───────────────
+        if not args.dry_run:
+            print("\nAdvancing Postgres sequences ...")
+            for config in TABLE_CONFIGS:
+                if config.pk_type != "int":
+                    continue
+                try:
+                    await local_conn.execute(
+                        f"SELECT setval("
+                        f"pg_get_serial_sequence('{config.table}', '{config.pk_col}'), "
+                        f"COALESCE((SELECT MAX({config.pk_col}) FROM {config.table}), 1)"
+                        f")"
+                    )
+                except Exception:  # pylint: disable=broad-exception-caught  # Reason: table may not exist in local env
+                    pass
+
+        # ── Clone LangGraph checkpoint tables ─────────────────────────────
+        print("\nCollecting thread_ids for checkpoint cloning ...")
+        thread_ids: list[str] = []
+        _tid_conn = prod_conn if args.dry_run else local_conn
+        _tid_user = source_user_id if args.dry_run else args.local_user_id
+        for _table in ("workflow_runs", "workflow_chat_sessions", "workflow_discovery_chat_sessions"):
+            try:
+                _rows = await _tid_conn.fetch(
+                    f"SELECT thread_id FROM {_table} WHERE user_id = $1 AND thread_id IS NOT NULL",
+                    _tid_user,
+                )
+                thread_ids.extend(r["thread_id"] for r in _rows)
+            except Exception:  # pylint: disable=broad-exception-caught  # Reason: thread_id column may not exist in all envs
+                pass
+        thread_ids = list(set(thread_ids))
+        print(f"  Found {len(thread_ids)} unique thread_id(s).")
+
+        print("\nCloning checkpoint tables:")
+        checkpoint_rows = await clone_checkpoint_tables(prod_conn, local_conn, thread_ids, args.dry_run)
+
         # ── Summary ────────────────────────────────────────────────────────
         if args.dry_run:
-            print(f"\n[dry-run] Total rows that would be cloned: {total_rows}")
+            print(f"\n[dry-run] Total rows that would be cloned: {total_rows} app rows + {checkpoint_rows} checkpoint rows")
         else:
-            print(f"\nDone.  {total_rows} rows cloned across {len(TABLE_CONFIGS)} tables", end="")
-            print(f"  ({total_errors} table errors)" if total_errors else ".")
             print(
-                f"\nLog in locally as user id={args.local_user_id} "
-                "to browse the cloned data."
+                f"\nDone.  {total_rows} app rows + {checkpoint_rows} checkpoint rows cloned",
+                end="",
             )
+            print(f"  ({total_errors} table errors)" if total_errors else ".")
+            print(f"\nLog in locally as user id={args.local_user_id} to browse the cloned data.")
 
         return 0 if total_errors == 0 else 1
 
@@ -731,6 +877,14 @@ if __name__ == "__main__":
         "--truncate-existing",
         action="store_true",
         help="Delete all existing rows for local-user-id before cloning",
+    )
+    parser.add_argument(
+        "--include-credentials",
+        action="store_true",
+        help=(
+            "Also clone oauth_connections, integration_resources, and integration_secrets. "
+            "Only useful if LOCAL_ENCRYPTION_KEY matches production — otherwise tokens are unreadable."
+        ),
     )
 
     sys.exit(asyncio.run(main(parser.parse_args())))
