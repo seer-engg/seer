@@ -2,7 +2,7 @@
 Node type implementations for workflow execution.
 
 This package provides a "one file per node type" pattern where each node type
-(tool, llm, if, for_each, hitl, browser, mcp) has its own file containing:
+(tool, agent, if, for_each, hitl, browser, mcp) has its own file containing:
 - Execution logic
 - Type registration
 - Routing logic (for control flow nodes)
@@ -14,7 +14,7 @@ All node types auto-register with the node_type_registry on import.
 
 Usage:
     from seer.core.nodes import node_type_registry
-    from seer.core.nodes import ToolNode, LLMNode, Node  # Re-exported models
+    from seer.core.nodes import ToolNode, AgentNode, Node  # Re-exported models
 """
 
 from seer.core.nodes.base import (
@@ -39,7 +39,6 @@ from seer.core.nodes.registry import (
 # Import node type implementations to trigger auto-registration
 # Each module registers its node type when imported
 from seer.core.nodes.tool_node import ToolNodeType
-from seer.core.nodes.llm_node import LLMNodeType
 from seer.core.nodes.mcp_node import MCPNodeType
 from seer.core.nodes.if_node import IfNodeType
 from seer.core.nodes.for_each_node import ForEachNodeType
@@ -52,7 +51,6 @@ from seer.core.nodes.agent_node import AgentNodeType
 from seer.core.schema.models import (
     # Node models
     ToolNode,
-    LLMNode,
     MCPNode,
     IfNode,
     ForEachNode,
@@ -90,7 +88,6 @@ __all__ = [
     "register_node_type",
     # Node type implementations
     "ToolNodeType",
-    "LLMNodeType",
     "MCPNodeType",
     "IfNodeType",
     "ForEachNodeType",
@@ -100,7 +97,6 @@ __all__ = [
     "AgentNodeType",
     # Node models (Pydantic classes) - re-exported from schema/models.py
     "ToolNode",
-    "LLMNode",
     "MCPNode",
     "IfNode",
     "ForEachNode",

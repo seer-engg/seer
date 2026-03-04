@@ -81,7 +81,7 @@ def build_workflow_spec(
                 "body": [
                     {
                         "id": "compose_reply",
-                        "type": "llm",
+                        "type": "agent",
                         "inputs": {
                             "model": MODEL_ID,
                             "prompt": (

@@ -1080,12 +1080,20 @@ class TestRunSavedWorkflowWithTriggerOverride:
         mock_trigger.key = "poll.gmail.email_received"
         mock_trigger.ui_meta = {"title": "Gmail Inbox"}
 
+        mock_sub = MagicMock()
+        mock_sub.id = 99
+        mock_trigger_event = MagicMock()
+        mock_trigger_event.id = 1
+
         with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
              patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
              patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
              patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock) as mock_create_run, \
              patch("seer.api.workflows.services.execution.workflow_execution_task") as mock_task, \
              patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class, \
+             patch("seer.api.workflows.services.execution.TriggerSubscription") as mock_ts_class, \
+             patch("seer.api.workflows.services.execution.TriggerEvent") as mock_te_class, \
+             patch("seer.api.workflows.services.execution.WorkflowRun") as mock_wf_run_class, \
              patch("seer.api.workflows.services.triggers.sync_trigger_subscriptions", new_callable=AsyncMock):
 
             mock_get_wf.return_value = mock_workflow
@@ -1094,6 +1102,9 @@ class TestRunSavedWorkflowWithTriggerOverride:
             mock_validate.return_value = None
             mock_create_run.return_value = mock_workflow_run
             mock_task.kiq = AsyncMock()
+            mock_ts_class.filter.return_value.first = AsyncMock(return_value=mock_sub)
+            mock_te_class.create = AsyncMock(return_value=mock_trigger_event)
+            mock_wf_run_class.filter.return_value.update = AsyncMock(return_value=None)
 
             result = await run_saved_workflow(mock_user, "wf_1", payload)
 
@@ -1105,6 +1116,9 @@ class TestRunSavedWorkflowWithTriggerOverride:
             assert call_kwargs["trigger_envelope"]["trigger_id"] == "trigger_gmail"
             assert call_kwargs["trigger_envelope"]["data"] == trigger_override["data"]
             assert result.run_id == "run_123"
+            # TriggerEvent should have been created and linked to the run
+            mock_te_class.create.assert_called_once()
+            mock_wf_run_class.filter.assert_called_once_with(id=mock_workflow_run.id)
 
     @pytest.mark.asyncio
     async def test_run_with_trigger_override_multiple_triggers_requires_trigger_id(self, mock_user, mock_workflow, mock_workflow_version):
@@ -1180,12 +1194,20 @@ class TestRunSavedWorkflowWithTriggerOverride:
         mock_trigger2.key = "poll.gmail.email_received"
         mock_trigger2.ui_meta = {"title": "Trigger 2"}
 
+        mock_sub = MagicMock()
+        mock_sub.id = 42
+        mock_trigger_event = MagicMock()
+        mock_trigger_event.id = 2
+
         with patch("seer.api.workflows.services.execution._get_workflow", new_callable=AsyncMock) as mock_get_wf, \
              patch("seer.api.workflows.services.execution._get_draft_version", new_callable=AsyncMock) as mock_get_draft, \
              patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock) as mock_validate, \
              patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock) as mock_create_run, \
              patch("seer.api.workflows.services.execution.workflow_execution_task") as mock_task, \
              patch("seer.api.workflows.services.execution.WorkflowSpec") as mock_spec_class, \
+             patch("seer.api.workflows.services.execution.TriggerSubscription") as mock_ts_class, \
+             patch("seer.api.workflows.services.execution.TriggerEvent") as mock_te_class, \
+             patch("seer.api.workflows.services.execution.WorkflowRun") as mock_wf_run_class, \
              patch("seer.api.workflows.services.triggers.sync_trigger_subscriptions", new_callable=AsyncMock):
 
             mock_get_wf.return_value = mock_workflow
@@ -1194,6 +1216,9 @@ class TestRunSavedWorkflowWithTriggerOverride:
             mock_validate.return_value = None
             mock_create_run.return_value = mock_workflow_run
             mock_task.kiq = AsyncMock()
+            mock_ts_class.filter.return_value.first = AsyncMock(return_value=mock_sub)
+            mock_te_class.create = AsyncMock(return_value=mock_trigger_event)
+            mock_wf_run_class.filter.return_value.update = AsyncMock(return_value=None)
 
             result = await run_saved_workflow(mock_user, "wf_1", payload)
 
@@ -1203,6 +1228,8 @@ class TestRunSavedWorkflowWithTriggerOverride:
             call_kwargs = mock_task.kiq.call_args[1]
             assert call_kwargs["trigger_envelope"]["trigger_id"] == "trigger_2"
             assert result.run_id == "run_123"
+            # TriggerEvent should have been persisted
+            mock_te_class.create.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_run_with_trigger_override_invalid_trigger_id(self, mock_user, mock_workflow, mock_workflow_version):

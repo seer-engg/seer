@@ -9,7 +9,7 @@ import pytest
 
 from seer.api.workflows import models as api_models
 from seer.api.workflows.services import catalog
-from seer.core.schema.models import LLMNode, ToolNode, WorkflowSpec
+from seer.core.schema.models import AgentNode, ToolNode, WorkflowSpec
 
 
 # =============================================================================
@@ -31,16 +31,13 @@ class TestListNodeTypes:
         assert isinstance(result.node_types, list)
 
     @pytest.mark.asyncio
-    async def test_list_node_types_includes_llm_type(self):
-        """Test LLM node type is included in response."""
+    async def test_list_node_types_includes_agent_type(self):
+        """Test agent node type is included in response (supersedes removed llm type)."""
         result = await catalog.list_node_types()
 
         types = [nt.type for nt in result.node_types]
-        assert "llm" in types
-
-        llm_descriptor = next(nt for nt in result.node_types if nt.type == "llm")
-        assert llm_descriptor.title == "LLM"
-        assert len(llm_descriptor.fields) > 0
+        assert "llm" not in types
+        assert "agent" in types
 
     @pytest.mark.asyncio
     async def test_list_node_types_includes_if_else_type(self):
@@ -507,7 +504,7 @@ class TestValidateSpec:
     """Tests for validate_spec function.
 
     Note: The _collect_warnings_from_nodes function has a bug where it checks
-    for 'node.out' but ToolNode uses 'expect_outputs' and LLMNode uses 'outputs'.
+    for 'node.out' but ToolNode uses 'expect_outputs' and AgentNode uses 'outputs'.
     These tests document the expected behavior once the bug is fixed.
     """
 
@@ -546,7 +543,7 @@ class TestCollectWarnings:
 
     Note: The current implementation has a bug - it checks 'node.out' but:
     - ToolNode uses 'expect_outputs'
-    - LLMNode uses 'outputs'
+    - AgentNode uses 'outputs'
 
     This causes AttributeError when processing these node types.
     Tests below document the current (buggy) behavior.
@@ -570,20 +567,6 @@ class TestCollectWarnings:
 
         # Current buggy behavior - raises AttributeError
         with pytest.raises(AttributeError, match="'ToolNode' object has no attribute 'out'"):
-            catalog._collect_warnings_from_nodes([node])
-
-    def test_collect_warnings_with_llm_node_raises_attribute_error(self):
-        """Test that LLMNode causes AttributeError due to missing 'out' attr.
-
-        BUG: catalog.py line 280 checks 'node.out' but LLMNode has 'outputs'.
-        """
-        node = LLMNode(
-            id="llm1",
-            inputs={"model": "gpt-4", "prompt": "test"}
-        )
-
-        # Current buggy behavior - raises AttributeError
-        with pytest.raises(AttributeError, match="'LLMNode' object has no attribute 'out'"):
             catalog._collect_warnings_from_nodes([node])
 
 
@@ -621,7 +604,7 @@ class TestGraphPreview:
         """Test generating preview creates sequential edges."""
         nodes = [
             ToolNode(id="n1", tool="test.tool"),
-            LLMNode(id="n2", inputs={"model": "gpt-4", "prompt": "test"}),
+            AgentNode(id="n2", inputs={"model": "gpt-4", "prompt": "test"}),
         ]
         spec = WorkflowSpec(nodes=nodes, edges=[])
 
@@ -634,7 +617,7 @@ class TestGraphPreview:
 
     def test_graph_preview_node_structure(self):
         """Test preview nodes have correct structure."""
-        node = LLMNode(id="llm1", inputs={"model": "gpt-4", "prompt": "test"})
+        node = AgentNode(id="llm1", inputs={"model": "gpt-4", "prompt": "test"})
         spec = WorkflowSpec(nodes=[node], edges=[])
 
         preview = catalog._graph_preview(spec)

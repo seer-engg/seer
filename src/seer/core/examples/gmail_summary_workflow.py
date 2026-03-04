@@ -118,7 +118,7 @@ def build_workflow_spec(email_schema: JsonSchema) -> Dict[str, Any]:
             },
             {
                 "id": "summarize",
-                "type": "llm",
+                "type": "agent",
                 "inputs": {
                     "model": MODEL_ID,
                     "prompt": (

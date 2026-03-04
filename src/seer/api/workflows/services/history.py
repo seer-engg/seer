@@ -23,7 +23,6 @@ from seer.database import (
 )
 from seer.logger import get_logger
 from seer.core.schema.models import (
-    LLMNode,
     Node,
     ToolNode,
     WorkflowSpec,
@@ -67,18 +66,6 @@ def _enrich_with_tool_node(enriched: Dict[str, Any], node: ToolNode) -> None:
         enriched["expect_outputs"] = node.expect_outputs.model_dump() if hasattr(node.expect_outputs, "model_dump") else node.expect_outputs
 
 
-def _enrich_with_llm_node(enriched: Dict[str, Any], node: LLMNode) -> None:
-    """Enrich trace data with LLMNode metadata."""
-    if "model" in node.inputs:
-        enriched["model"] = node.inputs["model"]
-    if "prompt" in node.inputs:
-        enriched["prompt_template"] = node.inputs["prompt"]
-    if "temperature" in node.inputs:
-        enriched["temperature"] = node.inputs["temperature"]
-    if node.outputs:
-        enriched["output_schema"] = node.outputs.model_dump() if hasattr(node.outputs, "model_dump") else node.outputs
-
-
 def _enrich_node_with_spec(
     node_trace: Dict[str, Any],
     node_id: str,
@@ -96,8 +83,6 @@ def _enrich_node_with_spec(
 
     if isinstance(node, ToolNode):
         _enrich_with_tool_node(enriched, node)
-    elif isinstance(node, LLMNode):
-        _enrich_with_llm_node(enriched, node)
 
     return enriched
 
@@ -107,8 +92,6 @@ def _build_node_label(node: Node) -> str:
     node_id = node.id
     if isinstance(node, ToolNode):
         return f"{node_id} ({node.tool})"
-    if isinstance(node, LLMNode):
-        return f"{node_id} (LLM)"
     return node_id
 
 
@@ -413,16 +396,12 @@ def _build_trigger_info(run: WorkflowRun) -> Dict[str, Any]:
     """
     Build trigger metadata for the history response.
 
-    For trigger-initiated runs, returns subscription and event data.
-    For manual runs (or runs where trigger data is unavailable), returns
-    only the source field to allow graceful degradation.
+    Surfaces trigger data whenever a TriggerEvent FK is linked to the run,
+    regardless of whether the run was initiated automatically (source=trigger)
+    or manually with a real event selected (source=manual + trigger_event_override).
     """
     source_value = run.source.value if isinstance(run.source, WorkflowRunSource) else run.source
-
-    if source_value != WorkflowRunSource.TRIGGER.value:
-        return {"source": "manual"}
-
-    trigger_info: Dict[str, Any] = {"source": "trigger"}
+    trigger_info: Dict[str, Any] = {"source": source_value}
 
     subscription = getattr(run, "subscription", None)
     if subscription is not None:

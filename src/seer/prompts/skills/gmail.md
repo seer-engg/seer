@@ -188,7 +188,7 @@ Process support emails and draft intelligent replies.
   "nodes": [
     {
       "id": "classify_email",
-      "type": "llm",
+      "type": "agent",
       "model": "gpt-5-mini",
       "prompt": "Classify this email: ${trigger.data.message.body}",
       "output": {
@@ -237,7 +237,7 @@ Generate and send daily report on schedule.
   "nodes": [
     {
       "id": "generate_report",
-      "type": "llm",
+      "type": "agent",
       "model": "gpt-5-mini",
       "prompt": "Generate daily summary for ${trigger.data.scheduled_time}",
       "out": "report"
@@ -303,14 +303,14 @@ Monitor support emails, fetch conversation threads, search KB, and reply with co
     },
     {
       "id": "analyze_thread",
-      "type": "llm",
+      "type": "agent",
       "model": "gpt-5-mini",
       "prompt": "Extract the customer's main issue from this thread: ${thread.messages}",
       "out": "context"
     },
     {
       "id": "generate_response",
-      "type": "llm",
+      "type": "agent",
       "model": "gpt-5",
       "prompt": "Generate helpful response for: ${context.issue}",
       "out": "response"
@@ -351,7 +351,7 @@ Classify support emails with AI and organize with labels.
   "nodes": [
     {
       "id": "classify_email",
-      "type": "llm",
+      "type": "agent",
       "model": "gpt-5-mini",
       "prompt": "Classify urgency and category: ${trigger.data.body}",
       "output": {
@@ -399,7 +399,7 @@ Send immediate auto-responses for FAQs, create drafts for complex issues.
   "nodes": [
     {
       "id": "classify",
-      "type": "llm",
+      "type": "agent",
       "model": "gpt-5-mini",
       "prompt": "Can this be auto-responded? ${email.body}",
       "out": "can_auto_respond"

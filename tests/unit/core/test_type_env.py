@@ -15,8 +15,8 @@ from seer.core.compiler.type_env import (
 from seer.core.expr.typecheck import TypeEnvironment
 from seer.core.registry.tool_registry import ToolRegistry
 from seer.core.schema.models import (
+    AgentNode,
     ForEachNode,
-    LLMNode,
     OutputContract,
     OutputMode,
     TriggerSpec,
@@ -260,15 +260,14 @@ def test_build_type_environment_with_foreach_node():
     assert "loop1" in symbols
 
 
-def test_build_type_environment_with_llm_node():
-    """Test building type environment with LLM node."""
+def test_build_type_environment_with_agent_node():
+    """Test building type environment with agent node."""
     spec = WorkflowSpec(
         version="2",
         triggers=[],
         nodes=[
-            LLMNode(
+            AgentNode(
                 id="llm1",
-                type="llm",
                 inputs={"model": "gpt-4", "prompt": "Generate a response"},
                 outputs=OutputContract(mode=OutputMode.json, schema={"schema": {"type": "object"}})
             )
@@ -298,9 +297,8 @@ def test_build_type_environment_node_with_output():
         version="2",
         triggers=[],
         nodes=[
-            LLMNode(
+            AgentNode(
                 id="llm1",
-                type="llm",
                 inputs={"model": "gpt-4", "prompt": "test"}
             )
         ],
@@ -838,19 +836,18 @@ def test_for_each_loop_variable_uses_permissive_fallback_for_unknown_source():
     assert item_schema.get("additionalProperties") is True
 
 
-def test_for_each_loop_variable_infers_type_from_llm_node_output():
-    """Test that for_each loop variables inherit type from LLM node's JSON output schema.
+def test_for_each_loop_variable_infers_type_from_agent_node_output():
+    """Test that for_each loop variables inherit type from agent node's JSON output schema.
 
-    This is the key use case from the developer review - when an LLM node outputs
+    This is the key use case from the developer review - when an agent node outputs
     a structured JSON array, loop variables should be able to access its properties.
     """
     spec = WorkflowSpec(
         version="2",
         triggers=[],
         nodes=[
-            LLMNode(
+            AgentNode(
                 id="prepare_data",
-                type="llm",
                 inputs={"model": "gpt-4", "prompt": "Generate organizations"},
                 outputs=OutputContract(
                     mode=OutputMode.json,

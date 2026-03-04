@@ -12,7 +12,6 @@ from seer.core.schema.models import (
     WorkflowSpec,
     EdgeType,
     ToolNode,
-    LLMNode,
     MCPNode,
     IfNode,
     ForEachNode,
@@ -64,10 +63,6 @@ def _format_node_type_usage_notes(node_type: str) -> List[str]:
             "use `get_tool_accounts(tool_name)` first. If multiple accounts exist, "
             "include `connection_id` in the node to specify which account to use.",
         ],
-        "llm": [
-            "**Important:** LLM nodes require `model` and `prompt` in inputs. "
-            "Use `outputs` to specify structured JSON output with schema."
-        ],
         "mcp": [
             "**Important:** MCP nodes call external Model Context Protocol servers. "
             "Use `auth.headers` for HTTP servers or `auth.env` for stdio servers."
@@ -116,7 +111,6 @@ def generate_node_type_reference() -> str:
     """
     node_types = {
         "tool": (ToolNode, "Execute a tool from the tool registry"),
-        "llm": (LLMNode, "AI inference with model configuration"),
         "mcp": (MCPNode, "Execute tools from external MCP servers"),
         "if": (IfNode, "Conditional branching based on expression"),
         "for_each": (ForEachNode, "Iterate over a list with loop body"),
@@ -203,9 +197,8 @@ def generate_validation_checklist_from_model() -> str:
 
     lines.append("Node requirements:")
     lines.append("- Each node must have unique `id` (string, min 1 char)")
-    lines.append("- Each node must have `type` field: tool, llm, mcp, if, for_each, hitl, image_gen, browser, or agent")
+    lines.append("- Each node must have `type` field: tool, agent, mcp, if, for_each, hitl, image_gen, or browser")
     lines.append("- Tool nodes: require `tool` (string) and `inputs` (object)")
-    lines.append("- LLM nodes: require `inputs` with `model` and `prompt` fields")
     lines.append("- If nodes: require `condition` (boolean expression)")
     lines.append("- ForEach nodes: require `items` (list expression)")
     lines.append("- Agent nodes: require `inputs` with `model` and `prompt` fields; optional `tools` list")

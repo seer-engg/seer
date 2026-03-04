@@ -275,7 +275,7 @@ Two paths that merge back to a single node:
 ```json
 {
   "id": "merge",
-  "type": "llm",
+  "type": "agent",
   "inputs": {
     "model": "gpt-5-mini",
     "prompt": "Result from path A: ${path_a}, Result from path B: ${path_b}"

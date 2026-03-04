@@ -1,7 +1,7 @@
 # Primitive Workflow Blocks Reference
 
 ## Overview
-Seer workflows are built from 9 primitive block types: **tool**, **llm**, **mcp**, **if**, **for_each**, **hitl**, **image_gen**, **browser**, and **agent**.
+Seer workflows are built from 8 primitive block types: **tool**, **agent**, **mcp**, **if**, **for_each**, **hitl**, **image_gen**, and **browser**.
 Each block is a node in the workflow graph, connected by edges that define execution flow.
 
 ---
@@ -53,155 +53,6 @@ Each block is a node in the workflow graph, connected by edges that define execu
 - Database operations (create, read, update)
 - External API calls
 - File operations
-
----
-
-## 2. LLM BLOCK (`type: "llm"`)
-
-**Purpose:** AI inference for text generation, classification, extraction, summarization
-
-**Schema:**
-```json
-{
-  "id": "unique_node_id",
-  "type": "llm",
-  "inputs": {
-    "model": "gpt-5-mini",
-    "prompt": "Your prompt with ${data} references",
-    "temperature": 0.3,
-    "max_tokens": 1000
-  },
-  "outputs": {
-    "mode": "json",
-    "schema": {
-      "json_schema": {
-        "type": "object",
-        "properties": {
-          "field": {"type": "string"}
-        },
-        "required": ["field"]
-      }
-    }
-  }
-}
-```
-
-**Required Fields:**
-- `id` (string): Unique identifier
-- `type`: Must be `"llm"`
-- `inputs` (object): Must contain `model` and `prompt`
-  - `model` (string): Model ID (e.g., `"gpt-5-mini"`, `"gpt-4o-mini"`)
-  - `prompt` (string): Template with `${...}` expressions for dynamic content
-  - `temperature` (number, optional): 0.0-1.0, controls randomness
-  - `max_tokens` (number, optional): Maximum tokens to generate
-- `outputs` (object): Defines output format
-  - `mode`: Either `"text"` or `"json"`
-  - `schema`: Required if `mode="json"`, contains JSON Schema
-
-**Output Modes:**
-
-1. **Text Mode** (freeform text):
-```json
-{
-  "outputs": {
-    "mode": "text"
-  }
-}
-```
-
-2. **JSON Mode** (structured data):
-```json
-{
-  "outputs": {
-    "mode": "json",
-    "schema": {
-      "json_schema": {
-        "type": "object",
-        "properties": {
-          "category": {"type": "string", "enum": ["urgent", "normal"]},
-          "summary": {"type": "string"}
-        },
-        "required": ["category", "summary"]
-      }
-    }
-  }
-}
-```
-
-**⚠️ CRITICAL: Root Schema Must Be `object`**
-OpenAI structured outputs require the root schema to have `"type": "object"`. **Array root types are NOT supported** and will fail at compile time.
-
-❌ **WRONG** - Array at root:
-```json
-{
-  "outputs": {
-    "mode": "json",
-    "schema": {
-      "json_schema": {
-        "type": "array",
-        "items": {"type": "object", "properties": {"name": {"type": "string"}}}
-      }
-    }
-  }
-}
-```
-
-✅ **CORRECT** - Wrap array in object property:
-```json
-{
-  "outputs": {
-    "mode": "json",
-    "schema": {
-      "json_schema": {
-        "type": "object",
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {"type": "object", "properties": {"name": {"type": "string"}}}
-          }
-        },
-        "required": ["items"]
-      }
-    }
-  }
-}
-```
-Then access the array via `${node_id.items}` in downstream nodes.
-
-**Example:**
-```json
-{
-  "id": "classify_email",
-  "type": "llm",
-  "inputs": {
-    "model": "gpt-5-mini",
-    "temperature": 0.3,
-    "prompt": "Classify this email:\n\nFrom: ${email.from}\nSubject: ${email.subject}\nBody: ${email.body}",
-    "email_data": "${fetch_email}"
-  },
-  "outputs": {
-    "mode": "json",
-    "schema": {
-      "json_schema": {
-        "type": "object",
-        "properties": {
-          "urgency": {"type": "string", "enum": ["urgent", "normal", "low"]},
-          "category": {"type": "string"},
-          "needs_human_review": {"type": "boolean"}
-        },
-        "required": ["urgency", "category", "needs_human_review"]
-      }
-    }
-  }
-}
-```
-
-**Common Use Cases:**
-- Email/message classification
-- Data extraction from unstructured text
-- Content generation (drafts, summaries)
-- Sentiment analysis
-- Decision-making with structured output
 
 ---
 
@@ -1018,6 +869,7 @@ Tools can be specified in two formats:
 - ✅ Agent output is accessed via `${node_id}` or `${node_id.field}` (if JSON mode)
 - ⚠️ Agents can be expensive - each iteration involves LLM calls and potentially tool execution
 - ⚠️ Use `max_iterations` to prevent runaway execution (default: 10)
+- ✉️ **Email body generation:** When tasking an agent to generate an email body, instruct it to produce the content as **formatted Markdown** (use headings, bullet points, bold text, etc.). Email tools convert Markdown to HTML for rendering in email clients.
 
 **Output Modes:**
 
@@ -1214,7 +1066,7 @@ This will fail because arithmetic is not allowed in template expressions.
 ```json
 {
   "id": "compute_row",
-  "type": "llm",
+  "type": "agent",
   "inputs": {
     "model": "gpt-5-mini",
     "prompt": "Calculate and return only the number: ${index} + 2"
@@ -1254,7 +1106,7 @@ Arithmetic works in `if` conditions!
 {
   "nodes": [
     {"id": "fetch", "type": "tool", "tool": "gmail_get_message", "inputs": {"message_id": "${trigger.data.id}"}},
-    {"id": "analyze", "type": "llm", "inputs": {"model": "gpt-5-mini", "prompt": "Analyze: ${fetch.body}"}, "outputs": {"mode": "json", ...}}
+    {"id": "analyze", "type": "agent", "inputs": {"model": "gpt-5-mini", "prompt": "Analyze: ${fetch.body}"}, "outputs": {"mode": "json", ...}}
   ],
   "edges": [
     {"source": "fetch", "target": "analyze"}
@@ -1266,7 +1118,7 @@ Arithmetic works in `if` conditions!
 ```json
 {
   "nodes": [
-    {"id": "classify", "type": "llm", ...},
+    {"id": "classify", "type": "agent", ...},
     {"id": "route", "type": "if", "condition": "${classify.category == 'urgent'}"},
     {"id": "urgent_path", "type": "tool", ...},
     {"id": "normal_path", "type": "tool", ...}
@@ -1286,7 +1138,7 @@ Arithmetic works in `if` conditions!
     {"id": "fetch_list", "type": "tool", "tool": "list_items", "inputs": {}},
     {"id": "loop", "type": "for_each", "items": "${fetch_list.items}"},
     {"id": "process", "type": "tool", "tool": "update_item", "inputs": {"id": "${item.id}", "status": "processed"}},
-    {"id": "complete", "type": "llm", "inputs": {"model": "gpt-5-mini", "prompt": "Summarize: processed all items"}, "outputs": {"mode": "text"}}
+    {"id": "complete", "type": "agent", "inputs": {"model": "gpt-5-mini", "prompt": "Summarize: processed all items"}, "outputs": {"mode": "text"}}
   ],
   "edges": [
     {"source": "fetch_list", "target": "loop"},
@@ -1303,7 +1155,6 @@ Arithmetic works in `if` conditions!
 | Block Type | Purpose | Required Fields | Output Access |
 |------------|---------|----------------|---------------|
 | `tool` | Execute registry tool | `id`, `tool`, `inputs` | `${node_id}`, `${node_id.field}` |
-| `llm` | AI inference | `id`, `inputs.model`, `inputs.prompt`, `outputs` | `${node_id}`, `${node_id.field}` |
 | `mcp` | External MCP tool | `id`, `server`, `tool` | `${node_id}`, `${node_id.field}` |
 | `if` | Conditional branch | `id`, `condition` | N/A (routing only) |
 | `for_each` | Loop over list | `id`, `items` | Loop state (internal) |

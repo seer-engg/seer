@@ -15,7 +15,7 @@ WorkflowCompiler.compile()
 CompiledGraph (LangGraph Runnable)
     ↓
 Runtime Execution
-    ├── Node executors (tool, llm, code, conditional, etc.)
+    ├── Node executors (tool, agent, if, for_each, etc.)
     ├── State management (checkpoints)
     └── Streaming/async execution
 ```
@@ -47,7 +47,7 @@ graph = await compiler.compile(user, spec_dict, checkpointer=None)
 
 **Node Types**:
 - **Tool Node**: Execute registered tools (e.g., Gmail, GitHub)
-- **LLM Node**: Call LLM with prompts/messages
+- **Agent Node**: Autonomous multi-step task execution with tool access
 - **Code Node**: Execute Python code sandbox
 - **Conditional Node**: Branch based on expression evaluation
 - **Transform Node**: Map/transform data
@@ -126,8 +126,8 @@ graph = await compiler.compile(user, spec, checkpointer=checkpointer)
       }
     },
     "node_2": {
-      "type": "llm",
-      "config": {
+      "type": "agent",
+      "inputs": {
         "model": "gpt-4",
         "prompt": "Summarize: {{node_1.output}}"
       }
