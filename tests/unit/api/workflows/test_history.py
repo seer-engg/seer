@@ -1098,9 +1098,9 @@ class TestGetErrorTracesFromDatabase:
                 "status": "failed",
                 "error": {"type": "KeyError", "message": "'kb_id'"},
             },
-            "_trace_llm-1": {
-                "node_id": "llm-1",
-                "node_type": "llm",
+            "_trace_agent-1": {
+                "node_id": "agent-1",
+                "node_type": "agent",
                 "status": "succeeded",  # Should be excluded
                 "output": "Hello",
             },

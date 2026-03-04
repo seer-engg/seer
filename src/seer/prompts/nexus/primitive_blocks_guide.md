@@ -56,16 +56,6 @@ Each block is a node in the workflow graph, connected by edges that define execu
 
 ---
 
-## 2. LLM BLOCK → Use Agent Block Instead
-
-> **Removed:** The `type: "llm"` block no longer exists. Use `type: "agent"` instead.
->
-> The agent block supports everything the LLM block offered — `model`, `prompt`, `outputs` (text or JSON mode), `temperature` — plus tool execution and autonomous multi-step iteration.
->
-> See **Section 9 (AGENT BLOCK)** for complete documentation and examples.
-
----
-
 ## 3. MCP BLOCK (`type: "mcp"`)
 
 **Purpose:** Execute tools from Model Context Protocol (MCP) servers (external tool providers)
@@ -879,6 +869,7 @@ Tools can be specified in two formats:
 - ✅ Agent output is accessed via `${node_id}` or `${node_id.field}` (if JSON mode)
 - ⚠️ Agents can be expensive - each iteration involves LLM calls and potentially tool execution
 - ⚠️ Use `max_iterations` to prevent runaway execution (default: 10)
+- ✉️ **Email body generation:** When tasking an agent to generate an email body, instruct it to produce the content as **formatted Markdown** (use headings, bullet points, bold text, etc.). Email tools convert Markdown to HTML for rendering in email clients.
 
 **Output Modes:**
 
@@ -1164,7 +1155,6 @@ Arithmetic works in `if` conditions!
 | Block Type | Purpose | Required Fields | Output Access |
 |------------|---------|----------------|---------------|
 | `tool` | Execute registry tool | `id`, `tool`, `inputs` | `${node_id}`, `${node_id.field}` |
-| `llm` | AI inference | `id`, `inputs.model`, `inputs.prompt`, `outputs` | `${node_id}`, `${node_id.field}` |
 | `mcp` | External MCP tool | `id`, `server`, `tool` | `${node_id}`, `${node_id.field}` |
 | `if` | Conditional branch | `id`, `condition` | N/A (routing only) |
 | `for_each` | Loop over list | `id`, `items` | Loop state (internal) |

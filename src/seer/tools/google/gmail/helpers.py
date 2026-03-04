@@ -256,6 +256,18 @@ def _set_optional_addresses(msg: EmailMessage, name: str, addresses: Optional[Li
         msg[name] = ", ".join(sanitized)
 
 
+def _markdown_to_html(text: str) -> str:
+    """Convert markdown text to an email-safe HTML document."""
+    import markdown as md  # pylint: disable=import-outside-toplevel  # Reason: Lazy import to avoid startup cost for optional dependency
+
+    body = md.markdown(text, extensions=["extra", "nl2br"])
+    return (
+        "<!DOCTYPE html><html><body style=\"font-family:Arial,sans-serif;"
+        "font-size:14px;line-height:1.6;color:#333;max-width:680px\">"
+        f"{body}</body></html>"
+    )
+
+
 def _build_mime_email(  # pylint: disable=too-many-arguments  # Reason: Gmail send helper requires all email components
     *,
     to: List[str],
@@ -288,9 +300,10 @@ def _build_mime_email(  # pylint: disable=too-many-arguments  # Reason: Gmail se
     _set_optional_header(msg, "In-Reply-To", in_reply_to)
     _set_optional_header(msg, "References", references)
 
+    # Auto-convert markdown to HTML when body_html not explicitly provided
+    effective_html = body_html if body_html is not None else _markdown_to_html(body_text or "")
     msg.set_content(body_text or "")
-    if body_html:
-        msg.add_alternative(body_html, subtype="html")
+    msg.add_alternative(effective_html, subtype="html")
 
     _add_attachments(msg, attachments)
 
