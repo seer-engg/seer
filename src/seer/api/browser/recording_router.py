@@ -148,6 +148,26 @@ async def get_recording_events(
     }
 
 
+@router.get("/shared/{recording_id}/events")
+async def get_shared_recording_events(recording_id: UUID) -> dict:
+    """Get recording events for public sharing (no auth required)."""
+    recording = await SessionRecording.get_or_none(id=recording_id)
+    if not recording:
+        raise HTTPException(status_code=404, detail="Recording not found")
+
+    try:
+        events = RecordingService.decompress_events(recording.events_compressed)
+    except Exception as e:
+        logger.error("Failed to decompress recording %s: %s", recording_id, e)
+        raise HTTPException(status_code=500, detail="Failed to decompress recording data") from e
+
+    return {
+        "recording_id": str(recording_id),
+        "event_count": len(events),
+        "events": events,
+    }
+
+
 @router.delete("/{recording_id}")
 async def delete_recording(
     request: Request,

@@ -18,13 +18,6 @@ Lint Aerich migrations for dangerous operations (runs in pre-commit).
 uv run python scripts/lint-migrations.py
 ```
 
-### `railway-migrate.sh`
-Apply database migrations on Railway deployments.
-
-```bash
-./scripts/railway-migrate.sh
-```
-
 ### `ensure_stripe_catalog.py`
 Create/reactivate Stripe products and prices for subscription tiers.
 
