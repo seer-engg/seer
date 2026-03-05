@@ -101,7 +101,7 @@ async def call_model(client: httpx.AsyncClient, model: str, prompt: str) -> dict
         content = data["choices"][0]["message"]["content"]
         usage = data.get("usage", {})
         return {"content": content, "latency": elapsed, "usage": usage, "error": None}
-    except Exception as e:
+    except (httpx.HTTPError, KeyError, ValueError) as e:
         return {"content": "", "latency": time.monotonic() - start, "usage": {}, "error": str(e)}
 
 
