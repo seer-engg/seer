@@ -186,6 +186,12 @@ async def get_model_registry(request: Request):
     return await services.list_models()
 
 
+@router.get("/registries/browser-models", response_model=api_models.ModelRegistryResponse)
+async def get_browser_model_registry(request: Request):
+    _require_user(request)
+    return await services.list_browser_models()
+
+
 @router.get("/registries/schemas/{schema_id}", response_model=api_models.SchemaResponse)
 async def get_schema(request: Request, schema_id: str):
     _require_user(request)

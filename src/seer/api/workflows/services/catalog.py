@@ -91,10 +91,18 @@ NODE_TYPE_DESCRIPTORS = api_models.NodeTypeResponse(
     ]
 )
 
+DEFAULT_BROWSER_MODEL_REGISTRY = [
+    api_models.ModelDescriptor(id="qwen/qwen3-vl-8b-thinking", title="Qwen3 VL 8B", supports_json_schema=False),
+    api_models.ModelDescriptor(id="google/gemini-3.1-flash-lite-preview", title="Gemini 3.1 Flash Lite", supports_json_schema=False),
+]
+
 DEFAULT_MODEL_REGISTRY = [
     # OpenAI models
     api_models.ModelDescriptor(id="gpt-5-mini", title="GPT-5 Mini", supports_json_schema=True),
     api_models.ModelDescriptor(id="gpt-5", title="GPT-5", supports_json_schema=True),
+    api_models.ModelDescriptor(id="z-ai/glm-5", title="GLM 5", supports_json_schema=True),
+    api_models.ModelDescriptor(id="moonshotai/kimi-k2.5", title="Kimi K2.5", supports_json_schema=True),
+    api_models.ModelDescriptor(id="minimax/minimax-m2.5", title="MiniMax M2.5", supports_json_schema=True),
 ]
 
 
@@ -258,6 +266,10 @@ async def list_models() -> api_models.ModelRegistryResponse:
             )
         )
     return api_models.ModelRegistryResponse(models=models)
+
+
+async def list_browser_models() -> api_models.ModelRegistryResponse:
+    return api_models.ModelRegistryResponse(models=list(DEFAULT_BROWSER_MODEL_REGISTRY))
 
 
 async def resolve_schema(schema_id: str) -> api_models.SchemaResponse:
