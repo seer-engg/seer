@@ -299,6 +299,37 @@ def _parse_agent_result(messages: List[Any]) -> tuple[str, List[Dict[str, Any]]]
     return final_output, steps
 
 
+def _collect_artifacts_from_messages(messages: List[Any]) -> List[Dict[str, Any]]:
+    """
+    Extract WorkflowFileRef dicts from create_artifact ToolMessage responses.
+
+    When the agent calls create_artifact, the tool returns a JSON-serialized
+    WorkflowFileRef. This helper scans all ToolMessages and collects those refs
+    into a list that gets emitted as the `{node.id}__artifacts` output key.
+
+    Args:
+        messages: List of messages from agent execution.
+
+    Returns:
+        List of WorkflowFileRef dicts (may be empty).
+    """
+    # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
+    from seer.core.files.models import is_file_ref
+    from seer.core.nodes.artifacts.tool import ARTIFACT_TOOL_NAME
+
+    artifacts: List[Dict[str, Any]] = []
+    for msg in messages:
+        if isinstance(msg, ToolMessage) and msg.name == ARTIFACT_TOOL_NAME:
+            try:
+                content = msg.content if isinstance(msg.content, str) else str(msg.content)
+                data = json.loads(content)
+                if is_file_ref(data):
+                    artifacts.append(data)
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("Failed to parse artifact from create_artifact tool response")
+    return artifacts
+
+
 def _extract_json_from_markdown(text: str) -> str:
     """
     Extract JSON content from markdown code blocks if present.
@@ -401,6 +432,7 @@ def _extract_agent_config(node: "AgentNode") -> Dict[str, Any]:
 
     max_iterations = node.inputs.get("max_iterations", 10)
     temperature = node.inputs.get("temperature", 0.2)
+    enable_artifacts = bool(node.inputs.get("enable_artifacts", True))
 
     return {
         "model_id": model_id,
@@ -408,6 +440,7 @@ def _extract_agent_config(node: "AgentNode") -> Dict[str, Any]:
         "tool_specs": cast(List[Any], tool_specs),
         "max_iterations": max_iterations,
         "temperature": temperature,
+        "enable_artifacts": enable_artifacts,
     }
 
 
@@ -451,11 +484,36 @@ def _build_agent_trace(
             "iterations": len([s for s in steps if s.get("type") == "reasoning"]),
             "output": success_data.get("result_value"),
             "output_key": node_id,
+            "artifacts": success_data.get("artifacts", []),
         })
     elif error:
         trace["error"] = error
 
     return trace
+
+
+async def _build_human_message(prompt: str, file_contents: List[Any]) -> tuple[str, Any]:
+    """Build HumanMessage from prompt and optional file contents.
+
+    Returns (possibly extended prompt, HumanMessage) where prompt may have
+    extracted text appended when file contents include text-based files.
+    """
+    if not file_contents:
+        return prompt, HumanMessage(content=prompt)
+
+    from seer.core.runtime.file_processor import FileContentProcessor  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
+    processor = FileContentProcessor()
+    processed = await processor.process_files(file_contents)
+    image_blocks = processed.get("image_blocks", [])
+    extracted_text = processed.get("extracted_text", "")
+
+    if extracted_text:
+        prompt = f"{prompt}\n\n{extracted_text}"
+
+    if image_blocks:
+        content: List[Any] = [{"type": "text", "text": prompt}] + image_blocks
+        return prompt, HumanMessage(content=content)
+    return prompt, HumanMessage(content=prompt)
 
 
 # =============================================================================
@@ -592,10 +650,11 @@ class AgentNodeType(BaseNodeType):
         tool_specs_list = config["tool_specs"]
         max_iterations = config["max_iterations"]
         temperature = config["temperature"]
+        enable_artifacts = config["enable_artifacts"]
 
         # Evaluate auxiliary inputs (non-reserved keys) and resolve file references
         from seer.core.expr.evaluator import evaluate_value  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
-        reserved_keys = {"model", "prompt", "tools", "max_iterations", "temperature"}
+        reserved_keys = {"model", "prompt", "tools", "max_iterations", "temperature", "enable_artifacts"}
         auxiliary = {
             key: evaluate_value(eval_ctx, value)
             for key, value in node.inputs.items()
@@ -612,28 +671,18 @@ class AgentNodeType(BaseNodeType):
         prompt = render_template(eval_ctx, config["prompt_template"])
 
         # Build HumanMessage, incorporating file contents if present
-        human_message: Any
-        if file_contents:
-            from seer.core.runtime.file_processor import FileContentProcessor  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
-            processor = FileContentProcessor()
-            processed = await processor.process_files(file_contents)
-            image_blocks = processed.get("image_blocks", [])
-            extracted_text = processed.get("extracted_text", "")
-
-            if extracted_text:
-                prompt = f"{prompt}\n\n{extracted_text}"
-
-            if image_blocks:
-                content: List[Any] = [{"type": "text", "text": prompt}] + image_blocks
-                human_message = HumanMessage(content=content)
-            else:
-                human_message = HumanMessage(content=prompt)
-        else:
-            human_message = HumanMessage(content=prompt)
+        prompt, human_message = await _build_human_message(prompt, file_contents)
 
         try:
             # Bind tools with credentials
             bound_tools = await _bind_tools_for_agent(tool_specs_list, services, ctx)
+
+            # Inject artifact tool if requested (not in public registry)
+            if enable_artifacts:
+                # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
+                from seer.core.nodes.artifacts.tool import make_create_artifact_tool
+                artifact_tool = make_create_artifact_tool(ctx, node.id)
+                bound_tools.append(artifact_tool)
 
             # Get LLM chat model
             model_def = services.model_registry.get(model_id)
@@ -663,6 +712,9 @@ class AgentNodeType(BaseNodeType):
             messages = result.get("messages", [])
             final_output, steps = _parse_agent_result(messages)
 
+            # Collect artifacts emitted via create_artifact tool calls
+            artifacts = _collect_artifacts_from_messages(messages) if enable_artifacts else []
+
             # Handle JSON output mode if specified
             result_value: Any = await self._handle_json_output(node, services, result, final_output)
 
@@ -687,15 +739,20 @@ class AgentNodeType(BaseNodeType):
                     "tool_names": [t.name for t in bound_tools],
                     "steps": steps,
                     "result_value": result_value,
+                    "artifacts": artifacts,
                 },
             ),
         }
 
+        if enable_artifacts:
+            output[f"{node.id}__artifacts"] = artifacts
+
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
-                "Agent node '%s' completed with %d steps",
+                "Agent node '%s' completed with %d steps, %d artifacts",
                 node.id,
                 len(steps),
+                len(artifacts),
             )
 
         return output

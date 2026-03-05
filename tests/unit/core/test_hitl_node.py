@@ -8,8 +8,9 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 from seer.core.compiler.type_env import build_type_environment
-from seer.core.nodes.hitl_node import _build_hitl_output_schema
+from seer.core.nodes.hitl_node import _build_hitl_output_schema, _evaluate_input_fields
 from seer.core.compiler.validate_refs import validate_references, _validate_hitl
+from seer.core.expr.evaluator import EvaluationContext
 from seer.core.errors import NodeError
 from seer.core.expr.typecheck import TypeEnvironment, Scope
 from seer.core.registry.tool_registry import ToolRegistry
@@ -752,3 +753,418 @@ def test_hitl_node_from_workflow_json():
     assert len(node.inputs) == 2
     assert node.inputs[0].input_type == HITLInputType.single_choice
     assert node.inputs[1].input_type == HITLInputType.text
+
+
+# =============================================================================
+# Input Field Evaluation Tests
+# =============================================================================
+
+
+def test_evaluate_input_fields_question():
+    """Test evaluation of template expressions in question field."""
+    inputs = [
+        HITLInputField(
+            id="approval",
+            question="Do you approve ${order.total} for ${customer.name}?",
+            input_type=HITLInputType.boolean,
+        ),
+    ]
+
+    eval_ctx = EvaluationContext(
+        state={
+            "order": {"total": "$500"},
+            "customer": {"name": "John Doe"},
+        },
+        locals={},
+        config={},
+        trigger=None,
+    )
+
+    result = _evaluate_input_fields(eval_ctx, inputs)
+
+    assert len(result) == 1
+    assert result[0]["question"] == "Do you approve $500 for John Doe?"
+
+
+def test_evaluate_input_fields_placeholder():
+    """Test evaluation of template expressions in placeholder field."""
+    inputs = [
+        HITLInputField(
+            id="amount",
+            question="Enter amount",
+            input_type=HITLInputType.number,
+            placeholder="Previous amount was ${previous.amount}",
+        ),
+    ]
+
+    eval_ctx = EvaluationContext(
+        state={"previous": {"amount": "100"}},
+        locals={},
+        config={},
+        trigger=None,
+    )
+
+    result = _evaluate_input_fields(eval_ctx, inputs)
+
+    assert result[0]["placeholder"] == "Previous amount was 100"
+
+
+def test_evaluate_input_fields_default_value_string():
+    """Test evaluation of template expressions in default_value (string only)."""
+    inputs = [
+        HITLInputField(
+            id="email",
+            question="Enter email",
+            input_type=HITLInputType.text,
+            default_value="${user.email}",
+        ),
+    ]
+
+    eval_ctx = EvaluationContext(
+        state={"user": {"email": "test@example.com"}},
+        locals={},
+        config={},
+        trigger=None,
+    )
+
+    result = _evaluate_input_fields(eval_ctx, inputs)
+
+    assert result[0]["default_value"] == "test@example.com"
+
+
+def test_evaluate_input_fields_default_value_non_string():
+    """Test that non-string default_value is preserved as-is."""
+    inputs = [
+        HITLInputField(
+            id="count",
+            question="Enter count",
+            input_type=HITLInputType.number,
+            default_value=42,
+        ),
+    ]
+
+    eval_ctx = EvaluationContext(
+        state={},
+        locals={},
+        config={},
+        trigger=None,
+    )
+
+    result = _evaluate_input_fields(eval_ctx, inputs)
+
+    assert result[0]["default_value"] == 42
+
+
+def test_evaluate_input_fields_option_labels():
+    """Test evaluation of template expressions in option labels."""
+    inputs = [
+        HITLInputField(
+            id="choice",
+            question="Select an option",
+            input_type=HITLInputType.single_choice,
+            options=[
+                HITLInputOption(value="approve", label="Approve ${order.amount}"),
+                HITLInputOption(value="reject", label="Reject ${order.amount}"),
+            ],
+        ),
+    ]
+
+    eval_ctx = EvaluationContext(
+        state={"order": {"amount": "$100"}},
+        locals={},
+        config={},
+        trigger=None,
+    )
+
+    result = _evaluate_input_fields(eval_ctx, inputs)
+
+    assert result[0]["options"][0]["label"] == "Approve $100"
+    assert result[0]["options"][1]["label"] == "Reject $100"
+
+
+def test_evaluate_input_fields_error_handling():
+    """Test that evaluation errors are displayed as error messages."""
+    inputs = [
+        HITLInputField(
+            id="test",
+            question="Value is ${undefined_node.value}",
+            input_type=HITLInputType.text,
+        ),
+    ]
+
+    eval_ctx = EvaluationContext(
+        state={},  # undefined_node is not in state
+        locals={},
+        config={},
+        trigger=None,
+    )
+
+    result = _evaluate_input_fields(eval_ctx, inputs)
+
+    assert "<error:" in result[0]["question"]
+
+
+def test_evaluate_input_fields_mixed_expressions():
+    """Test evaluation of multiple fields with different expression types."""
+    inputs = [
+        HITLInputField(
+            id="approval",
+            question="Approve ${order.id}?",
+            input_type=HITLInputType.single_choice,
+            placeholder="Order from ${customer.name}",
+            options=[
+                HITLInputOption(value="yes", label="Yes, approve ${order.amount}"),
+                HITLInputOption(value="no", label="No, reject order"),
+            ],
+        ),
+    ]
+
+    eval_ctx = EvaluationContext(
+        state={
+            "order": {"id": "ORD-123", "amount": "$500"},
+            "customer": {"name": "Acme Corp"},
+        },
+        locals={},
+        config={},
+        trigger=None,
+    )
+
+    result = _evaluate_input_fields(eval_ctx, inputs)
+
+    assert result[0]["question"] == "Approve ORD-123?"
+    assert result[0]["placeholder"] == "Order from Acme Corp"
+    assert result[0]["options"][0]["label"] == "Yes, approve $500"
+    assert result[0]["options"][1]["label"] == "No, reject order"
+
+
+def test_evaluate_input_fields_no_expressions():
+    """Test that fields without expressions are preserved."""
+    inputs = [
+        HITLInputField(
+            id="static",
+            question="Static question without variables",
+            input_type=HITLInputType.text,
+            placeholder="Static placeholder",
+            default_value="Static default",
+        ),
+    ]
+
+    eval_ctx = EvaluationContext(
+        state={},
+        locals={},
+        config={},
+        trigger=None,
+    )
+
+    result = _evaluate_input_fields(eval_ctx, inputs)
+
+    assert result[0]["question"] == "Static question without variables"
+    assert result[0]["placeholder"] == "Static placeholder"
+    assert result[0]["default_value"] == "Static default"
+
+
+# =============================================================================
+# Input Field Reference Validation Tests
+# =============================================================================
+
+
+def test_validate_hitl_input_question_valid():
+    """Test validation of valid question expressions."""
+    env = TypeEnvironment()
+    env.register("order", {"type": "object", "properties": {"total": {"type": "string"}}})
+    env.register("order.total", {"type": "string"})
+
+    scope = Scope(env=env)
+    errors: list[NodeError] = []
+
+    node = HITLNode(
+        id="test",
+        title="Test",
+        display=[],
+        inputs=[
+            HITLInputField(
+                id="approval",
+                question="Approve ${order.total}?",
+                input_type=HITLInputType.boolean,
+            ),
+        ],
+    )
+
+    _validate_hitl(node, scope, errors)
+
+    assert len(errors) == 0
+
+
+def test_validate_hitl_input_question_invalid():
+    """Test validation catches invalid question expressions."""
+    env = TypeEnvironment()
+    # Don't register 'unknown_node'
+
+    scope = Scope(env=env)
+    errors: list[NodeError] = []
+
+    node = HITLNode(
+        id="test",
+        title="Test",
+        display=[],
+        inputs=[
+            HITLInputField(
+                id="approval",
+                question="Approve ${unknown_node.value}?",
+                input_type=HITLInputType.boolean,
+            ),
+        ],
+    )
+
+    _validate_hitl(node, scope, errors)
+
+    assert len(errors) == 1
+    assert errors[0].location == "inputs[0].question"
+    assert "unknown_node" in errors[0].message
+
+
+def test_validate_hitl_input_placeholder_invalid():
+    """Test validation catches invalid placeholder expressions."""
+    env = TypeEnvironment()
+
+    scope = Scope(env=env)
+    errors: list[NodeError] = []
+
+    node = HITLNode(
+        id="test",
+        title="Test",
+        display=[],
+        inputs=[
+            HITLInputField(
+                id="amount",
+                question="Enter amount",
+                input_type=HITLInputType.number,
+                placeholder="Previous: ${undefined.value}",
+            ),
+        ],
+    )
+
+    _validate_hitl(node, scope, errors)
+
+    assert len(errors) == 1
+    assert errors[0].location == "inputs[0].placeholder"
+
+
+def test_validate_hitl_input_default_value_invalid():
+    """Test validation catches invalid default_value expressions (string only)."""
+    env = TypeEnvironment()
+
+    scope = Scope(env=env)
+    errors: list[NodeError] = []
+
+    node = HITLNode(
+        id="test",
+        title="Test",
+        display=[],
+        inputs=[
+            HITLInputField(
+                id="email",
+                question="Enter email",
+                input_type=HITLInputType.text,
+                default_value="${undefined.email}",
+            ),
+        ],
+    )
+
+    _validate_hitl(node, scope, errors)
+
+    assert len(errors) == 1
+    assert errors[0].location == "inputs[0].default_value"
+
+
+def test_validate_hitl_input_option_label_invalid():
+    """Test validation catches invalid option label expressions."""
+    env = TypeEnvironment()
+    env.register("order", {"type": "object", "properties": {"id": {"type": "string"}}})
+    env.register("order.id", {"type": "string"})
+
+    scope = Scope(env=env)
+    errors: list[NodeError] = []
+
+    node = HITLNode(
+        id="test",
+        title="Test",
+        display=[],
+        inputs=[
+            HITLInputField(
+                id="choice",
+                question="Select option",
+                input_type=HITLInputType.single_choice,
+                options=[
+                    HITLInputOption(value="a", label="Valid ${order.id}"),
+                    HITLInputOption(value="b", label="Invalid ${undefined.value}"),
+                ],
+            ),
+        ],
+    )
+
+    _validate_hitl(node, scope, errors)
+
+    assert len(errors) == 1
+    assert errors[0].location == "inputs[0].options[1].label"
+
+
+def test_validate_hitl_multiple_input_errors():
+    """Test validation reports errors for multiple invalid inputs."""
+    env = TypeEnvironment()
+
+    scope = Scope(env=env)
+    errors: list[NodeError] = []
+
+    node = HITLNode(
+        id="test",
+        title="Test",
+        display=[],
+        inputs=[
+            HITLInputField(
+                id="q1",
+                question="Question ${undefined1.value}",
+                input_type=HITLInputType.text,
+            ),
+            HITLInputField(
+                id="q2",
+                question="Question ${undefined2.value}",
+                input_type=HITLInputType.text,
+            ),
+        ],
+    )
+
+    _validate_hitl(node, scope, errors)
+
+    assert len(errors) == 2
+    assert errors[0].location == "inputs[0].question"
+    assert errors[1].location == "inputs[1].question"
+
+
+def test_validate_hitl_display_and_input_errors():
+    """Test validation reports errors for both display and input fields."""
+    env = TypeEnvironment()
+
+    scope = Scope(env=env)
+    errors: list[NodeError] = []
+
+    node = HITLNode(
+        id="test",
+        title="Test",
+        display=[
+            HITLDisplayItem(label="Data", value="${undefined_display.value}"),
+        ],
+        inputs=[
+            HITLInputField(
+                id="approval",
+                question="Approve ${undefined_input.value}?",
+                input_type=HITLInputType.boolean,
+            ),
+        ],
+    )
+
+    _validate_hitl(node, scope, errors)
+
+    assert len(errors) == 2
+    assert any(e.location == "display[0].value" for e in errors)
+    assert any(e.location == "inputs[0].question" for e in errors)
