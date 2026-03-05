@@ -18,7 +18,7 @@ def _detect_provider(model: str) -> Literal["openai", "anthropic", "openrouter"]
     """Detect provider from model name."""
     if model.startswith("claude-"):
         return "anthropic"
-    if model.startswith(("moonshot/", "moonshotai/", "openrouter/")):
+    if model.startswith(("moonshot/", "moonshotai/", "openrouter/", "z-ai/", "qwen/", "google/")):
         return "openrouter"
     # Default to OpenRouter for other models
     return "openrouter"
