@@ -371,11 +371,11 @@ class BrowserNode(NodeBase):
 
     # LLM model for browser automation (OpenRouter format)
     model: Optional[str] = Field(
-        default="google/gemini-2.5-flash",
+        default="qwen/qwen3-vl-8b-thinking",
         description=(
             "OpenRouter model identifier for browser automation agent. "
-            "Examples: 'openai/gpt-4o', 'anthropic/claude-sonnet-4.5', 'google/gemini-2.5-flash'. "
-            "Defaults to 'google/gemini-2.5-flash' for browser tasks."
+            "Examples: 'openai/gpt-4o', 'anthropic/claude-sonnet-4.5', 'qwen/qwen3-vl-8b-thinking'. "
+            "Defaults to 'qwen/qwen3-vl-8b-thinking' for browser tasks."
         )
     )
 

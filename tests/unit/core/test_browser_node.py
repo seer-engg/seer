@@ -124,13 +124,13 @@ def test_browser_node_with_custom_model():
 
 
 def test_browser_node_model_defaults_to_gemini():
-    """Test BrowserNode model defaults to google/gemini-2.5-flash."""
+    """Test BrowserNode model defaults to qwen3-vl."""
     node = BrowserNode(
         id="browse",
         task="Extract data from webpage",
     )
 
-    assert node.model == "google/gemini-2.5-flash"
+    assert node.model == "qwen/qwen3-vl-8b-thinking"
 
 
 def test_browser_node_with_claude_model():
