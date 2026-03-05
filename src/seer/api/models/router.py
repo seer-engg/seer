@@ -16,6 +16,7 @@ async def list_models():
     Returns Kimi series models only.
     """
     return [
+        ModelInfo(id="z-ai/glm-4.7", provider="openrouter", name="GLM 4.7", available=True),
         ModelInfo(id="moonshotai/kimi-k2.5", provider="openrouter", name="Kimi K2.5", available=True),
         ModelInfo(id="moonshotai/kimi-k2-thinking", provider="openrouter", name="Kimi K2 Thinking", available=True),
     ]
