@@ -111,26 +111,47 @@ def _uses_trigger_references(spec: WorkflowSpec) -> bool:
     return False
 
 
+def _collect_hitl_input_values(node: HITLNode) -> List[Any]:
+    """Collect all string values from HITL input fields that may contain ${} expressions."""
+    values = []
+    for input_field in node.inputs:
+        values.append(input_field.question)
+        if input_field.placeholder is not None:
+            values.append(input_field.placeholder)
+        if isinstance(input_field.default_value, str):
+            values.append(input_field.default_value)
+        if input_field.options:
+            for opt in input_field.options:
+                values.append(opt.label)
+    return values
+
+
+def _collect_node_expression_values(node: Node) -> list:
+    """Collect all expression-bearing values from a node for reference analysis."""
+    values_to_check = []
+
+    if hasattr(node, "inputs"):
+        inputs = getattr(node, "inputs")
+        if isinstance(inputs, dict):
+            values_to_check.extend(inputs.values())
+        elif isinstance(node, HITLNode):
+            values_to_check.extend(_collect_hitl_input_values(node))
+    if hasattr(node, "value"):
+        val = getattr(node, "value")
+        if val is not None:
+            values_to_check.append(val)
+    if hasattr(node, "condition"):
+        values_to_check.append(node.condition)
+    if hasattr(node, "items"):
+        values_to_check.append(node.items)
+
+    return values_to_check
+
+
 def _uses_bare_trigger_reference(spec: WorkflowSpec) -> bool:
     """Check if any node uses bare 'trigger' reference (not trigger.id)."""
     for node in spec.nodes:
-        values_to_check = []
-
-        if hasattr(node, "inputs"):
-            inputs = getattr(node, "inputs")
-            if isinstance(inputs, dict):
-                values_to_check.extend(inputs.values())
-            # HITLNode.inputs is List[HITLInputField] - fields don't contain ${} expressions
-        if hasattr(node, "value"):
-            val = getattr(node, "value")
-            if val is not None:
-                values_to_check.append(val)
-        if hasattr(node, "condition"):
-            values_to_check.append(node.condition)
-        if hasattr(node, "items"):
-            values_to_check.append(node.items)
-
-        refs = parser.collect_unique_references(values_to_check)
+        refs = parser.collect_unique_references(_collect_node_expression_values(node))
         for ref in refs:
             if ref.root == "trigger":
                 return True
@@ -140,22 +161,7 @@ def _uses_bare_trigger_reference(spec: WorkflowSpec) -> bool:
 
 def _node_uses_trigger_ids(node: Node, trigger_ids: set[str]) -> bool:
     """Check if a node references any trigger IDs."""
-    # Collect all values that may contain expressions
-    values_to_check = []
-
-    if hasattr(node, "inputs"):
-        inputs = getattr(node, "inputs")
-        if isinstance(inputs, dict):
-            values_to_check.extend(inputs.values())
-        # HITLNode.inputs is List[HITLInputField] - fields don't contain ${} expressions
-    if hasattr(node, "value"):
-        val = getattr(node, "value")
-        if val is not None:
-            values_to_check.append(val)
-    if hasattr(node, "condition"):
-        values_to_check.append(node.condition)
-    if hasattr(node, "items"):
-        values_to_check.append(node.items)
+    values_to_check = _collect_node_expression_values(node)
 
     # Check if any collected values reference trigger IDs
     refs = parser.collect_unique_references(values_to_check)
@@ -247,11 +253,16 @@ def _validate_for_each(node: ForEachNode, scope: Scope, errors: List[NodeError])
 
 def _validate_hitl(node: HITLNode, scope: Scope, errors: List[NodeError]) -> None:
     """
-    Validate display expressions in an HITLNode.
+    Validate expressions in an HITLNode.
 
-    Display items have value fields that can contain ${...} expressions.
-    These expressions must reference valid symbols in scope.
+    Validates ${...} expressions in:
+    - display[].value
+    - inputs[].question
+    - inputs[].placeholder (if present)
+    - inputs[].default_value (if string)
+    - inputs[].options[].label
     """
+    # Validate display expressions
     for idx, display_item in enumerate(node.display):
         _validate_value_references(
             display_item.value,
@@ -260,6 +271,48 @@ def _validate_hitl(node: HITLNode, scope: Scope, errors: List[NodeError]) -> Non
             node_id=node.id,
             location=f"display[{idx}].value",
         )
+
+    # Validate input field expressions
+    for idx, input_field in enumerate(node.inputs):
+        # Validate question
+        _validate_value_references(
+            input_field.question,
+            scope,
+            errors,
+            node_id=node.id,
+            location=f"inputs[{idx}].question",
+        )
+
+        # Validate placeholder if present
+        if input_field.placeholder is not None:
+            _validate_value_references(
+                input_field.placeholder,
+                scope,
+                errors,
+                node_id=node.id,
+                location=f"inputs[{idx}].placeholder",
+            )
+
+        # Validate default_value only if it's a string (may contain template)
+        if isinstance(input_field.default_value, str):
+            _validate_value_references(
+                input_field.default_value,
+                scope,
+                errors,
+                node_id=node.id,
+                location=f"inputs[{idx}].default_value",
+            )
+
+        # Validate option labels if present
+        if input_field.options:
+            for opt_idx, option in enumerate(input_field.options):
+                _validate_value_references(
+                    option.label,
+                    scope,
+                    errors,
+                    node_id=node.id,
+                    location=f"inputs[{idx}].options[{opt_idx}].label",
+                )
 
 
 def _single_reference(expression: str) -> ReferenceExpr:
