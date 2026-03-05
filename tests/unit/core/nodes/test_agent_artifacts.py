@@ -292,11 +292,11 @@ class TestExtractAgentConfigArtifacts:
         node.inputs = {"model": "claude-sonnet-4-6", "prompt": "Do something", **(extra_inputs or {})}
         return node
 
-    def test_enable_artifacts_defaults_to_false(self):
-        """enable_artifacts should default to False when not set."""
+    def test_enable_artifacts_defaults_to_true(self):
+        """enable_artifacts should default to True when not set."""
         node = self._make_node()
         config = _extract_agent_config(node)
-        assert config["enable_artifacts"] is False
+        assert config["enable_artifacts"] is True
 
     def test_enable_artifacts_true_when_set(self):
         """enable_artifacts should be True when set in inputs."""
