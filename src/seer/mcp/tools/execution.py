@@ -45,7 +45,7 @@ async def run_workflow(
 
         # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
         from seer.api.workflows.services.execution import run_saved_workflow
-        from seer.api.workflows.models import RunFromWorkflowRequest, MultiRunResponse
+        from seer.api.workflows.models import RunFromWorkflowRequest
 
         request = RunFromWorkflowRequest(
             version=version,
@@ -54,22 +54,6 @@ async def run_workflow(
         )
 
         response = await run_saved_workflow(user, workflow_id, request)
-
-        # Handle multi-run response (when workflow has triggers)
-        if isinstance(response, MultiRunResponse):
-            runs = []
-            for run in response.runs:
-                runs.append({
-                    "run_id": run.run_id,
-                    "status": run.status,
-                    "trigger_title": run.trigger_title,
-                    "created_at": run.created_at.isoformat(),
-                })
-            return json.dumps({
-                "runs": runs,
-                "total": len(runs),
-                "message": f"Created {len(runs)} run(s) for workflow triggers"
-            }, indent=2)
 
         # Single run response
         return json.dumps({
