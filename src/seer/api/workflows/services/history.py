@@ -209,6 +209,10 @@ def _build_node_trace_from_value(value: Dict[str, Any], node_id: str) -> Dict[st
     if "usage" in value:
         node_trace["usage"] = value["usage"]
 
+    # Include artifacts list if present (from agent nodes that called create_artifact)
+    if value.get("artifacts"):
+        node_trace["artifacts"] = value["artifacts"]
+
     return node_trace
 
 

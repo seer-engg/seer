@@ -24,6 +24,7 @@ from seer.core.schema.models import (
 from seer.database import WorkflowRunSource, WorkflowRunStatus
 from seer.api.workflows.services.history import (
     _build_node_label,
+    _build_node_trace_from_value,
     _find_node_in_spec,
     _enrich_with_tool_node,
     _enrich_node_with_spec,
@@ -1357,3 +1358,70 @@ class TestMergeCheckpointAndDatabaseTraces:
 
         iterations = [t.get("iteration") for t in result]
         assert set(iterations) == {0, 1, 2}
+
+
+# =============================================================================
+# _build_node_trace_from_value artifacts propagation tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestBuildNodeTraceFromValueArtifacts:
+    """Tests that _build_node_trace_from_value propagates the artifacts field."""
+
+    def _base_value(self, **kwargs):
+        base = {
+            "node_type": "agent",
+            "inputs": {},
+            "output": "Done",
+            "timestamp": None,
+            "output_key": "agent_1",
+        }
+        base.update(kwargs)
+        return base
+
+    def test_artifacts_included_when_present(self):
+        """Artifacts list from checkpoint value should appear in the node trace."""
+        artifacts = [
+            {
+                "_type": "workflow_file_ref",
+                "file_id": "fid-1",
+                "filename": "report.pdf",
+                "mime_type": "application/pdf",
+                "size_bytes": 42000,
+                "storage_path": "s3://bucket/run_1/report.pdf",
+                "workflow_run_id": "run_1",
+                "created_at": "2026-03-05T06:05:00+00:00",
+            }
+        ]
+        value = self._base_value(artifacts=artifacts)
+        trace = _build_node_trace_from_value(value, "agent_1")
+
+        assert "artifacts" in trace
+        assert len(trace["artifacts"]) == 1
+        assert trace["artifacts"][0]["filename"] == "report.pdf"
+        assert trace["artifacts"][0]["_type"] == "workflow_file_ref"
+
+    def test_artifacts_excluded_when_absent(self):
+        """Node trace should not have artifacts key when value has no artifacts."""
+        value = self._base_value()
+        trace = _build_node_trace_from_value(value, "agent_1")
+        assert "artifacts" not in trace
+
+    def test_artifacts_excluded_when_empty_list(self):
+        """Node trace should not have artifacts key when value has empty artifacts list."""
+        value = self._base_value(artifacts=[])
+        trace = _build_node_trace_from_value(value, "agent_1")
+        assert "artifacts" not in trace
+
+    def test_multiple_artifacts_propagated(self):
+        """All artifacts in the list should be propagated."""
+        artifacts = [
+            {"_type": "workflow_file_ref", "filename": "a.pdf"},
+            {"_type": "workflow_file_ref", "filename": "b.docx"},
+        ]
+        value = self._base_value(artifacts=artifacts)
+        trace = _build_node_trace_from_value(value, "agent_1")
+        assert len(trace["artifacts"]) == 2
+        filenames = {a["filename"] for a in trace["artifacts"]}
+        assert filenames == {"a.pdf", "b.docx"}

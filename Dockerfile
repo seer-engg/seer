@@ -11,7 +11,15 @@ RUN apt-get update && \
     libpq-dev \
     postgresql-client \
     git \
-    curl && \
+    curl \
+    # WeasyPrint system dependencies (HTML → PDF conversion)
+    libpango-1.0-0 \
+    libpangoft2-1.0-0 \
+    libharfbuzz0b \
+    libfontconfig1 \
+    libcairo2 \
+    libgdk-pixbuf-2.0-0 \
+    shared-mime-info && \
     rm -rf /var/lib/apt/lists/*
 
 # Install uv package manager
