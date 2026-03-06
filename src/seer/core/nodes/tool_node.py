@@ -179,6 +179,9 @@ class ToolNodeType(BaseNodeType):
 
         return await tool_def.async_handler(inputs, tool_config, ctx.runtime_context)
 
+    def get_analytics_properties(self, node: ToolNode, ctx: "NodeExecutionContext") -> dict:  # type: ignore[override]
+        return {"tool_name": node.tool, "connection_id": node.connection_id}
+
     def register_type_sync(
         self,
         node: ToolNode,  # type: ignore[override]

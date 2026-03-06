@@ -16,6 +16,7 @@ from seer.agents.nexus.context import (
     _current_thread_id,
     get_user_for_thread,
 )
+from seer.agents.nexus.tracking import track_nexus_tool
 from seer.agents.nexus.schema_context import (
     generate_node_type_reference,
     generate_validation_checklist_from_model,
@@ -145,6 +146,7 @@ def create_bound_get_workflow(workflow_id: str):
     the pre-bound workflow_id, so the agent doesn't need to pass it.
     """
     @tool
+    @track_nexus_tool("get_workflow")
     async def get_workflow() -> str:
         """
         Get the current workflow specification.
@@ -181,6 +183,7 @@ def create_bound_analyze_workflow(workflow_id: str):
     workflow_id, so the agent doesn't need to pass it.
     """
     @tool
+    @track_nexus_tool("analyze_workflow")
     async def analyze_workflow() -> str:
         """
         Analyze the current workflow structure.
@@ -271,6 +274,7 @@ def _validate_spec_format(workflow_spec: Any) -> tuple[Optional[Dict], Optional[
 
 
 @tool
+@track_nexus_tool("submit_workflow_spec")
 async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # Reason: Validation chain requires early returns for each validation step
     workflow_spec: Any,
     summary: Optional[str] = None,

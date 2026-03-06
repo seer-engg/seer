@@ -10,6 +10,7 @@ from langchain_core.tools import tool
 
 from seer.config import config
 from seer.agents.nexus.context import _current_thread_id, get_user_for_thread
+from seer.agents.nexus.tracking import track_nexus_tool
 from seer.logger import get_logger
 from seer.services.memory import UserMemoryService
 
@@ -92,6 +93,7 @@ def _format_session_search_results(memories: List[Dict[str, Any]]) -> str:
 
 
 @tool
+@track_nexus_tool("recall_memories")
 async def recall_memories(query: str, limit: int = 5) -> str:
     """
     Search your memories about this user for relevant context.
@@ -140,6 +142,7 @@ async def recall_memories(query: str, limit: int = 5) -> str:
 
 
 @tool
+@track_nexus_tool("search_past_sessions")
 async def search_past_sessions(query: str, limit: int = 3) -> str:
     """
     Search past conversation sessions with this user.
@@ -189,6 +192,7 @@ async def search_past_sessions(query: str, limit: int = 3) -> str:
 
 
 @tool
+@track_nexus_tool("get_user_profile")
 async def get_user_profile() -> str:
     """
     Get a summary of what is known about this user from memory.
