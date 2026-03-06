@@ -757,6 +757,9 @@ class AgentNodeType(BaseNodeType):
 
         return output
 
+    def get_analytics_properties(self, node: AgentNode, ctx: "NodeExecutionContext") -> dict:  # type: ignore[override]
+        return {"agent_type": node.inputs.get("model", "unknown")}
+
     def register_type_sync(
         self,
         node: AgentNode,  # type: ignore[override]
