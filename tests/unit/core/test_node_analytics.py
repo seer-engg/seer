@@ -11,9 +11,8 @@ import pytest
 
 from seer.core.nodes.base import NodeExecutionContext
 from seer.core.nodes.tool_node import ToolNodeType
-from seer.core.nodes.http_node import HttpNodeType
 from seer.core.nodes.agent_node import AgentNodeType
-from seer.core.schema.models import ToolNode, HttpNode, AgentNode
+from seer.core.schema.models import ToolNode, AgentNode
 
 pytestmark = pytest.mark.unit
 
@@ -57,14 +56,6 @@ class TestToolNodeAnalyticsProperties:
         props = ToolNodeType().get_analytics_properties(node, ctx)
         assert props["connection_id"] is None
 
-
-class TestHttpNodeAnalyticsProperties:
-    def test_returns_url_and_method(self):
-        node = HttpNode(id="n1", url="https://api.example.com/data", method="POST")
-        ctx = _make_ctx()
-        props = HttpNodeType().get_analytics_properties(node, ctx)
-        assert props["http_url"] == "https://api.example.com/data"
-        assert props["http_method"] == "POST"
 
 
 class TestAgentNodeAnalyticsProperties:
