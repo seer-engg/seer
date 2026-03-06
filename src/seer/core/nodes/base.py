@@ -127,6 +127,20 @@ class BaseNodeType(ABC):
         """
         self.register_type_sync(node, env, ctx)
 
+    def get_analytics_properties(  # pylint: disable=unused-argument  # Reason: Optional override for richer per-type analytics
+        self,
+        node: "Node",
+        ctx: "NodeExecutionContext",
+    ) -> Dict[str, Any]:
+        """
+        Return node-type-specific properties for PostHog analytics.
+
+        Override in concrete node types to add semantically meaningful
+        properties (e.g., tool_name for ToolNode, http_url for HttpNode).
+        The default returns an empty dict so all node types get baseline tracking.
+        """
+        return {}
+
     def get_routing(  # pylint: disable=unused-argument  # Reason: Optional override for control flow nodes
         self,
         node: "Node",

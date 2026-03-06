@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
@@ -235,7 +236,36 @@ class NodeRuntime:
             trigger=self._current_trigger,
         )
 
-        return await node_impl.execute_async(node, ctx, self.services)
+        start_time = time.perf_counter()
+        success = True
+        error_str: str | None = None
+        try:
+            result = await node_impl.execute_async(node, ctx, self.services)
+            return result
+        except Exception as exc:
+            success = False
+            error_str = str(exc)[:500]
+            raise
+        finally:
+            user_email = getattr(ctx.runtime_context.user, "email", None) if (ctx.runtime_context and ctx.runtime_context.user) else None
+            if user_email:
+                latency_ms = int((time.perf_counter() - start_time) * 1000)
+                extra = node_impl.get_analytics_properties(node, ctx)
+                # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import at module level
+                from seer.analytics.workflow_tracking import capture_workflow_event
+                await capture_workflow_event(
+                    event="workflow_node_executed",
+                    user_email=user_email,
+                    properties={
+                        "node_id": node.id,
+                        "node_type": node.type,
+                        "workflow_run_id": ctx.runtime_context.workflow_run_id,
+                        "success": success,
+                        "latency_ms": latency_ms,
+                        "error": error_str,
+                        **extra,
+                    },
+                )
 
     # ------------------------------------------------------------------
     # Helpers (kept for backward compatibility)
