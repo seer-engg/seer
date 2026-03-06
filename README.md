@@ -76,7 +76,7 @@ uv run pytest                    # Run tests
 
 ## Migrations
 
-> Run migrations manually after pulling updates (Railway auto-runs them).
+> Run migrations manually after pulling updates.
 
 ```bash
 # Docker
