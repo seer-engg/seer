@@ -4,9 +4,12 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Body, Request
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from fastapi import status as http_status
+
 from seer.api.core.errors import AUTH_PROBLEM, VALIDATION_PROBLEM, raise_problem
 from seer.database import User
 from seer.database.profile_models import UserProfile, validate_username
+from seer.database.template_models import TemplateSource, WorkflowTemplate
 
 router = APIRouter(prefix="/users/me", tags=["user-profile"])
 
@@ -128,3 +131,18 @@ async def update_user_profile(
         await profile.save()
 
     return UserProfileResponse.model_validate(profile, from_attributes=True)
+
+
+@router.delete("/templates/{slug}", status_code=http_status.HTTP_204_NO_CONTENT)
+async def unpublish_my_template(request: Request, slug: str):
+    """Unpublish (delete) a community template owned by the current user."""
+    user = _require_user(request)
+    template = await WorkflowTemplate.filter(slug=slug, created_by=user, source=TemplateSource.COMMUNITY).first()
+    if not template:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Template not found",
+            detail=f"No community template with slug '{slug}' found for your account",
+            status=404,
+        )
+    await template.delete()
