@@ -408,6 +408,7 @@ def test_type_env_browser_node_extracted_data_reference():
                                 "features": {"type": "array"},
                                 "pricing_tiers": {"type": "array"},
                             },
+                            "required": ["features", "pricing_tiers"],
                         }
                     },
                 ),
@@ -466,6 +467,7 @@ def test_type_env_browser_node_rejects_invalid_property_access():
                             "properties": {
                                 "shops": {"type": "array"},
                             },
+                            "required": ["shops"],
                         }
                     },
                 ),
@@ -657,6 +659,7 @@ def test_workflow_spec_browser_with_structured_output_and_screenshots():
                                 "product_name": {"type": "string"},
                                 "price": {"type": "number"},
                             },
+                            "required": ["product_name", "price"],
                         },
                     },
                 },

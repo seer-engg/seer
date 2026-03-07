@@ -296,7 +296,7 @@ async def test_mcp_node_with_output_validation() -> None:
                                 "name": {"type": "string"},
                                 "email": {"type": "string"},
                             },
-                            "required": ["id", "name"],
+                            "required": ["id", "name", "email"],
                         }
                     },
                 },

@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # schema models are intentionally comprehensive in a single module
 """
 Pydantic models describing the workflow specification.
 
@@ -63,6 +64,30 @@ class OutputMode(str, Enum):
     json = "json"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
 
 
+def _enforce_all_properties_required(schema: JsonSchema, path: str = "$") -> None:
+    """
+    Recursively assert that every JSON Schema object has all its `properties`
+    keys listed in `required`. Raises ValueError with a descriptive path if not.
+    """
+    if not isinstance(schema, dict):
+        return
+    if schema.get("type") == "object" and "properties" in schema:
+        declared = set(schema["properties"].keys())
+        required = set(schema.get("required") or [])
+        missing = declared - required
+        if missing:
+            raise ValueError(
+                f"OutputContract: all properties must be in 'required' for json output schema. "
+                f"Missing at '{path}': {sorted(missing)}. Add them to the 'required' array."
+            )
+        # Recurse into each property's sub-schema
+        for prop_name, prop_schema in schema["properties"].items():
+            _enforce_all_properties_required(prop_schema, path=f"{path}.{prop_name}")
+    # Recurse into array items
+    if "items" in schema and isinstance(schema["items"], dict):
+        _enforce_all_properties_required(schema["items"], path=f"{path}[]")
+
+
 class OutputContract(StrictModel):
     """
     Declares what a node writes to state[out].
@@ -80,6 +105,9 @@ class OutputContract(StrictModel):
             raise ValueError('OutputContract: schema is required when mode="json"')
         if self.mode == OutputMode.text and self.schema is not None:
             raise ValueError('OutputContract: schema must be omitted when mode="text"')
+        # Enforce all declared properties appear in required so LLMs don't omit fields
+        if self.mode == OutputMode.json and isinstance(self.schema, InlineSchema):
+            _enforce_all_properties_required(self.schema.json_schema)
         return self
 
 

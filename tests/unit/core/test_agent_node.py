@@ -225,6 +225,7 @@ def test_agent_node_json_output_registration():
                                 "name": {"type": "string"},
                                 "value": {"type": "integer"},
                             },
+                            "required": ["name", "value"],
                         }
                     },
                 },
@@ -592,6 +593,7 @@ async def test_agent_node_json_output_mode():
                                 "name": {"type": "string"},
                                 "value": {"type": "integer"},
                             },
+                            "required": ["name", "value"],
                         }
                     },
                 },
@@ -739,6 +741,7 @@ async def test_agent_node_json_output_with_structured_response():
                                 "email_1": {"type": "string", "description": "Summary of first email"},
                                 "email_2": {"type": "string", "description": "Summary of second email"},
                             },
+                            "required": ["email_1", "email_2"],
                         }
                     },
                 },
@@ -1333,3 +1336,125 @@ def test_strip_null_optional_fields_leads_regression():
     # Required fields untouched
     assert stripped["leads"][0]["company_name"] == "Acme Corp"
     jsonschema.validate(stripped, schema)  # Should not raise
+
+
+# =============================================================================
+# Output Schema Required Validation Tests
+# =============================================================================
+
+from seer.core.schema.models import InlineSchema, OutputContract, OutputMode
+
+
+def test_output_schema_all_properties_required_passes():
+    """Schema with all properties listed in required should not raise."""
+    contract = OutputContract(
+        mode=OutputMode.json,
+        schema=InlineSchema(**{"schema": {
+            "type": "object",
+            "properties": {
+                "q1_id": {"type": "string"},
+                "q1_fact": {"type": "string"},
+            },
+            "required": ["q1_id", "q1_fact"],
+        }}),
+    )
+    assert contract.mode == OutputMode.json
+
+
+def test_output_schema_missing_required_raises():
+    """Top-level property absent from required array must raise ValueError."""
+    with pytest.raises(ValueError, match="q1_id"):
+        OutputContract(
+            mode=OutputMode.json,
+            schema=InlineSchema(**{"schema": {
+                "type": "object",
+                "properties": {
+                    "q1_id": {"type": "string"},
+                    "q1_fact": {"type": "string"},
+                },
+                # No required array at all
+            }}),
+        )
+
+
+def test_output_schema_partial_required_raises():
+    """Only some properties in required — missing ones must raise ValueError."""
+    with pytest.raises(ValueError, match="q1_fact"):
+        OutputContract(
+            mode=OutputMode.json,
+            schema=InlineSchema(**{"schema": {
+                "type": "object",
+                "properties": {
+                    "q1_id": {"type": "string"},
+                    "q1_fact": {"type": "string"},
+                },
+                "required": ["q1_id"],  # q1_fact missing
+            }}),
+        )
+
+
+def test_output_schema_nested_object_missing_required_raises():
+    """Nested object schema missing required must raise with a path pointing inside."""
+    with pytest.raises(ValueError, match=r"\$\.corrections\[\]"):
+        OutputContract(
+            mode=OutputMode.json,
+            schema=InlineSchema(**{"schema": {
+                "type": "object",
+                "properties": {
+                    "corrections": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "original": {"type": "string"},
+                                "fixed": {"type": "string"},
+                            },
+                            # No required — should fail with path $.corrections[]
+                        },
+                    }
+                },
+                "required": ["corrections"],
+            }}),
+        )
+
+
+def test_output_schema_array_items_validated():
+    """Array items with type:object but missing required must raise ValueError."""
+    with pytest.raises(ValueError, match="label"):
+        OutputContract(
+            mode=OutputMode.json,
+            schema=InlineSchema(**{"schema": {
+                "type": "object",
+                "properties": {
+                    "tags": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "integer"},
+                                "label": {"type": "string"},
+                            },
+                            "required": ["id"],  # label missing
+                        },
+                    }
+                },
+                "required": ["tags"],
+            }}),
+        )
+
+
+def test_output_schema_text_mode_not_affected():
+    """text mode with no schema must not raise (regression guard)."""
+    contract = OutputContract(mode=OutputMode.text, schema=None)
+    assert contract.mode == OutputMode.text
+
+
+def test_output_schema_no_properties_passes():
+    """type:object without a properties key is valid (empty/generic object)."""
+    contract = OutputContract(
+        mode=OutputMode.json,
+        schema=InlineSchema(**{"schema": {
+            "type": "object",
+        }}),
+    )
+    assert contract.mode == OutputMode.json

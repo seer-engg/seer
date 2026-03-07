@@ -103,7 +103,7 @@ def test_mcp_node_with_expect_outputs():
                 schema={
                     "type": "object",
                     "properties": {"results": {"type": "array"}, "count": {"type": "integer"}},
-                    "required": ["results"],
+                    "required": ["results", "count"],
                 }
             ),
         ),

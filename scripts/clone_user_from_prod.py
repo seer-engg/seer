@@ -363,6 +363,28 @@ async def fetch_rows(
 # ---------------------------------------------------------------------------
 
 
+def _strip_auth_from_spec(spec: dict) -> None:
+    """
+    Strip user-specific auth from a workflow spec in-place.
+
+    Removes provider_connection_id from triggers, connection_id from tool/agent
+    nodes, and auth from mcp nodes.
+    """
+    for trigger in spec.get("triggers") or []:
+        trigger.get("provider_config", {}).pop("provider_connection_id", None)
+
+    for node in spec.get("nodes") or []:
+        node_type = node.get("type")
+        if node_type == "tool":
+            node.pop("connection_id", None)
+        elif node_type == "agent":
+            for tool in node.get("inputs", {}).get("tools") or []:
+                if isinstance(tool, dict):
+                    tool.pop("connection_id", None)
+        elif node_type == "mcp":
+            node["auth"] = None
+
+
 def remap_row(  # pylint: disable=too-complex  # Reason: 5 sequential flat remap passes (pk, user FKs, int FKs, uuid FKs, run_id string) — not real branching complexity
     row: asyncpg.Record,
     config: TableConfig,
@@ -413,6 +435,10 @@ def remap_row(  # pylint: disable=too-complex  # Reason: 5 sequential flat remap
                 old_run_id = int(match.group(1))
                 new_run_id = id_map.get("workflow_runs", {}).get(old_run_id)
                 d["workflow_run_id"] = f"run_{new_run_id}" if new_run_id else None
+
+    # Strip prod connection IDs from workflow specs — they don't exist locally
+    if config.table == "workflow_versions" and d.get("spec"):
+        _strip_auth_from_spec(d["spec"])
 
     return old_pk, d
 
