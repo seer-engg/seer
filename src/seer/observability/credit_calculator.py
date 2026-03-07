@@ -90,7 +90,7 @@ MODEL_PRICING: Dict[str, ModelPricing] = {
         reasoning_per_1m=Decimal("2.00"),
     ),
     # OpenRouter - GLM models
-    "z-ai/glm-4.7": ModelPricing(
+    "z-ai/glm-5": ModelPricing(
         input_per_1m=Decimal("0.80"),
         output_per_1m=Decimal("0.80"),
     ),
