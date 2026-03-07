@@ -51,7 +51,7 @@ async def _get_memory_context_for_user(user_id: str, current_query: Optional[str
         return ""
 
 async def create_nexus_chat_agent(
-    model: str = "z-ai/glm-4.7",
+    model: str = "z-ai/glm-5",
     checkpointer: Optional[Any] = None,
     user_id: Optional[str] = None,
     current_query: Optional[str] = None,
@@ -64,7 +64,7 @@ async def create_nexus_chat_agent(
     and human-in-the-loop capabilities.
 
     Args:
-        model: Model name to use (e.g., 'z-ai/glm-4.7', 'moonshotai/kimi-k2.5')
+        model: Model name to use (e.g., 'z-ai/glm-5', 'moonshotai/kimi-k2.5')
         checkpointer: Optional LangGraph checkpointer for persistence
         user_id: Optional user ID for memory context injection (Clerk user_id)
         current_query: Optional current user query for memory relevance search
