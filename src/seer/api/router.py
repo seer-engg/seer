@@ -10,6 +10,7 @@ from .models.router import router as models_router
 from .subscriptions.router import router as subscriptions_router
 from .subscriptions.setup_intent import router as setup_intent_router
 from .usage.router import router as usage_router
+from .users.profile import router as user_profile_router
 from .users.settings import router as user_settings_router
 from .webhooks.router import router as webhooks_router
 from .workflows.router import router as workflows_router
@@ -34,6 +35,7 @@ router.include_router(nexus_router)
 router.include_router(webhooks_router)
 router.include_router(forms_router)
 router.include_router(usage_router)
+router.include_router(user_profile_router)
 router.include_router(user_settings_router)
 router.include_router(templates_router)
 router.include_router(browser_router)
