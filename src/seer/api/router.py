@@ -20,6 +20,7 @@ from .browser.recording_router import router as recording_router
 from .files.router import router as files_router
 from .memory.router import router as memory_router
 from .overage.router import router as overage_router
+from .chat.router import router as chat_router
 
 router = APIRouter(prefix="/api")
 router.include_router(agents_traces_router)
@@ -41,3 +42,4 @@ router.include_router(recording_router)
 router.include_router(files_router)
 router.include_router(memory_router)
 router.include_router(overage_router)
+router.include_router(chat_router)
