@@ -333,6 +333,20 @@ INTEGRATION_CONFIGS: Dict[str, Dict[str, Any]] = {
             "scope_keywords": ["slack", "channels", "chat"]
         }
     },
+    # Notion integration
+    "notion": {
+        "display_name": "Notion",
+        "oauth_provider": "notion",
+        "requires_oauth": True,
+        "icon": {"type": "url", "value": "https://img.logo.dev/notion.so?token=pk_Ovp4v2MYQDqQ0D6xdN7OJA"},
+        "brand_color": "#000000",
+        "default_scopes": [],
+        "scopes": [],
+        "detection_patterns": {
+            "tool_name_patterns": ["notion_"],
+            "scope_keywords": ["notion"]
+        }
+    },
     # Airtable integration
     "airtable": {
         "display_name": "Airtable",

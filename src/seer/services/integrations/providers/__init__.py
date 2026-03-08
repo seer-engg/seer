@@ -4,6 +4,7 @@ from typing import Optional
 
 from .base import IntegrationProvider, ProviderContext, ProviderRegistry
 from .airtable import AirtableProvider
+from .notion import NotionProvider
 from .discord import DiscordProvider
 from .github import GitHubProvider
 from .google import GoogleProvider
@@ -19,6 +20,7 @@ _registry.register(DiscordProvider())
 _registry.register(LinkedInProvider())
 _registry.register(SlackProvider())
 _registry.register(AirtableProvider())
+_registry.register(NotionProvider())
 
 
 def get_integration_provider(provider_name: str) -> Optional[IntegrationProvider]:

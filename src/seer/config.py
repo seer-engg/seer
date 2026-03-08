@@ -230,6 +230,13 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         default=None, description="Airtable OAuth client secret"
     )
 
+    notion_client_id: Optional[str] = Field(
+        default=None, description="Notion OAuth client ID"
+    )
+    notion_client_secret: Optional[str] = Field(
+        default=None, description="Notion OAuth client secret"
+    )
+
     # ============================================================================
     # Feature Flags
     # ============================================================================
