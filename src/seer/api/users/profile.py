@@ -1,10 +1,8 @@
 """User profile API endpoints."""
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Request
+from fastapi import APIRouter, Body, Request, status as http_status
 from pydantic import BaseModel, ConfigDict, field_validator
-
-from fastapi import status as http_status
 
 from seer.api.core.errors import AUTH_PROBLEM, VALIDATION_PROBLEM, raise_problem
 from seer.database import User
@@ -67,6 +65,48 @@ async def get_user_profile(request: Request):
     return UserProfileResponse.model_validate(profile, from_attributes=True)
 
 
+async def _check_username_available(username: str) -> None:
+    if await UserProfile.filter(username=username).exists():
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Username taken",
+            detail=f"Username '{username}' is already in use",
+            status=409,
+        )
+
+
+async def _create_profile(user: User, update_data: UserProfileUpdate) -> UserProfile:
+    if not update_data.username:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Username required",
+            detail="Username is required when creating a profile",
+            status=400,
+        )
+    await _check_username_available(update_data.username)
+    return await UserProfile.create(
+        user=user,
+        username=update_data.username,
+        display_name=update_data.display_name,
+        bio=update_data.bio,
+        avatar_url=update_data.avatar_url,
+        social_links=update_data.social_links or {},
+        tags=update_data.tags or [],
+        is_public=update_data.is_public or False,
+    )
+
+
+async def _apply_profile_updates(profile: UserProfile, update_data: UserProfileUpdate) -> None:
+    if update_data.username is not None and update_data.username != profile.username:
+        await _check_username_available(update_data.username)
+        profile.username = update_data.username
+    for field in ("display_name", "bio", "avatar_url", "social_links", "tags", "is_public"):
+        value = getattr(update_data, field)
+        if value is not None:
+            setattr(profile, field, value)
+    await profile.save()
+
+
 @router.patch("/profile", response_model=UserProfileResponse)
 async def update_user_profile(
     request: Request,
@@ -75,61 +115,10 @@ async def update_user_profile(
     """Create or update current user's profile."""
     user = _require_user(request)
     profile = await UserProfile.filter(user=user).first()
-
     if profile is None:
-        # Creating new profile — username is required
-        if not update_data.username:
-            raise_problem(
-                type_uri=VALIDATION_PROBLEM,
-                title="Username required",
-                detail="Username is required when creating a profile",
-                status=400,
-            )
-        # Check uniqueness
-        if await UserProfile.filter(username=update_data.username).exists():
-            raise_problem(
-                type_uri=VALIDATION_PROBLEM,
-                title="Username taken",
-                detail=f"Username '{update_data.username}' is already in use",
-                status=409,
-            )
-        profile = await UserProfile.create(
-            user=user,
-            username=update_data.username,
-            display_name=update_data.display_name,
-            bio=update_data.bio,
-            avatar_url=update_data.avatar_url,
-            social_links=update_data.social_links or {},
-            tags=update_data.tags or [],
-            is_public=update_data.is_public or False,
-        )
+        profile = await _create_profile(user, update_data)
     else:
-        # Updating existing profile
-        if update_data.username is not None and update_data.username != profile.username:
-            if await UserProfile.filter(username=update_data.username).exists():
-                raise_problem(
-                    type_uri=VALIDATION_PROBLEM,
-                    title="Username taken",
-                    detail=f"Username '{update_data.username}' is already in use",
-                    status=409,
-                )
-            profile.username = update_data.username
-
-        if update_data.display_name is not None:
-            profile.display_name = update_data.display_name
-        if update_data.bio is not None:
-            profile.bio = update_data.bio
-        if update_data.avatar_url is not None:
-            profile.avatar_url = update_data.avatar_url
-        if update_data.social_links is not None:
-            profile.social_links = update_data.social_links
-        if update_data.tags is not None:
-            profile.tags = update_data.tags
-        if update_data.is_public is not None:
-            profile.is_public = update_data.is_public
-
-        await profile.save()
-
+        await _apply_profile_updates(profile, update_data)
     return UserProfileResponse.model_validate(profile, from_attributes=True)
 
 
