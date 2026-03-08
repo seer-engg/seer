@@ -24,6 +24,7 @@ def mock_tool_no_scopes():
     tool = MagicMock()
     tool.name = "test_tool"
     tool.required_scopes = []
+    tool.requires_oauth = False
     tool.required_secrets = []
     tool.default_resource = None
     tool.provider = None
@@ -50,6 +51,7 @@ def mock_tool_with_secrets():
     tool = MagicMock()
     tool.name = "api_tool"
     tool.required_scopes = []
+    tool.requires_oauth = False
     tool.required_secrets = ["api_key", "api_secret"]
     tool.default_resource = None
     tool.provider = "custom"
