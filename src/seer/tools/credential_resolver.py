@@ -55,7 +55,7 @@ class CredentialResolver:
         )
 
     async def _resolve_connection(self) -> Tuple[Optional[OAuthConnection], Optional[str]]:
-        if not self.tool.required_scopes:
+        if not self.tool.required_scopes and not self.tool.requires_oauth:
             return None, None
 
         if not self.user.user_id:
