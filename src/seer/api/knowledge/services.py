@@ -20,12 +20,15 @@ from seer.api.knowledge.models import (
     QueryResponse,
     QueryResultItem,
 )
-from seer.database import User
+from typing import Optional
+
+from seer.database import Organization, OrganizationMembership, User
 from seer.database.knowledge_models import (
     DOC_ID_PREFIX,
     KnowledgeBase,
     KnowledgeDocument,
 )
+from seer.database.organization_models import OrganizationRole
 from seer.logger import get_logger
 from seer.services.knowledge.chunking_service import ChunkingService
 from seer.services.knowledge.document_processor import SUPPORTED_MIME_TYPES
@@ -52,6 +55,85 @@ async def _get_kb_for_user(user: User, kb_id: str) -> KnowledgeBase:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Knowledge base not found: {kb_id}",
         )
+    return kb
+
+
+async def _can_view_kb(
+    user: User,
+    kb: KnowledgeBase,
+    membership: Optional[OrganizationMembership] = None,
+) -> bool:
+    """Check if user can view KB based on ownership or org membership."""
+    # Direct owner always has access
+    if kb.user_id == user.id:
+        return True
+    # If KB has org, check membership
+    if kb.organization_id:
+        if membership is None:
+            membership = await OrganizationMembership.get_or_none(
+                organization_id=kb.organization_id, user=user
+            )
+        return membership is not None
+    return False
+
+
+async def _can_manage_kb(
+    user: User,
+    kb: KnowledgeBase,
+    membership: Optional[OrganizationMembership] = None,
+) -> bool:
+    """Check if user can edit/delete KB."""
+    # Owner can always manage
+    if kb.user_id == user.id:
+        return True
+    # Org admin/owner can manage
+    if kb.organization_id:
+        if membership is None:
+            membership = await OrganizationMembership.get_or_none(
+                organization_id=kb.organization_id, user=user
+            )
+        if membership and membership.role in (OrganizationRole.OWNER, OrganizationRole.ADMIN):
+            return True
+    return False
+
+
+async def _get_kb_org_scoped(
+    user: User,
+    kb_id: str,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+    require_manage: bool = False,
+) -> KnowledgeBase:
+    """Get KB with org-scoped access control."""
+    try:
+        internal_id = KnowledgeBase.parse_public_id(kb_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+    # Query by org if provided, else by user
+    if organization:
+        kb = await KnowledgeBase.get_or_none(id=internal_id, organization=organization)
+    else:
+        kb = await KnowledgeBase.get_or_none(id=internal_id, user=user)
+
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Knowledge base not found: {kb_id}",
+        )
+
+    # Check permissions
+    if require_manage:
+        has_access = await _can_manage_kb(user, kb, membership)
+    else:
+        has_access = await _can_view_kb(user, kb, membership)
+
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Knowledge base not found: {kb_id}",
+        )
+
     return kb
 
 
@@ -106,10 +188,15 @@ def _doc_to_response(doc: KnowledgeDocument, kb_id: str) -> DocumentResponse:
 # Knowledge Base CRUD
 
 
-async def create_knowledge_base(user: User, request: KnowledgeBaseCreateRequest) -> KnowledgeBaseResponse:
+async def create_knowledge_base(
+    user: User,
+    request: KnowledgeBaseCreateRequest,
+    organization: Optional[Organization] = None,
+) -> KnowledgeBaseResponse:
     """Create a new knowledge base."""
     kb = await KnowledgeBase.create(
         user=user,
+        organization=organization,
         name=request.name,
         description=request.description,
         chunk_size=request.chunk_size,
@@ -119,24 +206,41 @@ async def create_knowledge_base(user: User, request: KnowledgeBaseCreateRequest)
     return _kb_to_response(kb, document_count=0)
 
 
-async def list_knowledge_bases(user: User) -> KnowledgeBaseListResponse:
-    """List all knowledge bases for a user."""
-    kbs = await KnowledgeBase.filter(user=user).annotate(doc_count=Count("documents")).order_by("-created_at")
+async def list_knowledge_bases(
+    user: User,
+    organization: Optional[Organization] = None,
+) -> KnowledgeBaseListResponse:
+    """List all knowledge bases for a user or organization."""
+    if organization:
+        kbs = await KnowledgeBase.filter(organization=organization).annotate(doc_count=Count("documents")).order_by("-created_at")
+    else:
+        kbs = await KnowledgeBase.filter(user=user).annotate(doc_count=Count("documents")).order_by("-created_at")
 
     items = [_kb_to_response(kb, document_count=getattr(kb, "doc_count", 0)) for kb in kbs]
     return KnowledgeBaseListResponse(items=items, total=len(items))
 
 
-async def get_knowledge_base(user: User, kb_id: str) -> KnowledgeBaseResponse:
+async def get_knowledge_base(
+    user: User,
+    kb_id: str,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+) -> KnowledgeBaseResponse:
     """Get a single knowledge base."""
-    kb = await _get_kb_for_user(user, kb_id)
+    kb = await _get_kb_org_scoped(user, kb_id, organization, membership)
     doc_count = await KnowledgeDocument.filter(knowledge_base=kb).count()
     return _kb_to_response(kb, document_count=doc_count)
 
 
-async def update_knowledge_base(user: User, kb_id: str, request: KnowledgeBaseUpdateRequest) -> KnowledgeBaseResponse:
+async def update_knowledge_base(
+    user: User,
+    kb_id: str,
+    request: KnowledgeBaseUpdateRequest,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+) -> KnowledgeBaseResponse:
     """Update a knowledge base."""
-    kb = await _get_kb_for_user(user, kb_id)
+    kb = await _get_kb_org_scoped(user, kb_id, organization, membership, require_manage=True)
 
     if request.name is not None:
         kb.name = request.name
@@ -149,9 +253,14 @@ async def update_knowledge_base(user: User, kb_id: str, request: KnowledgeBaseUp
     return _kb_to_response(kb, document_count=doc_count)
 
 
-async def delete_knowledge_base(user: User, kb_id: str) -> None:
+async def delete_knowledge_base(
+    user: User,
+    kb_id: str,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+) -> None:
     """Delete a knowledge base and all its documents/chunks."""
-    kb = await _get_kb_for_user(user, kb_id)
+    kb = await _get_kb_org_scoped(user, kb_id, organization, membership, require_manage=True)
 
     # Chunks will be cascade-deleted via foreign key
     await kb.delete()
@@ -161,9 +270,15 @@ async def delete_knowledge_base(user: User, kb_id: str) -> None:
 # Document Operations
 
 
-async def upload_document(user: User, kb_id: str, file: UploadFile) -> DocumentUploadResponse:
+async def upload_document(
+    user: User,
+    kb_id: str,
+    file: UploadFile,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+) -> DocumentUploadResponse:
     """Upload and process a document."""
-    kb = await _get_kb_for_user(user, kb_id)
+    kb = await _get_kb_org_scoped(user, kb_id, organization, membership, require_manage=True)
 
     # Validate MIME type
     mime_type = file.content_type or "application/octet-stream"
@@ -231,25 +346,42 @@ async def upload_document(user: User, kb_id: str, file: UploadFile) -> DocumentU
     )
 
 
-async def list_documents(user: User, kb_id: str) -> DocumentListResponse:
+async def list_documents(
+    user: User,
+    kb_id: str,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+) -> DocumentListResponse:
     """List all documents in a knowledge base."""
-    kb = await _get_kb_for_user(user, kb_id)
+    kb = await _get_kb_org_scoped(user, kb_id, organization, membership)
     docs = await KnowledgeDocument.filter(knowledge_base=kb).order_by("-created_at")
 
     items = [_doc_to_response(doc, kb.public_id) for doc in docs]
     return DocumentListResponse(items=items, total=len(items))
 
 
-async def get_document(user: User, kb_id: str, doc_id: str) -> DocumentResponse:
+async def get_document(
+    user: User,
+    kb_id: str,
+    doc_id: str,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+) -> DocumentResponse:
     """Get a single document."""
-    kb = await _get_kb_for_user(user, kb_id)
+    kb = await _get_kb_org_scoped(user, kb_id, organization, membership)
     doc = await _get_doc_for_kb(kb, doc_id)
     return _doc_to_response(doc, kb.public_id)
 
 
-async def delete_document(user: User, kb_id: str, doc_id: str) -> None:
+async def delete_document(
+    user: User,
+    kb_id: str,
+    doc_id: str,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+) -> None:
     """Delete a document and its chunks."""
-    kb = await _get_kb_for_user(user, kb_id)
+    kb = await _get_kb_org_scoped(user, kb_id, organization, membership, require_manage=True)
     doc = await _get_doc_for_kb(kb, doc_id)
 
     # Chunks will be cascade-deleted via foreign key
@@ -260,9 +392,15 @@ async def delete_document(user: User, kb_id: str, doc_id: str) -> None:
 # Query Operations
 
 
-async def query_knowledge_base(user: User, kb_id: str, request: QueryRequest) -> QueryResponse:
+async def query_knowledge_base(
+    user: User,
+    kb_id: str,
+    request: QueryRequest,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+) -> QueryResponse:
     """Perform semantic search on a knowledge base."""
-    kb = await _get_kb_for_user(user, kb_id)
+    kb = await _get_kb_org_scoped(user, kb_id, organization, membership)
 
     # Generate embedding for query
     embedding_service = get_embedding_service()
@@ -299,9 +437,15 @@ async def query_knowledge_base(user: User, kb_id: str, request: QueryRequest) ->
     )
 
 
-async def add_text_to_knowledge_base(user: User, kb_id: str, request: AddTextRequest) -> DocumentUploadResponse:
+async def add_text_to_knowledge_base(
+    user: User,
+    kb_id: str,
+    request: AddTextRequest,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+) -> DocumentUploadResponse:
     """Add text content directly to a knowledge base (sync processing)."""
-    kb = await _get_kb_for_user(user, kb_id)
+    kb = await _get_kb_org_scoped(user, kb_id, organization, membership, require_manage=True)
 
     # Compute content hash
     content_bytes = request.content.encode("utf-8")

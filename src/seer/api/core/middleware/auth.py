@@ -150,24 +150,56 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
         # Payment-exempt paths are now handled in _check_access_gates
         # This method only checks if user has payment method
 
+        # Check personal billing profile first
         billing_profile = await BillingProfile.get_or_none(owner_user=db_user)
 
-        # Require payment method unless they're still in onboarding
-        if not billing_profile or not billing_profile.has_payment_method:
-            settings = await UserSettings.get_or_none(user=db_user)
-            onboarding_complete = settings and settings.preferences.get("onboarding", {}).get("completed", False)
+        if billing_profile and billing_profile.has_payment_method:
+            return None  # User has personal payment method
 
-            if onboarding_complete:
-                return JSONResponse(
-                    status_code=402,
-                    content={
-                        "error": "payment_method_required",
-                        "message": "Payment method required to access this resource",
-                        "requires_payment_method": True
-                    }
-                )
+        # Check if user is member of a team with an active billing profile
+        if await self._is_member_of_paying_team(db_user):
+            return None  # Team pays for this user
+
+        # Only block if onboarding is complete (still onboarding = allowed)
+        settings = await UserSettings.get_or_none(user=db_user)
+        onboarding_complete = settings and settings.preferences.get("onboarding", {}).get("completed", False)
+
+        if onboarding_complete:
+            return JSONResponse(
+                status_code=402,
+                content={
+                    "error": "payment_method_required",
+                    "message": "Payment method required to access this resource",
+                    "requires_payment_method": True
+                }
+            )
 
         return None
+
+    async def _is_member_of_paying_team(self, db_user: User) -> bool:
+        """Check if user is a member of any team whose owner has a valid billing profile."""
+        from seer.database.organization_models import OrganizationMembership, MembershipStatus, OrganizationType
+
+        # Find active team memberships
+        team_membership = await OrganizationMembership.filter(
+            user=db_user,
+            status=MembershipStatus.ACTIVE,
+            organization__type=OrganizationType.TEAM,
+        ).prefetch_related("organization").first()
+
+        if not team_membership:
+            return False
+
+        # Get the team's owner
+        await team_membership.organization.fetch_related("owner")
+        team_owner = team_membership.organization.owner
+
+        if not team_owner:
+            return False
+
+        # Check if team owner has billing profile with payment method
+        owner_billing = await BillingProfile.get_or_none(owner_user=team_owner)
+        return owner_billing is not None and owner_billing.has_payment_method
 
     def _extract_token(self, request: Request) -> Optional[str]:
         """Extract JWT token from Authorization header or query parameter."""

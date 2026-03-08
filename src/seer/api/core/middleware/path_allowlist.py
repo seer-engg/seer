@@ -12,6 +12,8 @@ DEFAULT_PUBLIC_PATHS = {
     "/api/integrations/supabase_mgmt/callback",
     "/.well-known/oauth-protected-resource",
     "/sentry-debug",  # For testing Sentry integration; not included in DEFAULT_DOCS_PATHS since it's not a documented API endpoint.
+    "/docs",
+    "/openapi.json"
 }
 
 DEFAULT_DOCS_PATHS = {
@@ -82,6 +84,15 @@ def is_public_path(
     # OAuth-style callbacks (provider agnostic)
     if "/integrations/" in normalized_path and normalized_path.endswith("/callback"):
         return True
+
+    # Invitation details pages (view invitation before signing in)
+    # Match: /api/organizations/invitations/{token} (GET details)
+    # Don't match: /api/organizations/invitations/{token}/accept
+    # Don't match: /api/organizations/invitations/{token}/decline
+    if normalized_path.startswith("/api/organizations/invitations/"):
+        remainder = normalized_path[len("/api/organizations/invitations/"):]
+        if remainder and "/" not in remainder:
+            return True
 
     for prefix in DEFAULT_PUBLIC_PREFIXES:
         normalized_prefix = _normalize_path(prefix)

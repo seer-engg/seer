@@ -12,8 +12,10 @@ from tortoise.exceptions import DoesNotExist
 from seer.api.workflows import models as api_models
 from seer.api.workflows.services.shared import (
     VALIDATION_PROBLEM,
+    _can_view_workflow,
     _get_draft_version,
     _get_workflow,
+    _get_workflow_org_scoped,
     _hash_spec,
     _now,
     _raise_problem,
@@ -22,11 +24,15 @@ from seer.api.workflows.services.shared import (
     get_published_version,
     validate_workflow_spec,
 )
+from seer.database.organization_models import OrganizationRole
 from seer.database import (
+    Organization,
+    OrganizationMembership,
     User,
     Workflow,
     WorkflowVersion,
     WorkflowVersionStatus,
+    WorkflowVisibility,
     parse_workflow_public_id,
 )
 from seer.core.schema.models import WorkflowSpec
@@ -190,12 +196,29 @@ def _parse_workflow_cursor(cursor: Optional[str]) -> Optional[int]:
         return None  # Unreachable, but satisfies pylint
 
 
-async def create_workflow(user: User, payload: api_models.WorkflowCreateRequest) -> api_models.WorkflowResponse:
+async def create_workflow(
+    user: User,
+    payload: api_models.WorkflowCreateRequest,
+    organization: Optional[Organization] = None,
+) -> api_models.WorkflowResponse:
+    """
+    Create a new workflow.
+
+    Args:
+        user: The authenticated user (becomes the workflow creator)
+        payload: Workflow creation request
+        organization: If provided, assigns the workflow to this organization
+
+    Returns:
+        The created workflow response
+    """
     # Workflow limit check moved to UsageLimitMiddleware
     spec_dict = _spec_to_dict(payload.spec)
     workflow = await Workflow.create(
         user=user,
         name=payload.name,
+        organization=organization,
+        visibility=WorkflowVisibility.TEAM if organization else WorkflowVisibility.PRIVATE,
     )
     await WorkflowVersion.create(
         workflow=workflow,
@@ -215,11 +238,47 @@ async def list_workflows(
     *,
     limit: int = 50,
     cursor: Optional[str] = None,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
 ) -> api_models.WorkflowListResponse:
+    """
+    List workflows accessible to the user.
+
+    Args:
+        user: The authenticated user
+        limit: Maximum number of workflows to return
+        cursor: Pagination cursor
+        organization: If provided, list org-scoped workflows with visibility checks
+        membership: User's membership in the organization (for permission checks)
+
+    Returns:
+        Paginated list of workflow summaries
+    """
     limit = max(1, min(limit, 100))
     cursor_pk = _parse_workflow_cursor(cursor)
 
-    query = Workflow.filter(user=user)
+    # Build base query based on organization context
+    if organization:
+        # Organization-scoped: filter by org
+        query = Workflow.filter(organization=organization)
+
+        # For Users and Consultants, apply visibility filters
+        if membership and membership.role not in (OrganizationRole.OWNER, OrganizationRole.ADMIN):
+            # Users can see: TEAM visibility, own PRIVATE, or ASSIGNED workflows
+            if membership.role == OrganizationRole.USER:
+                from tortoise.expressions import Q  # pylint: disable=import-outside-toplevel  # Reason: conditional import for complex query
+                query = query.filter(
+                    Q(visibility=WorkflowVisibility.TEAM) |
+                    Q(visibility=WorkflowVisibility.PRIVATE, user=user) |
+                    Q(visibility=WorkflowVisibility.ASSIGNED, assignments__user=user)
+                )
+            elif membership.role == OrganizationRole.CONSULTANT:
+                # Consultants only see assigned workflows
+                query = query.filter(assignments__user=user)
+    else:
+        # Legacy user-scoped behavior
+        query = Workflow.filter(user=user)
+
     if cursor_pk:
         query = query.filter(id__lt=cursor_pk)
 
@@ -246,13 +305,23 @@ async def list_workflows(
     return api_models.WorkflowListResponse(items=items, next_cursor=next_cursor)
 
 
-async def get_workflow(user: User, workflow_id: str) -> api_models.WorkflowResponse:
-    workflow = await _get_workflow(user, workflow_id)
+async def get_workflow(
+    user: User,
+    workflow_id: str,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+) -> api_models.WorkflowResponse:
+    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership)
     return await _workflow_response(workflow)
 
 
-async def list_workflow_versions(user: User, workflow_id: str) -> api_models.WorkflowVersionListResponse:
-    workflow = await _get_workflow(user, workflow_id)
+async def list_workflow_versions(
+    user: User,
+    workflow_id: str,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+) -> api_models.WorkflowVersionListResponse:
+    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership)
     versions = (
         await WorkflowVersion.filter(workflow=workflow)
         .order_by("-created_at")
@@ -279,8 +348,10 @@ async def update_workflow(
     user: User,
     workflow_id: str,
     payload: api_models.WorkflowUpdateRequest,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
 ) -> api_models.WorkflowResponse:
-    workflow = await _get_workflow(user, workflow_id)
+    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=True)
     if payload.name is not None:
         workflow.name = payload.name
     await workflow.save()
@@ -322,8 +393,10 @@ async def patch_workflow_draft(
     user: User,
     workflow_id: str,
     payload: api_models.WorkflowDraftPatchRequest,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
 ) -> api_models.WorkflowResponse:
-    workflow = await _get_workflow(user, workflow_id)
+    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=True)
 
     # Get or create DRAFT version
     draft_version = await _get_draft_version(workflow, create_if_missing=True, user=user)
@@ -347,9 +420,11 @@ async def restore_workflow_version(
     workflow_id: str,
     version_id: int,
     payload: api_models.WorkflowVersionRestoreRequest,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
 ) -> api_models.WorkflowResponse:
     del payload  # payload reserved for future extensions (e.g., metadata), kept for API compatibility
-    workflow = await _get_workflow(user, workflow_id)
+    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=True)
     try:
         version = await WorkflowVersion.get(id=version_id, workflow=workflow)
     except DoesNotExist:
@@ -392,9 +467,11 @@ async def publish_workflow(
     user: User,
     workflow_id: str,
     payload: api_models.WorkflowPublishRequest,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
 ) -> api_models.WorkflowResponse:
     del payload  # payload reserved for future publish options, kept for API compatibility
-    workflow = await _get_workflow(user, workflow_id)
+    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=True)
 
     # Get existing DRAFT version (must exist to publish)
     draft_version = await _get_draft_version(workflow, create_if_missing=False)
@@ -446,12 +523,17 @@ async def publish_workflow(
 
     # Note: No new DRAFT is created here (on-demand creation)
 
-    workflow = await _get_workflow(user, workflow_id)
+    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=True)
     return await _workflow_response(workflow)
 
 
-async def delete_workflow(user: User, workflow_id: str) -> None:
-    workflow = await _get_workflow(user, workflow_id)
+async def delete_workflow(
+    user: User,
+    workflow_id: str,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+) -> None:
+    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=True)
     await workflow.delete()
 
 
@@ -459,6 +541,8 @@ async def export_workflow(
     user: User,
     workflow_id: str,
     include_triggers: bool = True,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
 ) -> Dict[str, Any]:
     """
     Export workflow and optionally triggers as portable JSON.
@@ -466,7 +550,7 @@ async def export_workflow(
 
 
     # 1. Fetch workflow and draft
-    workflow = await _get_workflow(user, workflow_id)
+    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership)
     draft_version = await _get_draft_version(workflow, create_if_missing=False)
 
     if not draft_version:

@@ -720,7 +720,7 @@ class TestPublishWorkflowValidation:
 
         mock_workflow = MagicMock()
 
-        with patch("seer.api.workflows.services.lifecycle._get_workflow", new=AsyncMock(return_value=mock_workflow)), \
+        with patch("seer.api.workflows.services.lifecycle._get_workflow_org_scoped", new=AsyncMock(return_value=mock_workflow)), \
              patch("seer.api.workflows.services.lifecycle._get_draft_version", new=AsyncMock(return_value=None)), \
              patch("seer.api.workflows.services.lifecycle.get_published_version", new=AsyncMock(return_value=MagicMock())):
             with pytest.raises(HTTPException) as exc_info:

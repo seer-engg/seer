@@ -24,12 +24,25 @@ class OAuthConnection(models.Model):
 
     status = fields.CharField(max_length=20, default="active")  # active, revoked, error
 
+    # Organization sharing - allows team members to use this connection
+    # When set, all members of the organization can use this OAuth connection
+    shared_with_organization = fields.ForeignKeyField(
+        "models.Organization",
+        related_name="shared_connections",
+        null=True,
+        on_delete=fields.SET_NULL,
+    )
+
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 
     class Meta:
         table = "oauth_connections"
         unique_together = (("user", "provider", "provider_account_id"),)
+        indexes = (
+            ("shared_with_organization_id",),
+            ("user_id", "provider"),
+        )
 
     def __str__(self) -> str:
         return f"{self.provider}:{self.provider_account_id} ({self.user})"

@@ -19,6 +19,7 @@ from .browser.ws_router import router as browser_session_router
 from .browser.recording_router import router as recording_router
 from .files.router import router as files_router
 from .memory.router import router as memory_router
+from .organizations.router import router as organizations_router
 from .overage.router import router as overage_router
 
 router = APIRouter(prefix="/api")
@@ -40,4 +41,5 @@ router.include_router(browser_session_router)
 router.include_router(recording_router)
 router.include_router(files_router)
 router.include_router(memory_router)
+router.include_router(organizations_router)
 router.include_router(overage_router)

@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 
-from seer.database import User
+from seer.database import Organization, OrganizationMembership, User
 from seer.database import (
     Workflow,
     WorkflowChatMessage,
@@ -20,6 +20,7 @@ from seer.database import (
 from seer.database.workflow_models import WorkflowCreationMode, WorkflowDiscoveryChatSession
 from seer.api.workflows.services.shared import (
     _get_draft_version,
+    _get_workflow_org_scoped,
     _update_draft_version,
 )
 from seer.logger import get_logger
@@ -89,25 +90,18 @@ async def workflow_state_snapshot(workflow: Workflow) -> Dict[str, Any]:
 
 
 
-async def _get_workflow(user: User, workflow_id: str) -> Workflow:
-    """Resolve and authorize workflow by public id."""
-    try:
-        pk = parse_workflow_public_id(workflow_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid workflow id format") from exc
+async def get_workflow(
+    user: User,
+    workflow_id: str,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+) -> Workflow:
+    """
+    Resolve and authorize workflow by public id with org-scoped access.
 
-    workflow = (
-        await Workflow.filter(id=pk, user=user)
-        .first()
-    )
-    if not workflow:
-        raise HTTPException(status_code=404, detail=f"Workflow '{workflow_id}' not found")
-    return workflow
-
-
-async def get_workflow(user: User, workflow_id: str) -> Workflow:
-    """Public accessor used by routers."""
-    return await _get_workflow(user, workflow_id)
+    Uses the shared org-scoped lookup to support team member access.
+    """
+    return await _get_workflow_org_scoped(user, workflow_id, organization, membership)
 
 
 # ============================================================================

@@ -19,23 +19,38 @@ class ResourceType(str, Enum):
 
 class UsageCounter(models.Model):
     """
-    Tracks usage counts for various resources per user and time period.
+    Tracks usage counts for various resources per user/organization and time period.
 
     Supports both total counts (all-time) and windowed counts (monthly).
     Designed for efficient querying and Redis caching.
 
+    Usage patterns:
+    - User-level: user is set, organization is null (personal org usage)
+    - Org-level: organization is set, user is null (team org aggregate usage)
+
     Example queries:
-    - Total workflows for user: resource_type=WORKFLOWS, period_start=None
-    - Runs this month: resource_type=RUNS, period_start=2024-01-01, period_end=2024-02-01
+    - Total workflows for user: resource_type=WORKFLOWS, period_start=None, user=user
+    - Org runs this month: resource_type=RUNS, period_start=2024-01-01, organization=org
     """
 
     id = fields.IntField(primary_key=True)
 
+    # User-level tracking (for personal orgs or per-member breakdown)
     user = fields.ForeignKeyField(
         "models.User",
         related_name="usage_counters",
         on_delete=fields.CASCADE,
         db_index=True,
+        null=True,
+    )
+
+    # Organization-level tracking (for team orgs)
+    organization = fields.ForeignKeyField(
+        "models.Organization",
+        related_name="usage_counters",
+        on_delete=fields.CASCADE,
+        db_index=True,
+        null=True,
     )
 
     resource_type = fields.CharEnumField(ResourceType, db_index=True)
@@ -63,11 +78,14 @@ class UsageCounter(models.Model):
             ("user_id", "resource_type", "period_start"),
             # Lookup by resource reference
             ("user_id", "resource_type", "reference_id"),
+            # Org-level lookup: org + resource + period
+            ("organization_id", "resource_type", "period_start"),
         ]
 
     def __str__(self) -> str:
         period_str = f"{self.period_start}" if self.period_start else "all-time"
-        return f"UsageCounter<user={self.user}, type={self.resource_type.value}, period={period_str}, count={self.count}>"
+        owner = f"user={self.user_id}" if self.user_id else f"org={self.organization_id}"
+        return f"UsageCounter<{owner}, type={self.resource_type.value}, period={period_str}, count={self.count}>"
 
 
 class LLMUsageRecord(models.Model):
@@ -76,15 +94,28 @@ class LLMUsageRecord(models.Model):
 
     Aggregated into UsageCounter for limit checking, but preserved
     for detailed analytics and debugging.
+
+    Organization field enables team-level cost tracking and billing.
     """
 
     id = fields.IntField(primary_key=True)
 
+    # User who triggered the LLM call
     user = fields.ForeignKeyField(
         "models.User",
         related_name="llm_usage_records",
         on_delete=fields.CASCADE,
         db_index=True,
+        null=True,
+    )
+
+    # Organization context (for team billing aggregation)
+    organization = fields.ForeignKeyField(
+        "models.Organization",
+        related_name="llm_usage_records",
+        on_delete=fields.CASCADE,
+        db_index=True,
+        null=True,
     )
 
     # Optional reference to workflow run
@@ -111,13 +142,16 @@ class LLMUsageRecord(models.Model):
     class Meta:
         table = "llm_usage_records"
         indexes = [
-            # Monthly cost queries
+            # Monthly cost queries per user
             ("user_id", "created_at"),
             # Workflow run analysis
             ("workflow_run_id", "created_at"),
             # Model usage analytics
             ("model", "created_at"),
+            # Organization-level cost queries
+            ("organization_id", "created_at"),
         ]
 
     def __str__(self) -> str:
-        return f"LLMUsageRecord<user={self.user}, model={self.model}, tokens={self.total_tokens}, cost=${self.cost}>"
+        owner = f"user={self.user_id}" if self.user_id else f"org={self.organization_id}"
+        return f"LLMUsageRecord<{owner}, model={self.model}, tokens={self.total_tokens}, cost=${self.cost}>"

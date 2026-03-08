@@ -4,9 +4,12 @@
 Workflow API router for CRUD and execution endpoints.
 """
 import uuid
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Query, Request
+
+from seer.api.core.middleware.organization import get_membership, get_organization
+from seer.database import Organization, OrganizationMembership
 from langgraph.types import Command
 
 from seer.api.agents.checkpointer import get_checkpointer
@@ -73,6 +76,16 @@ def _require_user(request: Request) -> User:
     # Type guard: raise_problem raises an exception, so this will never execute if user is None
     assert user is not None
     return user
+
+
+def _get_org_context(request: Request) -> tuple[Optional[Organization], Optional[OrganizationMembership]]:
+    """Get optional organization context from request state."""
+    try:
+        org = get_organization(request)
+        membership = get_membership(request)
+        return org, membership
+    except Exception:  # pylint: disable=broad-exception-caught  # Reason: fallback to None if org context not available
+        return None, None
 
 
 def _transform_clarification_interrupt(interrupt_data: Dict[str, Any]) -> None:
@@ -318,7 +331,8 @@ async def chat_with_workflow_endpoint(
 
     logger.info("Chat request received: workflow_id=%s, message_length=%d", workflow_id, len(chat_request.message))
     user = _require_user(request)
-    workflow = await get_workflow(user, workflow_id)
+    org, membership = _get_org_context(request)
+    workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
 
     # LLM credit limit check enforced by UsageLimitMiddleware
     model = chat_request.model or config.default_llm_model
@@ -407,7 +421,8 @@ async def get_chat_status_endpoint(
     Includes interrupt data if agent requires clarification.
     """
     user = _require_user(request)
-    workflow = await get_workflow(user, workflow_id)
+    org, membership = _get_org_context(request)
+    workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
     session = await get_chat_session(session_id, workflow)
 
     # Get latest assistant message for completed executions
@@ -464,7 +479,8 @@ async def create_chat_session_endpoint(
     """Create a new chat session."""
     print(f"Creating chat session for workflow {workflow_id}")
     user = _require_user(request)
-    workflow = await get_workflow(user, workflow_id)
+    org, membership = _get_org_context(request)
+    workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
 
     thread_id = f"workflow-{workflow_id}-{uuid.uuid4().hex}"
     session = await create_chat_session(
@@ -495,7 +511,8 @@ async def list_chat_sessions_endpoint(
     """List chat sessions for a workflow."""
     print(f"Listing chat sessions for workflow {workflow_id}")
     user = _require_user(request)
-    workflow = await get_workflow(user, workflow_id)
+    org, membership = _get_org_context(request)
+    workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
     sessions = await list_chat_sessions(workflow, user, limit=limit, offset=offset)
 
     return [
@@ -520,7 +537,8 @@ async def get_chat_session_endpoint(
 ) -> ChatSessionWithMessages:
     """Get a chat session with its messages."""
     user = _require_user(request)
-    workflow = await get_workflow(user, workflow_id)
+    org, membership = _get_org_context(request)
+    workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
     session = await get_chat_session(session_id, workflow)
 
     messages = await load_chat_history(session_id)
@@ -569,7 +587,8 @@ async def resume_chat_endpoint(
 
     logger.info("Resume request received: workflow_id=%s, thread_id=%s", workflow_id, resume_data.thread_id)
     user = _require_user(request)
-    workflow = await get_workflow(user, workflow_id)
+    org, membership = _get_org_context(request)
+    workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
 
     # Get checkpointer and session
     checkpointer = await get_checkpointer()
@@ -638,7 +657,9 @@ async def get_proposal_endpoint(
     proposal_id: int,
 ) -> WorkflowProposalPublic:
     """Fetch a single workflow proposal."""
-    workflow = await get_workflow(_require_user(request), workflow_id)
+    user = _require_user(request)
+    org, membership = _get_org_context(request)
+    workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
     proposal = await get_workflow_proposal(workflow, proposal_id)
     await proposal.fetch_related('created_by', 'workflow', 'session')
     return WorkflowProposalPublic.model_validate(proposal, from_attributes=True)
@@ -652,7 +673,8 @@ async def accept_proposal_endpoint(
 ) -> WorkflowProposalActionResponse:
     """Accept a workflow proposal and apply its changes."""
     user = _require_user(request)
-    workflow = await get_workflow(user, workflow_id)
+    org, membership = _get_org_context(request)
+    workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
     proposal, workflow = await accept_workflow_proposal(
         workflow,
         proposal_id,
@@ -674,7 +696,8 @@ async def reject_proposal_endpoint(
 ) -> WorkflowProposalActionResponse:
     """Reject a workflow proposal without applying changes."""
     user = _require_user(request)
-    workflow = await get_workflow(user, workflow_id)
+    org, membership = _get_org_context(request)
+    workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
     proposal = await reject_workflow_proposal(workflow, proposal_id)
     await proposal.fetch_related('created_by', 'workflow', 'session')
 

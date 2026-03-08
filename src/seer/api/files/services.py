@@ -16,12 +16,75 @@ from tortoise.functions import Count, Max, Min, Sum
 
 from seer.api.files import models as api_models
 from seer.config import config
-from seer.database import User, WorkflowFile
+from seer.database import Organization, OrganizationMembership, User, WorkflowFile
+from seer.database.organization_models import OrganizationRole
 from seer.database.workflow_models import make_run_public_id
 from seer.logger import get_logger
 
 if TYPE_CHECKING:
     pass
+
+
+async def _can_view_file(
+    user: User,
+    file: WorkflowFile,
+    membership: Optional[OrganizationMembership] = None,
+) -> bool:
+    """Check if user can view file based on ownership or org membership."""
+    if file.user_id == user.id:
+        return True
+    if file.organization_id:
+        if membership is None:
+            membership = await OrganizationMembership.get_or_none(
+                organization_id=file.organization_id, user=user
+            )
+        return membership is not None
+    return False
+
+
+async def _can_manage_file(
+    user: User,
+    file: WorkflowFile,
+    membership: Optional[OrganizationMembership] = None,
+) -> bool:
+    """Check if user can delete file."""
+    if file.user_id == user.id:
+        return True
+    if file.organization_id:
+        if membership is None:
+            membership = await OrganizationMembership.get_or_none(
+                organization_id=file.organization_id, user=user
+            )
+        if membership and membership.role in (OrganizationRole.OWNER, OrganizationRole.ADMIN):
+            return True
+    return False
+
+
+async def _get_file_org_scoped(
+    user: User,
+    file_id: str,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+    require_manage: bool = False,
+) -> WorkflowFile:
+    """Get file with org-scoped access control."""
+    if organization:
+        file = await WorkflowFile.filter(file_id=file_id, organization=organization).first()
+    else:
+        file = await WorkflowFile.filter(file_id=file_id, user=user).first()
+
+    if not file:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File '{file_id}' not found")
+
+    if require_manage:
+        has_access = await _can_manage_file(user, file, membership)
+    else:
+        has_access = await _can_view_file(user, file, membership)
+
+    if not has_access:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File '{file_id}' not found")
+
+    return file
 
 logger = get_logger("seer.api.files.services")
 
@@ -119,6 +182,7 @@ def _file_to_list_item(f: WorkflowFile) -> api_models.UserFileListItem:
 async def list_user_files(
     user: User,
     *,
+    organization: Optional[Organization] = None,
     limit: int = 50,
     cursor: Optional[str] = None,
     mime_type: Optional[str] = None,
@@ -165,13 +229,19 @@ async def list_user_files(
         sort_order=sort_order,
     )
 
-    query = WorkflowFile.filter(user=user)
+    if organization:
+        query = WorkflowFile.filter(organization=organization)
+    else:
+        query = WorkflowFile.filter(user=user)
     query = _apply_content_filters(query, params)
     query = _apply_date_size_filters(query, params)
 
     # Handle cursor pagination
     if params.cursor:
-        cursor_file = await WorkflowFile.filter(file_id=params.cursor, user=user).first()
+        if organization:
+            cursor_file = await WorkflowFile.filter(file_id=params.cursor, organization=organization).first()
+        else:
+            cursor_file = await WorkflowFile.filter(file_id=params.cursor, user=user).first()
         if cursor_file:
             if params.sort_order == "desc":
                 query = query.filter(created_at__lt=cursor_file.created_at)
@@ -184,7 +254,10 @@ async def list_user_files(
     files = await query.limit(params.limit + 1).prefetch_related("workflow_run", "workflow_run__workflow")
 
     # Get total count and size (without pagination filters)
-    base_query = WorkflowFile.filter(user=user)
+    if organization:
+        base_query = WorkflowFile.filter(organization=organization)
+    else:
+        base_query = WorkflowFile.filter(user=user)
     total_count = await base_query.count()
     total_size_result = await base_query.annotate(total=Sum("size_bytes")).values("total")
     total_size_bytes = total_size_result[0]["total"] or 0 if total_size_result else 0
@@ -200,17 +273,24 @@ async def list_user_files(
     )
 
 
-async def get_user_storage_stats(user: User) -> api_models.UserStorageStatsResponse:
+async def get_user_storage_stats(
+    user: User,
+    organization: Optional[Organization] = None,
+) -> api_models.UserStorageStatsResponse:
     """
-    Get storage statistics for a user.
+    Get storage statistics for a user or organization.
 
     Args:
         user: Authenticated user.
+        organization: Optional organization context for team stats.
 
     Returns:
         Storage statistics including totals and breakdowns.
     """
-    base_query = WorkflowFile.filter(user=user)
+    if organization:
+        base_query = WorkflowFile.filter(organization=organization)
+    else:
+        base_query = WorkflowFile.filter(user=user)
 
     # Get aggregate stats
     agg_result = await base_query.annotate(
@@ -275,13 +355,20 @@ async def get_user_storage_stats(user: User) -> api_models.UserStorageStatsRespo
     )
 
 
-async def get_user_file(user: User, file_id: str) -> api_models.UserFileResponse:
+async def get_user_file(
+    user: User,
+    file_id: str,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+) -> api_models.UserFileResponse:
     """
     Get metadata for a specific file.
 
     Args:
         user: Authenticated user.
         file_id: File UUID.
+        organization: Optional organization context for team access.
+        membership: Optional organization membership.
 
     Returns:
         File metadata.
@@ -289,15 +376,8 @@ async def get_user_file(user: User, file_id: str) -> api_models.UserFileResponse
     Raises:
         HTTPException: If file not found or access denied.
     """
-    file = await WorkflowFile.filter(file_id=file_id, user=user).prefetch_related(
-        "workflow_run", "workflow_run__workflow"
-    ).first()
-
-    if not file:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File '{file_id}' not found"
-        )
+    file = await _get_file_org_scoped(user, file_id, organization, membership)
+    await file.fetch_related("workflow_run", "workflow_run__workflow")
 
     run = file.workflow_run
     workflow = getattr(run, "workflow", None) if run else None
@@ -319,7 +399,13 @@ async def get_user_file(user: User, file_id: str) -> api_models.UserFileResponse
     )
 
 
-async def get_user_file_download_url(user: User, file_id: str, inline: bool = False) -> api_models.UserFileDownloadResponse:
+async def get_user_file_download_url(
+    user: User,
+    file_id: str,
+    inline: bool = False,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+) -> api_models.UserFileDownloadResponse:
     """
     Get a presigned URL to download or preview a file.
 
@@ -327,6 +413,8 @@ async def get_user_file_download_url(user: User, file_id: str, inline: bool = Fa
         user: Authenticated user.
         file_id: File UUID.
         inline: If True, returns URL for inline preview instead of download.
+        organization: Optional organization context for team access.
+        membership: Optional organization membership.
 
     Returns:
         Presigned download URL.
@@ -337,9 +425,7 @@ async def get_user_file_download_url(user: User, file_id: str, inline: bool = Fa
     # pylint: disable=import-outside-toplevel  # Avoid circular imports
     from seer.core.files.service import WorkflowFileSystem, file_to_ref
 
-    file = await WorkflowFile.filter(file_id=file_id, user=user).first()
-    if not file:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File '{file_id}' not found")
+    file = await _get_file_org_scoped(user, file_id, organization, membership)
 
     if not config.is_workflow_file_system_configured:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Workflow file storage is not configured")
@@ -353,7 +439,13 @@ async def get_user_file_download_url(user: User, file_id: str, inline: bool = Fa
     )
 
 
-async def get_user_file_content(user: User, file_id: str, max_size_bytes: int) -> StreamingResponse:
+async def get_user_file_content(
+    user: User,
+    file_id: str,
+    max_size_bytes: int,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+) -> StreamingResponse:
     """
     Stream file content directly for preview.
 
@@ -361,6 +453,8 @@ async def get_user_file_content(user: User, file_id: str, max_size_bytes: int) -
         user: Authenticated user.
         file_id: File UUID.
         max_size_bytes: Maximum file size allowed for preview.
+        organization: Optional organization context for team access.
+        membership: Optional organization membership.
 
     Returns:
         StreamingResponse with file content.
@@ -371,9 +465,7 @@ async def get_user_file_content(user: User, file_id: str, max_size_bytes: int) -
     # pylint: disable=import-outside-toplevel  # Avoid circular imports
     from seer.core.files.service import WorkflowFileSystem, file_to_ref
 
-    file = await WorkflowFile.filter(file_id=file_id, user=user).first()
-    if not file:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File '{file_id}' not found")
+    file = await _get_file_org_scoped(user, file_id, organization, membership)
 
     if file.size_bytes > max_size_bytes:
         raise HTTPException(
@@ -405,13 +497,20 @@ async def get_user_file_content(user: User, file_id: str, max_size_bytes: int) -
     )
 
 
-async def delete_user_file(user: User, file_id: str) -> api_models.UserFileDeleteResponse:
+async def delete_user_file(
+    user: User,
+    file_id: str,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+) -> api_models.UserFileDeleteResponse:
     """
     Delete a file.
 
     Args:
         user: Authenticated user.
         file_id: File UUID.
+        organization: Optional organization context for team access.
+        membership: Optional organization membership.
 
     Returns:
         Deletion confirmation.
@@ -422,9 +521,7 @@ async def delete_user_file(user: User, file_id: str) -> api_models.UserFileDelet
     # pylint: disable=import-outside-toplevel  # Avoid circular imports
     from seer.core.files.service import WorkflowFileSystem, file_to_ref
 
-    file = await WorkflowFile.filter(file_id=file_id, user=user).first()
-    if not file:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File '{file_id}' not found")
+    file = await _get_file_org_scoped(user, file_id, organization, membership, require_manage=True)
 
     # Delete from storage if configured
     deleted_from_storage = False
@@ -445,6 +542,8 @@ async def delete_user_file(user: User, file_id: str) -> api_models.UserFileDelet
 async def bulk_delete_user_files(
     user: User,
     file_ids: list[str],
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
 ) -> api_models.BulkDeleteFilesResponse:
     """
     Delete multiple files at once.
@@ -467,9 +566,9 @@ async def bulk_delete_user_files(
     fs = WorkflowFileSystem.instance() if config.is_workflow_file_system_configured else None
 
     for file_id in file_ids:
-        file = await WorkflowFile.filter(file_id=file_id, user=user).first()
-
-        if not file:
+        try:
+            file = await _get_file_org_scoped(user, file_id, organization, membership, require_manage=True)
+        except HTTPException:
             results.append(api_models.BulkDeleteResult(file_id=file_id, deleted=False, error="File not found"))
             failed_count += 1
             continue
@@ -513,6 +612,7 @@ async def search_user_files(
     user: User,
     query: str,
     limit: int = 20,
+    organization: Optional[Organization] = None,
 ) -> api_models.FileSearchResponse:
     """
     Search files by filename.
@@ -521,6 +621,7 @@ async def search_user_files(
         user: Authenticated user.
         query: Search query (matches filename).
         limit: Max results to return.
+        organization: Optional organization context for team access.
 
     Returns:
         Matching files.
@@ -528,18 +629,28 @@ async def search_user_files(
     limit = max(1, min(limit, 50))
 
     # Search by filename (case-insensitive partial match)
-    files = await WorkflowFile.filter(
-        user=user,
-        filename__icontains=query,
-    ).prefetch_related(
-        "workflow_run", "workflow_run__workflow"
-    ).order_by("-created_at").limit(limit)
-
-    # Get total count of matches
-    total_matches = await WorkflowFile.filter(
-        user=user,
-        filename__icontains=query,
-    ).count()
+    if organization:
+        files = await WorkflowFile.filter(
+            organization=organization,
+            filename__icontains=query,
+        ).prefetch_related(
+            "workflow_run", "workflow_run__workflow"
+        ).order_by("-created_at").limit(limit)
+        total_matches = await WorkflowFile.filter(
+            organization=organization,
+            filename__icontains=query,
+        ).count()
+    else:
+        files = await WorkflowFile.filter(
+            user=user,
+            filename__icontains=query,
+        ).prefetch_related(
+            "workflow_run", "workflow_run__workflow"
+        ).order_by("-created_at").limit(limit)
+        total_matches = await WorkflowFile.filter(
+            user=user,
+            filename__icontains=query,
+        ).count()
 
     items = []
     for f in files:

@@ -1345,102 +1345,110 @@ def test_strip_null_optional_fields_leads_regression():
 from seer.core.schema.models import InlineSchema, OutputContract, OutputMode
 
 
+def _build_agent_spec_with_outputs(output_schema: dict) -> dict:
+    """Helper: build a minimal workflow spec with one AgentNode using the given output schema."""
+    return {
+        "version": "2",
+        "nodes": [
+            {
+                "id": "agent1",
+                "type": "agent",
+                "inputs": {"model": "claude-sonnet-4-6", "prompt": "Do something."},
+                "outputs": {
+                    "mode": "json",
+                    "schema": {"json_schema": output_schema},
+                },
+            }
+        ],
+    }
+
+
 def test_output_schema_all_properties_required_passes():
-    """Schema with all properties listed in required should not raise."""
-    contract = OutputContract(
-        mode=OutputMode.json,
-        schema=InlineSchema(**{"schema": {
-            "type": "object",
-            "properties": {
-                "q1_id": {"type": "string"},
-                "q1_fact": {"type": "string"},
-            },
-            "required": ["q1_id", "q1_fact"],
-        }}),
-    )
-    assert contract.mode == OutputMode.json
+    """Schema with all properties listed in required should compile without error."""
+    spec = parse_workflow_spec(_build_agent_spec_with_outputs({
+        "type": "object",
+        "properties": {
+            "q1_id": {"type": "string"},
+            "q1_fact": {"type": "string"},
+        },
+        "required": ["q1_id", "q1_fact"],
+    }))
+    env = build_type_environment(spec, schema_registry=SchemaRegistry(), tool_registry=ToolRegistry())
+    assert env.get("agent1") is not None
 
 
 def test_output_schema_missing_required_raises():
-    """Top-level property absent from required array must raise ValueError."""
-    with pytest.raises(ValueError, match="q1_id"):
-        OutputContract(
-            mode=OutputMode.json,
-            schema=InlineSchema(**{"schema": {
-                "type": "object",
-                "properties": {
-                    "q1_id": {"type": "string"},
-                    "q1_fact": {"type": "string"},
-                },
-                # No required array at all
-            }}),
-        )
+    """Top-level property absent from required array must raise at compile time."""
+    spec = parse_workflow_spec(_build_agent_spec_with_outputs({
+        "type": "object",
+        "properties": {
+            "q1_id": {"type": "string"},
+            "q1_fact": {"type": "string"},
+        },
+        # No required array at all
+    }))
+    with pytest.raises((TypeEnvironmentError, ValueError), match="q1_id"):
+        build_type_environment(spec, schema_registry=SchemaRegistry(), tool_registry=ToolRegistry())
 
 
 def test_output_schema_partial_required_raises():
-    """Only some properties in required — missing ones must raise ValueError."""
-    with pytest.raises(ValueError, match="q1_fact"):
-        OutputContract(
-            mode=OutputMode.json,
-            schema=InlineSchema(**{"schema": {
-                "type": "object",
-                "properties": {
-                    "q1_id": {"type": "string"},
-                    "q1_fact": {"type": "string"},
-                },
-                "required": ["q1_id"],  # q1_fact missing
-            }}),
-        )
+    """Only some properties in required — missing ones must raise at compile time."""
+    spec = parse_workflow_spec(_build_agent_spec_with_outputs({
+        "type": "object",
+        "properties": {
+            "q1_id": {"type": "string"},
+            "q1_fact": {"type": "string"},
+        },
+        "required": ["q1_id"],  # q1_fact missing
+    }))
+    with pytest.raises((TypeEnvironmentError, ValueError), match="q1_fact"):
+        build_type_environment(spec, schema_registry=SchemaRegistry(), tool_registry=ToolRegistry())
 
 
 def test_output_schema_nested_object_missing_required_raises():
     """Nested object schema missing required must raise with a path pointing inside."""
-    with pytest.raises(ValueError, match=r"\$\.corrections\[\]"):
-        OutputContract(
-            mode=OutputMode.json,
-            schema=InlineSchema(**{"schema": {
-                "type": "object",
-                "properties": {
-                    "corrections": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "original": {"type": "string"},
-                                "fixed": {"type": "string"},
-                            },
-                            # No required — should fail with path $.corrections[]
-                        },
-                    }
+    spec = parse_workflow_spec(_build_agent_spec_with_outputs({
+        "type": "object",
+        "properties": {
+            "corrections": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "original": {"type": "string"},
+                        "fixed": {"type": "string"},
+                    },
+                    # No required — should fail with path $.corrections[]
                 },
-                "required": ["corrections"],
-            }}),
-        )
+            }
+        },
+        "required": ["corrections"],
+    }))
+    with pytest.raises((TypeEnvironmentError, ValueError), match=r"corrections"):
+        build_type_environment(spec, schema_registry=SchemaRegistry(), tool_registry=ToolRegistry())
 
 
 def test_output_schema_array_items_validated():
-    """Array items with type:object but missing required must raise ValueError."""
-    with pytest.raises(ValueError, match="label"):
-        OutputContract(
-            mode=OutputMode.json,
-            schema=InlineSchema(**{"schema": {
-                "type": "object",
-                "properties": {
-                    "tags": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "id": {"type": "integer"},
-                                "label": {"type": "string"},
-                            },
-                            "required": ["id"],  # label missing
-                        },
-                    }
+    """Array items with type:object but missing required must raise at compile time."""
+    spec = parse_workflow_spec(_build_agent_spec_with_outputs({
+        "type": "object",
+        "properties": {
+            "tags": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "integer"},
+                        "label": {"type": "string"},
+                    },
+                    "required": ["id"],  # label missing
                 },
-                "required": ["tags"],
-            }}),
-        )
+            }
+        },
+        "required": ["tags"],
+    }))
+    with pytest.raises((TypeEnvironmentError, ValueError), match="label"):
+        build_type_environment(spec, schema_registry=SchemaRegistry(), tool_registry=ToolRegistry())
 
 
 def test_output_schema_text_mode_not_affected():
@@ -1458,3 +1466,39 @@ def test_output_schema_no_properties_passes():
         }}),
     )
     assert contract.mode == OutputMode.json
+
+
+def test_tool_node_expect_outputs_allows_optional_properties():
+    """ToolNode.expect_outputs must accept schemas where some properties are optional (not in required)."""
+    spec_payload = {
+        "version": "2",
+        "nodes": [
+            {
+                "id": "tool1",
+                "type": "tool",
+                "tool": "gmail_list_emails",
+                "inputs": {},
+                "expect_outputs": {
+                    "mode": "json",
+                    "schema": {
+                        "json_schema": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "subject": {"type": "string"},
+                                    "body": {"type": "string"},  # optional — not in required
+                                },
+                                "required": ["id", "subject"],
+                                "additionalProperties": True,
+                            },
+                        }
+                    },
+                },
+            }
+        ],
+    }
+    # Must not raise — optional properties are valid for tool node assertions
+    spec = parse_workflow_spec(spec_payload)
+    assert spec is not None

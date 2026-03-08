@@ -7,7 +7,9 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fastapi import HTTPException
 
+from seer.database import OrganizationMembership
 from seer.database.knowledge_models import KnowledgeBase, KnowledgeDocument
+from seer.database.organization_models import OrganizationRole
 from seer.logger import get_logger
 from seer.services.knowledge.chunking_service import ChunkingService
 from seer.services.knowledge.embedding_service import get_embedding_service
@@ -95,10 +97,24 @@ class KnowledgeBaseAddTextTool(BaseTool):
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-        # Get KB
+        # Get KB and verify user has manage access
         kb = await KnowledgeBase.get_or_none(id=internal_id)
         if not kb:
             raise HTTPException(status_code=404, detail=f"Knowledge base not found: {kb_id}")
+
+        # Check user access: must be owner or org admin/owner
+        if context and context.user:
+            has_access = kb.user_id == context.user.id
+            if not has_access and kb.organization_id:
+                membership = await OrganizationMembership.get_or_none(
+                    organization_id=kb.organization_id, user=context.user
+                )
+                if membership and membership.role in (OrganizationRole.OWNER, OrganizationRole.ADMIN):
+                    has_access = True
+            if not has_access:
+                raise HTTPException(status_code=404, detail=f"Knowledge base not found: {kb_id}")
+        else:
+            raise HTTPException(status_code=401, detail="User context required")
 
         # Compute content hash for deduplication
         content_bytes = content.encode("utf-8")
