@@ -101,10 +101,10 @@ async def create_personal_organization(
         joined_at=datetime.now(timezone.utc),
     )
 
-    # Create billing profile for the organization
-    await BillingProfile.create(
-        type=BillingProfileType.INDIVIDUAL,
+    # Create billing profile for the organization (idempotent — legacy users may already have one)
+    await BillingProfile.get_or_create(
         owner_user=user,
+        defaults={"type": BillingProfileType.INDIVIDUAL},
     )
 
     logger.info(
