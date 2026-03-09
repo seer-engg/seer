@@ -1,5 +1,3 @@
-# pylint: disable=too-complex,try-except-raise
-# Reason: _make_request handles multiple HTTP methods and error conditions; re-raises HTTPException to avoid broader catch
 """
 Base class for Notion API tools.
 
@@ -17,6 +15,7 @@ from fastapi import HTTPException
 from seer.logger import get_logger
 from seer.tools.base import BaseTool
 from seer.tools.credential_resolver import ResolvedCredentials
+from seer.tools.http_dispatch import dispatch_http
 
 logger = get_logger("shared.tools.notion.base")
 
@@ -102,16 +101,7 @@ class NotionAPIClient(BaseTool, ABC):
 
         try:
             async with httpx.AsyncClient(timeout=timeout_value) as client:
-                if method.upper() == "GET":
-                    resp = await client.get(url, headers=headers, params=params)
-                elif method.upper() == "POST":
-                    resp = await client.post(url, headers=headers, params=params, json=json_body)
-                elif method.upper() == "PATCH":
-                    resp = await client.patch(url, headers=headers, params=params, json=json_body)
-                elif method.upper() == "DELETE":
-                    resp = await client.delete(url, headers=headers, params=params)
-                else:
-                    raise ValueError(f"Unsupported HTTP method: {method}")
+                resp = await dispatch_http(client, method, url, headers, params=params, json_body=json_body)
 
                 resp.raise_for_status()
                 return resp.json()
@@ -123,8 +113,6 @@ class NotionAPIClient(BaseTool, ABC):
             ) from exc
         except httpx.HTTPStatusError as exc:
             raise self._handle_notion_error(exc) from exc
-        except HTTPException:
-            raise
         except (ValueError, KeyError, TypeError) as exc:
             logger.exception("Unexpected error in %s", self.name)
             raise HTTPException(
