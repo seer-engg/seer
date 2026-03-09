@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 
 from seer.api.workflows import models as api_models
 from seer.api.workflows import services
+from seer.api.workflows.services.share_template import ShareAsTemplateRequest, ShareAsTemplateResponse, share_workflow_as_template
 from seer.database import User
 
 router = APIRouter(prefix="/v1", tags=["workflows"])
@@ -462,6 +463,16 @@ async def delete_run_file(request: Request, run_id: str, file_id: str):
     """
     user = _require_user(request)
     return await services.delete_run_file(user, run_id, file_id)
+
+
+@router.post(
+    "/workflows/{workflow_id}/share-as-template",
+    response_model=ShareAsTemplateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def share_as_template(request: Request, workflow_id: str, payload: ShareAsTemplateRequest):
+    user = _require_user(request)
+    return await share_workflow_as_template(user, workflow_id, payload)
 
 
 __all__ = ["router"]

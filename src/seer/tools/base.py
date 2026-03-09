@@ -109,6 +109,7 @@ class BaseTool(ABC):
     name: str
     description: str
     required_scopes: List[str] = []
+    requires_oauth: bool = False  # True for OAuth tools with no URL scopes (e.g. Notion)
     integration_type: Optional[str] = None  # e.g., 'gmail', 'github', 'googledrive'
     provider: Optional[str] = None  # e.g., 'google', 'github' - OAuth provider for connections
     required_secrets: List[str] = []

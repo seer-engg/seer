@@ -49,7 +49,8 @@ from seer.services.integrations.auth.helpers import (
 from seer.services.integrations.tool_status_service import (
     get_tools_connection_status_for_user,
     get_single_tool_status,
-    PROVIDERS_WITHOUT_REFRESH_TOKENS
+    PROVIDERS_WITHOUT_REFRESH_TOKENS,
+    SCOPELESS_OAUTH_PROVIDERS,
 )
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
@@ -69,14 +70,15 @@ def _build_oauth_redirect_uri(request: Request, oauth_provider: str) -> str:
 
 
 def _validate_scope_and_get_provider(scope: str, provider: str):
-    if not scope:
+    oauth_provider = get_oauth_provider(provider)
+    # Some providers (e.g. Notion) use capability-based permissions instead of URL scopes
+    if not scope and oauth_provider not in SCOPELESS_OAUTH_PROVIDERS:
         raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Missing scope parameter",
             detail="scope parameter is required. Frontend must specify OAuth scopes.",
             status=400
         )
-    oauth_provider = get_oauth_provider(provider)
     provider_impl = get_integration_provider(oauth_provider)
     if not provider_impl:
         raise_problem(
@@ -97,9 +99,11 @@ def _check_existing_scopes(
 ):
     # Check if this provider requires refresh tokens for re-consent logic
     requires_refresh = oauth_provider not in PROVIDERS_WITHOUT_REFRESH_TOKENS
+    # Scopeless providers (e.g. Notion) store empty scopes — treat any active connection as valid
+    is_scopeless = oauth_provider in SCOPELESS_OAUTH_PROVIDERS
     has_valid_connection = (
         existing_connection
-        and existing_connection.scopes
+        and (existing_connection.scopes or is_scopeless)
         and (existing_connection.refresh_token_enc or not requires_refresh)
     )
 
@@ -434,7 +438,7 @@ async def get_tool_accounts(request: Request, tool_name: str):
         )
 
     # If tool doesn't require OAuth, return empty response
-    if not tool.required_scopes:
+    if not tool.required_scopes and not tool.requires_oauth:
         return ToolAccountsResponse(
             tool_name=tool_name,
             provider=tool.provider,
@@ -461,7 +465,10 @@ async def get_tool_accounts(request: Request, tool_name: str):
     for conn in provider_connections:
         # Check scope coverage
         missing = []
-        if conn.scopes:
+        if not tool.required_scopes:
+            # Scopeless OAuth provider (e.g. Notion) — connection existing = fully authorized
+            has_scopes = True
+        elif conn.scopes:
             has_scopes = has_required_scopes(conn.scopes, tool.required_scopes)
             if not has_scopes:
                 # Find which scopes are missing
