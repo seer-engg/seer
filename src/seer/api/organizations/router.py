@@ -1,11 +1,15 @@
+# pylint: disable=too-many-lines  # Reason: single router consolidates all org, member, invitation, integration, approval, and billing endpoints
 """
 Organizations API Router.
 
 Provides endpoints for managing organizations, memberships, and invitations.
 All resource access is org-scoped via the OrganizationContextMiddleware.
 """
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
+
+import stripe
 
 from fastapi import APIRouter, Body, HTTPException, Request, status
 
@@ -43,6 +47,7 @@ from seer.api.organizations.models import (
     WorkflowApprovalResponse,
 )
 from seer.database import OAuthConnection, Organization, OrganizationMembership, User, Workflow
+from seer.database.models import UserSettings
 from seer.database.organization_models import (
     ApprovalStatus,
     InvitationStatus,
@@ -51,6 +56,12 @@ from seer.database.organization_models import (
     OrganizationRole,
     OrganizationType,
     WorkflowApproval,
+)
+from seer.database.usage_models import ResourceType, UsageCounter
+from seer.api.subscriptions.stripe_service import (
+    create_org_portal_session,
+    get_org_subscription,
+    list_org_invoices as _list_org_invoices,
 )
 from seer.config import config
 from seer.services.email_service import (
@@ -227,7 +238,7 @@ async def switch_organization(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(e),
-        )
+        ) from e
 
     return SwitchOrganizationResponse(
         organization=OrganizationResponse(
@@ -561,7 +572,6 @@ async def create_invitation(
         await existing_invitation.save()
 
     # Create new invitation
-    import secrets
     invitation = await OrganizationInvitation.create(
         organization=org,
         email=body.email.lower(),
@@ -657,8 +667,6 @@ async def _mark_onboarding_complete_for_team_member(user: User) -> None:
     Team members use the team's subscription, so they don't need to add
     their own payment method or complete the full onboarding flow.
     """
-    from seer.database.models import UserSettings
-
     settings, _ = await UserSettings.get_or_create(user=user)
 
     onboarding = settings.preferences.get("onboarding", {})
@@ -1230,8 +1238,6 @@ async def review_workflow_approval(
     Admins and owners can approve or reject consultant-created workflows.
     Approved workflows can then be published and used by the team.
     """
-    from datetime import timezone as tz
-
     user = _require_user(request)
     org = get_organization(request)
     membership = get_membership(request)
@@ -1266,7 +1272,7 @@ async def review_workflow_approval(
     # Update approval
     approval.status = body.status
     approval.reviewed_by = user
-    approval.reviewed_at = datetime.now(tz.utc)
+    approval.reviewed_at = datetime.now(timezone.utc)
     approval.review_notes = body.notes
     await approval.save()
 
@@ -1305,8 +1311,6 @@ async def get_org_billing(
     Returns subscription tier, status, and billing period information.
     Only organization owners can access billing information.
     """
-    from seer.api.subscriptions.stripe_service import get_org_subscription
-
     _require_user(request)
     org = get_organization(request)
     membership = get_membership(request)
@@ -1342,10 +1346,6 @@ async def create_org_billing_portal(
     Allows the owner to manage subscription, payment methods, and view invoices.
     Only organization owners can access the billing portal.
     """
-    from seer.api.subscriptions.stripe_service import create_org_portal_session
-    from seer.config import config
-    import stripe
-
     user = _require_user(request)
     org = get_organization(request)
     membership = get_membership(request)
@@ -1380,10 +1380,6 @@ async def list_org_invoices(
     Returns a paginated list of Stripe invoices.
     Only organization owners can view invoices.
     """
-    from seer.api.subscriptions.stripe_service import list_org_invoices as _list_org_invoices
-    from seer.config import config
-    import stripe
-
     _require_user(request)
     org = get_organization(request)
     membership = get_membership(request)
@@ -1420,9 +1416,6 @@ async def get_org_usage_summary(
     Returns workflow count, runs this month, and LLM credits used.
     Only organization owners can view usage information.
     """
-    from datetime import timezone as tz
-    from seer.database.usage_models import UsageCounter, ResourceType
-
     _require_user(request)
     org = get_organization(request)
     membership = get_membership(request)
@@ -1433,7 +1426,7 @@ async def get_org_usage_summary(
     _require_owner(membership)
 
     # Get current billing period (start of current month)
-    now = datetime.now(tz.utc)
+    now = datetime.now(timezone.utc)
     period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     period_end = (period_start.replace(month=period_start.month % 12 + 1) if period_start.month < 12
                   else period_start.replace(year=period_start.year + 1, month=1))

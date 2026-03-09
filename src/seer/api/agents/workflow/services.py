@@ -15,7 +15,6 @@ from seer.database import (
     WorkflowChatMessage,
     WorkflowChatSession,
     WorkflowProposal,
-    parse_workflow_public_id,
 )
 from seer.database.workflow_models import WorkflowCreationMode, WorkflowDiscoveryChatSession
 from seer.api.workflows.services.shared import (

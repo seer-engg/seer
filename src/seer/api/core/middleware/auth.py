@@ -178,7 +178,9 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
 
     async def _is_member_of_paying_team(self, db_user: User) -> bool:
         """Check if user is a member of any team whose owner has a valid billing profile."""
-        from seer.database.organization_models import OrganizationMembership, MembershipStatus, OrganizationType
+        from seer.database.organization_models import (  # pylint: disable=import-outside-toplevel  # Reason: avoids circular import
+            OrganizationMembership, MembershipStatus, OrganizationType
+        )
 
         # Find active team memberships
         team_membership = await OrganizationMembership.filter(

@@ -150,6 +150,7 @@ class OrganizationMembership(models.Model):
         )
 
     def __str__(self) -> str:
+        # pylint: disable-next=no-member  # Reason: Tortoise ORM generates _id FK shadow attributes at runtime
         return f"OrganizationMembership<org={self.organization_id}, user={self.user_id}, role={self.role}>"
 
     @property
@@ -226,6 +227,7 @@ class OrganizationInvitation(models.Model):
         )
 
     def __str__(self) -> str:
+        # pylint: disable-next=no-member  # Reason: Tortoise ORM generates _id FK shadow attributes at runtime
         return f"OrganizationInvitation<org={self.organization_id}, email={self.email}, status={self.status}>"
 
     @property
@@ -287,6 +289,7 @@ class WorkflowApproval(models.Model):
         )
 
     def __str__(self) -> str:
+        # pylint: disable-next=no-member  # Reason: Tortoise ORM generates _id FK shadow attributes at runtime
         return f"WorkflowApproval<workflow={self.workflow_id}, status={self.status}>"
 
 
@@ -335,6 +338,7 @@ class WorkflowAssignment(models.Model):
         )
 
     def __str__(self) -> str:
+        # pylint: disable-next=no-member  # Reason: Tortoise ORM generates _id FK shadow attributes at runtime
         return f"WorkflowAssignment<workflow={self.workflow_id}, user={self.user_id}>"
 
 

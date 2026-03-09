@@ -27,7 +27,7 @@ def _get_org_context(request: Request) -> Tuple[Optional[Organization], Optional
         org = get_organization(request)
         membership = get_membership(request)
         return org, membership
-    except Exception:
+    except (AttributeError, HTTPException):
         return None, None
 
 

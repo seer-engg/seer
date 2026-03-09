@@ -75,6 +75,7 @@ class BillingProfile(models.Model):
         table = "billing_profiles"
 
     def __str__(self) -> str:
+        # pylint: disable=no-member  # Reason: Tortoise ORM generates FK _id attributes (owner_user_id, owner_organization_id) dynamically
         owner = f"user={self.owner_user_id}" if self.owner_user_id else f"org={self.owner_organization_id}"
         return f"BillingProfile<id={self.id}, type={self.type.value}, {owner}>"
 

@@ -83,6 +83,7 @@ class UsageCounter(models.Model):
         ]
 
     def __str__(self) -> str:
+        # pylint: disable=no-member  # Reason: Tortoise ORM generates FK _id attributes (user_id, organization_id) dynamically
         period_str = f"{self.period_start}" if self.period_start else "all-time"
         owner = f"user={self.user_id}" if self.user_id else f"org={self.organization_id}"
         return f"UsageCounter<{owner}, type={self.resource_type.value}, period={period_str}, count={self.count}>"
@@ -153,5 +154,6 @@ class LLMUsageRecord(models.Model):
         ]
 
     def __str__(self) -> str:
+        # pylint: disable=no-member  # Reason: Tortoise ORM generates FK _id attributes (user_id, organization_id) dynamically
         owner = f"user={self.user_id}" if self.user_id else f"org={self.organization_id}"
         return f"LLMUsageRecord<{owner}, model={self.model}, tokens={self.total_tokens}, cost=${self.cost}>"

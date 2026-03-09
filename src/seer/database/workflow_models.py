@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # Reason: workflow ORM models, version history, run tracking, and status enums all belong together
 from datetime import datetime, timezone
 from enum import Enum
 

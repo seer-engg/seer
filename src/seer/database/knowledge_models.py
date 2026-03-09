@@ -19,6 +19,7 @@ class KnowledgeBase(models.Model):
 
     id = fields.IntField(primary_key=True)
     user = fields.ForeignKeyField("models.User", related_name="knowledge_bases", on_delete=CASCADE)
+    user_id: int  # Tortoise ORM FK shadow attribute
     organization = fields.ForeignKeyField(
         "models.Organization",
         related_name="knowledge_bases",
@@ -26,6 +27,7 @@ class KnowledgeBase(models.Model):
         null=True,
         description="Organization this KB belongs to (for team access)",
     )
+    organization_id: Optional[int]  # Tortoise ORM FK shadow attribute
     name = fields.CharField(max_length=255)
     description = fields.TextField(null=True)
     embedding_model = fields.CharField(max_length=100, default="text-embedding-3-small")

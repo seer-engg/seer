@@ -96,9 +96,10 @@ class User(models.Model):
         Note: This uses lazy imports to avoid circular dependencies.
         """
         # Lazy import to avoid circular dependency
+        # pylint: disable=import-outside-toplevel  # Reason: avoids circular import between database models and service layer
         from seer.services.organization_service import create_personal_organization
-        from seer.services.clerk_service import set_active_organization
-        from seer.logger import get_logger
+        from seer.services.clerk_service import set_active_organization  # pylint: disable=import-outside-toplevel  # Reason: avoids circular import
+        from seer.logger import get_logger  # pylint: disable=import-outside-toplevel  # Reason: avoids circular import
 
         logger = get_logger("database.models")
 

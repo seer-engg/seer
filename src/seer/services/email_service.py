@@ -50,6 +50,7 @@ async def _send_via_resend(
     to_emails: List[str],
     subject: str,
     html_body: str,
+    *,
     text_body: Optional[str] = None,
     from_address: Optional[str] = None,
     reply_to: Optional[str] = None,
@@ -107,6 +108,7 @@ async def send_email(
     to_emails: List[str],
     subject: str,
     html_body: str,
+    *,
     text_body: Optional[str] = None,
     from_address: Optional[str] = None,
     reply_to: Optional[str] = None,
@@ -128,7 +130,7 @@ async def send_email(
     Raises:
         EmailServiceError: If sending fails
     """
-    provider = config.email_provider.lower()
+    provider = str(config.email_provider).lower()
 
     if provider == "disabled":
         logger.info("Email sending disabled, skipping email to %s", to_emails)

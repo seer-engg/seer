@@ -128,7 +128,7 @@ async def _get_workflow(user: User, workflow_id: str) -> Workflow:
     return workflow
 
 
-async def _can_view_workflow(
+async def _can_view_workflow(  # pylint: disable=too-many-return-statements  # Reason: distinct RBAC branch per membership role/visibility
     user: User,
     workflow: Workflow,
     membership: Optional[OrganizationMembership] = None,
@@ -179,7 +179,7 @@ async def _can_view_workflow(
     return False
 
 
-async def _can_manage_workflow(
+async def _can_manage_workflow(  # pylint: disable=too-many-return-statements  # Reason: distinct RBAC branch per membership role/visibility
     user: User,
     workflow: Workflow,
     membership: Optional[OrganizationMembership] = None,

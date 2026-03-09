@@ -4,6 +4,8 @@ from typing import Set, Optional, List
 from datetime import datetime, timezone
 from typing import Dict, Any
 
+from tortoise.expressions import Q
+
 from seer.database import OAuthConnection, User
 from seer.logger import get_logger
 from seer.services.integrations.auth.oauth import get_oauth_provider
@@ -222,8 +224,6 @@ async def list_connections_with_shared(
     Returns:
         List of OAuthConnection objects
     """
-    from tortoise.expressions import Q
-
     try:
         query = Q(user=user, status="active")
         if organization_id:

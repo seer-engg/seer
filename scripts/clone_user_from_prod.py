@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# pylint: disable=too-many-lines  # Reason: ~200 lines are the 27-table TABLE_CONFIGS list; can't be shortened meaningfully
+# pylint: disable=too-many-lines,duplicate-code  # Reason: TABLE_CONFIGS list can't be shortened; _strip_auth_from_spec intentionally duplicated in standalone scripts
 """
 Clone a production user's data to local Postgres.
 

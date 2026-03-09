@@ -57,15 +57,14 @@ class OrganizationContextMiddleware(BaseHTTPMiddleware):
                 request.state.organization = membership.organization
                 request.state.membership = membership
                 return await call_next(request)
-            else:
-                # User claims an org they're not a member of
-                # This could happen if they were removed from a team
-                logger.warning(
-                    "User %s claims org %s but has no active membership",
-                    db_user.user_id,
-                    org_id,
-                )
-                # Fall through to personal org
+            # User claims an org they're not a member of
+            # This could happen if they were removed from a team
+            logger.warning(
+                "User %s claims org %s but has no active membership",
+                db_user.user_id,
+                org_id,
+            )
+            # Fall through to personal org
 
         # Default to personal org
         org_result = await self._get_or_create_personal_org(db_user)
@@ -148,6 +147,7 @@ class OrganizationContextMiddleware(BaseHTTPMiddleware):
         # Create it now (should be rare in production)
         logger.info("Creating missing personal org for user %s", db_user.user_id)
 
+        # pylint: disable-next=import-outside-toplevel  # Reason: avoids circular import between middleware and service layer
         from seer.services.organization_service import create_personal_organization
         return await create_personal_organization(db_user)
 

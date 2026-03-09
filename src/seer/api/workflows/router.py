@@ -491,6 +491,7 @@ async def delete_run_file(request: Request, run_id: str, file_id: str):
 
     This removes both the file from storage and its metadata.
     """
+    user = _require_user(request)
     _, membership = _get_org_context(request)
     return await services.delete_run_file(user, run_id, file_id, membership=membership)
 

@@ -1,4 +1,6 @@
-# pylint: disable=duplicate-code  # Reason: Shared workflow version mutation snippets are reused in services.shared
+# pylint: disable=duplicate-code,too-many-lines
+# Reason: Shared workflow version mutation snippets are reused in services.shared;
+# module contains multiple closely related CRUD operations that would be awkward to split
 """Workflow CRUD operations and version management."""
 
 from __future__ import annotations
@@ -12,7 +14,6 @@ from tortoise.exceptions import DoesNotExist
 from seer.api.workflows import models as api_models
 from seer.api.workflows.services.shared import (
     VALIDATION_PROBLEM,
-    _can_view_workflow,
     _get_draft_version,
     _get_workflow,
     _get_workflow_org_scoped,
@@ -415,7 +416,7 @@ async def patch_workflow_draft(
     return await _workflow_response(workflow)
 
 
-async def restore_workflow_version(
+async def restore_workflow_version(  # pylint: disable=too-many-positional-arguments  # Reason: All args are required for org-scoped version restore; splitting would obscure the call site
     user: User,
     workflow_id: str,
     version_id: int,

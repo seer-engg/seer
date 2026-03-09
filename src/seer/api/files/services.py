@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # Reason: file service consolidates upload, list, delete, presign, and storage backend logic
 """
 User-level file management services.
 

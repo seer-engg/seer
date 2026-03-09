@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from typing import Optional
 
 from fastapi import HTTPException, UploadFile, status
 from tortoise.functions import Count
@@ -20,7 +21,6 @@ from seer.api.knowledge.models import (
     QueryResponse,
     QueryResultItem,
 )
-from typing import Optional
 
 from seer.database import Organization, OrganizationMembership, User
 from seer.database.knowledge_models import (
@@ -40,22 +40,6 @@ logger = get_logger("api.knowledge.services")
 
 # Maximum file size: 10MB
 MAX_FILE_SIZE = 10 * 1024 * 1024
-
-
-async def _get_kb_for_user(user: User, kb_id: str) -> KnowledgeBase:
-    """Get knowledge base by public ID, ensuring user ownership."""
-    try:
-        internal_id = KnowledgeBase.parse_public_id(kb_id)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
-
-    kb = await KnowledgeBase.get_or_none(id=internal_id, user=user)
-    if not kb:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Knowledge base not found: {kb_id}",
-        )
-    return kb
 
 
 async def _can_view_kb(

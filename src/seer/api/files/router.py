@@ -39,7 +39,7 @@ def _get_org_context(request: Request) -> Tuple[Optional[Organization], Optional
         org = get_organization(request)
         membership = get_membership(request)
         return org, membership
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught  # Reason: org context is optional; any failure should silently degrade to unauthenticated access
         return None, None
 
 

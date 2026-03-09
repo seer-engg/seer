@@ -1,4 +1,4 @@
-# pylint: disable=broad-exception-caught,import-outside-toplevel,cyclic-import
+# pylint: disable=broad-exception-caught,import-outside-toplevel,cyclic-import,too-many-lines
 # Reason: Stripe operations require broad error handling; webhook controller imported lazily to avoid cycles during app init
 """
 Stripe service layer for subscription management.
@@ -745,9 +745,8 @@ async def get_or_create_org_stripe_customer(organization: Organization, owner_us
         }
 
         if config.env == "dev":
-            import time as time_module
             test_clock = stripe.test_helpers.TestClock.create(
-                frozen_time=int(time_module.time()),
+                frozen_time=int(time.time()),
                 name=f"Test clock for org {organization.name}",
             )
             customer_params["test_clock"] = test_clock.id
