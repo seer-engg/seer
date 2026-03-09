@@ -69,7 +69,7 @@ class TestGetSingleToolStatusService:
 
         with patch("seer.tools.base.get_tool", return_value=mock_tool), \
              patch("seer.services.integrations.tool_status_service.get_oauth_provider", return_value="google"), \
-             patch("seer.services.integrations.tool_status_service.list_connections", new_callable=AsyncMock, return_value=[mock_oauth_connection]), \
+             patch("seer.services.integrations.tool_status_service.list_connections_with_shared", new_callable=AsyncMock, return_value=[mock_oauth_connection]), \
              patch("seer.services.integrations.tool_status_service.build_provider_secrets_map", new_callable=AsyncMock, return_value={}):
 
             result = await get_single_tool_status(mock_user, "gmail_send_email")
@@ -85,9 +85,13 @@ class TestGetSingleToolStatusService:
         from seer.services.integrations.tool_status_service import get_single_tool_status
         from seer.database import OAuthConnection
 
+        # Mock the filter().first() chain
+        mock_filter = MagicMock()
+        mock_filter.first = AsyncMock(return_value=mock_oauth_connection)
+
         with patch("seer.tools.base.get_tool", return_value=mock_tool), \
              patch("seer.services.integrations.tool_status_service.get_oauth_provider", return_value="google"), \
-             patch.object(OAuthConnection, "get_or_none", new_callable=AsyncMock, return_value=mock_oauth_connection), \
+             patch.object(OAuthConnection, "filter", return_value=mock_filter), \
              patch("seer.services.integrations.tool_status_service.build_provider_secrets_map", new_callable=AsyncMock, return_value={}):
 
             result = await get_single_tool_status(mock_user, "gmail_send_email", connection_id=123)
@@ -104,9 +108,13 @@ class TestGetSingleToolStatusService:
         from seer.services.integrations.tool_status_service import get_single_tool_status
         from seer.database import OAuthConnection
 
+        # Mock the filter().first() chain returning None
+        mock_filter = MagicMock()
+        mock_filter.first = AsyncMock(return_value=None)
+
         with patch("seer.tools.base.get_tool", return_value=mock_tool), \
              patch("seer.services.integrations.tool_status_service.get_oauth_provider", return_value="google"), \
-             patch.object(OAuthConnection, "get_or_none", new_callable=AsyncMock, return_value=None), \
+             patch.object(OAuthConnection, "filter", return_value=mock_filter), \
              patch("seer.services.integrations.tool_status_service.build_provider_secrets_map", new_callable=AsyncMock, return_value={}):
 
             result = await get_single_tool_status(mock_user, "gmail_send_email", connection_id=999)
@@ -128,9 +136,13 @@ class TestGetSingleToolStatusService:
         wrong_provider_conn.provider = "github"  # Wrong provider for gmail tool
         wrong_provider_conn.scopes = "repo user"
 
+        # Mock the filter().first() chain
+        mock_filter = MagicMock()
+        mock_filter.first = AsyncMock(return_value=wrong_provider_conn)
+
         with patch("seer.tools.base.get_tool", return_value=mock_tool), \
              patch("seer.services.integrations.tool_status_service.get_oauth_provider", return_value="google"), \
-             patch.object(OAuthConnection, "get_or_none", new_callable=AsyncMock, return_value=wrong_provider_conn), \
+             patch.object(OAuthConnection, "filter", return_value=mock_filter), \
              patch("seer.services.integrations.tool_status_service.build_provider_secrets_map", new_callable=AsyncMock, return_value={}):
 
             result = await get_single_tool_status(mock_user, "gmail_send_email", connection_id=123)
@@ -152,9 +164,13 @@ class TestGetSingleToolStatusService:
         read_only_conn.scopes = "https://www.googleapis.com/auth/gmail.readonly"  # Missing send scope
         read_only_conn.refresh_token_enc = "encrypted_token"
 
+        # Mock the filter().first() chain
+        mock_filter = MagicMock()
+        mock_filter.first = AsyncMock(return_value=read_only_conn)
+
         with patch("seer.tools.base.get_tool", return_value=mock_tool), \
              patch("seer.services.integrations.tool_status_service.get_oauth_provider", return_value="google"), \
-             patch.object(OAuthConnection, "get_or_none", new_callable=AsyncMock, return_value=read_only_conn), \
+             patch.object(OAuthConnection, "filter", return_value=mock_filter), \
              patch("seer.services.integrations.tool_status_service.build_provider_secrets_map", new_callable=AsyncMock, return_value={}):
 
             result = await get_single_tool_status(mock_user, "gmail_send_email", connection_id=123)
@@ -175,10 +191,13 @@ class TestGetToolStatusEndpoint:
 
     @pytest.fixture
     def mock_request(self):
-        """Create a mock request with user state."""
+        """Create a mock request with user state and organization."""
         request = MagicMock()
         request.state.db_user = MagicMock()
         request.state.db_user.user_id = "test_user_123"
+        # Mock organization for shared connection lookup
+        request.state.organization = MagicMock()
+        request.state.organization.id = 1
         return request
 
     @pytest.mark.asyncio
@@ -224,7 +243,8 @@ class TestGetToolStatusEndpoint:
         with patch("seer.api.integrations.router.get_single_tool_status", new_callable=AsyncMock, return_value=expected_status) as mock_service:
             result = await get_tool_status(mock_request, "gmail_send_email", connection_id=456)
 
-        mock_service.assert_called_once_with(mock_request.state.db_user, "gmail_send_email", 456)
+        # Now called with organization_id as 4th argument
+        mock_service.assert_called_once_with(mock_request.state.db_user, "gmail_send_email", 456, 1)
         assert result["connection_id"] == "google:456"
         assert result["provider_account_id"] == "bob@gmail.com"
 

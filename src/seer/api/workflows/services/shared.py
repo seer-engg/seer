@@ -313,16 +313,25 @@ def raise_compiler_error(exc: WorkflowCompilerError, problem_title: str, type_ur
     )
 
 
-async def validate_workflow_spec(user: User, spec: WorkflowSpec) -> None:
+async def validate_workflow_spec(
+    user: User,
+    spec: WorkflowSpec,
+    organization_id: Optional[int] = None,
+) -> None:
     """
     Validate workflow spec by running the compiler pipeline.
     Raises HTTP 400 if validation fails.
+
+    Args:
+        user: The user validating the workflow
+        spec: The workflow spec to validate
+        organization_id: Optional organization ID for resolving shared connections
     """
     from seer.api.agents.checkpointer import get_checkpointer  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import at module load
     compiler = WorkflowCompilerSingleton.instance()
     spec_dict = _spec_to_dict(spec)
     checkpointer = await get_checkpointer()
     try:
-        await compiler.compile(user, spec_dict, checkpointer=checkpointer)
+        await compiler.compile(user, spec_dict, checkpointer=checkpointer, organization_id=organization_id)
     except WorkflowCompilerError as exc:
         raise_compiler_error(exc, "Workflow validation failed")

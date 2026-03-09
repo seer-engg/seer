@@ -948,7 +948,7 @@ async def list_org_integrations(
 async def share_integration(
     request: Request,
     org_id: int,
-    connection_id: int,
+    connection_id: str,  # Accept string to handle "google:1" format from frontend
 ) -> ShareIntegrationResponse:
     """
     Share an OAuth connection with the organization.
@@ -968,8 +968,19 @@ async def share_integration(
             detail="Can only share integrations with team organizations",
         )
 
+    # Parse connection_id - handles both "google:1" and "1" formats
+    if ":" in connection_id:
+        _, db_id = connection_id.split(":", 1)
+    else:
+        db_id = connection_id
+
+    try:
+        conn_id = int(db_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid connection ID: {connection_id}") from exc
+
     # Get the connection (must be owned by the user)
-    connection = await OAuthConnection.get_or_none(id=connection_id, user=user)
+    connection = await OAuthConnection.get_or_none(id=conn_id, user=user)
 
     if not connection:
         raise HTTPException(
@@ -1007,7 +1018,7 @@ async def share_integration(
 async def unshare_integration(
     request: Request,
     org_id: int,
-    connection_id: int,
+    connection_id: str,  # Accept string to handle "google:1" format from frontend
 ) -> None:
     """
     Remove sharing of an OAuth connection.
@@ -1021,8 +1032,19 @@ async def unshare_integration(
     if org.id != org_id:
         raise HTTPException(status_code=403, detail="Can only manage current organization")
 
+    # Parse connection_id - handles both "google:1" and "1" formats
+    if ":" in connection_id:
+        _, db_id = connection_id.split(":", 1)
+    else:
+        db_id = connection_id
+
+    try:
+        conn_id = int(db_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid connection ID: {connection_id}") from exc
+
     # Get the connection (must be owned by the user)
-    connection = await OAuthConnection.get_or_none(id=connection_id, user=user)
+    connection = await OAuthConnection.get_or_none(id=conn_id, user=user)
 
     if not connection:
         raise HTTPException(

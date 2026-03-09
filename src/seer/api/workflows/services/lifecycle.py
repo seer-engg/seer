@@ -495,7 +495,8 @@ async def publish_workflow(
     spec = WorkflowSpec.model_validate(draft_version.spec)
 
     # Run full compilation validation (same checks as /runs)
-    await validate_workflow_spec(user, spec)
+    # Pass organization_id for shared connection validation
+    await validate_workflow_spec(user, spec, organization_id=workflow.organization_id)
 
     # Sync trigger subscriptions
     # pylint: disable=import-outside-toplevel

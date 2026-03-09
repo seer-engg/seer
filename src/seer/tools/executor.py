@@ -33,6 +33,7 @@ async def execute_tool(
         user: User
         connection_id: OAuth connection ID (if tool requires OAuth)
         arguments: Tool arguments
+        context: Optional runtime context containing organization_id for shared connections
 
     Returns:
         Tool execution result
@@ -53,7 +54,15 @@ async def execute_tool(
     schema = tool.get_parameters_schema()
     arguments = coerce_arguments(arguments, schema)
 
-    resolver = CredentialResolver(user=user, tool=tool, connection_id=connection_id)
+    # Extract organization_id from context for shared connection resolution
+    organization_id = context.organization_id if context else None
+
+    resolver = CredentialResolver(
+        user=user,
+        tool=tool,
+        connection_id=connection_id,
+        organization_id=organization_id,
+    )
     try:
         resolved = await resolver.resolve(arguments or {})
     except HTTPException:

@@ -239,6 +239,7 @@ async def upload_file(
     from seer.database import WorkflowFile
 
     user = _require_user(request)
+    org, _ = _get_org_context(request)
 
     if not config.is_workflow_file_system_configured:
         raise HTTPException(
@@ -306,6 +307,7 @@ async def upload_file(
     db_file = await WorkflowFile.create(
         file_id=file_id,
         user=user,
+        organization=org,
         workflow_run=None,  # User upload, no run
         storage_path=storage_path,
         filename=actual_filename,

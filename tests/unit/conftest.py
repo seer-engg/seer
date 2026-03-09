@@ -185,6 +185,7 @@ def mock_workflow():
     workflow.id = 1
     workflow.workflow_id = "wf_1"
     workflow.name = "Test Workflow"
+    workflow.organization_id = None  # For shared connection resolution
     return workflow
 
 
