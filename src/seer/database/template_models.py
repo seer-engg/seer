@@ -14,6 +14,7 @@ class TemplateCategory(str, Enum):
     MARKETING = "marketing"
     CUSTOMER_SUPPORT = "customer_support"
     SALES = "sales"
+    PRODUCTIVITY = "productivity"
 
 
 class TemplateSource(str, Enum):
