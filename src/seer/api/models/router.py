@@ -16,7 +16,20 @@ async def list_models():
     Returns Kimi series models only.
     """
     return [
-        ModelInfo(id="z-ai/glm-4.7", provider="openrouter", name="GLM 4.7", available=True),
+        ModelInfo(id="z-ai/glm-5", provider="openrouter", name="GLM 5", available=True),
         ModelInfo(id="moonshotai/kimi-k2.5", provider="openrouter", name="Kimi K2.5", available=True),
         ModelInfo(id="moonshotai/kimi-k2-thinking", provider="openrouter", name="Kimi K2 Thinking", available=True),
+    ]
+
+
+@router.get("/image", response_model=List[ModelInfo])
+async def list_image_models():
+    """List available models for image generation."""
+    return [
+        ModelInfo(id="google/gemini-3.1-flash-image-preview", provider="openrouter", name="Gemini 3.1 Flash Image", available=True),
+        ModelInfo(id="sourceful/riverflow-v2-pro", provider="openrouter", name="Riverflow V2 Pro", available=True),
+        ModelInfo(id="sourceful/riverflow-v2-fast", provider="openrouter", name="Riverflow V2 Fast", available=True),
+        ModelInfo(id="black-forest-labs/flux.2-klein-4b", provider="openrouter", name="FLUX.2 Klein", available=True),
+        ModelInfo(id="bytedance-seed/seedream-4.5", provider="openrouter", name="Seedream 4.5", available=True),
+        ModelInfo(id="black-forest-labs/flux.2-flex", provider="openrouter", name="FLUX.2 Flex", available=True),
     ]

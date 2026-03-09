@@ -106,6 +106,22 @@ if config.airtable_client_id and config.airtable_client_secret:
     )
 
 
+# Notion OAuth
+# Notion does not use URL scopes - permissions are configured as "capabilities" in Notion dashboard
+# Requires Basic Auth for token endpoint (same as Airtable)
+if config.notion_client_id and config.notion_client_secret:
+    oauth.register(
+        name='notion',
+        client_id=config.notion_client_id,
+        client_secret=config.notion_client_secret,
+        authorize_url='https://api.notion.com/v1/oauth/authorize',
+        access_token_url='https://api.notion.com/v1/oauth/token',
+        api_base_url='https://api.notion.com/v1/',
+        token_endpoint_auth_method='client_secret_basic',  # Notion requires Basic Auth header
+        client_kwargs={},  # No URL scopes - Notion uses dashboard capabilities
+    )
+
+
 # Provider mappings: integration_type -> OAuth provider
 _INTEGRATION_TO_PROVIDER: dict[str, str] = {
     # Google integrations
@@ -128,6 +144,7 @@ _INTEGRATION_TO_PROVIDER: dict[str, str] = {
     'linkedin': 'linkedin',
     'slack': 'slack',
     'airtable': 'airtable',
+    'notion': 'notion',
 }
 
 
