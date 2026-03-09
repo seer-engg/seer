@@ -190,6 +190,7 @@ async def test_agent_generates_data_for_loop_iteration() -> None:
                                     "items": {"type": "string"},
                                 }
                             },
+                            "required": ["tasks"],
                         }
                     },
                 },
