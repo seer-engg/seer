@@ -139,6 +139,9 @@ class TriggerPollEngine:
                         delay_seconds=max(subscription.poll_interval_seconds, 60),
                     )
                     return None
+            else:
+                # No connection required and none configured — skip OAuth entirely
+                return None
 
         try:
             return await get_oauth_token(

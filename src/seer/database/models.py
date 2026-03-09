@@ -36,7 +36,17 @@ class User(models.Model):
     async def get_or_create_from_auth(
         cls, auth_user: "AuthenticatedUser", signup_source: Optional[str] = None
     ) -> "User":
-        """Fetch or persist a user based on Clerk claims."""
+        """
+        Fetch or persist a user based on Clerk claims.
+
+        For new users, this also creates:
+        - A personal Organization (every user has one)
+        - An owner OrganizationMembership
+        - A BillingProfile for the personal org
+
+        After creation, Clerk metadata is updated with the personal org ID
+        so the JWT includes active_organization_id on subsequent requests.
+        """
         defaults: Dict[str, Any] = {
             "email": auth_user.email,
             "first_name": auth_user.first_name,
@@ -53,6 +63,8 @@ class User(models.Model):
             defaults=defaults,
         )
         if created:
+            # Create personal organization for new users
+            await cls._setup_new_user(user)
             return user
 
         updated_fields = []
@@ -68,6 +80,59 @@ class User(models.Model):
             await user.save(update_fields=updated_fields)
 
         return user
+
+    @classmethod
+    async def _setup_new_user(cls, user: "User") -> None:
+        """
+        Set up a newly created user with personal organization.
+
+        This is called automatically when a new user is created via get_or_create_from_auth.
+        Creates:
+        - Personal Organization
+        - Owner membership
+        - Billing profile
+        - Updates Clerk metadata with active_organization_id
+
+        Note: This uses lazy imports to avoid circular dependencies.
+        """
+        # Lazy import to avoid circular dependency
+        # pylint: disable=import-outside-toplevel  # Reason: avoids circular import between database models and service layer
+        from seer.services.organization_service import create_personal_organization
+        from seer.services.clerk_service import set_active_organization  # pylint: disable=import-outside-toplevel  # Reason: avoids circular import
+        from seer.logger import get_logger  # pylint: disable=import-outside-toplevel  # Reason: avoids circular import
+
+        logger = get_logger("database.models")
+
+        try:
+            organization, _ = await create_personal_organization(user)
+
+            # Set personal org as active in Clerk metadata
+            # This ensures the JWT includes active_organization_id on next token refresh
+            try:
+                await set_active_organization(user.user_id, organization.id)
+            except Exception as clerk_err:  # pylint: disable=broad-exception-caught  # Reason: Clerk API failure shouldn't block user signup
+                # Log but don't fail - Clerk metadata is nice-to-have
+                # The middleware will fall back to personal org anyway
+                logger.warning(
+                    "Failed to set Clerk metadata for user %s: %s",
+                    user.user_id,
+                    clerk_err,
+                )
+
+            logger.info(
+                "Set up new user %s with personal org %s",
+                user.user_id,
+                organization.id,
+            )
+
+        except Exception as org_err:  # pylint: disable=broad-exception-caught  # Reason: Org creation failure should be logged but handled gracefully
+            # Log the error but don't fail user creation
+            # The middleware will create the org on next request
+            logger.error(
+                "Failed to create personal org for user %s: %s",
+                user.user_id,
+                org_err,
+            )
 
 
 class UserPublic(BaseModel):

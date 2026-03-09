@@ -9,14 +9,15 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 
+from seer.api.core.middleware.organization import get_membership, get_organization
 from seer.api.files import models as api_models
 from seer.api.files import services
-from seer.database import User
+from seer.database import Organization, OrganizationMembership, User
 from seer.logger import get_logger
 
 logger = get_logger("seer.api.files.router")
@@ -30,6 +31,16 @@ def _require_user(request: Request) -> User:
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
     return user
+
+
+def _get_org_context(request: Request) -> Tuple[Optional[Organization], Optional[OrganizationMembership]]:
+    """Get optional organization context from request state."""
+    try:
+        org = get_organization(request)
+        membership = get_membership(request)
+        return org, membership
+    except Exception:  # pylint: disable=broad-exception-caught  # Reason: org context is optional; any failure should silently degrade to unauthenticated access
+        return None, None
 
 
 # pylint: disable=invalid-name  # Enum values use lowercase to match API query parameter values
@@ -72,8 +83,10 @@ async def list_files(
     Results are paginated using cursor-based pagination.
     """
     user = _require_user(request)
+    org, _ = _get_org_context(request)
     return await services.list_user_files(
         user,
+        organization=org,
         limit=limit,
         cursor=cursor,
         mime_type=mime_type,
@@ -92,12 +105,13 @@ async def list_files(
 @router.get("/stats", response_model=api_models.UserStorageStatsResponse)
 async def get_storage_stats(request: Request) -> api_models.UserStorageStatsResponse:
     """
-    Get storage statistics for the authenticated user.
+    Get storage statistics for the authenticated user or organization.
 
     Returns total file count, total size, and breakdowns by MIME type and source tool.
     """
     user = _require_user(request)
-    return await services.get_user_storage_stats(user)
+    org, _ = _get_org_context(request)
+    return await services.get_user_storage_stats(user, organization=org)
 
 
 @router.get("/search", response_model=api_models.FileSearchResponse)
@@ -112,7 +126,8 @@ async def search_files(
     Performs case-insensitive partial matching on filenames.
     """
     user = _require_user(request)
-    return await services.search_user_files(user, q, limit)
+    org, _ = _get_org_context(request)
+    return await services.search_user_files(user, q, limit, organization=org)
 
 
 @router.get("/{file_id}", response_model=api_models.UserFileResponse)
@@ -126,7 +141,8 @@ async def get_file(
     Returns 404 if the file doesn't exist or doesn't belong to the user.
     """
     user = _require_user(request)
-    return await services.get_user_file(user, file_id)
+    org, membership = _get_org_context(request)
+    return await services.get_user_file(user, file_id, organization=org, membership=membership)
 
 
 @router.get("/{file_id}/download", response_model=api_models.UserFileDownloadResponse)
@@ -143,7 +159,8 @@ async def get_file_download_url(
     Returns 503 if file storage is not configured.
     """
     user = _require_user(request)
-    return await services.get_user_file_download_url(user, file_id, inline=inline)
+    org, membership = _get_org_context(request)
+    return await services.get_user_file_download_url(user, file_id, inline=inline, organization=org, membership=membership)
 
 
 # Maximum file size for content preview (5MB)
@@ -164,7 +181,8 @@ async def get_file_content(
     Returns 503 if file storage is not configured.
     """
     user = _require_user(request)
-    return await services.get_user_file_content(user, file_id, MAX_PREVIEW_SIZE_BYTES)
+    org, membership = _get_org_context(request)
+    return await services.get_user_file_content(user, file_id, MAX_PREVIEW_SIZE_BYTES, organization=org, membership=membership)
 
 
 @router.delete("/{file_id}", response_model=api_models.UserFileDeleteResponse)
@@ -179,7 +197,8 @@ async def delete_file(
     Returns 404 if the file doesn't exist or doesn't belong to the user.
     """
     user = _require_user(request)
-    return await services.delete_user_file(user, file_id)
+    org, membership = _get_org_context(request)
+    return await services.delete_user_file(user, file_id, organization=org, membership=membership)
 
 
 @router.post("/bulk-delete", response_model=api_models.BulkDeleteFilesResponse)
@@ -194,7 +213,8 @@ async def bulk_delete_files(
     including any errors encountered.
     """
     user = _require_user(request)
-    return await services.bulk_delete_user_files(user, body.file_ids)
+    org, membership = _get_org_context(request)
+    return await services.bulk_delete_user_files(user, body.file_ids, organization=org, membership=membership)
 
 
 # pylint: disable=too-many-locals,protected-access  # Upload requires multiple local vars; accessing S3 backend internals for direct upload
@@ -219,6 +239,7 @@ async def upload_file(
     from seer.database import WorkflowFile
 
     user = _require_user(request)
+    org, _ = _get_org_context(request)
 
     if not config.is_workflow_file_system_configured:
         raise HTTPException(
@@ -286,6 +307,7 @@ async def upload_file(
     db_file = await WorkflowFile.create(
         file_id=file_id,
         user=user,
+        organization=org,
         workflow_run=None,  # User upload, no run
         storage_path=storage_path,
         filename=actual_filename,

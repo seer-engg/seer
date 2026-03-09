@@ -123,9 +123,16 @@ class WorkflowCompilerSingleton:
         workflow_spec: Any,
         *,
         checkpointer: AsyncPostgresSaver | None = None,
+        organization_id: int | None = None,
     ) -> UserBoundCompiledWorkflow:
         """
         Compile the provided workflow spec and bind it to the given DB user.
+
+        Args:
+            user: The user compiling the workflow
+            workflow_spec: The workflow specification
+            checkpointer: Optional LangGraph checkpointer
+            organization_id: Optional organization ID for resolving shared connections
         """
 
         spec = parse_workflow_spec(workflow_spec)
@@ -133,7 +140,8 @@ class WorkflowCompilerSingleton:
 
         # Validate OAuth connections for multi-account scenarios
         # This returns auto-resolved connection_ids for single-account cases
-        resolved_connections = await validate_connections_and_raise(spec, user)
+        # Pass organization_id to include organization-shared connections
+        resolved_connections = await validate_connections_and_raise(spec, user, organization_id)
         if resolved_connections:
             logger.debug(
                 "Auto-resolved connections for nodes: %s",

@@ -863,10 +863,12 @@ def test_for_each_loop_variable_infers_type_from_agent_node_output():
                                             "name": {"type": "string"},
                                             "email": {"type": "string"},
                                             "active": {"type": "boolean"}
-                                        }
+                                        },
+                                        "required": ["name", "email", "active"],
                                     }
                                 }
-                            }
+                            },
+                            "required": ["organizations"],
                         }
                     }
                 )

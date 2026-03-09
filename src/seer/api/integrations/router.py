@@ -42,7 +42,6 @@ logger = get_logger("api.integrations.router")
 from seer.services.integrations.auth.helpers import (
     get_connection_display_name,
     has_required_scopes,
-    list_connections,
     parse_scopes,
     store_oauth_connection,
 )
@@ -285,11 +284,15 @@ async def list_integrations(request: Request):
     List all integration connections for the current user.
 
     Returns connections organized by OAuth provider with scope information.
+    Includes organization-shared connections if in an organization context.
     Frontend can use this to determine which tools are connected.
     """
+    from seer.services.integrations.auth.helpers import list_connections_with_shared
     user: User = request.state.db_user
+    organization = getattr(request.state, "organization", None)
+    organization_id = organization.id if organization else None
     logger.info("Listing integrations for user %s", user.user_id)
-    connections = await list_connections(user)
+    connections = await list_connections_with_shared(user, organization_id)
     res = []
     for conn in connections:
         # Construct composite ID so frontend can use it for deletion if needed
@@ -320,11 +323,14 @@ async def get_tools_connection_status(request: Request):
 
     Returns a list of all tools with their connection status based on
     whether the user has a connection with the required scopes.
+    Includes organization-shared connections if in an organization context.
 
     This is the primary endpoint for frontend to check which tools are connected.
     """
     user: User = request.state.db_user
-    results = await get_tools_connection_status_for_user(user)
+    organization = getattr(request.state, "organization", None)
+    organization_id = organization.id if organization else None
+    results = await get_tools_connection_status_for_user(user, organization_id)
     return {"tools": results}
 
 
@@ -340,6 +346,7 @@ async def get_tool_status(
     This endpoint allows checking the connection status for a single tool.
     When connection_id is provided, it validates that specific connection's scopes
     instead of using any available connection for the provider.
+    Includes organization-shared connections if in an organization context.
 
     Use cases:
     - Canvas tool blocks checking status for their configured connection_id
@@ -353,7 +360,9 @@ async def get_tool_status(
         SingleToolStatusResponse with connection status for the tool
     """
     user: User = request.state.db_user
-    result = await get_single_tool_status(user, tool_name, connection_id)
+    organization = getattr(request.state, "organization", None)
+    organization_id = organization.id if organization else None
+    result = await get_single_tool_status(user, tool_name, connection_id, organization_id)
 
     if result is None:
         raise_problem(
@@ -373,6 +382,7 @@ async def list_connections_grouped(request: Request):
 
     Returns connections organized by provider, useful for multi-account scenarios
     where users need to see all their connected accounts per provider.
+    Includes organization-shared connections if in an organization context.
 
     Example response:
     {
@@ -387,8 +397,11 @@ async def list_connections_grouped(request: Request):
         }
     }
     """
+    from seer.services.integrations.auth.helpers import list_connections_with_shared
     user: User = request.state.db_user
-    connections = await list_connections(user)
+    organization = getattr(request.state, "organization", None)
+    organization_id = organization.id if organization else None
+    connections = await list_connections_with_shared(user, organization_id)
 
     grouped: dict = {}
     for conn in connections:
@@ -414,6 +427,7 @@ async def get_tool_accounts(request: Request, tool_name: str):
 
     Returns all user accounts that can be used with this tool, including
     scope validation status for each account.
+    Includes organization-shared connections if in an organization context.
 
     Used by frontend workflow builder to let users select which account
     to use when they have multiple accounts for the same provider.
@@ -425,8 +439,11 @@ async def get_tool_accounts(request: Request, tool_name: str):
         ToolAccountsResponse with list of accounts and whether selection is required
     """
     from seer.tools.base import get_tool  # pylint: disable=import-outside-toplevel
+    from seer.services.integrations.auth.helpers import list_connections_with_shared
 
     user: User = request.state.db_user
+    organization = getattr(request.state, "organization", None)
+    organization_id = organization.id if organization else None
 
     tool = get_tool(tool_name)
     if tool is None:
@@ -457,8 +474,8 @@ async def get_tool_accounts(request: Request, tool_name: str):
             required_scopes=list(tool.required_scopes),
         )
 
-    # Get all connections for this provider
-    connections = await list_connections(user)
+    # Get all connections for this provider (including shared connections)
+    connections = await list_connections_with_shared(user, organization_id)
     provider_connections = [c for c in connections if c.provider == provider]
 
     accounts = []

@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # schema models are intentionally comprehensive in a single module
 """
 Pydantic models describing the workflow specification.
 
@@ -61,6 +62,35 @@ SchemaSpec = Union[SchemaRef, InlineSchema]
 class OutputMode(str, Enum):
     text = "text"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
     json = "json"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
+
+
+def enforce_all_properties_required(schema: JsonSchema, path: str = "$") -> None:
+    """
+    Recursively assert that every JSON Schema object has all its `properties`
+    keys listed in `required`. Raises ValueError with a descriptive path if not.
+
+    This is intentionally NOT called from OutputContract itself — it is called
+    during compilation (register_type_sync) only for node types that drive LLM
+    structured output (AgentNode, BrowserNode), where the schema must be strict
+    so the LLM cannot silently omit fields.
+    """
+    if not isinstance(schema, dict):
+        return
+    if schema.get("type") == "object" and "properties" in schema:
+        declared = set(schema["properties"].keys())
+        required = set(schema.get("required") or [])
+        missing = declared - required
+        if missing:
+            raise ValueError(
+                f"OutputContract: all properties must be in 'required' for json output schema. "
+                f"Missing at '{path}': {sorted(missing)}. Add them to the 'required' array."
+            )
+        # Recurse into each property's sub-schema
+        for prop_name, prop_schema in schema["properties"].items():
+            enforce_all_properties_required(prop_schema, path=f"{path}.{prop_name}")
+    # Recurse into array items
+    if "items" in schema and isinstance(schema["items"], dict):
+        enforce_all_properties_required(schema["items"], path=f"{path}[]")
 
 
 class OutputContract(StrictModel):

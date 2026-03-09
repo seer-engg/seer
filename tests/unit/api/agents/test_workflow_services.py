@@ -369,34 +369,32 @@ class TestWorkflowStateSnapshot:
 
 @pytest.mark.unit
 class TestGetWorkflow:
-    """Tests for _get_workflow and get_workflow functions."""
+    """Tests for get_workflow function (delegates to _get_workflow_org_scoped)."""
 
     @pytest.mark.asyncio
     async def test_get_workflow_success(self, mock_user, mock_workflow):
-        """Test successful workflow retrieval."""
-        from seer.database import Workflow
-
-        with patch.object(Workflow, "filter") as mock_filter:
-            mock_query = MagicMock()
-            mock_query.first = AsyncMock(return_value=mock_workflow)
-            mock_filter.return_value = mock_query
+        """Test successful workflow retrieval via org-scoped lookup."""
+        with patch(
+            "seer.api.agents.workflow.services._get_workflow_org_scoped",
+            new_callable=AsyncMock
+        ) as mock_get_wf:
+            mock_get_wf.return_value = mock_workflow
 
             from seer.api.agents.workflow.services import get_workflow
 
             result = await get_workflow(mock_user, "wf_1")
 
             assert result == mock_workflow
-            mock_filter.assert_called_once_with(id=1, user=mock_user)
+            mock_get_wf.assert_called_once_with(mock_user, "wf_1", None, None)
 
     @pytest.mark.asyncio
     async def test_get_workflow_not_found(self, mock_user):
         """Test workflow not found raises HTTPException."""
-        from seer.database import Workflow
-
-        with patch.object(Workflow, "filter") as mock_filter:
-            mock_query = MagicMock()
-            mock_query.first = AsyncMock(return_value=None)
-            mock_filter.return_value = mock_query
+        with patch(
+            "seer.api.agents.workflow.services._get_workflow_org_scoped",
+            new_callable=AsyncMock
+        ) as mock_get_wf:
+            mock_get_wf.side_effect = HTTPException(status_code=404, detail="Workflow 'wf_999' not found")
 
             from seer.api.agents.workflow.services import get_workflow
 
@@ -409,13 +407,18 @@ class TestGetWorkflow:
     @pytest.mark.asyncio
     async def test_get_workflow_invalid_id_format(self, mock_user):
         """Test invalid workflow ID format raises HTTPException."""
-        from seer.api.agents.workflow.services import get_workflow
+        with patch(
+            "seer.api.agents.workflow.services._get_workflow_org_scoped",
+            new_callable=AsyncMock
+        ) as mock_get_wf:
+            mock_get_wf.side_effect = HTTPException(status_code=400, detail="Workflow id is invalid")
 
-        with pytest.raises(HTTPException) as exc_info:
-            await get_workflow(mock_user, "invalid_id")
+            from seer.api.agents.workflow.services import get_workflow
 
-        assert exc_info.value.status_code == 400
-        assert "Invalid workflow id format" in exc_info.value.detail
+            with pytest.raises(HTTPException) as exc_info:
+                await get_workflow(mock_user, "invalid_id")
+
+            assert exc_info.value.status_code == 400
 
     @pytest.mark.asyncio
     async def test_get_workflow_empty_id(self, mock_user):

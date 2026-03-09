@@ -36,10 +36,12 @@ class CredentialResolver:
         user: User,
         tool: BaseTool,
         connection_id: Optional[str] = None,
+        organization_id: Optional[int] = None,
     ) -> None:
         self.user = user
         self.tool = tool
         self.connection_id = connection_id
+        self.organization_id = organization_id
 
     async def resolve(self, arguments: Dict[str, Any]) -> ResolvedCredentials:
         args = arguments or {}
@@ -75,6 +77,7 @@ class CredentialResolver:
             self.user,
             connection_id=self.connection_id,
             provider=provider,
+            organization_id=self.organization_id,
         )
 
         is_valid, missing_scope = validate_scopes(connection, self.tool.required_scopes)

@@ -60,6 +60,7 @@ def mock_workflow_run():
         run.interrupt_expires_at = interrupt_expires_at
         run.workflow = MagicMock()
         run.workflow.workflow_id = "wf_1"
+        run.workflow.organization_id = None  # For shared connection resolution
         run.user = MagicMock()
         run.user.id = user_id
         run.fetch_related = AsyncMock()
@@ -392,7 +393,7 @@ class TestCompileWorkflow:
     """Tests for workflow compilation via singleton."""
 
     async def test_calls_compiler_singleton_with_correct_args(self, mock_user):
-        """Verifies compiler.compile is called with user, spec, checkpointer."""
+        """Verifies compiler.compile is called with user, spec, checkpointer, organization_id."""
         from seer.services.workflows.execution import _compile_workflow
 
         mock_checkpointer = MagicMock()
@@ -405,10 +406,10 @@ class TestCompileWorkflow:
             mock_compiler.compile = AsyncMock(return_value=MagicMock())
             mock_singleton.instance.return_value = mock_compiler
 
-            await _compile_workflow(mock_user, spec, checkpointer=mock_checkpointer)
+            await _compile_workflow(mock_user, spec, checkpointer=mock_checkpointer, organization_id=123)
 
             mock_compiler.compile.assert_called_once_with(
-                mock_user, spec, checkpointer=mock_checkpointer
+                mock_user, spec, checkpointer=mock_checkpointer, organization_id=123
             )
 
     async def test_returns_compiled_workflow(self, mock_user, mock_compiled_workflow):
@@ -430,7 +431,7 @@ class TestCompileWorkflow:
             assert result == expected_compiled
 
     async def test_passes_none_checkpointer_when_not_provided(self, mock_user):
-        """Checkpointer defaults to None when not provided."""
+        """Checkpointer and organization_id default to None when not provided."""
         from seer.services.workflows.execution import _compile_workflow
 
         spec = {"version": "2", "nodes": [], "edges": []}
@@ -445,7 +446,7 @@ class TestCompileWorkflow:
             await _compile_workflow(mock_user, spec)
 
             mock_compiler.compile.assert_called_once_with(
-                mock_user, spec, checkpointer=None
+                mock_user, spec, checkpointer=None, organization_id=None
             )
 
 

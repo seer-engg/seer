@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pylint: disable=duplicate-code  # Reason: _strip_auth_from_spec is intentionally duplicated in standalone scripts to keep them self-contained
 """
 Interactive workflow cloner - clone workflows between users via direct DB access.
 

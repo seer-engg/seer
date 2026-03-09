@@ -10,7 +10,7 @@ from seer.api.core.errors import RUN_PROBLEM
 from seer.api.workflows import models as api_models
 from seer.api.workflows.services.shared import (
     _get_draft_version,
-    _get_workflow,
+    _get_workflow_org_scoped,
     _now,
     _raise_problem,
     _spec_to_dict,
@@ -18,6 +18,8 @@ from seer.api.workflows.services.shared import (
 )
 from seer.core.schema.models import TriggerSpec, WorkflowSpec
 from seer.database import (
+    Organization,
+    OrganizationMembership,
     TriggerEvent,
     TriggerEventStatus,
     TriggerSubscription,
@@ -126,11 +128,14 @@ async def list_workflow_runs(
     workflow_id: str,
     *,
     limit: int = 50,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
 ) -> api_models.WorkflowRunListResponse:
-    workflow = await _get_workflow(user, workflow_id)
+    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership)
     limit = max(1, min(limit, 100))
+    # Show all runs for the workflow (not just user's runs) since workflow access was verified
     runs = (
-        await WorkflowRun.filter(user=user, workflow=workflow)
+        await WorkflowRun.filter(workflow=workflow)
         .order_by("-created_at")
         .limit(limit)
     )
@@ -314,6 +319,8 @@ async def run_saved_workflow(
     user: User,
     workflow_id: str,
     payload: api_models.RunFromWorkflowRequest,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
 ) -> api_models.RunResponse:
     """
     Run a workflow.
@@ -321,7 +328,7 @@ async def run_saved_workflow(
     - If workflow has triggers, requires trigger_event_override with a real event
     - If workflow has no triggers, creates a manual run
     """
-    workflow = await _get_workflow(user, workflow_id)
+    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership)
 
     if payload.version is not None:
         version = await WorkflowVersion.filter(
@@ -354,7 +361,8 @@ async def run_saved_workflow(
             await sync_trigger_subscriptions(user, workflow, spec, skip_validation=True)
 
     spec = WorkflowSpec.model_validate(version.spec)
-    await validate_workflow_spec(user, spec)
+    # Pass organization_id for shared connection validation
+    await validate_workflow_spec(user, spec, organization_id=workflow.organization_id)
     trigger_specs = spec.triggers or []
 
     if payload.trigger_event_override:

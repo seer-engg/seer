@@ -59,13 +59,17 @@ class KnowledgeBaseListTool(BaseTool):
         credentials: Optional["ResolvedCredentials"] = None,
         context: Optional["WorkflowRuntimeContext"] = None,
     ) -> Any:
-        # access_token, arguments, credentials, context unused but required for interface consistency
-        _ = access_token, arguments, credentials, context
-        # Note: In workflow context, we need to get user_id from the credentials or workflow context
-        # For now, list all KBs (access control should be handled at workflow level)
-        # In production, this would filter by user from workflow context
-
-        kbs = await KnowledgeBase.all().annotate(doc_count=Count("documents")).order_by("-created_at")
+        # access_token, arguments, credentials unused but required for interface consistency
+        _ = access_token, arguments, credentials
+        # Filter by user ownership (required for security)
+        if context and context.user:
+            kbs = await KnowledgeBase.filter(user=context.user).annotate(
+                doc_count=Count("documents")
+            ).order_by("-created_at")
+        else:
+            # No context - return empty list (security: don't expose all KBs)
+            logger.warning("kb_list called without user context, returning empty list")
+            kbs = []
 
         result = {
             "knowledge_bases": [

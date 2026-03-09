@@ -15,12 +15,14 @@ from seer.services.workflows.execution import _build_run_config
 from seer.api.core.errors import RUN_PROBLEM, VALIDATION_PROBLEM, raise_problem
 from seer.config import config as shared_config
 from seer.database import (
+    OrganizationMembership,
     User,
     WorkflowRun,
     WorkflowRunSource,
     WorkflowRunStatus,
     parse_run_public_id,
 )
+from seer.api.workflows.services.shared import _can_view_workflow
 from seer.logger import get_logger
 from seer.core.schema.models import (
     Node,
@@ -448,12 +450,17 @@ def _build_history_response(
     }]
 
 
-async def _get_run(user: User, run_id: str) -> WorkflowRun:
+async def _get_run(
+    user: User,
+    run_id: str,
+    membership: Optional[OrganizationMembership] = None,
+) -> WorkflowRun:
     """
     Get a workflow run by ID, prefetching the workflow relationship.
 
     Prefetches the workflow ForeignKey to avoid QuerySet issues when accessing
-    run.workflow.workflow_id later.
+    run.workflow.workflow_id later. Checks workflow access to determine if user
+    can view the run (team members can see all runs for accessible workflows).
     """
     try:
         pk = parse_run_public_id(run_id)
@@ -464,9 +471,17 @@ async def _get_run(user: User, run_id: str) -> WorkflowRun:
             detail="Run id is invalid",
             status=400,
         )
-    # Use filter().prefetch_related().first() instead of .get() to prefetch workflow
-    run = await WorkflowRun.filter(id=pk, user=user).prefetch_related('workflow', 'subscription', 'trigger_event').first()
+    # Fetch run by ID and prefetch workflow for access check
+    run = await WorkflowRun.filter(id=pk).prefetch_related('workflow', 'subscription', 'trigger_event').first()
     if not run:
+        raise_problem(
+            type_uri=RUN_PROBLEM,
+            title="Run not found",
+            detail=f"Run '{run_id}' not found",
+            status=404,
+        )
+    # Check if user can view the workflow (and thus its runs)
+    if not await _can_view_workflow(user, run.workflow, membership):
         raise_problem(
             type_uri=RUN_PROBLEM,
             title="Run not found",
@@ -476,7 +491,11 @@ async def _get_run(user: User, run_id: str) -> WorkflowRun:
     return run
 
 
-async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryResponse:
+async def get_run_history(
+    user: User,
+    run_id: str,
+    membership: Optional[OrganizationMembership] = None,
+) -> api_models.RunHistoryResponse:
     """
     Get workflow execution history with node-based traces.
 
@@ -484,7 +503,7 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
     enriched with workflow spec metadata.
     """
     await _validate_history_prerequisites()
-    run = await _get_run(user, run_id)
+    run = await _get_run(user, run_id, membership)
     checkpointer = await _get_checkpointer_or_fail()
     workflow_spec = _parse_workflow_spec(run)
 
@@ -561,7 +580,11 @@ async def get_run_history(user: User, run_id: str) -> api_models.RunHistoryRespo
     return api_models.RunHistoryResponse(run_id=run.run_id, history=history)
 
 
-async def get_run_status(user: User, run_id: str) -> api_models.RunResponse:
-    run = await _get_run(user, run_id)
-    from seer.api.workflows.services.execution import _serialize_run
+async def get_run_status(
+    user: User,
+    run_id: str,
+    membership: Optional[OrganizationMembership] = None,
+) -> api_models.RunResponse:
+    run = await _get_run(user, run_id, membership)
+    from seer.api.workflows.services.execution import _serialize_run  # pylint: disable=import-outside-toplevel
     return _serialize_run(run)

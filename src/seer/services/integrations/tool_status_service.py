@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Set
 from seer.database import IntegrationSecret, OAuthConnection, User
 from seer.logger import get_logger
 
-from seer.services.integrations.auth.helpers import has_required_scopes, list_connections
+from seer.services.integrations.auth.helpers import has_required_scopes, list_connections_with_shared
 from seer.services.integrations.auth.oauth import get_oauth_provider
 
 logger = get_logger(__name__)
@@ -198,9 +198,16 @@ def build_tool_status(
 
 
 
-async def get_tools_connection_status_for_user(user: User) -> List[Dict[str, Any]]:
+async def get_tools_connection_status_for_user(
+    user: User,
+    organization_id: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     """
     Get the connection status for all tools for a user.
+
+    Args:
+        user: The user to check connection status for
+        organization_id: Optional organization ID to include shared connections
     """
     from seer.tools.base import (
         list_tools as get_all_tools,  # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with tools.base module
@@ -208,7 +215,7 @@ async def get_tools_connection_status_for_user(user: User) -> List[Dict[str, Any
 
     logger.info("Getting tools connection status for user %s", user.user_id)
 
-    connections = await list_connections(user)
+    connections = await list_connections_with_shared(user, organization_id)
     provider_connections = build_provider_connections_map(connections)
     provider_secrets = await build_provider_secrets_map(user)
     all_tools = get_all_tools()
@@ -235,6 +242,7 @@ async def get_single_tool_status(
     user: User,
     tool_name: str,
     connection_id: Optional[int] = None,
+    organization_id: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Get connection status for a single tool, optionally for a specific connection.
@@ -243,11 +251,13 @@ async def get_single_tool_status(
         user: Current user
         tool_name: Name of the tool to get status for
         connection_id: Optional specific OAuth connection ID to check against
+        organization_id: Optional organization ID to include shared connections
 
     Returns:
         Tool status dict or None if tool not found
     """
     from seer.tools.base import get_tool  # pylint: disable=import-outside-toplevel # Reason: Avoids circular import
+    from tortoise.expressions import Q  # pylint: disable=import-outside-toplevel # Reason: Avoids circular import
 
     tool = get_tool(tool_name)
     if tool is None:
@@ -260,8 +270,13 @@ async def get_single_tool_status(
     conn_info = None
     if oauth_provider:
         if connection_id is not None:
-            # Fetch the specific connection by ID
-            conn = await OAuthConnection.get_or_none(id=connection_id, user=user, status="active")
+            # Fetch the specific connection by ID (allow shared connections)
+            query = Q(id=connection_id, status="active")
+            if organization_id:
+                query &= (Q(user=user) | Q(shared_with_organization_id=organization_id))
+            else:
+                query &= Q(user=user)
+            conn = await OAuthConnection.filter(query).first()
             if conn and conn.provider == oauth_provider:
                 conn_info = {
                     "scopes": conn.scopes or "",
@@ -272,7 +287,7 @@ async def get_single_tool_status(
                 }
         else:
             # Fallback to existing behavior - get any connection for this provider
-            connections = await list_connections(user)
+            connections = await list_connections_with_shared(user, organization_id)
             provider_connections = build_provider_connections_map(connections)
             conn_info = provider_connections.get(oauth_provider)
 

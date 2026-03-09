@@ -6,27 +6,52 @@ Provides API layer for managing files created during workflow execution.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import Optional
 
 from fastapi import HTTPException, status
 
 from seer.api.workflows import models as api_models
-from seer.database import User, WorkflowFile, WorkflowRun, parse_run_public_id
+from seer.api.workflows.services.shared import _can_view_workflow
+from seer.database import OrganizationMembership, User, WorkflowFile, WorkflowRun, parse_run_public_id
 from seer.logger import get_logger
-
-if TYPE_CHECKING:
-    pass
 
 logger = get_logger("seer.api.workflows.services.files")
 
 
-async def list_run_files(user: User, run_id: str) -> api_models.WorkflowFileListResponse:
+async def _get_run_with_access_check(
+    user: User,
+    run_id: str,
+    membership: Optional[OrganizationMembership] = None,
+) -> WorkflowRun:
+    """
+    Get a workflow run by ID with workflow-based access control.
+
+    Team members can access runs for workflows they can view.
+    """
+    run_pk = parse_run_public_id(run_id)
+    run = await WorkflowRun.filter(id=run_pk).prefetch_related("workflow").first()
+    if not run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run '{run_id}' not found")
+
+    # Check if user can view the workflow (and thus its runs)
+    if not await _can_view_workflow(user, run.workflow, membership):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run '{run_id}' not found")
+
+    return run
+
+
+async def list_run_files(
+    user: User,
+    run_id: str,
+    membership: Optional[OrganizationMembership] = None,
+) -> api_models.WorkflowFileListResponse:
     """
     List all files created during a workflow run.
 
     Args:
         user: Authenticated user.
         run_id: Workflow run ID (e.g., "run_123").
+        membership: User's org membership for access control.
 
     Returns:
         List of file metadata.
@@ -34,15 +59,8 @@ async def list_run_files(user: User, run_id: str) -> api_models.WorkflowFileList
     Raises:
         HTTPException: If run not found or access denied.
     """
-    run_pk = parse_run_public_id(run_id)
-
-    # Verify user owns the run
-    run = await WorkflowRun.filter(id=run_pk, user=user).first()
-    if not run:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Run '{run_id}' not found"
-        )
+    run = await _get_run_with_access_check(user, run_id, membership)
+    run_pk = run.id
 
     # Get all files for the run
     files = await WorkflowFile.filter(workflow_run_id=run_pk).order_by("-created_at")
@@ -71,7 +89,12 @@ async def list_run_files(user: User, run_id: str) -> api_models.WorkflowFileList
     )
 
 
-async def get_run_file(user: User, run_id: str, file_id: str) -> api_models.WorkflowFileResponse:
+async def get_run_file(
+    user: User,
+    run_id: str,
+    file_id: str,
+    membership: Optional[OrganizationMembership] = None,
+) -> api_models.WorkflowFileResponse:
     """
     Get metadata for a specific file.
 
@@ -79,6 +102,7 @@ async def get_run_file(user: User, run_id: str, file_id: str) -> api_models.Work
         user: Authenticated user.
         run_id: Workflow run ID.
         file_id: File UUID.
+        membership: User's org membership for access control.
 
     Returns:
         File metadata.
@@ -86,15 +110,8 @@ async def get_run_file(user: User, run_id: str, file_id: str) -> api_models.Work
     Raises:
         HTTPException: If file not found or access denied.
     """
-    run_pk = parse_run_public_id(run_id)
-
-    # Verify user owns the run
-    run = await WorkflowRun.filter(id=run_pk, user=user).first()
-    if not run:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Run '{run_id}' not found"
-        )
+    run = await _get_run_with_access_check(user, run_id, membership)
+    run_pk = run.id
 
     # Get the file
     file = await WorkflowFile.filter(file_id=file_id, workflow_run_id=run_pk).first()
@@ -119,7 +136,10 @@ async def get_run_file(user: User, run_id: str, file_id: str) -> api_models.Work
 
 
 async def get_run_file_download_url(
-    user: User, run_id: str, file_id: str
+    user: User,
+    run_id: str,
+    file_id: str,
+    membership: Optional[OrganizationMembership] = None,
 ) -> api_models.WorkflowFileDownloadResponse:
     """
     Get a presigned URL to download a file.
@@ -128,6 +148,7 @@ async def get_run_file_download_url(
         user: Authenticated user.
         run_id: Workflow run ID.
         file_id: File UUID.
+        membership: User's org membership for access control.
 
     Returns:
         Presigned download URL.
@@ -139,12 +160,8 @@ async def get_run_file_download_url(
     from seer.config import config
     from seer.core.files.service import WorkflowFileSystem, file_to_ref
 
-    run_pk = parse_run_public_id(run_id)
-
-    # Verify user owns the run
-    run = await WorkflowRun.filter(id=run_pk, user=user).first()
-    if not run:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run '{run_id}' not found")
+    run = await _get_run_with_access_check(user, run_id, membership)
+    run_pk = run.id
 
     # Get the file
     file = await WorkflowFile.filter(file_id=file_id, workflow_run_id=run_pk).first()
@@ -164,7 +181,10 @@ async def get_run_file_download_url(
 
 
 async def delete_run_file(
-    user: User, run_id: str, file_id: str
+    user: User,
+    run_id: str,
+    file_id: str,
+    membership: Optional[OrganizationMembership] = None,
 ) -> api_models.WorkflowFileDeleteResponse:
     """
     Delete a file from a workflow run.
@@ -173,6 +193,7 @@ async def delete_run_file(
         user: Authenticated user.
         run_id: Workflow run ID.
         file_id: File UUID.
+        membership: User's org membership for access control.
 
     Returns:
         Deletion confirmation.
@@ -184,12 +205,8 @@ async def delete_run_file(
     from seer.config import config
     from seer.core.files.service import WorkflowFileSystem, file_to_ref
 
-    run_pk = parse_run_public_id(run_id)
-
-    # Verify user owns the run
-    run = await WorkflowRun.filter(id=run_pk, user=user).first()
-    if not run:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run '{run_id}' not found")
+    run = await _get_run_with_access_check(user, run_id, membership)
+    run_pk = run.id
 
     # Get the file
     file = await WorkflowFile.filter(file_id=file_id, workflow_run_id=run_pk).first()

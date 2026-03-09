@@ -44,6 +44,22 @@ class TestIsPublicPath:
         assert not is_public_path("/docs", include_docs=False)
         assert not is_public_path("/openapi.json", include_docs=False)
 
+    def test_invitation_token_paths(self):
+        """Test invitation paths: token details public, accept/decline require auth."""
+        # GET invitation details (view before signing in) - public
+        assert is_public_path("/api/organizations/invitations/abc123")
+        assert is_public_path("/api/organizations/invitations/some-uuid-token")
+
+        # POST accept/decline - NOT public (require auth)
+        assert not is_public_path("/api/organizations/invitations/abc123/accept")
+        assert not is_public_path("/api/organizations/invitations/abc123/decline")
+        assert not is_public_path("/api/organizations/invitations/some-uuid-token/accept")
+        assert not is_public_path("/api/organizations/invitations/some-uuid-token/decline")
+
+        # Base path without token - NOT public
+        assert not is_public_path("/api/organizations/invitations")
+        assert not is_public_path("/api/organizations/invitations/")
+
     def test_non_public_paths(self):
         """Test non-public paths return False."""
         assert not is_public_path("/api/v1/workflows")

@@ -531,6 +531,27 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     )
 
     # ============================================================================
+    # Email Service Configuration (for organization invitations)
+    # ============================================================================
+
+    email_provider: str = Field(
+        default="resend",
+        description="Email provider: 'resend', 'sendgrid', 'ses', or 'disabled'"
+    )
+    email_api_key: Optional[str] = Field(
+        default=None,
+        description="API key for email provider (Resend API key, SendGrid API key, etc.)"
+    )
+    email_from_address: str = Field(
+        default="Seer <noreply@getseer.dev>",
+        description="Default from address for transactional emails"
+    )
+    email_from_name: str = Field(
+        default="Seer",
+        description="Default from name for transactional emails"
+    )
+
+    # ============================================================================
     # Memory Layer (Mem0) Configuration
     # ============================================================================
 

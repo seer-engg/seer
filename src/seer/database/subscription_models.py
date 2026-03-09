@@ -35,15 +35,36 @@ class BillingProfileType(str, Enum):
 
 
 class BillingProfile(models.Model):
-    """Billing profile for a paying entity (individual user or team)."""
+    """
+    Billing profile for a paying entity (individual user or team organization).
+
+    Ownership rules:
+    - INDIVIDUAL type: owner_user is set, owner_organization is null
+    - TEAM type: owner_organization is set, owner_user is null
+
+    When a user creates a team organization, their subscription transfers
+    from their personal billing profile to the team's billing profile.
+    """
 
     id = fields.IntField(primary_key=True)
     type = fields.CharEnumField(BillingProfileType, default=BillingProfileType.INDIVIDUAL)
-    owner_user = fields.OneToOneField(
+
+    # Individual billing - owned by a user
+    owner_user = fields.ForeignKeyField(
         "models.User",
         related_name="billing_profiles",
         on_delete=fields.CASCADE,
+        null=True,
     )
+
+    # Team billing - owned by an organization
+    owner_organization = fields.ForeignKeyField(
+        "models.Organization",
+        related_name="billing_profile",
+        on_delete=fields.CASCADE,
+        null=True,
+    )
+
     stripe_customer_id = fields.CharField(max_length=255, unique=True, null=True)
     has_payment_method = fields.BooleanField(default=False)
     payment_method_added_at = fields.DatetimeField(null=True)
@@ -54,7 +75,9 @@ class BillingProfile(models.Model):
         table = "billing_profiles"
 
     def __str__(self) -> str:
-        return f"BillingProfile<id={self.id}, type={self.type.value}>"
+        # pylint: disable=no-member  # Reason: Tortoise ORM generates FK _id attributes (owner_user_id, owner_organization_id) dynamically
+        owner = f"user={self.owner_user_id}" if self.owner_user_id else f"org={self.owner_organization_id}"
+        return f"BillingProfile<id={self.id}, type={self.type.value}, {owner}>"
 
 
 class BillingSubscription(models.Model):

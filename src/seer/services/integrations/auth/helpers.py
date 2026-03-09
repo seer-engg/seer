@@ -4,6 +4,8 @@ from typing import Set, Optional, List
 from datetime import datetime, timezone
 from typing import Dict, Any
 
+from tortoise.expressions import Q
+
 from seer.database import OAuthConnection, User
 from seer.logger import get_logger
 from seer.services.integrations.auth.oauth import get_oauth_provider
@@ -203,6 +205,39 @@ async def list_connections(user: User):
         logger.error(f"Error listing connections for user {user.user_id}: {e}")
         return []
 
+
+async def list_connections_with_shared(
+    user: User,
+    organization_id: Optional[int] = None,
+) -> List[OAuthConnection]:
+    """
+    List all active OAuth connections available to a user.
+
+    Includes:
+    - User's own connections
+    - Connections shared with the user's organization (if organization_id provided)
+
+    Args:
+        user: The user to list connections for
+        organization_id: Optional organization ID to include shared connections
+
+    Returns:
+        List of OAuthConnection objects
+    """
+    try:
+        query = Q(user=user, status="active")
+        if organization_id:
+            query |= Q(shared_with_organization_id=organization_id, status="active")
+
+        connections = await OAuthConnection.filter(query).all()
+        logger.info(
+            f"Listed {len(connections)} connections for user {user.user_id} "
+            f"(org_id={organization_id})"
+        )
+        return connections
+    except Exception as e:
+        logger.error(f"Error listing connections for user {user.user_id}: {e}")
+        return []
 
 
 def merge_scopes(existing_scopes: str, new_scopes: str) -> str:

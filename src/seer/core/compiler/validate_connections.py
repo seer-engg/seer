@@ -15,7 +15,7 @@ Validation rules:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, List
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from seer.core.errors import ErrorCode, NodeError, ValidationPhaseError
 from seer.core.schema.models import ToolNode, WorkflowSpec
@@ -40,6 +40,7 @@ class ConnectionValidationResult:
 async def validate_tool_connections(
     spec: WorkflowSpec,
     user: "User",
+    organization_id: Optional[int] = None,
 ) -> ConnectionValidationResult:
     """
     Validate that all tool nodes have valid OAuth connections.
@@ -52,12 +53,14 @@ async def validate_tool_connections(
     Args:
         spec: Workflow specification to validate
         user: User whose connections to check
+        organization_id: Optional organization ID to include shared connections
 
     Returns:
         ConnectionValidationResult with errors and auto-resolved connections
     """
     # Import here to avoid circular dependency
     from seer.database import OAuthConnection  # pylint: disable=import-outside-toplevel
+    from tortoise.expressions import Q  # pylint: disable=import-outside-toplevel  # Reason: avoid import overhead when not needed
 
     result = ConnectionValidationResult()
 
@@ -71,8 +74,12 @@ async def validate_tool_connections(
     for node, provider in oauth_tools:
         nodes_by_provider.setdefault(provider, []).append((node, provider))
 
-    # Fetch user's connections grouped by provider
-    connections = await OAuthConnection.filter(user=user, status="active").all()
+    # Fetch user's connections + organization-shared connections
+    query = Q(user=user, status="active")
+    if organization_id:
+        query |= Q(shared_with_organization_id=organization_id, status="active")
+
+    connections = await OAuthConnection.filter(query).all()
     connections_by_provider: Dict[str, List[OAuthConnection]] = {}
     for conn in connections:
         connections_by_provider.setdefault(conn.provider, []).append(conn)
@@ -199,6 +206,7 @@ def _validate_node_connection(
 async def validate_connections_and_raise(
     spec: WorkflowSpec,
     user: "User",
+    organization_id: Optional[int] = None,
 ) -> Dict[str, int]:
     """
     Validate connections and raise ValidationPhaseError if any errors found.
@@ -206,6 +214,7 @@ async def validate_connections_and_raise(
     Args:
         spec: Workflow specification to validate
         user: User whose connections to check
+        organization_id: Optional organization ID to include shared connections
 
     Returns:
         Dict mapping node_id -> connection_id for auto-resolved connections
@@ -213,7 +222,7 @@ async def validate_connections_and_raise(
     Raises:
         ValidationPhaseError: If any connection validation errors found
     """
-    result = await validate_tool_connections(spec, user)
+    result = await validate_tool_connections(spec, user, organization_id)
 
     if result.errors:
         messages = []

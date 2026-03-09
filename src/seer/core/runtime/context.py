@@ -21,6 +21,7 @@ class WorkflowRuntimeContext:
         thread_id: LangGraph thread ID for chat contexts.
         per_run_cost_cap_usd: Maximum cost allowed for this run.
         accumulated_cost_usd: Running total of costs (mutable).
+        organization_id: The organization ID for resolving shared OAuth connections.
     """
 
     user: User
@@ -28,6 +29,7 @@ class WorkflowRuntimeContext:
     thread_id: str | None = None  # For chat threads
     per_run_cost_cap_usd: float | None = None  # Cost limit per execution
     accumulated_cost_usd: float = 0.0  # Running total (mutable)
+    organization_id: int | None = None  # For shared OAuth connection resolution
 
     # Private field for lazy-loaded file system
     _file_system: Optional["WorkflowFileSystem"] = field(default=None, repr=False)

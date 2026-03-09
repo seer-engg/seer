@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fastapi import HTTPException
 
+from seer.database import OrganizationMembership
 from seer.database.knowledge_models import DOC_ID_PREFIX, KnowledgeBase
 from seer.logger import get_logger
 from seer.services.knowledge.embedding_service import get_embedding_service
@@ -103,10 +104,23 @@ class KnowledgeBaseQueryTool(BaseTool):
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-        # Verify KB exists (user auth is handled at workflow level)
+        # Get KB and verify user has access
         kb = await KnowledgeBase.get_or_none(id=internal_id)
         if not kb:
             raise HTTPException(status_code=404, detail=f"Knowledge base not found: {kb_id}")
+
+        # Check user access: must be owner or in same organization
+        if context and context.user:
+            has_access = kb.user_id == context.user.id
+            if not has_access and kb.organization_id:
+                membership = await OrganizationMembership.get_or_none(
+                    organization_id=kb.organization_id, user=context.user
+                )
+                has_access = membership is not None
+            if not has_access:
+                raise HTTPException(status_code=404, detail=f"Knowledge base not found: {kb_id}")
+        else:
+            raise HTTPException(status_code=401, detail="User context required")
 
         # Generate query embedding
         embedding_service = get_embedding_service()
