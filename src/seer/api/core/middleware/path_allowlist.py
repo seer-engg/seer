@@ -26,6 +26,7 @@ DEFAULT_PUBLIC_PREFIXES = (
     "/sse",  # MCP SSE transport (has its own auth)
     "/mcp",  # MCP HTTP transport (has its own auth)
     "/api/browser/recordings/shared",  # Public replay links
+    "/api/public",
 )
 
 # Payment-exempt paths: require auth but skip payment gates and usage limits.
