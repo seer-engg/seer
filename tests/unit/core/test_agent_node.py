@@ -1065,7 +1065,7 @@ from typing import List, get_args, get_origin
 
 from pydantic import BaseModel, ValidationError
 
-from seer.core.nodes.agent_node import _create_output_model_from_schema, _strip_null_optional_fields
+from seer.core.nodes.agent_node import _create_output_model_from_schema, _create_tool_input_model, _strip_null_optional_fields
 
 
 def test_create_output_model_flat_required_optional():
@@ -1677,3 +1677,56 @@ class TestAgentNodeUsageTracking:
             config = call_args.kwargs.get("config")
         assert config is not None
         assert config.get("callbacks") == []
+
+
+# =============================================================================
+# _create_tool_input_model unit tests
+# =============================================================================
+
+
+def test_create_tool_input_model_preserves_schema_defaults():
+    """Optional fields with schema defaults use the default, not None."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "search_depth": {"type": "string", "default": "basic"},
+            "max_results": {"type": "integer", "default": 5},
+        },
+        "required": ["query"],
+    }
+    Model = _create_tool_input_model("web_search", schema)
+    fields = Model.model_fields
+
+    assert fields["query"].is_required()
+    assert fields["search_depth"].default == "basic"
+    assert fields["max_results"].default == 5
+
+
+def test_create_tool_input_model_optional_without_default_gets_none():
+    """Optional fields without a schema default still get None."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "topic": {"type": "string"},
+        },
+        "required": ["query"],
+    }
+    Model = _create_tool_input_model("search", schema)
+    assert Model.model_fields["topic"].default is None
+
+
+def test_create_tool_input_model_none_not_passed_for_defaults():
+    """When instantiated without optional args, fields with schema defaults retain those defaults, not None."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "search_depth": {"type": "string", "default": "basic"},
+        },
+        "required": ["query"],
+    }
+    Model = _create_tool_input_model("web_search", schema)
+    instance = Model(query="test")
+    assert instance.search_depth == "basic"

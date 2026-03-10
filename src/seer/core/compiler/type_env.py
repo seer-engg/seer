@@ -47,6 +47,9 @@ def build_type_environment(
     if spec.triggers:
         _register_triggers(spec.triggers, env)
 
+    # Register vars namespace for global variables (permissive — any key allowed)
+    env.register("vars", {"type": "object", "additionalProperties": {"type": "string"}})
+
     # Process all nodes (sync path — skips MCP validation)
     for node in spec.nodes:
         _process_node_sync(node, env, schema_registry, tool_registry)
@@ -74,6 +77,9 @@ async def build_type_environment_async(
     # Register each trigger by its ID
     if spec.triggers:
         _register_triggers(spec.triggers, env)
+
+    # Register vars namespace for global variables (permissive — any key allowed)
+    env.register("vars", {"type": "object", "additionalProperties": {"type": "string"}})
 
     # Process all nodes (async path — includes MCP validation)
     for node in spec.nodes:

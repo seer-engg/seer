@@ -16,6 +16,7 @@ from seer.database.models_integrations import IntegrationResource, IntegrationSe
 from seer.database.models_browser import BrowserProfile
 from seer.database.models_browser_recording import SessionRecording
 from seer.database.workflow_models import (
+    GlobalVariable,
     TriggerEvent,
     TriggerEventStatus,
     TriggerSubscription,
@@ -128,6 +129,7 @@ __all__ = [
     "Workflow",
     "WorkflowVersion",
     "WorkflowRun",
+    "GlobalVariable",
     "WorkflowFile",
     "WorkflowChatSession",
     "WorkflowChatMessage",

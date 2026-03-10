@@ -552,6 +552,39 @@ class WorkflowDiscoveryChatSession(models.Model):
         return f"WorkflowDiscoveryChatSession<{self.id}:{self.thread_id}>"
 
 
+class GlobalVariable(models.Model):
+    """Organization-scoped key-value variable reusable across workflows."""
+
+    id = fields.IntField(primary_key=True)
+    organization = fields.ForeignKeyField(
+        "models.Organization",
+        related_name="global_variables",
+        on_delete=fields.CASCADE,
+    )
+    key = fields.CharField(max_length=255)
+    value = fields.TextField()
+    is_secret = fields.BooleanField(default=False)
+    description = fields.TextField(null=True)
+    created_by = fields.ForeignKeyField(
+        "models.User",
+        related_name="created_global_variables",
+        on_delete=fields.CASCADE,
+    )
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    class Meta:
+        table = "global_variables"
+        ordering = ("key",)
+        unique_together = (("organization_id", "key"),)
+        indexes = (
+            ("organization_id",),
+        )
+
+    def __str__(self) -> str:
+        return f"GlobalVariable<{self.key}>"
+
+
 class WorkflowFile(models.Model):
     """
     Tracks files created during workflow execution or uploaded by users.

@@ -44,6 +44,7 @@ def _evaluate_inputs(node: ToolNode, ctx: NodeExecutionContext) -> Dict[str, Any
         locals=ctx.locals_ctx or {},
         config=ctx.config,
         trigger=ctx.trigger,
+        vars=ctx.vars,
     )
 
     inputs: Dict[str, Any] = {}
