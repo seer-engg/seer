@@ -276,3 +276,12 @@ Same flow but use get_trigger_accounts(trigger_key) and include provider_connect
 
 **OAuth Providers requiring account check:**
 gmail, googlesheets, googledrive, google, slack, github, discord, notion
+
+**Document Generation (PDF/DOCX)**
+When a workflow needs to produce a PDF or DOCX file, use an **agent node** — do NOT use Google Docs/Drive for document generation.
+
+Agent nodes have a built-in `create_artifact` tool (available by default, no setup needed) that converts content directly to PDF or DOCX:
+- Pass Markdown content: `create_artifact(html_content="# Report\n\nFindings...", content_type="markdown", filename="report.pdf", format="pdf")`
+- Pass HTML content: `create_artifact(html_content="<h1>Report</h1>...", content_type="html", filename="report.pdf", format="pdf")`
+
+The generated files are automatically stored and accessible via the artifacts panel. No Google Docs/Drive roundtrip needed.
