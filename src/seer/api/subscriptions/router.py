@@ -19,6 +19,7 @@ from tortoise.exceptions import IntegrityError
 from seer.config import config
 from seer.database.models import User
 from seer.api.core.middleware.organization import get_organization
+from seer.api.organizations.models import OrgInvoiceItem
 from seer.database.subscription_models import (
     StripeWebhookEvent,
     StripeWebhookEventStatus,
@@ -99,26 +100,9 @@ class PaginationMeta(BaseModel):
     has_more: bool
 
 
-class InvoiceItem(BaseModel):
-    """Invoice data for billing history."""
-    id: str
-    number: Optional[str] = None
-    status: Optional[str] = None
-    currency: Optional[str] = None
-    total: Optional[int] = None
-    amount_paid: Optional[int] = None
-    amount_due: Optional[int] = None
-    created_at: Optional[str] = None
-    period_start: Optional[str] = None
-    period_end: Optional[str] = None
-    hosted_invoice_url: Optional[str] = None
-    invoice_pdf: Optional[str] = None
-    billing_reason: Optional[str] = None
-
-
 class InvoiceListResponse(BaseModel):
     """Paginated invoices list."""
-    items: list[InvoiceItem]
+    items: list[OrgInvoiceItem]
     pagination: PaginationMeta
 
 
