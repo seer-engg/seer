@@ -85,7 +85,11 @@ def _create_tool_input_model(tool_name: str, input_schema: Dict[str, Any]) -> ty
         if prop_name in required:
             field_definitions[prop_name] = (python_type, ...)
         else:
-            field_definitions[prop_name] = (Optional[python_type], None)
+            default = prop_schema.get("default")
+            if default is not None:
+                field_definitions[prop_name] = (Optional[python_type], default)
+            else:
+                field_definitions[prop_name] = (Optional[python_type], None)
 
     model_name = f"{tool_name.replace('.', '_').replace('-', '_').title()}Input"
     return create_model(model_name, **field_definitions)
@@ -183,6 +187,8 @@ def _make_tool_executor(
 
     async def execute(**kwargs: Any) -> str:
         """Execute tool with resolved credentials."""
+        # Strip None values so tools fall back to their own defaults
+        kwargs = {k: v for k, v in kwargs.items() if v is not None}
         try:
             access_token = None
             credentials = None
@@ -642,6 +648,7 @@ class AgentNodeType(BaseNodeType):
             locals=ctx.locals_ctx or {},
             config=ctx.config,
             trigger=ctx.trigger,
+            vars=ctx.vars,
         )
 
         # Extract and validate agent configuration

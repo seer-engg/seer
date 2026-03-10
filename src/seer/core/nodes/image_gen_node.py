@@ -399,7 +399,7 @@ class ImageGenNodeType(BaseNodeType):
         from seer.core.runtime.state import INTERNAL_STATE_PREFIX
 
         visible_state = {k: v for k, v in ctx.state.items() if not k.startswith(INTERNAL_STATE_PREFIX)}
-        return EvaluationContext(state=visible_state, locals=ctx.locals_ctx or {}, config=ctx.config, trigger=ctx.trigger)
+        return EvaluationContext(state=visible_state, locals=ctx.locals_ctx or {}, config=ctx.config, trigger=ctx.trigger, vars=ctx.vars)
 
     async def execute_async(
         self,

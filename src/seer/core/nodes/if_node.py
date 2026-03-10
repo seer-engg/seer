@@ -79,6 +79,7 @@ class IfNodeType(BaseNodeType):
             locals=ctx.locals_ctx or {},
             config=ctx.config,
             trigger=ctx.trigger,
+            vars=ctx.vars,
         )
 
         # Evaluate condition

@@ -56,6 +56,7 @@ class NodeRuntime:
         self._type_schemas = services.type_env.as_dict()
         self._current_trigger: Mapping[str, Any] | None = None
         self._current_context: WorkflowRuntimeContext | None = None
+        self._current_vars: Mapping[str, Any] | None = None
         self._loop_body_map: Dict[str, str] = {}  # node_id -> parent_loop_id
         self._nested_loop_parents: Dict[str, str] = {}  # inner_loop_id -> outer_loop_id
 
@@ -75,6 +76,10 @@ class NodeRuntime:
 
     def bind_context(self, context: WorkflowRuntimeContext | None) -> None:
         self._current_context = context
+
+    def bind_vars(self, vars_dict: Mapping[str, Any] | None) -> None:
+        """Bind global variables for ${vars.*} resolution."""
+        self._current_vars = vars_dict
 
     def set_loop_body_map(self, loop_body_map: Dict[str, str]) -> None:
         """Set mapping from node_id to parent loop_id for nodes inside loops."""
@@ -234,6 +239,7 @@ class NodeRuntime:
             loop_body_map=self._loop_body_map,
             nested_loop_parents=self._nested_loop_parents,
             trigger=self._current_trigger,
+            vars=self._current_vars,
         )
 
         start_time = time.perf_counter()
@@ -284,4 +290,5 @@ class NodeRuntime:
             locals=locals_mapping,
             config=config,
             trigger=self._current_trigger,
+            vars=self._current_vars,
         )

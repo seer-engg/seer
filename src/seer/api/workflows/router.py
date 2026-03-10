@@ -5,12 +5,14 @@ from typing import Optional
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
+from tortoise.exceptions import IntegrityError
 
 from seer.api.core.middleware.organization import get_membership, get_organization
 from seer.api.workflows import models as api_models
 from seer.api.workflows import services
 from seer.api.workflows.services.share_template import ShareAsTemplateRequest, ShareAsTemplateResponse, share_workflow_as_template
 from seer.database import Organization, OrganizationMembership, User
+from seer.database.workflow_models import GlobalVariable
 
 router = APIRouter(prefix="/v1", tags=["workflows"])
 
@@ -452,11 +454,7 @@ async def resume_run(request: Request, run_id: str, payload: api_models.HITLResu
 
 @router.get("/runs/{run_id}/files", response_model=api_models.WorkflowFileListResponse)
 async def list_run_files(request: Request, run_id: str):
-    """
-    List all files created during a workflow run.
-
-    Returns file metadata including size, type, and creation time.
-    """
+    """List all files created during a workflow run."""
     user = _require_user(request)
     _, membership = _get_org_context(request)
     return await services.list_run_files(user, run_id, membership=membership)
@@ -464,9 +462,7 @@ async def list_run_files(request: Request, run_id: str):
 
 @router.get("/runs/{run_id}/files/{file_id}", response_model=api_models.WorkflowFileResponse)
 async def get_run_file(request: Request, run_id: str, file_id: str):
-    """
-    Get metadata for a specific file in a workflow run.
-    """
+    """Get metadata for a specific file in a workflow run."""
     user = _require_user(request)
     _, membership = _get_org_context(request)
     return await services.get_run_file(user, run_id, file_id, membership=membership)
@@ -474,11 +470,7 @@ async def get_run_file(request: Request, run_id: str, file_id: str):
 
 @router.get("/runs/{run_id}/files/{file_id}/download", response_model=api_models.WorkflowFileDownloadResponse)
 async def download_run_file(request: Request, run_id: str, file_id: str):
-    """
-    Get a presigned URL to download a file from a workflow run.
-
-    The URL is valid for 1 hour.
-    """
+    """Get a presigned download URL for a file from a workflow run."""
     user = _require_user(request)
     _, membership = _get_org_context(request)
     return await services.get_run_file_download_url(user, run_id, file_id, membership=membership)
@@ -486,11 +478,7 @@ async def download_run_file(request: Request, run_id: str, file_id: str):
 
 @router.delete("/runs/{run_id}/files/{file_id}", response_model=api_models.WorkflowFileDeleteResponse)
 async def delete_run_file(request: Request, run_id: str, file_id: str):
-    """
-    Delete a file from a workflow run.
-
-    This removes both the file from storage and its metadata.
-    """
+    """Delete a file from a workflow run."""
     user = _require_user(request)
     _, membership = _get_org_context(request)
     return await services.delete_run_file(user, run_id, file_id, membership=membership)
@@ -504,6 +492,103 @@ async def delete_run_file(request: Request, run_id: str, file_id: str):
 async def share_as_template(request: Request, workflow_id: str, payload: ShareAsTemplateRequest):
     user = _require_user(request)
     return await share_workflow_as_template(user, workflow_id, payload)
+
+
+# ============================================================================
+# Global Variables Endpoints
+# ============================================================================
+
+
+@router.get("/variables", response_model=api_models.GlobalVariableListResponse)
+async def list_global_variables(request: Request):
+    """List all global variables for the current organization."""
+    _require_user(request)
+    org, _ = _get_org_context(request)
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organization context required")
+    rows = await GlobalVariable.filter(organization=org).order_by("key")
+    items = []
+    for row in rows:
+        items.append(api_models.GlobalVariableItem(
+            id=row.id,
+            key=row.key,
+            value="" if row.is_secret else row.value,
+            is_secret=row.is_secret,
+            description=row.description,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        ))
+    return api_models.GlobalVariableListResponse(items=items)
+
+
+@router.post("/variables", response_model=api_models.GlobalVariableItem, status_code=status.HTTP_201_CREATED)
+async def create_global_variable(request: Request, payload: api_models.GlobalVariableCreateRequest):
+    """Create a new global variable."""
+    user = _require_user(request)
+    org, _ = _get_org_context(request)
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organization context required")
+    try:
+        row = await GlobalVariable.create(
+            organization=org,
+            key=payload.key,
+            value=payload.value,
+            is_secret=payload.is_secret,
+            description=payload.description,
+            created_by=user,
+        )
+    except IntegrityError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Variable '{payload.key}' already exists") from exc
+    return api_models.GlobalVariableItem(
+        id=row.id,
+        key=row.key,
+        value="" if row.is_secret else row.value,
+        is_secret=row.is_secret,
+        description=row.description,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+@router.patch("/variables/{variable_id}", response_model=api_models.GlobalVariableItem)
+async def update_global_variable(request: Request, variable_id: int, payload: api_models.GlobalVariableUpdateRequest):
+    """Update an existing global variable."""
+    _require_user(request)
+    org, _ = _get_org_context(request)
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organization context required")
+    row = await GlobalVariable.filter(id=variable_id, organization=org).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variable not found")
+    if payload.value is not None:
+        row.value = payload.value
+    if payload.is_secret is not None:
+        row.is_secret = payload.is_secret
+    if payload.description is not None:
+        row.description = payload.description
+    await row.save()
+    return api_models.GlobalVariableItem(
+        id=row.id,
+        key=row.key,
+        value="" if row.is_secret else row.value,
+        is_secret=row.is_secret,
+        description=row.description,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+@router.delete("/variables/{variable_id}", status_code=status.HTTP_200_OK)
+async def delete_global_variable(request: Request, variable_id: int):
+    """Delete a global variable."""
+    _require_user(request)
+    org, _ = _get_org_context(request)
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organization context required")
+    deleted = await GlobalVariable.filter(id=variable_id, organization=org).delete()
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variable not found")
+    return {"ok": True}
 
 
 __all__ = ["router"]
