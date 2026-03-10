@@ -22,6 +22,10 @@ class CreateOrganizationRequest(BaseModel):
     """Request to create a new team organization."""
     name: str = Field(..., min_length=1, max_length=255)
     slug: Optional[str] = Field(None, min_length=1, max_length=255)
+    transfer_subscription: bool = Field(
+        default=False,
+        description="If true, transfer the user's personal subscription to this team org"
+    )
 
 
 class ConvertToTeamRequest(BaseModel):
@@ -66,6 +70,10 @@ class OrganizationResponse(BaseModel):
     type: OrganizationType
     created_at: datetime
     updated_at: datetime
+    checkout_required: bool = Field(
+        default=False,
+        description="True if this org needs to complete checkout (no subscription transferred)"
+    )
 
 
 class OrganizationWithRoleResponse(BaseModel):
@@ -245,6 +253,18 @@ class OrgBillingResponse(BaseModel):
 class OrgBillingPortalResponse(BaseModel):
     """Response containing Stripe portal URL."""
     portal_url: str
+
+
+class OrgCheckoutRequest(BaseModel):
+    """Request to create checkout session for organization."""
+    price_id: str
+    success_url: str
+    cancel_url: str
+
+
+class OrgCheckoutResponse(BaseModel):
+    """Response containing Stripe checkout URL."""
+    checkout_url: str
 
 
 class OrgInvoiceItem(BaseModel):

@@ -26,6 +26,7 @@ def mock_request():
     request.method = "POST"
     request.url.path = "/api/v1/workflows"
     request.state = MagicMock()
+    request.state.organization = None  # Organization context (may be None for personal workspace)
     return request
 
 # Note: mock_user fixture is provided by tests/unit/conftest.py
@@ -117,7 +118,7 @@ class TestDispatchBasic:
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
              patch("seer.api.core.middleware.usage_limit.is_payment_exempt_path") as mock_is_exempt, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits:
+             patch("seer.api.core.middleware.usage_limit.get_effective_limits") as mock_get_limits:
 
             mock_is_public.return_value = False
             mock_is_exempt.return_value = True
@@ -128,7 +129,7 @@ class TestDispatchBasic:
 
             # Should pass through without checking limits
             call_next.assert_called_once()
-            # get_limits_for_user should not be called
+            # get_effective_limits should not be called
             mock_get_limits.assert_not_called()
 
     @pytest.mark.asyncio
@@ -161,7 +162,7 @@ class TestDispatchBasic:
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
              patch("seer.api.core.middleware.usage_limit.is_payment_exempt_path") as mock_is_exempt, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits:
+             patch("seer.api.core.middleware.usage_limit.get_effective_limits") as mock_get_limits:
 
             mock_is_public.return_value = False
             mock_is_exempt.return_value = True
@@ -185,7 +186,7 @@ class TestDispatchBasic:
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
              patch("seer.api.core.middleware.usage_limit.is_payment_exempt_path") as mock_is_exempt, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits, \
+             patch("seer.api.core.middleware.usage_limit.get_effective_limits") as mock_get_limits, \
              patch("seer.api.core.middleware.usage_limit.get_workflow_count") as mock_get_count, \
              patch("seer.api.core.middleware.usage_limit.resolve_user_tier") as mock_resolve_tier:
 
@@ -224,7 +225,7 @@ class TestWorkflowCreationLimit:
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
              patch("seer.api.core.middleware.usage_limit.is_payment_exempt_path") as mock_is_exempt, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits, \
+             patch("seer.api.core.middleware.usage_limit.get_effective_limits") as mock_get_limits, \
              patch("seer.api.core.middleware.usage_limit.get_workflow_count") as mock_get_count:
 
             mock_is_public.return_value = False
@@ -247,7 +248,7 @@ class TestWorkflowCreationLimit:
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
              patch("seer.api.core.middleware.usage_limit.is_payment_exempt_path") as mock_is_exempt, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits, \
+             patch("seer.api.core.middleware.usage_limit.get_effective_limits") as mock_get_limits, \
              patch("seer.api.core.middleware.usage_limit.get_workflow_count") as mock_get_count, \
              patch("seer.api.core.middleware.usage_limit.resolve_user_tier") as mock_resolve_tier:
 
@@ -272,7 +273,7 @@ class TestWorkflowCreationLimit:
         call_next = AsyncMock(return_value=MagicMock())
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits:
+             patch("seer.api.core.middleware.usage_limit.get_effective_limits") as mock_get_limits:
 
             mock_is_public.return_value = False
             mock_get_limits.return_value = unlimited_limits
@@ -303,7 +304,7 @@ class TestWorkflowRunLimit:
         call_next = AsyncMock(return_value=MagicMock())
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits, \
+             patch("seer.api.core.middleware.usage_limit.get_effective_limits") as mock_get_limits, \
              patch("seer.api.core.middleware.usage_limit.get_monthly_run_count") as mock_get_count:
 
             mock_is_public.return_value = False
@@ -324,7 +325,7 @@ class TestWorkflowRunLimit:
         mock_request.url.path = "/api/v1/workflows/wf_123/run"
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits, \
+             patch("seer.api.core.middleware.usage_limit.get_effective_limits") as mock_get_limits, \
              patch("seer.api.core.middleware.usage_limit.get_monthly_run_count") as mock_get_count, \
              patch("seer.api.core.middleware.usage_limit.resolve_user_tier") as mock_resolve_tier:
 
@@ -348,7 +349,7 @@ class TestWorkflowRunLimit:
         call_next = AsyncMock(return_value=MagicMock())
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits:
+             patch("seer.api.core.middleware.usage_limit.get_effective_limits") as mock_get_limits:
 
             mock_is_public.return_value = False
             mock_get_limits.return_value = unlimited_limits
@@ -379,7 +380,7 @@ class TestPollingIntervalValidation:
         call_next = AsyncMock(return_value=MagicMock())
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits:
+             patch("seer.api.core.middleware.usage_limit.get_effective_limits") as mock_get_limits:
 
             mock_is_public.return_value = False
             mock_get_limits.return_value = mock_limits
@@ -400,7 +401,7 @@ class TestPollingIntervalValidation:
         call_next = AsyncMock(return_value=MagicMock())
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits, \
+             patch("seer.api.core.middleware.usage_limit.get_effective_limits") as mock_get_limits, \
              patch("seer.api.core.middleware.usage_limit.resolve_user_tier") as mock_resolve_tier, \
              patch("seer.api.core.middleware.usage_limit.logger") as mock_logger:
 
@@ -427,7 +428,7 @@ class TestPollingIntervalValidation:
         call_next = AsyncMock(return_value=MagicMock())
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits:
+             patch("seer.api.core.middleware.usage_limit.get_effective_limits") as mock_get_limits:
 
             mock_is_public.return_value = False
             mock_get_limits.return_value = mock_limits
@@ -458,7 +459,7 @@ class TestChatLLMCreditLimit:
         call_next = AsyncMock(return_value=MagicMock())
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits, \
+             patch("seer.api.core.middleware.usage_limit.get_effective_limits") as mock_get_limits, \
              patch("seer.api.core.middleware.usage_limit.check_credit_limit") as mock_check_credit:
 
             mock_is_public.return_value = False
@@ -470,7 +471,8 @@ class TestChatLLMCreditLimit:
             await middleware.dispatch(mock_request, call_next)
 
             call_next.assert_called_once()
-            mock_check_credit.assert_called_once_with(mock_user)
+            # check_credit_limit now takes (user, organization) - organization is None from mock_request
+            mock_check_credit.assert_called_once_with(mock_user, None)
 
     @pytest.mark.asyncio
     async def test_chat_endpoint_blocked_when_over_limit(self, mock_request, mock_user, mock_limits):
@@ -483,7 +485,7 @@ class TestChatLLMCreditLimit:
         mock_request.url.path = "/nexus/wf_123/chat"
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits, \
+             patch("seer.api.core.middleware.usage_limit.get_effective_limits") as mock_get_limits, \
              patch("seer.api.core.middleware.usage_limit.check_credit_limit") as mock_check_credit:
 
             mock_is_public.return_value = False
@@ -518,7 +520,7 @@ class TestChatLLMCreditLimit:
         mock_request.url.path = "/nexus/wf_123/chat/resume"
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits, \
+             patch("seer.api.core.middleware.usage_limit.get_effective_limits") as mock_get_limits, \
              patch("seer.api.core.middleware.usage_limit.check_credit_limit") as mock_check_credit:
 
             mock_is_public.return_value = False
@@ -545,7 +547,7 @@ class TestChatLLMCreditLimit:
         call_next = AsyncMock(return_value=MagicMock())
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits, \
+             patch("seer.api.core.middleware.usage_limit.get_effective_limits") as mock_get_limits, \
              patch("seer.api.core.middleware.usage_limit.check_credit_limit") as mock_check_credit:
 
             mock_is_public.return_value = False
@@ -579,7 +581,7 @@ class TestPathPatternMatching:
         call_next = AsyncMock(return_value=MagicMock())
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits:
+             patch("seer.api.core.middleware.usage_limit.get_effective_limits") as mock_get_limits:
 
             mock_is_public.return_value = False
             mock_get_limits.return_value = mock_limits
@@ -599,7 +601,7 @@ class TestPathPatternMatching:
         call_next = AsyncMock(return_value=MagicMock())
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits:
+             patch("seer.api.core.middleware.usage_limit.get_effective_limits") as mock_get_limits:
 
             mock_is_public.return_value = False
             mock_get_limits.return_value = mock_limits
@@ -628,7 +630,7 @@ class TestErrorResponseFormat:
         mock_request.url.path = "/api/v1/workflows"
 
         with patch("seer.api.core.middleware.usage_limit.is_public_path") as mock_is_public, \
-             patch("seer.api.core.middleware.usage_limit.get_limits_for_user") as mock_get_limits, \
+             patch("seer.api.core.middleware.usage_limit.get_effective_limits") as mock_get_limits, \
              patch("seer.api.core.middleware.usage_limit.get_workflow_count") as mock_get_count, \
              patch("seer.api.core.middleware.usage_limit.resolve_user_tier") as mock_resolve_tier:
 

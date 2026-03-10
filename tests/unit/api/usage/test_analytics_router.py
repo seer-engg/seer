@@ -426,7 +426,7 @@ class TestResolvePeriod:
         from seer.api.usage.router import _resolve_period
 
         with patch(
-            "seer.api.usage.router.get_billing_period_for_user",
+            "seer.api.usage.router.get_effective_billing_period",
             new_callable=AsyncMock,
             return_value=(PERIOD_START, PERIOD_END),
         ):
@@ -441,7 +441,7 @@ class TestResolvePeriod:
         custom_start = datetime(2025, 1, 15, tzinfo=timezone.utc)
 
         with patch(
-            "seer.api.usage.router.get_billing_period_for_user",
+            "seer.api.usage.router.get_effective_billing_period",
             new_callable=AsyncMock,
             return_value=(PERIOD_START, PERIOD_END),
         ):
@@ -456,7 +456,7 @@ class TestResolvePeriod:
         custom_end = datetime(2025, 1, 20, tzinfo=timezone.utc)
 
         with patch(
-            "seer.api.usage.router.get_billing_period_for_user",
+            "seer.api.usage.router.get_effective_billing_period",
             new_callable=AsyncMock,
             return_value=(PERIOD_START, PERIOD_END),
         ):

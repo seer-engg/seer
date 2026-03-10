@@ -62,7 +62,7 @@ def mock_setup_intent_event():
         "customer": "cus_123",
         "payment_method": "pm_123",
         "metadata": {
-            "billing_profile_id": "1",
+            "organization_id": "1",
         },
     }
 
@@ -570,28 +570,35 @@ class TestHandleSetupIntentSucceeded:
     """Tests for _handle_setup_intent_succeeded method."""
 
     @pytest.mark.asyncio
-    async def test_updates_billing_profile_payment_method(self, webhook_controller):
-        """Test updates billing profile has_payment_method flag."""
+    async def test_updates_organization_payment_method(self, webhook_controller):
+        """Test updates organization has_payment_method flag via StripeCustomer lookup."""
         setup_intent_data = {
             "id": "seti_123",
             "customer": "cus_123",
             "payment_method": "pm_123",
         }
-        mock_profile = MagicMock()
-        mock_profile.has_payment_method = False
-        mock_profile.save = AsyncMock()
+        mock_org = MagicMock()
+        mock_org.has_payment_method = False
+        mock_org.save = AsyncMock()
+
+        mock_stripe_customer = MagicMock()
+        mock_stripe_customer.id = 1
 
         with patch(
-            "seer.api.subscriptions.stripe_webhook_controller.BillingProfile"
-        ) as mock_billing:
-            mock_billing.get_or_none = AsyncMock(return_value=mock_profile)
+            "seer.api.subscriptions.stripe_webhook_controller.StripeCustomer"
+        ) as mock_stripe_cls, patch(
+            "seer.api.subscriptions.stripe_webhook_controller.Organization"
+        ) as mock_org_cls:
+            mock_stripe_cls.get_or_none = AsyncMock(return_value=mock_stripe_customer)
+            mock_org_cls.get_or_none = AsyncMock(return_value=mock_org)
 
             await webhook_controller._handle_setup_intent_succeeded(setup_intent_data)
 
-            mock_billing.get_or_none.assert_called_once_with(stripe_customer_id="cus_123")
-            assert mock_profile.has_payment_method is True
-            assert mock_profile.payment_method_added_at is not None
-            mock_profile.save.assert_called_once()
+            mock_stripe_cls.get_or_none.assert_called_once_with(stripe_customer_id="cus_123")
+            mock_org_cls.get_or_none.assert_called_once_with(stripe_customer_id=mock_stripe_customer.id)
+            assert mock_org.has_payment_method is True
+            assert mock_org.payment_method_added_at is not None
+            mock_org.save.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_handles_data_with_object_wrapper(self, webhook_controller):
@@ -603,17 +610,22 @@ class TestHandleSetupIntentSucceeded:
                 "payment_method": "pm_123",
             }
         }
-        mock_profile = MagicMock()
-        mock_profile.save = AsyncMock()
+        mock_org = MagicMock()
+        mock_org.save = AsyncMock()
+        mock_stripe_customer = MagicMock()
+        mock_stripe_customer.id = 1
 
         with patch(
-            "seer.api.subscriptions.stripe_webhook_controller.BillingProfile"
-        ) as mock_billing:
-            mock_billing.get_or_none = AsyncMock(return_value=mock_profile)
+            "seer.api.subscriptions.stripe_webhook_controller.StripeCustomer"
+        ) as mock_stripe_cls, patch(
+            "seer.api.subscriptions.stripe_webhook_controller.Organization"
+        ) as mock_org_cls:
+            mock_stripe_cls.get_or_none = AsyncMock(return_value=mock_stripe_customer)
+            mock_org_cls.get_or_none = AsyncMock(return_value=mock_org)
 
             await webhook_controller._handle_setup_intent_succeeded(setup_intent_data)
 
-            mock_billing.get_or_none.assert_called_once_with(stripe_customer_id="cus_123")
+            mock_stripe_cls.get_or_none.assert_called_once_with(stripe_customer_id="cus_123")
 
     @pytest.mark.asyncio
     async def test_logs_warning_when_customer_id_missing(self, webhook_controller):
@@ -623,20 +635,20 @@ class TestHandleSetupIntentSucceeded:
         with patch(
             "seer.api.subscriptions.stripe_webhook_controller.logger"
         ) as mock_logger, patch(
-            "seer.api.subscriptions.stripe_webhook_controller.BillingProfile"
-        ) as mock_billing:
-            mock_billing.get_or_none = AsyncMock()
+            "seer.api.subscriptions.stripe_webhook_controller.StripeCustomer"
+        ) as mock_stripe_cls:
+            mock_stripe_cls.get_or_none = AsyncMock()
 
             await webhook_controller._handle_setup_intent_succeeded(setup_intent_data)
 
             mock_logger.warning.assert_called()
             call_args = str(mock_logger.warning.call_args)
             assert "missing customer ID" in call_args
-            mock_billing.get_or_none.assert_not_called()
+            mock_stripe_cls.get_or_none.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_logs_warning_when_billing_profile_not_found(self, webhook_controller):
-        """Test logs warning when billing profile is not found."""
+    async def test_logs_warning_when_stripe_customer_not_found(self, webhook_controller):
+        """Test logs warning when stripe customer is not found."""
         setup_intent_data = {
             "id": "seti_123",
             "customer": "cus_123",
@@ -646,35 +658,67 @@ class TestHandleSetupIntentSucceeded:
         with patch(
             "seer.api.subscriptions.stripe_webhook_controller.logger"
         ) as mock_logger, patch(
-            "seer.api.subscriptions.stripe_webhook_controller.BillingProfile"
-        ) as mock_billing:
-            mock_billing.get_or_none = AsyncMock(return_value=None)
+            "seer.api.subscriptions.stripe_webhook_controller.StripeCustomer"
+        ) as mock_stripe_cls:
+            mock_stripe_cls.get_or_none = AsyncMock(return_value=None)
 
             await webhook_controller._handle_setup_intent_succeeded(setup_intent_data)
 
             mock_logger.warning.assert_called()
             call_args = str(mock_logger.warning.call_args)
-            assert "No billing profile found" in call_args
+            assert "No" in call_args and "found" in call_args
 
     @pytest.mark.asyncio
-    async def test_saves_with_correct_update_fields(self, webhook_controller):
-        """Test billing profile saved with correct update_fields."""
+    async def test_logs_warning_when_organization_not_found(self, webhook_controller):
+        """Test logs warning when organization is not found."""
         setup_intent_data = {
             "id": "seti_123",
             "customer": "cus_123",
             "payment_method": "pm_123",
         }
-        mock_profile = MagicMock()
-        mock_profile.save = AsyncMock()
+        mock_stripe_customer = MagicMock()
+        mock_stripe_customer.id = 1
 
         with patch(
-            "seer.api.subscriptions.stripe_webhook_controller.BillingProfile"
-        ) as mock_billing:
-            mock_billing.get_or_none = AsyncMock(return_value=mock_profile)
+            "seer.api.subscriptions.stripe_webhook_controller.logger"
+        ) as mock_logger, patch(
+            "seer.api.subscriptions.stripe_webhook_controller.StripeCustomer"
+        ) as mock_stripe_cls, patch(
+            "seer.api.subscriptions.stripe_webhook_controller.Organization"
+        ) as mock_org_cls:
+            mock_stripe_cls.get_or_none = AsyncMock(return_value=mock_stripe_customer)
+            mock_org_cls.get_or_none = AsyncMock(return_value=None)
 
             await webhook_controller._handle_setup_intent_succeeded(setup_intent_data)
 
-            mock_profile.save.assert_called_once_with(
+            mock_logger.warning.assert_called()
+            call_args = str(mock_logger.warning.call_args)
+            assert "No" in call_args and "found" in call_args
+
+    @pytest.mark.asyncio
+    async def test_saves_with_correct_update_fields(self, webhook_controller):
+        """Test organization saved with correct update_fields."""
+        setup_intent_data = {
+            "id": "seti_123",
+            "customer": "cus_123",
+            "payment_method": "pm_123",
+        }
+        mock_org = MagicMock()
+        mock_org.save = AsyncMock()
+        mock_stripe_customer = MagicMock()
+        mock_stripe_customer.id = 1
+
+        with patch(
+            "seer.api.subscriptions.stripe_webhook_controller.StripeCustomer"
+        ) as mock_stripe_cls, patch(
+            "seer.api.subscriptions.stripe_webhook_controller.Organization"
+        ) as mock_org_cls:
+            mock_stripe_cls.get_or_none = AsyncMock(return_value=mock_stripe_customer)
+            mock_org_cls.get_or_none = AsyncMock(return_value=mock_org)
+
+            await webhook_controller._handle_setup_intent_succeeded(setup_intent_data)
+
+            mock_org.save.assert_called_once_with(
                 update_fields=["has_payment_method", "payment_method_added_at"]
             )
 
@@ -686,23 +730,28 @@ class TestHandleSetupIntentSucceeded:
             "customer": "cus_123",
             "payment_method": "pm_123",
         }
-        mock_profile = MagicMock()
-        mock_profile.save = AsyncMock()
+        mock_org = MagicMock()
+        mock_org.save = AsyncMock()
+        mock_stripe_customer = MagicMock()
+        mock_stripe_customer.id = 1
 
         before_call = datetime.now(timezone.utc)
 
         with patch(
-            "seer.api.subscriptions.stripe_webhook_controller.BillingProfile"
-        ) as mock_billing:
-            mock_billing.get_or_none = AsyncMock(return_value=mock_profile)
+            "seer.api.subscriptions.stripe_webhook_controller.StripeCustomer"
+        ) as mock_stripe_cls, patch(
+            "seer.api.subscriptions.stripe_webhook_controller.Organization"
+        ) as mock_org_cls:
+            mock_stripe_cls.get_or_none = AsyncMock(return_value=mock_stripe_customer)
+            mock_org_cls.get_or_none = AsyncMock(return_value=mock_org)
 
             await webhook_controller._handle_setup_intent_succeeded(setup_intent_data)
 
         after_call = datetime.now(timezone.utc)
 
-        assert mock_profile.payment_method_added_at >= before_call
-        assert mock_profile.payment_method_added_at <= after_call
-        assert mock_profile.payment_method_added_at.tzinfo == timezone.utc
+        assert mock_org.payment_method_added_at >= before_call
+        assert mock_org.payment_method_added_at <= after_call
+        assert mock_org.payment_method_added_at.tzinfo == timezone.utc
 
 
 # =============================================================================
@@ -781,13 +830,18 @@ class TestWebhookEventFlow:
             "customer": "cus_123",
             "payment_method": "pm_123",
         }
-        mock_profile = MagicMock()
-        mock_profile.save = AsyncMock()
+        mock_org = MagicMock()
+        mock_org.save = AsyncMock()
+        mock_stripe_customer = MagicMock()
+        mock_stripe_customer.id = 1
 
         with patch(
-            "seer.api.subscriptions.stripe_webhook_controller.BillingProfile"
-        ) as mock_billing:
-            mock_billing.get_or_none = AsyncMock(return_value=mock_profile)
+            "seer.api.subscriptions.stripe_webhook_controller.StripeCustomer"
+        ) as mock_stripe_cls, patch(
+            "seer.api.subscriptions.stripe_webhook_controller.Organization"
+        ) as mock_org_cls:
+            mock_stripe_cls.get_or_none = AsyncMock(return_value=mock_stripe_customer)
+            mock_org_cls.get_or_none = AsyncMock(return_value=mock_org)
 
             await webhook_controller.process_event(
                 "setup_intent.succeeded",
@@ -795,6 +849,6 @@ class TestWebhookEventFlow:
                 event_id="evt_789"
             )
 
-            mock_billing.get_or_none.assert_called_once_with(stripe_customer_id="cus_123")
-            assert mock_profile.has_payment_method is True
-            mock_profile.save.assert_called_once()
+            mock_stripe_cls.get_or_none.assert_called_once_with(stripe_customer_id="cus_123")
+            assert mock_org.has_payment_method is True
+            mock_org.save.assert_called_once()

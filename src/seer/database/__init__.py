@@ -37,9 +37,8 @@ from seer.database.workflow_models import (
     parse_workflow_public_id,
 )
 from seer.database.subscription_models import (
-    BillingProfile,
-    BillingProfileType,
     BillingSubscription,
+    StripeCustomer,
     SubscriptionStatus,
     SubscriptionTier,
     StripeWebhookEvent,
@@ -146,9 +145,8 @@ __all__ = [
     "make_run_public_id",
     "parse_run_public_id",
     # Subscription domain
-    "BillingProfile",
-    "BillingProfileType",
     "BillingSubscription",
+    "StripeCustomer",
     "SubscriptionTier",
     "SubscriptionStatus",
     "StripeWebhookEvent",

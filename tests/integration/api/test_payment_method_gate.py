@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from seer.database.models import User, UserSettings
-from seer.database.subscription_models import BillingProfile
+from seer.database.organization_models import Organization, OrganizationType
 
 
 @pytest.fixture
@@ -21,8 +21,12 @@ async def user_without_payment_method(db_engine):  # pylint: disable=unused-argu
         user_id="user_no_payment",
         email="nopayment@example.com",
     )
-    billing_profile = await BillingProfile.create(
-        owner_user=user,
+    # Create personal organization for user (org-centric billing)
+    organization = await Organization.create(
+        owner=user,
+        name=f"{user.first_name or 'User'}'s Workspace",
+        slug=f"personal-{user.user_id}",
+        type=OrganizationType.PERSONAL,
         has_payment_method=False,
     )
     # User has completed onboarding
@@ -34,9 +38,9 @@ async def user_without_payment_method(db_engine):  # pylint: disable=unused-argu
             }
         }
     )
-    yield user, billing_profile, settings
+    yield user, organization, settings
     await settings.delete()
-    await billing_profile.delete()
+    await organization.delete()
     await user.delete()
 
 
@@ -47,8 +51,12 @@ async def user_with_payment_method(db_engine):  # pylint: disable=unused-argumen
         user_id="user_with_payment",
         email="withpayment@example.com",
     )
-    billing_profile = await BillingProfile.create(
-        owner_user=user,
+    # Create personal organization with payment method (org-centric billing)
+    organization = await Organization.create(
+        owner=user,
+        name=f"{user.first_name or 'User'}'s Workspace",
+        slug=f"personal-{user.user_id}",
+        type=OrganizationType.PERSONAL,
         has_payment_method=True,
         payment_method_added_at=datetime.now(timezone.utc),
     )
@@ -61,9 +69,9 @@ async def user_with_payment_method(db_engine):  # pylint: disable=unused-argumen
             }
         }
     )
-    yield user, billing_profile, settings
+    yield user, organization, settings
     await settings.delete()
-    await billing_profile.delete()
+    await organization.delete()
     await user.delete()
 
 
@@ -74,8 +82,12 @@ async def user_in_onboarding(db_engine):  # pylint: disable=unused-argument # Re
         user_id="user_onboarding",
         email="onboarding@example.com",
     )
-    billing_profile = await BillingProfile.create(
-        owner_user=user,
+    # Create personal organization (org-centric billing)
+    organization = await Organization.create(
+        owner=user,
+        name=f"{user.first_name or 'User'}'s Workspace",
+        slug=f"personal-{user.user_id}",
+        type=OrganizationType.PERSONAL,
         has_payment_method=False,
     )
     # User has NOT completed onboarding
@@ -87,9 +99,9 @@ async def user_in_onboarding(db_engine):  # pylint: disable=unused-argument # Re
             }
         }
     )
-    yield user, billing_profile, settings
+    yield user, organization, settings
     await settings.delete()
-    await billing_profile.delete()
+    await organization.delete()
     await user.delete()
 
 
@@ -108,10 +120,10 @@ class TestPaymentMethodGate:
 
     async def test_blocks_user_without_payment_method(self, user_without_payment_method):
         """Test that users without payment method should be blocked from accessing non-subscription endpoints."""
-        user, billing_profile, settings = user_without_payment_method
+        user, organization, settings = user_without_payment_method
 
         # Verify preconditions that would trigger payment method gate
-        assert billing_profile.has_payment_method is False
+        assert organization.has_payment_method is False
         assert settings.preferences.get("onboarding", {}).get("completed", False) is True
 
         # Verify user has completed onboarding but lacks payment method
@@ -119,47 +131,47 @@ class TestPaymentMethodGate:
 
     async def test_allows_user_with_payment_method(self, mock_app: FastAPI, user_with_payment_method):
         """Test that users with payment method can access the app."""
-        user, billing_profile, settings = user_with_payment_method
+        user, organization, settings = user_with_payment_method
 
         with patch("seer.api.core.middleware.auth.config") as mock_config:
             mock_config.is_self_hosted = False
 
             # User should be able to access endpoints
             # This test verifies the payment method gate allows them through
-            assert billing_profile.has_payment_method is True
+            assert organization.has_payment_method is True
 
     async def test_allows_subscription_endpoints_without_payment_method(self, mock_app: FastAPI, user_without_payment_method):
         """Test that subscription endpoints are accessible even without payment method."""
-        user, billing_profile, settings = user_without_payment_method
+        user, organization, settings = user_without_payment_method
 
         # Subscription endpoints should always be accessible
         # This is necessary for users to add payment methods
-        assert billing_profile.has_payment_method is False
+        assert organization.has_payment_method is False
 
         # The /api/subscriptions/* endpoints should not be blocked
         # This allows users to complete the payment flow
 
     async def test_allows_user_in_onboarding(self, mock_app: FastAPI, user_in_onboarding):
         """Test that users still in onboarding flow are not blocked."""
-        user, billing_profile, settings = user_in_onboarding
+        user, organization, settings = user_in_onboarding
 
         # Users who haven't completed onboarding shouldn't be blocked
         # even if they don't have a payment method
-        assert billing_profile.has_payment_method is False
+        assert organization.has_payment_method is False
         assert settings.preferences.get("onboarding", {}).get("completed", False) is False
 
     async def test_self_hosted_mode_bypass(self, mock_app: FastAPI, user_without_payment_method):
         """Test that payment method gate is bypassed in self-hosted mode."""
-        user, billing_profile, settings = user_without_payment_method
+        user, organization, settings = user_without_payment_method
 
         with patch("seer.api.core.middleware.auth.config") as mock_config:
             mock_config.is_self_hosted = True
 
             # Self-hosted users should not be subject to payment method gate
             # even if they don't have a payment method
-            assert billing_profile.has_payment_method is False
+            assert organization.has_payment_method is False
 
-    async def test_user_without_billing_profile(self, db_engine):  # pylint: disable=unused-argument # Reason: db_engine needed for database initialization
+    async def test_user_without_organization(self, db_engine):  # pylint: disable=unused-argument # Reason: db_engine needed for database initialization
         """Test handling of user without billing profile."""
         user = await User.create(
             user_id="user_no_billing",
@@ -179,10 +191,10 @@ class TestPaymentMethodGate:
             with patch("seer.api.core.middleware.auth.config") as mock_config:
                 mock_config.is_self_hosted = False
 
-                billing_profile = await BillingProfile.get_or_none(owner_user=user)
-                assert billing_profile is None
+                organization = await Organization.get_or_none(owner=user, type=OrganizationType.PERSONAL)
+                assert organization is None
 
-                # Should be blocked since no billing profile means no payment method
+                # Should be blocked since no organization means no payment method
                 onboarding_complete = settings.preferences.get("onboarding", {}).get("completed", False)
                 assert onboarding_complete is True
         finally:

@@ -19,15 +19,21 @@ from tortoise.expressions import F
 from tortoise.functions import Count, Sum
 
 from seer.database.models import User
+from seer.database.organization_models import Organization, OrganizationType
 from seer.database.overage_models import OverageSettings
-from seer.database.subscription_models import BillingProfile
 from seer.database.usage_models import (
     LLMUsageRecord,
     ResourceType,
     UsageCounter,
 )
 from seer.database import Workflow, WorkflowRun, WorkflowRunStatus, make_workflow_public_id, parse_run_public_id
-from seer.observability.service import get_billing_period_for_user, get_limits_for_user
+from seer.observability.service import (
+    get_billing_period_for_org,
+    get_billing_period_for_user,
+    get_effective_billing_period,
+    get_limits_for_org,
+    get_limits_for_user,
+)
 from seer.logger import get_logger
 
 logger = get_logger(__name__)
@@ -78,9 +84,13 @@ async def track_llm_usage(  # pylint: disable=too-many-arguments,too-many-positi
     workflow_run_id: Optional[str] = None,
     operation: Optional[str] = None,
     metadata: Optional[dict] = None,
+    organization: Optional[Organization] = None,
 ) -> LLMUsageRecord:
     """
     Track an LLM API call for cost monitoring.
+
+    For team organizations, this updates both user-in-org counters (for per-member
+    breakdown) and org-level counters (for limit enforcement).
 
     Args:
         user: The user making the call
@@ -92,13 +102,15 @@ async def track_llm_usage(  # pylint: disable=too-many-arguments,too-many-positi
         workflow_run_id: Optional workflow run ID
         operation: Optional operation type (e.g., "workflow_execution", "chat_message")
         metadata: Optional additional metadata
+        organization: Optional organization context (for team billing)
 
     Returns:
         The created LLMUsageRecord
     """
     logger.info(
-        "Tracking LLM usage for user %s: provider=%s, model=%s, input_tokens=%d, output_tokens=%d, cost=%.6f",
+        "Tracking LLM usage for user %s (org=%s): provider=%s, model=%s, input_tokens=%d, output_tokens=%d, cost=%.6f",
         user.user_id,
+        organization.id if organization else None,
         provider,
         model,
         input_tokens,
@@ -107,6 +119,7 @@ async def track_llm_usage(  # pylint: disable=too-many-arguments,too-many-positi
     )
     record = await LLMUsageRecord.create(
         user=user,
+        organization=organization,  # Set org FK for team-level tracking
         workflow_run_id=workflow_run_id,
         provider=provider,
         model=model,
@@ -118,11 +131,13 @@ async def track_llm_usage(  # pylint: disable=too-many-arguments,too-many-positi
         metadata=metadata,
     )
 
-    # Also update monthly credit counter aligned to billing period
-    period_start, period_end = await get_billing_period_for_user(user)
+    # Get billing period based on context
+    period_start, period_end = await get_effective_billing_period(user, organization)
 
-    counter, _ = await UsageCounter.get_or_create(
+    # 1. Update user-in-org counter (tracks individual member's contribution)
+    user_counter, _ = await UsageCounter.get_or_create(
         user=user,
+        organization=organization,
         resource_type=ResourceType.LLM_CREDITS,
         period_start=period_start,
         period_end=period_end,
@@ -130,20 +145,35 @@ async def track_llm_usage(  # pylint: disable=too-many-arguments,too-many-positi
     )
 
     # Increment cost atomically
-    await UsageCounter.filter(id=counter.id).update(
+    await UsageCounter.filter(id=user_counter.id).update(
         count=F("count") + 1,  # Count of API calls
         value=F("value") + cost,  # Total cost
     )
 
+    # 2. For team orgs, also update org-level aggregate counter (user=None)
+    if organization and organization.type == OrganizationType.TEAM:
+        org_counter, _ = await UsageCounter.get_or_create(
+            user=None,  # Org-level aggregate
+            organization=organization,
+            resource_type=ResourceType.LLM_CREDITS,
+            period_start=period_start,
+            period_end=period_end,
+            defaults={"count": 0, "value": Decimal("0.0")},
+        )
+        await UsageCounter.filter(id=org_counter.id).update(
+            count=F("count") + 1,
+            value=F("value") + cost,
+        )
+
     # Check if this usage triggers overage billing
-    await _handle_potential_overage(user, record, cost)
+    await _handle_potential_overage(user, record, cost, organization)
 
     return record
 
 
 async def _get_user_overage_settings(user: User) -> Optional[OverageSettings]:
     """
-    Get enabled overage settings for a user.
+    Get enabled overage settings for a user's personal organization.
 
     Args:
         user: The user to check.
@@ -152,12 +182,16 @@ async def _get_user_overage_settings(user: User) -> Optional[OverageSettings]:
         OverageSettings if enabled, None otherwise.
     """
     try:
-        billing_profile = await BillingProfile.get_or_none(owner_user=user)
-        if not billing_profile:
+        # Find user's personal organization
+        personal_org = await Organization.get_or_none(
+            owner=user,
+            type=OrganizationType.PERSONAL
+        )
+        if not personal_org:
             return None
 
         overage_settings = await OverageSettings.get_or_none(
-            billing_profile=billing_profile,
+            organization=personal_org,
             enabled=True,
         )
         return overage_settings
@@ -165,37 +199,86 @@ async def _get_user_overage_settings(user: User) -> Optional[OverageSettings]:
         return None
 
 
+async def _get_org_overage_settings(organization: Organization) -> Optional[OverageSettings]:
+    """
+    Get enabled overage settings for an organization.
+
+    Args:
+        organization: The organization to check.
+
+    Returns:
+        OverageSettings if enabled, None otherwise.
+    """
+    try:
+        overage_settings = await OverageSettings.get_or_none(
+            organization=organization,
+            enabled=True,
+        )
+        return overage_settings
+    except Exception:  # pylint: disable=broad-except  # reason: graceful degradation
+        return None
+
+
+async def _get_effective_overage_settings(
+    user: User,
+    organization: Optional[Organization],
+) -> Optional[OverageSettings]:
+    """
+    Get effective overage settings based on organization context.
+
+    Args:
+        user: The user context.
+        organization: Optional organization context.
+
+    Returns:
+        OverageSettings if enabled, None otherwise.
+    """
+    if organization and organization.type == OrganizationType.TEAM:
+        return await _get_org_overage_settings(organization)
+    return await _get_user_overage_settings(user)
+
+
 async def _handle_potential_overage(
     user: User,
     llm_record: LLMUsageRecord,
     cost: Decimal,
+    organization: Optional[Organization] = None,
 ) -> None:
     """
     Handle potential overage billing after LLM usage is tracked.
 
     Called after each LLM usage record is created. Determines if the usage
-    pushes the user into overage territory and reports to Stripe if so.
+    pushes the user/org into overage territory and reports to Stripe if so.
+
+    For team orgs, uses organization's billing profile and org-level usage.
 
     Args:
         user: The user who incurred the cost.
         llm_record: The LLM usage record that was created.
         cost: The cost in USD.
+        organization: Optional organization context (for team billing).
     """
-    # Get overage settings (only if enabled)
-    overage_settings = await _get_user_overage_settings(user)
+    # Get effective overage settings (from org for team orgs, user otherwise)
+    overage_settings = await _get_effective_overage_settings(user, organization)
     if not overage_settings:
         return
 
-    # Get user limits
-    limits = await get_limits_for_user(user)
+    # Get effective limits (org limits for team orgs, user limits otherwise)
+    if organization and organization.type == OrganizationType.TEAM:
+        limits = await get_limits_for_org(organization)
+    else:
+        limits = await get_limits_for_user(user)
+
     if limits.has_unlimited_credits:
         return
 
     monthly_limit = Decimal(str(limits.llm_credits_monthly))
 
-    # Get current monthly usage
-    _period_start, _period_end = await get_billing_period_for_user(user)  # Period bounds unused here
-    current_usage = await get_monthly_llm_credits_used(user)
+    # Get current monthly usage (org-level for team orgs, user-level otherwise)
+    if organization and organization.type == OrganizationType.TEAM:
+        current_usage = await get_org_monthly_llm_credits_used(organization)
+    else:
+        current_usage = await get_monthly_llm_credits_used(user)
 
     # Check if we're in overage territory (over 100% of subscription limit)
     if current_usage <= monthly_limit:
@@ -320,6 +403,127 @@ async def get_weekly_llm_credits_used(user: User) -> Decimal:
         Total credits used in USD during the last 7 days
     """
     return await get_rolling_llm_credits_used(user, timedelta(days=7))
+
+
+# =============================================================================
+# Organization-Scoped Query Functions
+# =============================================================================
+
+
+async def get_org_workflow_count(organization: Organization) -> int:
+    """
+    Get the total workflow count for an organization.
+
+    Args:
+        organization: The organization to get count for
+
+    Returns:
+        Total workflow count
+    """
+    count = await Workflow.filter(organization=organization).count()
+    return count
+
+
+async def get_org_monthly_run_count(organization: Organization) -> int:
+    """
+    Get the workflow run count for the current month for an organization.
+
+    Args:
+        organization: The organization to get count for
+
+    Returns:
+        Monthly run count
+    """
+    period_start, period_end = await get_billing_period_for_org(organization)
+
+    count = await WorkflowRun.filter(
+        workflow__organization=organization,
+        created_at__gte=period_start,
+        created_at__lt=period_end,
+        status=WorkflowRunStatus.SUCCEEDED,
+    ).count()
+
+    return count
+
+
+async def get_org_monthly_llm_credits_used(organization: Organization) -> Decimal:
+    """
+    Get the total LLM credits used this month for an organization.
+
+    Queries the org-level UsageCounter (user=None, organization=org).
+
+    Args:
+        organization: The organization to get credits for
+
+    Returns:
+        Total credits used in USD
+    """
+    period_start, period_end = await get_billing_period_for_org(organization)
+
+    counter = await UsageCounter.get_or_none(
+        user=None,  # Org-level aggregate
+        organization=organization,
+        resource_type=ResourceType.LLM_CREDITS,
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+    return counter.value if counter else Decimal("0.0")
+
+
+async def get_org_rolling_llm_credits_used(organization: Organization, window: timedelta) -> Decimal:
+    """
+    Get total LLM credits used in a rolling time window for an organization.
+
+    Queries LLMUsageRecord directly using the (organization_id, created_at) index
+    for efficient rolling window calculations.
+
+    Args:
+        organization: The organization to get credits for
+        window: The time window to query (e.g., timedelta(hours=5))
+
+    Returns:
+        Total credits used in USD during the rolling window
+    """
+    cutoff = datetime.now(timezone.utc) - window
+    result = await LLMUsageRecord.filter(
+        organization=organization,
+        created_at__gte=cutoff,
+    ).annotate(total_cost=Sum("cost")).values("total_cost")
+
+    if result and result[0]["total_cost"]:
+        return Decimal(str(result[0]["total_cost"]))
+    return Decimal("0.0")
+
+
+async def get_org_5h_llm_credits_used(organization: Organization) -> Decimal:
+    """
+    Get total LLM credits used in the last 5 hours for an organization.
+
+    Uses a rolling window for burst protection.
+
+    Args:
+        organization: The organization to get credits for
+
+    Returns:
+        Total credits used in USD during the last 5 hours
+    """
+    return await get_org_rolling_llm_credits_used(organization, timedelta(hours=5))
+
+
+async def get_org_weekly_llm_credits_used(organization: Organization) -> Decimal:
+    """
+    Get total LLM credits used in the last 7 days for an organization.
+
+    Uses a rolling window to prevent front-loading usage.
+
+    Args:
+        organization: The organization to get credits for
+
+    Returns:
+        Total credits used in USD during the last 7 days
+    """
+    return await get_org_rolling_llm_credits_used(organization, timedelta(days=7))
 
 
 async def get_monthly_llm_credits_detailed(user: User) -> dict:

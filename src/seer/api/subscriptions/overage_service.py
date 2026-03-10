@@ -19,9 +19,10 @@ from seer.database.overage_models import (
     OverageSettings,
     OverageUsageRecord,
 )
+from seer.database.organization_models import Organization
 from seer.database.subscription_models import (
-    BillingProfile,
     BillingSubscription,
+    StripeCustomer,
     SubscriptionStatus,
     SubscriptionTier,
 )
@@ -59,18 +60,18 @@ def _get_overage_price_id() -> str:
     return price_id
 
 
-async def get_or_create_overage_settings(billing_profile: BillingProfile) -> OverageSettings:
+async def get_or_create_overage_settings(organization: Organization) -> OverageSettings:
     """
-    Get or create overage settings for a billing profile.
+    Get or create overage settings for an organization.
 
     Args:
-        billing_profile: The billing profile to get settings for.
+        organization: The organization to get settings for.
 
     Returns:
         OverageSettings instance.
     """
     settings, _ = await OverageSettings.get_or_create(
-        billing_profile=billing_profile,
+        organization=organization,
         defaults={
             "spending_cap_cents": tiered_usage_limits.OVERAGE_DEFAULT_CAP_CENTS,
             "margin_multiplier": Decimal(str(tiered_usage_limits.OVERAGE_DEFAULT_MARGIN_MULTIPLIER)),
@@ -100,9 +101,9 @@ async def is_overage_eligible(subscription: BillingSubscription) -> bool:
     if subscription.status not in {SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING}:
         return False
 
-    # Check payment method
-    await subscription.fetch_related("billing_profile")
-    if not subscription.billing_profile.has_payment_method:
+    # Check payment method on organization
+    await subscription.fetch_related("organization")
+    if not subscription.organization.has_payment_method:
         return False
 
     return True
@@ -224,16 +225,20 @@ async def report_usage_to_stripe(
 
     stripe.api_key = config.stripe_secret_key
 
-    # Get the Stripe customer ID from the billing profile
-    await overage_settings.fetch_related("billing_profile")
-    stripe_customer_id = overage_settings.billing_profile.stripe_customer_id
+    # Get the Stripe customer ID from the organization
+    await overage_settings.fetch_related("organization")
+    organization = overage_settings.organization
 
-    if not stripe_customer_id:
+    if not organization.stripe_customer_id:
         logger.error(
-            "No Stripe customer ID for overage settings %s",
+            "No Stripe customer for overage settings %s (org %s)",
             overage_settings.id,
+            organization.id,
         )
         return None
+
+    stripe_customer = await StripeCustomer.get(id=organization.stripe_customer_id)
+    stripe_customer_id = stripe_customer.stripe_customer_id
 
     # Create local record first
     usage_record = await OverageUsageRecord.create(
@@ -289,15 +294,15 @@ async def report_usage_to_stripe(
 
 
 async def enable_overage(
-    billing_profile: BillingProfile,
+    organization: Organization,
     subscription: BillingSubscription,
     spending_cap_cents: Optional[int] = None,
 ) -> OverageSettings:
     """
-    Enable usage-based pricing for a billing profile.
+    Enable usage-based pricing for an organization.
 
     Args:
-        billing_profile: The billing profile.
+        organization: The organization.
         subscription: The billing subscription.
         spending_cap_cents: Optional custom spending cap.
 
@@ -310,7 +315,7 @@ async def enable_overage(
     if not await is_overage_eligible(subscription):
         raise ValueError("Subscription is not eligible for overage pricing")
 
-    settings = await get_or_create_overage_settings(billing_profile)
+    settings = await get_or_create_overage_settings(organization)
 
     # Attach metered pricing to Stripe subscription
     subscription_item_id = await attach_overage_pricing(subscription)
@@ -335,8 +340,8 @@ async def enable_overage(
     await settings.save()
 
     logger.info(
-        "Enabled overage for billing profile %s with cap $%.2f",
-        billing_profile.id,
+        "Enabled overage for organization %s with cap $%.2f",
+        organization.id,
         settings.spending_cap_cents / 100,
     )
 
@@ -344,22 +349,22 @@ async def enable_overage(
 
 
 async def disable_overage(
-    billing_profile: BillingProfile,
+    organization: Organization,
     subscription: BillingSubscription,
 ) -> OverageSettings:
     """
-    Disable usage-based pricing for a billing profile.
+    Disable usage-based pricing for an organization.
 
     Note: Pending charges will still be billed, only new overages are blocked.
 
     Args:
-        billing_profile: The billing profile.
+        organization: The organization.
         subscription: The billing subscription.
 
     Returns:
         Updated OverageSettings.
     """
-    settings = await get_or_create_overage_settings(billing_profile)
+    settings = await get_or_create_overage_settings(organization)
 
     if not settings.enabled:
         return settings
@@ -374,8 +379,8 @@ async def disable_overage(
     await settings.save()
 
     logger.info(
-        "Disabled overage for billing profile %s (pending charges: %d cents)",
-        billing_profile.id,
+        "Disabled overage for organization %s (pending charges: %d cents)",
+        organization.id,
         settings.current_period_overage_cents,
     )
 
@@ -383,14 +388,14 @@ async def disable_overage(
 
 
 async def update_spending_cap(
-    billing_profile: BillingProfile,
+    organization: Organization,
     spending_cap_cents: int,
 ) -> OverageSettings:
     """
-    Update the spending cap for a billing profile.
+    Update the spending cap for an organization.
 
     Args:
-        billing_profile: The billing profile.
+        organization: The organization.
         spending_cap_cents: New spending cap in cents.
 
     Returns:
@@ -407,13 +412,13 @@ async def update_spending_cap(
             f"Spending cap must be between ${min_cap / 100:.2f} and ${max_cap / 100:.2f}"
         )
 
-    settings = await get_or_create_overage_settings(billing_profile)
+    settings = await get_or_create_overage_settings(organization)
     settings.spending_cap_cents = spending_cap_cents
     await settings.save(update_fields=["spending_cap_cents", "updated_at"])
 
     logger.info(
-        "Updated spending cap for billing profile %s to $%.2f",
-        billing_profile.id,
+        "Updated spending cap for organization %s to $%.2f",
+        organization.id,
         spending_cap_cents / 100,
     )
 

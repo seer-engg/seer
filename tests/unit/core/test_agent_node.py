@@ -1502,3 +1502,178 @@ def test_tool_node_expect_outputs_allows_optional_properties():
     # Must not raise — optional properties are valid for tool node assertions
     spec = parse_workflow_spec(spec_payload)
     assert spec is not None
+
+
+# =============================================================================
+# Agent Node LLM Usage Tracking Tests
+# =============================================================================
+
+
+class TestAgentNodeUsageTracking:
+    """Tests for agent node LLM usage tracking via CostCapCallbackHandler."""
+
+    @pytest.mark.asyncio
+    async def test_agent_node_sets_up_cost_tracking_callback(self):
+        """Agent node should attach CostCapCallbackHandler when runtime context is available."""
+        from langchain_core.messages import AIMessage, HumanMessage
+
+        # Create mock context with user
+        mock_user = MagicMock(spec=User)
+        mock_user.user_id = "usr_test"
+        context = MagicMock(spec=WorkflowRuntimeContext)
+        context.user = mock_user
+
+        mock_chat_model = MagicMock()
+        model_def = ModelDefinition(
+            model_id="test-model",
+            text_handler=lambda inv: ("result", {}),
+            chat_model_factory=lambda: mock_chat_model,
+        )
+
+        spec = {
+            "version": "2",
+            "nodes": [
+                {
+                    "id": "tracking_agent",
+                    "type": "agent",
+                    "inputs": {
+                        "model": "test-model",
+                        "prompt": "Test prompt",
+                        "tools": [],
+                    },
+                    "outputs": {"mode": "text"},
+                }
+            ],
+        }
+
+        mock_agent = AsyncMock()
+        mock_agent.ainvoke.return_value = {
+            "messages": [
+                HumanMessage(content="Test prompt"),
+                AIMessage(content="Test response"),
+            ]
+        }
+
+        # Patch at the source module where the functions are defined
+        with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
+            with patch("seer.agents.nexus.cost_callback.set_chat_runtime_context") as mock_set_ctx:
+                with patch("seer.agents.nexus.cost_callback.clear_chat_runtime_context") as mock_clear_ctx:
+                    compiled = await _compile_agent_workflow(spec, [model_def])
+                    await compiled.ainvoke(config=None, context=context, trigger=None)
+
+                    # Verify context was set before invocation
+                    mock_set_ctx.assert_called_once_with(context)
+                    # Verify context was cleared after invocation
+                    mock_clear_ctx.assert_called_once()
+
+        # Verify callback was passed to ainvoke
+        call_args = mock_agent.ainvoke.call_args
+        assert call_args is not None
+        config = call_args.kwargs.get("config") or call_args.args[1] if len(call_args.args) > 1 else None
+        if config is None and call_args.kwargs:
+            config = call_args.kwargs.get("config")
+        assert config is not None
+        assert "callbacks" in config
+        assert len(config["callbacks"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_agent_node_clears_context_on_exception(self):
+        """Agent node should clear runtime context even when execution raises."""
+        from langchain_core.messages import HumanMessage
+
+        mock_user = MagicMock(spec=User)
+        mock_user.user_id = "usr_test"
+        context = MagicMock(spec=WorkflowRuntimeContext)
+        context.user = mock_user
+
+        mock_chat_model = MagicMock()
+        model_def = ModelDefinition(
+            model_id="test-model",
+            text_handler=lambda inv: ("result", {}),
+            chat_model_factory=lambda: mock_chat_model,
+        )
+
+        spec = {
+            "version": "2",
+            "nodes": [
+                {
+                    "id": "error_agent",
+                    "type": "agent",
+                    "inputs": {
+                        "model": "test-model",
+                        "prompt": "Test prompt",
+                        "tools": [],
+                    },
+                    "outputs": {"mode": "text"},
+                }
+            ],
+        }
+
+        mock_agent = AsyncMock()
+        mock_agent.ainvoke.side_effect = RuntimeError("Agent execution failed")
+
+        with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
+            with patch("seer.agents.nexus.cost_callback.set_chat_runtime_context") as mock_set_ctx:
+                with patch("seer.agents.nexus.cost_callback.clear_chat_runtime_context") as mock_clear_ctx:
+                    compiled = await _compile_agent_workflow(spec, [model_def])
+                    with pytest.raises(Exception):  # ExecutionError wraps the RuntimeError
+                        await compiled.ainvoke(config=None, context=context, trigger=None)
+
+                    # Even with exception, context should be cleared
+                    mock_set_ctx.assert_called_once()
+                    mock_clear_ctx.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_agent_node_no_callback_without_runtime_context(self):
+        """Agent node should not set up callback when no runtime context available."""
+        from langchain_core.messages import AIMessage, HumanMessage
+
+        mock_chat_model = MagicMock()
+        model_def = ModelDefinition(
+            model_id="test-model",
+            text_handler=lambda inv: ("result", {}),
+            chat_model_factory=lambda: mock_chat_model,
+        )
+
+        spec = {
+            "version": "2",
+            "nodes": [
+                {
+                    "id": "no_context_agent",
+                    "type": "agent",
+                    "inputs": {
+                        "model": "test-model",
+                        "prompt": "Test prompt",
+                        "tools": [],
+                    },
+                    "outputs": {"mode": "text"},
+                }
+            ],
+        }
+
+        mock_agent = AsyncMock()
+        mock_agent.ainvoke.return_value = {
+            "messages": [
+                HumanMessage(content="Test prompt"),
+                AIMessage(content="Test response"),
+            ]
+        }
+
+        with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
+            with patch("seer.agents.nexus.cost_callback.set_chat_runtime_context") as mock_set_ctx:
+                with patch("seer.agents.nexus.cost_callback.clear_chat_runtime_context") as mock_clear_ctx:
+                    compiled = await _compile_agent_workflow(spec, [model_def])
+                    # Pass None context
+                    await compiled.ainvoke(config=None, context=None, trigger=None)
+
+                    # Should not set or clear context when context is None
+                    mock_set_ctx.assert_not_called()
+                    mock_clear_ctx.assert_not_called()
+
+        # Verify empty callbacks list when no context
+        call_args = mock_agent.ainvoke.call_args
+        config = call_args.kwargs.get("config") or call_args.args[1] if len(call_args.args) > 1 else None
+        if config is None and call_args.kwargs:
+            config = call_args.kwargs.get("config")
+        assert config is not None
+        assert config.get("callbacks") == []

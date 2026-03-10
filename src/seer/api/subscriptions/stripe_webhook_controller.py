@@ -10,7 +10,8 @@ from seer.api.subscriptions import stripe_service
 from seer.api.subscriptions.clerk_sync import sync_stripe_customer_to_clerk
 from seer.config import config
 from seer.database.overage_models import OverageSettings
-from seer.database.subscription_models import BillingProfile, SubscriptionTier
+from seer.database.organization_models import Organization
+from seer.database.subscription_models import StripeCustomer, SubscriptionTier
 from seer.logger import get_logger
 
 logger = get_logger("api.subscriptions.stripe_webhook_controller")
@@ -136,10 +137,10 @@ class StripeWebhookController:
 
     async def _handle_setup_intent_succeeded(self, data: dict) -> None:
         """
-        Handle successful Setup Intent - update BillingProfile with payment method status.
+        Handle successful Setup Intent - update payment method status.
 
         Called when a user successfully adds a payment method during onboarding.
-        Updates the has_payment_method flag to allow app access.
+        Updates the has_payment_method flag on the Organization to allow app access.
         """
         setup_intent = data.get("object") if "object" in data else data
         customer_id = setup_intent.get("customer")
@@ -148,21 +149,31 @@ class StripeWebhookController:
             logger.warning("Setup Intent succeeded event missing customer ID")
             return
 
-        billing_profile = await BillingProfile.get_or_none(stripe_customer_id=customer_id)
-        if not billing_profile:
+        # Lookup via StripeCustomer → Organization
+        stripe_customer = await StripeCustomer.get_or_none(stripe_customer_id=customer_id)
+        if not stripe_customer:
             logger.warning(
-                "No billing profile found for Stripe customer %s on Setup Intent success",
+                "No StripeCustomer found for Stripe customer %s on Setup Intent success",
                 customer_id
             )
             return
 
-        billing_profile.has_payment_method = True
-        billing_profile.payment_method_added_at = datetime.now(timezone.utc)
-        await billing_profile.save(update_fields=["has_payment_method", "payment_method_added_at"])
+        organization = await Organization.get_or_none(stripe_customer_id=stripe_customer.id)
+        if not organization:
+            logger.warning(
+                "No organization found for StripeCustomer %s on Setup Intent success",
+                stripe_customer.id
+            )
+            return
+
+        now = datetime.now(timezone.utc)
+        organization.has_payment_method = True
+        organization.payment_method_added_at = now
+        await organization.save(update_fields=["has_payment_method", "payment_method_added_at"])
 
         logger.info(
-            "Updated payment method status for customer %s (Setup Intent: %s)",
-            customer_id,
+            "Updated payment method status for org %s (Setup Intent: %s)",
+            organization.id,
             setup_intent.get("id")
         )
 
@@ -177,11 +188,16 @@ class StripeWebhookController:
         if not customer_id:
             return
 
-        billing_profile = await BillingProfile.get_or_none(stripe_customer_id=customer_id)
-        if not billing_profile:
+        # Lookup via StripeCustomer → Organization → OverageSettings
+        stripe_customer = await StripeCustomer.get_or_none(stripe_customer_id=customer_id)
+        if not stripe_customer:
             return
 
-        overage_settings = await OverageSettings.get_or_none(billing_profile=billing_profile)
+        organization = await Organization.get_or_none(stripe_customer_id=stripe_customer.id)
+        if not organization:
+            return
+
+        overage_settings = await OverageSettings.get_or_none(organization=organization)
         if not overage_settings or not overage_settings.enabled:
             return
 
@@ -217,7 +233,7 @@ class StripeWebhookController:
         Handle payment failure that might be related to overage charges.
 
         If the invoice contains overage line items and payment fails,
-        we may need to disable overage for the user.
+        we disable overage for the organization.
 
         Args:
             invoice: The Stripe invoice object.
@@ -237,11 +253,16 @@ class StripeWebhookController:
         if not has_overage_line:
             return
 
-        billing_profile = await BillingProfile.get_or_none(stripe_customer_id=customer_id)
-        if not billing_profile:
+        # Lookup via StripeCustomer → Organization → OverageSettings
+        stripe_customer = await StripeCustomer.get_or_none(stripe_customer_id=customer_id)
+        if not stripe_customer:
             return
 
-        overage_settings = await OverageSettings.get_or_none(billing_profile=billing_profile)
+        organization = await Organization.get_or_none(stripe_customer_id=stripe_customer.id)
+        if not organization:
+            return
+
+        overage_settings = await OverageSettings.get_or_none(organization=organization)
         if not overage_settings or not overage_settings.enabled:
             return
 
@@ -263,11 +284,16 @@ class StripeWebhookController:
         Args:
             customer_id: The Stripe customer ID.
         """
-        billing_profile = await BillingProfile.get_or_none(stripe_customer_id=customer_id)
-        if not billing_profile:
+        # Lookup via StripeCustomer → Organization → OverageSettings
+        stripe_customer = await StripeCustomer.get_or_none(stripe_customer_id=customer_id)
+        if not stripe_customer:
             return
 
-        overage_settings = await OverageSettings.get_or_none(billing_profile=billing_profile)
+        organization = await Organization.get_or_none(stripe_customer_id=stripe_customer.id)
+        if not organization:
+            return
+
+        overage_settings = await OverageSettings.get_or_none(organization=organization)
         if not overage_settings:
             return
 

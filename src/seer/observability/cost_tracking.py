@@ -7,10 +7,11 @@ Provides shared functionality for:
 - Per-run cost cap enforcement
 - Async usage tracking with cross-thread event loop handling
 """
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from seer.core.event_loop import schedule_async_task
 from seer.core.runtime.context import WorkflowRuntimeContext
+from seer.database.organization_models import Organization
 from seer.observability.credit_calculator import calculate_cost
 from seer.observability.exceptions import RunCostCapExceeded
 from seer.observability.tracking import track_llm_usage
@@ -108,6 +109,11 @@ class CostTracker:
         if context.thread_id:
             tracking_metadata["thread_id"] = context.thread_id
 
+        # Resolve organization from context for team-level tracking
+        organization: Optional[Organization] = None
+        if context.organization_id:
+            organization = await Organization.get_or_none(id=context.organization_id)
+
         # Define async tracking coroutine
         async def do_track():
             try:
@@ -121,6 +127,7 @@ class CostTracker:
                     workflow_run_id=context.workflow_run_id,
                     operation=operation,
                     metadata=tracking_metadata,
+                    organization=organization,  # Pass org for team-level tracking
                 )
                 logger.debug("Successfully tracked LLM usage to database")
             except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: tracking failures should not break workflow execution

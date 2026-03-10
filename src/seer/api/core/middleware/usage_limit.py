@@ -13,12 +13,16 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from seer.api.core.middleware.path_allowlist import is_public_path, is_payment_exempt_path
 from seer.database import User
+from seer.database.organization_models import Organization, OrganizationType
 from seer.logger import get_logger
 from seer.observability import (
     RunLimitExceeded,
     WorkflowLimitExceeded,
-    get_limits_for_user,
+    get_effective_limits,
+    get_effective_tier,
     get_monthly_run_count,
+    get_org_monthly_run_count,
+    get_org_workflow_count,
     get_workflow_count,
     resolve_user_tier,
 )
@@ -80,21 +84,24 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
                 content={"detail": "Authentication required"},
             )
 
-        # Get user's tier limits
-        limits = await get_limits_for_user(user)
+        # Get organization context (may be None for personal workspace)
+        organization: Optional[Organization] = getattr(request.state, "organization", None)
+
+        # Get effective limits (org limits for team orgs, user limits otherwise)
+        limits = await get_effective_limits(user, organization)
 
         # Check limits based on request path
         method = request.method
 
         # 1. Workflow Creation Limit
         if method == "POST" and path == "/api/v1/workflows":
-            response = await self._check_workflow_creation_limit(user, limits)
+            response = await self._check_workflow_creation_limit(user, organization, limits)
             if response:
                 return response
 
         # 2. Workflow Run Limit
         elif method == "POST" and "/run" in path and "/api/v1/workflows/" in path:
-            response = await self._check_workflow_run_limit(user, limits)
+            response = await self._check_workflow_run_limit(user, organization, limits)
             if response:
                 return response
 
@@ -104,24 +111,37 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
 
         # 4. Chat LLM Credit Limit (before chat execution starts)
         elif method == "POST" and "/nexus/" in path and "/chat" in path:
-            response = await self._check_llm_credit_limit(user)
+            response = await self._check_llm_credit_limit(user, organization)
             if response:
                 return response
 
         # All checks passed - proceed to handler
         return await call_next(request)
 
-    async def _check_workflow_creation_limit(self, user: User, limits) -> Optional[JSONResponse]:
-        """Check if user has exceeded workflow creation limit."""
+    async def _check_workflow_creation_limit(
+        self, user: User, organization: Optional[Organization], limits
+    ) -> Optional[JSONResponse]:
+        """Check if user/org has exceeded workflow creation limit."""
         if not limits.has_unlimited_workflows:
-            logger.info("Checking workflow creation limit for user %s", user.id)
-            current = await get_workflow_count(user)
+            use_org_limits = organization and organization.type == OrganizationType.TEAM
+            logger.info(
+                "Checking workflow creation limit for user %s (org=%s)",
+                user.id, organization.id if organization else None
+            )
+
+            # Get current count: org-level for team orgs, user-level otherwise
+            if use_org_limits and organization:
+                current = await get_org_workflow_count(organization)
+            else:
+                current = await get_workflow_count(user)
+
             if current >= limits.workflows:
-                tier = await resolve_user_tier(user)
+                tier = await get_effective_tier(user, organization)
                 error = WorkflowLimitExceeded(limits.workflows, current, tier)
                 logger.warning(
-                    "Workflow creation limit exceeded for user %s (tier=%s, current=%d, limit=%d)",
+                    "Workflow creation limit exceeded for user %s (org=%s, tier=%s, current=%d, limit=%d)",
                     user.id,
+                    organization.id if organization else None,
                     tier.value,
                     current,
                     limits.workflows,
@@ -129,16 +149,26 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
                 return JSONResponse(status_code=402, content=error.to_dict())
         return None
 
-    async def _check_workflow_run_limit(self, user: User, limits) -> Optional[JSONResponse]:
-        """Check if user has exceeded workflow run limit."""
+    async def _check_workflow_run_limit(
+        self, user: User, organization: Optional[Organization], limits
+    ) -> Optional[JSONResponse]:
+        """Check if user/org has exceeded workflow run limit."""
         if not limits.has_unlimited_runs:
-            current = await get_monthly_run_count(user)
+            use_org_limits = organization and organization.type == OrganizationType.TEAM
+
+            # Get current count: org-level for team orgs, user-level otherwise
+            if use_org_limits and organization:
+                current = await get_org_monthly_run_count(organization)
+            else:
+                current = await get_monthly_run_count(user)
+
             if current >= limits.runs_monthly:
-                tier = await resolve_user_tier(user)
+                tier = await get_effective_tier(user, organization)
                 error = RunLimitExceeded(limits.runs_monthly, current, tier)
                 logger.warning(
-                    "Workflow run limit exceeded for user %s (tier=%s, current=%d, limit=%d)",
+                    "Workflow run limit exceeded for user %s (org=%s, tier=%s, current=%d, limit=%d)",
                     user.id,
+                    organization.id if organization else None,
                     tier.value,
                     current,
                     limits.runs_monthly,
@@ -146,15 +176,18 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
                 return JSONResponse(status_code=402, content=error.to_dict())
         return None
 
-    async def _check_llm_credit_limit(self, user: User) -> Optional[JSONResponse]:
-        """Check if user has exceeded LLM credit limit before chat execution."""
+    async def _check_llm_credit_limit(
+        self, user: User, organization: Optional[Organization] = None
+    ) -> Optional[JSONResponse]:
+        """Check if user/org has exceeded LLM credit limit before chat execution."""
         try:
-            await check_credit_limit(user)
+            await check_credit_limit(user, organization)
             return None
         except CreditLimitExceeded as exc:
             logger.warning(
-                "LLM credit limit exceeded for user %s (period=%s, current=$%.2f, limit=$%.2f)",
+                "LLM credit limit exceeded for user %s (org=%s, period=%s, current=$%.2f, limit=$%.2f)",
                 user.id,
+                organization.id if organization else None,
                 exc.period.value,
                 exc.current,
                 exc.limit,

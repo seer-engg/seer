@@ -15,7 +15,11 @@ from seer.database.organization_models import (
     OrganizationRole,
     OrganizationType,
 )
-from seer.database.subscription_models import BillingProfile, BillingProfileType
+from seer.database.subscription_models import (
+    BillingSubscription,
+    SubscriptionStatus,
+    SubscriptionTier,
+)
 from seer.logger import get_logger
 from seer.services.clerk_service import set_active_organization
 
@@ -101,10 +105,13 @@ async def create_personal_organization(
         joined_at=datetime.now(timezone.utc),
     )
 
-    # Create billing profile for the organization (idempotent — legacy users may already have one)
-    await BillingProfile.get_or_create(
-        owner_user=user,
-        defaults={"type": BillingProfileType.INDIVIDUAL},
+    # Create FREE subscription directly on organization
+    await BillingSubscription.get_or_create(
+        organization=organization,
+        defaults={
+            "tier": SubscriptionTier.FREE,
+            "status": SubscriptionStatus.ACTIVE,
+        },
     )
 
     logger.info(
@@ -167,6 +174,16 @@ async def create_team_organization(
         role=OrganizationRole.OWNER,
         status=MembershipStatus.ACTIVE,
         joined_at=datetime.now(timezone.utc),
+    )
+
+    # V2: Create FREE subscription for team (checkout required for paid tier)
+    # When transfer_subscription is used, this will be upgraded via transfer
+    await BillingSubscription.get_or_create(
+        organization=organization,
+        defaults={
+            "tier": SubscriptionTier.FREE,
+            "status": SubscriptionStatus.ACTIVE,
+        },
     )
 
     logger.info(

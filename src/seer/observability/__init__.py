@@ -17,10 +17,18 @@ from seer.observability.exceptions import (
 from seer.observability.models import TierLimits
 from seer.observability.service import (
     get_account_age_days,
+    get_billing_period_for_org,
+    get_effective_billing_period,
+    get_effective_limits,
+    get_effective_subscription,
+    get_effective_tier,
+    get_limits_for_org,
     get_limits_for_tier,
     get_limits_for_user,
+    get_subscription_for_org,
     get_subscription_for_user,
     is_trial_expired,
+    resolve_org_tier,
     resolve_user_tier,
 )
 from seer.observability.tracking import (
@@ -37,6 +45,12 @@ from seer.observability.tracking import (
     get_workflow_count,
     reset_monthly_counters,
     track_llm_usage,
+    # Organization-scoped tracking functions
+    get_org_workflow_count,
+    get_org_monthly_run_count,
+    get_org_monthly_llm_credits_used,
+    get_org_5h_llm_credits_used,
+    get_org_weekly_llm_credits_used,
 )
 # Sentry error monitoring utilities
 from seer.observability.sentry_client import (
@@ -52,14 +66,24 @@ from seer.observability.sentry_client import (
 __all__ = [
     # Models
     "TierLimits",
-    # Service functions
+    # Service functions - User-scoped
     "get_limits_for_tier",
     "get_limits_for_user",
     "resolve_user_tier",
     "get_account_age_days",
     "is_trial_expired",
     "get_subscription_for_user",
-    # Tracking functions
+    # Service functions - Organization-scoped
+    "resolve_org_tier",
+    "get_limits_for_org",
+    "get_billing_period_for_org",
+    "get_subscription_for_org",
+    # Service functions - Effective (org-aware)
+    "get_effective_tier",
+    "get_effective_limits",
+    "get_effective_billing_period",
+    "get_effective_subscription",
+    # Tracking functions - User-scoped
     "get_workflow_count",
     "get_monthly_run_count",
     "track_llm_usage",
@@ -68,6 +92,12 @@ __all__ = [
     "get_weekly_llm_credits_used",
     "get_monthly_llm_credits_detailed",
     "reset_monthly_counters",
+    # Tracking functions - Organization-scoped
+    "get_org_workflow_count",
+    "get_org_monthly_run_count",
+    "get_org_monthly_llm_credits_used",
+    "get_org_5h_llm_credits_used",
+    "get_org_weekly_llm_credits_used",
     # Analytics query functions
     "get_llm_usage_by_model",
     "get_llm_usage_by_operation",

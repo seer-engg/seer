@@ -9,7 +9,7 @@ from typing import Optional
 
 import stripe
 
-from seer.database.subscription_models import BillingSubscription, SubscriptionStatus
+from seer.database.subscription_models import BillingSubscription
 from seer.logger import get_logger
 
 logger = get_logger("tests.assertions")
@@ -235,25 +235,25 @@ async def assert_subscription_deleted(user_id: str) -> None:
         AssertionError: If subscription is still active
     """
     from seer.database.subscription_models import (
-        BillingProfile,
         BillingSubscription,
         SubscriptionTier,
     )
     from seer.database.models import User
+    from seer.database.organization_models import Organization, OrganizationType
 
     # Get user first
     user = await User.get_or_none(user_id=user_id)
     if not user:
         raise AssertionError(f"No user found with user_id {user_id}")
 
-    # Get billing profile via owner_user relationship
-    profile = await BillingProfile.get_or_none(owner_user=user)
+    # Get personal organization for user (org-centric billing)
+    organization = await Organization.get_or_none(owner=user, type=OrganizationType.PERSONAL)
 
-    if not profile:
-        raise AssertionError(f"No billing profile found for user {user_id}")
+    if not organization:
+        raise AssertionError(f"No personal organization found for user {user_id}")
 
     # Get subscription if it exists
-    subscription = await BillingSubscription.get_or_none(billing_profile=profile)
+    subscription = await BillingSubscription.get_or_none(organization=organization)
 
     if subscription and subscription.tier != SubscriptionTier.FREE:
         raise AssertionError(

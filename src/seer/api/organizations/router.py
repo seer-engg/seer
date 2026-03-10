@@ -29,6 +29,8 @@ from seer.api.organizations.models import (
     MemberResponse,
     OrgBillingPortalResponse,
     OrgBillingResponse,
+    OrgCheckoutRequest,
+    OrgCheckoutResponse,
     OrgInvoiceItem,
     OrgInvoiceListResponse,
     OrgUsageSummaryResponse,
@@ -57,11 +59,23 @@ from seer.database.organization_models import (
     OrganizationType,
     WorkflowApproval,
 )
-from seer.database.usage_models import ResourceType, UsageCounter
+from seer.observability import (
+    get_org_monthly_llm_credits_used,
+    get_org_monthly_run_count,
+    get_org_workflow_count,
+)
+from seer.observability.service import get_billing_period_for_org
 from seer.api.subscriptions.stripe_service import (
+    create_org_checkout_session,
     create_org_portal_session,
     get_org_subscription,
     list_org_invoices as _list_org_invoices,
+    transfer_subscription_between_orgs,
+)
+from seer.database.subscription_models import (
+    BillingSubscription,
+    SubscriptionStatus,
+    SubscriptionTier,
 )
 from seer.config import config
 from seer.services.email_service import (
@@ -185,16 +199,36 @@ async def create_organization(
     body: CreateOrganizationRequest = Body(...),
 ) -> OrganizationResponse:
     """
-    Create a new team organization.
+    Create a new team organization with hybrid billing options.
 
-    The creating user becomes the owner. Their subscription will be
-    associated with the new team for billing purposes.
+    Billing behavior:
+    - If user has paid subscription AND transfer_subscription=true:
+      The subscription is transferred to the team, personal workspace becomes FREE.
+    - If user has paid subscription AND transfer_subscription=false:
+      Team starts with FREE tier, checkout_required=true.
+    - If user has FREE tier:
+      Team starts with FREE tier, checkout_required=true.
+
+    The creating user becomes the owner of the new organization.
+
+    Response includes `checkout_required` boolean to indicate if frontend
+    should redirect to Stripe checkout.
     """
     user = _require_user(request)
 
-    # TODO: Verify user has an active subscription before creating team
-    # This check is deferred to billing integration
+    # 1. Get user's personal org and subscription status
+    personal_org = await Organization.get_or_none(owner=user, type=OrganizationType.PERSONAL)
+    personal_subscription = None
+    if personal_org:
+        personal_subscription = await BillingSubscription.get_or_none(organization=personal_org)
 
+    has_transferable_subscription = (
+        personal_subscription is not None
+        and personal_subscription.tier != SubscriptionTier.FREE
+        and personal_subscription.status in [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING]
+    )
+
+    # 2. Create the team organization (includes FREE subscription)
     try:
         organization, _ = await create_team_organization(
             owner=user,
@@ -209,6 +243,18 @@ async def create_organization(
             status=400,
         )
 
+    # 3. Handle subscription based on transfer_subscription flag
+    checkout_required = False
+
+    if has_transferable_subscription and personal_org and body.transfer_subscription:
+        # Transfer the subscription from personal org to team org
+        await transfer_subscription_between_orgs(personal_org, organization)
+        checkout_required = False
+    else:
+        # Team already has FREE tier subscription from create_team_organization
+        # Team needs checkout to get a paid subscription
+        checkout_required = True
+
     return OrganizationResponse(
         id=organization.id,
         name=organization.name,
@@ -216,6 +262,7 @@ async def create_organization(
         type=organization.type,
         created_at=organization.created_at,
         updated_at=organization.updated_at,
+        checkout_required=checkout_required,
     )
 
 
@@ -1331,7 +1378,7 @@ async def get_org_billing(
             else None
         ),
         cancel_at_period_end=subscription.cancel_at_period_end,
-        has_payment_method=subscription.billing_profile.has_payment_method if subscription.billing_profile else False,
+        has_payment_method=org.has_payment_method,
     )
 
 
@@ -1363,6 +1410,58 @@ async def create_org_billing_portal(
     try:
         portal_url = await create_org_portal_session(org, user, return_url)
         return OrgBillingPortalResponse(portal_url=portal_url)
+    except stripe.error.StripeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{org_id}/billing/checkout", response_model=OrgCheckoutResponse)
+async def create_org_checkout(
+    request: Request,
+    org_id: int,
+    body: OrgCheckoutRequest = Body(...),
+) -> OrgCheckoutResponse:
+    """
+    Create a Stripe Checkout session for the organization.
+
+    Used when a team organization needs to purchase a subscription.
+    This is typically needed when:
+    - User creates a second team (first team already has their transferred subscription)
+    - Team org is on FREE tier and wants to upgrade
+
+    Only organization owners can initiate checkout.
+    """
+    user = _require_user(request)
+    org = get_organization(request)
+    membership = get_membership(request)
+
+    if org.id != org_id:
+        raise HTTPException(status_code=403, detail="Can only access billing for current organization")
+
+    _require_owner(membership)
+
+    if not config.is_stripe_configured:
+        raise HTTPException(status_code=503, detail="Stripe is not configured")
+
+    # Check if org already has a paid subscription
+    existing_subscription = await get_org_subscription(org)
+    if existing_subscription and existing_subscription.tier != SubscriptionTier.FREE:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Already subscribed",
+            detail="This organization already has an active paid subscription. "
+                   "Use the billing portal to manage your subscription.",
+            status=409,  # Conflict
+        )
+
+    try:
+        checkout_url = await create_org_checkout_session(
+            organization=org,
+            user=user,
+            price_id=body.price_id,
+            success_url=body.success_url,
+            cancel_url=body.cancel_url,
+        )
+        return OrgCheckoutResponse(checkout_url=checkout_url)
     except stripe.error.StripeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1414,7 +1513,7 @@ async def get_org_usage_summary(
     Get organization usage summary for the current billing period.
 
     Returns workflow count, runs this month, and LLM credits used.
-    Only organization owners can view usage information.
+    All active organization members can view usage information.
     """
     _require_user(request)
     org = get_organization(request)
@@ -1423,40 +1522,17 @@ async def get_org_usage_summary(
     if org.id != org_id:
         raise HTTPException(status_code=403, detail="Can only view usage for current organization")
 
-    _require_owner(membership)
+    # Allow all active members to view usage (not just owners)
+    if membership.status != MembershipStatus.ACTIVE:
+        raise HTTPException(status_code=403, detail="Only active members can view organization usage")
 
-    # Get current billing period (start of current month)
-    now = datetime.now(timezone.utc)
-    period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    period_end = (period_start.replace(month=period_start.month % 12 + 1) if period_start.month < 12
-                  else period_start.replace(year=period_start.year + 1, month=1))
+    # Get org's actual billing period (not calendar month)
+    period_start, period_end = await get_billing_period_for_org(org)
 
-    # Get workflow count (all-time)
-    workflows_counter = await UsageCounter.get_or_none(
-        organization=org,
-        user=None,
-        resource_type=ResourceType.WORKFLOWS,
-        period_start__isnull=True,
-    )
-    workflows_count = workflows_counter.count if workflows_counter else 0
-
-    # Get runs this month
-    runs_counter = await UsageCounter.get_or_none(
-        organization=org,
-        user=None,
-        resource_type=ResourceType.RUNS,
-        period_start=period_start,
-    )
-    runs_this_month = runs_counter.count if runs_counter else 0
-
-    # Get LLM credits this month
-    llm_counter = await UsageCounter.get_or_none(
-        organization=org,
-        user=None,
-        resource_type=ResourceType.LLM_CREDITS,
-        period_start=period_start,
-    )
-    llm_credits = float(llm_counter.value) if llm_counter else 0.0
+    # Use the new org-scoped query functions
+    workflows_count = await get_org_workflow_count(org)
+    runs_this_month = await get_org_monthly_run_count(org)
+    llm_credits = float(await get_org_monthly_llm_credits_used(org))
 
     return OrgUsageSummaryResponse(
         workflows_count=workflows_count,

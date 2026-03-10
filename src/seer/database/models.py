@@ -42,7 +42,7 @@ class User(models.Model):
         For new users, this also creates:
         - A personal Organization (every user has one)
         - An owner OrganizationMembership
-        - A BillingProfile for the personal org
+        - A FREE tier BillingSubscription
 
         After creation, Clerk metadata is updated with the personal org ID
         so the JWT includes active_organization_id on subsequent requests.
