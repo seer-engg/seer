@@ -90,9 +90,10 @@ class TestSetupIntentEndpoints:
 
         # Mock authentication
         with patch("seer.api.subscriptions.setup_intent._require_user", return_value=user):
-            with patch("seer.api.subscriptions.setup_intent.get_or_create_stripe_customer", return_value="cus_test123"):
-                async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
-                    response = await client.post("/api/subscriptions/setup-intent")
+            with patch("seer.api.subscriptions.setup_intent._require_organization", return_value=organization):
+                with patch("seer.api.subscriptions.setup_intent.get_or_create_org_stripe_customer", return_value="cus_test123"):
+                    async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
+                        response = await client.post("/api/subscriptions/setup-intent")
 
         assert response.status_code == 200
         data = response.json()
@@ -116,11 +117,12 @@ class TestSetupIntentEndpoints:
         assert organization.payment_method_added_at is None
 
         with patch("seer.api.subscriptions.setup_intent._require_user", return_value=user):
-            async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
-                response = await client.post(
-                    "/api/subscriptions/setup-intent/confirm",
-                    json={"setup_intent_id": "seti_test123"}
-                )
+            with patch("seer.api.subscriptions.setup_intent._require_organization", return_value=organization):
+                async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
+                    response = await client.post(
+                        "/api/subscriptions/setup-intent/confirm",
+                        json={"setup_intent_id": "seti_test123"}
+                    )
 
         assert response.status_code == 200
         data = response.json()
@@ -145,11 +147,12 @@ class TestSetupIntentEndpoints:
             )
 
             with patch("seer.api.subscriptions.setup_intent._require_user", return_value=user):
-                async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
-                    response = await client.post(
-                        "/api/subscriptions/setup-intent/confirm",
-                        json={"setup_intent_id": "seti_test123"}
-                    )
+                with patch("seer.api.subscriptions.setup_intent._require_organization", return_value=organization):
+                    async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
+                        response = await client.post(
+                            "/api/subscriptions/setup-intent/confirm",
+                            json={"setup_intent_id": "seti_test123"}
+                        )
 
         assert response.status_code == 400
         assert "expected 'succeeded'" in response.json()["detail"].lower()
@@ -168,8 +171,9 @@ class TestSetupIntentEndpoints:
         await organization.save()
 
         with patch("seer.api.subscriptions.setup_intent._require_user", return_value=user):
-            async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
-                response = await client.get("/api/subscriptions/payment-method/status")
+            with patch("seer.api.subscriptions.setup_intent._require_organization", return_value=organization):
+                async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
+                    response = await client.get("/api/subscriptions/payment-method/status")
 
         assert response.status_code == 200
         data = response.json()
@@ -181,8 +185,9 @@ class TestSetupIntentEndpoints:
         user, organization = test_user
 
         with patch("seer.api.subscriptions.setup_intent._require_user", return_value=user):
-            async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
-                response = await client.get("/api/subscriptions/payment-method/status")
+            with patch("seer.api.subscriptions.setup_intent._require_organization", return_value=organization):
+                async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
+                    response = await client.get("/api/subscriptions/payment-method/status")
 
         assert response.status_code == 200
         data = response.json()
@@ -190,7 +195,9 @@ class TestSetupIntentEndpoints:
         assert data["payment_method_added_at"] is None
 
     async def test_get_payment_method_status_no_organization(self, app_with_subscriptions: FastAPI, db_engine):  # pylint: disable=unused-argument # Reason: db_engine needed for database initialization
-        """Test getting payment method status when user has no billing profile."""
+        """Test getting payment method status when user has no organization context."""
+        from fastapi import HTTPException
+
         user = await User.create(
             user_id="no_billing_user",
             email="nobilling@example.com",
@@ -198,13 +205,12 @@ class TestSetupIntentEndpoints:
 
         try:
             with patch("seer.api.subscriptions.setup_intent._require_user", return_value=user):
-                async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
-                    response = await client.get("/api/subscriptions/payment-method/status")
+                with patch("seer.api.subscriptions.setup_intent._require_organization", side_effect=HTTPException(status_code=401, detail="Organization context required")):
+                    async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
+                        response = await client.get("/api/subscriptions/payment-method/status")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert data["has_payment_method"] is False
-            assert data["payment_method_added_at"] is None
+            assert response.status_code == 401
+            assert response.json()["detail"] == "Organization context required"
         finally:
             await user.delete()
 
