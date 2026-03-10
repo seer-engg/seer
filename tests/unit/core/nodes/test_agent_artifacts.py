@@ -60,7 +60,24 @@ def _make_artifact_tool_message(file_ref_dict: Dict[str, Any]) -> ToolMessage:
 
 @pytest.mark.unit
 class TestConverters:
-    """Tests for HTML → bytes converters."""
+    """Tests for content → bytes converters."""
+
+    def test_markdown_to_html_produces_styled_document(self):
+        """markdown_to_html should return a full HTML document with converted content."""
+        from seer.core.nodes.artifacts.converters import markdown_to_html
+
+        result = markdown_to_html("# Hello\n\nA paragraph with **bold** text.\n\n| A | B |\n|---|---|\n| 1 | 2 |")
+        assert "<!DOCTYPE html>" in result
+        assert "<h1" in result
+        assert "<strong>bold</strong>" in result
+        assert "<table>" in result
+
+    def test_markdown_to_html_fenced_code(self):
+        """markdown_to_html should handle fenced code blocks."""
+        from seer.core.nodes.artifacts.converters import markdown_to_html
+
+        result = markdown_to_html("```python\nprint('hi')\n```")
+        assert "<code" in result
 
     def test_html_to_pdf_returns_bytes(self):
         """html_to_pdf should return non-empty bytes starting with %PDF."""
@@ -191,6 +208,67 @@ class TestCreateArtifactTool:
                     filename="report.pdf",
                     format="pdf",
                 )
+
+    @pytest.mark.asyncio
+    async def test_markdown_content_type_calls_markdown_to_html(self):
+        """Tool should convert markdown to HTML before PDF conversion when content_type='markdown'."""
+        from seer.core.nodes.artifacts.tool import make_create_artifact_tool
+
+        ctx = self._make_ctx()
+        file_ref = WorkflowFileRef(
+            file_id="fid3",
+            storage_path="s3://b/r/report.pdf",
+            filename="report.pdf",
+            mime_type="application/pdf",
+            size_bytes=500,
+            workflow_run_id="run_42",
+            created_at=datetime.now(timezone.utc),
+        )
+        ctx.runtime_context.file_system.store_file_with_record = AsyncMock(return_value=file_ref)
+
+        with (
+            patch("seer.core.nodes.artifacts.tool.markdown_to_html", return_value="<h1>Hello</h1>") as mock_md,
+            patch("seer.core.nodes.artifacts.tool.html_to_pdf", return_value=b"%PDF-fake"),
+        ):
+            tool = make_create_artifact_tool(ctx, node_id="agent1")
+            await tool.coroutine(
+                html_content="# Hello",
+                filename="report.pdf",
+                format="pdf",
+                content_type="markdown",
+            )
+
+        mock_md.assert_called_once_with("# Hello")
+
+    @pytest.mark.asyncio
+    async def test_html_content_type_skips_markdown_conversion(self):
+        """Tool should NOT call markdown_to_html when content_type='html'."""
+        from seer.core.nodes.artifacts.tool import make_create_artifact_tool
+
+        ctx = self._make_ctx()
+        file_ref = WorkflowFileRef(
+            file_id="fid4",
+            storage_path="s3://b/r/report.pdf",
+            filename="report.pdf",
+            mime_type="application/pdf",
+            size_bytes=500,
+            workflow_run_id="run_42",
+            created_at=datetime.now(timezone.utc),
+        )
+        ctx.runtime_context.file_system.store_file_with_record = AsyncMock(return_value=file_ref)
+
+        with (
+            patch("seer.core.nodes.artifacts.tool.markdown_to_html") as mock_md,
+            patch("seer.core.nodes.artifacts.tool.html_to_pdf", return_value=b"%PDF-fake"),
+        ):
+            tool = make_create_artifact_tool(ctx, node_id="agent1")
+            await tool.coroutine(
+                html_content="<p>test</p>",
+                filename="report.pdf",
+                format="pdf",
+            )
+
+        mock_md.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_raises_on_unsupported_format(self):
