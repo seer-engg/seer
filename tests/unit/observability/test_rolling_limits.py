@@ -302,7 +302,7 @@ class TestCreditGate:
         from seer.observability.credit_gate import check_credit_limit
 
         with (
-            patch("seer.observability.credit_gate.get_limits_for_user") as mock_get_limits,
+            patch("seer.observability.credit_gate.get_effective_limits") as mock_get_limits,
             patch("seer.observability.credit_gate.get_5h_llm_credits_used") as mock_5h,
             patch("seer.observability.credit_gate.get_weekly_llm_credits_used") as mock_weekly,
             patch("seer.observability.credit_gate.get_monthly_llm_credits_used") as mock_monthly,
@@ -324,8 +324,8 @@ class TestCreditGate:
         from seer.observability.credit_gate import check_credit_limit
 
         with (
-            patch("seer.observability.credit_gate.get_limits_for_user") as mock_get_limits,
-            patch("seer.observability.credit_gate.resolve_user_tier") as mock_resolve_tier,
+            patch("seer.observability.credit_gate.get_effective_limits") as mock_get_limits,
+            patch("seer.observability.credit_gate.get_effective_tier") as mock_resolve_tier,
             patch("seer.observability.credit_gate.get_5h_llm_credits_used") as mock_5h,
             patch("seer.observability.credit_gate.get_weekly_llm_credits_used") as mock_weekly,
             patch("seer.observability.credit_gate.get_monthly_llm_credits_used") as mock_monthly,
@@ -362,8 +362,8 @@ class TestCreditGate:
         from seer.observability.credit_gate import check_credit_limit
 
         with (
-            patch("seer.observability.credit_gate.get_limits_for_user") as mock_get_limits,
-            patch("seer.observability.credit_gate.resolve_user_tier") as mock_resolve_tier,
+            patch("seer.observability.credit_gate.get_effective_limits") as mock_get_limits,
+            patch("seer.observability.credit_gate.get_effective_tier") as mock_resolve_tier,
             patch("seer.observability.credit_gate.get_5h_llm_credits_used") as mock_5h,
             patch("seer.observability.credit_gate.get_weekly_llm_credits_used") as mock_weekly,
             patch("seer.observability.credit_gate.get_monthly_llm_credits_used") as mock_monthly,
@@ -394,8 +394,8 @@ class TestCreditGate:
         from seer.observability.credit_gate import check_credit_limit
 
         with (
-            patch("seer.observability.credit_gate.get_limits_for_user") as mock_get_limits,
-            patch("seer.observability.credit_gate.resolve_user_tier") as mock_resolve_tier,
+            patch("seer.observability.credit_gate.get_effective_limits") as mock_get_limits,
+            patch("seer.observability.credit_gate.get_effective_tier") as mock_resolve_tier,
             patch("seer.observability.credit_gate.get_5h_llm_credits_used") as mock_5h,
             patch("seer.observability.credit_gate.get_weekly_llm_credits_used") as mock_weekly,
             patch("seer.observability.credit_gate.get_monthly_llm_credits_used") as mock_monthly,
@@ -426,8 +426,8 @@ class TestCreditGate:
         from seer.observability.credit_gate import check_credit_limit
 
         with (
-            patch("seer.observability.credit_gate.get_limits_for_user") as mock_get_limits,
-            patch("seer.observability.credit_gate.resolve_user_tier") as mock_resolve_tier,
+            patch("seer.observability.credit_gate.get_effective_limits") as mock_get_limits,
+            patch("seer.observability.credit_gate.get_effective_tier") as mock_resolve_tier,
             patch("seer.observability.credit_gate.get_5h_llm_credits_used") as mock_5h,
             patch("seer.observability.credit_gate.get_weekly_llm_credits_used") as mock_weekly,
             patch("seer.observability.credit_gate.get_monthly_llm_credits_used") as mock_monthly,
@@ -456,8 +456,8 @@ class TestCreditGate:
         from seer.observability.credit_gate import check_credit_limit
 
         with (
-            patch("seer.observability.credit_gate.get_limits_for_user") as mock_get_limits,
-            patch("seer.observability.credit_gate.resolve_user_tier") as mock_resolve_tier,
+            patch("seer.observability.credit_gate.get_effective_limits") as mock_get_limits,
+            patch("seer.observability.credit_gate.get_effective_tier") as mock_resolve_tier,
             patch("seer.observability.credit_gate.get_5h_llm_credits_used") as mock_5h,
             patch("seer.observability.credit_gate.get_weekly_llm_credits_used") as mock_weekly,
             patch("seer.observability.credit_gate.get_monthly_llm_credits_used") as mock_monthly,
@@ -489,8 +489,8 @@ class TestCreditGate:
         from seer.observability.credit_gate import check_credit_limit
 
         with (
-            patch("seer.observability.credit_gate.get_limits_for_user") as mock_get_limits,
-            patch("seer.observability.credit_gate.resolve_user_tier") as mock_resolve_tier,
+            patch("seer.observability.credit_gate.get_effective_limits") as mock_get_limits,
+            patch("seer.observability.credit_gate.get_effective_tier") as mock_resolve_tier,
             patch("seer.observability.credit_gate.get_5h_llm_credits_used") as mock_5h,
             patch("seer.observability.credit_gate.get_weekly_llm_credits_used") as mock_weekly,
             patch("seer.observability.credit_gate.get_monthly_llm_credits_used") as mock_monthly,
@@ -543,8 +543,8 @@ class TestCreditGateOverageAllowance:
         from seer.observability.credit_gate import check_credit_limit
 
         with (
-            patch("seer.observability.credit_gate.get_limits_for_user") as mock_get_limits,
-            patch("seer.observability.credit_gate.resolve_user_tier") as mock_resolve_tier,
+            patch("seer.observability.credit_gate.get_effective_limits") as mock_get_limits,
+            patch("seer.observability.credit_gate.get_effective_tier") as mock_resolve_tier,
             patch("seer.observability.credit_gate.get_5h_llm_credits_used") as mock_5h,
             patch("seer.observability.credit_gate.get_weekly_llm_credits_used") as mock_weekly,
             patch("seer.observability.credit_gate.get_monthly_llm_credits_used") as mock_monthly,
@@ -584,8 +584,8 @@ class TestCreditGateOverageAllowance:
         from seer.observability.exceptions import CreditLimitExceeded
 
         with (
-            patch("seer.observability.credit_gate.get_limits_for_user") as mock_get_limits,
-            patch("seer.observability.credit_gate.resolve_user_tier") as mock_resolve_tier,
+            patch("seer.observability.credit_gate.get_effective_limits") as mock_get_limits,
+            patch("seer.observability.credit_gate.get_effective_tier") as mock_resolve_tier,
             patch("seer.observability.credit_gate.get_5h_llm_credits_used") as mock_5h,
             patch("seer.observability.credit_gate.get_weekly_llm_credits_used") as mock_weekly,
             patch("seer.observability.credit_gate.get_monthly_llm_credits_used") as mock_monthly,
@@ -627,8 +627,8 @@ class TestCreditGateOverageAllowance:
         from seer.observability.exceptions import CreditLimitExceeded
 
         with (
-            patch("seer.observability.credit_gate.get_limits_for_user") as mock_get_limits,
-            patch("seer.observability.credit_gate.resolve_user_tier") as mock_resolve_tier,
+            patch("seer.observability.credit_gate.get_effective_limits") as mock_get_limits,
+            patch("seer.observability.credit_gate.get_effective_tier") as mock_resolve_tier,
             patch("seer.observability.credit_gate.get_5h_llm_credits_used") as mock_5h,
             patch("seer.observability.credit_gate.get_weekly_llm_credits_used") as mock_weekly,
             patch("seer.observability.credit_gate.get_monthly_llm_credits_used") as mock_monthly,
@@ -684,7 +684,7 @@ class TestCheckOverageAllowance:
         from seer.observability.credit_gate import _check_overage_allowance
 
         with patch(
-            "seer.observability.credit_gate._get_user_overage_settings"
+            "seer.observability.credit_gate._get_effective_overage_settings"
         ) as mock_get_settings:
             mock_get_settings.return_value = None
 
@@ -706,7 +706,7 @@ class TestCheckOverageAllowance:
         mock_settings.remaining_cap_cents = 5000  # $50 remaining
 
         with patch(
-            "seer.observability.credit_gate._get_user_overage_settings"
+            "seer.observability.credit_gate._get_effective_overage_settings"
         ) as mock_get_settings:
             mock_get_settings.return_value = mock_settings
 
@@ -729,7 +729,7 @@ class TestCheckOverageAllowance:
         mock_settings.remaining_cap_cents = 0  # Cap exhausted
 
         with patch(
-            "seer.observability.credit_gate._get_user_overage_settings"
+            "seer.observability.credit_gate._get_effective_overage_settings"
         ) as mock_get_settings:
             mock_get_settings.return_value = mock_settings
 

@@ -9,10 +9,9 @@ import stripe
 from httpx import AsyncClient
 
 from seer.api.subscriptions.pricing_catalog import invalidate_pricing_cache
-from seer.api.subscriptions.stripe_service import get_or_create_stripe_customer
 from seer.config import config
 from seer.database.models import User
-from seer.database.subscription_models import BillingProfile, SubscriptionTier
+from seer.database.organization_models import Organization, OrganizationType
 
 from .helpers import (
     StripeTestClockManager,
@@ -126,7 +125,7 @@ async def user_with_payment_method(db_engine):
     Create test user with payment method already added.
 
     Yields:
-        tuple: (user, billing_profile, stripe_customer_id)
+        tuple: (user, organization, stripe_customer_id)
 
     Cleanup:
         Deletes Stripe customer and DB records
@@ -151,13 +150,22 @@ async def user_with_payment_method(db_engine):
     # Attach test payment method
     attach_test_payment_method(stripe_customer.id)
 
-    # Create billing profile
-    billing_profile = await BillingProfile.create(
-        owner_user=user,
+    # Create personal organization with Stripe customer (org-centric billing)
+    from seer.database.subscription_models import StripeCustomer
+    stripe_customer_record = await StripeCustomer.create(
         stripe_customer_id=stripe_customer.id,
+        created_by_user=user,
+    )
+    organization = await Organization.create(
+        owner=user,
+        name=f"{user.first_name or 'User'}'s Workspace",
+        slug=f"personal-{user.user_id}",
+        type=OrganizationType.PERSONAL,
+        stripe_customer=stripe_customer_record,
+        has_payment_method=True,
     )
 
-    yield user, billing_profile, stripe_customer.id
+    yield user, organization, stripe_customer.id
 
     # Cleanup: Delete Stripe customer
     try:
@@ -190,12 +198,12 @@ async def trial_subscription_setup(user_with_payment_method, stripe_test_clock):
     Create trial subscription with test clock.
 
     Yields:
-        tuple: (user, billing_profile, stripe_subscription, test_clock)
+        tuple: (user, organization, stripe_subscription, test_clock)
 
     Note:
         The subscription is created with a test clock for time-based testing
     """
-    user, billing_profile, stripe_customer_id = user_with_payment_method
+    user, organization, stripe_customer_id = user_with_payment_method
 
     # Create test clock
     test_clock = stripe_test_clock.create_clock()
@@ -210,8 +218,8 @@ async def trial_subscription_setup(user_with_payment_method, stripe_test_clock):
     attach_test_payment_method(test_customer.id)
 
     # Update billing profile with test clock customer
-    billing_profile.stripe_customer_id = test_customer.id
-    await billing_profile.save()
+    organization.stripe_customer_id = test_customer.id
+    await organization.save()
 
     # Create subscription with trial (will use test clock)
     from seer.api.subscriptions.pricing_catalog import get_price_id_for_checkout
@@ -229,7 +237,7 @@ async def trial_subscription_setup(user_with_payment_method, stripe_test_clock):
     from seer.api.subscriptions.stripe_service import sync_subscription_from_stripe
     await sync_subscription_from_stripe(stripe_subscription)
 
-    yield user, billing_profile, stripe_subscription, test_clock
+    yield user, organization, stripe_subscription, test_clock
 
     # Cleanup: Cancel subscription
     try:
@@ -301,7 +309,7 @@ async def subscription_with_trial(authenticated_subscription_client, user_with_p
         dict: Response from create-with-trial endpoint containing subscription_id,
               status, and trial_end
     """
-    user, billing_profile, _ = user_with_payment_method
+    user, organization, _ = user_with_payment_method
 
     # Call the API endpoint
     response = await authenticated_subscription_client.post(

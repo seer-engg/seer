@@ -16,13 +16,13 @@ from tortoise.transactions import in_transaction
 from seer.config import config
 from seer.database.models import User
 from seer.database.subscription_models import (
-    BillingProfile,
-    BillingProfileType,
     BillingSubscription,
+    StripeCustomer,
     SubscriptionStatus,
     SubscriptionTier,
 )
-from seer.database.organization_models import Organization
+from seer.database.organization_models import Organization, OrganizationType
+from seer.database.overage_models import OverageSettings
 from seer.logger import get_logger
 from seer.api.subscriptions.pricing_catalog import get_price_id_to_tier_map
 
@@ -157,230 +157,6 @@ STRIPE_STATUS_MAP = {
 }
 
 
-async def get_or_create_billing_profile(user: User) -> BillingProfile:
-    """
-    Fetch or create the billing profile for an individual user.
-    """
-    profile, _ = await BillingProfile.get_or_create(
-        owner_user=user,
-        defaults={"type": BillingProfileType.INDIVIDUAL},
-    )
-    return profile
-
-
-async def get_or_create_stripe_customer(user: User) -> str:
-    """
-    Get existing Stripe customer or create a new one.
-
-    In dev environment, attaches a test clock to enable time simulation for testing.
-
-    Returns the Stripe customer ID.
-    """
-    billing_profile = await get_or_create_billing_profile(user)
-
-    if billing_profile.stripe_customer_id:
-        return billing_profile.stripe_customer_id
-
-    # Lock the billing profile row to avoid creating duplicate customers on concurrent requests.
-    async with in_transaction() as conn:
-        locked_profile = await BillingProfile.select_for_update().using_db(conn).get(id=billing_profile.id)
-        if locked_profile.stripe_customer_id:
-            return locked_profile.stripe_customer_id
-
-        name = f"{user.first_name or ''} {user.last_name or ''}".strip() or None
-
-        # In dev environment, create and attach a test clock for time simulation
-        customer_params = {
-            "email": user.email,
-            "name": name,
-            "metadata": {
-                "user_id": user.user_id,  # Clerk user ID
-                "seer_user_id": str(user.id),
-            }
-        }
-
-        if config.env == "dev":
-            test_clock = stripe.test_helpers.TestClock.create(
-                frozen_time=int(time.time()),
-                name=f"Test clock for {user.email}",
-            )
-            customer_params["test_clock"] = test_clock.id
-            logger.info("Created test clock %s for user %s", test_clock.id, user.user_id)
-
-        customer = stripe.Customer.create(**customer_params)
-
-        logger.info("Created Stripe customer %s for user %s", customer.id, user.user_id)
-
-        locked_profile.stripe_customer_id = customer.id
-        await locked_profile.save(update_fields=["stripe_customer_id"], using_db=conn)
-
-        return customer.id
-
-
-async def create_checkout_session(
-    user: User,
-    price_id: str,
-    success_url: str,
-    cancel_url: str,
-    metadata: Optional[dict] = None,
-) -> str:
-    """
-    Create a Stripe Checkout session and return the checkout URL.
-
-    Args:
-        user: The authenticated user
-        price_id: Stripe Price ID for the subscription plan
-        success_url: URL to redirect to on successful payment
-        cancel_url: URL to redirect to if payment is canceled
-        metadata: Optional metadata to attach to the session
-
-    Returns:
-        The Stripe Checkout session URL
-    """
-    customer_id = await get_or_create_stripe_customer(user)
-
-    session_metadata = {"user_id": user.user_id}
-    if metadata:
-        session_metadata.update(metadata)
-
-    session = stripe.checkout.Session.create(
-        customer=customer_id,
-        mode="subscription",
-        line_items=[{"price": price_id, "quantity": 1}],
-        success_url=success_url,
-        cancel_url=cancel_url,
-        allow_promotion_codes=True,
-        billing_address_collection="auto",
-        metadata=session_metadata,
-    )
-
-    logger.info(
-        "Created checkout session %s for user %s, price %s",
-        session.id, user.user_id, price_id
-    )
-
-    return session.url
-
-
-async def create_portal_session(user: User, return_url: str) -> str:
-    """
-    Create a Stripe Customer Portal session and return the portal URL.
-
-    Args:
-        user: The authenticated user
-        return_url: URL to return to after portal session
-
-    Returns:
-        The Stripe Customer Portal URL
-    """
-    customer_id = await get_or_create_stripe_customer(user)
-
-    session = stripe.billing_portal.Session.create(
-        customer=customer_id,
-        return_url=return_url,
-    )
-
-    logger.info("Created portal session for user %s", user.user_id)
-
-    return session.url
-
-
-async def get_user_subscription(user: User) -> BillingSubscription:
-    """
-    Get user's billing subscription or create with free tier default.
-
-    Args:
-        user: The authenticated user
-
-    Returns:
-        The user's subscription record
-    """
-    billing_profile = await get_or_create_billing_profile(user)
-    subscription, created = await BillingSubscription.get_or_create(
-        billing_profile=billing_profile,
-        defaults={
-            "tier": SubscriptionTier.FREE,
-            "status": SubscriptionStatus.ACTIVE,
-        }
-    )
-    subscription.billing_profile = billing_profile
-    if created:
-        logger.info("Created free tier subscription for user %s", user.user_id)
-    return subscription
-
-
-async def list_customer_invoices(user: User, page: int, page_size: int) -> dict:
-    """
-    List invoices for a Stripe customer with numbered pagination.
-    """
-    subscription = await get_user_subscription(user)
-    customer_id = subscription.billing_profile.stripe_customer_id or await get_or_create_stripe_customer(user)
-
-    items, has_more = _paginate_stripe_list(
-        stripe.Invoice.list,
-        page=page,
-        page_size=page_size,
-        customer=customer_id,
-        expand=["data.customer"],
-    )
-
-    def _serialize_invoice(invoice: dict) -> dict[str, Any]:
-        return {
-            "id": invoice.get("id"),
-            "number": invoice.get("number"),
-            "status": invoice.get("status"),
-            "currency": invoice.get("currency"),
-            "total": invoice.get("total"),
-            "amount_paid": invoice.get("amount_paid"),
-            "amount_due": invoice.get("amount_due"),
-            "created_at": _timestamp_to_iso(invoice.get("created")),
-            "period_start": _timestamp_to_iso(invoice.get("period_start")),
-            "period_end": _timestamp_to_iso(invoice.get("period_end")),
-            "hosted_invoice_url": invoice.get("hosted_invoice_url"),
-            "invoice_pdf": invoice.get("invoice_pdf"),
-            "billing_reason": invoice.get("billing_reason"),
-        }
-
-    return {
-        "items": [_serialize_invoice(item) for item in items],
-        "has_more": has_more,
-    }
-
-
-async def list_customer_payments(user: User, page: int, page_size: int) -> dict:
-    """
-    List payments (charges) for a Stripe customer with numbered pagination.
-    """
-    subscription = await get_user_subscription(user)
-    customer_id = subscription.billing_profile.stripe_customer_id or await get_or_create_stripe_customer(user)
-
-    items, has_more = _paginate_stripe_list(
-        stripe.Charge.list,
-        page=page,
-        page_size=page_size,
-        customer=customer_id,
-    )
-
-    def _serialize_charge(charge: dict) -> dict[str, Any]:
-        return {
-            "id": charge.get("id"),
-            "status": charge.get("status"),
-            "currency": charge.get("currency"),
-            "amount": charge.get("amount"),
-            "paid": charge.get("paid"),
-            "description": charge.get("description"),
-            "receipt_url": charge.get("receipt_url"),
-            "created_at": _timestamp_to_iso(charge.get("created")),
-            "invoice_id": charge.get("invoice"),
-            "payment_intent_id": charge.get("payment_intent"),
-        }
-
-    return {
-        "items": [_serialize_charge(item) for item in items],
-        "has_more": has_more,
-    }
-
-
 def _resolve_subscription_tier(subscription_obj: dict, current_tier: SubscriptionTier) -> SubscriptionTier:
     """
     Resolve subscription tier from Stripe subscription items.
@@ -453,122 +229,16 @@ def _update_subscription_fields(
     subscription.cancel_at_period_end = bool(stripe_obj.get("cancel_at_period_end", False))
 
 
-async def sync_subscription_from_stripe(
-    stripe_subscription: Union[dict, str, stripe.Subscription],
-) -> Optional[BillingSubscription]:
-    """
-    Sync subscription state from Stripe webhook data.
-
-    Called when receiving subscription.created/updated webhooks or when
-    we need to refresh state after invoice events.
-
-    Args:
-        stripe_subscription: The Stripe subscription object or subscription ID
-
-    Returns:
-        The updated BillingSubscription or None if customer not found
-    """
-    subscription_obj = _maybe_fetch_subscription(stripe_subscription)
-    if not subscription_obj:
-        return None
-
-    customer_id = subscription_obj.get("customer")
-    subscription_id = subscription_obj.get("id")
-
-    if not customer_id or not subscription_id:
-        logger.warning("Stripe subscription payload missing id/customer: %s", subscription_obj)
-        return None
-
-    billing_profile = await BillingProfile.get_or_none(stripe_customer_id=customer_id)
-    if not billing_profile:
-        logger.warning(
-            "No billing profile found for Stripe customer %s, subscription %s",
-            customer_id, subscription_id
-        )
-        return None
-
-    subscription, _ = await BillingSubscription.get_or_create(
-        billing_profile=billing_profile,
-        defaults={
-            "tier": SubscriptionTier.FREE,
-            "status": SubscriptionStatus.ACTIVE,
-        },
-    )
-    subscription.billing_profile = billing_profile
-
-    # Resolve tier from Stripe price metadata
-    tier = _resolve_subscription_tier(subscription_obj, subscription.tier)
-
-    # Update all subscription fields from Stripe data
-    _update_subscription_fields(subscription, subscription_obj, tier)
-
-    await subscription.save()
-
-    logger.info(
-        "Synced subscription for customer %s: tier=%s, status=%s",
-        customer_id, tier.value, subscription.status.value
-    )
-
-    return subscription
-
-
 async def sync_subscription_for_invoice(invoice: dict) -> Optional[BillingSubscription]:
     """
     Sync subscription based on invoice events (payment succeeded/failed).
+    Uses V2 org-centric model.
     """
     subscription_id = invoice.get("subscription")
     if not subscription_id:
         logger.warning("Invoice %s missing subscription ID", invoice.get("id"))
         return None
     return await sync_subscription_from_stripe(subscription_id)
-
-
-async def handle_subscription_deleted(stripe_subscription: dict) -> Optional[BillingSubscription]:
-    """
-    Handle subscription cancellation/deletion.
-
-    Reverts user to free tier when subscription is deleted.
-
-    Args:
-        stripe_subscription: The Stripe subscription object from webhook
-
-    Returns:
-        The updated BillingSubscription or None if customer not found
-    """
-    customer_id = stripe_subscription.get("customer")
-    if not customer_id:
-        logger.warning("Subscription deletion payload missing customer: %s", stripe_subscription)
-        return None
-
-    billing_profile = await BillingProfile.get_or_none(stripe_customer_id=customer_id)
-    if not billing_profile:
-        logger.warning(
-            "No billing profile found for Stripe customer %s on subscription deletion",
-            customer_id
-        )
-        return None
-
-    subscription, _ = await BillingSubscription.get_or_create(
-        billing_profile=billing_profile,
-        defaults={
-            "tier": SubscriptionTier.FREE,
-            "status": SubscriptionStatus.ACTIVE,
-        },
-    )
-
-    # Revert to free tier
-    subscription.tier = SubscriptionTier.FREE
-    subscription.status = SubscriptionStatus.ACTIVE
-    subscription.stripe_subscription_id = None
-    subscription.current_period_start = None
-    subscription.current_period_end = None
-    subscription.cancel_at_period_end = False
-
-    await subscription.save()
-
-    logger.info("Reverted customer %s to free tier after subscription deletion", customer_id)
-
-    return subscription
 
 
 async def process_stripe_event(event_type: str | None, data: dict) -> None:
@@ -606,23 +276,6 @@ def verify_webhook_signature(payload: bytes, signature: str) -> dict:
 # ============================================================================
 
 
-async def get_or_create_org_billing_profile(organization: Organization) -> BillingProfile:
-    """
-    Fetch or create the billing profile for an organization.
-
-    Args:
-        organization: The organization to get/create billing for
-
-    Returns:
-        The organization's billing profile
-    """
-    profile, _ = await BillingProfile.get_or_create(
-        owner_organization=organization,
-        defaults={"type": BillingProfileType.TEAM},
-    )
-    return profile
-
-
 async def get_org_subscription(organization: Organization) -> BillingSubscription:
     """
     Get organization's billing subscription or create with free tier default.
@@ -633,148 +286,32 @@ async def get_org_subscription(organization: Organization) -> BillingSubscriptio
     Returns:
         The organization's subscription record
     """
-    billing_profile = await get_or_create_org_billing_profile(organization)
     subscription, created = await BillingSubscription.get_or_create(
-        billing_profile=billing_profile,
+        organization=organization,
         defaults={
             "tier": SubscriptionTier.FREE,
             "status": SubscriptionStatus.ACTIVE,
         }
     )
-    subscription.billing_profile = billing_profile
+    subscription.organization = organization
     if created:
         logger.info("Created free tier subscription for organization %s", organization.id)
     return subscription
 
 
-async def transfer_subscription_to_org(
-    personal_billing: BillingProfile,
-    subscription: BillingSubscription,
-    target_org: Organization,
-) -> BillingProfile:
-    """
-    Transfer a user's subscription to a team organization.
-
-    This is called when a user with an active subscription creates a team.
-    The subscription moves from their personal billing to the team's billing.
-
-    Args:
-        personal_billing: User's personal billing profile with active subscription
-        subscription: The subscription to transfer
-        target_org: The team organization to transfer to
-
-    Returns:
-        The new organization billing profile
-    """
-    # Create org billing profile with Stripe customer from personal billing
-    org_billing = await BillingProfile.create(
-        type=BillingProfileType.TEAM,
-        owner_organization=target_org,
-        stripe_customer_id=personal_billing.stripe_customer_id,
-        has_payment_method=personal_billing.has_payment_method,
-        payment_method_added_at=personal_billing.payment_method_added_at,
-    )
-
-    # Move subscription to org billing profile
-    subscription.billing_profile = org_billing
-    await subscription.save()
-
-    # Update Stripe customer metadata with organization info
-    if personal_billing.stripe_customer_id:
-        try:
-            stripe.Customer.modify(
-                personal_billing.stripe_customer_id,
-                metadata={
-                    "organization_id": str(target_org.id),
-                    "billing_type": "team",
-                },
-            )
-            logger.info(
-                "Updated Stripe customer %s metadata for org %s",
-                personal_billing.stripe_customer_id, target_org.id
-            )
-        except stripe.error.StripeError as exc:
-            logger.error("Failed to update Stripe customer metadata: %s", exc)
-            # Continue anyway - metadata update is not critical
-
-    # Clear personal billing profile's Stripe connection
-    # (the customer now belongs to the org)
-    personal_billing.stripe_customer_id = None
-    personal_billing.has_payment_method = False
-    personal_billing.payment_method_added_at = None
-    await personal_billing.save()
-
-    logger.info(
-        "Transferred subscription %s from user to org %s",
-        subscription.stripe_subscription_id, target_org.id
-    )
-
-    return org_billing
-
-
-async def get_or_create_org_stripe_customer(organization: Organization, owner_user: User) -> str:
-    """
-    Get existing Stripe customer for org or create a new one.
-
-    Args:
-        organization: The organization
-        owner_user: The organization owner (for customer name/email)
-
-    Returns:
-        The Stripe customer ID
-    """
-    billing_profile = await get_or_create_org_billing_profile(organization)
-
-    if billing_profile.stripe_customer_id:
-        return billing_profile.stripe_customer_id
-
-    # Lock the billing profile row to avoid creating duplicate customers
-    async with in_transaction() as conn:
-        locked_profile = await BillingProfile.select_for_update().using_db(conn).get(id=billing_profile.id)
-        if locked_profile.stripe_customer_id:
-            return locked_profile.stripe_customer_id
-
-        customer_params = {
-            "email": owner_user.email,
-            "name": organization.name,
-            "metadata": {
-                "organization_id": str(organization.id),
-                "organization_name": organization.name,
-                "billing_type": "team",
-            }
-        }
-
-        if config.env == "dev":
-            test_clock = stripe.test_helpers.TestClock.create(
-                frozen_time=int(time.time()),
-                name=f"Test clock for org {organization.name}",
-            )
-            customer_params["test_clock"] = test_clock.id
-            logger.info("Created test clock %s for org %s", test_clock.id, organization.id)
-
-        customer = stripe.Customer.create(**customer_params)
-
-        logger.info("Created Stripe customer %s for organization %s", customer.id, organization.id)
-
-        locked_profile.stripe_customer_id = customer.id
-        await locked_profile.save(update_fields=["stripe_customer_id"], using_db=conn)
-
-        return customer.id
-
-
-async def create_org_portal_session(organization: Organization, owner_user: User, return_url: str) -> str:
+async def create_org_portal_session(organization: Organization, user: User, return_url: str) -> str:
     """
     Create a Stripe Customer Portal session for an organization.
 
     Args:
         organization: The organization
-        owner_user: The organization owner (for customer creation if needed)
+        user: The user accessing the portal (for customer creation if needed)
         return_url: URL to return to after portal session
 
     Returns:
         The Stripe Customer Portal URL
     """
-    customer_id = await get_or_create_org_stripe_customer(organization, owner_user)
+    customer_id = await get_or_create_org_stripe_customer(organization, user)
 
     session = stripe.billing_portal.Session.create(
         customer=customer_id,
@@ -782,6 +319,53 @@ async def create_org_portal_session(organization: Organization, owner_user: User
     )
 
     logger.info("Created portal session for organization %s", organization.id)
+
+    return session.url
+
+
+async def create_org_checkout_session(
+    organization: Organization,
+    user: User,
+    price_id: str,
+    success_url: str,
+    cancel_url: str,
+) -> str:
+    """
+    Create a Stripe Checkout session for an organization and return the checkout URL.
+
+    Used when an org needs to purchase a subscription.
+
+    Args:
+        organization: The organization to create checkout for
+        user: The user initiating checkout (for customer creation if needed)
+        price_id: Stripe Price ID for the subscription plan
+        success_url: URL to redirect to on successful payment
+        cancel_url: URL to redirect to if payment is canceled
+
+    Returns:
+        The Stripe Checkout session URL
+    """
+    customer_id = await get_or_create_org_stripe_customer(organization, user)
+
+    session = stripe.checkout.Session.create(
+        customer=customer_id,
+        mode="subscription",
+        line_items=[{"price": price_id, "quantity": 1}],
+        success_url=success_url,
+        cancel_url=cancel_url,
+        allow_promotion_codes=True,
+        billing_address_collection="auto",
+        metadata={
+            "organization_id": str(organization.id),
+            "organization_name": organization.name,
+            "billing_type": "team" if organization.type == OrganizationType.TEAM else "personal",
+        },
+    )
+
+    logger.info(
+        "Created checkout session %s for organization %s, price %s",
+        session.id, organization.id, price_id
+    )
 
     return session.url
 
@@ -798,15 +382,16 @@ async def list_org_invoices(organization: Organization, page: int, page_size: in
     Returns:
         Dict with items list and has_more flag
     """
-    billing_profile = await get_or_create_org_billing_profile(organization)
-    if not billing_profile.stripe_customer_id:
+    if not organization.stripe_customer_id:
         return {"items": [], "has_more": False}
+
+    stripe_customer = await StripeCustomer.get(id=organization.stripe_customer_id)
 
     items, has_more = _paginate_stripe_list(
         stripe.Invoice.list,
         page=page,
         page_size=page_size,
-        customer=billing_profile.stripe_customer_id,
+        customer=stripe_customer.stripe_customer_id,
         expand=["data.customer"],
     )
 
@@ -831,3 +416,411 @@ async def list_org_invoices(organization: Organization, page: int, page_size: in
         "items": [_serialize_invoice(item) for item in items],
         "has_more": has_more,
     }
+
+
+async def get_or_create_org_stripe_customer(organization: Organization, user: User) -> str:
+    """
+    Get existing Stripe customer for org or create a new one with StripeCustomer audit record.
+
+    Args:
+        organization: The organization
+        user: The user creating/accessing the customer (for customer name/email and audit)
+
+    Returns:
+        The Stripe customer ID
+    """
+    # Check if org already has a stripe customer linked
+    if organization.stripe_customer_id:
+        stripe_customer = await StripeCustomer.get(id=organization.stripe_customer_id)
+        return stripe_customer.stripe_customer_id
+
+    # Lock the organization row to avoid creating duplicate customers
+    async with in_transaction() as conn:
+        locked_org = await Organization.select_for_update().using_db(conn).get(id=organization.id)
+
+        # Re-check after acquiring lock
+        if locked_org.stripe_customer_id:
+            stripe_customer = await StripeCustomer.get(id=locked_org.stripe_customer_id)
+            return stripe_customer.stripe_customer_id
+
+        # Create Stripe customer
+        customer_params = {
+            "email": user.email,
+            "name": organization.name,
+            "metadata": {
+                "organization_id": str(organization.id),
+                "organization_name": organization.name,
+                "created_by_user_id": str(user.id),
+                "billing_type": "team" if organization.type == OrganizationType.TEAM else "personal",
+            }
+        }
+
+        if config.env == "dev":
+            test_clock = stripe.test_helpers.TestClock.create(
+                frozen_time=int(time.time()),
+                name=f"Test clock for org {organization.name}",
+            )
+            customer_params["test_clock"] = test_clock.id
+            logger.info("Created test clock %s for org %s", test_clock.id, organization.id)
+
+        customer = stripe.Customer.create(**customer_params)
+        logger.info("Created Stripe customer %s for organization %s", customer.id, organization.id)
+
+        # Create StripeCustomer record for audit trail
+        stripe_customer = await StripeCustomer.create(
+            stripe_customer_id=customer.id,
+            created_by_user=user,
+            using_db=conn,
+        )
+
+        # Link to organization
+        locked_org.stripe_customer_id = stripe_customer.id
+        await locked_org.save(update_fields=["stripe_customer_id"], using_db=conn)
+
+        return customer.id
+
+
+async def sync_subscription_from_stripe(
+    stripe_subscription: Union[dict, str, stripe.Subscription],
+) -> Optional[BillingSubscription]:
+    """
+    Sync subscription state from Stripe webhook data using V2 org-centric model.
+
+    Looks up organization via StripeCustomer table.
+
+    Args:
+        stripe_subscription: The Stripe subscription object or subscription ID
+
+    Returns:
+        The updated BillingSubscription or None if customer not found
+    """
+    subscription_obj = _maybe_fetch_subscription(stripe_subscription)
+    if not subscription_obj:
+        return None
+
+    customer_id = subscription_obj.get("customer")
+    subscription_id = subscription_obj.get("id")
+
+    if not customer_id or not subscription_id:
+        logger.warning("Stripe subscription payload missing id/customer: %s", subscription_obj)
+        return None
+
+    # V2: Look up via StripeCustomer -> Organization
+    stripe_customer = await StripeCustomer.get_or_none(stripe_customer_id=customer_id)
+    if not stripe_customer:
+        logger.warning(
+            "No StripeCustomer found for Stripe customer %s, subscription %s",
+            customer_id, subscription_id
+        )
+        return None
+
+    organization = await Organization.get_or_none(stripe_customer_id=stripe_customer.id)
+    if not organization:
+        logger.warning(
+            "No Organization found for StripeCustomer %s, subscription %s",
+            stripe_customer.id, subscription_id
+        )
+        return None
+
+    # Get or create subscription for this organization
+    subscription, _ = await BillingSubscription.get_or_create(
+        organization=organization,
+        defaults={
+            "tier": SubscriptionTier.FREE,
+            "status": SubscriptionStatus.ACTIVE,
+        },
+    )
+    subscription.organization = organization
+
+    # Resolve tier from Stripe price metadata
+    tier = _resolve_subscription_tier(subscription_obj, subscription.tier)
+
+    # Update all subscription fields from Stripe data
+    _update_subscription_fields(subscription, subscription_obj, tier)
+
+    await subscription.save()
+
+    logger.info(
+        "Synced subscription for org %s (customer %s): tier=%s, status=%s",
+        organization.id, customer_id, tier.value, subscription.status.value
+    )
+
+    return subscription
+
+
+async def handle_subscription_deleted(stripe_subscription: dict) -> Optional[BillingSubscription]:
+    """
+    Handle subscription cancellation/deletion using V2 org-centric model.
+
+    Reverts organization to free tier when subscription is deleted.
+
+    Args:
+        stripe_subscription: The Stripe subscription object from webhook
+
+    Returns:
+        The updated BillingSubscription or None if customer not found
+    """
+    customer_id = stripe_subscription.get("customer")
+    if not customer_id:
+        logger.warning("Subscription deletion payload missing customer: %s", stripe_subscription)
+        return None
+
+    # V2: Look up via StripeCustomer -> Organization
+    stripe_customer = await StripeCustomer.get_or_none(stripe_customer_id=customer_id)
+    if not stripe_customer:
+        logger.warning(
+            "No StripeCustomer found for Stripe customer %s on subscription deletion",
+            customer_id
+        )
+        return None
+
+    organization = await Organization.get_or_none(stripe_customer_id=stripe_customer.id)
+    if not organization:
+        logger.warning(
+            "No Organization found for StripeCustomer %s on subscription deletion",
+            stripe_customer.id
+        )
+        return None
+
+    subscription, _ = await BillingSubscription.get_or_create(
+        organization=organization,
+        defaults={
+            "tier": SubscriptionTier.FREE,
+            "status": SubscriptionStatus.ACTIVE,
+        },
+    )
+
+    # Revert to free tier
+    subscription.tier = SubscriptionTier.FREE
+    subscription.status = SubscriptionStatus.ACTIVE
+    subscription.stripe_subscription_id = None
+    subscription.current_period_start = None
+    subscription.current_period_end = None
+    subscription.cancel_at_period_end = False
+
+    await subscription.save()
+
+    logger.info("Reverted org %s to free tier after subscription deletion", organization.id)
+
+    return subscription
+
+
+async def transfer_subscription_between_orgs(
+    source_org: Organization,
+    target_org: Organization,
+) -> None:
+    """
+    Transfer billing from one organization to another.
+
+    This moves the StripeCustomer assignment and subscription from source_org to target_org.
+    Used when a user creates a team and wants to transfer their personal subscription.
+
+    All database operations are wrapped in a transaction for atomicity.
+
+    Args:
+        source_org: The source organization (e.g., personal org with active subscription)
+        target_org: The target organization (e.g., new team org)
+
+    Raises:
+        ValueError: If source org has no stripe customer or subscription
+    """
+    if not source_org.stripe_customer_id:
+        raise ValueError(f"Source organization {source_org.id} has no Stripe customer")
+
+    # Get the source subscription
+    source_sub = await BillingSubscription.get_or_none(organization=source_org)
+    if not source_sub:
+        raise ValueError(f"Source organization {source_org.id} has no subscription")
+
+    stripe_customer = await StripeCustomer.get(id=source_org.stripe_customer_id)
+
+    async with in_transaction() as conn:
+        # Lock both organizations
+        locked_source = await Organization.select_for_update().using_db(conn).get(id=source_org.id)
+        locked_target = await Organization.select_for_update().using_db(conn).get(id=target_org.id)
+
+        # Transfer stripe_customer FK
+        locked_target.stripe_customer_id = locked_source.stripe_customer_id
+        locked_target.has_payment_method = locked_source.has_payment_method
+        locked_target.payment_method_added_at = locked_source.payment_method_added_at
+        await locked_target.save(
+            update_fields=["stripe_customer_id", "has_payment_method", "payment_method_added_at"],
+            using_db=conn
+        )
+
+        # Clear source org's billing
+        locked_source.stripe_customer_id = None
+        locked_source.has_payment_method = False
+        locked_source.payment_method_added_at = None
+        await locked_source.save(
+            update_fields=["stripe_customer_id", "has_payment_method", "payment_method_added_at"],
+            using_db=conn
+        )
+
+        # Delete any existing subscription on target org (e.g., FREE created by create_team_organization)
+        await BillingSubscription.filter(organization=locked_target).using_db(conn).delete()
+
+        # Move subscription to target org
+        source_sub.organization = locked_target
+        await source_sub.save(update_fields=["organization_id"], using_db=conn)
+
+        # Transfer overage settings if exists
+        source_overage = await OverageSettings.get_or_none(organization=source_org, using_db=conn)
+        if source_overage:
+            source_overage.organization = locked_target
+            await source_overage.save(update_fields=["organization_id"], using_db=conn)
+
+        # Create FREE tier subscription for source org
+        await BillingSubscription.create(
+            organization=locked_source,
+            tier=SubscriptionTier.FREE,
+            status=SubscriptionStatus.ACTIVE,
+            using_db=conn,
+        )
+
+    # Update Stripe customer metadata (outside transaction)
+    try:
+        stripe.Customer.modify(
+            stripe_customer.stripe_customer_id,
+            metadata={
+                "organization_id": str(target_org.id),
+                "organization_name": target_org.name,
+                "billing_type": "team" if target_org.type == OrganizationType.TEAM else "personal",
+            },
+        )
+        logger.info(
+            "Updated Stripe customer %s metadata for org %s",
+            stripe_customer.stripe_customer_id, target_org.id
+        )
+    except stripe.error.StripeError as exc:
+        logger.error("Failed to update Stripe customer metadata: %s", exc)
+        # Continue anyway - metadata update is not critical
+
+    logger.info(
+        "Transferred subscription from org %s to org %s",
+        source_org.id, target_org.id
+    )
+
+
+async def update_org_has_payment_method(organization: Organization, has_payment_method: bool) -> None:
+    """
+    Update organization's has_payment_method flag.
+
+    Called when payment method is added/removed via Stripe webhook.
+
+    Args:
+        organization: The organization to update
+        has_payment_method: Whether a valid payment method is attached
+    """
+    organization.has_payment_method = has_payment_method
+    if has_payment_method and not organization.payment_method_added_at:
+        organization.payment_method_added_at = datetime.now(timezone.utc)
+    await organization.save(update_fields=["has_payment_method", "payment_method_added_at"])
+
+
+# ============================================================================
+# User-Centric Wrapper Functions (for backward compatibility)
+# ============================================================================
+
+
+async def _get_user_personal_org(user: User) -> Organization:
+    """Get or create the user's personal organization."""
+    organization = await Organization.get_or_none(owner=user, type=OrganizationType.PERSONAL)
+    if not organization:
+        raise ValueError(f"No personal organization found for user {user.user_id}")
+    return organization
+
+
+async def get_user_subscription(user: User) -> BillingSubscription:
+    """
+    Get user's personal organization's billing subscription.
+
+    Wrapper for get_org_subscription that uses user's personal org.
+    """
+    organization = await _get_user_personal_org(user)
+    return await get_org_subscription(organization)
+
+
+async def create_checkout_session(
+    user: User,
+    price_id: str,
+    success_url: str,
+    cancel_url: str,
+) -> str:
+    """
+    Create a Stripe Checkout session for a user's personal organization.
+
+    Wrapper for create_org_checkout_session.
+    """
+    organization = await _get_user_personal_org(user)
+    return await create_org_checkout_session(organization, user, price_id, success_url, cancel_url)
+
+
+async def create_portal_session(user: User, return_url: str) -> str:
+    """
+    Create a Stripe Customer Portal session for a user's personal organization.
+
+    Wrapper for create_org_portal_session.
+    """
+    organization = await _get_user_personal_org(user)
+    return await create_org_portal_session(organization, user, return_url)
+
+
+async def get_or_create_stripe_customer(user: User) -> str:
+    """
+    Get or create a Stripe customer for a user's personal organization.
+
+    Wrapper for get_or_create_org_stripe_customer.
+    """
+    organization = await _get_user_personal_org(user)
+    return await get_or_create_org_stripe_customer(organization, user)
+
+
+async def list_customer_invoices(user: User, page: int, page_size: int) -> dict:
+    """
+    List invoices for a user's personal organization.
+
+    Wrapper for list_org_invoices.
+    """
+    organization = await _get_user_personal_org(user)
+    return await list_org_invoices(organization, page, page_size)
+
+
+async def list_customer_payments(user: User, page: int, page_size: int) -> dict:
+    """
+    List payments (charges) for a user's personal organization.
+
+    Args:
+        user: The user
+        page: Page number (1-based)
+        page_size: Items per page
+
+    Returns:
+        Dict with items list and has_more flag
+    """
+    organization = await _get_user_personal_org(user)
+
+    if not organization.stripe_customer_id:
+        return {"items": [], "has_more": False}
+
+    stripe_customer = await StripeCustomer.get(id=organization.stripe_customer_id)
+
+    items, has_more = _paginate_stripe_list(
+        stripe.Charge.list,
+        page=page,
+        page_size=page_size,
+        customer=stripe_customer.stripe_customer_id,
+    )
+
+    def _serialize_charge(charge: dict) -> dict[str, Any]:
+        return {
+            "id": charge.get("id"),
+            "amount": charge.get("amount"),
+            "currency": charge.get("currency"),
+            "status": charge.get("status"),
+            "created": charge.get("created"),
+            "description": charge.get("description"),
+            "receipt_url": charge.get("receipt_url"),
+        }
+
+    return {"items": [_serialize_charge(c) for c in items], "has_more": has_more}

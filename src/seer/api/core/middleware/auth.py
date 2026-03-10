@@ -14,7 +14,7 @@ from seer.auth.clerk_verifier import ClerkJWTVerifier, VerifiedClerkToken
 from seer.config import config
 from seer.database import User
 from seer.database.models import UserSettings
-from seer.database.subscription_models import BillingProfile
+from seer.database.organization_models import OrganizationType
 from seer.logger import get_logger
 from seer.observability import (
     TrialExpiredError,
@@ -148,17 +148,21 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
     async def _check_payment_method_gate(self, db_user: User) -> Optional[JSONResponse]:
         """Check if payment method is required for this request."""
         # Payment-exempt paths are now handled in _check_access_gates
-        # This method only checks if user has payment method
+        # This method checks if user belongs to an org with a payment method
+        from seer.database.organization_models import (  # pylint: disable=import-outside-toplevel  # Reason: avoids circular import
+            OrganizationMembership, MembershipStatus
+        )
 
-        # Check personal billing profile first
-        billing_profile = await BillingProfile.get_or_none(owner_user=db_user)
+        # Check if user is in any org with payment method
+        memberships = await OrganizationMembership.filter(
+            user=db_user,
+            status=MembershipStatus.ACTIVE,
+        ).prefetch_related("organization")
 
-        if billing_profile and billing_profile.has_payment_method:
-            return None  # User has personal payment method
-
-        # Check if user is member of a team with an active billing profile
-        if await self._is_member_of_paying_team(db_user):
-            return None  # Team pays for this user
+        for membership in memberships:
+            org = membership.organization
+            if org.has_payment_method:
+                return None  # User belongs to org with payment method
 
         # Only block if onboarding is complete (still onboarding = allowed)
         settings = await UserSettings.get_or_none(user=db_user)
@@ -177,31 +181,20 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
         return None
 
     async def _is_member_of_paying_team(self, db_user: User) -> bool:
-        """Check if user is a member of any team whose owner has a valid billing profile."""
+        """Check if user is a member of any team with a payment method."""
         from seer.database.organization_models import (  # pylint: disable=import-outside-toplevel  # Reason: avoids circular import
-            OrganizationMembership, MembershipStatus, OrganizationType
+            OrganizationMembership, MembershipStatus
         )
 
-        # Find active team memberships
+        # Find active team memberships where team has payment method
         team_membership = await OrganizationMembership.filter(
             user=db_user,
             status=MembershipStatus.ACTIVE,
             organization__type=OrganizationType.TEAM,
-        ).prefetch_related("organization").first()
+            organization__has_payment_method=True,
+        ).first()
 
-        if not team_membership:
-            return False
-
-        # Get the team's owner
-        await team_membership.organization.fetch_related("owner")
-        team_owner = team_membership.organization.owner
-
-        if not team_owner:
-            return False
-
-        # Check if team owner has billing profile with payment method
-        owner_billing = await BillingProfile.get_or_none(owner_user=team_owner)
-        return owner_billing is not None and owner_billing.has_payment_method
+        return team_membership is not None
 
     def _extract_token(self, request: Request) -> Optional[str]:
         """Extract JWT token from Authorization header or query parameter."""

@@ -18,9 +18,8 @@ from seer.database.workflow_models import (
     WorkflowRunStatus,
     WorkflowVersionStatus,
 )
+from seer.database.organization_models import Organization
 from seer.database.subscription_models import (
-    BillingProfile,
-    BillingProfileType,
     BillingSubscription,
     SubscriptionStatus,
     SubscriptionTier,
@@ -241,44 +240,6 @@ class TriggerSubscriptionFactory:
         )
 
 
-class BillingProfileFactory:
-    """Factory for creating BillingProfile instances."""
-
-    _counter = 0
-
-    @classmethod
-    async def create(
-        cls,
-        user: User,
-        profile_type: BillingProfileType = BillingProfileType.STRIPE,
-        stripe_customer_id: Optional[str] = None,
-        **kwargs,
-    ) -> BillingProfile:
-        """
-        Create a BillingProfile instance.
-
-        Args:
-            user: Associated user
-            profile_type: Profile type (default: STRIPE)
-            stripe_customer_id: Stripe customer ID (auto-generated if not provided)
-            **kwargs: Additional BillingProfile fields
-
-        Returns:
-            Created BillingProfile instance
-        """
-        cls._counter += 1
-
-        if stripe_customer_id is None:
-            stripe_customer_id = f"cus_test_{cls._counter}"
-
-        return await BillingProfile.create(
-            user=user,
-            profile_type=profile_type,
-            stripe_customer_id=stripe_customer_id,
-            **kwargs,
-        )
-
-
 class BillingSubscriptionFactory:
     """Factory for creating BillingSubscription instances."""
 
@@ -287,7 +248,7 @@ class BillingSubscriptionFactory:
     @classmethod
     async def create(
         cls,
-        billing_profile: BillingProfile,
+        organization: Organization,
         subscription_id: Optional[str] = None,
         tier: SubscriptionTier = SubscriptionTier.PRO,
         status: SubscriptionStatus = SubscriptionStatus.ACTIVE,
@@ -299,7 +260,7 @@ class BillingSubscriptionFactory:
         Create a BillingSubscription instance.
 
         Args:
-            billing_profile: Associated billing profile
+            organization: Associated organization
             subscription_id: Subscription ID (auto-generated if not provided)
             tier: Subscription tier (default: PRO)
             status: Subscription status (default: ACTIVE)
@@ -322,8 +283,8 @@ class BillingSubscriptionFactory:
             current_period_end = current_period_start + timedelta(days=30)
 
         return await BillingSubscription.create(
-            billing_profile=billing_profile,
-            subscription_id=subscription_id,
+            organization=organization,
+            stripe_subscription_id=subscription_id,
             tier=tier,
             status=status,
             current_period_start=current_period_start,

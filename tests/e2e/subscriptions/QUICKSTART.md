@@ -111,17 +111,22 @@ cd /home/lokesh/second/seer
 uv run python -c "
 import asyncio
 from seer.database import init_db
-from seer.database.subscription_models import BillingProfile
+from seer.database.organization_models import Organization
+from seer.database.subscription_models import BillingSubscription
 
 async def check():
     await init_db()
-    profiles = await BillingProfile.all()
-    for p in profiles:
-        print(f'User: {p.user_id}')
-        print(f'Tier: {p.tier}')
-        print(f'Status: {p.status}')
-        print(f'Subscription ID: {p.stripe_subscription_id}')
-        print(f'Trial End: {p.current_period_end}')
+    # Organizations now hold billing info directly (org-centric billing)
+    orgs = await Organization.all().prefetch_related('stripe_customer')
+    for org in orgs:
+        sub = await BillingSubscription.get_or_none(organization=org)
+        print(f'Org: {org.name} ({org.type.value})')
+        print(f'Has Payment Method: {org.has_payment_method}')
+        if sub:
+            print(f'Tier: {sub.tier}')
+            print(f'Status: {sub.status}')
+            print(f'Subscription ID: {sub.stripe_subscription_id}')
+            print(f'Trial End: {sub.current_period_end}')
         print('---')
 
 asyncio.run(check())

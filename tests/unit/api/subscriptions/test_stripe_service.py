@@ -174,36 +174,6 @@ class TestPaginateStripeList:
 
 
 # =============================================================================
-# Billing Profile Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestBillingProfileOperations:
-    """Tests for billing profile operations."""
-
-    @pytest.mark.asyncio
-    async def test_get_or_create_billing_profile_existing(self):
-        """Test getting existing billing profile."""
-        from seer.database import User
-        from seer.database.subscription_models import BillingProfile, BillingProfileType
-
-        mock_user = MagicMock(spec=User)
-        mock_user.id = 1
-
-        mock_profile = MagicMock(spec=BillingProfile)
-        mock_profile.id = 1
-        mock_profile.profile_type = BillingProfileType.INDIVIDUAL
-
-        with patch("seer.database.subscription_models.BillingProfile.get_or_none") as mock_get:
-            mock_get.return_value = AsyncMock(return_value=mock_profile)()
-
-            result = await mock_get.return_value
-
-            assert result == mock_profile
-
-
-# =============================================================================
 # Stripe Customer Tests
 # =============================================================================
 
@@ -215,16 +185,18 @@ class TestStripeCustomerOperations:
     def test_stripe_customer_creation_payload(self):
         """Test Stripe customer creation payload structure."""
         # Test that customer creation uses correct email and metadata
+        # Organization-centric: metadata includes organization_id and created_by_user_id
         customer_data = {
             "email": "test@example.com",
             "metadata": {
-                "user_id": "user_123",
-                "billing_profile_id": "1",
+                "organization_id": "1",
+                "created_by_user_id": "user_123",
             }
         }
 
         assert customer_data["email"] == "test@example.com"
-        assert customer_data["metadata"]["user_id"] == "user_123"
+        assert customer_data["metadata"]["organization_id"] == "1"
+        assert customer_data["metadata"]["created_by_user_id"] == "user_123"
 
 
 # =============================================================================

@@ -117,30 +117,33 @@ async def test_user():
 @pytest.fixture
 async def test_user_with_subscription(test_user):
     """
-    Create test user with active PRO subscription.
+    Create test user with active PRO subscription via their personal org.
 
     Useful for testing subscription-dependent features.
     """
     from datetime import datetime, timedelta, timezone
+    from seer.database.organization_models import Organization, OrganizationType
     from seer.database.subscription_models import (
-        BillingProfile,
-        BillingProfileType,
         BillingSubscription,
         SubscriptionStatus,
         SubscriptionTier,
     )
 
-    # Create billing profile
-    profile = await BillingProfile.create(
-        user=test_user,
-        profile_type=BillingProfileType.INDIVIDUAL,
-        stripe_customer_id="cus_test_123",
+    # Get or create personal organization for user
+    personal_org, _ = await Organization.get_or_create(
+        owner=test_user,
+        type=OrganizationType.PERSONAL,
+        defaults={
+            "name": f"{test_user.first_name}'s Workspace",
+            "slug": f"personal-{test_user.user_id}",
+            "settings": {},
+        }
     )
 
-    # Create active subscription
+    # Create active subscription on organization
     subscription = await BillingSubscription.create(
-        billing_profile=profile,
-        subscription_id="sub_test_123",
+        organization=personal_org,
+        stripe_subscription_id="sub_test_123",
         tier=SubscriptionTier.PRO,
         status=SubscriptionStatus.ACTIVE,
         current_period_start=datetime.now(timezone.utc),

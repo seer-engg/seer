@@ -703,10 +703,31 @@ class AgentNodeType(BaseNodeType):
             # So we multiply by 3 to allow for the full loop
             recursion_limit = max_iterations * 3 if isinstance(max_iterations, int) else 30
 
-            result = await agent.ainvoke(
-                {"messages": [human_message]},
-                config={"recursion_limit": recursion_limit},
+            # Set up cost tracking callback for LLM usage tracking
+            # Only enable callback if runtime context is available (needed for user/billing info)
+            # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
+            from seer.agents.nexus.cost_callback import (
+                CostCapCallbackHandler,
+                set_chat_runtime_context,
+                clear_chat_runtime_context,
             )
+
+            callbacks = []
+            if ctx.runtime_context:
+                set_chat_runtime_context(ctx.runtime_context)
+                callbacks.append(CostCapCallbackHandler())
+
+            try:
+                result = await agent.ainvoke(
+                    {"messages": [human_message]},
+                    config={
+                        "recursion_limit": recursion_limit,
+                        "callbacks": callbacks,
+                    },
+                )
+            finally:
+                if ctx.runtime_context:
+                    clear_chat_runtime_context()
 
             # Parse agent result
             messages = result.get("messages", [])

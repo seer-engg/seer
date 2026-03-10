@@ -11,24 +11,34 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from seer.database.models import User
-from seer.database.subscription_models import BillingProfile
+from seer.database.organization_models import Organization, OrganizationType
+from seer.database.subscription_models import StripeCustomer
 
 
 @pytest.fixture
 async def test_user(db_engine):  # pylint: disable=unused-argument # Reason: db_engine needed for database initialization
-    """Create a test user with billing profile."""
+    """Create a test user with organization (org-centric billing)."""
     user = await User.create(
         user_id="test_user_123",
         email="test@example.com",
         first_name="Test",
         last_name="User",
     )
-    billing_profile = await BillingProfile.create(
-        owner_user=user,
+    stripe_customer = await StripeCustomer.create(
         stripe_customer_id="cus_test123",
+        created_by_user=user,
     )
-    yield user, billing_profile
-    await billing_profile.delete()
+    organization = await Organization.create(
+        owner=user,
+        name=f"{user.first_name or 'User'}'s Workspace",
+        slug=f"personal-{user.user_id}",
+        type=OrganizationType.PERSONAL,
+        stripe_customer=stripe_customer,
+        has_payment_method=False,
+    )
+    yield user, organization
+    await organization.delete()
+    await stripe_customer.delete()
     await user.delete()
 
 
@@ -76,7 +86,7 @@ class TestSetupIntentEndpoints:
 
     async def test_create_setup_intent_success(self, app_with_subscriptions: FastAPI, test_user, mock_stripe_config, mock_stripe_setup_intent):  # pylint: disable=unused-argument # Reason: mock_stripe_config needed for fixture setup
         """Test creating a Setup Intent for payment method collection."""
-        user, billing_profile = test_user
+        user, organization = test_user
 
         # Mock authentication
         with patch("seer.api.subscriptions.setup_intent._require_user", return_value=user):
@@ -99,11 +109,11 @@ class TestSetupIntentEndpoints:
 
     async def test_confirm_setup_intent_success(self, app_with_subscriptions: FastAPI, test_user, mock_stripe_config, mock_stripe_setup_intent):  # pylint: disable=unused-argument # Reason: mock_stripe_config needed for fixture setup
         """Test confirming a successful Setup Intent."""
-        user, billing_profile = test_user
+        user, organization = test_user
 
         # Ensure payment method not set initially
-        assert billing_profile.has_payment_method is False
-        assert billing_profile.payment_method_added_at is None
+        assert organization.has_payment_method is False
+        assert organization.payment_method_added_at is None
 
         with patch("seer.api.subscriptions.setup_intent._require_user", return_value=user):
             async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
@@ -117,15 +127,15 @@ class TestSetupIntentEndpoints:
         assert data["success"] is True
         assert data["message"] == "Payment method successfully added"
 
-        # Verify billing profile updated
-        await billing_profile.refresh_from_db()
-        assert billing_profile.has_payment_method is True
-        assert billing_profile.payment_method_added_at is not None
+        # Verify organization updated
+        await organization.refresh_from_db()
+        assert organization.has_payment_method is True
+        assert organization.payment_method_added_at is not None
         mock_stripe_setup_intent.retrieve.assert_called_once_with("seti_test123")
 
     async def test_confirm_setup_intent_not_succeeded(self, app_with_subscriptions: FastAPI, test_user, mock_stripe_config):  # pylint: disable=unused-argument # Reason: mock_stripe_config needed for fixture setup
         """Test confirming Setup Intent that hasn't succeeded yet."""
-        user, billing_profile = test_user
+        user, organization = test_user
 
         with patch("seer.api.subscriptions.setup_intent.stripe.SetupIntent") as mock_si:
             mock_si.retrieve.return_value = MagicMock(
@@ -144,18 +154,18 @@ class TestSetupIntentEndpoints:
         assert response.status_code == 400
         assert "expected 'succeeded'" in response.json()["detail"].lower()
 
-        # Verify billing profile not updated
-        await billing_profile.refresh_from_db()
-        assert billing_profile.has_payment_method is False
+        # Verify organization not updated
+        await organization.refresh_from_db()
+        assert organization.has_payment_method is False
 
     async def test_get_payment_method_status_has_method(self, app_with_subscriptions: FastAPI, test_user):
         """Test getting payment method status when user has payment method."""
-        user, billing_profile = test_user
+        user, organization = test_user
 
         # Set payment method
-        billing_profile.has_payment_method = True
-        billing_profile.payment_method_added_at = datetime.now(timezone.utc)
-        await billing_profile.save()
+        organization.has_payment_method = True
+        organization.payment_method_added_at = datetime.now(timezone.utc)
+        await organization.save()
 
         with patch("seer.api.subscriptions.setup_intent._require_user", return_value=user):
             async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
@@ -168,7 +178,7 @@ class TestSetupIntentEndpoints:
 
     async def test_get_payment_method_status_no_method(self, app_with_subscriptions: FastAPI, test_user):
         """Test getting payment method status when user has no payment method."""
-        user, billing_profile = test_user
+        user, organization = test_user
 
         with patch("seer.api.subscriptions.setup_intent._require_user", return_value=user):
             async with AsyncClient(transport=ASGITransport(app=app_with_subscriptions), base_url="http://test") as client:
@@ -179,7 +189,7 @@ class TestSetupIntentEndpoints:
         assert data["has_payment_method"] is False
         assert data["payment_method_added_at"] is None
 
-    async def test_get_payment_method_status_no_billing_profile(self, app_with_subscriptions: FastAPI, db_engine):  # pylint: disable=unused-argument # Reason: db_engine needed for database initialization
+    async def test_get_payment_method_status_no_organization(self, app_with_subscriptions: FastAPI, db_engine):  # pylint: disable=unused-argument # Reason: db_engine needed for database initialization
         """Test getting payment method status when user has no billing profile."""
         user = await User.create(
             user_id="no_billing_user",
@@ -207,10 +217,10 @@ class TestWebhookHandler:
         """Test processing setup_intent.succeeded webhook."""
         from seer.api.subscriptions.stripe_webhook_controller import stripe_webhook_controller
 
-        user, billing_profile = test_user
+        user, organization = test_user
 
         # Ensure payment method not set initially
-        assert billing_profile.has_payment_method is False
+        assert organization.has_payment_method is False
 
         # Simulate webhook event
         webhook_data = {
@@ -223,10 +233,10 @@ class TestWebhookHandler:
 
         await stripe_webhook_controller._handle_setup_intent_succeeded(webhook_data)
 
-        # Verify billing profile updated
-        await billing_profile.refresh_from_db()
-        assert billing_profile.has_payment_method is True
-        assert billing_profile.payment_method_added_at is not None
+        # Verify organization updated
+        await organization.refresh_from_db()
+        assert organization.has_payment_method is True
+        assert organization.payment_method_added_at is not None
 
     async def test_setup_intent_succeeded_webhook_no_customer(self):
         """Test webhook with missing customer ID."""
@@ -243,8 +253,8 @@ class TestWebhookHandler:
         # Should not raise exception, just log warning
         await stripe_webhook_controller._handle_setup_intent_succeeded(webhook_data)
 
-    async def test_setup_intent_succeeded_webhook_no_billing_profile(self, db_engine):  # pylint: disable=unused-argument # Reason: db_engine needed for database initialization
-        """Test webhook for non-existent billing profile."""
+    async def test_setup_intent_succeeded_webhook_no_organization(self, db_engine):  # pylint: disable=unused-argument # Reason: db_engine needed for database initialization
+        """Test webhook for non-existent organization."""
         from seer.api.subscriptions.stripe_webhook_controller import stripe_webhook_controller
 
         webhook_data = {

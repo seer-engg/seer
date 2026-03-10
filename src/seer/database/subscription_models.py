@@ -4,6 +4,38 @@ from enum import Enum
 from tortoise import fields, models
 
 
+class StripeCustomer(models.Model):
+    """
+    Tracks Stripe customer ownership with full audit trail.
+
+    This table serves as the source of truth for Stripe customer assignments.
+    Benefits:
+    - Preserves who originally created the customer (audit trail)
+    - When subscription transfers, customer stays same, just reassigned to new org
+    - Webhook lookups: StripeCustomer.get(stripe_customer_id=...) → organization
+    """
+
+    id = fields.IntField(primary_key=True)
+    stripe_customer_id = fields.CharField(max_length=255, unique=True)
+
+    # Who originally created this Stripe customer (audit trail - never changes)
+    created_by_user = fields.ForeignKeyField(
+        "models.User",
+        related_name="created_stripe_customers",
+        on_delete=fields.CASCADE,
+    )
+
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    class Meta:
+        table = "stripe_customers"
+
+    def __str__(self) -> str:
+        # pylint: disable=no-member  # Reason: Tortoise ORM generates FK _id attributes dynamically
+        return f"StripeCustomer<id={self.id}, stripe_id={self.stripe_customer_id}, created_by={self.created_by_user_id}>"
+
+
 class SubscriptionTier(str, Enum):
     """Available subscription tiers."""
     FREE = "free"
@@ -28,65 +60,20 @@ class StripeWebhookEventStatus(str, Enum):
     FAILED = "failed"
 
 
-class BillingProfileType(str, Enum):
-    """Types of billing profiles."""
-    INDIVIDUAL = "individual"
-    TEAM = "team"
-
-
-class BillingProfile(models.Model):
-    """
-    Billing profile for a paying entity (individual user or team organization).
-
-    Ownership rules:
-    - INDIVIDUAL type: owner_user is set, owner_organization is null
-    - TEAM type: owner_organization is set, owner_user is null
-
-    When a user creates a team organization, their subscription transfers
-    from their personal billing profile to the team's billing profile.
-    """
-
-    id = fields.IntField(primary_key=True)
-    type = fields.CharEnumField(BillingProfileType, default=BillingProfileType.INDIVIDUAL)
-
-    # Individual billing - owned by a user
-    owner_user = fields.ForeignKeyField(
-        "models.User",
-        related_name="billing_profiles",
-        on_delete=fields.CASCADE,
-        null=True,
-    )
-
-    # Team billing - owned by an organization
-    owner_organization = fields.ForeignKeyField(
-        "models.Organization",
-        related_name="billing_profile",
-        on_delete=fields.CASCADE,
-        null=True,
-    )
-
-    stripe_customer_id = fields.CharField(max_length=255, unique=True, null=True)
-    has_payment_method = fields.BooleanField(default=False)
-    payment_method_added_at = fields.DatetimeField(null=True)
-    created_at = fields.DatetimeField(auto_now_add=True)
-    updated_at = fields.DatetimeField(auto_now=True)
-
-    class Meta:
-        table = "billing_profiles"
-
-    def __str__(self) -> str:
-        # pylint: disable=no-member  # Reason: Tortoise ORM generates FK _id attributes (owner_user_id, owner_organization_id) dynamically
-        owner = f"user={self.owner_user_id}" if self.owner_user_id else f"org={self.owner_organization_id}"
-        return f"BillingProfile<id={self.id}, type={self.type.value}, {owner}>"
-
-
 class BillingSubscription(models.Model):
-    """Subscription record tied to a billing profile."""
+    """Subscription record tied to an organization.
+
+    Every organization (personal or team) has exactly one subscription.
+    Personal orgs start with FREE tier, can upgrade via checkout.
+    Team orgs either inherit from transfer or start FREE.
+    """
 
     id = fields.IntField(primary_key=True)
-    billing_profile = fields.OneToOneField(
-        "models.BillingProfile",
-        related_name="subscription",
+
+    # Organization-centric billing - every org has exactly one subscription
+    organization = fields.OneToOneField(
+        "models.Organization",
+        related_name="billing_subscription",
         on_delete=fields.CASCADE,
     )
 

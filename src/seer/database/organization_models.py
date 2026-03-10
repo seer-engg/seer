@@ -64,6 +64,11 @@ class Organization(models.Model):
 
     Every user has exactly one personal org created on signup.
     This unifies the data model - all queries use organization_id.
+
+    Billing is now org-centric:
+    - stripe_customer: FK to StripeCustomer (audit trail for Stripe customer)
+    - has_payment_method: Whether a valid payment method is attached
+    - payment_method_added_at: When payment method was first added
     """
     id = fields.IntField(primary_key=True)
 
@@ -83,6 +88,16 @@ class Organization(models.Model):
 
     # Settings (org-level preferences)
     settings = fields.JSONField(default=dict)
+
+    # Billing - org-centric (Phase 1 addition)
+    stripe_customer = fields.ForeignKeyField(
+        "models.StripeCustomer",
+        related_name="organizations",
+        on_delete=fields.SET_NULL,
+        null=True,
+    )
+    has_payment_method = fields.BooleanField(default=False)
+    payment_method_added_at = fields.DatetimeField(null=True)
 
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)

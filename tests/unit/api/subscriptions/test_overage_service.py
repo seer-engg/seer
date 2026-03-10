@@ -27,16 +27,27 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_billing_profile():
-    """Create mock billing profile."""
-    from seer.database.subscription_models import BillingProfile, BillingProfileType
+def mock_organization():
+    """Create mock organization for billing tests."""
+    from seer.database.organization_models import Organization, OrganizationType
 
-    profile = MagicMock(spec=BillingProfile)
-    profile.id = 1
-    profile.profile_type = BillingProfileType.INDIVIDUAL
-    profile.stripe_customer_id = "cus_test123"
-    profile.has_payment_method = True
-    return profile
+    org = MagicMock(spec=Organization)
+    org.id = 1
+    org.type = OrganizationType.PERSONAL
+    org.stripe_customer_id = 1  # FK to StripeCustomer
+    org.has_payment_method = True
+    return org
+
+
+@pytest.fixture
+def mock_stripe_customer():
+    """Create mock stripe customer for billing tests."""
+    from seer.database.subscription_models import StripeCustomer
+
+    customer = MagicMock(spec=StripeCustomer)
+    customer.id = 1
+    customer.stripe_customer_id = "cus_test123"
+    return customer
 
 
 @pytest.fixture
@@ -120,12 +131,12 @@ class TestIsOverageEligible:
 
     @pytest.mark.asyncio
     async def test_eligible_pro_tier_active_with_payment(
-        self, mock_subscription, mock_billing_profile
+        self, mock_subscription, mock_organization
     ):
         """Test PRO tier with active subscription and payment method is eligible."""
         from seer.api.subscriptions.overage_service import is_overage_eligible
 
-        mock_subscription.billing_profile = mock_billing_profile
+        mock_subscription.organization = mock_organization
         mock_subscription.fetch_related = AsyncMock()
 
         result = await is_overage_eligible(mock_subscription)
@@ -133,13 +144,13 @@ class TestIsOverageEligible:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_not_eligible_free_tier(self, mock_subscription, mock_billing_profile):
+    async def test_not_eligible_free_tier(self, mock_subscription, mock_organization):
         """Test FREE tier is not eligible."""
         from seer.database.subscription_models import SubscriptionTier
         from seer.api.subscriptions.overage_service import is_overage_eligible
 
         mock_subscription.tier = SubscriptionTier.FREE
-        mock_subscription.billing_profile = mock_billing_profile
+        mock_subscription.organization = mock_organization
         mock_subscription.fetch_related = AsyncMock()
 
         result = await is_overage_eligible(mock_subscription)
@@ -148,14 +159,14 @@ class TestIsOverageEligible:
 
     @pytest.mark.asyncio
     async def test_not_eligible_canceled_subscription(
-        self, mock_subscription, mock_billing_profile
+        self, mock_subscription, mock_organization
     ):
         """Test canceled subscription is not eligible."""
         from seer.database.subscription_models import SubscriptionStatus
         from seer.api.subscriptions.overage_service import is_overage_eligible
 
         mock_subscription.status = SubscriptionStatus.CANCELED
-        mock_subscription.billing_profile = mock_billing_profile
+        mock_subscription.organization = mock_organization
         mock_subscription.fetch_related = AsyncMock()
 
         result = await is_overage_eligible(mock_subscription)
@@ -164,13 +175,13 @@ class TestIsOverageEligible:
 
     @pytest.mark.asyncio
     async def test_not_eligible_no_payment_method(
-        self, mock_subscription, mock_billing_profile
+        self, mock_subscription, mock_organization
     ):
         """Test not eligible without payment method."""
         from seer.api.subscriptions.overage_service import is_overage_eligible
 
-        mock_billing_profile.has_payment_method = False
-        mock_subscription.billing_profile = mock_billing_profile
+        mock_organization.has_payment_method = False
+        mock_subscription.organization = mock_organization
         mock_subscription.fetch_related = AsyncMock()
 
         result = await is_overage_eligible(mock_subscription)
@@ -178,13 +189,13 @@ class TestIsOverageEligible:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_eligible_trialing_status(self, mock_subscription, mock_billing_profile):
+    async def test_eligible_trialing_status(self, mock_subscription, mock_organization):
         """Test trialing subscription is eligible."""
         from seer.database.subscription_models import SubscriptionStatus
         from seer.api.subscriptions.overage_service import is_overage_eligible
 
         mock_subscription.status = SubscriptionStatus.TRIALING
-        mock_subscription.billing_profile = mock_billing_profile
+        mock_subscription.organization = mock_organization
         mock_subscription.fetch_related = AsyncMock()
 
         result = await is_overage_eligible(mock_subscription)
@@ -192,13 +203,13 @@ class TestIsOverageEligible:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_eligible_pro_plus_tier(self, mock_subscription, mock_billing_profile):
+    async def test_eligible_pro_plus_tier(self, mock_subscription, mock_organization):
         """Test PRO_PLUS tier is eligible."""
         from seer.database.subscription_models import SubscriptionTier
         from seer.api.subscriptions.overage_service import is_overage_eligible
 
         mock_subscription.tier = SubscriptionTier.PRO_PLUS
-        mock_subscription.billing_profile = mock_billing_profile
+        mock_subscription.organization = mock_organization
         mock_subscription.fetch_related = AsyncMock()
 
         result = await is_overage_eligible(mock_subscription)
@@ -215,7 +226,7 @@ class TestGetOrCreateOverageSettings:
     """Tests for get_or_create_overage_settings function."""
 
     @pytest.mark.asyncio
-    async def test_creates_settings_with_defaults(self, mock_billing_profile):
+    async def test_creates_settings_with_defaults(self, mock_organization):
         """Test creates settings with default values."""
         from seer.api.subscriptions.overage_service import get_or_create_overage_settings
 
@@ -226,13 +237,13 @@ class TestGetOrCreateOverageSettings:
         ) as mock_overage_cls:
             mock_overage_cls.get_or_create = AsyncMock(return_value=(mock_settings, True))
 
-            result = await get_or_create_overage_settings(mock_billing_profile)
+            result = await get_or_create_overage_settings(mock_organization)
 
             assert result == mock_settings
             mock_overage_cls.get_or_create.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_returns_existing_settings(self, mock_billing_profile):
+    async def test_returns_existing_settings(self, mock_organization):
         """Test returns existing settings if already exists."""
         from seer.api.subscriptions.overage_service import get_or_create_overage_settings
 
@@ -245,7 +256,7 @@ class TestGetOrCreateOverageSettings:
                 return_value=(existing_settings, False)
             )
 
-            result = await get_or_create_overage_settings(mock_billing_profile)
+            result = await get_or_create_overage_settings(mock_organization)
 
             assert result == existing_settings
 
@@ -391,13 +402,13 @@ class TestReportUsageToStripe:
 
     @pytest.mark.asyncio
     async def test_creates_meter_event_and_updates_records(
-        self, mock_overage_settings, mock_billing_profile
+        self, mock_overage_settings, mock_organization, mock_stripe_customer
     ):
         """Test creates Stripe meter event and updates local records."""
         from seer.api.subscriptions.overage_service import report_usage_to_stripe
         from seer.database.overage_models import OverageRecordStatus
 
-        mock_overage_settings.billing_profile = mock_billing_profile
+        mock_overage_settings.organization = mock_organization
         mock_overage_settings.fetch_related = AsyncMock()
 
         mock_usage_record = MagicMock()
@@ -408,10 +419,12 @@ class TestReportUsageToStripe:
 
         with patch("seer.api.subscriptions.overage_service.config") as mock_config, \
              patch("seer.api.subscriptions.overage_service.OverageUsageRecord") as mock_record_cls, \
+             patch("seer.api.subscriptions.overage_service.StripeCustomer") as mock_stripe_cls, \
              patch("stripe.billing.MeterEvent.create") as mock_meter:
 
             mock_config.stripe_secret_key = "sk_test_123"
             mock_record_cls.create = AsyncMock(return_value=mock_usage_record)
+            mock_stripe_cls.get = AsyncMock(return_value=mock_stripe_customer)
             mock_meter.return_value = mock_meter_event
 
             result = await report_usage_to_stripe(
@@ -451,13 +464,13 @@ class TestReportUsageToStripe:
 
     @pytest.mark.asyncio
     async def test_returns_none_when_no_customer_id(
-        self, mock_overage_settings, mock_billing_profile
+        self, mock_overage_settings, mock_organization
     ):
         """Test returns None when no Stripe customer ID."""
         from seer.api.subscriptions.overage_service import report_usage_to_stripe
 
-        mock_billing_profile.stripe_customer_id = None
-        mock_overage_settings.billing_profile = mock_billing_profile
+        mock_organization.stripe_customer_id = None
+        mock_overage_settings.organization = mock_organization
         mock_overage_settings.fetch_related = AsyncMock()
 
         with patch("seer.api.subscriptions.overage_service.config") as mock_config:
@@ -474,14 +487,14 @@ class TestReportUsageToStripe:
 
     @pytest.mark.asyncio
     async def test_marks_record_failed_on_stripe_error(
-        self, mock_overage_settings, mock_billing_profile
+        self, mock_overage_settings, mock_organization, mock_stripe_customer
     ):
         """Test marks usage record as failed on Stripe error."""
         import stripe
         from seer.api.subscriptions.overage_service import report_usage_to_stripe
         from seer.database.overage_models import OverageRecordStatus
 
-        mock_overage_settings.billing_profile = mock_billing_profile
+        mock_overage_settings.organization = mock_organization
         mock_overage_settings.fetch_related = AsyncMock()
 
         mock_usage_record = MagicMock()
@@ -489,10 +502,12 @@ class TestReportUsageToStripe:
 
         with patch("seer.api.subscriptions.overage_service.config") as mock_config, \
              patch("seer.api.subscriptions.overage_service.OverageUsageRecord") as mock_record_cls, \
+             patch("seer.api.subscriptions.overage_service.StripeCustomer") as mock_stripe_cls, \
              patch("stripe.billing.MeterEvent.create") as mock_meter:
 
             mock_config.stripe_secret_key = "sk_test_123"
             mock_record_cls.create = AsyncMock(return_value=mock_usage_record)
+            mock_stripe_cls.get = AsyncMock(return_value=mock_stripe_customer)
             mock_meter.side_effect = stripe.error.StripeError("Meter error")  # type: ignore[attr-defined]
 
             result = await report_usage_to_stripe(
@@ -517,7 +532,7 @@ class TestEnableOverage:
 
     @pytest.mark.asyncio
     async def test_enables_overage_successfully(
-        self, mock_billing_profile, mock_subscription, mock_overage_settings
+        self, mock_organization, mock_subscription, mock_overage_settings
     ):
         """Test enables overage and attaches Stripe pricing."""
         from seer.api.subscriptions.overage_service import enable_overage
@@ -536,7 +551,7 @@ class TestEnableOverage:
             mock_get_settings.return_value = mock_overage_settings
             mock_attach.return_value = "si_123"
 
-            result = await enable_overage(mock_billing_profile, mock_subscription)
+            result = await enable_overage(mock_organization, mock_subscription)
 
             assert result == mock_overage_settings
             assert mock_overage_settings.enabled is True
@@ -545,7 +560,7 @@ class TestEnableOverage:
 
     @pytest.mark.asyncio
     async def test_raises_when_not_eligible(
-        self, mock_billing_profile, mock_subscription
+        self, mock_organization, mock_subscription
     ):
         """Test raises ValueError when subscription not eligible."""
         from seer.api.subscriptions.overage_service import enable_overage
@@ -556,13 +571,13 @@ class TestEnableOverage:
             mock_eligible.return_value = False
 
             with pytest.raises(ValueError) as exc_info:
-                await enable_overage(mock_billing_profile, mock_subscription)
+                await enable_overage(mock_organization, mock_subscription)
 
             assert "not eligible" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_raises_when_stripe_attach_fails(
-        self, mock_billing_profile, mock_subscription, mock_overage_settings
+        self, mock_organization, mock_subscription, mock_overage_settings
     ):
         """Test raises ValueError when Stripe attachment fails."""
         from seer.api.subscriptions.overage_service import enable_overage
@@ -582,13 +597,13 @@ class TestEnableOverage:
             mock_attach.return_value = None
 
             with pytest.raises(ValueError) as exc_info:
-                await enable_overage(mock_billing_profile, mock_subscription)
+                await enable_overage(mock_organization, mock_subscription)
 
             assert "Failed to attach" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_applies_custom_spending_cap(
-        self, mock_billing_profile, mock_subscription, mock_overage_settings
+        self, mock_organization, mock_subscription, mock_overage_settings
     ):
         """Test applies custom spending cap within limits."""
         from seer.api.subscriptions.overage_service import enable_overage
@@ -608,7 +623,7 @@ class TestEnableOverage:
             mock_attach.return_value = "si_123"
 
             result = await enable_overage(
-                mock_billing_profile, mock_subscription, spending_cap_cents=10000
+                mock_organization, mock_subscription, spending_cap_cents=10000
             )
 
             assert result.spending_cap_cents == 10000
@@ -619,7 +634,7 @@ class TestDisableOverage:
 
     @pytest.mark.asyncio
     async def test_disables_overage_and_detaches_stripe(
-        self, mock_billing_profile, mock_subscription, mock_overage_settings
+        self, mock_organization, mock_subscription, mock_overage_settings
     ):
         """Test disables overage and detaches Stripe subscription item."""
         from seer.api.subscriptions.overage_service import disable_overage
@@ -637,7 +652,7 @@ class TestDisableOverage:
             mock_get_settings.return_value = mock_overage_settings
             mock_detach.return_value = True
 
-            result = await disable_overage(mock_billing_profile, mock_subscription)
+            result = await disable_overage(mock_organization, mock_subscription)
 
             assert result == mock_overage_settings
             assert mock_overage_settings.enabled is False
@@ -646,7 +661,7 @@ class TestDisableOverage:
 
     @pytest.mark.asyncio
     async def test_returns_settings_unchanged_if_already_disabled(
-        self, mock_billing_profile, mock_subscription, mock_overage_settings
+        self, mock_organization, mock_subscription, mock_overage_settings
     ):
         """Test returns settings unchanged if already disabled."""
         from seer.api.subscriptions.overage_service import disable_overage
@@ -658,7 +673,7 @@ class TestDisableOverage:
         ) as mock_get_settings:
             mock_get_settings.return_value = mock_overage_settings
 
-            result = await disable_overage(mock_billing_profile, mock_subscription)
+            result = await disable_overage(mock_organization, mock_subscription)
 
             assert result == mock_overage_settings
             mock_overage_settings.save.assert_not_called()
@@ -674,7 +689,7 @@ class TestUpdateSpendingCap:
 
     @pytest.mark.asyncio
     async def test_updates_spending_cap(
-        self, mock_billing_profile, mock_overage_settings
+        self, mock_organization, mock_overage_settings
     ):
         """Test updates spending cap successfully."""
         from seer.api.subscriptions.overage_service import update_spending_cap
@@ -684,28 +699,28 @@ class TestUpdateSpendingCap:
         ) as mock_get_settings:
             mock_get_settings.return_value = mock_overage_settings
 
-            result = await update_spending_cap(mock_billing_profile, 10000)
+            result = await update_spending_cap(mock_organization, 10000)
 
             assert result.spending_cap_cents == 10000
             mock_overage_settings.save.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_raises_when_cap_below_minimum(self, mock_billing_profile):
+    async def test_raises_when_cap_below_minimum(self, mock_organization):
         """Test raises ValueError when cap below minimum."""
         from seer.api.subscriptions.overage_service import update_spending_cap
 
         with pytest.raises(ValueError) as exc_info:
-            await update_spending_cap(mock_billing_profile, 100)  # $1 is below minimum
+            await update_spending_cap(mock_organization, 100)  # $1 is below minimum
 
         assert "must be between" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_raises_when_cap_above_maximum(self, mock_billing_profile):
+    async def test_raises_when_cap_above_maximum(self, mock_organization):
         """Test raises ValueError when cap above maximum."""
         from seer.api.subscriptions.overage_service import update_spending_cap
 
         with pytest.raises(ValueError) as exc_info:
-            await update_spending_cap(mock_billing_profile, 100000000)  # Too high
+            await update_spending_cap(mock_organization, 100000000)  # Too high
 
         assert "must be between" in str(exc_info.value)
 

@@ -16,10 +16,11 @@ from pydantic import BaseModel
 
 from seer.config import config
 from seer.database import User
-from seer.database.subscription_models import SubscriptionStatus, SubscriptionTier
+from seer.database.organization_models import Organization, OrganizationType
 from seer.observability import (
     get_5h_llm_credits_used,
-    get_limits_for_user,
+    get_effective_limits,
+    get_effective_subscription,
     get_llm_usage_by_model,
     get_llm_usage_by_operation,
     get_llm_usage_by_workflow,
@@ -27,12 +28,15 @@ from seer.observability import (
     get_llm_usage_records_paginated,
     get_monthly_llm_credits_used,
     get_monthly_run_count,
-    get_subscription_for_user,
+    get_org_5h_llm_credits_used,
+    get_org_monthly_llm_credits_used,
+    get_org_monthly_run_count,
+    get_org_weekly_llm_credits_used,
+    get_org_workflow_count,
     get_weekly_llm_credits_used,
     get_workflow_count,
-    resolve_user_tier,
 )
-from seer.observability.service import get_billing_period_for_user
+from seer.observability.service import get_effective_billing_period
 from seer.observability.models import TierLimits
 
 router = APIRouter(prefix="/usage", tags=["usage"])
@@ -60,21 +64,10 @@ class UsageBreakdown(BaseModel):
     workflows: UsageMetric
 
 
-class SubscriptionSummary(BaseModel):
-    """Subscription context included with usage."""
-
-    tier: str
-    status: str
-    current_period_end: Optional[datetime] = None
-    cancel_at_period_end: bool = False
-
-
 class UsageResponse(BaseModel):
     """Response model for usage summary."""
 
-    tier: str
     is_self_hosted: bool
-    subscription: SubscriptionSummary
     limits: dict[str, Union[int, float]]
     usage: UsageBreakdown
 
@@ -122,29 +115,6 @@ def _build_usage_metric(
         reset_at=reset_at,
         disabled=disabled,
         unit=unit,
-    )
-
-
-def _serialize_subscription(
-    subscription,
-    tier: SubscriptionTier,
-) -> SubscriptionSummary:
-    """Convert a BillingSubscription (or None) into a serializable summary."""
-    if subscription:
-        return SubscriptionSummary(
-            tier=subscription.tier.value,
-            status=subscription.status.value,
-            current_period_end=subscription.current_period_end,
-            cancel_at_period_end=subscription.cancel_at_period_end,
-        )
-
-    # No subscription record (self-hosted or free default)
-    fallback_status = SubscriptionStatus.ACTIVE.value
-    return SubscriptionSummary(
-        tier=tier.value,
-        status=fallback_status,
-        current_period_end=None,
-        cancel_at_period_end=False,
     )
 
 
@@ -202,20 +172,35 @@ def _build_usage_breakdown(  # pylint: disable=too-many-arguments,too-many-posit
 @router.get("", response_model=UsageResponse)
 async def get_usage_summary(request: Request) -> UsageResponse:
     """
-    Return the current user's usage and limits across all gated resources.
+    Return the current user's/organization's usage and limits across all gated resources.
+
+    For team organizations, returns org-level usage aggregates.
     """
     user = _require_user(request)
-    limits = await get_limits_for_user(user)
-    tier = await resolve_user_tier(user)
-    subscription = await get_subscription_for_user(user)
+    organization: Optional[Organization] = getattr(request.state, "organization", None)
 
-    monthly_runs_used = await get_monthly_run_count(user)
-    workflows_used = await get_workflow_count(user)
-    llm_credits_used = await get_monthly_llm_credits_used(user)
-    llm_credits_5h_used = await get_5h_llm_credits_used(user)
-    llm_credits_weekly_used = await get_weekly_llm_credits_used(user)
+    # Use effective functions (org-aware)
+    limits = await get_effective_limits(user, organization)
+    subscription = await get_effective_subscription(user, organization)
 
-    _, reset_at = await get_billing_period_for_user(user, subscription)
+    # Determine if we should query org-level usage
+    use_org_usage = organization and organization.type == OrganizationType.TEAM
+
+    # Get usage counts: org-level for team orgs, user-level otherwise
+    if use_org_usage and organization:
+        monthly_runs_used = await get_org_monthly_run_count(organization)
+        workflows_used = await get_org_workflow_count(organization)
+        llm_credits_used = await get_org_monthly_llm_credits_used(organization)
+        llm_credits_5h_used = await get_org_5h_llm_credits_used(organization)
+        llm_credits_weekly_used = await get_org_weekly_llm_credits_used(organization)
+    else:
+        monthly_runs_used = await get_monthly_run_count(user)
+        workflows_used = await get_workflow_count(user)
+        llm_credits_used = await get_monthly_llm_credits_used(user)
+        llm_credits_5h_used = await get_5h_llm_credits_used(user)
+        llm_credits_weekly_used = await get_weekly_llm_credits_used(user)
+
+    _, reset_at = await get_effective_billing_period(user, organization, subscription)
 
     # Rolling windows reset relative to now (Claude-style countdown display)
     now = datetime.now(timezone.utc)
@@ -235,9 +220,7 @@ async def get_usage_summary(request: Request) -> UsageResponse:
     )
 
     return UsageResponse(
-        tier=tier.value,
         is_self_hosted=config.is_self_hosted,
-        subscription=_serialize_subscription(subscription, tier),
         limits={
             "poll_min_interval_seconds": limits.poll_min_interval_seconds,
         },
@@ -330,11 +313,12 @@ async def _resolve_period(
     user: User,
     start: Optional[datetime],
     end: Optional[datetime],
+    organization: Optional[Organization] = None,
 ) -> tuple[datetime, datetime]:
-    """Default start/end to the user's current billing period if not provided."""
+    """Default start/end to the user's/org's current billing period if not provided."""
     if start and end:
         return start, end
-    period_start, period_end = await get_billing_period_for_user(user)
+    period_start, period_end = await get_effective_billing_period(user, organization)
     return start or period_start, end or period_end
 
 
