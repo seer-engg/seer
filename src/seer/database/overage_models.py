@@ -20,16 +20,17 @@ class OverageRecordStatus(str, Enum):
 
 class OverageSettings(models.Model):
     """
-    Overage pricing settings for a billing profile.
+    Overage pricing settings for an organization.
 
-    Allows paid tier users to opt into usage-based pricing for LLM credits
+    Allows paid tier organizations to opt into usage-based pricing for LLM credits
     beyond their subscription allowance.
     """
 
     id = fields.IntField(primary_key=True)
 
-    billing_profile = fields.OneToOneField(
-        "models.BillingProfile",
+    # Organization-centric - every org can have overage settings
+    organization = fields.OneToOneField(
+        "models.Organization",
         related_name="overage_settings",
         on_delete=fields.CASCADE,
     )
@@ -62,8 +63,8 @@ class OverageSettings(models.Model):
         table = "overage_settings"
 
     def __str__(self) -> str:
-        # pylint: disable=no-member  # billing_profile_id is dynamically created by Tortoise ORM
-        return f"OverageSettings<profile={self.billing_profile_id}, enabled={self.enabled}, cap=${self.spending_cap_cents / 100:.2f}>"
+        # pylint: disable=no-member  # organization_id is dynamically created by Tortoise ORM
+        return f"OverageSettings<org={self.organization_id}, enabled={self.enabled}, cap=${self.spending_cap_cents / 100:.2f}>"
 
     @property
     def spending_cap_dollars(self) -> Decimal:

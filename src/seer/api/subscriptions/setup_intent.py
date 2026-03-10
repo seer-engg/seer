@@ -14,10 +14,10 @@ from pydantic import BaseModel
 
 from seer.config import config
 from seer.database.models import User
-from seer.database.subscription_models import BillingProfile
+from seer.database.organization_models import Organization
 from seer.logger import get_logger
 
-from .stripe_service import get_or_create_stripe_customer
+from .stripe_service import get_or_create_org_stripe_customer
 
 logger = get_logger("api.subscriptions.setup_intent")
 
@@ -30,6 +30,14 @@ def _require_user(request: Request) -> User:
     if user is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     return user
+
+
+def _require_organization(request: Request) -> Organization:
+    """Extract organization from request or raise 401."""
+    org = getattr(request.state, "organization", None)
+    if org is None:
+        raise HTTPException(status_code=401, detail="Organization context required")
+    return org
 
 
 # --- Request/Response Models ---
@@ -76,10 +84,11 @@ async def create_setup_intent(request: Request):
         raise HTTPException(status_code=503, detail="Stripe is not configured")
 
     user = _require_user(request)
+    organization = _require_organization(request)
 
     try:
-        # Get or create Stripe customer
-        customer_id = await get_or_create_stripe_customer(user)
+        # Get or create Stripe customer for organization
+        customer_id = await get_or_create_org_stripe_customer(organization, user)
 
         # Create Setup Intent with off_session usage for future charges
         setup_intent = stripe.SetupIntent.create(
@@ -89,12 +98,13 @@ async def create_setup_intent(request: Request):
             metadata={
                 "user_id": user.user_id,  # Clerk user ID
                 "seer_user_id": str(user.id),
+                "organization_id": str(organization.id),
             }
         )
 
         logger.info(
-            "Created Setup Intent %s for user %s (customer %s)",
-            setup_intent.id, user.user_id, customer_id
+            "Created Setup Intent %s for org %s (customer %s)",
+            setup_intent.id, organization.id, customer_id
         )
 
         return SetupIntentResponse(
@@ -103,17 +113,17 @@ async def create_setup_intent(request: Request):
         )
 
     except stripe.error.StripeError as exc:
-        logger.error("Stripe Setup Intent creation error for user %s: %s", user.user_id, str(exc))
+        logger.error("Stripe Setup Intent creation error for org %s: %s", organization.id, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/setup-intent/confirm", response_model=SetupConfirmResponse)
 async def confirm_setup_intent(request: Request, body: ConfirmSetupRequest):
     """
-    Confirm that Setup Intent succeeded and update user's payment method status.
+    Confirm that Setup Intent succeeded and update organization's payment method status.
 
     This endpoint is called by the frontend after Stripe confirms the payment method.
-    It verifies the Setup Intent status and updates the BillingProfile accordingly.
+    It verifies the Setup Intent status and updates the Organization accordingly.
 
     Args:
         body: Contains the setup_intent_id to verify
@@ -124,7 +134,7 @@ async def confirm_setup_intent(request: Request, body: ConfirmSetupRequest):
     if not config.is_stripe_configured:
         raise HTTPException(status_code=503, detail="Stripe is not configured")
 
-    user = _require_user(request)
+    organization = _require_organization(request)
 
     try:
         # Retrieve Setup Intent from Stripe to verify status
@@ -132,27 +142,22 @@ async def confirm_setup_intent(request: Request, body: ConfirmSetupRequest):
 
         if setup_intent.status != "succeeded":
             logger.warning(
-                "Setup Intent %s for user %s has status %s (expected 'succeeded')",
-                body.setup_intent_id, user.user_id, setup_intent.status
+                "Setup Intent %s for org %s has status %s (expected 'succeeded')",
+                body.setup_intent_id, organization.id, setup_intent.status
             )
             raise HTTPException(
                 status_code=400,
                 detail=f"Setup Intent status is {setup_intent.status}, expected 'succeeded'"
             )
 
-        # Get billing profile and update payment method status
-        billing_profile = await BillingProfile.get_or_none(owner_user=user)
-        if not billing_profile:
-            logger.error("No billing profile found for user %s during Setup Intent confirmation", user.user_id)
-            raise HTTPException(status_code=404, detail="Billing profile not found")
-
-        billing_profile.has_payment_method = True
-        billing_profile.payment_method_added_at = datetime.now(timezone.utc)
-        await billing_profile.save(update_fields=["has_payment_method", "payment_method_added_at"])
+        # Update organization payment method status
+        organization.has_payment_method = True
+        organization.payment_method_added_at = datetime.now(timezone.utc)
+        await organization.save(update_fields=["has_payment_method", "payment_method_added_at"])
 
         logger.info(
-            "Confirmed Setup Intent %s for user %s, updated payment method status",
-            body.setup_intent_id, user.user_id
+            "Confirmed Setup Intent %s for org %s, updated payment method status",
+            body.setup_intent_id, organization.id
         )
 
         return SetupConfirmResponse(
@@ -168,25 +173,17 @@ async def confirm_setup_intent(request: Request, body: ConfirmSetupRequest):
 @router.get("/payment-method/status", response_model=PaymentMethodStatusResponse)
 async def get_payment_method_status(request: Request):
     """
-    Get payment method status for the authenticated user.
+    Get payment method status for the current organization.
 
-    Returns whether the user has a payment method on file and when it was added.
+    Returns whether the organization has a payment method on file and when it was added.
     """
-    user = _require_user(request)
-
-    billing_profile = await BillingProfile.get_or_none(owner_user=user)
-
-    if not billing_profile:
-        return PaymentMethodStatusResponse(
-            has_payment_method=False,
-            payment_method_added_at=None
-        )
+    organization = _require_organization(request)
 
     return PaymentMethodStatusResponse(
-        has_payment_method=billing_profile.has_payment_method,
+        has_payment_method=organization.has_payment_method,
         payment_method_added_at=(
-            billing_profile.payment_method_added_at.isoformat()
-            if billing_profile.payment_method_added_at
+            organization.payment_method_added_at.isoformat()
+            if organization.payment_method_added_at
             else None
         )
     )

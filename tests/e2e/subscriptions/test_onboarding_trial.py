@@ -13,7 +13,8 @@ import stripe
 
 from seer.api.subscriptions.stripe_service import sync_subscription_from_stripe
 from seer.config import config
-from seer.database.subscription_models import BillingSubscription, BillingProfile, SubscriptionTier
+from seer.database.organization_models import Organization, OrganizationType
+from seer.database.subscription_models import BillingSubscription, StripeCustomer, SubscriptionTier
 
 from .helpers import (
     assert_no_charges_during_trial,
@@ -35,7 +36,7 @@ async def test_create_trial_subscription_during_onboarding(
     - No invoice created yet
     - DB synced with Stripe
     """
-    user, billing_profile, stripe_customer_id = user_with_payment_method
+    user, organization, stripe_customer_id = user_with_payment_method
 
     # Call the create-with-trial endpoint (simulates onboarding)
     response = await authenticated_subscription_client.post(
@@ -79,8 +80,8 @@ async def test_create_trial_subscription_during_onboarding(
         )
 
     # Verify DB is synced
-    await billing_profile.refresh_from_db()
-    subscription = await BillingSubscription.get(billing_profile=billing_profile)
+    await organization.refresh_from_db()
+    subscription = await BillingSubscription.get(organization=organization)
     assert subscription.tier == SubscriptionTier.PRO
     assert subscription.stripe_subscription_id == result["subscription_id"]
 
@@ -116,10 +117,18 @@ async def test_create_trial_requires_payment_method(db_engine):
         metadata={"user_id": user.user_id},
     )
 
-    # Create billing profile
-    await BillingProfile.create(
-        owner_user=user,
+    # Create StripeCustomer record and Organization (org-centric billing)
+    stripe_customer_record = await StripeCustomer.create(
         stripe_customer_id=stripe_customer.id,
+        created_by_user=user,
+    )
+    await Organization.create(
+        owner=user,
+        name=f"{user.first_name or 'User'}'s Workspace",
+        slug=f"personal-{user.user_id}",
+        type=OrganizationType.PERSONAL,
+        stripe_customer=stripe_customer_record,
+        has_payment_method=False,  # No payment method attached
     )
 
     # Create test app and client with mocked auth
@@ -163,7 +172,7 @@ async def test_webhook_sync_after_trial_creation(
     - DB is updated via sync_subscription_from_stripe()
     - Webhook idempotency (reprocessing same event)
     """
-    user, billing_profile, _ = user_with_payment_method
+    user, organization, _ = user_with_payment_method
     subscription_id = subscription_with_trial["subscription_id"]
 
     # Simulate webhook event (in real scenario, Stripe sends this)
@@ -191,8 +200,8 @@ async def test_webhook_sync_after_trial_creation(
         assert processed, "Webhook should be processed successfully"
 
     # Verify DB was updated
-    await billing_profile.refresh_from_db()
-    subscription = await BillingSubscription.get(billing_profile=billing_profile)
+    await organization.refresh_from_db()
+    subscription = await BillingSubscription.get(organization=organization)
     assert subscription.stripe_subscription_id == subscription_id
     assert subscription.tier == SubscriptionTier.PRO
 
@@ -287,7 +296,7 @@ async def test_subscription_has_default_payment_method(
 
     This prevents payment failures when the trial period ends.
     """
-    user, billing_profile, stripe_customer_id = user_with_payment_method
+    user, organization, stripe_customer_id = user_with_payment_method
 
     # Create subscription via API
     response = await authenticated_subscription_client.post(

@@ -18,6 +18,8 @@ from tortoise.exceptions import IntegrityError
 
 from seer.config import config
 from seer.database.models import User
+from seer.api.core.middleware.organization import get_organization
+from seer.api.organizations.models import OrgInvoiceItem
 from seer.database.subscription_models import (
     StripeWebhookEvent,
     StripeWebhookEventStatus,
@@ -35,7 +37,7 @@ from .stripe_service import (
     create_checkout_session,
     create_portal_session,
     get_or_create_stripe_customer,
-    get_user_subscription,
+    get_org_subscription,
     list_customer_invoices,
     list_customer_payments,
     sync_subscription_from_stripe,
@@ -80,6 +82,10 @@ class SubscriptionResponse(BaseModel):
     status: str
     current_period_end: Optional[str] = None
     cancel_at_period_end: bool = False
+    # Organization context for debugging
+    organization_id: int
+    organization_name: str
+    organization_type: str  # "PERSONAL" or "TEAM"
 
 
 class PricingResponse(BaseModel):
@@ -94,26 +100,9 @@ class PaginationMeta(BaseModel):
     has_more: bool
 
 
-class InvoiceItem(BaseModel):
-    """Invoice data for billing history."""
-    id: str
-    number: Optional[str] = None
-    status: Optional[str] = None
-    currency: Optional[str] = None
-    total: Optional[int] = None
-    amount_paid: Optional[int] = None
-    amount_due: Optional[int] = None
-    created_at: Optional[str] = None
-    period_start: Optional[str] = None
-    period_end: Optional[str] = None
-    hosted_invoice_url: Optional[str] = None
-    invoice_pdf: Optional[str] = None
-    billing_reason: Optional[str] = None
-
-
 class InvoiceListResponse(BaseModel):
     """Paginated invoices list."""
-    items: list[InvoiceItem]
+    items: list[OrgInvoiceItem]
     pagination: PaginationMeta
 
 
@@ -187,12 +176,17 @@ async def get_pricing():
 @router.get("/current", response_model=SubscriptionResponse)
 async def get_current_subscription(request: Request):
     """
-    Get current user's subscription status.
+    Get current organization's subscription status.
 
-    Returns the user's current tier, status, and billing period information.
+    Returns the subscription for the user's current organization context
+    (determined by JWT's current_organization_id claim).
     """
-    user = _require_user(request)
-    subscription = await get_user_subscription(user)
+    _require_user(request)
+
+    # Get the current organization from request context (set by middleware from JWT)
+    organization = get_organization(request)
+
+    subscription = await get_org_subscription(organization)
 
     return SubscriptionResponse(
         tier=subscription.tier.value,
@@ -203,6 +197,9 @@ async def get_current_subscription(request: Request):
             else None
         ),
         cancel_at_period_end=subscription.cancel_at_period_end,
+        organization_id=organization.id,
+        organization_name=organization.name,
+        organization_type=organization.type.value,
     )
 
 

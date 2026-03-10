@@ -522,7 +522,7 @@ class TestCheckAccessGates:
         with patch("seer.auth.clerk_verifier.PyJWKClient"), \
              patch("seer.api.core.middleware.auth.is_trial_expired") as mock_trial, \
              patch("seer.api.core.middleware.auth.config") as mock_config, \
-             patch("seer.database.subscription_models.BillingProfile.get_or_none") as mock_billing:
+             patch("seer.database.organization_models.Organization.get_or_none") as mock_billing:
             mock_trial.return_value = False
             mock_config.is_self_hosted = False
             # User has no payment method

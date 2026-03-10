@@ -14,8 +14,8 @@ from pydantic import BaseModel, Field
 
 from seer.config import config
 from seer.database.models import User
+from seer.database.organization_models import Organization
 from seer.database.overage_models import OverageRecordStatus, OverageUsageRecord
-from seer.database.subscription_models import BillingProfile
 from seer.logger import get_logger
 from seer.observability.constants import tiered_usage_limits
 
@@ -27,7 +27,7 @@ from seer.api.subscriptions.overage_service import (
     is_overage_eligible,
     update_spending_cap,
 )
-from seer.api.subscriptions.stripe_service import get_user_subscription
+from seer.api.subscriptions.stripe_service import get_org_subscription
 
 logger = get_logger("api.overage.router")
 
@@ -40,6 +40,14 @@ def _require_user(request: Request) -> User:
     if user is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     return user
+
+
+def _require_organization(request: Request) -> Organization:
+    """Extract organization from request or raise 401."""
+    org = getattr(request.state, "organization", None)
+    if org is None:
+        raise HTTPException(status_code=401, detail="Organization context required")
+    return org
 
 
 # --- Request/Response Models ---
@@ -172,32 +180,14 @@ async def get_overage_settings(request: Request):
     - Remaining cap
     - Usage record counts by status
     """
-    user = _require_user(request)
-
-    # Get billing profile
-    billing_profile = await BillingProfile.get_or_none(owner_user=user)
-    if not billing_profile:
-        # No billing profile - return default disabled state
-        return OverageSettingsResponse(
-            enabled=False,
-            eligible=False,
-            spending_cap_cents=tiered_usage_limits.OVERAGE_DEFAULT_CAP_CENTS,
-            spending_cap_dollars=tiered_usage_limits.OVERAGE_DEFAULT_CAP_CENTS / 100,
-            current_usage_cents=0,
-            current_usage_dollars=0.0,
-            remaining_cents=tiered_usage_limits.OVERAGE_DEFAULT_CAP_CENTS,
-            remaining_dollars=tiered_usage_limits.OVERAGE_DEFAULT_CAP_CENTS / 100,
-            cap_reached=False,
-            margin_multiplier=tiered_usage_limits.OVERAGE_DEFAULT_MARGIN_MULTIPLIER,
-            margin_percent=(tiered_usage_limits.OVERAGE_DEFAULT_MARGIN_MULTIPLIER - 1) * 100,
-        )
+    organization = _require_organization(request)
 
     # Check eligibility
-    subscription = await get_user_subscription(user)
+    subscription = await get_org_subscription(organization)
     eligible = await is_overage_eligible(subscription)
 
     # Get or create overage settings
-    settings = await get_or_create_overage_settings(billing_profile)
+    settings = await get_or_create_overage_settings(organization)
 
     # Get usage summary
     summary = await get_overage_usage_summary(settings)
@@ -236,18 +226,10 @@ async def enable_overage_pricing(request: Request, body: EnableOverageRequest):
     if not config.is_stripe_configured:
         raise HTTPException(status_code=503, detail="Stripe is not configured")
 
-    user = _require_user(request)
-
-    # Get billing profile
-    billing_profile = await BillingProfile.get_or_none(owner_user=user)
-    if not billing_profile:
-        raise HTTPException(
-            status_code=400,
-            detail="No billing profile found. Please set up your subscription first.",
-        )
+    organization = _require_organization(request)
 
     # Get subscription
-    subscription = await get_user_subscription(user)
+    subscription = await get_org_subscription(organization)
 
     # Check eligibility
     if not await is_overage_eligible(subscription):
@@ -258,7 +240,7 @@ async def enable_overage_pricing(request: Request, body: EnableOverageRequest):
 
     try:
         settings = await enable_overage(
-            billing_profile=billing_profile,
+            organization=organization,
             subscription=subscription,
             spending_cap_cents=body.spending_cap_cents,
         )
@@ -297,18 +279,13 @@ async def disable_overage_pricing(request: Request):
     Note: Any pending charges in the current billing period will still
     be billed. Only new overages will be blocked after disabling.
     """
-    user = _require_user(request)
-
-    # Get billing profile
-    billing_profile = await BillingProfile.get_or_none(owner_user=user)
-    if not billing_profile:
-        raise HTTPException(status_code=400, detail="No billing profile found.")
+    organization = _require_organization(request)
 
     # Get subscription
-    subscription = await get_user_subscription(user)
+    subscription = await get_org_subscription(organization)
 
     settings = await disable_overage(
-        billing_profile=billing_profile,
+        organization=organization,
         subscription=subscription,
     )
 
@@ -332,16 +309,11 @@ async def update_overage_cap(request: Request, body: UpdateCapRequest):
 
     The cap can be updated whether overage is currently enabled or not.
     """
-    user = _require_user(request)
-
-    # Get billing profile
-    billing_profile = await BillingProfile.get_or_none(owner_user=user)
-    if not billing_profile:
-        raise HTTPException(status_code=400, detail="No billing profile found.")
+    organization = _require_organization(request)
 
     try:
         settings = await update_spending_cap(
-            billing_profile=billing_profile,
+            organization=organization,
             spending_cap_cents=body.spending_cap_cents,
         )
     except ValueError as exc:
@@ -366,21 +338,10 @@ async def list_overage_usage(
 
     Returns individual usage records with their Stripe reporting status.
     """
-    user = _require_user(request)
-
-    # Get billing profile
-    billing_profile = await BillingProfile.get_or_none(owner_user=user)
-    if not billing_profile:
-        return OverageUsageListResponse(
-            items=[],
-            total_count=0,
-            page=page,
-            page_size=page_size,
-            has_more=False,
-        )
+    organization = _require_organization(request)
 
     # Get overage settings
-    settings = await get_or_create_overage_settings(billing_profile)
+    settings = await get_or_create_overage_settings(organization)
 
     # Build query
     query = OverageUsageRecord.filter(overage_settings=settings)

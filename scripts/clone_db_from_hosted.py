@@ -209,7 +209,6 @@ def build_pg_dump_command(
 def build_pg_restore_command(
     conn: DbConnectionInfo,
     input_file: str,
-    drop_existing: bool,
     data_only: bool,
     schema_only: bool,
 ) -> list[str]:
@@ -222,10 +221,6 @@ def build_pg_restore_command(
         f"--dbname={conn.database}",
     ]
 
-    if drop_existing:
-        cmd.append("--clean")  # Drop objects before recreating
-        cmd.append("--if-exists")  # Don't error if object doesn't exist
-
     # Data/schema only options
     if data_only:
         cmd.append("--data-only")
@@ -235,6 +230,40 @@ def build_pg_restore_command(
     cmd.append(input_file)
 
     return cmd
+
+
+def drop_schema_cascade(conn: DbConnectionInfo, dry_run: bool) -> int:
+    """
+    Drop and recreate public schema using CASCADE to remove all objects atomically.
+
+    This avoids pg_restore --clean failures caused by local-only tables (e.g. tables
+    added by local migrations that don't exist in the source dump) whose FK constraints
+    block the DROP of tables that ARE in the dump.
+    """
+    sql = "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+    cmd = [
+        "psql",
+        f"--dbname={conn.database}",
+        "--no-password",
+        "-c",
+        sql,
+    ]
+    env = {**os.environ, **conn.to_env_dict()}
+
+    print("\nDropping and recreating public schema (CASCADE)...")
+    print(f"Command: psql --dbname={conn.database} -c \"{sql}\"")
+
+    if dry_run:
+        print("[DRY RUN] Would execute schema drop/recreate")
+        return 0
+
+    result = subprocess.run(cmd, env=env, check=False)
+    if result.returncode != 0:
+        print(f"ERROR: Schema drop/recreate failed with exit code {result.returncode}", file=sys.stderr)
+    else:
+        print("Schema cleared successfully.")
+
+    return result.returncode
 
 
 # ---------------------------------------------------------------------------
@@ -283,7 +312,6 @@ def run_pg_dump(
 def run_pg_restore(
     conn: DbConnectionInfo,
     input_file: str,
-    drop_existing: bool,
     data_only: bool,
     schema_only: bool,
     dry_run: bool,
@@ -292,7 +320,7 @@ def run_pg_restore(
     Execute pg_restore to restore database from dump.
     Returns exit code (0 = success).
     """
-    cmd = build_pg_restore_command(conn, input_file, drop_existing, data_only, schema_only)
+    cmd = build_pg_restore_command(conn, input_file, data_only, schema_only)
     env = {**os.environ, **conn.to_env_dict()}
 
     print(f"\n{'=' * 70}")
@@ -417,11 +445,18 @@ def main(args: argparse.Namespace) -> int:
             print("\nDump failed. Aborting restore.", file=sys.stderr)
             return exit_code
 
-        # Step 2: pg_restore
+        # Step 2: If dropping existing, nuke the schema first so local-only tables
+        # (e.g. from unapplied local migrations) can't block the restore via FK deps.
+        if args.drop_existing and not args.data_only:
+            exit_code = drop_schema_cascade(local_conn, dry_run=args.dry_run)
+            if exit_code != 0 and not args.dry_run:
+                print("\nSchema drop failed. Aborting restore.", file=sys.stderr)
+                return exit_code
+
+        # Step 3: pg_restore
         exit_code = run_pg_restore(
             conn=local_conn,
             input_file=dump_file,
-            drop_existing=args.drop_existing,
             data_only=args.data_only,
             schema_only=args.schema_only,
             dry_run=args.dry_run,
