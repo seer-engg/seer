@@ -91,22 +91,44 @@ async def get_oauth_token(
     user: User,
     connection_id: Optional[str] = None,
     provider: Optional[str] = None,
+    organization_id: Optional[int] = None,
 ) -> Tuple[OAuthConnection, str]:
     """
     Resolve an OAuth connection for the user, refreshing tokens if expired.
+
+    Args:
+        user: The user requesting the OAuth token
+        connection_id: Optional connection ID (format: "provider:id" or "id")
+        provider: Optional provider name to look up by provider
+        organization_id: Optional organization ID to include shared connections
     """
+    from tortoise.expressions import Q  # pylint: disable=import-outside-toplevel  # Reason: avoid import overhead when not needed
 
     if connection_id:
         if ":" in connection_id:
             _, db_id = connection_id.split(":", 1)
         else:
             db_id = connection_id
-        try:
-            connection = await OAuthConnection.get(id=int(db_id), user=user, status="active")
-        except Exception as exc:
-            raise HTTPException(status_code=404, detail=f"OAuth connection {connection_id} not found") from exc
+
+        # Build query for user's connection OR organization-shared connection
+        query = Q(id=int(db_id), status="active")
+        if organization_id:
+            query &= (Q(user=user) | Q(shared_with_organization_id=organization_id))
+        else:
+            query &= Q(user=user)
+
+        connection = await OAuthConnection.filter(query).first()
+        if not connection:
+            raise HTTPException(status_code=404, detail=f"OAuth connection {connection_id} not found")
     elif provider:
-        connection = await OAuthConnection.get_or_none(user=user, provider=provider, status="active")
+        # Build query for user's connection OR organization-shared connection
+        query = Q(provider=provider, status="active")
+        if organization_id:
+            query &= (Q(user=user) | Q(shared_with_organization_id=organization_id))
+        else:
+            query &= Q(user=user)
+
+        connection = await OAuthConnection.filter(query).first()
         if not connection:
             raise HTTPException(
                 status_code=404,

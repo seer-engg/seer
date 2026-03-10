@@ -460,6 +460,7 @@ async def test_execute_workflow_with_agent_json_output() -> None:
                                 "name": {"type": "string"},
                                 "score": {"type": "integer"},
                             },
+                            "required": ["name", "score"],
                         }
                     },
                 },

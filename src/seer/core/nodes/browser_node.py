@@ -17,7 +17,7 @@ from seer.core.expr.typecheck import schema_from_output_contract
 from seer.core.nodes.base import BaseNodeType, NodeExecutionContext, TypeRegistrationContext, get_trace_key
 from seer.core.nodes.registry import register_node_type
 # Import model from schema/models.py (canonical location)
-from seer.core.schema.models import BrowserNode, OutputMode
+from seer.core.schema.models import BrowserNode, InlineSchema, OutputMode, enforce_all_properties_required
 
 if TYPE_CHECKING:
     from seer.core.expr.typecheck import TypeEnvironment
@@ -261,6 +261,9 @@ class BrowserNodeType(BaseNodeType):
         # Determine the extracted_data schema
         if node.expect_outputs:
             extracted_data_schema = schema_from_output_contract(node.expect_outputs, ctx.schema_registry)
+            # Enforce strict schema for LLM structured extraction so the model cannot silently omit fields
+            if node.expect_outputs.mode == OutputMode.json and isinstance(node.expect_outputs.schema, InlineSchema):
+                enforce_all_properties_required(node.expect_outputs.schema.json_schema)
         else:
             # Default: permissive object
             extracted_data_schema = {"type": "object", "additionalProperties": {}}

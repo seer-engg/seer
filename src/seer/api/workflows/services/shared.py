@@ -11,12 +11,16 @@ from seer.api.core.errors import raise_problem as _raise_problem
 from seer.api.workflows import models as api_models
 from seer.core.errors import WorkflowCompilerError
 from seer.database import (
+    Organization,
+    OrganizationMembership,
     User,
     Workflow,
     WorkflowVersion,
     WorkflowVersionStatus,
+    WorkflowVisibility,
     parse_workflow_public_id,
 )
+from seer.database.organization_models import OrganizationRole, WorkflowAssignment
 from seer.core.schema.models import WorkflowSpec
 from seer.core.runtime.global_compiler import WorkflowCompilerSingleton
 
@@ -124,6 +128,169 @@ async def _get_workflow(user: User, workflow_id: str) -> Workflow:
     return workflow
 
 
+async def _can_view_workflow(  # pylint: disable=too-many-return-statements  # Reason: distinct RBAC branch per membership role/visibility
+    user: User,
+    workflow: Workflow,
+    membership: Optional[OrganizationMembership] = None,
+) -> bool:
+    """
+    Check if user can view a workflow based on organization membership and visibility.
+
+    Args:
+        user: The user attempting to view
+        workflow: The workflow being viewed
+        membership: User's membership in the workflow's organization (optional)
+
+    Returns:
+        True if user can view the workflow
+    """
+    # If workflow has no organization (legacy), only owner can view
+    if workflow.organization_id is None:
+        return workflow.user_id == user.id
+
+    # If no membership provided, fetch it
+    if membership is None:
+        membership = await OrganizationMembership.get_or_none(
+            organization_id=workflow.organization_id,
+            user=user,
+        )
+        if membership is None:
+            return False
+
+    # Owner and Admin can see everything in their org
+    if membership.role in (OrganizationRole.OWNER, OrganizationRole.ADMIN):
+        return True
+
+    # Get visibility (default to TEAM for backward compatibility)
+    visibility = getattr(workflow, "visibility", WorkflowVisibility.TEAM)
+
+    if membership.role == OrganizationRole.USER:
+        if visibility == WorkflowVisibility.TEAM:
+            return True
+        if visibility == WorkflowVisibility.PRIVATE:
+            return workflow.user_id == user.id
+        if visibility == WorkflowVisibility.ASSIGNED:
+            return await WorkflowAssignment.filter(workflow=workflow, user=user).exists()
+
+    if membership.role == OrganizationRole.CONSULTANT:
+        # Consultants can only view assigned workflows
+        return await WorkflowAssignment.filter(workflow=workflow, user=user).exists()
+
+    return False
+
+
+async def _can_manage_workflow(  # pylint: disable=too-many-return-statements  # Reason: distinct RBAC branch per membership role/visibility
+    user: User,
+    workflow: Workflow,
+    membership: Optional[OrganizationMembership] = None,
+) -> bool:
+    """
+    Check if user can edit/delete a workflow.
+
+    Args:
+        user: The user attempting the action
+        workflow: The workflow being managed
+        membership: User's membership in the workflow's organization (optional)
+
+    Returns:
+        True if user can manage the workflow
+    """
+    # If workflow has no organization (legacy), only owner can manage
+    if workflow.organization_id is None:
+        return workflow.user_id == user.id
+
+    # If no membership provided, fetch it
+    if membership is None:
+        membership = await OrganizationMembership.get_or_none(
+            organization_id=workflow.organization_id,
+            user=user,
+        )
+        if membership is None:
+            return False
+
+    # Owner/Admin can manage all workflows in the org
+    if membership.role in (OrganizationRole.OWNER, OrganizationRole.ADMIN):
+        return True
+
+    # Users can manage TEAM-visible workflows (not just their own)
+    if membership.role == OrganizationRole.USER:
+        visibility = getattr(workflow, "visibility", WorkflowVisibility.TEAM)
+        if visibility == WorkflowVisibility.TEAM:
+            return True
+        if visibility == WorkflowVisibility.PRIVATE:
+            return workflow.user_id == user.id
+        if visibility == WorkflowVisibility.ASSIGNED:
+            return await WorkflowAssignment.filter(workflow=workflow, user=user).exists()
+
+    # Consultants cannot manage workflows
+    return False
+
+
+async def _get_workflow_org_scoped(
+    user: User,
+    workflow_id: str,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+    require_manage: bool = False,
+) -> Workflow:
+    """
+    Get a workflow with organization-scoped access control.
+
+    Args:
+        user: The authenticated user
+        workflow_id: The workflow public ID (e.g., "wf_123")
+        organization: The current organization context (optional)
+        membership: User's membership in the organization (optional)
+        require_manage: If True, require manage permission (for edit/delete)
+
+    Returns:
+        The workflow if access is allowed
+
+    Raises:
+        HTTP 404 if workflow not found or access denied
+    """
+    try:
+        pk = parse_workflow_public_id(workflow_id)
+    except ValueError:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Invalid workflow id",
+            detail="Workflow id is invalid",
+            status=400,
+        )
+
+    # First, try to find by organization (if provided)
+    if organization:
+        workflow = await Workflow.filter(id=pk, organization=organization).first()
+    else:
+        # Fall back to user-scoped (legacy behavior)
+        workflow = await Workflow.filter(id=pk, user=user).first()
+
+    if workflow is None:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Workflow not found",
+            detail=f"Workflow '{workflow_id}' not found",
+            status=404,
+        )
+
+    # Check access permissions
+    if require_manage:
+        has_access = await _can_manage_workflow(user, workflow, membership)
+    else:
+        has_access = await _can_view_workflow(user, workflow, membership)
+
+    if not has_access:
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Workflow not found",
+            detail=f"Workflow '{workflow_id}' not found",
+            status=404,
+        )
+
+    return workflow
+
+
 def raise_compiler_error(exc: WorkflowCompilerError, problem_title: str, type_uri: str = COMPILE_PROBLEM) -> None:
     """Convert WorkflowCompilerError to API problem response and raise it."""
     problem_errors = [
@@ -146,16 +313,25 @@ def raise_compiler_error(exc: WorkflowCompilerError, problem_title: str, type_ur
     )
 
 
-async def validate_workflow_spec(user: User, spec: WorkflowSpec) -> None:
+async def validate_workflow_spec(
+    user: User,
+    spec: WorkflowSpec,
+    organization_id: Optional[int] = None,
+) -> None:
     """
     Validate workflow spec by running the compiler pipeline.
     Raises HTTP 400 if validation fails.
+
+    Args:
+        user: The user validating the workflow
+        spec: The workflow spec to validate
+        organization_id: Optional organization ID for resolving shared connections
     """
     from seer.api.agents.checkpointer import get_checkpointer  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import at module load
     compiler = WorkflowCompilerSingleton.instance()
     spec_dict = _spec_to_dict(spec)
     checkpointer = await get_checkpointer()
     try:
-        await compiler.compile(user, spec_dict, checkpointer=checkpointer)
+        await compiler.compile(user, spec_dict, checkpointer=checkpointer, organization_id=organization_id)
     except WorkflowCompilerError as exc:
         raise_compiler_error(exc, "Workflow validation failed")

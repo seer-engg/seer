@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 
+from typing import Optional
+
 from fastapi import APIRouter, Body, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 
+from seer.api.core.middleware.organization import get_membership, get_organization
 from seer.api.workflows import models as api_models
 from seer.api.workflows import services
 from seer.api.workflows.services.share_template import ShareAsTemplateRequest, ShareAsTemplateResponse, share_workflow_as_template
-from seer.database import User
+from seer.database import Organization, OrganizationMembership, User
 
 router = APIRouter(prefix="/v1", tags=["workflows"])
 
@@ -17,6 +20,16 @@ def _require_user(request: Request) -> User:
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
     return user
+
+
+def _get_org_context(request: Request) -> tuple[Optional[Organization], Optional[OrganizationMembership]]:
+    """Get optional organization context from request state."""
+    try:
+        org = get_organization(request)
+        membership = get_membership(request)
+        return org, membership
+    except Exception:  # pylint: disable=broad-exception-caught  # Reason: fallback to None if org context not available
+        return None, None
 
 
 @router.get("/builder/node-types", response_model=api_models.NodeTypeResponse)
@@ -218,7 +231,8 @@ async def list_mcp_tools(request: Request, payload: api_models.McpToolsRequest):
 @router.post("/workflows", response_model=api_models.WorkflowResponse, status_code=status.HTTP_201_CREATED)
 async def create_workflow(request: Request, payload: api_models.WorkflowCreateRequest):
     user = _require_user(request)
-    return await services.create_workflow(user, payload)
+    org, _ = _get_org_context(request)
+    return await services.create_workflow(user, payload, organization=org)
 
 
 @router.post("/workflows/import", response_model=api_models.WorkflowResponse, status_code=status.HTTP_201_CREATED)
@@ -237,13 +251,15 @@ async def list_workflows(
     cursor: str | None = Query(None),
 ):
     user = _require_user(request)
-    return await services.list_workflows(user, limit=limit, cursor=cursor)
+    org, membership = _get_org_context(request)
+    return await services.list_workflows(user, limit=limit, cursor=cursor, organization=org, membership=membership)
 
 
 @router.get("/workflows/{workflow_id}", response_model=api_models.WorkflowResponse)
 async def get_workflow(request: Request, workflow_id: str):
     user = _require_user(request)
-    return await services.get_workflow(user, workflow_id)
+    org, membership = _get_org_context(request)
+    return await services.get_workflow(user, workflow_id, organization=org, membership=membership)
 
 
 @router.get("/workflows/{workflow_id}/export")
@@ -253,10 +269,11 @@ async def export_workflow(
     include_triggers: bool = Query(True),
 ):
     user = _require_user(request)
-    export_data = await services.export_workflow(user, workflow_id, include_triggers)
+    org, membership = _get_org_context(request)
+    export_data = await services.export_workflow(user, workflow_id, include_triggers, organization=org, membership=membership)
 
     # Return as downloadable JSON file
-    workflow = await services.get_workflow(user, workflow_id)
+    workflow = await services.get_workflow(user, workflow_id, organization=org, membership=membership)
     filename = f"{workflow.name.replace(' ', '_')}.seer.json"
 
     return JSONResponse(
@@ -270,7 +287,8 @@ async def export_workflow(
 @router.get("/workflows/{workflow_id}/versions", response_model=api_models.WorkflowVersionListResponse)
 async def list_workflow_versions(request: Request, workflow_id: str):
     user = _require_user(request)
-    return await services.list_workflow_versions(user, workflow_id)
+    org, membership = _get_org_context(request)
+    return await services.list_workflow_versions(user, workflow_id, organization=org, membership=membership)
 
 
 @router.post(
@@ -284,13 +302,15 @@ async def restore_workflow_version(
     payload: api_models.WorkflowVersionRestoreRequest,
 ):
     user = _require_user(request)
-    return await services.restore_workflow_version(user, workflow_id, version_id, payload)
+    org, membership = _get_org_context(request)
+    return await services.restore_workflow_version(user, workflow_id, version_id, payload, organization=org, membership=membership)
 
 
 @router.put("/workflows/{workflow_id}", response_model=api_models.WorkflowResponse)
 async def update_workflow(request: Request, workflow_id: str, payload: api_models.WorkflowUpdateRequest):
     user = _require_user(request)
-    return await services.update_workflow(user, workflow_id, payload)
+    org, membership = _get_org_context(request)
+    return await services.update_workflow(user, workflow_id, payload, organization=org, membership=membership)
 
 
 @router.patch("/workflows/{workflow_id}/draft", response_model=api_models.WorkflowResponse)
@@ -300,7 +320,8 @@ async def patch_workflow_draft(
     payload: api_models.WorkflowDraftPatchRequest,
 ):
     user = _require_user(request)
-    return await services.patch_workflow_draft(user, workflow_id, payload)
+    org, membership = _get_org_context(request)
+    return await services.patch_workflow_draft(user, workflow_id, payload, organization=org, membership=membership)
 
 
 @router.post("/workflows/{workflow_id}/publish", response_model=api_models.WorkflowResponse)
@@ -310,13 +331,15 @@ async def publish_workflow(
     payload: api_models.WorkflowPublishRequest = Body(default_factory=api_models.WorkflowPublishRequest),
 ):
     user = _require_user(request)
-    return await services.publish_workflow(user, workflow_id, payload)
+    org, membership = _get_org_context(request)
+    return await services.publish_workflow(user, workflow_id, payload, organization=org, membership=membership)
 
 
 @router.delete("/workflows/{workflow_id}", status_code=status.HTTP_200_OK)
 async def delete_workflow(request: Request, workflow_id: str):
     user = _require_user(request)
-    await services.delete_workflow(user, workflow_id)
+    org, membership = _get_org_context(request)
+    await services.delete_workflow(user, workflow_id, organization=org, membership=membership)
     return {"ok": True}
 
 
@@ -345,7 +368,8 @@ async def typecheck_expression(request: Request, payload: api_models.ExpressionT
 )
 async def run_workflow(request: Request, workflow_id: str, payload: api_models.RunFromWorkflowRequest):
     user = _require_user(request)
-    return await services.run_saved_workflow(user, workflow_id, payload)
+    org, membership = _get_org_context(request)
+    return await services.run_saved_workflow(user, workflow_id, payload, organization=org, membership=membership)
 
 
 @router.get("/workflows/{workflow_id}/runs", response_model=api_models.WorkflowRunListResponse)
@@ -355,19 +379,22 @@ async def list_workflow_runs(
     limit: int = Query(50, ge=1, le=100),
 ):
     user = _require_user(request)
-    return await services.list_workflow_runs(user, workflow_id, limit=limit)
+    org, membership = _get_org_context(request)
+    return await services.list_workflow_runs(user, workflow_id, limit=limit, organization=org, membership=membership)
 
 
 @router.get("/runs/{run_id}", response_model=api_models.RunResponse)
 async def get_run_status(request: Request, run_id: str):
     user = _require_user(request)
-    return await services.get_run_status(user, run_id)
+    _, membership = _get_org_context(request)
+    return await services.get_run_status(user, run_id, membership=membership)
 
 
 @router.get("/runs/{run_id}/history", response_model=api_models.RunHistoryResponse)
 async def get_run_history(request: Request, run_id: str):
     user = _require_user(request)
-    return await services.get_run_history(user, run_id)
+    _, membership = _get_org_context(request)
+    return await services.get_run_history(user, run_id, membership=membership)
 
 
 @router.get("/runs/{run_id}/interrupt", response_model=api_models.HITLInterruptResponse)
@@ -431,7 +458,8 @@ async def list_run_files(request: Request, run_id: str):
     Returns file metadata including size, type, and creation time.
     """
     user = _require_user(request)
-    return await services.list_run_files(user, run_id)
+    _, membership = _get_org_context(request)
+    return await services.list_run_files(user, run_id, membership=membership)
 
 
 @router.get("/runs/{run_id}/files/{file_id}", response_model=api_models.WorkflowFileResponse)
@@ -440,7 +468,8 @@ async def get_run_file(request: Request, run_id: str, file_id: str):
     Get metadata for a specific file in a workflow run.
     """
     user = _require_user(request)
-    return await services.get_run_file(user, run_id, file_id)
+    _, membership = _get_org_context(request)
+    return await services.get_run_file(user, run_id, file_id, membership=membership)
 
 
 @router.get("/runs/{run_id}/files/{file_id}/download", response_model=api_models.WorkflowFileDownloadResponse)
@@ -451,7 +480,8 @@ async def download_run_file(request: Request, run_id: str, file_id: str):
     The URL is valid for 1 hour.
     """
     user = _require_user(request)
-    return await services.get_run_file_download_url(user, run_id, file_id)
+    _, membership = _get_org_context(request)
+    return await services.get_run_file_download_url(user, run_id, file_id, membership=membership)
 
 
 @router.delete("/runs/{run_id}/files/{file_id}", response_model=api_models.WorkflowFileDeleteResponse)
@@ -462,7 +492,8 @@ async def delete_run_file(request: Request, run_id: str, file_id: str):
     This removes both the file from storage and its metadata.
     """
     user = _require_user(request)
-    return await services.delete_run_file(user, run_id, file_id)
+    _, membership = _get_org_context(request)
+    return await services.delete_run_file(user, run_id, file_id, membership=membership)
 
 
 @router.post(

@@ -111,18 +111,26 @@ async def _compile_workflow(
     user: User,
     spec: Dict[str, Any],
     checkpointer: Optional[Any] = None,
+    organization_id: Optional[int] = None,
 ) -> Any:
     """
     Compile a workflow spec using the global compiler instance.
 
     This is a shared helper to avoid duplicating the compile pattern across
     history.py and execution.py.
+
+    Args:
+        user: The user compiling the workflow
+        spec: The workflow spec dict
+        checkpointer: Optional LangGraph checkpointer
+        organization_id: Optional organization ID for resolving shared connections
     """
     compiler = WorkflowCompilerSingleton.instance()
     return await compiler.compile(
         user,
         spec,
         checkpointer=checkpointer,
+        organization_id=organization_id,
     )
 
 
@@ -168,8 +176,11 @@ async def _execute_run(
     )
 
     checkpointer = await get_checkpointer()
+    # Get organization_id from workflow for shared connection resolution
+    organization_id = getattr(run.workflow, "organization_id", None)
+
     try:
-        compiled = await _compile_workflow(user, run.spec, checkpointer=checkpointer)
+        compiled = await _compile_workflow(user, run.spec, checkpointer=checkpointer, organization_id=organization_id)
     except WorkflowCompilerError as exc:
         logger.error("Workflow compilation failed", exc_info=True)
         await WorkflowRun.filter(id=run.id).update(
@@ -205,6 +216,7 @@ async def _execute_run(
             thread_id=None,  # Not a chat thread
             per_run_cost_cap_usd=per_run_cost_cap_usd,
             accumulated_cost_usd=0.0,
+            organization_id=organization_id,
         )
         result = await compiled.ainvoke(
             config=effective_config, context=runtime_context, trigger=trigger_envelope
@@ -380,6 +392,7 @@ async def _execute_resume(
     user: User,
     compiled: Any,
     responses: Dict[str, Any],
+    organization_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Execute the resume operation and handle result."""
     run_config = dict(run.config or {})
@@ -395,6 +408,7 @@ async def _execute_resume(
         thread_id=None,
         per_run_cost_cap_usd=per_run_cost_cap_usd,
         accumulated_cost_usd=0.0,
+        organization_id=organization_id,
     )
 
     # Resume with user responses using LangGraph's Command
@@ -490,8 +504,11 @@ async def resume_workflow_run(
 
     # Compile workflow
     checkpointer = await get_checkpointer()
+    # Get organization_id from workflow for shared connection resolution
+    organization_id = getattr(run.workflow, "organization_id", None)
+
     try:
-        compiled = await _compile_workflow(user, run.spec, checkpointer=checkpointer)
+        compiled = await _compile_workflow(user, run.spec, checkpointer=checkpointer, organization_id=organization_id)
     except WorkflowCompilerError as exc:
         logger.error("Workflow compilation failed during resume", exc_info=True)
         await WorkflowRun.filter(id=run.id).update(
@@ -503,7 +520,7 @@ async def resume_workflow_run(
 
     # Execute resume
     try:
-        return await _execute_resume(run, user, compiled, responses)
+        return await _execute_resume(run, user, compiled, responses, organization_id=organization_id)
     except Exception as exc:
         from seer.observability.exceptions import RunCostCapExceeded  # pylint: disable=import-outside-toplevel  # Reason: circular dependency
 

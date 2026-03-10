@@ -25,7 +25,7 @@ from seer.core.errors import ExecutionError
 from seer.core.expr.typecheck import schema_from_output_contract
 from seer.core.nodes.base import BaseNodeType, NodeExecutionContext, TypeRegistrationContext, get_trace_key
 from seer.core.nodes.registry import register_node_type
-from seer.core.schema.models import AgentNode, OutputMode
+from seer.core.schema.models import AgentNode, InlineSchema, OutputMode, enforce_all_properties_required
 
 if TYPE_CHECKING:
     from seer.core.expr.typecheck import TypeEnvironment
@@ -770,6 +770,10 @@ class AgentNodeType(BaseNodeType):
         from seer.core.errors import TypeEnvironmentError  # pylint: disable=import-outside-toplevel  # Reason: Rare error path
 
         schema = schema_from_output_contract(node.outputs, ctx.schema_registry)
+
+        # Enforce strict schema for LLM structured output so the model cannot silently omit fields
+        if node.outputs.mode == OutputMode.json and isinstance(node.outputs.schema, InlineSchema):
+            enforce_all_properties_required(node.outputs.schema.json_schema)
 
         # Validate that tools exist in registry
         tool_specs_raw = node.inputs.get("tools", [])

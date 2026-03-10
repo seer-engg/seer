@@ -173,6 +173,12 @@ from seer.api.core.middleware.usage_limit import UsageLimitMiddleware  # pylint:
 app.add_middleware(UsageLimitMiddleware)
 logger.info("🔒 Usage limit middleware enabled")
 
+# Organization context middleware - extracts org from JWT claims
+# must be AFTER auth middleware to have db_user set
+from seer.api.core.middleware.organization import OrganizationContextMiddleware  # pylint: disable=ungrouped-imports,wrong-import-position # Reason: Must be after auth middleware setup
+app.add_middleware(OrganizationContextMiddleware)
+logger.info("🏢 Organization context middleware enabled")
+
 # Authentication middleware - register BEFORE CORS to ensure user is set
 if config.is_cloud_mode:
     if not config.is_clerk_configured:

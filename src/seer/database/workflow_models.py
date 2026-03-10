@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # Reason: workflow ORM models, version history, run tracking, and status enums all belong together
 from datetime import datetime, timezone
 from enum import Enum
 
@@ -73,18 +74,63 @@ class WorkflowVersionStatus(str, Enum):
     ARCHIVED = "ARCHIVED"
 
 
+class WorkflowVisibility(str, Enum):
+    """Visibility of workflows within an organization."""
+    PRIVATE = "private"    # Only creator can see
+    TEAM = "team"          # All org members can see
+    ASSIGNED = "assigned"  # Only assigned users can see (for consultants)
+
+
+class WorkflowApprovalStatus(str, Enum):
+    """Approval status for consultant-created workflows."""
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
 class Workflow(models.Model):
     """New workflow entity that owns drafts, versions, and published state."""
 
     id = fields.IntField(primary_key=True)
     user = fields.ForeignKeyField("models.User", related_name="workflows")
     name = fields.CharField(max_length=255)
+
+    # Organization ownership (replaces user-only ownership)
+    # Nullable initially for migration compatibility
+    organization = fields.ForeignKeyField(
+        "models.Organization",
+        related_name="workflows",
+        null=True,
+        on_delete=fields.CASCADE,
+    )
+
+    # Approval status for consultant-created workflows
+    approval_status = fields.CharEnumField(
+        WorkflowApprovalStatus,
+        max_length=20,
+        null=True,
+        description="Approval status for consultant-created workflows",
+    )
+
+    # Workflow visibility within org
+    visibility = fields.CharEnumField(
+        WorkflowVisibility,
+        max_length=20,
+        default=WorkflowVisibility.TEAM,
+        description="Who can see this workflow within the organization",
+    )
+
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 
     class Meta:
         table = "workflows"
         ordering = ("-updated_at", "id")
+        indexes = (
+            ("organization_id",),
+            ("user_id", "organization_id"),
+            ("visibility",),
+        )
 
     def __str__(self) -> str:
         return f"Workflow<{self.workflow_id}>"
@@ -527,6 +573,13 @@ class WorkflowFile(models.Model):
         on_delete=fields.CASCADE,
         description="User who owns this file",
     )
+    organization = fields.ForeignKeyField(
+        "models.Organization",
+        related_name="workflow_files",
+        on_delete=fields.CASCADE,
+        null=True,
+        description="Organization this file belongs to (for team access)",
+    )
     workflow_run = fields.ForeignKeyField(
         "models.WorkflowRun",
         related_name="files",
@@ -573,6 +626,7 @@ class WorkflowFile(models.Model):
             ("workflow_run_id",),
             ("file_id",),
             ("user_id",),
+            ("organization_id",),
             ("mime_type",),
             ("source_tool",),
             ("created_at",),
