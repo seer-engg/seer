@@ -52,7 +52,8 @@ def make_create_artifact_tool(ctx: "NodeExecutionContext", node_id: str) -> Stru
         StructuredTool ready to be appended to the agent's tool list.
     """
 
-    async def _execute(html_content: str, filename: str, format: str, content_type: str = "html") -> str:  # pylint: disable=redefined-builtin  # Reason: 'format' matches the public tool schema name
+    # pylint: disable-next=redefined-builtin  # Reason: 'format' matches the public tool schema name
+    async def _execute(html_content: str, filename: str, format: str, content_type: str = "html") -> str:
         """Convert content to the requested format and store as a workflow file."""
         fmt = format.lower().strip()
         if fmt not in FORMAT_MIME:
