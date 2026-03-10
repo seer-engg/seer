@@ -33,6 +33,11 @@ class CompiledWorkflow:
     ) -> Mapping[str, Any]:
         self.runtime.bind_trigger(trigger)
         self.runtime.bind_context(context)
+
+        # Load global variables once per run
+        vars_dict = await self._load_global_variables(context)
+        self.runtime.bind_vars(vars_dict)
+
         effective_config = dict(config or {})
         effective_config = merge_workflow_langfuse_callbacks(effective_config)
 
@@ -60,3 +65,17 @@ class CompiledWorkflow:
             for key, value in final_state.items()
             if not key.startswith(INTERNAL_STATE_PREFIX) or key == "__interrupt__"
         }
+
+    @staticmethod
+    async def _load_global_variables(context: WorkflowRuntimeContext | None) -> dict[str, str] | None:
+        """Load org-scoped global variables as a dict for ${vars.*} resolution."""
+        if context is None or context.organization_id is None:
+            return None
+        try:
+            # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module level
+            from seer.database.workflow_models import GlobalVariable
+            rows = await GlobalVariable.filter(organization_id=context.organization_id)
+            return {row.key: row.value for row in rows}
+        except Exception:  # pylint: disable=broad-exception-caught  # Reason: vars loading should not break workflow execution
+            logger.warning("Failed to load global variables for org %s", context.organization_id, exc_info=True)
+            return None

@@ -148,6 +148,7 @@ class BrowserNodeType(BaseNodeType):
             locals=ctx.locals_ctx or {},
             config=ctx.config,
             trigger=ctx.trigger,
+            vars=ctx.vars,
         )
 
         # Capture inputs and evaluate task expression

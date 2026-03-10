@@ -415,6 +415,38 @@ class WorkflowFileDeleteResponse(BaseModel):
     deleted: bool
 
 
+# ============================================================================
+# Global Variables
+# ============================================================================
+
+
+class GlobalVariableCreateRequest(BaseModel):
+    key: str = Field(..., max_length=255)
+    value: str
+    is_secret: bool = False
+    description: Optional[str] = None
+
+
+class GlobalVariableUpdateRequest(BaseModel):
+    value: Optional[str] = None
+    is_secret: Optional[bool] = None
+    description: Optional[str] = None
+
+
+class GlobalVariableItem(BaseModel):
+    id: int
+    key: str
+    value: str
+    is_secret: bool
+    description: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class GlobalVariableListResponse(BaseModel):
+    items: List[GlobalVariableItem]
+
+
 __all__ = [
     "ProblemDetails", "ProblemError", "NodeFieldDescriptor", "NodeTypeDescriptor",
     "NodeTypeResponse", "ToolDescriptor", "ToolRegistryResponse", "TriggerDescriptor",
@@ -440,4 +472,6 @@ __all__ = [
     "HITLResumeRequest", "HITLInterruptDisplayItem", "HITLInterruptInputField",
     "HITLInterruptResponse", "WorkflowFileItem", "WorkflowFileListResponse",
     "WorkflowFileResponse", "WorkflowFileDownloadResponse", "WorkflowFileDeleteResponse",
+    "GlobalVariableCreateRequest", "GlobalVariableUpdateRequest",
+    "GlobalVariableItem", "GlobalVariableListResponse",
 ]

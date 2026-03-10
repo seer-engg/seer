@@ -88,6 +88,7 @@ class ForEachNodeType(BaseNodeType):
             locals=ctx.locals_ctx or {},
             config=ctx.config,
             trigger=ctx.trigger,
+            vars=ctx.vars,
         )
 
         # Check for nested loop reset (parent iteration changed)

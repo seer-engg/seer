@@ -30,6 +30,7 @@ class EvaluationContext:
     locals: Mapping[str, Any]
     config: Mapping[str, Any] | None = None
     trigger: Mapping[str, Any] | None = None
+    vars: Mapping[str, Any] | None = None  # pylint: disable=redefined-builtin  # Reason: Matches ${vars.*} expression syntax
 
     def with_locals(self, overrides: Mapping[str, Any]) -> "EvaluationContext":
         merged = dict(self.locals)
@@ -55,6 +56,9 @@ def _resolve_root(ctx: EvaluationContext, root: str) -> Any:
             f"Reference root '{root}' does not match the active trigger ID '{trigger_id}'. "
             f"Use ${{{trigger_id}}} or ${{{trigger_id}.*}} to reference the trigger's data."
         )
+
+    if ctx.vars is not None and root == "vars":
+        return ctx.vars
 
     if ctx.config and root == "config":
         return ctx.config

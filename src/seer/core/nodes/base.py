@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class NodeExecutionContext:
+class NodeExecutionContext:  # pylint: disable=too-many-instance-attributes  # Reason: Execution context bundles related runtime state
     """Context passed to node execution methods."""
     state: "WorkflowState"
     config: Mapping[str, Any]
@@ -38,6 +38,8 @@ class NodeExecutionContext:
     nested_loop_parents: Dict[str, str] | None = None
     # Trigger data for expression evaluation
     trigger: Mapping[str, Any] | None = None
+    # Global variables for ${vars.*} resolution
+    vars: Mapping[str, Any] | None = None  # pylint: disable=redefined-builtin  # Reason: Matches ${vars.*} expression syntax
 
 
 @dataclass
@@ -214,6 +216,7 @@ def build_eval_context(
     config: Mapping[str, Any],
     locals_ctx: Mapping[str, Any] | None,
     trigger: Mapping[str, Any] | None = None,
+    vars: Mapping[str, Any] | None = None,  # pylint: disable=redefined-builtin  # Reason: Matches ${vars.*} expression syntax
 ) -> "EvaluationContext":
     """
     Build evaluation context for expression evaluation.
@@ -237,6 +240,7 @@ def build_eval_context(
         locals=locals_ctx or {},
         config=config,
         trigger=trigger,
+        vars=vars,
     )
 
 
