@@ -98,8 +98,7 @@ DEFAULT_BROWSER_MODEL_REGISTRY = [
 
 DEFAULT_MODEL_REGISTRY = [
     # OpenAI models
-    api_models.ModelDescriptor(id="gpt-5-mini", title="GPT-5 Mini", supports_json_schema=True),
-    api_models.ModelDescriptor(id="gpt-5", title="GPT-5", supports_json_schema=True),
+    api_models.ModelDescriptor(id="openai/gpt-oss-120b", title="GPT OSS 120B", supports_json_schema=True),
     api_models.ModelDescriptor(id="z-ai/glm-5", title="GLM 5", supports_json_schema=True),
     api_models.ModelDescriptor(id="moonshotai/kimi-k2.5", title="Kimi K2.5", supports_json_schema=True),
     api_models.ModelDescriptor(id="minimax/minimax-m2.5", title="MiniMax M2.5", supports_json_schema=True),

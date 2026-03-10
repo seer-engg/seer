@@ -137,7 +137,7 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
 
 
 
-    default_llm_model: str = Field(default="gpt-5-mini", description="Default LLM model")
+    default_llm_model: str = Field(default="openai/gpt-oss-120b", description="Default LLM model")
 
     # Taskiq / Valkey configuration
     redis_url: str = Field(
@@ -588,7 +588,7 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         description="Auto-extract memories from completed chat sessions"
     )
     memory_extraction_model: str = Field(
-        default="gpt-5-mini",
+        default="openai/gpt-oss-120b",
         description="LLM model for memory extraction (used by Mem0, works with OpenRouter)"
     )
     mem0_llm_provider: str = Field(
