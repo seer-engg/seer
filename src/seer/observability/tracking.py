@@ -342,6 +342,7 @@ async def get_monthly_llm_credits_used(user: User) -> Decimal:
 
     counter = await UsageCounter.get_or_none(
         user=user,
+        organization=None,
         resource_type=ResourceType.LLM_CREDITS,
         period_start=period_start,
         period_end=period_end,
@@ -583,6 +584,7 @@ async def reset_monthly_counters(user: User, target_month: Optional[datetime] = 
     for resource_type in [ResourceType.RUNS, ResourceType.LLM_CREDITS]:
         await UsageCounter.get_or_create(
             user=user,
+            organization=None,
             resource_type=resource_type,
             period_start=period_start,
             period_end=period_end,

@@ -1,15 +1,20 @@
 """API router for general chat."""
 from __future__ import annotations
 
+import json
+import logging
 from typing import List
 
 from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 
 from seer.database import User
 from seer.database.chat_models import GeneralChatMessage
 from seer.database.workflow_models import ChatExecutionStatus
 
 from . import schemas, services
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -109,6 +114,52 @@ async def send_message(request: Request, session_id: int, body: schemas.ChatSend
     await session.save(update_fields=["current_execution_task_id"])
 
     return schemas.ChatSendResponse(session_id=session_id, execution_status="queued")
+
+
+@router.post("/sessions/{session_id}/messages/stream")
+async def stream_message(request: Request, session_id: int, body: schemas.ChatSendRequest):
+    """Stream chat response via SSE. Falls back to task queue for image generation."""
+    user = _require_user(request)
+    session = await services.get_session(session_id, user)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Image generation doesn't stream — use existing task queue
+    if body.generate_image:
+        return await send_message(request, session_id, body)
+
+    # Save user message + auto-title
+    await services.save_message(session_id=session_id, role="user", content=body.message, model=body.model)
+    await services.auto_generate_title(session_id)
+
+    async def event_generator():
+        try:
+            from seer.config import config  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+            from seer.llm import get_llm  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+            from seer.worker.tasks.general_chat import _build_langchain_messages  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+
+            history = await GeneralChatMessage.filter(session_id=session_id).order_by("created_at").all()
+            lc_messages = _build_langchain_messages(history)
+
+            model = body.model or config.default_llm_model
+            llm = get_llm(model=model)
+
+            full_response = ""
+            async for chunk in llm.astream(lc_messages):
+                token = chunk.content if hasattr(chunk, "content") else str(chunk)
+                if token:
+                    full_response += token
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+
+            # Save complete assistant message
+            await services.save_message(session_id=session_id, role="assistant", content=full_response, model=model)
+            yield f"data: {json.dumps({'done': True})}\n\n"
+
+        except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: SSE must send error event, not crash
+            logger.error("Streaming chat failed", exc_info=True, extra={"session_id": session_id})
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.get("/sessions/{session_id}/status", response_model=schemas.ChatStatusResponse)
