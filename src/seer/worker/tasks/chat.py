@@ -1,3 +1,5 @@
+# pylint: disable=too-many-lines
+# Reason: Background task module with complex agent orchestration; refactoring deferred
 """
 Background tasks for async chat execution.
 
@@ -6,6 +8,7 @@ execution in background workers.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
@@ -23,13 +26,16 @@ from seer.agents.nexus.cost_callback import (
     set_chat_runtime_context,
     clear_chat_runtime_context,
 )
+from seer.agents.nexus.stream_publisher import StreamPublisher
 from seer.api.agents.checkpointer import _recreate_checkpointer, get_checkpointer
+from seer.api.agents.workflow.chat_schema import StreamEventType
 from seer.api.agents.workflow.chat_services import (
     ChatOrchestrator,
     CheckpointerHealthService,
     IncompleteToolCallDetector,
     IncompleteToolCallRecoveryService,
     InterruptHandler,
+    process_stream_event,
 )
 from seer.utilities.langfuse_tracing import merge_nexus_langfuse_callbacks, langfuse_user_context
 from seer.api.agents.workflow.services import (
@@ -220,9 +226,38 @@ async def _invoke_agent_with_orchestrator(
     return await orchestrator.invoke_with_health_checks(user_msg, config_dict)
 
 
+async def _stream_agent_with_orchestrator(  # pylint: disable=too-many-positional-arguments # Reason: All params required for streaming orchestration
+    agent,
+    checkpointer,
+    user_msg: HumanMessage,
+    thread_id: str,
+    max_agent_steps: int,
+    publisher: StreamPublisher,
+) -> Dict[str, Any]:
+    """Stream agent events using orchestrator with health checks."""
+    cost_callback = CostCapCallbackHandler()
+
+    config_dict = {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": max_agent_steps,
+        "callbacks": [cost_callback],
+    }
+
+    orchestrator = ChatOrchestrator(
+        agent=agent,
+        checkpointer=checkpointer,
+        health_service=CheckpointerHealthService(),
+        detector=IncompleteToolCallDetector(),
+        recovery_service=IncompleteToolCallRecoveryService(),
+        reconnect_func=_recreate_checkpointer,
+    )
+
+    return await orchestrator.stream_with_health_checks(user_msg, config_dict, publisher)
+
+
 @broker.task
 async def chat_execution_task(
-    # pylint: disable=too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-positional-arguments,too-many-locals,too-many-statements
     # Reason: Background task requires all parameters; multiple variables needed for orchestration
     session_id: int,
     user_id: int,
@@ -283,15 +318,108 @@ async def chat_execution_task(
         # Set context for callback access
         set_chat_runtime_context(runtime_context)
 
+        publisher = StreamPublisher(session_id)
         try:
-            # Invoke agent with Langfuse user context for trace attribution
+            # Publish AGENT_START before invocation
+            await publisher.publish(StreamEventType.AGENT_START, {})
+
+            # Stream agent with Langfuse user context for trace attribution
             user_msg = HumanMessage(content=message)
             with langfuse_user_context(user.user_id):
-                result = await _invoke_agent_with_orchestrator(
-                    agent, checkpointer, user_msg, thread_id, max_agent_steps
+                result = await _stream_agent_with_orchestrator(
+                    agent, checkpointer, user_msg, thread_id, max_agent_steps, publisher
                 )
 
-            await _handle_agent_result(session, result, thread_id, session_id)
+            # Detect interrupts
+            interrupt_required, interrupt_data = InterruptHandler.extract_interrupt_from_result(result)
+
+            if not interrupt_required:
+                # Also check agent state for interrupt (astream_events may not surface __interrupt__)
+                interrupt_required, interrupt_data = await InterruptHandler.extract_interrupt_from_state(
+                    agent, {"configurable": {"thread_id": thread_id}}
+                )
+
+            if interrupt_required and interrupt_data:
+                # Agent needs user input - mark as INTERRUPTED
+                logger.info(
+                    "Chat execution interrupted for user input",
+                    extra={"session_id": session_id, "interrupt_type": interrupt_data.get("type")}
+                )
+
+                session.current_execution_status = ChatExecutionStatus.INTERRUPTED
+                session.current_execution_finished_at = datetime.now(timezone.utc)
+                session.pending_interrupt_type = interrupt_data.get("type")
+                session.pending_interrupt_data = interrupt_data
+                await session.save(update_fields=[
+                    "current_execution_status",
+                    "current_execution_finished_at",
+                    "pending_interrupt_type",
+                    "pending_interrupt_data",
+                ])
+
+                # Save assistant's interrupt message
+                response_text = _extract_response_text(result)
+                agent_messages = result.get("messages", [])
+                thinking_steps = extract_thinking_from_messages(agent_messages)
+
+                await save_chat_message(
+                    session_id=session_id,
+                    role="assistant",
+                    content=response_text,
+                    thinking="\n".join(thinking_steps) if thinking_steps else None,
+                )
+
+                # Publish INTERRUPT event so client can show clarification UI
+                await publisher.publish(StreamEventType.INTERRUPT, interrupt_data)
+                await publisher.publish_done()
+            else:
+                # Execution completed successfully
+                agent_messages = result.get("messages", [])
+                # Prefer final_content from streaming; fall back to last message extraction
+                response_text = result.get("final_content") or _extract_response_text(result)
+                thinking_steps = extract_thinking_from_messages(agent_messages)
+
+                # Get any pending proposal
+                proposal = await WorkflowProposal.get_or_none(
+                    thread_id=thread_id,
+                    status=WorkflowProposal.STATUS_PENDING
+                ).prefetch_related('created_by', 'workflow', 'session')
+
+                # Save assistant message
+                await save_chat_message(
+                    session_id=session_id,
+                    role="assistant",
+                    content=response_text,
+                    thinking="\n".join(thinking_steps) if thinking_steps else None,
+                    suggested_edits=proposal.spec if proposal else None,
+                    proposal=proposal,
+                )
+
+                # Mark as completed
+                session.current_execution_status = ChatExecutionStatus.COMPLETED
+                session.current_execution_finished_at = datetime.now(timezone.utc)
+                session.current_execution_error = None
+                await session.save(update_fields=[
+                    "current_execution_status",
+                    "current_execution_finished_at",
+                    "current_execution_error",
+                ])
+
+                logger.info(
+                    "Chat execution completed successfully",
+                    extra={"session_id": session_id}
+                )
+
+                # Publish AGENT_END with final answer
+                agent_end_data: Dict[str, Any] = {"content": response_text}
+                if proposal:
+                    agent_end_data["proposal_id"] = proposal.id
+                await publisher.publish(StreamEventType.AGENT_END, agent_end_data)
+                await publisher.publish_done()
+
+                # Trigger memory extraction in background (non-blocking)
+                if config.memory_enabled and config.memory_extraction_enabled:
+                    await extract_session_memories.kiq(session_id)
 
         except RunCostCapExceeded as e:
             logger.warning(
@@ -314,8 +442,11 @@ async def chat_execution_task(
                 "current_execution_finished_at",
                 "current_execution_error",
             ])
+            await publisher.publish(StreamEventType.ERROR, {"status_code": 402, "message": str(e)})
+            await publisher.publish_done()
         finally:
             clear_chat_runtime_context()
+            await publisher.close()
 
     except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Background task must catch all exceptions to avoid worker crash
         logger.error(
@@ -340,8 +471,8 @@ async def chat_execution_task(
 
 @broker.task
 async def chat_resume_task(
-    # pylint: disable=too-many-positional-arguments,too-many-locals
-    # Reason: Background task requires all parameters; multiple variables needed for orchestration
+    # pylint: disable=too-many-positional-arguments,too-many-locals,too-many-statements,too-complex
+    # Reason: Background task requires all parameters; resume orchestration has inherent branching
     session_id: int,
     user_id: int,
     thread_id: str,
@@ -415,18 +546,118 @@ async def chat_resume_task(
         }
         config_with_langfuse = merge_nexus_langfuse_callbacks(config_dict)
 
+        publisher = StreamPublisher(session_id)
         # Set thread_id in context variable
         token = _current_thread_id.set(thread_id)
         try:
-            # Wrap agent invocation with Langfuse user context for trace attribution
-            with langfuse_user_context(user.user_id):
-                result = await agent.ainvoke(resume_command, config=config_with_langfuse)
+            await publisher.publish(StreamEventType.AGENT_START, {})
 
-            await _handle_agent_result(session, result, thread_id, session_id)
+            final_content = ""
+            all_messages: list = []
+
+            # Stream resume command events
+            async def _stream_resume() -> None:
+                nonlocal final_content, all_messages
+                async for event in agent.astream_events(resume_command, config=config_with_langfuse, version="v2"):
+                    fc, msgs = await process_stream_event(event, publisher, StreamEventType)
+                    if fc is not None:
+                        final_content = fc
+                    if msgs is not None:
+                        all_messages = msgs
+
+            # Wrap agent resume stream with Langfuse user context
+            with langfuse_user_context(user.user_id):
+                await asyncio.wait_for(_stream_resume(), timeout=900.0)
+
+            result: Dict[str, Any] = {"messages": all_messages, "final_content": final_content}
+
+            # Detect interrupts
+            interrupt_required, interrupt_data = InterruptHandler.extract_interrupt_from_result(result)
+
+            if not interrupt_required:
+                # Also check agent state for interrupt (astream_events may not surface __interrupt__)
+                interrupt_required, interrupt_data = await InterruptHandler.extract_interrupt_from_state(agent, config_dict)
+
+            if interrupt_required and interrupt_data:
+                # Another interrupt - mark as INTERRUPTED
+                logger.info(
+                    "Chat resume interrupted again for user input",
+                    extra={"session_id": session_id, "interrupt_type": interrupt_data.get("type")}
+                )
+
+                session.current_execution_status = ChatExecutionStatus.INTERRUPTED
+                session.current_execution_finished_at = datetime.now(timezone.utc)
+                session.pending_interrupt_type = interrupt_data.get("type")
+                session.pending_interrupt_data = interrupt_data
+                await session.save(update_fields=[
+                    "current_execution_status",
+                    "current_execution_finished_at",
+                    "pending_interrupt_type",
+                    "pending_interrupt_data",
+                ])
+
+                # Save assistant's interrupt message
+                response_text = final_content or _extract_response_text(result)
+                agent_messages = all_messages
+                thinking_steps = extract_thinking_from_messages(agent_messages)
+
+                await save_chat_message(
+                    session_id=session_id,
+                    role="assistant",
+                    content=response_text,
+                    thinking="\n".join(thinking_steps) if thinking_steps else None,
+                )
+
+                await publisher.publish(StreamEventType.INTERRUPT, interrupt_data)
+                await publisher.publish_done()
+            else:
+                # Execution completed successfully
+                agent_messages = all_messages
+                response_text = final_content or _extract_response_text(result)
+                thinking_steps = extract_thinking_from_messages(agent_messages)
+
+                # Get any pending proposal
+                proposal = await WorkflowProposal.get_or_none(
+                    thread_id=thread_id,
+                    status=WorkflowProposal.STATUS_PENDING
+                ).prefetch_related('created_by', 'workflow', 'session')
+
+                # Save assistant message
+                await save_chat_message(
+                    session_id=session_id,
+                    role="assistant",
+                    content=response_text,
+                    thinking="\n".join(thinking_steps) if thinking_steps else None,
+                    suggested_edits=proposal.spec if proposal else None,
+                    proposal=proposal,
+                )
+
+                # Mark as completed
+                session.current_execution_status = ChatExecutionStatus.COMPLETED
+                session.current_execution_finished_at = datetime.now(timezone.utc)
+                session.current_execution_error = None
+                await session.save(update_fields=[
+                    "current_execution_status",
+                    "current_execution_finished_at",
+                    "current_execution_error",
+                ])
+
+                logger.info(
+                    "Chat resume completed successfully",
+                    extra={"session_id": session_id}
+                )
+
+                # Publish AGENT_END with final answer
+                agent_end_data: Dict[str, Any] = {"content": response_text}
+                if proposal:
+                    agent_end_data["proposal_id"] = proposal.id
+                await publisher.publish(StreamEventType.AGENT_END, agent_end_data)
+                await publisher.publish_done()
 
         finally:
             _current_thread_id.reset(token)
             clear_chat_runtime_context()
+            await publisher.close()
 
     except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Background task must catch all exceptions to avoid worker crash
         logger.error(
