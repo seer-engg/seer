@@ -119,20 +119,6 @@ async def admin_get_template(request: Request, slug: str):
     return await admin_services.get_template_admin(slug)
 
 
-@router.post(
-    "/admin/templates",
-    response_model=api_models.TemplateAdminResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def admin_create_template(
-    request: Request,
-    payload: api_models.TemplateCreateRequest,
-):
-    """Create a new template."""
-    user = _require_user(request)
-    return await admin_services.create_template(user, payload)
-
-
 @router.put("/admin/templates/{slug}", response_model=api_models.TemplateAdminResponse)
 async def admin_update_template(
     request: Request,
