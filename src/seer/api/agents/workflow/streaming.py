@@ -101,7 +101,10 @@ async def save_stream_result(  # pylint: disable=too-many-positional-arguments #
         await session.save(update_fields=["current_execution_status", "current_execution_finished_at", "current_execution_error"])
 
         if config.memory_enabled and config.memory_extraction_enabled:
-            await extract_session_memories.kiq(session_id)
+            try:
+                await extract_session_memories.kiq(session_id)
+            except Exception:  # pylint: disable=broad-exception-caught # Reason: Non-critical background task
+                logger.warning("Failed to enqueue memory extraction", extra={"session_id": session_id})
 
     return proposal
 

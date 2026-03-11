@@ -186,7 +186,10 @@ async def _handle_agent_result(
         )
 
         if config.memory_enabled and config.memory_extraction_enabled:
-            await extract_session_memories.kiq(session_id)
+            try:
+                await extract_session_memories.kiq(session_id)
+            except Exception:  # pylint: disable=broad-exception-caught # Reason: Non-critical background task
+                logger.warning("Failed to enqueue memory extraction", extra={"session_id": session_id})
 
 
 async def _invoke_agent_with_orchestrator(
