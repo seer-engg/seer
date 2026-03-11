@@ -278,6 +278,7 @@ class ImageGenNodeType(BaseNodeType):
                 data=image_data,
                 mime_type=mime_type,
                 source_tool="image_gen_node",
+                organization_id=runtime_ctx.organization_id,
             )
             logger.info("Stored generated image in workflow file system: %s", file_ref.file_id)
             return file_ref.to_dict()

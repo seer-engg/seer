@@ -3,6 +3,8 @@ from typing import List
 
 from fastapi import APIRouter
 
+from seer.api.workflows.services.catalog import DEFAULT_MODEL_REGISTRY
+
 from .schema import ModelInfo
 
 router = APIRouter(prefix="/models", tags=["models"])
@@ -10,15 +12,10 @@ router = APIRouter(prefix="/models", tags=["models"])
 
 @router.get("", response_model=List[ModelInfo])
 async def list_models():
-    """
-    List available models for the Chat Agent.
-
-    Returns Kimi series models only.
-    """
+    """List available models for the Chat Agent."""
     return [
-        ModelInfo(id="z-ai/glm-5", provider="openrouter", name="GLM 5", available=True),
-        ModelInfo(id="moonshotai/kimi-k2.5", provider="openrouter", name="Kimi K2.5", available=True),
-        ModelInfo(id="moonshotai/kimi-k2-thinking", provider="openrouter", name="Kimi K2 Thinking", available=True),
+        ModelInfo(id=m.id, provider="openrouter", name=m.title, available=True)
+        for m in DEFAULT_MODEL_REGISTRY
     ]
 
 

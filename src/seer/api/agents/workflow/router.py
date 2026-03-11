@@ -3,10 +3,14 @@
 """
 Workflow API router for CRUD and execution endpoints.
 """
+import json
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Query, Request
+from fastapi.responses import StreamingResponse
+from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
 from seer.api.agents.checkpointer import get_checkpointer
@@ -307,6 +311,236 @@ async def _build_resume_command(
         )
 
     return Command(resume=resume_value)
+
+
+async def _handle_recovery_stream(  # pylint: disable=too-many-positional-arguments # Reason: All params needed
+    orchestrator, message: str, config_dict, thread_id: str, session, session_id: int,
+):
+    """Handle the incomplete-tool-call recovery path and yield SSE events."""
+    from seer.agents.nexus import extract_thinking_from_messages  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+    from seer.worker.tasks.chat import _handle_agent_result  # pylint: disable=import-outside-toplevel # Reason: Reuse shared logic
+    from seer.api.agents.workflow.chat_services import InterruptHandler  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+    from seer.api.agents.workflow.streaming import build_final_sse_event  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+
+    user_msg = HumanMessage(content=message)
+    result = await orchestrator._recover_from_incomplete_state(user_msg, config_dict, thread_id)  # pylint: disable=protected-access # Reason: Internal module helper
+    response_text = result.get("messages", [])[-1].content if result.get("messages") else ""
+    yield f"data: {json.dumps({'token': response_text})}\n\n"
+
+    agent_messages = result.get("messages", [])
+    thinking_steps = extract_thinking_from_messages(agent_messages)
+    interrupt_required, interrupt_data = InterruptHandler.extract_interrupt_from_result(result)
+    await _handle_agent_result(session, result, thread_id, session_id)
+
+    proposal = None
+    if not interrupt_required:
+        from seer.database.workflow_models import WorkflowProposal  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+        proposal = await WorkflowProposal.get_or_none(thread_id=thread_id, status=WorkflowProposal.STATUS_PENDING)
+        if proposal:
+            await proposal.fetch_related('created_by', 'workflow', 'session')
+
+    yield build_final_sse_event(session_id, thread_id, thinking_steps, interrupt_required, interrupt_data, proposal)
+
+
+@router.post("/{workflow_id}/chat/stream")
+async def stream_chat_with_workflow_endpoint(  # pylint: disable=too-many-locals,too-many-statements,too-complex # Reason: SSE endpoint with nested generator
+    request: Request,
+    workflow_id: str,
+    chat_request: ChatRequest,
+):
+    """Stream chat response via SSE. Runs agent inline with token-level streaming."""
+    # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+    from seer.database.workflow_models import ChatExecutionStatus
+    from seer.agents.nexus import create_nexus_chat_agent, _current_thread_id
+    from seer.agents.nexus.cost_callback import CostCapCallbackHandler, set_chat_runtime_context, clear_chat_runtime_context
+    from seer.api.agents.checkpointer import _recreate_checkpointer  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+    from seer.api.agents.workflow.chat_services import (
+        ChatOrchestrator, CheckpointerHealthService, IncompleteToolCallDetector, IncompleteToolCallRecoveryService,
+    )
+    from seer.api.agents.workflow.streaming import (
+        stream_agent_tokens, extract_post_stream_state, save_stream_result, build_final_sse_event, mark_session_failed,
+    )
+    from seer.utilities.langfuse_tracing import merge_nexus_langfuse_callbacks
+    from seer.worker.tasks.chat import _get_user_settings_and_context, _handle_agent_result
+    from seer.observability.exceptions import RunCostCapExceeded
+
+    user = _require_user(request)
+    org, membership = _get_org_context(request)
+    workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
+    model = chat_request.model or config.default_llm_model
+
+    session, thread_id, session_id = await SessionService.get_or_create_session(
+        workflow=workflow, user=user,
+        thread_id=chat_request.thread_id, session_id=chat_request.session_id,
+    )
+
+    if session.current_execution_status in [ChatExecutionStatus.QUEUED, ChatExecutionStatus.RUNNING]:
+        raise_problem(type_uri=VALIDATION_PROBLEM, title="Execution already in progress",
+                      detail="Cannot start new execution while another is in progress", status=409)
+
+    session.current_workflow_state = await workflow_state_snapshot(workflow)
+    await session.save(update_fields=['current_workflow_state'])
+    await save_chat_message(session_id=session_id, role="user", content=chat_request.message)
+
+    async def event_generator():
+        session.current_execution_status = ChatExecutionStatus.RUNNING
+        session.current_execution_started_at = datetime.now(timezone.utc)
+        session.current_execution_error = None
+        session.pending_interrupt_type = None
+        session.pending_interrupt_data = None
+        await session.save(update_fields=[
+            'current_execution_status', 'current_execution_started_at',
+            'current_execution_error', 'pending_interrupt_type', 'pending_interrupt_data',
+        ])
+
+        try:
+            checkpointer = await get_checkpointer()
+            agent = await create_nexus_chat_agent(
+                model=model, checkpointer=checkpointer,
+                user_id=user.user_id, current_query=chat_request.message, workflow_id=workflow.workflow_id,
+            )
+            max_agent_steps, runtime_context = await _get_user_settings_and_context(user, thread_id)
+            set_chat_runtime_context(runtime_context)
+
+            orchestrator = ChatOrchestrator(
+                agent=agent, checkpointer=checkpointer,
+                health_service=CheckpointerHealthService(), detector=IncompleteToolCallDetector(),
+                recovery_service=IncompleteToolCallRecoveryService(), reconnect_func=_recreate_checkpointer,
+            )
+            cost_callback = CostCapCallbackHandler()
+            config_dict = {"configurable": {"thread_id": thread_id}, "recursion_limit": max_agent_steps, "callbacks": [cost_callback]}
+
+            # Handle incomplete tool call recovery
+            if await orchestrator._check_for_incomplete_tool_calls(config_dict):  # pylint: disable=protected-access # Reason: Internal module helper
+                async for sse_line in _handle_recovery_stream(orchestrator, chat_request.message, config_dict, thread_id, session, session_id):
+                    yield sse_line
+                return
+
+            # Normal streaming path
+            config_with_langfuse = merge_nexus_langfuse_callbacks(config_dict)
+            token_ctx = _current_thread_id.set(thread_id)
+            try:
+                full_response = ""
+                input_msgs = {"messages": [HumanMessage(content=chat_request.message)]}
+                async for token in stream_agent_tokens(agent, input_msgs, config_with_langfuse, user.user_id):
+                    full_response += token
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+
+                state = await extract_post_stream_state(agent, config_with_langfuse)
+                if not full_response:
+                    full_response = state["full_response"]
+                proposal = await save_stream_result(
+                    session, session_id, thread_id, full_response,
+                    state["all_thinking"], state["interrupt_required"], state["interrupt_data"],
+                )
+                yield build_final_sse_event(
+                    session_id, thread_id, state["all_thinking"],
+                    state["interrupt_required"], state["interrupt_data"], proposal,
+                )
+            finally:
+                _current_thread_id.reset(token_ctx)
+                clear_chat_runtime_context()
+
+        except RunCostCapExceeded as e:
+            logger.warning("Chat cost cap exceeded during stream", extra={"session_id": session_id})
+            await mark_session_failed(session, "cost_cap_exceeded", str(e.to_dict()), 402)
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        except Exception as e:  # pylint: disable=broad-exception-caught # Reason: SSE must send error event
+            logger.error("Streaming chat failed", exc_info=True, extra={"session_id": session_id})
+            await mark_session_failed(session, "execution_error", str(e))
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.post("/{workflow_id}/chat/resume/stream")
+async def stream_resume_chat_endpoint(  # pylint: disable=too-many-locals # Reason: SSE endpoint with nested generator
+    request: Request,
+    workflow_id: str,
+    resume_data: ChatResumeRequest,
+):
+    """Stream resumed chat response via SSE after interrupt."""
+    # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+    from seer.database.workflow_models import ChatExecutionStatus
+    from seer.agents.nexus import create_nexus_chat_agent, _current_thread_id
+    from seer.agents.nexus.cost_callback import CostCapCallbackHandler, set_chat_runtime_context, clear_chat_runtime_context
+    from seer.api.agents.workflow.streaming import (
+        stream_agent_tokens, extract_post_stream_state, save_stream_result, build_final_sse_event, mark_session_failed,
+    )
+    from seer.utilities.langfuse_tracing import merge_nexus_langfuse_callbacks
+    from seer.worker.tasks.chat import _get_user_settings_and_context
+    from seer.observability.exceptions import RunCostCapExceeded
+
+    user = _require_user(request)
+    org, membership = _get_org_context(request)
+    workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
+
+    checkpointer = await get_checkpointer()
+    session = await get_chat_session_by_thread_id(resume_data.thread_id, workflow)
+    if not session:
+        raise_problem(type_uri=VALIDATION_PROBLEM, title="Session not found",
+                      detail=f"Chat session not found for thread_id: {resume_data.thread_id}", status=404)
+    assert session is not None
+    session_id = session.id
+    thread_id = resume_data.thread_id
+
+    resume_command = await _build_resume_command(resume_data, checkpointer, session_id)
+
+    async def event_generator():
+        session.current_execution_status = ChatExecutionStatus.RUNNING
+        session.current_execution_started_at = datetime.now(timezone.utc)
+        session.current_execution_error = None
+        session.pending_interrupt_type = None
+        session.pending_interrupt_data = None
+        await session.save(update_fields=[
+            'current_execution_status', 'current_execution_started_at',
+            'current_execution_error', 'pending_interrupt_type', 'pending_interrupt_data',
+        ])
+
+        try:
+            agent = await create_nexus_chat_agent(
+                model=config.default_llm_model, checkpointer=checkpointer,
+                user_id=user.user_id, workflow_id=workflow.workflow_id,
+            )
+            max_agent_steps, runtime_context = await _get_user_settings_and_context(user, thread_id)
+            set_chat_runtime_context(runtime_context)
+
+            cost_callback = CostCapCallbackHandler()
+            config_dict = {"configurable": {"thread_id": thread_id}, "recursion_limit": max_agent_steps, "callbacks": [cost_callback]}
+            config_with_langfuse = merge_nexus_langfuse_callbacks(config_dict)
+
+            token_ctx = _current_thread_id.set(thread_id)
+            try:
+                full_response = ""
+                async for token in stream_agent_tokens(agent, resume_command, config_with_langfuse, user.user_id):
+                    full_response += token
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+
+                state = await extract_post_stream_state(agent, config_with_langfuse)
+                if not full_response:
+                    full_response = state["full_response"]
+                proposal = await save_stream_result(
+                    session, session_id, thread_id, full_response,
+                    state["all_thinking"], state["interrupt_required"], state["interrupt_data"],
+                )
+                yield build_final_sse_event(
+                    session_id, thread_id, state["all_thinking"],
+                    state["interrupt_required"], state["interrupt_data"], proposal,
+                )
+            finally:
+                _current_thread_id.reset(token_ctx)
+                clear_chat_runtime_context()
+
+        except RunCostCapExceeded as e:
+            logger.warning("Chat cost cap exceeded during resume stream", extra={"session_id": session_id})
+            await mark_session_failed(session, "cost_cap_exceeded", str(e.to_dict()), 402)
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        except Exception as e:  # pylint: disable=broad-exception-caught # Reason: SSE must send error event
+            logger.error("Streaming resume failed", exc_info=True, extra={"session_id": session_id})
+            await mark_session_failed(session, "execution_error", str(e))
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.post("/{workflow_id}/chat", response_model=ChatResponse)
