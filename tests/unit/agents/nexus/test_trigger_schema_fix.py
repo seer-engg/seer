@@ -13,6 +13,7 @@ from seer.tools.trigger_schema_fix import (
     _extract_available_fields,
     _build_example_expressions,
     _detect_misplaced_properties,
+    _infer_data_fields_from_nodes,
     fix_trigger_event_schemas,
 )
 
@@ -565,3 +566,169 @@ class TestFixTriggerEventSchemasStrippedProperties:
         assert fix.get("stripped_properties") is None or fix.get("stripped_properties") == []
         assert fix.get("warning") is None
         assert fix.get("correct_structure_hint") is None
+
+
+@pytest.mark.unit
+class TestInferDataFieldsFromNodes:
+    """Test _infer_data_fields_from_nodes function."""
+
+    def test_extracts_fields_from_string_values(self):
+        spec_dict = {
+            "nodes": [
+                {"id": "agent1", "config": {"prompt": "Hello ${lead_form.data.lead_name}, from ${lead_form.data.company}"}}
+            ]
+        }
+        result = _infer_data_fields_from_nodes(spec_dict, "lead_form")
+        assert result == {"lead_name", "company"}
+
+    def test_extracts_from_nested_dicts(self):
+        spec_dict = {
+            "nodes": [
+                {"id": "n1", "config": {"tool": {"input": {"email": "${form1.data.email_address}"}}}}
+            ]
+        }
+        result = _infer_data_fields_from_nodes(spec_dict, "form1")
+        assert result == {"email_address"}
+
+    def test_extracts_from_lists(self):
+        spec_dict = {
+            "nodes": [
+                {"id": "n1", "config": {"items": ["${t.data.foo}", "${t.data.bar}"]}}
+            ]
+        }
+        result = _infer_data_fields_from_nodes(spec_dict, "t")
+        assert result == {"foo", "bar"}
+
+    def test_ignores_other_triggers(self):
+        spec_dict = {
+            "nodes": [
+                {"id": "n1", "config": {"prompt": "${other_trigger.data.name}"}}
+            ]
+        }
+        result = _infer_data_fields_from_nodes(spec_dict, "my_form")
+        assert result == set()
+
+    def test_returns_empty_for_no_nodes(self):
+        assert _infer_data_fields_from_nodes({}, "t") == set()
+        assert _infer_data_fields_from_nodes({"nodes": []}, "t") == set()
+
+    def test_deduplicates_fields(self):
+        spec_dict = {
+            "nodes": [
+                {"id": "n1", "config": {"a": "${f.data.x}"}},
+                {"id": "n2", "config": {"b": "${f.data.x}"}},
+            ]
+        }
+        result = _infer_data_fields_from_nodes(spec_dict, "f")
+        assert result == {"x"}
+
+
+@pytest.mark.unit
+class TestFixTriggerEventSchemasFieldInference:
+    """Test that fix_trigger_event_schemas infers fields from node references."""
+
+    def test_infers_fields_for_form_trigger(self):
+        canonical_schema = {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "trigger_key": {"type": "string"},
+                "data": {"type": "object", "additionalProperties": True},
+            }
+        }
+
+        mock_def = MagicMock()
+        mock_def.schemas.event = canonical_schema
+
+        spec_dict = {
+            "triggers": [
+                {
+                    "id": "lead_form",
+                    "key": "form.hosted",
+                    "event_schema": {}
+                }
+            ],
+            "nodes": [
+                {"id": "agent1", "config": {"prompt": "Name: ${lead_form.data.lead_name}, Email: ${lead_form.data.email}"}}
+            ]
+        }
+
+        with patch("seer.tools.trigger_schema_fix.trigger_registry") as mock_registry:
+            mock_registry.maybe_get.return_value = mock_def
+            result_spec, fixes = fix_trigger_event_schemas(spec_dict)
+
+        data_props = result_spec["triggers"][0]["event_schema"]["properties"]["data"]["properties"]
+        assert "lead_name" in data_props
+        assert "email" in data_props
+        assert data_props["lead_name"] == {"type": "string"}
+
+    def test_does_not_overwrite_existing_data_properties(self):
+        canonical_schema = {
+            "type": "object",
+            "properties": {
+                "data": {"type": "object", "additionalProperties": True},
+            }
+        }
+
+        mock_def = MagicMock()
+        mock_def.schemas.event = canonical_schema
+
+        spec_dict = {
+            "triggers": [
+                {
+                    "id": "f",
+                    "key": "form.hosted",
+                    "event_schema": {
+                        "properties": {
+                            "data": {
+                                "type": "object",
+                                "additionalProperties": True,
+                                "properties": {"name": {"type": "string", "description": "Full name"}}
+                            }
+                        }
+                    }
+                }
+            ],
+            "nodes": [
+                {"id": "n1", "config": {"x": "${f.data.name}"}}
+            ]
+        }
+
+        with patch("seer.tools.trigger_schema_fix.trigger_registry") as mock_registry:
+            mock_registry.maybe_get.return_value = mock_def
+            result_spec, _ = fix_trigger_event_schemas(spec_dict)
+
+        data_props = result_spec["triggers"][0]["event_schema"]["properties"]["data"]["properties"]
+        # Should preserve the original richer definition
+        assert data_props["name"] == {"type": "string", "description": "Full name"}
+
+    def test_no_inference_for_non_dynamic_triggers(self):
+        canonical_schema = {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "object",
+                    "properties": {"message_id": {"type": "string"}}
+                },
+            }
+        }
+
+        mock_def = MagicMock()
+        mock_def.schemas.event = canonical_schema
+
+        spec_dict = {
+            "triggers": [
+                {"id": "t", "key": "poll.gmail.email_received", "event_schema": {}}
+            ],
+            "nodes": [
+                {"id": "n1", "config": {"x": "${t.data.custom_field}"}}
+            ]
+        }
+
+        with patch("seer.tools.trigger_schema_fix.trigger_registry") as mock_registry:
+            mock_registry.maybe_get.return_value = mock_def
+            result_spec, _ = fix_trigger_event_schemas(spec_dict)
+
+        data_props = result_spec["triggers"][0]["event_schema"]["properties"]["data"]["properties"]
+        # Should NOT inject custom_field since additionalProperties is not True
+        assert "custom_field" not in data_props

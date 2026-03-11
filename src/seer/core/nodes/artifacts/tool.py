@@ -18,7 +18,7 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from seer.core.errors import ExecutionError
-from seer.core.nodes.artifacts.converters import FORMAT_MIME, html_to_docx, html_to_pdf
+from seer.core.nodes.artifacts.converters import FORMAT_MIME, html_to_docx, html_to_pdf, markdown_to_html
 
 if TYPE_CHECKING:
     from seer.core.nodes.base import NodeExecutionContext
@@ -31,9 +31,10 @@ ARTIFACT_TOOL_NAME = "create_artifact"
 class _CreateArtifactInput(BaseModel):
     """Input schema for the create_artifact tool."""
 
-    html_content: str = Field(description="Full HTML document to convert into the output file")
+    html_content: str = Field(description="The content to convert. Can be HTML or Markdown (set content_type accordingly).")
     filename: str = Field(description="Desired output filename, e.g. 'report.pdf' or 'summary.docx'")
     format: str = Field(description="Output format: 'pdf' or 'docx'")
+    content_type: str = Field(default="html", description="Input content type: 'html' or 'markdown'")
 
 
 def make_create_artifact_tool(ctx: "NodeExecutionContext", node_id: str) -> StructuredTool:
@@ -51,11 +52,16 @@ def make_create_artifact_tool(ctx: "NodeExecutionContext", node_id: str) -> Stru
         StructuredTool ready to be appended to the agent's tool list.
     """
 
-    async def _execute(html_content: str, filename: str, format: str) -> str:  # pylint: disable=redefined-builtin  # Reason: 'format' matches the public tool schema name
-        """Convert HTML to the requested format and store as a workflow file."""
+    # pylint: disable-next=redefined-builtin  # Reason: 'format' matches the public tool schema name
+    async def _execute(html_content: str, filename: str, format: str, content_type: str = "html") -> str:
+        """Convert content to the requested format and store as a workflow file."""
         fmt = format.lower().strip()
         if fmt not in FORMAT_MIME:
             raise ExecutionError(f"create_artifact: unsupported format '{format}'. Use 'pdf' or 'docx'.")
+
+        # Convert markdown to HTML if needed
+        if content_type.lower().strip() == "markdown":
+            html_content = markdown_to_html(html_content)
 
         # Convert HTML → bytes
         try:
@@ -98,8 +104,9 @@ def make_create_artifact_tool(ctx: "NodeExecutionContext", node_id: str) -> Stru
         coroutine=_execute,
         name=ARTIFACT_TOOL_NAME,
         description=(
-            "Convert HTML content to a file artifact (PDF or DOCX) and store it. "
-            "Call this when you need to produce a downloadable document from HTML."
+            "Convert content to a file artifact (PDF or DOCX) and store it. "
+            "Supports both HTML and Markdown input (set content_type='markdown' for Markdown). "
+            "Call this when you need to produce a downloadable document."
         ),
         args_schema=_CreateArtifactInput,
     )
