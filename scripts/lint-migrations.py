@@ -5,6 +5,16 @@ import re
 import sys
 from pathlib import Path
 
+# Migrations created out of numerical order that have been manually verified/fixed.
+# When migrations are created out of order (e.g., #48 on March 9, then #46 on March 10),
+# the MODELS_STATE chain breaks because aerich applies migrations in NUMBER order,
+# but the MODELS_STATE was captured at an earlier point in time.
+# Migrations in this allowlist have had their MODELS_STATE manually corrected.
+ALLOWED_OUT_OF_ORDER_MIGRATIONS = {
+    "48_20260309100000_global_variables.py": "MODELS_STATE manually updated 2026-03-11",
+    "49_20260309110000_avatar_url_length.py": "MODELS_STATE manually updated 2026-03-11",
+}
+
 # Migrations that contain unsafe patterns but are already deployed to production.
 # These migrations predate the linter and were accepted before safety checks existed.
 # Adding new migrations to this list should be RARE and require explicit approval.
@@ -57,8 +67,75 @@ def lint_migration(file_path: Path) -> list[str]:
 
     return issues
 
+
+def check_migration_order(migrations_dir: Path) -> list[str]:
+    """
+    Check that migration numbers and timestamps are in chronological order.
+
+    Aerich uses datetime.now() for timestamps (server local time, often UTC).
+    If migration #N has a timestamp EARLIER than migration #(N-1), the MODELS_STATE
+    chain will break because aerich applies migrations in NUMBER order, but the
+    MODELS_STATE was captured at an earlier point in time.
+    """
+    migration_files = sorted(migrations_dir.glob("*.py"))
+
+    # Parse migration info: (number, timestamp, filename)
+    migrations = []
+    pattern = re.compile(r'^(\d+)_(\d{14})_.*\.py$')
+
+    for f in migration_files:
+        match = pattern.match(f.name)
+        if match:
+            num = int(match.group(1))
+            ts = match.group(2)  # YYYYMMDDHHMMSS format
+            migrations.append((num, ts, f.name))
+
+    # Sort by number and check timestamp ordering
+    migrations.sort(key=lambda x: x[0])
+    issues = []
+
+    for i in range(1, len(migrations)):
+        prev_num, prev_ts, prev_name = migrations[i - 1]
+        curr_num, curr_ts, curr_name = migrations[i]
+
+        # Skip if in allowlist
+        if curr_name in ALLOWED_OUT_OF_ORDER_MIGRATIONS:
+            continue
+
+        # If current migration has lower timestamp than previous, it's out of order
+        if curr_ts < prev_ts:
+            # Format timestamps for readability
+            prev_dt = f"{prev_ts[:4]}-{prev_ts[4:6]}-{prev_ts[6:8]} {prev_ts[8:10]}:{prev_ts[10:12]}:{prev_ts[12:14]}"
+            curr_dt = f"{curr_ts[:4]}-{curr_ts[4:6]}-{curr_ts[6:8]} {curr_ts[8:10]}:{curr_ts[10:12]}:{curr_ts[12:14]}"
+
+            issues.append(
+                f"❌ OUT-OF-ORDER MIGRATION DETECTED\n"
+                f"   Migration #{curr_num}: {curr_name}\n"
+                f"   Created at: {curr_dt} (server time)\n"
+                f"   \n"
+                f"   But migration #{prev_num}: {prev_name}\n"
+                f"   Was created at: {prev_dt} (server time)\n"
+                f"   \n"
+                f"   PROBLEM: #{curr_num} will apply AFTER #{prev_num}, but its MODELS_STATE\n"
+                f"   was captured BEFORE #{prev_num} existed. This breaks aerich's state tracking.\n"
+                f"   \n"
+                f"   FIX: Update MODELS_STATE in #{curr_num} to match current Python models.\n"
+                f"   See documentation for the 'reference migration' technique."
+            )
+
+    return issues
+
+
 def main():
     migrations_dir = Path(__file__).parent.parent / "migrations" / "models"
+
+    # Check migration ordering first (applies to ALL migrations)
+    order_issues = check_migration_order(migrations_dir)
+    if order_issues:
+        print("❌ Migration ordering issues detected:\n")
+        for issue in order_issues:
+            print(f"  {issue}")
+        print()
 
     # Get all migration files
     migration_files = sorted(migrations_dir.glob("*.py"))
@@ -86,12 +163,13 @@ def main():
             print(f"   - {name}: {info['reason']}")
         print()
 
-    if all_issues:
-        print("❌ Migration linting failed:\n")
-        for issue in all_issues:
-            print(f"  {issue}")
-        print("\nPlease review these migrations for safety.")
-        print("See documentation/docs/guides/safe-migrations.md for guidance.")
+    if all_issues or order_issues:
+        if all_issues:
+            print("❌ Migration linting failed:\n")
+            for issue in all_issues:
+                print(f"  {issue}")
+            print("\nPlease review these migrations for safety.")
+            print("See documentation/docs/guides/safe-migrations.md for guidance.")
         sys.exit(1)
     else:
         print("✅ Migration linting passed")
