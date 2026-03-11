@@ -1,3 +1,6 @@
+# pylint: disable=cyclic-import
+# Reason: models.py lazy-imports seer.services.organization_service inside _setup_new_user()
+# to avoid a runtime circular import; the cycle is intentional and safe at runtime.
 from __future__ import annotations
 
 from datetime import datetime
