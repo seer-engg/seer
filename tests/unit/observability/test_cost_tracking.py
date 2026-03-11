@@ -20,8 +20,7 @@ class TestDetectProviderFromModel:
         """Test OpenAI GPT model detection."""
         assert detect_provider_from_model("gpt-4o") == "openai"
         assert detect_provider_from_model("gpt-4o-mini") == "openai"
-        assert detect_provider_from_model("gpt-5") == "openai"
-        assert detect_provider_from_model("gpt-5-nano") == "openai"
+        assert detect_provider_from_model("openai/gpt-oss-120b") == "openai"
 
     def test_openai_o3_models(self):
         """Test OpenAI o3 model detection."""

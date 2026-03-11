@@ -30,7 +30,7 @@ def detect_provider_from_model(model: str) -> str:
     Returns:
         Provider name: "openai", "anthropic", "openrouter", or "unknown"
     """
-    if model.startswith(("gpt-", "o3-", "o1-")):
+    if model.startswith(("gpt-", "o3-", "o1-", "openai/")):
         return "openai"
     if model.startswith("claude-"):
         return "anthropic"
