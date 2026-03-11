@@ -32,8 +32,19 @@ def _raise_not_found(slug: str) -> None:
     )
 
 
-async def list_templates(
+def _build_scope_query(scope: Optional[str], user: Optional[User]):
+    """Build base QuerySet filtered by scope and user."""
+    if scope == "mine" and user:
+        return WorkflowTemplate.filter(created_by=user)
+    if scope == "community" and user:
+        return WorkflowTemplate.filter(is_published=True, visibility="public").exclude(created_by=user)
+    return WorkflowTemplate.filter(is_published=True)
+
+
+async def list_templates(  # pylint: disable=too-many-arguments  # legitimate filter params
     *,
+    user: Optional[User] = None,
+    scope: Optional[str] = None,  # "mine" | "community" | None (all)
     category: Optional[str] = None,
     tags: Optional[List[str]] = None,
     search: Optional[str] = None,
@@ -41,11 +52,10 @@ async def list_templates(
     limit: int = 50,
     cursor: Optional[str] = None,
 ) -> api_models.TemplateListResponse:
-    """List published templates with optional filters."""
+    """List templates with visibility-aware filtering."""
     limit = max(1, min(limit, 100))
 
-    # Base query: only published templates
-    query = WorkflowTemplate.filter(is_published=True)
+    query = _build_scope_query(scope, user)
 
     # Apply filters
     if category:
@@ -55,7 +65,6 @@ async def list_templates(
         query = query.filter(is_featured=True)
 
     if search:
-        # Simple search on name and description
         query = query.filter(name__icontains=search) | query.filter(description__icontains=search)
 
     # Cursor-based pagination
@@ -77,8 +86,8 @@ async def list_templates(
     items = [_to_summary(t) for t in templates[:limit]]
     next_cursor = str(templates[-1].id) if len(templates) > limit else None
 
-    # Get total count
-    count_query = WorkflowTemplate.filter(is_published=True)
+    # Get total count for current scope
+    count_query = _build_scope_query(scope, user)
     if category:
         count_query = count_query.filter(category=category)
     if featured_only:
@@ -260,6 +269,7 @@ def _build_template_fields(template: WorkflowTemplate) -> Dict[str, Any]:
         "icon": template.icon,
         "is_featured": template.is_featured,
         "usage_count": template.usage_count,
+        "visibility": template.visibility,
         "required_integrations": [
             api_models.RequiredIntegration(
                 provider=r.get("provider", ""),
@@ -289,6 +299,7 @@ def _to_summary(template: WorkflowTemplate) -> api_models.TemplateSummary:
         icon=template.icon,
         is_featured=template.is_featured,
         usage_count=template.usage_count,
+        visibility=template.visibility,
         required_integrations=[
             api_models.RequiredIntegration(
                 provider=r.get("provider", ""),

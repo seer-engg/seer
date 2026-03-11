@@ -33,10 +33,11 @@ async def get_template_categories(request: Request):
 
 
 @router.get("/templates", response_model=api_models.TemplateListResponse)
-async def list_templates(
+async def list_templates(  # pylint: disable=too-many-arguments  # FastAPI query params
     request: Request,
     *,  # Force keyword-only arguments
     category: Optional[str] = Query(None, description="Filter by category"),
+    scope: Optional[str] = Query(None, description="Filter scope: 'mine' or 'community'"),
     tags: Optional[str] = Query(None, description="Filter by tags (comma-separated)"),
     search: Optional[str] = Query(None, description="Search in name and description"),
     featured: bool = Query(False, description="Only show featured templates"),
@@ -44,12 +45,13 @@ async def list_templates(
     cursor: Optional[str] = Query(None, description="Pagination cursor"),
 ):
     """List published workflow templates."""
-    _require_user(request)
-
+    user = _require_user(request)
     # Parse tags from comma-separated string
     tag_list = [t.strip() for t in tags.split(",")] if tags else None
 
     return await services.list_templates(
+        user=user,
+        scope=scope,
         category=category,
         tags=tag_list,
         search=search,
