@@ -19,6 +19,30 @@ async def _empty_sse(*args, **kwargs):
     yield  # noqa: unreachable — makes this an async generator
 
 
+async def _empty_astream_events(*args, **kwargs):
+    """Async generator stub that yields nothing — replaces agent.astream_events in tests."""
+    return
+    yield  # noqa: unreachable — makes this an async generator
+
+
+def _make_interrupt_state(interrupt_data: dict):
+    """Build a mock LangGraph StateSnapshot with the given interrupt value."""
+    mock_state = MagicMock()
+    mock_state.values = {"messages": []}
+    mock_interrupt = MagicMock()
+    mock_interrupt.value = interrupt_data
+    mock_state.interrupts = (mock_interrupt,)
+    return mock_state
+
+
+def _make_completed_state():
+    """Build a mock LangGraph StateSnapshot with no interrupts (completed run)."""
+    mock_state = MagicMock()
+    mock_state.values = {"messages": [MagicMock(content="Done.")]}
+    mock_state.interrupts = ()
+    return mock_state
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 class TestClarificationFlow:
@@ -126,10 +150,16 @@ class TestClarificationFlow:
 
         # Now simulate the background task execution by patching what it uses
         # and directly updating the session state (simulating task completion)
+        mock_agent.astream_events = _empty_astream_events
+        mock_agent.aget_state = AsyncMock(return_value=_make_interrupt_state(interrupt_data))
+
         with patch('seer.worker.tasks.chat.create_nexus_chat_agent', return_value=mock_agent), \
-             patch('seer.worker.tasks.chat.get_checkpointer') as mock_task_checkpointer:
+             patch('seer.worker.tasks.chat.get_checkpointer') as mock_task_checkpointer, \
+             patch('seer.worker.tasks.chat.StreamPublisher') as mock_task_publisher, \
+             patch('seer.api.agents.checkpointer.get_checkpointer_with_retry', new_callable=AsyncMock, return_value=None):
 
             mock_task_checkpointer.return_value = AsyncMock()
+            mock_task_publisher.return_value = AsyncMock()
 
             # Import and run the task directly to simulate background execution
             from seer.worker.tasks.chat import chat_execution_task
@@ -241,8 +271,15 @@ class TestClarificationFlow:
         assert captured_task_args["thread_id"] == thread_id
 
         # Simulate background task execution
+        mock_agent.astream_events = _empty_astream_events
+        mock_agent.aget_state = AsyncMock(return_value=_make_completed_state())
+
         with patch('seer.worker.tasks.chat.create_nexus_chat_agent', return_value=mock_agent), \
-             patch('seer.worker.tasks.chat.get_checkpointer', return_value=mock_checkpointer):
+             patch('seer.worker.tasks.chat.get_checkpointer', return_value=mock_checkpointer), \
+             patch('seer.worker.tasks.chat.StreamPublisher') as mock_task_publisher, \
+             patch('seer.api.agents.checkpointer.get_checkpointer_with_retry', new_callable=AsyncMock, return_value=None):
+
+            mock_task_publisher.return_value = AsyncMock()
 
             from seer.worker.tasks.chat import chat_resume_task
             await chat_resume_task(
@@ -475,8 +512,15 @@ class TestClarificationFlow:
             assert response.status_code == 200
 
         # Simulate background task execution
+        mock_agent.astream_events = _empty_astream_events
+        mock_agent.aget_state = AsyncMock(return_value=_make_completed_state())
+
         with patch('seer.worker.tasks.chat.create_nexus_chat_agent', return_value=mock_agent), \
-             patch('seer.worker.tasks.chat.get_checkpointer', return_value=mock_checkpointer):
+             patch('seer.worker.tasks.chat.get_checkpointer', return_value=mock_checkpointer), \
+             patch('seer.worker.tasks.chat.StreamPublisher') as mock_task_publisher, \
+             patch('seer.api.agents.checkpointer.get_checkpointer_with_retry', new_callable=AsyncMock, return_value=None):
+
+            mock_task_publisher.return_value = AsyncMock()
 
             from seer.worker.tasks.chat import chat_resume_task
             await chat_resume_task(
@@ -559,10 +603,16 @@ class TestClarificationFlow:
             session_id = captured_task_args["session_id"]
 
         # Simulate background task execution
+        mock_agent.astream_events = _empty_astream_events
+        mock_agent.aget_state = AsyncMock(return_value=_make_interrupt_state(interrupt_data))
+
         with patch('seer.worker.tasks.chat.create_nexus_chat_agent', return_value=mock_agent), \
-             patch('seer.worker.tasks.chat.get_checkpointer') as mock_task_checkpointer:
+             patch('seer.worker.tasks.chat.get_checkpointer') as mock_task_checkpointer, \
+             patch('seer.worker.tasks.chat.StreamPublisher') as mock_task_publisher, \
+             patch('seer.api.agents.checkpointer.get_checkpointer_with_retry', new_callable=AsyncMock, return_value=None):
 
             mock_task_checkpointer.return_value = AsyncMock()
+            mock_task_publisher.return_value = AsyncMock()
 
             from seer.worker.tasks.chat import chat_execution_task
             await chat_execution_task(
@@ -661,10 +711,16 @@ class TestClarificationFlow:
             session_id = captured_task_args["session_id"]
 
         # Simulate task execution
+        mock_agent.astream_events = _empty_astream_events
+        mock_agent.aget_state = AsyncMock(return_value=_make_interrupt_state(interrupt_data))
+
         with patch('seer.worker.tasks.chat.create_nexus_chat_agent', return_value=mock_agent), \
-             patch('seer.worker.tasks.chat.get_checkpointer') as mock_task_checkpointer:
+             patch('seer.worker.tasks.chat.get_checkpointer') as mock_task_checkpointer, \
+             patch('seer.worker.tasks.chat.StreamPublisher') as mock_task_publisher, \
+             patch('seer.api.agents.checkpointer.get_checkpointer_with_retry', new_callable=AsyncMock, return_value=None):
 
             mock_task_checkpointer.return_value = AsyncMock()
+            mock_task_publisher.return_value = AsyncMock()
 
             from seer.worker.tasks.chat import chat_execution_task
             await chat_execution_task(
@@ -738,8 +794,15 @@ class TestClarificationFlow:
             assert response.status_code == 200
 
         # Simulate resume task
+        mock_agent.astream_events = _empty_astream_events
+        mock_agent.aget_state = AsyncMock(return_value=_make_completed_state())
+
         with patch('seer.worker.tasks.chat.create_nexus_chat_agent', return_value=mock_agent), \
-             patch('seer.worker.tasks.chat.get_checkpointer', return_value=mock_checkpointer):
+             patch('seer.worker.tasks.chat.get_checkpointer', return_value=mock_checkpointer), \
+             patch('seer.worker.tasks.chat.StreamPublisher') as mock_task_publisher, \
+             patch('seer.api.agents.checkpointer.get_checkpointer_with_retry', new_callable=AsyncMock, return_value=None):
+
+            mock_task_publisher.return_value = AsyncMock()
 
             from seer.worker.tasks.chat import chat_resume_task
             await chat_resume_task(

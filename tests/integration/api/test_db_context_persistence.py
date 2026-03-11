@@ -5,9 +5,15 @@ Tests that workflow state, proposals, and user lookups are persisted in the data
 and survive across restarts.
 """
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+
+
+async def _empty_sse(*args, **kwargs):
+    """Async generator stub that yields nothing — replaces stream_events_sse in tests."""
+    return
+    yield  # noqa: unreachable — makes this an async generator
 
 
 @pytest.mark.integration
@@ -39,7 +45,6 @@ class TestDBContextPersistence:
     async def test_session_creation_on_chat(self, workflow_client):
         """Test that chat session is created in database on chat request."""
         from seer.database.workflow_models import WorkflowChatSession
-        from unittest.mock import patch
 
         client, workflow = workflow_client
 
@@ -47,11 +52,21 @@ class TestDBContextPersistence:
         mock_task_result = MagicMock()
         mock_task_result.task_id = "mock-task-id-123"
 
+        captured_task_args = {}
+
+        async def capture_kiq(**kwargs):
+            captured_task_args.update(kwargs)
+            return mock_task_result
+
         with patch('seer.api.agents.workflow.router.get_checkpointer') as mock_checkpointer, \
-             patch('seer.worker.tasks.chat.chat_execution_task') as mock_chat_task:
+             patch('seer.worker.tasks.chat.chat_execution_task') as mock_chat_task, \
+             patch('seer.api.agents.workflow.router.get_stream_watermark', new_callable=AsyncMock, return_value="0"), \
+             patch('seer.agents.nexus.stream_publisher.StreamPublisher') as mock_publisher_cls, \
+             patch('seer.api.agents.workflow.router.stream_events_sse', new=_empty_sse):
 
             mock_checkpointer.return_value = AsyncMock()
-            mock_chat_task.kiq = AsyncMock(return_value=mock_task_result)
+            mock_publisher_cls.return_value = AsyncMock()
+            mock_chat_task.kiq = AsyncMock(side_effect=capture_kiq)
 
             # Send chat message (async mode - the default)
             response = await client.post(
@@ -62,15 +77,16 @@ class TestDBContextPersistence:
             )
 
             assert response.status_code == 200
-            data = response.json()
-            thread_id = data["thread_id"]
 
-            # Verify session was created in database
-            session = await WorkflowChatSession.get_or_none(thread_id=thread_id)
-            assert session is not None
-            assert session.workflow_id == workflow.id
-            # Router populates current_workflow_state from the actual workflow spec
-            assert session.current_workflow_state is not None
+        # session_id comes from the captured kiq args — response is SSE, not JSON
+        session_id = captured_task_args["session_id"]
+
+        # Verify session was created in database
+        session = await WorkflowChatSession.get_or_none(id=session_id)
+        assert session is not None
+        assert session.workflow_id == workflow.id
+        # Router populates current_workflow_state from the actual workflow spec
+        assert session.current_workflow_state is not None
 
     async def test_proposal_creation_by_thread(self, workflow_client):
         """Test that proposals are created with thread_id and can be queried."""
