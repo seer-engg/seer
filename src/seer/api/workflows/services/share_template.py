@@ -11,7 +11,6 @@ from seer.database.profile_models import UserProfile
 from seer.database.template_models import TemplateCategory, TemplateSource, WorkflowTemplate
 from seer.database.workflow_models import Workflow, WorkflowVersion, WorkflowVersionStatus, parse_workflow_public_id
 from seer.database.organization_models import Organization, OrganizationMembership, MembershipStatus
-from seer.api.templates.admin_services import _detect_required_integrations
 
 
 class ShareAsTemplateRequest(BaseModel):
@@ -83,6 +82,8 @@ async def share_workflow_as_template(user: User, workflow_id: str, payload: Shar
         org = await Organization.filter(id=membership.organization_id).first()
 
     # 6. Auto-detect required integrations
+    # pylint: disable-next=import-outside-toplevel # circular import avoidance
+    from seer.api.templates.admin_services import _detect_required_integrations
     required_integrations = _detect_required_integrations(released_version.spec)
 
     # 7. Create template
