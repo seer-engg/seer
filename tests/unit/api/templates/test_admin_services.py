@@ -302,6 +302,7 @@ async def test_create_template_success():
         {"provider": "google", "integration_type": "gmail", "reason": "Send emails"}
     ]
     mock_template.spec = {"version": "2", "nodes": [], "edges": []}
+    mock_template.visibility = "private"
     mock_template.created_at = MagicMock()
     mock_template.updated_at = MagicMock()
 
@@ -371,6 +372,7 @@ async def test_create_template_auto_detects_integrations():
         {"provider": "slack", "integration_type": "slack", "reason": "Required for slack.send_message tool"},
     ]
     mock_template.spec = mock_version.spec
+    mock_template.visibility = "private"
     mock_template.created_at = MagicMock()
     mock_template.updated_at = MagicMock()
 
@@ -485,6 +487,7 @@ async def test_update_template_success():
     mock_template.usage_count = 5
     mock_template.required_integrations = []
     mock_template.spec = {}
+    mock_template.visibility = "private"
     mock_template.created_at = MagicMock()
     mock_template.updated_at = MagicMock()
 
@@ -571,6 +574,7 @@ async def test_toggle_publish():
     mock_template.usage_count = 0
     mock_template.required_integrations = []
     mock_template.spec = {}
+    mock_template.visibility = "private"
     mock_template.created_at = MagicMock()
     mock_template.updated_at = MagicMock()
 
@@ -609,6 +613,7 @@ def test_to_admin_response_helper():
         {"provider": "google", "integration_type": "gmail", "reason": "Send"}
     ]
     mock_template.spec = {"version": "2"}
+    mock_template.visibility = "private"
     mock_template.created_at = datetime.now(timezone.utc)
     mock_template.updated_at = datetime.now(timezone.utc)
 
