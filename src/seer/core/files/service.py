@@ -148,6 +148,7 @@ class WorkflowFileSystem:
         source_node_id: Optional[str] = None,
         source_tool: Optional[str] = None,
         workflow_run: Optional["WorkflowRun"] = None,
+        organization_id: int | None = None,
     ) -> WorkflowFileRef:
         """
         Store a file and create a database record for tracking.
@@ -195,6 +196,7 @@ class WorkflowFileSystem:
                 md5_hash=file_ref.md5_hash,
                 source_node_id=source_node_id,
                 source_tool=source_tool,
+                organization_id=organization_id,
             )
             logger.debug(
                 "Created WorkflowFile record: file_id=%s user=%s tool=%s",

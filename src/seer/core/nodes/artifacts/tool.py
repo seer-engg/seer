@@ -90,6 +90,7 @@ def make_create_artifact_tool(ctx: "NodeExecutionContext", node_id: str) -> Stru
             mime_type=mime_type,
             source_tool=ARTIFACT_TOOL_NAME,
             source_node_id=node_id,
+            organization_id=ctx.runtime_context.organization_id,
         )
 
         logger.debug(

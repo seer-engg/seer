@@ -386,44 +386,70 @@ class ChatOrchestrator:
 
     async def _check_for_incomplete_tool_calls(self, config_dict: Dict[str, Any]) -> bool:
         """Check if current state has incomplete tool calls."""
-        # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with checkpointer module
-        from seer.api.agents.checkpointer import get_checkpointer_with_retry
+        from seer.api.agents.checkpointer import get_checkpointer_with_retry  # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with checkpointer module
 
         thread_id = config_dict.get("configurable", {}).get("thread_id")
         logger.debug("Checking checkpointer health for thread %s", thread_id)
 
-        try:
-            checkpointer = await get_checkpointer_with_retry()
-            if checkpointer is None:
-                logger.warning("Checkpointer unavailable, proceeding without state check")
+        for attempt in range(2):
+            try:
+                checkpointer = await get_checkpointer_with_retry()
+                if checkpointer is None:
+                    logger.warning("Checkpointer unavailable, proceeding without state check")
+                    return False
+                current_state = await self.agent.aget_state(config_dict)
+                messages = current_state.values.get("messages", [])
+                return self.detector.has_incomplete_tool_calls(messages)
+            except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Resilient state checking
+                if attempt == 0 and self.health_service.is_connection_error(e):
+                    logger.warning("Connection error during state check: %s, reconnecting...", e)
+                    try:
+                        await self.reconnect_func()
+                        continue
+                    except Exception:  # pylint: disable=broad-exception-caught # Reason: Recovery fallback
+                        pass
+                logger.warning("Error checking state for incomplete tool calls: %s. Proceeding.", e)
                 return False
+        return False
 
-            current_state = await self.agent.aget_state(config_dict)
-            messages = current_state.values.get("messages", [])
-            return self.detector.has_incomplete_tool_calls(messages)
+    async def _find_safe_checkpoint_config(
+        self, config_dict: Dict[str, Any], thread_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Find a safe checkpoint to resume from, or None if unavailable."""
+        from seer.api.agents.checkpointer import get_checkpointer_with_retry  # pylint: disable=import-outside-toplevel # Reason: Avoids circular import
 
-        except (Exception, ConnectionError, EOFError) as e:  # pylint: disable=broad-exception-caught # Reason: Resilient state checking, catch all to prevent blocking normal flow
-            if self.health_service.is_connection_error(e):
-                logger.warning("Connection error during state check: %s, attempting reconnection...", e)
-                return await self._retry_incomplete_check_after_reconnect(config_dict)
-            logger.warning("Error checking state for incomplete tool calls: %s. Proceeding with normal invocation.", e)
-            return False
+        checkpointer = await get_checkpointer_with_retry()
+        if not checkpointer:
+            return None
 
-    async def _retry_incomplete_check_after_reconnect(self, config_dict: Dict[str, Any]) -> bool:
-        """Retry incomplete tool call check after reconnection."""
         try:
-            checkpointer = await self.reconnect_func()
-            if not checkpointer:
-                logger.warning("Failed to recreate checkpointer, proceeding without state check")
-                return False
+            checkpoints = await asyncio.wait_for(self._list_checkpoints(checkpointer, config_dict), timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.error("Checkpoint listing timed out for thread %s", thread_id)
+            return None
 
-            current_state = await self.agent.aget_state(config_dict)
-            messages = current_state.values.get("messages", [])
-            return self.detector.has_incomplete_tool_calls(messages)
+        safe = self.recovery_service.find_safe_checkpoint(checkpoints)
+        if safe:
+            cp_id = safe.config["configurable"]["checkpoint_id"]
+            logger.info("Found safe checkpoint: %s", cp_id)
+            return {"configurable": {"thread_id": thread_id, "checkpoint_id": cp_id}}
+        return None
 
-        except Exception as retry_error:  # pylint: disable=broad-exception-caught # Reason: Retry fallback, catch all to prevent blocking
-            logger.error("State check failed after reconnection: %s", retry_error)
-            return False
+    async def _delete_thread_with_fallback(self, thread_id: str) -> None:
+        """Delete thread state, falling back to reconnect on failure."""
+        from seer.api.agents.checkpointer import get_checkpointer  # pylint: disable=import-outside-toplevel # Reason: Avoids circular import
+
+        try:
+            cp = await get_checkpointer()
+            if cp:
+                await self.recovery_service.delete_thread(cp, thread_id)
+        except Exception:  # pylint: disable=broad-exception-caught # Reason: Recovery fallback
+            try:
+                cp = await self.reconnect_func()
+                if cp:
+                    await self.recovery_service.delete_thread(cp, thread_id)
+            except Exception:  # pylint: disable=broad-exception-caught # Reason: Final fallback
+                pass
 
     async def _recover_from_incomplete_state(
         self,
@@ -431,117 +457,26 @@ class ChatOrchestrator:
         config_dict: Dict[str, Any],
         thread_id: str,
     ) -> Dict[str, Any]:
-        """Recover from incomplete tool call state."""
-        # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with checkpointer module
-        from seer.api.agents.checkpointer import get_checkpointer_with_retry
-
+        """Recover from incomplete tool call state by finding safe checkpoint or restarting."""
         logger.warning("Incomplete tool calls detected in thread %s, attempting recovery...", thread_id)
 
-        if not self.checkpointer:
-            logger.error("No checkpointer available for state recovery")
-            return await self.invoke_with_timeout({"messages": [user_msg]}, config_dict, None)
-
         try:
-            checkpointer = await get_checkpointer_with_retry()
-            if checkpointer is None:
-                return await self._delete_thread_and_restart(user_msg, config_dict, thread_id)
+            safe_config = await self._find_safe_checkpoint_config(config_dict, thread_id)
+            if safe_config:
+                return await self.invoke_with_timeout({"messages": [user_msg]}, safe_config, None)
 
-            return await self._try_safe_checkpoint_or_restart(user_msg, config_dict, thread_id, checkpointer)
+            logger.warning("No safe checkpoint found, deleting thread %s and starting fresh", thread_id)
+            await self._delete_thread_with_fallback(thread_id)
 
-        except (Exception, ConnectionError, EOFError) as e:  # pylint: disable=broad-exception-caught # Reason: Recovery error handler, catch all for resilience
-            if self.health_service.is_connection_error(e):
-                return await self._handle_recovery_connection_error(user_msg, config_dict, thread_id, e)
-            return await self._fallback_delete_and_restart(user_msg, config_dict, thread_id, e)
+        except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Recovery must not crash
+            logger.error("Error during recovery: %s", e, exc_info=True)
+            await self._delete_thread_with_fallback(thread_id)
 
-    async def _delete_thread_and_restart(
-        self,
-        user_msg: HumanMessage,
-        config_dict: Dict[str, Any],
-        thread_id: str,
-    ) -> Dict[str, Any]:
-        """Delete thread and restart with fresh state."""
-        # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with checkpointer module
-        from seer.api.agents.checkpointer import get_checkpointer
-
-        logger.warning("Checkpointer unavailable for checkpoint recovery, deleting thread and starting fresh")
-        fresh_checkpointer = await get_checkpointer()
-        if fresh_checkpointer:
-            await self.recovery_service.delete_thread(fresh_checkpointer, thread_id)
-        return await self.invoke_with_timeout({"messages": [user_msg]}, config_dict, None)
-
-    async def _try_safe_checkpoint_or_restart(
-        self,
-        user_msg: HumanMessage,
-        config_dict: Dict[str, Any],
-        thread_id: str,
-        checkpointer: Any,
-    ) -> Dict[str, Any]:
-        """Try to resume from safe checkpoint or restart."""
-        try:
-            checkpoints = await asyncio.wait_for(
-                self._list_checkpoints(checkpointer, config_dict),
-                timeout=10.0,
-            )
-        except asyncio.TimeoutError:
-            logger.error("Checkpoint listing timed out for thread %s", thread_id)
-            checkpoints = []
-
-        safe_checkpoint = self.recovery_service.find_safe_checkpoint(checkpoints)
-
-        if safe_checkpoint:
-            prev_config = {
-                "configurable": {
-                    "thread_id": thread_id,
-                    "checkpoint_id": safe_checkpoint.config["configurable"]["checkpoint_id"],
-                }
-            }
-            logger.info("Resuming from safe checkpoint: %s", prev_config['configurable']['checkpoint_id'])
-            return await self.invoke_with_timeout({"messages": [user_msg]}, prev_config, None)
-
-        logger.warning("No safe checkpoint found, deleting thread %s and starting fresh", thread_id)
-        await self.recovery_service.delete_thread(checkpointer, thread_id)
         return await self.invoke_with_timeout({"messages": [user_msg]}, config_dict, None)
 
     async def _list_checkpoints(self, checkpointer: Any, config_dict: Dict[str, Any]) -> List[Any]:
         """List checkpoints asynchronously."""
         return [c async for c in checkpointer.alist(config_dict)]
-
-    async def _handle_recovery_connection_error(
-        self,
-        user_msg: HumanMessage,
-        config_dict: Dict[str, Any],
-        thread_id: str,
-        error: Exception,
-    ) -> Dict[str, Any]:
-        """Handle connection error during recovery."""
-        logger.warning("Connection error during checkpoint recovery: %s, attempting reconnection...", error)
-        try:
-            checkpointer = await self.reconnect_func()
-            if checkpointer:
-                await self.recovery_service.delete_thread(checkpointer, thread_id)
-                return await self.invoke_with_timeout({"messages": [user_msg]}, config_dict, None)
-            logger.error("Failed to recreate checkpointer, proceeding without deletion")
-            return await self.invoke_with_timeout({"messages": [user_msg]}, config_dict, None)
-        except Exception as reconnect_error:  # pylint: disable=broad-exception-caught # Reason: Recovery fallback, catch all to prevent cascading failures
-            logger.error("Error during checkpointer reconnection in recovery: %s", reconnect_error)
-            return await self.invoke_with_timeout({"messages": [user_msg]}, config_dict, None)
-
-    async def _fallback_delete_and_restart(
-        self,
-        user_msg: HumanMessage,
-        config_dict: Dict[str, Any],
-        thread_id: str,
-        error: Exception,
-    ) -> Dict[str, Any]:
-        """Fallback: delete thread and restart."""
-        # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with checkpointer module
-        from seer.api.agents.checkpointer import get_checkpointer
-
-        logger.error("Error recovering from incomplete state: %s", error, exc_info=True)
-        fresh_checkpointer = await get_checkpointer()
-        if fresh_checkpointer:
-            await self.recovery_service.delete_thread(fresh_checkpointer, thread_id)
-        return await self.invoke_with_timeout({"messages": [user_msg]}, config_dict, None)
 
     async def invoke_with_health_checks(
         self,
