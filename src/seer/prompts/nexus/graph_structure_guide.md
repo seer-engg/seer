@@ -277,7 +277,7 @@ Two paths that merge back to a single node:
   "id": "merge",
   "type": "agent",
   "inputs": {
-    "model": "gpt-5-mini",
+    "model": "openai/gpt-oss-120b",
     "prompt": "Result from path A: ${path_a}, Result from path B: ${path_b}"
   }
 }

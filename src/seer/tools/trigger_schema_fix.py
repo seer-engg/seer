@@ -8,6 +8,7 @@ trigger registry.
 Used by both Nexus agent tools and MCP tools for workflow validation.
 """
 
+import re
 from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
@@ -124,6 +125,51 @@ def _build_example_expressions(trigger_id: str, canonical_schema: Dict) -> List[
     return examples
 
 
+def _infer_data_fields_from_nodes(spec_dict: Dict[str, Any], trigger_id: str) -> set[str]:
+    """Extract field names referenced as ${trigger_id.data.X} in any node."""
+    pattern = re.compile(r"\$\{" + re.escape(trigger_id) + r"\.data\.(\w+)\}")
+    fields: set[str] = set()
+
+    def scan(value: Any) -> None:
+        if isinstance(value, str):
+            fields.update(pattern.findall(value))
+        elif isinstance(value, dict):
+            for v in value.values():
+                scan(v)
+        elif isinstance(value, list):
+            for v in value:
+                scan(v)
+
+    for node in spec_dict.get("nodes", []):
+        scan(node)
+    return fields
+
+
+def _determine_fix_reason(spec_schema: Optional[Dict]) -> str:
+    """Determine the reason string for a schema fix."""
+    if not spec_schema:
+        return "Empty event_schema replaced with canonical schema"
+    spec_data_props = spec_schema.get("properties", {}).get("data", {}).get("properties", {})
+    if spec_data_props:
+        return "Event schema fixed, custom data fields preserved"
+    return "Incorrect event_schema replaced with canonical schema"
+
+
+def _inject_inferred_fields(merged_schema: Dict[str, Any], spec_dict: Dict[str, Any], trigger_id: str) -> None:
+    """For dynamic-data triggers, infer fields from node references and inject into schema."""
+    data_schema = merged_schema.get("properties", {}).get("data", {})
+    if data_schema.get("additionalProperties") is not True:
+        return
+    inferred = _infer_data_fields_from_nodes(spec_dict, trigger_id)
+    if not inferred:
+        return
+    if "properties" not in data_schema:
+        data_schema["properties"] = {}
+    for field in inferred:
+        if field not in data_schema["properties"]:
+            data_schema["properties"][field] = {"type": "string"}
+
+
 def fix_trigger_event_schemas(spec_dict: Dict[str, Any]) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
     """
     Auto-fix trigger event_schemas by replacing with canonical schemas from registry.
@@ -166,20 +212,13 @@ def fix_trigger_event_schemas(spec_dict: Dict[str, Any]) -> tuple[Dict[str, Any]
             # Detect misplaced properties before applying fix
             misplaced_props = _detect_misplaced_properties(spec_schema, canonical_schema)
 
-            # Determine reason for fix
-            if not spec_schema:
-                reason = "Empty event_schema replaced with canonical schema"
-            else:
-                # Check if we're preserving custom data properties
-                spec_data_props = (spec_schema or {}).get("properties", {}).get("data", {}).get("properties", {})
-                if spec_data_props:
-                    reason = "Event schema fixed, custom data fields preserved"
-                else:
-                    reason = "Incorrect event_schema replaced with canonical schema"
+            reason = _determine_fix_reason(spec_schema)
 
             # Apply fix - merge custom data.properties if present
             merged_schema = _merge_custom_data_properties(canonical_schema, spec_schema)
             trigger["event_schema"] = merged_schema
+
+            _inject_inferred_fields(merged_schema, spec_dict, trigger.get("id", ""))
 
             # Build fix record with enhanced feedback for misplaced properties
             fix_record: Dict[str, Any] = {

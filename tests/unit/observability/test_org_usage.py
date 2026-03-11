@@ -601,3 +601,61 @@ class TestGetSubscriptionForOrg:
         subscription = await get_subscription_for_org(org)
 
         assert subscription is None
+
+
+# =============================================================================
+# Regression Tests
+# =============================================================================
+
+
+class TestMultipleObjectsReturnedRegression:
+    """Regression tests for MultipleObjectsReturned when user has both personal and org counters."""
+
+    async def test_get_monthly_llm_credits_used_filters_by_org_none(self, mocker):
+        """get_monthly_llm_credits_used should filter organization=None to avoid MultipleObjectsReturned."""
+        from seer.observability.tracking import get_monthly_llm_credits_used
+
+        user = MagicMock()
+        mock_counter = MagicMock()
+        mock_counter.value = Decimal("5.00")
+
+        mocker.patch(
+            "seer.observability.tracking.get_billing_period_for_user",
+            new_callable=AsyncMock,
+            return_value=(datetime(2024, 1, 1, tzinfo=timezone.utc), datetime(2024, 2, 1, tzinfo=timezone.utc)),
+        )
+        mocker.patch.object(
+            UsageCounter,
+            "get_or_none",
+            new_callable=AsyncMock,
+            return_value=mock_counter,
+        )
+
+        result = await get_monthly_llm_credits_used(user)
+
+        assert result == Decimal("5.00")
+        call_kwargs = UsageCounter.get_or_none.call_args.kwargs
+        assert call_kwargs["organization"] is None, "Must filter organization=None to avoid MultipleObjectsReturned"
+
+    async def test_reset_monthly_counters_filters_by_org_none(self, mocker):
+        """reset_monthly_counters should use organization=None to avoid MultipleObjectsReturned."""
+        from seer.observability.tracking import reset_monthly_counters
+
+        user = MagicMock()
+
+        mocker.patch(
+            "seer.observability.tracking.get_billing_period_for_user",
+            new_callable=AsyncMock,
+            return_value=(datetime(2024, 1, 1, tzinfo=timezone.utc), datetime(2024, 2, 1, tzinfo=timezone.utc)),
+        )
+        mocker.patch.object(
+            UsageCounter,
+            "get_or_create",
+            new_callable=AsyncMock,
+            return_value=(MagicMock(), True),
+        )
+
+        await reset_monthly_counters(user)
+
+        for call in UsageCounter.get_or_create.call_args_list:
+            assert call.kwargs["organization"] is None, "Must filter organization=None to avoid MultipleObjectsReturned"
