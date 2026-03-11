@@ -123,6 +123,72 @@ async def _get_user_settings_and_context(
     return max_agent_steps, runtime_context
 
 
+async def _handle_agent_result(
+    session: "WorkflowChatSession",
+    result: Dict[str, Any],
+    thread_id: str,
+    session_id: int,
+) -> None:
+    """Handle agent result: detect interrupts, save messages, update session status."""
+    interrupt_required, interrupt_data = InterruptHandler.extract_interrupt_from_result(result)
+    agent_messages = result.get("messages", []) if isinstance(result, dict) else []
+    response_text = _extract_response_text(result)
+    thinking_steps = extract_thinking_from_messages(agent_messages)
+
+    if interrupt_required and interrupt_data:
+        logger.info(
+            "Chat execution interrupted for user input",
+            extra={"session_id": session_id, "interrupt_type": interrupt_data.get("type")}
+        )
+        session.current_execution_status = ChatExecutionStatus.INTERRUPTED
+        session.current_execution_finished_at = datetime.now(timezone.utc)
+        session.pending_interrupt_type = interrupt_data.get("type")
+        session.pending_interrupt_data = interrupt_data
+        await session.save(update_fields=[
+            "current_execution_status",
+            "current_execution_finished_at",
+            "pending_interrupt_type",
+            "pending_interrupt_data",
+        ])
+        await save_chat_message(
+            session_id=session_id,
+            role="assistant",
+            content=response_text,
+            thinking="\n".join(thinking_steps) if thinking_steps else None,
+        )
+    else:
+        proposal = await WorkflowProposal.get_or_none(
+            thread_id=thread_id,
+            status=WorkflowProposal.STATUS_PENDING
+        ).prefetch_related('created_by', 'workflow', 'session')
+
+        await save_chat_message(
+            session_id=session_id,
+            role="assistant",
+            content=response_text,
+            thinking="\n".join(thinking_steps) if thinking_steps else None,
+            suggested_edits=proposal.spec if proposal else None,
+            proposal=proposal,
+        )
+
+        session.current_execution_status = ChatExecutionStatus.COMPLETED
+        session.current_execution_finished_at = datetime.now(timezone.utc)
+        session.current_execution_error = None
+        await session.save(update_fields=[
+            "current_execution_status",
+            "current_execution_finished_at",
+            "current_execution_error",
+        ])
+
+        logger.info(
+            "Chat execution completed successfully",
+            extra={"session_id": session_id}
+        )
+
+        if config.memory_enabled and config.memory_extraction_enabled:
+            await extract_session_memories.kiq(session_id)
+
+
 async def _invoke_agent_with_orchestrator(
     agent,
     checkpointer,
@@ -222,78 +288,7 @@ async def chat_execution_task(
                     agent, checkpointer, user_msg, thread_id, max_agent_steps
                 )
 
-            # Detect interrupts
-            interrupt_required, interrupt_data = InterruptHandler.extract_interrupt_from_result(result)
-
-            if interrupt_required and interrupt_data:
-                # Agent needs user input - mark as INTERRUPTED
-                logger.info(
-                    "Chat execution interrupted for user input",
-                    extra={"session_id": session_id, "interrupt_type": interrupt_data.get("type")}
-                )
-
-                session.current_execution_status = ChatExecutionStatus.INTERRUPTED
-                session.current_execution_finished_at = datetime.now(timezone.utc)
-                session.pending_interrupt_type = interrupt_data.get("type")
-                session.pending_interrupt_data = interrupt_data
-                await session.save(update_fields=[
-                    "current_execution_status",
-                    "current_execution_finished_at",
-                    "pending_interrupt_type",
-                    "pending_interrupt_data",
-                ])
-
-                # Save assistant's interrupt message
-                response_text = _extract_response_text(result)
-                agent_messages = result.get("messages", [])
-                thinking_steps = extract_thinking_from_messages(agent_messages)
-
-                await save_chat_message(
-                    session_id=session_id,
-                    role="assistant",
-                    content=response_text,
-                    thinking="\n".join(thinking_steps) if thinking_steps else None,
-                )
-            else:
-                # Execution completed successfully
-                agent_messages = result.get("messages", [])
-                response_text = _extract_response_text(result)
-                thinking_steps = extract_thinking_from_messages(agent_messages)
-
-                # Get any pending proposal
-                proposal = await WorkflowProposal.get_or_none(
-                    thread_id=thread_id,
-                    status=WorkflowProposal.STATUS_PENDING
-                ).prefetch_related('created_by', 'workflow', 'session')
-
-                # Save assistant message
-                await save_chat_message(
-                    session_id=session_id,
-                    role="assistant",
-                    content=response_text,
-                    thinking="\n".join(thinking_steps) if thinking_steps else None,
-                    suggested_edits=proposal.spec if proposal else None,
-                    proposal=proposal,
-                )
-
-                # Mark as completed
-                session.current_execution_status = ChatExecutionStatus.COMPLETED
-                session.current_execution_finished_at = datetime.now(timezone.utc)
-                session.current_execution_error = None
-                await session.save(update_fields=[
-                    "current_execution_status",
-                    "current_execution_finished_at",
-                    "current_execution_error",
-                ])
-
-                logger.info(
-                    "Chat execution completed successfully",
-                    extra={"session_id": session_id}
-                )
-
-                # Trigger memory extraction in background (non-blocking)
-                if config.memory_enabled and config.memory_extraction_enabled:
-                    await extract_session_memories.kiq(session_id)
+            await _handle_agent_result(session, result, thread_id, session_id)
 
         except RunCostCapExceeded as e:
             logger.warning(
@@ -424,74 +419,7 @@ async def chat_resume_task(
             with langfuse_user_context(user.user_id):
                 result = await agent.ainvoke(resume_command, config=config_with_langfuse)
 
-            # Detect interrupts
-            interrupt_required, interrupt_data = InterruptHandler.extract_interrupt_from_result(result)
-
-            if interrupt_required and interrupt_data:
-                # Another interrupt - mark as INTERRUPTED
-                logger.info(
-                    "Chat resume interrupted again for user input",
-                    extra={"session_id": session_id, "interrupt_type": interrupt_data.get("type")}
-                )
-
-                session.current_execution_status = ChatExecutionStatus.INTERRUPTED
-                session.current_execution_finished_at = datetime.now(timezone.utc)
-                session.pending_interrupt_type = interrupt_data.get("type")
-                session.pending_interrupt_data = interrupt_data
-                await session.save(update_fields=[
-                    "current_execution_status",
-                    "current_execution_finished_at",
-                    "pending_interrupt_type",
-                    "pending_interrupt_data",
-                ])
-
-                # Save assistant's interrupt message
-                response_text = _extract_response_text(result)
-                agent_messages = result.get("messages", [])
-                thinking_steps = extract_thinking_from_messages(agent_messages)
-
-                await save_chat_message(
-                    session_id=session_id,
-                    role="assistant",
-                    content=response_text,
-                    thinking="\n".join(thinking_steps) if thinking_steps else None,
-                )
-            else:
-                # Execution completed successfully
-                agent_messages = result.get("messages", [])
-                response_text = _extract_response_text(result)
-                thinking_steps = extract_thinking_from_messages(agent_messages)
-
-                # Get any pending proposal
-                proposal = await WorkflowProposal.get_or_none(
-                    thread_id=thread_id,
-                    status=WorkflowProposal.STATUS_PENDING
-                ).prefetch_related('created_by', 'workflow', 'session')
-
-                # Save assistant message
-                await save_chat_message(
-                    session_id=session_id,
-                    role="assistant",
-                    content=response_text,
-                    thinking="\n".join(thinking_steps) if thinking_steps else None,
-                    suggested_edits=proposal.spec if proposal else None,
-                    proposal=proposal,
-                )
-
-                # Mark as completed
-                session.current_execution_status = ChatExecutionStatus.COMPLETED
-                session.current_execution_finished_at = datetime.now(timezone.utc)
-                session.current_execution_error = None
-                await session.save(update_fields=[
-                    "current_execution_status",
-                    "current_execution_finished_at",
-                    "current_execution_error",
-                ])
-
-                logger.info(
-                    "Chat resume completed successfully",
-                    extra={"session_id": session_id}
-                )
+            await _handle_agent_result(session, result, thread_id, session_id)
 
         finally:
             _current_thread_id.reset(token)
@@ -554,4 +482,4 @@ async def cleanup_stale_chat_executions() -> None:
     logger.info("Cleaned up %d stale chat executions", len(stale_sessions))
 
 
-__all__ = ["chat_execution_task", "chat_resume_task", "cleanup_stale_chat_executions"]
+__all__ = ["chat_execution_task", "chat_resume_task", "cleanup_stale_chat_executions", "_handle_agent_result"]

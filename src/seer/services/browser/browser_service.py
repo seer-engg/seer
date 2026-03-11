@@ -440,6 +440,7 @@ class BrowserService:
         file_system: Optional["WorkflowFileSystem"] = None,
         workflow_run_id: Optional[str] = None,
         model: Optional[str] = None,
+        organization_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Execute a browser automation task using a pooled browser session.
@@ -460,6 +461,7 @@ class BrowserService:
             file_system: WorkflowFileSystem for saving screenshots
             workflow_run_id: Run ID for organizing screenshot files
             model: OpenRouter model identifier. If None, uses config.default_llm_model
+            organization_id: Organization ID for file ownership
 
         Returns:
             Result dict with success, result, extracted_data, final_url, screenshots
@@ -531,6 +533,7 @@ class BrowserService:
                     file_system=file_system,
                     workflow_run_id=workflow_run_id,
                     user=user,
+                    organization_id=organization_id,
                 ),
                 "usage": self._extract_usage_metadata(history, model),
             }
@@ -803,6 +806,7 @@ class BrowserService:
         file_system: Optional["WorkflowFileSystem"],
         workflow_run_id: Optional[str],
         user: Optional[User],
+        organization_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         Save screenshots from browser history to S3.
@@ -817,6 +821,7 @@ class BrowserService:
             file_system: WorkflowFileSystem for S3 uploads
             workflow_run_id: Run ID for organizing files
             user: User who owns the files
+            organization_id: Organization ID for file ownership
 
         Returns:
             List of WorkflowFileRef dicts with file references
@@ -854,6 +859,7 @@ class BrowserService:
                         data=screenshot_data,
                         mime_type="image/png",
                         source_tool="browser_screenshot",
+                        organization_id=organization_id,
                     )
                     screenshots_result.append(file_ref.to_dict())
                     logger.debug(f"Saved screenshot {filename} to S3")
