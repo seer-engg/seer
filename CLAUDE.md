@@ -29,6 +29,7 @@
 - **Run Scripts:** Always use `uv run <script_name>` (e.g., `uv run main.py`)
 - **Install Packages:** Always use `uv add <package>` (NEVER use `pip install`)
 - **Run Tests:** `uv run pytest`
+- **Migrations:** NEVER create migration files manually. Always use `uv run aerich migrate --name <name>`. Manual migrations lack MODELS_STATE and will fail CI.
 - **Lockfile:** Rely on `uv.lock`. Do not create requirements.txt unless explicitly asked.
 
 ## Environment
@@ -41,3 +42,9 @@
 - Add regression tests for bug fixes and workflow schema/validation changes.
 - all tests are in /tests
 - for every change related to `/src/seer/core` make sure to add concerned unit tests and full json spec tests and validate that the changes passess all the tests ( regression testing )
+
+## Git Workflow
+- Branch naming: `<name>/<MMDD>-<slug>` (e.g., `akshay/0311-fix-templates`)
+- PRs always target `dev` branch
+- Linting must pass before committing (pre-commit hooks enforced)
+- After PR merges to `dev` and CI passes, publish to `main`

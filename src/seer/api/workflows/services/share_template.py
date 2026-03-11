@@ -10,6 +10,7 @@ from seer.database.models import User
 from seer.database.profile_models import UserProfile
 from seer.database.template_models import TemplateCategory, TemplateSource, WorkflowTemplate
 from seer.database.workflow_models import Workflow, WorkflowVersion, WorkflowVersionStatus, parse_workflow_public_id
+from seer.database.organization_models import Organization, OrganizationMembership, MembershipStatus
 
 
 class ShareAsTemplateRequest(BaseModel):
@@ -18,6 +19,7 @@ class ShareAsTemplateRequest(BaseModel):
     category: TemplateCategory
     tags: list[str] = []
     icon: Optional[str] = None
+    visibility: str = "private"  # "private" | "public"
 
 
 class ShareAsTemplateResponse(BaseModel):
@@ -73,7 +75,13 @@ async def share_workflow_as_template(user: User, workflow_id: str, payload: Shar
         slug = f"{base_slug}-{counter}"
         counter += 1
 
-    # 5. Create template
+    # 5. Get user's organization
+    membership = await OrganizationMembership.filter(user=user, status=MembershipStatus.ACTIVE).first()
+    org = None
+    if membership:
+        org = await Organization.filter(id=membership.organization_id).first()
+
+    # 6. Create template
     template = await WorkflowTemplate.create(
         slug=slug,
         name=payload.name,
@@ -83,12 +91,14 @@ async def share_workflow_as_template(user: User, workflow_id: str, payload: Shar
         icon=payload.icon,
         source=TemplateSource.COMMUNITY,
         created_by=user,
+        organization=org,
+        visibility=payload.visibility,
         spec=released_version.spec,
-        is_published=True,
+        is_published=payload.visibility == "public",
         source_workflow_id=workflow.id,
     )
 
-    # 6. Return response
+    # 7. Return response
     return ShareAsTemplateResponse(
         slug=template.slug,
         name=template.name,

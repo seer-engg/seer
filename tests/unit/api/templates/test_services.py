@@ -372,6 +372,7 @@ def test_to_summary_helper():
     mock_template.required_integrations = [
         {"provider": "google", "integration_type": "gmail", "reason": "Send emails"}
     ]
+    mock_template.visibility = "public"
 
     summary = _to_summary(mock_template)
 
@@ -411,6 +412,7 @@ def test_to_detail_helper():
             {"inputs": {"to": "${config.recipient_email}"}}
         ]
     }
+    mock_template.visibility = "public"
     mock_template.created_at = datetime.now(timezone.utc)
     mock_template.updated_at = datetime.now(timezone.utc)
 

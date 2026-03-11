@@ -99,36 +99,56 @@ def main():  # pylint: disable=too-many-statements  # one-off data script
 
         # 2. Template A: Daily Motivational Inspiration Email
         spec_a = {
-            "version": "1.0",
+            "version": "2",
             "triggers": [
                 {
-                    "type": "schedule",
-                    "config": {
+                    "id": "schedule_trigger",
+                    "key": "schedule.cron",
+                    "mode": "polling",
+                    "event_schema": {},
+                    "meta": {"requires_connection": False},
+                    "filters": {},
+                    "provider_config": {
                         "cron": "0 7 * * *",
                         "timezone": "${config.timezone}",
                     },
+                    "ui_meta": {},
                 }
             ],
             "nodes": [
                 {
                     "id": "generate",
-                    "type": "ai",
-                    "config": {
-                        "prompt": PROMPT_A,
+                    "type": "agent",
+                    "inputs": {
                         "model": "claude-sonnet-4-20250514",
+                        "prompt": PROMPT_A,
+                        "tools": [],
                     },
+                    "outputs": {"mode": "text"},
                 },
                 {
                     "id": "send_email",
-                    "type": "gmail_send",
-                    "config": {
+                    "type": "tool",
+                    "tool": "gmail.send_email",
+                    "inputs": {
                         "to": "${config.recipient_email}",
                         "subject": "Your Daily Dose of Inspiration",
                         "body": "${nodes.generate.output}",
                     },
                 },
             ],
-            "edges": [{"from": "generate", "to": "send_email"}],
+            "edges": [
+                {
+                    "source": "schedule_trigger",
+                    "target": "generate",
+                    "type": "trigger",
+                },
+                {
+                    "source": "generate",
+                    "target": "send_email",
+                    "type": "default",
+                },
+            ],
         }
 
         integrations_a = [
@@ -158,31 +178,45 @@ def main():  # pylint: disable=too-many-statements  # one-off data script
 
         # 3. Template B: Application Analyzer
         spec_b = {
-            "version": "1.0",
+            "version": "2",
             "triggers": [
                 {
-                    "type": "webhook",
-                    "config": {"path": "/analyze-application"},
+                    "id": "webhook_trigger",
+                    "key": "webhook.incoming",
+                    "mode": "webhook",
+                    "event_schema": {},
+                    "meta": {"requires_connection": False},
+                    "filters": {},
+                    "provider_config": {
+                        "path": "/analyze-application",
+                    },
+                    "ui_meta": {},
                 }
             ],
             "nodes": [
                 {
                     "id": "extract_pdf",
-                    "type": "pdf_extract",
-                    "config": {"file": "${trigger.body.file_url}"},
-                },
-                {
-                    "id": "analyze",
-                    "type": "ai",
-                    "config": {
-                        "prompt": PROMPT_B,
-                        "model": "claude-sonnet-4-20250514",
+                    "type": "tool",
+                    "tool": "pdf.extract_text",
+                    "inputs": {
+                        "file": "${trigger.body.file_url}",
                     },
                 },
                 {
+                    "id": "analyze",
+                    "type": "agent",
+                    "inputs": {
+                        "model": "claude-sonnet-4-20250514",
+                        "prompt": PROMPT_B,
+                        "tools": [],
+                    },
+                    "outputs": {"mode": "text"},
+                },
+                {
                     "id": "send_results",
-                    "type": "gmail_send",
-                    "config": {
+                    "type": "tool",
+                    "tool": "gmail.send_email",
+                    "inputs": {
                         "to": "${config.reviewer_email}",
                         "subject": (
                             "Application Analysis: "
@@ -193,8 +227,21 @@ def main():  # pylint: disable=too-many-statements  # one-off data script
                 },
             ],
             "edges": [
-                {"from": "extract_pdf", "to": "analyze"},
-                {"from": "analyze", "to": "send_results"},
+                {
+                    "source": "webhook_trigger",
+                    "target": "extract_pdf",
+                    "type": "trigger",
+                },
+                {
+                    "source": "extract_pdf",
+                    "target": "analyze",
+                    "type": "default",
+                },
+                {
+                    "source": "analyze",
+                    "target": "send_results",
+                    "type": "default",
+                },
             ],
         }
 
@@ -227,34 +274,45 @@ def main():  # pylint: disable=too-many-statements  # one-off data script
 
         # 4. Template C: LinkedIn SNEAC GEO
         spec_c = {
-            "version": "1.0",
+            "version": "2",
             "triggers": [
                 {
-                    "type": "google_drive",
-                    "config": {
+                    "id": "gdrive_trigger",
+                    "key": "google_drive.file_created",
+                    "mode": "polling",
+                    "event_schema": {},
+                    "meta": {"requires_connection": True},
+                    "filters": {},
+                    "provider_config": {
                         "folder_id": "${config.google_drive_folder_id}",
-                        "event": "file_created",
                     },
+                    "ui_meta": {},
                 }
             ],
             "nodes": [
                 {
                     "id": "read_doc",
-                    "type": "google_drive_read",
-                    "config": {"file_id": "${trigger.file_id}"},
-                },
-                {
-                    "id": "sneac_agent",
-                    "type": "ai",
-                    "config": {
-                        "prompt": PROMPT_C,
-                        "model": "claude-sonnet-4-20250514",
+                    "type": "tool",
+                    "tool": "google_drive.read_file",
+                    "inputs": {
+                        "file_id": "${trigger.file_id}",
                     },
                 },
                 {
+                    "id": "sneac_agent",
+                    "type": "agent",
+                    "inputs": {
+                        "model": "claude-sonnet-4-20250514",
+                        "prompt": PROMPT_C,
+                        "tools": [],
+                    },
+                    "outputs": {"mode": "text"},
+                },
+                {
                     "id": "approval_email",
-                    "type": "gmail_send",
-                    "config": {
+                    "type": "tool",
+                    "tool": "gmail.send_email",
+                    "inputs": {
                         "to": "${config.approval_email}",
                         "subject": "LinkedIn Post Ready for Review",
                         "body": APPROVAL_BODY,
@@ -262,16 +320,34 @@ def main():  # pylint: disable=too-many-statements  # one-off data script
                 },
                 {
                     "id": "publish",
-                    "type": "linkedin_post",
-                    "config": {
+                    "type": "tool",
+                    "tool": "linkedin.create_post",
+                    "inputs": {
                         "content": "${nodes.sneac_agent.output}",
                     },
                 },
             ],
             "edges": [
-                {"from": "read_doc", "to": "sneac_agent"},
-                {"from": "sneac_agent", "to": "approval_email"},
-                {"from": "approval_email", "to": "publish"},
+                {
+                    "source": "gdrive_trigger",
+                    "target": "read_doc",
+                    "type": "trigger",
+                },
+                {
+                    "source": "read_doc",
+                    "target": "sneac_agent",
+                    "type": "default",
+                },
+                {
+                    "source": "sneac_agent",
+                    "target": "approval_email",
+                    "type": "default",
+                },
+                {
+                    "source": "approval_email",
+                    "target": "publish",
+                    "type": "default",
+                },
             ],
         }
 
