@@ -408,7 +408,8 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat.get_checkpointer", new_callable=AsyncMock), \
              patch("seer.worker.tasks.chat.create_nexus_chat_agent"), \
              patch("seer.worker.tasks.chat._get_user_settings_and_context", new_callable=AsyncMock) as mock_settings, \
-             patch("seer.worker.tasks.chat._invoke_agent_with_orchestrator", new_callable=AsyncMock) as mock_invoke, \
+             patch("seer.worker.tasks.chat._stream_agent_with_orchestrator", new_callable=AsyncMock) as mock_stream, \
+             patch("seer.worker.tasks.chat.StreamPublisher") as MockPublisher, \
              patch("seer.worker.tasks.chat.InterruptHandler") as MockInterrupt, \
              patch("seer.worker.tasks.chat.save_chat_message", new_callable=AsyncMock), \
              patch("seer.worker.tasks.chat.langfuse_user_context", mock_langfuse_context), \
@@ -422,8 +423,10 @@ class TestChatExecutionTask:
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
-            mock_invoke.return_value = {"messages": []}
+            mock_stream.return_value = {"messages": []}
+            MockPublisher.return_value = AsyncMock()
             MockInterrupt.extract_interrupt_from_result.return_value = (False, None)
+            MockInterrupt.extract_interrupt_from_state = AsyncMock(return_value=(False, None))
             MockProposal.get_or_none.return_value.prefetch_related = AsyncMock(return_value=None)
 
             await chat_execution_task(
@@ -447,7 +450,8 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat.get_checkpointer", new_callable=AsyncMock), \
              patch("seer.worker.tasks.chat.create_nexus_chat_agent"), \
              patch("seer.worker.tasks.chat._get_user_settings_and_context", new_callable=AsyncMock) as mock_settings, \
-             patch("seer.worker.tasks.chat._invoke_agent_with_orchestrator", new_callable=AsyncMock) as mock_invoke, \
+             patch("seer.worker.tasks.chat._stream_agent_with_orchestrator", new_callable=AsyncMock) as mock_stream, \
+             patch("seer.worker.tasks.chat.StreamPublisher") as MockPublisher, \
              patch("seer.worker.tasks.chat.langfuse_user_context", mock_langfuse_context), \
              patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
              patch("seer.worker.tasks.chat.clear_chat_runtime_context"):
@@ -456,7 +460,8 @@ class TestChatExecutionTask:
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
-            mock_invoke.side_effect = RunCostCapExceeded(
+            MockPublisher.return_value = AsyncMock()
+            mock_stream.side_effect = RunCostCapExceeded(
                 run_identifier="thread-123",
                 accumulated_cost=10.0,
                 cost_cap=5.0,
@@ -510,7 +515,8 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat.get_checkpointer", new_callable=AsyncMock), \
              patch("seer.worker.tasks.chat.create_nexus_chat_agent"), \
              patch("seer.worker.tasks.chat._get_user_settings_and_context", new_callable=AsyncMock) as mock_settings, \
-             patch("seer.worker.tasks.chat._invoke_agent_with_orchestrator", new_callable=AsyncMock) as mock_invoke, \
+             patch("seer.worker.tasks.chat._stream_agent_with_orchestrator", new_callable=AsyncMock) as mock_stream, \
+             patch("seer.worker.tasks.chat.StreamPublisher") as MockPublisher, \
              patch("seer.worker.tasks.chat.InterruptHandler") as MockInterrupt, \
              patch("seer.worker.tasks.chat.save_chat_message", new_callable=AsyncMock), \
              patch("seer.worker.tasks.chat.extract_thinking_from_messages") as mock_thinking, \
@@ -522,8 +528,10 @@ class TestChatExecutionTask:
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
-            mock_invoke.return_value = {"messages": [MagicMock(content="Need approval")]}
+            mock_stream.return_value = {"messages": [MagicMock(content="Need approval")]}
+            MockPublisher.return_value = AsyncMock()
             MockInterrupt.extract_interrupt_from_result.return_value = (True, {"type": "approval_request"})
+            MockInterrupt.extract_interrupt_from_state = AsyncMock(return_value=(False, None))
             mock_thinking.return_value = []
 
             await chat_execution_task(
@@ -547,7 +555,8 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat.get_checkpointer", new_callable=AsyncMock), \
              patch("seer.worker.tasks.chat.create_nexus_chat_agent"), \
              patch("seer.worker.tasks.chat._get_user_settings_and_context", new_callable=AsyncMock) as mock_settings, \
-             patch("seer.worker.tasks.chat._invoke_agent_with_orchestrator", new_callable=AsyncMock) as mock_invoke, \
+             patch("seer.worker.tasks.chat._stream_agent_with_orchestrator", new_callable=AsyncMock) as mock_stream, \
+             patch("seer.worker.tasks.chat.StreamPublisher") as MockPublisher, \
              patch("seer.worker.tasks.chat.InterruptHandler") as MockInterrupt, \
              patch("seer.worker.tasks.chat.save_chat_message", new_callable=AsyncMock) as mock_save_msg, \
              patch("seer.worker.tasks.chat.extract_thinking_from_messages") as mock_thinking, \
@@ -563,8 +572,10 @@ class TestChatExecutionTask:
 
             last_msg = MagicMock()
             last_msg.content = "I can help with that!"
-            mock_invoke.return_value = {"messages": [last_msg]}
+            mock_stream.return_value = {"messages": [last_msg]}
+            MockPublisher.return_value = AsyncMock()
             MockInterrupt.extract_interrupt_from_result.return_value = (False, None)
+            MockInterrupt.extract_interrupt_from_state = AsyncMock(return_value=(False, None))
             mock_thinking.return_value = ["thinking step 1"]
             MockProposal.get_or_none.return_value.prefetch_related = AsyncMock(return_value=None)
 
@@ -595,7 +606,8 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat.get_checkpointer", new_callable=AsyncMock), \
              patch("seer.worker.tasks.chat.create_nexus_chat_agent"), \
              patch("seer.worker.tasks.chat._get_user_settings_and_context", new_callable=AsyncMock) as mock_settings, \
-             patch("seer.worker.tasks.chat._invoke_agent_with_orchestrator", new_callable=AsyncMock) as mock_invoke, \
+             patch("seer.worker.tasks.chat._stream_agent_with_orchestrator", new_callable=AsyncMock) as mock_stream, \
+             patch("seer.worker.tasks.chat.StreamPublisher") as MockPublisher, \
              patch("seer.worker.tasks.chat.InterruptHandler") as MockInterrupt, \
              patch("seer.worker.tasks.chat.save_chat_message", new_callable=AsyncMock) as mock_save_msg, \
              patch("seer.worker.tasks.chat.extract_thinking_from_messages") as mock_thinking, \
@@ -608,8 +620,10 @@ class TestChatExecutionTask:
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
-            mock_invoke.return_value = {"messages": []}
+            mock_stream.return_value = {"messages": []}
+            MockPublisher.return_value = AsyncMock()
             MockInterrupt.extract_interrupt_from_result.return_value = (False, None)
+            MockInterrupt.extract_interrupt_from_state = AsyncMock(return_value=(False, None))
             mock_thinking.return_value = []
 
             # Mock the chained get_or_none().prefetch_related()
@@ -772,6 +786,53 @@ class TestChatExecutionTask:
 
         call_kwargs = mock_create_agent.call_args.kwargs
         assert call_kwargs["model"] == "gpt-4-turbo"
+
+    @pytest.mark.asyncio
+    async def test_state_fallback_detects_interrupt_when_result_has_none(self, mock_user, mock_workflow, mock_chat_session):
+        """Test that interrupt is detected via agent state when astream_events doesn't surface __interrupt__."""
+        from seer.worker.tasks.chat import chat_execution_task
+
+        interrupt_data = {"type": "clarification_questions", "questions": ["What is the goal?"]}
+
+        with patch("seer.worker.tasks.chat.WorkflowChatSession") as MockSession, \
+             patch("seer.worker.tasks.chat.User") as MockUser, \
+             patch("seer.worker.tasks.chat.Workflow") as MockWorkflow, \
+             patch("seer.worker.tasks.chat.get_checkpointer", new_callable=AsyncMock), \
+             patch("seer.worker.tasks.chat.create_nexus_chat_agent"), \
+             patch("seer.worker.tasks.chat._get_user_settings_and_context", new_callable=AsyncMock) as mock_settings, \
+             patch("seer.worker.tasks.chat._stream_agent_with_orchestrator", new_callable=AsyncMock) as mock_stream, \
+             patch("seer.worker.tasks.chat.InterruptHandler") as MockInterrupt, \
+             patch("seer.worker.tasks.chat.StreamPublisher") as MockPublisher, \
+             patch("seer.worker.tasks.chat.save_chat_message", new_callable=AsyncMock), \
+             patch("seer.worker.tasks.chat.extract_thinking_from_messages") as mock_thinking, \
+             patch("seer.worker.tasks.chat.langfuse_user_context", mock_langfuse_context), \
+             patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
+             patch("seer.worker.tasks.chat.clear_chat_runtime_context"):
+
+            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockUser.get = AsyncMock(return_value=mock_user)
+            MockWorkflow.get = AsyncMock(return_value=mock_workflow)
+            mock_settings.return_value = (50, MagicMock())
+            mock_stream.return_value = {"messages": [MagicMock(content="Let me ask some questions")]}
+            mock_thinking.return_value = []
+
+            mock_publisher_instance = AsyncMock()
+            MockPublisher.return_value = mock_publisher_instance
+
+            # from_result finds nothing; from_state finds the interrupt in the checkpoint
+            MockInterrupt.extract_interrupt_from_result.return_value = (False, None)
+            MockInterrupt.extract_interrupt_from_state = AsyncMock(return_value=(True, interrupt_data))
+
+            await chat_execution_task(
+                session_id=1,
+                user_id=1,
+                message="Help me build a workflow",
+                workflow_id=1,
+            )
+
+        assert mock_chat_session.current_execution_status == ChatExecutionStatus.INTERRUPTED
+        assert mock_chat_session.pending_interrupt_type == "clarification_questions"
+        MockInterrupt.extract_interrupt_from_state.assert_awaited_once()
 
 
 # =============================================================================

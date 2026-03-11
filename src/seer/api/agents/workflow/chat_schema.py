@@ -12,6 +12,26 @@ from seer.database import UserPublic
 from .models import WorkflowProposalPublic
 
 
+class StreamEventType(str, Enum):
+    """Type of SSE stream event published during agent execution."""
+    SESSION_INFO = "session_info"    # First event: {session_id, thread_id, execution_task_id}
+    AGENT_START  = "agent_start"     # Agent invocation begins
+    TOOL_START   = "tool_start"      # {tool_name, input_preview}
+    TOOL_END     = "tool_end"        # {tool_name, output_preview}
+    AI_MESSAGE   = "ai_message"      # Intermediate reasoning {content}
+    AGENT_END    = "agent_end"       # Final answer {content, proposal_id?}
+    INTERRUPT    = "interrupt"       # {questions: [...]}
+    ERROR        = "error"           # {message, status_code}
+    DONE         = "done"            # Stream sentinel {}
+
+
+class StreamEvent(BaseModel):
+    """A single event in the nexus agent SSE stream."""
+    type: StreamEventType
+    data: Dict[str, Any] = {}
+    session_id: int
+
+
 class WorkflowCreationMode(str, Enum):
     """Mode for workflow creation during discovery."""
     AUTO_CREATE = "AUTO_CREATE"
@@ -88,6 +108,10 @@ class ChatMessage(BaseModel):
     proposal: Optional[WorkflowProposalPublic] = None
     metadata: Optional[Dict[str, Any]] = None
     created_at: datetime
+    # Interrupt fields — populated on the last assistant message when the session is interrupted.
+    # Allows the frontend to restore the clarification card from message history (reconnect or history navigation).
+    interrupt_required: bool = False
+    interrupt_data: Optional[Dict[str, Any]] = None
 
 
 class ChatSessionWithMessages(ChatSession):

@@ -1,3 +1,5 @@
+# pylint: disable=too-many-lines
+# Reason: Orchestration module with multiple service classes; refactoring deferred
 """
 Services for workflow chat endpoint to reduce complexity.
 """
@@ -48,20 +50,27 @@ class SessionService:
             session = await get_chat_session_by_thread_id(thread_id, workflow)
             if session:
                 session_id = session.id
+            else:
+                raise_problem(
+                    type_uri=VALIDATION_PROBLEM,
+                    title="Session not found",
+                    detail=f"Chat session not found for thread_id: {thread_id}",
+                    status=404,
+                )
         elif session_id:
             session = await get_chat_session(session_id, workflow)
-            thread_id = session.thread_id
+            if session:
+                thread_id = session.thread_id
+            else:
+                raise_problem(
+                    type_uri=VALIDATION_PROBLEM,
+                    title="Session not found",
+                    detail=f"Chat session not found for session_id: {session_id}",
+                    status=404,
+                )
         else:
+            # Create new session only when no identifiers provided
             thread_id = f"workflow-{workflow.workflow_id}-{uuid.uuid4().hex}"
-            session = await create_chat_session(
-                workflow=workflow,
-                user=user,
-                thread_id=thread_id,
-            )
-            session_id = session.id
-
-        if session is None:
-            thread_id = thread_id or f"workflow-{workflow.workflow_id}-{uuid.uuid4().hex}"
             session = await create_chat_session(
                 workflow=workflow,
                 user=user,
@@ -299,32 +308,102 @@ class InterruptHandler:
         """
         try:
             current_state = await agent.aget_state(config_dict)
-            if hasattr(current_state, "interrupt") and current_state.interrupt:
-                interrupt = current_state.interrupt
-                interrupt_data = None
-
-                if isinstance(interrupt, list) and len(interrupt) > 0:
-                    first_interrupt = interrupt[0]
-                    if hasattr(first_interrupt, "value"):
-                        interrupt_data = (
-                            first_interrupt.value
-                            if isinstance(first_interrupt.value, dict)
-                            else {"value": first_interrupt.value}
-                        )
-                    elif isinstance(first_interrupt, dict):
-                        interrupt_data = first_interrupt.get("value", first_interrupt)
-                    else:
-                        interrupt_data = {"value": str(first_interrupt)}
-                elif isinstance(interrupt, dict):
-                    interrupt_data = interrupt
+            # LangGraph 1.x stores interrupts in StateSnapshot.interrupts (tuple of Interrupt objects)
+            interrupts = getattr(current_state, "interrupts", None)
+            if interrupts:
+                first_interrupt = interrupts[0]
+                if hasattr(first_interrupt, "value"):
+                    interrupt_data = (
+                        first_interrupt.value
+                        if isinstance(first_interrupt.value, dict)
+                        else {"value": first_interrupt.value}
+                    )
+                elif isinstance(first_interrupt, dict):
+                    interrupt_data = first_interrupt.get("value", first_interrupt)
                 else:
-                    interrupt_data = {"value": interrupt}
-
+                    interrupt_data = {"value": str(first_interrupt)}
                 return True, interrupt_data
         except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Interrupt check is non-critical, log and proceed
             logger.debug("Could not check state for interrupts: %s", e)
 
         return False, None
+
+
+# ---------------------------------------------------------------------------
+# LangGraph astream_events helpers (shared by ChatOrchestrator and chat tasks)
+# ---------------------------------------------------------------------------
+
+async def _handle_tool_event(
+    event_type: str,
+    event_name: str,
+    event_data: Dict[str, Any],
+    publisher: Any,
+    stream_event_type: Any,
+) -> None:
+    """Publish TOOL_START or TOOL_END to the stream publisher."""
+    if event_type == "on_tool_start":
+        await publisher.publish(stream_event_type.TOOL_START, {
+            "tool_name": event_name,
+            "input_preview": str(event_data.get("input", {}))[:200],
+        })
+    elif event_type == "on_tool_end":
+        await publisher.publish(stream_event_type.TOOL_END, {
+            "tool_name": event_name,
+            "output_preview": str(event_data.get("output", ""))[:200],
+        })
+
+
+async def _handle_chat_model_end(
+    event_data: Dict[str, Any],
+    publisher: Any,
+    stream_event_type: Any,
+) -> Optional[str]:
+    """Handle on_chat_model_end. Returns final_content if this is the terminal LLM call."""
+    output = event_data.get("output")
+    if output is None:
+        return None
+    tool_calls = getattr(output, "tool_calls", None) or []
+    content = getattr(output, "content", "") or ""
+    if tool_calls and content:
+        await publisher.publish(stream_event_type.AI_MESSAGE, {"content": str(content)})
+    elif content:
+        return str(content)
+    return None
+
+
+def _handle_chain_end(event_name: str, event_data: Dict[str, Any]) -> Optional[List[Any]]:
+    """Handle on_chain_end LangGraph. Returns captured messages list or None."""
+    if event_name != "LangGraph":
+        return None
+    output = event_data.get("output", {})
+    if isinstance(output, dict):
+        return output.get("messages", [])
+    return None
+
+
+async def process_stream_event(
+    event: Dict[str, Any],
+    publisher: Any,
+    stream_event_type: Any,
+) -> Tuple[Optional[str], Optional[List[Any]]]:
+    """
+    Process a single LangGraph astream_events v2 event.
+
+    Returns:
+        Tuple of (final_content, all_messages) — either may be None.
+    """
+    event_type = event.get("event", "")
+    event_name = event.get("name", "")
+    event_data = event.get("data", {})
+
+    if event_type in ("on_tool_start", "on_tool_end"):
+        await _handle_tool_event(event_type, event_name, event_data, publisher, stream_event_type)
+        return None, None
+    if event_type == "on_chat_model_end":
+        return await _handle_chat_model_end(event_data, publisher, stream_event_type), None
+    if event_type == "on_chain_end":
+        return None, _handle_chain_end(event_name, event_data)
+    return None, None
 
 
 class ChatOrchestrator:
@@ -499,3 +578,87 @@ class ChatOrchestrator:
         result = await self.invoke_with_timeout({"messages": [user_msg]}, config_dict, None)
         logger.debug("Agent invocation completed for thread %s, checkpoint should be saved automatically by LangGraph", thread_id)
         return result
+
+    async def stream_with_timeout(  # pylint: disable=too-complex # Reason: Timeout/token/stream orchestration across multiple async boundaries
+        self,
+        messages: Any,
+        config_dict: Dict[str, Any],
+        publisher: Any,  # StreamPublisher — typed as Any to avoid circular import
+        timeout: float = 900.0,
+    ) -> Dict[str, Any]:
+        """
+        Stream agent events via astream_events, publishing each to Redis.
+
+        Maps LangGraph v2 events:
+        - on_tool_start   → TOOL_START
+        - on_tool_end     → TOOL_END
+        - on_chat_model_end (with tool_calls) → AI_MESSAGE (intermediate)
+        - on_chat_model_end (no tool_calls, has content) → captured as final_content
+
+        Returns:
+            Dict with "messages" list and "final_content" str (same shape as ainvoke result)
+        """
+        # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with agents module
+        from seer.agents.nexus import _current_thread_id
+        from seer.api.agents.workflow.chat_schema import StreamEventType
+
+        thread_id = config_dict.get("configurable", {}).get("thread_id")
+        token = _current_thread_id.set(thread_id) if thread_id else None
+
+        config_with_langfuse = merge_nexus_langfuse_callbacks(config_dict)
+
+        final_content = ""
+        all_messages: List[Any] = []
+
+        async def _stream() -> None:
+            nonlocal final_content, all_messages
+            async for event in self.agent.astream_events(messages, config=config_with_langfuse, version="v2"):
+                fc, msgs = await process_stream_event(event, publisher, StreamEventType)
+                if fc is not None:
+                    final_content = fc
+                if msgs is not None:
+                    all_messages = msgs
+
+        try:
+            await asyncio.wait_for(_stream(), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.error("Agent stream timed out after %ss for thread %s", timeout, thread_id or 'unknown')
+            raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Request timeout",
+                detail="Request timed out. The agent took too long to respond.",
+                status=504,
+            )
+        finally:
+            if token is not None:
+                _current_thread_id.reset(token)
+
+        return {"messages": all_messages, "final_content": final_content}
+
+    async def stream_with_health_checks(
+        self,
+        user_msg: HumanMessage,
+        config_dict: Dict[str, Any],
+        publisher: Any,  # StreamPublisher — typed as Any to avoid circular import
+    ) -> Dict[str, Any]:
+        """
+        Drop-in streaming replacement for invoke_with_health_checks.
+
+        Health check / recovery paths use ainvoke (rare edge case).
+        Main path uses stream_with_timeout for real-time event publishing.
+        """
+        # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with schema module
+        from seer.api.agents.workflow.chat_schema import StreamEventType
+
+        thread_id = config_dict.get("configurable", {}).get("thread_id")
+
+        if self.checkpointer and thread_id:
+            has_incomplete = await self._check_for_incomplete_tool_calls(config_dict)
+            if has_incomplete:
+                # Recovery path — use ainvoke with synthetic events
+                await publisher.publish(StreamEventType.AGENT_START, {"recovery": True})
+                result = await self._recover_from_incomplete_state(user_msg, config_dict, thread_id)
+                return result
+
+        logger.info("Streaming agent for thread %s with checkpointer=%s", thread_id, 'enabled' if self.checkpointer else 'disabled')
+        return await self.stream_with_timeout({"messages": [user_msg]}, config_dict, publisher)
