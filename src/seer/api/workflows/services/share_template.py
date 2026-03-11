@@ -11,6 +11,7 @@ from seer.database.profile_models import UserProfile
 from seer.database.template_models import TemplateCategory, TemplateSource, WorkflowTemplate
 from seer.database.workflow_models import Workflow, WorkflowVersion, WorkflowVersionStatus, parse_workflow_public_id
 from seer.database.organization_models import Organization, OrganizationMembership, MembershipStatus
+from seer.api.templates.admin_services import _detect_required_integrations
 
 
 class ShareAsTemplateRequest(BaseModel):
@@ -19,7 +20,7 @@ class ShareAsTemplateRequest(BaseModel):
     category: TemplateCategory
     tags: list[str] = []
     icon: Optional[str] = None
-    visibility: str = "private"  # "private" | "public"
+    is_published: bool = False
 
 
 class ShareAsTemplateResponse(BaseModel):
@@ -81,7 +82,10 @@ async def share_workflow_as_template(user: User, workflow_id: str, payload: Shar
     if membership:
         org = await Organization.filter(id=membership.organization_id).first()
 
-    # 6. Create template
+    # 6. Auto-detect required integrations
+    required_integrations = _detect_required_integrations(released_version.spec)
+
+    # 7. Create template
     template = await WorkflowTemplate.create(
         slug=slug,
         name=payload.name,
@@ -92,13 +96,14 @@ async def share_workflow_as_template(user: User, workflow_id: str, payload: Shar
         source=TemplateSource.COMMUNITY,
         created_by=user,
         organization=org,
-        visibility=payload.visibility,
+        visibility="public" if payload.is_published else "private",
         spec=released_version.spec,
-        is_published=payload.visibility == "public",
+        required_integrations=required_integrations,
+        is_published=payload.is_published,
         source_workflow_id=workflow.id,
     )
 
-    # 7. Return response
+    # 8. Return response
     return ShareAsTemplateResponse(
         slug=template.slug,
         name=template.name,

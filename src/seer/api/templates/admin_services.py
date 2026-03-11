@@ -10,13 +10,11 @@ from tortoise.exceptions import IntegrityError
 from seer.api.templates import models as api_models
 from seer.api.templates.services import _build_template_fields
 from seer.database import (
-    User,
     Workflow,
     WorkflowVersion,
     WorkflowVersionStatus,
     WorkflowTemplate,
     TemplateCategory,
-    TemplateSource,
     parse_workflow_public_id,
 )
 
@@ -206,58 +204,6 @@ async def get_template_admin(slug: str) -> api_models.TemplateAdminResponse:
     return _to_admin_response(template)
 
 
-async def create_template(
-    user: User,
-    payload: api_models.TemplateCreateRequest,
-) -> api_models.TemplateAdminResponse:
-    """Create a new template from an existing workflow."""
-    category = _validate_category(payload.category)
-
-    # 1. Fetch workflow (any user's workflow - admin privilege)
-    workflow = await _get_workflow_for_template(payload.workflow_id)
-
-    # 2. Get spec from RELEASED version (if exists) or DRAFT
-    spec = await _get_workflow_spec(workflow)
-
-    # 3. Auto-detect required integrations from triggers (if not provided)
-    if payload.required_integrations is None:
-        required_integrations = _detect_required_integrations(spec)
-    else:
-        required_integrations = [
-            {
-                "provider": ri.provider,
-                "integration_type": ri.integration_type,
-                "reason": ri.reason,
-            }
-            for ri in payload.required_integrations
-        ]
-
-    # 4. Create template with extracted spec
-    try:
-        template = await WorkflowTemplate.create(
-            slug=payload.slug,
-            name=payload.name,
-            description=payload.description,
-            category=category,
-            tags=payload.tags,
-            source=TemplateSource.SYSTEM,
-            created_by=user,
-            spec=spec,
-            required_integrations=required_integrations,
-            source_workflow_id=workflow.id,  # Track lineage
-            icon=payload.icon,
-            preview_image_url=payload.preview_image_url,
-            is_published=payload.is_published,
-            is_featured=payload.is_featured,
-        )
-    except IntegrityError as e:
-        if "slug" in str(e).lower() or "unique" in str(e).lower():
-            _raise_conflict(f"Template with slug '{payload.slug}' already exists")
-        raise
-
-    return _to_admin_response(template)
-
-
 def _build_template_update_data(
     payload: api_models.TemplateUpdateRequest,
 ) -> Dict[str, Any]:
@@ -354,7 +300,6 @@ def _to_admin_response(template: WorkflowTemplate) -> api_models.TemplateAdminRe
 __all__ = [
     "list_all_templates",
     "get_template_admin",
-    "create_template",
     "update_template",
     "delete_template",
     "toggle_publish",
