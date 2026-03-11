@@ -22,9 +22,14 @@ from pydantic import BaseModel, create_model
 from seer.config import config
 from seer.database import User
 from seer.services.browser.custom_tools import CustomBrowserTools
+from seer.services.browser.exceptions import TargetDetachmentError
 from seer.services.browser.pool_manager import BrowserPoolManager
 from seer.services.browser.recording_service import RecordingService
 from seer.services.browser.session_context_manager import SessionContextManager
+
+# Target recovery configuration
+TARGET_RECOVERY_MAX_ATTEMPTS = 3
+TARGET_RECOVERY_DELAY_SECONDS = 2.0
 
 if TYPE_CHECKING:
     from browser_use import BrowserSession
@@ -390,14 +395,28 @@ class BrowserService:
         self,
         managed: "ManagedSession",
         start_url: Optional[str],
+        *,
+        user: Optional[User] = None,
+        browser_profile_id: Optional[str] = None,
+        workflow_run_id: Optional[str] = None,
     ) -> None:
-        """Start rrweb recording for session replay if enabled."""
+        """Start rrweb recording for session replay if enabled.
+
+        With chunked recording support, events are periodically flushed to the
+        database during long-running sessions to prevent data loss on CDP target
+        detachment.
+        """
         if not config.browser_recording_enabled:
             return
         try:
             recorder = await RecordingService.get_instance()
             managed.recording_id = await recorder.start_recording(
-                managed.id, managed.session, start_url=start_url
+                managed.id,
+                managed.session,
+                start_url=start_url,
+                user=user,
+                profile_id=browser_profile_id,
+                workflow_run_id=workflow_run_id,
             )
             managed.start_url = start_url
         except Exception as e:
@@ -426,7 +445,152 @@ class BrowserService:
         except Exception as e:
             logger.warning(f"Failed to save workflow recording: {e}")
 
-    async def execute_task(
+    async def _run_browser_agent_with_recovery(
+        self,
+        task: str,
+        inputs: Dict[str, Any],
+        extraction_schema: Optional[Dict[str, Any]],
+        max_steps: int,
+        timeout_seconds: int,
+        browser_session: "BrowserSession",
+        model: Optional[str] = None,
+        managed_session: Optional["ManagedSession"] = None,
+    ) -> tuple[Any, Optional[Dict[str, Any]]]:
+        """Run agent with automatic recovery from transient target detachment.
+
+        Wraps _run_browser_agent with retry logic for "No valid agent focus"
+        errors that can occur when CDP targets detach during long-running tasks.
+
+        Args:
+            Same as _run_browser_agent, plus:
+            managed_session: Session reference for error context
+
+        Returns:
+            Tuple of (agent_history, tool_extracted_data)
+
+        Raises:
+            TargetDetachmentError: If recovery fails after all attempts
+        """
+        last_error: Optional[Exception] = None
+
+        for attempt in range(TARGET_RECOVERY_MAX_ATTEMPTS):
+            try:
+                return await self._run_browser_agent(
+                    task, inputs, extraction_schema, max_steps, timeout_seconds,
+                    browser_session, model
+                )
+            except ValueError as e:
+                error_str = str(e).lower()
+                if "no valid agent focus" in error_str:
+                    last_error = e
+                    session_id = managed_session.id if managed_session else "unknown"
+
+                    if attempt < TARGET_RECOVERY_MAX_ATTEMPTS - 1:
+                        logger.warning(
+                            f"Target focus lost for session {session_id}, "
+                            f"attempting recovery (attempt {attempt + 1}/{TARGET_RECOVERY_MAX_ATTEMPTS})"
+                        )
+                        await asyncio.sleep(TARGET_RECOVERY_DELAY_SECONDS)
+
+                        # Try to recover focus via browser-use's internal mechanism
+                        recovered = await self._try_recover_focus(browser_session)
+                        if not recovered:
+                            raise TargetDetachmentError(session_id) from e
+                        continue
+                    # Max attempts reached
+                    raise TargetDetachmentError(
+                        session_id,
+                        f"Failed to recover from target detachment after {TARGET_RECOVERY_MAX_ATTEMPTS} attempts"
+                    ) from e
+                # Re-raise non-focus errors
+                raise
+
+        # Should not reach here, but handle gracefully
+        session_id = managed_session.id if managed_session else "unknown"
+        raise TargetDetachmentError(session_id, "Recovery exhausted") from last_error
+
+    async def _try_recover_focus(self, browser_session: "BrowserSession") -> bool:
+        """Attempt to recover browser focus after target detachment.
+
+        Waits briefly for browser-use's internal recovery, then validates
+        that a valid page is accessible.
+
+        Returns:
+            True if recovery succeeded, False otherwise
+        """
+        try:
+            # Give browser-use time to run its internal recovery
+            await asyncio.sleep(1.0)
+
+            # Try to get current page - this triggers browser-use's focus recovery
+            page = await asyncio.wait_for(
+                browser_session.must_get_current_page(),
+                timeout=5.0
+            )
+            return page is not None
+        except Exception as e:
+            logger.warning(f"Focus recovery failed: {e}")
+            return False
+
+    def _categorize_error(self, error: Exception) -> str:
+        """Categorize error type for metrics and handling.
+
+        Returns:
+            Error category string: "target_detachment", "cdp_error",
+            "timeout", "connection_error", or "unknown"
+        """
+        error_str = str(error).lower()
+
+        if "no valid agent focus" in error_str:
+            return "target_detachment"
+        if "cdp" in error_str or "chrome" in error_str:
+            return "cdp_error"
+        if "timeout" in error_str:
+            return "timeout"
+        if "connection" in error_str:
+            return "connection_error"
+
+        return "unknown"
+
+    async def _emergency_save_recording(
+        self,
+        managed: "ManagedSession",
+        user: Optional[User],
+        browser_profile_id: Optional[str],
+        workflow_run_id: Optional[str],
+    ) -> bool:
+        """Emergency save recording when session fails unexpectedly.
+
+        Attempts to save whatever recording data exists (including any
+        already-flushed chunks) when the browser session encounters
+        an unrecoverable error.
+
+        Returns:
+            True if recording was saved, False otherwise
+        """
+        if not (managed.recording_id and config.browser_recording_enabled and user):
+            return False
+
+        try:
+            recorder = await RecordingService.get_instance()
+            # save_recording handles chunked recordings gracefully
+            recording_id = await recorder.save_recording(
+                managed.id,
+                user,
+                profile_id=browser_profile_id,
+                workflow_run_id=workflow_run_id,
+                session_type="workflow",
+                start_url=managed.start_url,
+            )
+            if recording_id:
+                logger.info(f"Emergency saved recording {recording_id} for failed session {managed.id}")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Failed emergency recording save for session {managed.id}: {e}")
+            return False
+
+    async def execute_task(  # pylint: disable=too-many-locals  # Reason: Task execution requires pool, session, agent history, extracted data, error handling, and final state variables
         self,
         user: Optional[User],
         task: str,
@@ -478,14 +642,19 @@ class BrowserService:
         )
 
         await self._start_recording_if_enabled(
-            managed, inputs.get("url") or inputs.get("start_url")
+            managed,
+            inputs.get("url") or inputs.get("start_url"),
+            user=user,
+            browser_profile_id=browser_profile_id,
+            workflow_run_id=workflow_run_id,
         )
 
         try:
-            history, tool_extracted_data = await self._run_browser_agent(
+            history, tool_extracted_data = await self._run_browser_agent_with_recovery(
                 task, inputs, extraction_schema, max_steps, timeout_seconds,
                 browser_session=managed.session,
                 model=model,
+                managed_session=managed,
             )
 
             # Get extracted data - from custom tool (Kimi) or standard extraction
@@ -538,12 +707,37 @@ class BrowserService:
                 "usage": self._extract_usage_metadata(history, model),
             }
 
+        except TargetDetachmentError as e:
+            # Target detachment with recovery failed - emergency save recording
+            logger.error(f"Target detachment during task: {e}")
+            await self._emergency_save_recording(managed, user, browser_profile_id, workflow_run_id)
+            return {
+                **self._build_error_result(f"Browser target detached: {str(e)}"),
+                "error_type": "target_detachment",
+                "partial_recording_saved": True,
+                "usage": None,
+            }
         except asyncio.TimeoutError:
             logger.warning(f"Browser task timed out after {timeout_seconds}s")
-            return {**self._build_error_result(f"Task timed out after {timeout_seconds} seconds"), "usage": None}
+            return {
+                **self._build_error_result(f"Task timed out after {timeout_seconds} seconds"),
+                "error_type": "timeout",
+                "usage": None,
+            }
         except Exception as e:
-            logger.error(f"Browser task failed: {e}")
-            return {**self._build_error_result(f"Task failed: {str(e)}"), "usage": None}
+            # Categorize and log the error
+            error_type = self._categorize_error(e)
+            logger.error(f"Browser task failed ({error_type}): {e}")
+
+            # Emergency save for target-related errors
+            if error_type == "target_detachment":
+                await self._emergency_save_recording(managed, user, browser_profile_id, workflow_run_id)
+
+            return {
+                **self._build_error_result(f"Task failed: {str(e)}"),
+                "error_type": error_type,
+                "usage": None,
+            }
         finally:
             await self._save_recording_if_enabled(managed, user, browser_profile_id, workflow_run_id)
             final_state = await pool.release_session(managed.id)

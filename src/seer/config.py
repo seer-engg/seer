@@ -465,6 +465,10 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         default="https://cdn.jsdelivr.net/npm/rrweb@2.0.0-alpha.13/dist/record/rrweb-record.min.js",
         description="CDN URL for rrweb recording script",
     )
+    browser_recording_flush_interval_seconds: int = Field(
+        default=45,
+        description="Interval between event flushes to DB (seconds). Set to 0 to disable chunked recording.",
+    )
 
     # Browser Stealth
     browser_stealth_enabled: bool = Field(

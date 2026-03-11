@@ -1886,3 +1886,311 @@ class TestModelAwareExecution:
         agent_call = mock_agent_cls.call_args
         assert agent_call.kwargs.get("tools") is None
         assert agent_call.kwargs.get("output_model_schema") is None
+
+
+# ==============================================================================
+# TARGET DETACHMENT RECOVERY TESTS
+# ==============================================================================
+#
+# Tests for CDP target detachment handling - a key durability feature that
+# prevents total task failure when browser tabs disconnect temporarily.
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+class TestCategorizeError:
+    """Test error categorization for metrics and handling."""
+
+    def test_categorizes_target_detachment(self, browser_service):
+        """Test that 'no valid agent focus' errors are categorized correctly."""
+        error = ValueError("No valid agent focus available - target may have detached")
+        assert browser_service._categorize_error(error) == "target_detachment"
+
+    def test_categorizes_cdp_error(self, browser_service):
+        """Test that CDP-related errors are categorized."""
+        error = RuntimeError("CDP connection lost to Chrome instance")
+        assert browser_service._categorize_error(error) == "cdp_error"
+
+    def test_categorizes_timeout(self, browser_service):
+        """Test that timeout errors are categorized."""
+        error = asyncio.TimeoutError("Operation timed out after 30s")
+        # TimeoutError doesn't have a message, test with generic Exception
+        error_with_msg = Exception("timeout waiting for response")
+        assert browser_service._categorize_error(error_with_msg) == "timeout"
+
+    def test_categorizes_connection_error(self, browser_service):
+        """Test that connection errors are categorized."""
+        error = ConnectionError("Failed to establish connection to browser")
+        assert browser_service._categorize_error(error) == "connection_error"
+
+    def test_categorizes_unknown_error(self, browser_service):
+        """Test that unrecognized errors are categorized as unknown."""
+        error = ValueError("Something unexpected happened")
+        assert browser_service._categorize_error(error) == "unknown"
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+class TestTryRecoverFocus:
+    """Test browser focus recovery mechanism."""
+
+    async def test_recover_focus_succeeds_when_page_accessible(self, browser_service):
+        """Test that recovery succeeds when browser page is accessible."""
+        mock_session = MagicMock()
+        mock_page = MagicMock()
+        mock_session.must_get_current_page = AsyncMock(return_value=mock_page)
+
+        result = await browser_service._try_recover_focus(mock_session)
+
+        assert result is True
+        mock_session.must_get_current_page.assert_called_once()
+
+    async def test_recover_focus_fails_on_exception(self, browser_service):
+        """Test that recovery returns False when page access fails."""
+        mock_session = MagicMock()
+        mock_session.must_get_current_page = AsyncMock(
+            side_effect=RuntimeError("Target closed")
+        )
+
+        result = await browser_service._try_recover_focus(mock_session)
+
+        assert result is False
+
+    async def test_recover_focus_fails_on_timeout(self, browser_service):
+        """Test that recovery returns False when page access times out."""
+        mock_session = MagicMock()
+
+        async def slow_get_page():
+            await asyncio.sleep(10)  # Longer than timeout
+            return MagicMock()
+
+        mock_session.must_get_current_page = slow_get_page
+
+        result = await browser_service._try_recover_focus(mock_session)
+
+        assert result is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+class TestRunBrowserAgentWithRecovery:
+    """Test retry logic for transient target detachment."""
+
+    async def test_succeeds_on_first_attempt(self, browser_service):
+        """Test that successful execution returns immediately."""
+        mock_history = MagicMock()
+        mock_session = MagicMock()
+
+        with patch.object(browser_service, "_run_browser_agent") as mock_run:
+            mock_run.return_value = (mock_history, None)
+
+            result = await browser_service._run_browser_agent_with_recovery(
+                task="Click button",
+                inputs={},
+                extraction_schema=None,
+                max_steps=10,
+                timeout_seconds=60,
+                browser_session=mock_session,
+            )
+
+            assert result == (mock_history, None)
+            assert mock_run.call_count == 1
+
+    async def test_retries_on_focus_error(self, browser_service):
+        """Test that focus errors trigger retry with recovery."""
+        from seer.services.browser.exceptions import TargetDetachmentError
+
+        mock_history = MagicMock()
+        mock_session = MagicMock()
+        mock_managed = MagicMock()
+        mock_managed.id = "test-session"
+
+        call_count = 0
+
+        async def mock_run(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ValueError("No valid agent focus available")
+            return (mock_history, None)
+
+        with patch.object(browser_service, "_run_browser_agent", side_effect=mock_run):
+            with patch.object(browser_service, "_try_recover_focus", return_value=True):
+                result = await browser_service._run_browser_agent_with_recovery(
+                    task="Click button",
+                    inputs={},
+                    extraction_schema=None,
+                    max_steps=10,
+                    timeout_seconds=60,
+                    browser_session=mock_session,
+                    managed_session=mock_managed,
+                )
+
+                assert result == (mock_history, None)
+                assert call_count == 2
+
+    async def test_raises_after_max_attempts(self, browser_service):
+        """Test that TargetDetachmentError is raised after max retry attempts."""
+        from seer.services.browser.exceptions import TargetDetachmentError
+
+        mock_session = MagicMock()
+        mock_managed = MagicMock()
+        mock_managed.id = "test-session"
+
+        with patch.object(browser_service, "_run_browser_agent") as mock_run:
+            mock_run.side_effect = ValueError("No valid agent focus available")
+            with patch.object(browser_service, "_try_recover_focus", return_value=True):
+                with pytest.raises(TargetDetachmentError) as exc_info:
+                    await browser_service._run_browser_agent_with_recovery(
+                        task="Click button",
+                        inputs={},
+                        extraction_schema=None,
+                        max_steps=10,
+                        timeout_seconds=60,
+                        browser_session=mock_session,
+                        managed_session=mock_managed,
+                    )
+
+                assert "test-session" in str(exc_info.value)
+                assert mock_run.call_count == 3  # MAX_ATTEMPTS
+
+    async def test_raises_immediately_on_recovery_failure(self, browser_service):
+        """Test that TargetDetachmentError is raised if recovery fails."""
+        from seer.services.browser.exceptions import TargetDetachmentError
+
+        mock_session = MagicMock()
+        mock_managed = MagicMock()
+        mock_managed.id = "test-session"
+
+        with patch.object(browser_service, "_run_browser_agent") as mock_run:
+            mock_run.side_effect = ValueError("No valid agent focus available")
+            with patch.object(browser_service, "_try_recover_focus", return_value=False):
+                with pytest.raises(TargetDetachmentError):
+                    await browser_service._run_browser_agent_with_recovery(
+                        task="Click button",
+                        inputs={},
+                        extraction_schema=None,
+                        max_steps=10,
+                        timeout_seconds=60,
+                        browser_session=mock_session,
+                        managed_session=mock_managed,
+                    )
+
+                # Should fail after first attempt since recovery failed
+                assert mock_run.call_count == 1
+
+    async def test_reraises_non_focus_errors(self, browser_service):
+        """Test that non-focus errors are re-raised immediately."""
+        mock_session = MagicMock()
+
+        with patch.object(browser_service, "_run_browser_agent") as mock_run:
+            mock_run.side_effect = ValueError("Some other error")
+
+            with pytest.raises(ValueError) as exc_info:
+                await browser_service._run_browser_agent_with_recovery(
+                    task="Click button",
+                    inputs={},
+                    extraction_schema=None,
+                    max_steps=10,
+                    timeout_seconds=60,
+                    browser_session=mock_session,
+                )
+
+            assert "Some other error" in str(exc_info.value)
+            assert mock_run.call_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+class TestEmergencySaveRecording:
+    """Test emergency recording save on session failure."""
+
+    @patch("seer.services.browser.browser_service.RecordingService")
+    @patch("seer.services.browser.browser_service.config")
+    async def test_saves_recording_on_failure(
+        self, mock_config, mock_recording_service_cls, browser_service, mock_user
+    ):
+        """Test that emergency save attempts to save recording data."""
+        mock_config.browser_recording_enabled = True
+
+        mock_recorder = MagicMock()
+        mock_recorder.save_recording = AsyncMock(return_value="recording-123")
+        mock_recording_service_cls.get_instance = AsyncMock(return_value=mock_recorder)
+
+        mock_managed = MagicMock()
+        mock_managed.id = "session-123"
+        mock_managed.recording_id = "rec-123"
+        mock_managed.start_url = "https://example.com"
+
+        result = await browser_service._emergency_save_recording(
+            mock_managed, mock_user, "profile-123", "run-456"
+        )
+
+        assert result is True
+        mock_recorder.save_recording.assert_called_once_with(
+            "session-123",
+            mock_user,
+            profile_id="profile-123",
+            workflow_run_id="run-456",
+            session_type="workflow",
+            start_url="https://example.com",
+        )
+
+    @patch("seer.services.browser.browser_service.config")
+    async def test_returns_false_when_no_recording_id(
+        self, mock_config, browser_service, mock_user
+    ):
+        """Test that emergency save returns False when no recording was started."""
+        mock_config.browser_recording_enabled = True
+
+        mock_managed = MagicMock()
+        mock_managed.id = "session-123"
+        mock_managed.recording_id = None  # No recording
+
+        result = await browser_service._emergency_save_recording(
+            mock_managed, mock_user, "profile-123", "run-456"
+        )
+
+        assert result is False
+
+    @patch("seer.services.browser.browser_service.config")
+    async def test_returns_false_when_recording_disabled(
+        self, mock_config, browser_service, mock_user
+    ):
+        """Test that emergency save returns False when recording is disabled."""
+        mock_config.browser_recording_enabled = False
+
+        mock_managed = MagicMock()
+        mock_managed.id = "session-123"
+        mock_managed.recording_id = "rec-123"
+
+        result = await browser_service._emergency_save_recording(
+            mock_managed, mock_user, "profile-123", "run-456"
+        )
+
+        assert result is False
+
+    @patch("seer.services.browser.browser_service.RecordingService")
+    @patch("seer.services.browser.browser_service.config")
+    async def test_handles_save_error_gracefully(
+        self, mock_config, mock_recording_service_cls, browser_service, mock_user
+    ):
+        """Test that emergency save handles errors without raising."""
+        mock_config.browser_recording_enabled = True
+
+        mock_recorder = MagicMock()
+        mock_recorder.save_recording = AsyncMock(
+            side_effect=RuntimeError("Database error")
+        )
+        mock_recording_service_cls.get_instance = AsyncMock(return_value=mock_recorder)
+
+        mock_managed = MagicMock()
+        mock_managed.id = "session-123"
+        mock_managed.recording_id = "rec-123"
+        mock_managed.start_url = "https://example.com"
+
+        # Should not raise
+        result = await browser_service._emergency_save_recording(
+            mock_managed, mock_user, "profile-123", "run-456"
+        )
+
+        assert result is False

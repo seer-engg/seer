@@ -14,7 +14,7 @@ from seer.database.models import (
 from seer.database.models_oauth import OAuthConnection
 from seer.database.models_integrations import IntegrationResource, IntegrationSecret
 from seer.database.models_browser import BrowserProfile
-from seer.database.models_browser_recording import SessionRecording
+from seer.database.models_browser_recording import SessionRecording, SessionRecordingChunk
 from seer.database.workflow_models import (
     GlobalVariable,
     TriggerEvent,
@@ -125,6 +125,7 @@ __all__ = [
     "BrowserProfile",
     # Session recordings
     "SessionRecording",
+    "SessionRecordingChunk",
     # Workflow domain
     "Workflow",
     "WorkflowVersion",
