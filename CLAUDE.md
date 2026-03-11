@@ -29,6 +29,7 @@
 - **Run Scripts:** Always use `uv run <script_name>` (e.g., `uv run main.py`)
 - **Install Packages:** Always use `uv add <package>` (NEVER use `pip install`)
 - **Run Tests:** `uv run pytest`
+- **Migrations:** NEVER create migration files manually. Always use `uv run aerich migrate --name <name>`. Manual migrations lack MODELS_STATE and will fail CI.
 - **Lockfile:** Rely on `uv.lock`. Do not create requirements.txt unless explicitly asked.
 
 ## Environment
