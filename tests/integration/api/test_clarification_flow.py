@@ -13,6 +13,12 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 
+async def _empty_sse(*args, **kwargs):
+    """Async generator stub that yields nothing — replaces stream_events_sse in tests."""
+    return
+    yield  # noqa: unreachable — makes this an async generator
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 class TestClarificationFlow:
@@ -93,8 +99,12 @@ class TestClarificationFlow:
             return mock_task_result
 
         with patch('seer.api.agents.workflow.router.get_checkpointer') as mock_get_checkpointer, \
-             patch('seer.worker.tasks.chat.chat_execution_task') as mock_chat_task:
+             patch('seer.worker.tasks.chat.chat_execution_task') as mock_chat_task, \
+             patch('seer.api.agents.workflow.router.get_stream_watermark', new_callable=AsyncMock, return_value="0"), \
+             patch('seer.agents.nexus.stream_publisher.StreamPublisher') as mock_publisher_cls, \
+             patch('seer.api.agents.workflow.router.stream_events_sse', new=_empty_sse):
 
+            mock_publisher_cls.return_value = AsyncMock()
             mock_get_checkpointer.return_value = AsyncMock()
             mock_chat_task.kiq = AsyncMock(side_effect=capture_kiq)
 
@@ -107,11 +117,8 @@ class TestClarificationFlow:
             )
 
             assert response.status_code == 200
-            data = response.json()
-
-            # Verify async response
-            assert data["execution_status"] == "queued"
-            session_id = data["session_id"]
+            # session_id comes from captured kiq args — response is SSE, not JSON
+            session_id = captured_task_args["session_id"]
 
         # Verify task was enqueued with correct args
         assert "session_id" in captured_task_args
@@ -202,8 +209,12 @@ class TestClarificationFlow:
             return mock_task_result
 
         with patch('seer.api.agents.workflow.router.get_checkpointer', return_value=mock_checkpointer), \
-             patch('seer.worker.tasks.chat.chat_resume_task') as mock_resume_task:
+             patch('seer.worker.tasks.chat.chat_resume_task') as mock_resume_task, \
+             patch('seer.api.agents.workflow.router.get_stream_watermark', new_callable=AsyncMock, return_value="0"), \
+             patch('seer.agents.nexus.stream_publisher.StreamPublisher') as mock_publisher_cls, \
+             patch('seer.api.agents.workflow.router.stream_events_sse', new=_empty_sse):
 
+            mock_publisher_cls.return_value = AsyncMock()
             mock_resume_task.kiq = AsyncMock(side_effect=capture_kiq)
 
             # Resume with answers (batch format)
@@ -224,8 +235,6 @@ class TestClarificationFlow:
             )
 
             assert response.status_code == 200
-            data = response.json()
-            assert data["execution_status"] == "queued"
 
         # Verify task was enqueued
         assert "session_id" in captured_task_args
@@ -438,8 +447,12 @@ class TestClarificationFlow:
             return mock_task_result
 
         with patch('seer.api.agents.workflow.router.get_checkpointer', return_value=mock_checkpointer), \
-             patch('seer.worker.tasks.chat.chat_resume_task') as mock_resume_task:
+             patch('seer.worker.tasks.chat.chat_resume_task') as mock_resume_task, \
+             patch('seer.api.agents.workflow.router.get_stream_watermark', new_callable=AsyncMock, return_value="0"), \
+             patch('seer.agents.nexus.stream_publisher.StreamPublisher') as mock_publisher_cls, \
+             patch('seer.api.agents.workflow.router.stream_events_sse', new=_empty_sse):
 
+            mock_publisher_cls.return_value = AsyncMock()
             mock_resume_task.kiq = AsyncMock(side_effect=capture_kiq)
 
             # Resume with wildcard and custom input (batch format)
@@ -460,8 +473,6 @@ class TestClarificationFlow:
             )
 
             assert response.status_code == 200
-            data = response.json()
-            assert data["execution_status"] == "queued"
 
         # Simulate background task execution
         with patch('seer.worker.tasks.chat.create_nexus_chat_agent', return_value=mock_agent), \
@@ -527,8 +538,12 @@ class TestClarificationFlow:
             return mock_task_result
 
         with patch('seer.api.agents.workflow.router.get_checkpointer') as mock_get_checkpointer, \
-             patch('seer.worker.tasks.chat.chat_execution_task') as mock_chat_task:
+             patch('seer.worker.tasks.chat.chat_execution_task') as mock_chat_task, \
+             patch('seer.api.agents.workflow.router.get_stream_watermark', new_callable=AsyncMock, return_value="0"), \
+             patch('seer.agents.nexus.stream_publisher.StreamPublisher') as mock_publisher_cls, \
+             patch('seer.api.agents.workflow.router.stream_events_sse', new=_empty_sse):
 
+            mock_publisher_cls.return_value = AsyncMock()
             mock_get_checkpointer.return_value = AsyncMock()
             mock_chat_task.kiq = AsyncMock(side_effect=capture_kiq)
 
@@ -541,8 +556,7 @@ class TestClarificationFlow:
             )
 
             assert response.status_code == 200
-            data = response.json()
-            session_id = data["session_id"]
+            session_id = captured_task_args["session_id"]
 
         # Simulate background task execution
         with patch('seer.worker.tasks.chat.create_nexus_chat_agent', return_value=mock_agent), \
@@ -627,8 +641,12 @@ class TestClarificationFlow:
             return mock_task_result
 
         with patch('seer.api.agents.workflow.router.get_checkpointer') as mock_get_checkpointer, \
-             patch('seer.worker.tasks.chat.chat_execution_task') as mock_chat_task:
+             patch('seer.worker.tasks.chat.chat_execution_task') as mock_chat_task, \
+             patch('seer.api.agents.workflow.router.get_stream_watermark', new_callable=AsyncMock, return_value="0"), \
+             patch('seer.agents.nexus.stream_publisher.StreamPublisher') as mock_publisher_cls, \
+             patch('seer.api.agents.workflow.router.stream_events_sse', new=_empty_sse):
 
+            mock_publisher_cls.return_value = AsyncMock()
             mock_get_checkpointer.return_value = AsyncMock()
             mock_chat_task.kiq = AsyncMock(side_effect=capture_kiq)
 
@@ -640,7 +658,7 @@ class TestClarificationFlow:
             )
 
             assert response.status_code == 200
-            session_id = response.json()["session_id"]
+            session_id = captured_task_args["session_id"]
 
         # Simulate task execution
         with patch('seer.worker.tasks.chat.create_nexus_chat_agent', return_value=mock_agent), \
@@ -688,8 +706,12 @@ class TestClarificationFlow:
             return mock_task_result
 
         with patch('seer.api.agents.workflow.router.get_checkpointer', return_value=mock_checkpointer), \
-             patch('seer.worker.tasks.chat.chat_resume_task') as mock_resume_task:
+             patch('seer.worker.tasks.chat.chat_resume_task') as mock_resume_task, \
+             patch('seer.api.agents.workflow.router.get_stream_watermark', new_callable=AsyncMock, return_value="0"), \
+             patch('seer.agents.nexus.stream_publisher.StreamPublisher') as mock_publisher_cls_resume, \
+             patch('seer.api.agents.workflow.router.stream_events_sse', new=_empty_sse):
 
+            mock_publisher_cls_resume.return_value = AsyncMock()
             mock_resume_task.kiq = AsyncMock(side_effect=capture_resume_kiq)
 
             response = await client.post(
