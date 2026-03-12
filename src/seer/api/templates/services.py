@@ -13,6 +13,7 @@ from seer.api.workflows import models as workflow_models
 from seer.api.workflows.services.lifecycle import create_workflow as create_workflow_from_spec
 from seer.database import (
     OAuthConnection,
+    Organization,
     User,
     WorkflowTemplate,
     TemplateCategory,
@@ -181,6 +182,7 @@ async def instantiate_template(
     user: User,
     slug: str,
     payload: api_models.TemplateInstantiateRequest,
+    organization: Optional[Organization] = None,
 ) -> api_models.TemplateInstantiateResponse:
     """Create a workflow from a template."""
     template = await WorkflowTemplate.filter(slug=slug, is_published=True).first()
@@ -206,7 +208,7 @@ async def instantiate_template(
         spec=spec,
     )
 
-    workflow_response = await create_workflow_from_spec(user, workflow_request)
+    workflow_response = await create_workflow_from_spec(user, workflow_request, organization=organization)
 
     # Increment usage count
     await WorkflowTemplate.filter(id=template.id).update(usage_count=template.usage_count + 1)

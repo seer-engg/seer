@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-
+import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request, status
@@ -48,18 +48,7 @@ async def get_trigger_catalog(request: Request):
 
 @router.get("/triggers/{trigger_key}/accounts", response_model=api_models.TriggerAccountsResponse)
 async def get_trigger_accounts(request: Request, trigger_key: str):
-    """
-    Get available OAuth accounts for a specific trigger.
-
-    Used by frontend to let users select which account to use
-    when they have multiple accounts for the same provider.
-
-    Args:
-        trigger_key: Trigger key (e.g., "poll.gmail.email_received")
-
-    Returns:
-        TriggerAccountsResponse with list of accounts and whether selection is required
-    """
+    """Get available OAuth accounts for a specific trigger."""
     user = _require_user(request)
     return await services.get_trigger_accounts(user, trigger_key)
 
@@ -71,14 +60,7 @@ async def list_trigger_subscriptions(
     trigger_key: str | None = Query(None),
     search: str | None = Query(None),
 ):
-    """
-    List all trigger subscriptions with extended info for management view.
-
-    Query params:
-    - workflow_id: Filter by specific workflow
-    - trigger_key: Filter by trigger type (e.g., 'webhook.generic', 'poll.gmail.email_received')
-    - search: Search by title
-    """
+    """List all trigger subscriptions with optional filtering."""
     user = _require_user(request)
     return await services.list_trigger_subscriptions_extended(
         user, workflow_id=workflow_id, trigger_key=trigger_key, search=search
@@ -337,11 +319,29 @@ async def publish_workflow(
     return await services.publish_workflow(user, workflow_id, payload, organization=org, membership=membership)
 
 
+@router.patch("/workflows/{workflow_id}/published", response_model=api_models.WorkflowSummary)
+async def toggle_workflow_published(
+    request: Request,
+    workflow_id: str,
+    payload: api_models.WorkflowPublishedToggleRequest,
+):
+    """Toggle whether a workflow is published as a template."""
+    user = _require_user(request)
+    org, membership = _get_org_context(request)
+    return await services.toggle_workflow_published(user, workflow_id, payload.is_published, organization=org, membership=membership)
+
+
 @router.delete("/workflows/{workflow_id}", status_code=status.HTTP_200_OK)
 async def delete_workflow(request: Request, workflow_id: str):
     user = _require_user(request)
     org, membership = _get_org_context(request)
-    await services.delete_workflow(user, workflow_id, organization=org, membership=membership)
+    try:
+        await asyncio.wait_for(
+            services.delete_workflow(user, workflow_id, organization=org, membership=membership),
+            timeout=30.0,
+        )
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="Delete operation timed out. The workflow may have active runs.") from exc
     return {"ok": True}
 
 
