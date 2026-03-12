@@ -5,8 +5,9 @@ RUN_IN_TRANSACTION = True
 
 async def upgrade(db: BaseDBAsyncClient) -> str:
     return """
-        ALTER TABLE "workflow_templates" ADD "visibility" VARCHAR(10) NOT NULL DEFAULT 'private';
-        ALTER TABLE "workflow_templates" ADD "organization_id" INT;
+        ALTER TABLE "workflow_templates" ADD COLUMN IF NOT EXISTS "visibility" VARCHAR(10) NOT NULL DEFAULT 'private';
+        ALTER TABLE "workflow_templates" ADD COLUMN IF NOT EXISTS "organization_id" INT;
+        ALTER TABLE "workflow_templates" DROP CONSTRAINT IF EXISTS "fk_workflow_organiza_5d3a90cc";
         ALTER TABLE "workflow_templates" ADD CONSTRAINT "fk_workflow_organiza_5d3a90cc" FOREIGN KEY ("organization_id") REFERENCES "organizations" ("id") ON DELETE SET NULL;
         COMMENT ON COLUMN "workflow_templates"."category" IS 'MARKETING: marketing
 CUSTOMER_SUPPORT: customer_support
