@@ -81,3 +81,4 @@ notebooks/
 .env.thread
 .env.docker
 .worktrees/
+.worktrees/
