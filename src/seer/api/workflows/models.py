@@ -177,6 +177,10 @@ class WorkflowPublishRequest(BaseModel):
     pass
 
 
+class WorkflowPublishedToggleRequest(BaseModel):
+    is_published: bool
+
+
 class WorkflowVersionRestoreRequest(BaseModel):
     pass
 
@@ -204,6 +208,7 @@ class WorkflowSummary(BaseModel):
     name: str
     created_at: datetime
     updated_at: datetime
+    is_published: bool = False
 
 
 class WorkflowResponse(WorkflowSummary):

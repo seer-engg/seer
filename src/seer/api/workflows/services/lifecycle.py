@@ -25,7 +25,7 @@ from seer.api.workflows.services.shared import (
     get_published_version,
     validate_workflow_spec,
 )
-from seer.database.organization_models import OrganizationRole
+from seer.database.organization_models import OrganizationRole, OrganizationType
 from seer.database import (
     Organization,
     OrganizationMembership,
@@ -37,6 +37,7 @@ from seer.database import (
     parse_workflow_public_id,
 )
 from seer.core.schema.models import WorkflowSpec
+from seer.database.workflow_models import TriggerSubscription, WorkflowRun, WorkflowRunStatus
 
 # ===== Helper Functions =====
 
@@ -53,7 +54,6 @@ async def _enrich_trigger_specs_with_subscriptions(workflow: Workflow, spec: Wor
 
     # Import here to avoid circular dependency
     # pylint: disable=import-outside-toplevel
-    from seer.database import TriggerSubscription
     from seer.api.workflows.services.triggers import (
         _build_webhook_url,
         _build_form_url,
@@ -109,7 +109,22 @@ async def _workflow_summary(workflow: Workflow, draft_version: Optional[Workflow
         name=workflow.name,
         created_at=workflow.created_at,
         updated_at=updated_at,
+        is_published=workflow.is_published,
     )
+
+
+async def toggle_workflow_published(
+    user: User,
+    workflow_id: str,
+    is_published: bool,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+) -> api_models.WorkflowSummary:
+    """Toggle the is_published flag on a workflow."""
+    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=True)
+    workflow.is_published = is_published
+    await workflow.save(update_fields=["is_published", "updated_at"])
+    return await _workflow_summary(workflow)
 
 
 def _serialize_version_list_item(
@@ -214,6 +229,10 @@ async def create_workflow(
         The created workflow response
     """
     # Workflow limit check moved to UsageLimitMiddleware
+    # Fallback to user's personal org if no org context provided (e.g. MCP-created workflows)
+    if not organization:
+        organization = await Organization.get_or_none(owner=user, type=OrganizationType.PERSONAL)
+
     spec_dict = _spec_to_dict(payload.spec)
     workflow = await Workflow.create(
         user=user,
@@ -536,6 +555,22 @@ async def delete_workflow(
     membership: Optional[OrganizationMembership] = None,
 ) -> None:
     workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=True)
+
+    # Cancel active runs to release DB locks
+    active_runs = await WorkflowRun.filter(
+        workflow=workflow,
+        status__in=[WorkflowRunStatus.RUNNING, WorkflowRunStatus.QUEUED, WorkflowRunStatus.INTERRUPTED],
+    )
+    for run in active_runs:
+        run.status = WorkflowRunStatus.CANCELLED
+        await run.save(update_fields=["status"])
+
+    # Nullify FK on workflow_runs (constraint dropped in migration 6, but column remains)
+    await WorkflowRun.filter(workflow=workflow).update(workflow_id=None)
+
+    # Delete trigger subscriptions before workflow
+    await TriggerSubscription.filter(workflow=workflow).delete()
+
     await workflow.delete()
 
 

@@ -9,7 +9,8 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from seer.api.templates import models as api_models
 from seer.api.templates import services
 from seer.api.templates import admin_services
-from seer.database import User
+from seer.api.core.middleware.organization import get_organization
+from seer.database import Organization, User
 
 router = APIRouter(prefix="/v1", tags=["templates"])
 
@@ -87,7 +88,12 @@ async def instantiate_template(
 ):
     """Create a workflow from a template."""
     user = _require_user(request)
-    return await services.instantiate_template(user, slug, payload)
+    org: Optional[Organization] = None
+    try:
+        org = get_organization(request)
+    except Exception:  # pylint: disable=broad-exception-caught  # Reason: fallback to None if org context not available
+        pass
+    return await services.instantiate_template(user, slug, payload, organization=org)
 
 
 # ===== Admin Endpoints =====
