@@ -6,6 +6,7 @@ import copy
 import re
 from typing import Any, Dict, List, Optional
 
+import pytz
 from fastapi import HTTPException, status
 
 from seer.api.templates import models as api_models
@@ -195,6 +196,9 @@ async def instantiate_template(
     # Resolve config placeholders
     spec = _resolve_placeholders(spec, payload.config)
 
+    # Validate resolved timezones in trigger configs
+    _validate_resolved_timezones(spec)
+
     # Map provider connections to triggers
     if payload.provider_connections:
         spec = _apply_provider_connections(spec, payload.provider_connections)
@@ -316,6 +320,25 @@ def _to_summary(template: WorkflowTemplate) -> api_models.TemplateSummary:
 def _to_detail(template: WorkflowTemplate) -> api_models.TemplateDetailResponse:
     """Convert a template to a detail response."""
     return api_models.TemplateDetailResponse(**_build_template_fields(template))
+
+
+def _validate_resolved_timezones(spec: Dict[str, Any]) -> None:
+    """Validate that timezone values in trigger provider_configs are valid IANA names."""
+    for trigger in spec.get("triggers", []):
+        provider_config = trigger.get("provider_config", {})
+        if not provider_config or "timezone" not in provider_config:
+            continue
+        tz_val = provider_config["timezone"]
+        if not isinstance(tz_val, str):
+            continue
+        tz_val = tz_val.strip()
+        try:
+            pytz.timezone(tz_val)
+        except pytz.exceptions.UnknownTimeZoneError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid timezone '{provider_config['timezone']}'. Use IANA timezone names (e.g., America/Chicago, UTC)",
+            ) from exc
 
 
 def _resolve_placeholders(spec: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:

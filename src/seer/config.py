@@ -137,7 +137,7 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
 
 
 
-    default_llm_model: str = Field(default="openai/gpt-oss-120b", description="Default LLM model")
+    default_llm_model: str = Field(default="z-ai/glm-5", description="Default LLM model")
 
     # Taskiq / Valkey configuration
     redis_url: str = Field(

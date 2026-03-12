@@ -274,6 +274,71 @@ class TestValidateProviderConfig:
 
         mock_raise.assert_called_once()
 
+    def test_validate_provider_config_rejects_invalid_timezone(self):
+        """Test that invalid timezone abbreviations like 'CST' are rejected."""
+        from seer.api.workflows.services.triggers import _validate_provider_config
+
+        mock_definition = MagicMock()
+        mock_definition.schemas.config = {
+            "type": "object",
+            "properties": {
+                "cron_expression": {"type": "string"},
+                "timezone": {"type": "string"}
+            },
+        }
+
+        with patch("seer.api.workflows.services.triggers._raise_problem") as mock_raise:
+            mock_raise.side_effect = Exception("Validation failed")
+
+            with pytest.raises(Exception, match="Validation failed"):
+                _validate_provider_config(
+                    {"cron_expression": "0 * * * *", "timezone": "CST"},
+                    mock_definition,
+                )
+
+        mock_raise.assert_called_once()
+        call_kwargs = mock_raise.call_args[1]
+        assert call_kwargs["status"] == 400
+        assert "Invalid timezone" in call_kwargs["detail"]
+
+    def test_validate_provider_config_accepts_valid_timezone(self):
+        """Test that valid IANA timezone names are accepted."""
+        from seer.api.workflows.services.triggers import _validate_provider_config
+
+        mock_definition = MagicMock()
+        mock_definition.schemas.config = {
+            "type": "object",
+            "properties": {
+                "cron_expression": {"type": "string"},
+                "timezone": {"type": "string"}
+            },
+        }
+
+        # Should not raise
+        _validate_provider_config(
+            {"cron_expression": "0 * * * *", "timezone": "America/New_York"},
+            mock_definition,
+        )
+
+    def test_validate_provider_config_strips_timezone_whitespace(self):
+        """Test that trailing whitespace in timezone is handled."""
+        from seer.api.workflows.services.triggers import _validate_provider_config
+
+        mock_definition = MagicMock()
+        mock_definition.schemas.config = {
+            "type": "object",
+            "properties": {
+                "cron_expression": {"type": "string"},
+                "timezone": {"type": "string"}
+            },
+        }
+
+        # 'America/Chicago ' with trailing space should pass after strip
+        _validate_provider_config(
+            {"cron_expression": "0 * * * *", "timezone": "America/Chicago "},
+            mock_definition,
+        )
+
     def test_validate_provider_config_excludes_provider_connection_id(self):
         """Test that provider_connection_id is excluded from schema validation.
 

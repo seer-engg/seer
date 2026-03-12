@@ -12,10 +12,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from fastapi import HTTPException
+
 from seer.api.templates.services import (
     extract_config_fields,
     _resolve_placeholders,
     _apply_provider_connections,
+    _validate_resolved_timezones,
 )
 
 
@@ -468,3 +471,48 @@ async def test_check_requirements_builds_status():
         slack_status = next(i for i in result.integrations if i.provider == "slack")
         assert slack_status.connected is False
         assert slack_status.connection_id is None
+
+
+# =============================================================================
+# Timezone Validation Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+def test_validate_resolved_timezones_valid_iana():
+    """Valid IANA timezone passes validation."""
+    spec = {"triggers": [{"provider_config": {"timezone": "America/Chicago"}}]}
+    _validate_resolved_timezones(spec)  # should not raise
+
+
+@pytest.mark.unit
+def test_validate_resolved_timezones_abbreviation_rejected():
+    """Abbreviation like PST is rejected with 400."""
+    spec = {"triggers": [{"provider_config": {"timezone": "PST"}}]}
+    with pytest.raises(HTTPException) as exc_info:
+        _validate_resolved_timezones(spec)
+    assert exc_info.value.status_code == 400
+    assert "PST" in exc_info.value.detail
+
+
+@pytest.mark.unit
+def test_validate_resolved_timezones_whitespace_stripped():
+    """Trailing whitespace is stripped before validation — valid tz passes."""
+    spec = {"triggers": [{"provider_config": {"timezone": "UTC  "}}]}
+    _validate_resolved_timezones(spec)  # should not raise
+
+
+@pytest.mark.unit
+def test_validate_resolved_timezones_invalid_with_whitespace():
+    """Invalid tz with whitespace like 'CST ' is rejected."""
+    spec = {"triggers": [{"provider_config": {"timezone": "CST "}}]}
+    with pytest.raises(HTTPException) as exc_info:
+        _validate_resolved_timezones(spec)
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.unit
+def test_validate_resolved_timezones_no_triggers():
+    """Spec with no triggers passes validation."""
+    _validate_resolved_timezones({"triggers": []})
+    _validate_resolved_timezones({})  # no triggers key at all
