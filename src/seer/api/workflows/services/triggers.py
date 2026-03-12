@@ -8,6 +8,8 @@ import secrets
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+import pytz
+
 from fastapi import HTTPException
 from jsonschema import Draft7Validator
 
@@ -160,6 +162,19 @@ def _validate_provider_config(provider_config: Dict[str, Any], definition) -> No
             detail=f"Provider config did not match schema: {detail}",
             status=400,
         )
+
+    # Validate timezone is a valid IANA name (not an abbreviation like CST)
+    if provider_config.get("timezone"):
+        tz_val = provider_config["timezone"].strip()
+        try:
+            pytz.timezone(tz_val)
+        except pytz.exceptions.UnknownTimeZoneError:
+            _raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Invalid trigger configuration",
+                detail=f"Invalid timezone: '{provider_config['timezone']}'. Use IANA timezone names (e.g., America/Chicago, UTC)",
+                status=400,
+            )
 
 
 def _is_expression(value: Any) -> bool:

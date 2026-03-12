@@ -36,7 +36,7 @@ class CronScheduleAdapter(PollAdapter):
         """Initialize cursor with the current time as the last execution."""
         config = ctx.subscription.provider_config or {}
         cron_expr = config.get("cron_expression")
-        tz_name = config.get("timezone", DEFAULT_TIMEZONE)
+        tz_name = config.get("timezone", DEFAULT_TIMEZONE).strip()
 
         if not cron_expr:
             raise PollAdapterError(
@@ -89,7 +89,7 @@ class CronScheduleAdapter(PollAdapter):
         """
         config = ctx.subscription.provider_config or {}
         cron_expr = cursor.get("cron_expression") or config.get("cron_expression")
-        tz_name = cursor.get("timezone") or config.get("timezone", DEFAULT_TIMEZONE)
+        tz_name = (cursor.get("timezone") or config.get("timezone", DEFAULT_TIMEZONE)).strip()
         last_exec_str = cursor.get("last_execution_utc")
 
         if not cron_expr:
