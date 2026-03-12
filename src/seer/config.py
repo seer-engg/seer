@@ -600,12 +600,12 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         description="Custom base URL for Mem0 LLM (auto-set for openrouter)"
     )
     mem0_embedder_provider: str = Field(
-        default="huggingface",
+        default="openai",
         description="Embedder provider for Mem0: 'openai', 'huggingface', or 'ollama'"
     )
     mem0_embedder_model: str = Field(
-        default="sentence-transformers/all-MiniLM-L6-v2",
-        description="Embedding model for Mem0 (default: free HuggingFace model)"
+        default="text-embedding-3-small",
+        description="Embedding model for Mem0 (default: OpenAI text-embedding-3-small)"
     )
 
     @classmethod
