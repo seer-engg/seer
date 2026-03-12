@@ -38,6 +38,7 @@ from seer.database import (
 )
 from seer.core.schema.models import WorkflowSpec
 from seer.database.workflow_models import TriggerSubscription, WorkflowRun, WorkflowRunStatus
+from seer.tools.base import list_tools as list_all_tools
 
 # ===== Helper Functions =====
 
@@ -95,6 +96,30 @@ async def _enrich_trigger_specs_with_subscriptions(workflow: Workflow, spec: Wor
             trigger.ui_meta["updated_at"] = subscription.updated_at.isoformat()
 
 
+def _extract_integrations(spec_dict: Optional[Dict[str, Any]]) -> list[str]:
+    """Extract deduplicated integration types from workflow spec tool nodes."""
+    if not spec_dict:
+        return []
+    nodes = spec_dict.get("nodes", [])
+    tool_names = {n.get("tool", "") for n in nodes if n.get("type") == "tool" and n.get("tool")}
+    if not tool_names:
+        return []
+    # Build lookup from registry
+    tool_integration_map = {}
+    for t in list_all_tools():
+        if t.name in tool_names:
+            integration = getattr(t, "integration_type", None) or t.name.split("_")[0]
+            tool_integration_map[t.name] = integration
+    # Fallback for tools not in registry
+    integrations = set()
+    for name in tool_names:
+        if name in tool_integration_map:
+            integrations.add(tool_integration_map[name])
+        else:
+            integrations.add(name.split("_")[0])
+    return sorted(integrations)
+
+
 async def _workflow_summary(workflow: Workflow, draft_version: Optional[WorkflowVersion] = None) -> api_models.WorkflowSummary:
     """
     Create a workflow summary.
@@ -103,6 +128,8 @@ async def _workflow_summary(workflow: Workflow, draft_version: Optional[Workflow
     Pass it explicitly when available to avoid extra queries.
     """
     updated_at = draft_version.updated_at if draft_version else workflow.updated_at
+    spec_dict = draft_version.spec if draft_version else None
+    integrations = _extract_integrations(spec_dict)
 
     return api_models.WorkflowSummary(
         workflow_id=workflow.workflow_id,
@@ -110,6 +137,8 @@ async def _workflow_summary(workflow: Workflow, draft_version: Optional[Workflow
         created_at=workflow.created_at,
         updated_at=updated_at,
         is_published=workflow.is_published,
+        is_active=workflow.is_active,
+        integrations=integrations,
     )
 
 
@@ -124,6 +153,20 @@ async def toggle_workflow_published(
     workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=True)
     workflow.is_published = is_published
     await workflow.save(update_fields=["is_published", "updated_at"])
+    return await _workflow_summary(workflow)
+
+
+async def toggle_workflow_active(
+    user: User,
+    workflow_id: str,
+    is_active: bool,
+    organization: Optional[Organization] = None,
+    membership: Optional[OrganizationMembership] = None,
+) -> api_models.WorkflowSummary:
+    """Toggle the is_active flag on a workflow."""
+    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=True)
+    workflow.is_active = is_active
+    await workflow.save(update_fields=["is_active", "updated_at"])
     return await _workflow_summary(workflow)
 
 
