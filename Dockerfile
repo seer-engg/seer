@@ -23,7 +23,7 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_SEER=0.1.4
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=0.1.4
 
 # Layer cache: install deps before copying source
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev
 
 # Copy source and reinstall (picks up the project itself)
