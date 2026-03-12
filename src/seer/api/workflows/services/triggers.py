@@ -52,6 +52,31 @@ from seer.services.integrations.auth.helpers import get_connection_display_name
 
 logger = get_logger(__name__)
 
+TIMEZONE_ABBREVIATION_MAP = {
+    "PST": "America/Los_Angeles",
+    "PDT": "America/Los_Angeles",
+    "EST": "America/New_York",
+    "EDT": "America/New_York",
+    "CST": "America/Chicago",
+    "CDT": "America/Chicago",
+    "MST": "America/Denver",
+    "MDT": "America/Denver",
+    "GMT": "Europe/London",
+    "BST": "Europe/London",
+    "IST": "Asia/Kolkata",
+    "JST": "Asia/Tokyo",
+    "CET": "Europe/Paris",
+    "CEST": "Europe/Paris",
+    "AEST": "Australia/Sydney",
+    "AEDT": "Australia/Sydney",
+    "NZST": "Pacific/Auckland",
+    "NZDT": "Pacific/Auckland",
+    "KST": "Asia/Seoul",
+    "SGT": "Asia/Singapore",
+    "HKT": "Asia/Hong_Kong",
+    "PKT": "Asia/Karachi",
+}
+
 
 class MultipleAccountsError(Exception):
     """Raised when multiple OAuth accounts exist and explicit selection is required."""
@@ -163,9 +188,11 @@ def _validate_provider_config(provider_config: Dict[str, Any], definition) -> No
             status=400,
         )
 
-    # Validate timezone is a valid IANA name (not an abbreviation like CST)
+    # Auto-correct timezone abbreviations to IANA names, then validate
     if provider_config.get("timezone"):
         tz_val = provider_config["timezone"].strip()
+        tz_val = TIMEZONE_ABBREVIATION_MAP.get(tz_val.upper(), tz_val)
+        provider_config["timezone"] = tz_val
         try:
             pytz.timezone(tz_val)
         except pytz.exceptions.UnknownTimeZoneError:
