@@ -331,6 +331,18 @@ async def toggle_workflow_published(
     return await services.toggle_workflow_published(user, workflow_id, payload.is_published, organization=org, membership=membership)
 
 
+@router.patch("/workflows/{workflow_id}/active", response_model=api_models.WorkflowSummary)
+async def toggle_workflow_active(
+    request: Request,
+    workflow_id: str,
+    payload: api_models.WorkflowActiveToggleRequest,
+):
+    """Toggle whether a workflow is active or paused."""
+    user = _require_user(request)
+    org, membership = _get_org_context(request)
+    return await services.toggle_workflow_active(user, workflow_id, payload.is_active, organization=org, membership=membership)
+
+
 @router.delete("/workflows/{workflow_id}", status_code=status.HTTP_200_OK)
 async def delete_workflow(request: Request, workflow_id: str):
     user = _require_user(request)
@@ -494,11 +506,6 @@ async def share_as_template(request: Request, workflow_id: str, payload: ShareAs
     return await share_workflow_as_template(user, workflow_id, payload)
 
 
-# ============================================================================
-# Global Variables Endpoints
-# ============================================================================
-
-
 @router.get("/variables", response_model=api_models.GlobalVariableListResponse)
 async def list_global_variables(request: Request):
     """List all global variables for the current organization."""
@@ -589,6 +596,3 @@ async def delete_global_variable(request: Request, variable_id: int):
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variable not found")
     return {"ok": True}
-
-
-__all__ = ["router"]

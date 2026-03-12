@@ -181,6 +181,10 @@ class WorkflowPublishedToggleRequest(BaseModel):
     is_published: bool
 
 
+class WorkflowActiveToggleRequest(BaseModel):
+    is_active: bool
+
+
 class WorkflowVersionRestoreRequest(BaseModel):
     pass
 
@@ -209,6 +213,8 @@ class WorkflowSummary(BaseModel):
     created_at: datetime
     updated_at: datetime
     is_published: bool = False
+    is_active: bool = True
+    integrations: List[str] = Field(default_factory=list)
 
 
 class WorkflowResponse(WorkflowSummary):
@@ -479,4 +485,5 @@ __all__ = [
     "WorkflowFileResponse", "WorkflowFileDownloadResponse", "WorkflowFileDeleteResponse",
     "GlobalVariableCreateRequest", "GlobalVariableUpdateRequest",
     "GlobalVariableItem", "GlobalVariableListResponse",
+    "WorkflowActiveToggleRequest",
 ]
