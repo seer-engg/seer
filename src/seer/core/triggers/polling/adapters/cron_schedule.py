@@ -18,7 +18,7 @@ from seer.logger import get_logger
 
 logger = get_logger(__name__)
 
-DEFAULT_TIMEZONE = "UTC"
+DEFAULT_TIMEZONE = "America/Chicago"
 
 
 class CronScheduleAdapter(PollAdapter):

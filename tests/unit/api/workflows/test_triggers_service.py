@@ -274,8 +274,42 @@ class TestValidateProviderConfig:
 
         mock_raise.assert_called_once()
 
-    def test_validate_provider_config_rejects_invalid_timezone(self):
-        """Test that invalid timezone abbreviations like 'CST' are rejected."""
+    def test_validate_provider_config_autocorrects_timezone_abbreviation(self):
+        """Test that timezone abbreviations like 'CST' are auto-corrected to IANA names."""
+        from seer.api.workflows.services.triggers import _validate_provider_config
+
+        mock_definition = MagicMock()
+        mock_definition.schemas.config = {
+            "type": "object",
+            "properties": {
+                "cron_expression": {"type": "string"},
+                "timezone": {"type": "string"}
+            },
+        }
+
+        config = {"cron_expression": "0 * * * *", "timezone": "CST"}
+        _validate_provider_config(config, mock_definition)
+        assert config["timezone"] == "America/Chicago"
+
+    def test_validate_provider_config_autocorrects_pst(self):
+        """Test that PST is auto-corrected to America/Los_Angeles."""
+        from seer.api.workflows.services.triggers import _validate_provider_config
+
+        mock_definition = MagicMock()
+        mock_definition.schemas.config = {
+            "type": "object",
+            "properties": {
+                "cron_expression": {"type": "string"},
+                "timezone": {"type": "string"}
+            },
+        }
+
+        config = {"cron_expression": "0 * * * *", "timezone": "PST"}
+        _validate_provider_config(config, mock_definition)
+        assert config["timezone"] == "America/Los_Angeles"
+
+    def test_validate_provider_config_rejects_unknown_timezone(self):
+        """Test that truly invalid timezone values are still rejected."""
         from seer.api.workflows.services.triggers import _validate_provider_config
 
         mock_definition = MagicMock()
@@ -292,14 +326,13 @@ class TestValidateProviderConfig:
 
             with pytest.raises(Exception, match="Validation failed"):
                 _validate_provider_config(
-                    {"cron_expression": "0 * * * *", "timezone": "CST"},
+                    {"cron_expression": "0 * * * *", "timezone": "NotATimezone"},
                     mock_definition,
                 )
 
         mock_raise.assert_called_once()
         call_kwargs = mock_raise.call_args[1]
         assert call_kwargs["status"] == 400
-        assert "Invalid timezone" in call_kwargs["detail"]
 
     def test_validate_provider_config_accepts_valid_timezone(self):
         """Test that valid IANA timezone names are accepted."""
@@ -364,6 +397,18 @@ class TestValidateProviderConfig:
             {"provider_connection_id": 1, "query": "is:unread"},
             mock_definition
         )
+
+    def test_timezone_enum_values_are_valid_pytz_timezones(self):
+        """Test that all timezone enum values in the schema are valid pytz timezones."""
+        import pytz
+        from seer.core.registry.trigger_registry import trigger_registry
+
+        definition = trigger_registry.maybe_get("schedule.cron")
+        assert definition is not None
+        schema = definition.schemas.config
+        tz_enum = schema["properties"]["timezone"]["enum"]
+        for tz_name in tz_enum:
+            pytz.timezone(tz_name)  # Raises if invalid
 
     def test_validate_provider_config_only_provider_connection_id_passes(self):
         """Test that provider_config with ONLY provider_connection_id passes validation.
