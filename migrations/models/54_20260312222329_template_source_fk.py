@@ -5,6 +5,12 @@ RUN_IN_TRANSACTION = True
 
 async def upgrade(db: BaseDBAsyncClient) -> str:
     return """
+        -- Clean up orphaned source_workflow_id references before adding FK constraint
+        UPDATE "workflow_templates"
+        SET "source_workflow_id" = NULL
+        WHERE "source_workflow_id" IS NOT NULL
+        AND "source_workflow_id" NOT IN (SELECT "id" FROM "workflows");
+
         ALTER TABLE "workflow_templates" ADD CONSTRAINT "fk_workflow_workflow_f0f21e22" FOREIGN KEY ("source_workflow_id") REFERENCES "workflows" ("id") ON DELETE SET NULL;"""
 
 
