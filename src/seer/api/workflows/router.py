@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-
+import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request, status
@@ -10,7 +10,12 @@ from tortoise.exceptions import IntegrityError
 from seer.api.core.middleware.organization import get_membership, get_organization
 from seer.api.workflows import models as api_models
 from seer.api.workflows import services
-from seer.api.workflows.services.share_template import ShareAsTemplateRequest, ShareAsTemplateResponse, share_workflow_as_template
+from seer.api.workflows.services.share_template import (
+    ShareAsTemplateRequest,
+    ShareAsTemplateResponse,
+    get_workflow_template_meta,
+    share_workflow_as_template,
+)
 from seer.database import Organization, OrganizationMembership, User
 from seer.database.workflow_models import GlobalVariable
 
@@ -48,18 +53,7 @@ async def get_trigger_catalog(request: Request):
 
 @router.get("/triggers/{trigger_key}/accounts", response_model=api_models.TriggerAccountsResponse)
 async def get_trigger_accounts(request: Request, trigger_key: str):
-    """
-    Get available OAuth accounts for a specific trigger.
-
-    Used by frontend to let users select which account to use
-    when they have multiple accounts for the same provider.
-
-    Args:
-        trigger_key: Trigger key (e.g., "poll.gmail.email_received")
-
-    Returns:
-        TriggerAccountsResponse with list of accounts and whether selection is required
-    """
+    """Get available OAuth accounts for a specific trigger."""
     user = _require_user(request)
     return await services.get_trigger_accounts(user, trigger_key)
 
@@ -71,14 +65,7 @@ async def list_trigger_subscriptions(
     trigger_key: str | None = Query(None),
     search: str | None = Query(None),
 ):
-    """
-    List all trigger subscriptions with extended info for management view.
-
-    Query params:
-    - workflow_id: Filter by specific workflow
-    - trigger_key: Filter by trigger type (e.g., 'webhook.generic', 'poll.gmail.email_received')
-    - search: Search by title
-    """
+    """List all trigger subscriptions with optional filtering."""
     user = _require_user(request)
     return await services.list_trigger_subscriptions_extended(
         user, workflow_id=workflow_id, trigger_key=trigger_key, search=search
@@ -148,12 +135,7 @@ async def get_subscription_event_count(
     request: Request,
     subscription_id: int,
 ):
-    """
-    Get the count of stored events for a trigger subscription.
-
-    Used by the frontend to determine if "Browse events" should be shown
-    for persisted triggers (webhooks, forms).
-    """
+    """Get the count of stored events for a trigger subscription."""
     user = _require_user(request)
     return await services.get_subscription_event_count(user, subscription_id)
 
@@ -167,14 +149,7 @@ async def generate_trigger_event(
     trigger_key: str,
     payload: api_models.TriggerEventGenerateRequest,
 ):
-    """
-    Generate a synthetic trigger event for immediate workflow execution.
-
-    Currently supports:
-    - schedule.cron: Generate a synthetic cron event for manual triggering
-
-    Returns an event envelope that can be used with the run workflow endpoint.
-    """
+    """Generate a synthetic trigger event for immediate workflow execution."""
     _require_user(request)
 
     if trigger_key != "schedule.cron":
@@ -337,11 +312,41 @@ async def publish_workflow(
     return await services.publish_workflow(user, workflow_id, payload, organization=org, membership=membership)
 
 
+@router.patch("/workflows/{workflow_id}/published", response_model=api_models.WorkflowSummary)
+async def toggle_workflow_published(
+    request: Request,
+    workflow_id: str,
+    payload: api_models.WorkflowPublishedToggleRequest,
+):
+    """Toggle whether a workflow is published as a template."""
+    user = _require_user(request)
+    org, membership = _get_org_context(request)
+    return await services.toggle_workflow_published(user, workflow_id, payload.is_published, organization=org, membership=membership)
+
+
+@router.patch("/workflows/{workflow_id}/active", response_model=api_models.WorkflowSummary)
+async def toggle_workflow_active(
+    request: Request,
+    workflow_id: str,
+    payload: api_models.WorkflowActiveToggleRequest,
+):
+    """Toggle whether a workflow is active or paused."""
+    user = _require_user(request)
+    org, membership = _get_org_context(request)
+    return await services.toggle_workflow_active(user, workflow_id, payload.is_active, organization=org, membership=membership)
+
+
 @router.delete("/workflows/{workflow_id}", status_code=status.HTTP_200_OK)
 async def delete_workflow(request: Request, workflow_id: str):
     user = _require_user(request)
     org, membership = _get_org_context(request)
-    await services.delete_workflow(user, workflow_id, organization=org, membership=membership)
+    try:
+        await asyncio.wait_for(
+            services.delete_workflow(user, workflow_id, organization=org, membership=membership),
+            timeout=30.0,
+        )
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="Delete operation timed out. The workflow may have active runs.") from exc
     return {"ok": True}
 
 
@@ -401,11 +406,7 @@ async def get_run_history(request: Request, run_id: str):
 
 @router.get("/runs/{run_id}/interrupt", response_model=api_models.HITLInterruptResponse)
 async def get_run_interrupt(request: Request, run_id: str):
-    """
-    Get pending HITL interrupt data for a workflow run.
-
-    Returns 404 if run is not found or not in INTERRUPTED state.
-    """
+    """Get pending HITL interrupt data for a workflow run."""
     user = _require_user(request)
     interrupt_data = await services.get_workflow_run_interrupt(user, run_id)
     if interrupt_data is None:
@@ -438,18 +439,10 @@ async def get_run_interrupt(request: Request, run_id: str):
 
 @router.post("/runs/{run_id}/resume", response_model=api_models.RunResponse)
 async def resume_run(request: Request, run_id: str, payload: api_models.HITLResumeRequest):
-    """
-    Resume a workflow run that is paused at an HITL interrupt.
-
-    Provides user responses to continue workflow execution.
-    """
+    """Resume a workflow run that is paused at an HITL interrupt."""
     user = _require_user(request)
     return await services.resume_workflow_run(user, run_id, payload.responses)
 
-
-# ============================================================================
-# Workflow File Endpoints
-# ============================================================================
 
 
 @router.get("/runs/{run_id}/files", response_model=api_models.WorkflowFileListResponse)
@@ -484,19 +477,23 @@ async def delete_run_file(request: Request, run_id: str, file_id: str):
     return await services.delete_run_file(user, run_id, file_id, membership=membership)
 
 
+@router.get("/workflows/{workflow_id}/template")
+async def get_workflow_template(request: Request, workflow_id: str):
+    """Get the template published from this workflow, if any."""
+    user = _require_user(request)
+    result = await get_workflow_template_meta(user, workflow_id)
+    if not result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No template found for this workflow")
+    return result
+
+
 @router.post(
     "/workflows/{workflow_id}/share-as-template",
     response_model=ShareAsTemplateResponse,
-    status_code=status.HTTP_201_CREATED,
 )
 async def share_as_template(request: Request, workflow_id: str, payload: ShareAsTemplateRequest):
     user = _require_user(request)
     return await share_workflow_as_template(user, workflow_id, payload)
-
-
-# ============================================================================
-# Global Variables Endpoints
-# ============================================================================
 
 
 @router.get("/variables", response_model=api_models.GlobalVariableListResponse)
@@ -589,6 +586,3 @@ async def delete_global_variable(request: Request, variable_id: int):
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variable not found")
     return {"ok": True}
-
-
-__all__ = ["router"]

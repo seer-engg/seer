@@ -4,6 +4,7 @@ Unit tests for workflow lifecycle operations.
 Tests the actual functions from the workflow lifecycle module including
 parsing, hashing, cursor handling, and version management.
 """
+import asyncio
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -728,3 +729,58 @@ class TestPublishWorkflowValidation:
 
         assert exc_info.value.status_code == 400
         assert exc_info.value.detail["title"] == "Workflow already published"
+
+
+# =============================================================================
+# Delete Workflow Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestDeleteWorkflow:
+    """Tests for delete_workflow cleanup logic."""
+
+    @pytest.mark.asyncio
+    async def test_delete_workflow_cancels_active_runs_and_cleans_up(self):
+        """delete_workflow should cancel active runs, nullify FKs, delete subscriptions, then delete workflow."""
+        from seer.api.workflows.services.lifecycle import delete_workflow
+
+        user = MagicMock()
+        mock_workflow = AsyncMock()
+
+        mock_run = MagicMock()
+        mock_run.status = "running"
+        mock_run.save = AsyncMock()
+
+        mock_update = AsyncMock()
+        mock_trig_delete = AsyncMock()
+
+        class FakeQuerySet:
+            """Mimics Tortoise QuerySet: sync construction, awaitable."""
+            def __init__(self, items=None):
+                self._items = items or []
+                self.update = AsyncMock()
+                self.delete = AsyncMock()
+
+            def __await__(self):
+                async def _resolve():
+                    return self._items
+                return _resolve().__await__()
+
+        with patch("seer.api.workflows.services.lifecycle._get_workflow_org_scoped", new=AsyncMock(return_value=mock_workflow)), \
+             patch("seer.api.workflows.services.lifecycle.WorkflowRun") as MockWfRun, \
+             patch("seer.api.workflows.services.lifecycle.TriggerSubscription") as MockTrigSub:
+            active_qs = FakeQuerySet(items=[mock_run])
+            all_qs = FakeQuerySet()
+            all_qs.update = mock_update
+
+            MockWfRun.filter = MagicMock(side_effect=[active_qs, all_qs])
+            MockTrigSub.filter.return_value.delete = mock_trig_delete
+
+            await delete_workflow(user, "wf_1")
+
+        assert mock_run.status == "cancelled"
+        mock_run.save.assert_called_once_with(update_fields=["status"])
+        mock_update.assert_called_once_with(workflow_id=None)
+        mock_trig_delete.assert_called_once()
+        mock_workflow.delete.assert_called_once()

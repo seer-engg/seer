@@ -187,6 +187,33 @@ async def get_shared_recording_events(recording_id: UUID) -> dict:
     }
 
 
+@router.get("/{recording_id}/thumbnail-events")
+async def get_recording_thumbnail_events(
+    request: Request,
+    recording_id: UUID,
+) -> dict:
+    """Get first few rrweb events (meta + full snapshot) for thumbnail rendering."""
+    user: User = request.state.db_user
+
+    recording = await SessionRecording.get_or_none(id=recording_id, user=user)
+    if not recording:
+        raise HTTPException(status_code=404, detail="Recording not found")
+
+    try:
+        events = RecordingService.decompress_events(recording.events_compressed)
+    except Exception as e:
+        logger.error("Failed to decompress recording %s: %s", recording_id, e)
+        raise HTTPException(status_code=500, detail="Failed to decompress recording data") from e
+
+    # Return only first 3 events (typically meta + full-snapshot)
+    thumbnail_events = events[:3]
+    return {
+        "recording_id": str(recording_id),
+        "event_count": len(thumbnail_events),
+        "events": thumbnail_events,
+    }
+
+
 @router.delete("/{recording_id}")
 async def delete_recording(
     request: Request,

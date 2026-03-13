@@ -1,43 +1,60 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
-- `src/seer/api/`: FastAPI HTTP layer (routers, middleware, API models).
-- `src/seer/services/`: business logic used by API/worker (workflows, integrations, triggers).
-- `src/seer/core/`: workflow compiler, runtime, schema models, and global compiler singleton.
-- `src/seer/tools/`: tool registry, executor, credential resolution, and provider tool implementations.
-- `src/seer/agents/`: agent-specific orchestration (LangGraph-based workflow agent).
-- `src/seer/worker/`: Taskiq background worker and polling tasks.
-- `src/seer/database/`: Tortoise ORM models/configuration; migrations live in `/migrations`.
-- `src/seer/analytics/`, `src/seer/observability/`, `src/seer/utilities/`: shared instrumentation and helpers.
-- `documentation/`: docs site assets (Node-based).
-- `scripts/`: maintenance and debugging scripts.
+## Architectural Philosophy
 
-## Core Systems (Compiler, Tools, Triggers)
-- Workflow compiler: `src/seer/core/` validates workflow specs, builds LangGraph graphs, and hosts runtime node executors; API/services/worker call into it via the global compiler singleton.
-- Tool registry: `src/seer/tools/` provides `BaseTool`, registry helpers, executor, and credential resolution.
-- Trigger polling: trigger catalog + subscription management lives under `src/seer/api/workflows/services` and `src/seer/services/workflows/triggers.py`; Taskiq worker (`src/seer/worker/`) polls and dispatches runs.
+Seer is an AI workflow automation platform. Both the backend and frontend are closed source.
 
+**Dependency direction is strict and one-way:**
+```
+api → services → core → tools
+         ↓
+       worker
+```
+Never reach "upward." If you need to, extract a shared abstraction into `core/` or `services/`.
 
+## Project Structure
+- `src/seer/api/`: FastAPI HTTP layer — thin routers, validates input, calls services, returns output. No business logic.
+- `src/seer/services/`: Business logic for API and worker — workflow orchestration, integrations, triggers.
+- `src/seer/core/`: Workflow compiler, runtime, schema models, global compiler singleton. The engine. Must not import from api/services/worker.
+- `src/seer/tools/`: Tool registry, executor, credential resolution, per-provider implementations. See each module's docstring for how to add new tools.
+- `src/seer/agents/`: LangGraph-based workflow agent orchestration.
+- `src/seer/worker/`: Taskiq background worker and polling tasks. Nothing imports from worker.
+- `src/seer/database/`: Tortoise ORM models/config. Migrations in `/migrations`.
+- `src/seer/observability/`: Structured logging and Sentry. Use this — never `print()` or bare `logging.getLogger()`.
+- `documentation/`: Docs site (Node-based). `scripts/`: Maintenance scripts.
 
-## Coding Style & Naming Conventions
-- Python 3.12, 4-space indentation, `snake_case` for functions/modules, `PascalCase` for classes.
-- Line length limit is 150 characters (see `pyproject.toml`).
-- Linting uses `pylint` and `pre-commit`; any `# pylint: disable=...` must include a reason comment.
+## Credentials & Secrets
+- **Never hardcode secrets.** Not in code, comments, or test fixtures.
+- All credentials flow through `src/seer/tools/` credential resolution. Tools receive resolved credentials at execution time.
+- App config and env vars: `src/seer/core/config.py`.
+- In tests, mock the credential resolver — never use real tokens.
 
+## Coding Style
+- Python 3.12, 4-space indent, `snake_case` functions/modules, `PascalCase` classes, 150-char line limit.
+- Type hints on all public function signatures. Use `from __future__ import annotations` for forward refs.
+- Any `# pylint: disable=...` must include a reason comment.
+- Use domain exceptions from `core/` (e.g., `WorkflowCompilationError`, `ToolExecutionError`) — not bare `Exception`/`ValueError`.
+- API layer catches domain exceptions and maps to HTTP status. Services never return HTTP responses.
+- In async code, let exceptions propagate — the caller decides recovery.
 
-## Build & Run Commands
-- **Run Scripts:** Always use `uv run <script_name>` (e.g., `uv run main.py`)
-- **Install Packages:** Always use `uv add <package>` (NEVER use `pip install`)
-- **Run Tests:** `uv run pytest`
-- **Lockfile:** Rely on `uv.lock`. Do not create requirements.txt unless explicitly asked.
+## Build & Run — Critical Rules
+- **Always** use `uv run <script>` and `uv add <package>`. **NEVER** `pip install`. **NEVER** manually create venvs.
+- **Migrations:** Only via `uv run aerich migrate --name <n>`. Manual migration files lack `MODELS_STATE` and break CI.
+- **Pre-commit:** Run `uv run pytest --tb=short -q` and **wait for it to pass** before committing. No background commits.
+- Rely on `uv.lock`. No `requirements.txt` unless explicitly asked.
 
-## Environment
-- This project uses `uv` for dependency management.
-- Do not attempt to create virtual environments manually (venv). Let `uv` handle it.
+## Testing
+- `pytest` + `pytest-asyncio` (mode: `auto`). All tests in `/tests`, named `test_*.py`.
+- **Bug fixes:** Every fix must include a test that fails without the fix and passes with it.
+- **Core changes (`src/seer/core/`):** Require unit tests + full JSON spec tests. Run the entire suite, not just new tests.
+- Mock external dependencies (HTTP, DB, credentials). Do not mock internal modules in the same layer — test through public interfaces.
+- Tests must not depend on execution order or shared mutable state.
 
-## Testing Guidelines
-- `pytest` + `pytest-asyncio` (asyncio mode is `auto`).
-- Tests are named `test_*.py`;
-- Add regression tests for bug fixes and workflow schema/validation changes.
-- all tests are in /tests
-- for every change related to `/src/seer/core` make sure to add concerned unit tests and full json spec tests and validate that the changes passess all the tests ( regression testing )
+## Git Workflow
+- Branch: `<name>/<MMDD>-<slug>` (e.g., `akshay/0311-fix-templates`)
+- Commits: conventional format — `feat(core): add conditional validation`, `fix(tools): handle OAuth refresh failure`
+- PRs target `dev`. Description must include: what changed, why, how to test.
+- After merge to `dev` + CI green → publish to `main`.
+
+## Trigger Handlers Must Be Idempotent
+The same event delivered twice must not produce duplicate workflow runs. This is a hard requirement for all trigger implementations in `src/seer/services/workflows/triggers.py` and `src/seer/worker/`.

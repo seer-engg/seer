@@ -12,10 +12,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from fastapi import HTTPException
+
 from seer.api.templates.services import (
     extract_config_fields,
     _resolve_placeholders,
     _apply_provider_connections,
+    _apply_user_timezone,
+    _validate_resolved_timezones,
 )
 
 
@@ -372,6 +376,7 @@ def test_to_summary_helper():
     mock_template.required_integrations = [
         {"provider": "google", "integration_type": "gmail", "reason": "Send emails"}
     ]
+    mock_template.visibility = "public"
 
     summary = _to_summary(mock_template)
 
@@ -411,6 +416,7 @@ def test_to_detail_helper():
             {"inputs": {"to": "${config.recipient_email}"}}
         ]
     }
+    mock_template.visibility = "public"
     mock_template.created_at = datetime.now(timezone.utc)
     mock_template.updated_at = datetime.now(timezone.utc)
 
@@ -466,3 +472,107 @@ async def test_check_requirements_builds_status():
         slack_status = next(i for i in result.integrations if i.provider == "slack")
         assert slack_status.connected is False
         assert slack_status.connection_id is None
+
+
+# =============================================================================
+# Timezone Validation Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+def test_validate_resolved_timezones_valid_iana():
+    """Valid IANA timezone passes validation."""
+    spec = {"triggers": [{"provider_config": {"timezone": "America/Chicago"}}]}
+    _validate_resolved_timezones(spec)  # should not raise
+
+
+@pytest.mark.unit
+def test_validate_resolved_timezones_abbreviation_rejected():
+    """Abbreviation like PST is rejected with 400."""
+    spec = {"triggers": [{"provider_config": {"timezone": "PST"}}]}
+    with pytest.raises(HTTPException) as exc_info:
+        _validate_resolved_timezones(spec)
+    assert exc_info.value.status_code == 400
+    assert "PST" in exc_info.value.detail
+
+
+@pytest.mark.unit
+def test_validate_resolved_timezones_whitespace_stripped():
+    """Trailing whitespace is stripped before validation — valid tz passes."""
+    spec = {"triggers": [{"provider_config": {"timezone": "UTC  "}}]}
+    _validate_resolved_timezones(spec)  # should not raise
+
+
+@pytest.mark.unit
+def test_validate_resolved_timezones_invalid_with_whitespace():
+    """Invalid tz with whitespace like 'CST ' is rejected."""
+    spec = {"triggers": [{"provider_config": {"timezone": "CST "}}]}
+    with pytest.raises(HTTPException) as exc_info:
+        _validate_resolved_timezones(spec)
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.unit
+def test_validate_resolved_timezones_no_triggers():
+    """Spec with no triggers passes validation."""
+    _validate_resolved_timezones({"triggers": []})
+    _validate_resolved_timezones({})  # no triggers key at all
+
+
+# =============================================================================
+# _apply_user_timezone Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+def test_apply_user_timezone_fills_missing():
+    """Cron trigger with no timezone gets user_tz."""
+    spec = {
+        "triggers": [
+            {"trigger": "schedule.cron", "provider_config": {"cron": "0 9 * * *"}},
+        ]
+    }
+    result = _apply_user_timezone(spec, "Asia/Kolkata")
+    assert result["triggers"][0]["provider_config"]["timezone"] == "Asia/Kolkata"
+
+
+@pytest.mark.unit
+def test_apply_user_timezone_skips_non_cron():
+    """Non-cron trigger is unchanged."""
+    spec = {
+        "triggers": [
+            {"trigger": "gmail.new_email", "provider_config": {"label": "inbox"}},
+        ]
+    }
+    result = _apply_user_timezone(spec, "Asia/Kolkata")
+    assert "timezone" not in result["triggers"][0]["provider_config"]
+
+
+@pytest.mark.unit
+def test_apply_user_timezone_preserves_explicit():
+    """Trigger with explicit timezone is NOT overwritten."""
+    spec = {
+        "triggers": [
+            {
+                "trigger": "schedule.cron",
+                "provider_config": {"cron": "0 9 * * *", "timezone": "Europe/London"},
+            },
+        ]
+    }
+    result = _apply_user_timezone(spec, "Asia/Kolkata")
+    assert result["triggers"][0]["provider_config"]["timezone"] == "Europe/London"
+
+
+@pytest.mark.unit
+def test_apply_user_timezone_replaces_unresolved_placeholder():
+    """Trigger with ${config.timezone} placeholder gets replaced."""
+    spec = {
+        "triggers": [
+            {
+                "trigger": "schedule.cron",
+                "provider_config": {"cron": "0 9 * * *", "timezone": "${config.timezone}"},
+            },
+        ]
+    }
+    result = _apply_user_timezone(spec, "US/Eastern")
+    assert result["triggers"][0]["provider_config"]["timezone"] == "US/Eastern"

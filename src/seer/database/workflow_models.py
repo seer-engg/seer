@@ -120,6 +120,9 @@ class Workflow(models.Model):
         description="Who can see this workflow within the organization",
     )
 
+    is_published = fields.BooleanField(default=False, description="Whether this workflow is published as a template")
+    is_active = fields.BooleanField(default=True, description="Whether this workflow is active or paused")
+
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 

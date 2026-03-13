@@ -8,6 +8,8 @@ import secrets
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+import pytz
+
 from fastapi import HTTPException
 from jsonschema import Draft7Validator
 
@@ -49,6 +51,31 @@ from seer.services.integrations.auth.oauth import get_oauth_provider
 from seer.services.integrations.auth.helpers import get_connection_display_name
 
 logger = get_logger(__name__)
+
+TIMEZONE_ABBREVIATION_MAP = {
+    "PST": "America/Los_Angeles",
+    "PDT": "America/Los_Angeles",
+    "EST": "America/New_York",
+    "EDT": "America/New_York",
+    "CST": "America/Chicago",
+    "CDT": "America/Chicago",
+    "MST": "America/Denver",
+    "MDT": "America/Denver",
+    "GMT": "Europe/London",
+    "BST": "Europe/London",
+    "IST": "Asia/Kolkata",
+    "JST": "Asia/Tokyo",
+    "CET": "Europe/Paris",
+    "CEST": "Europe/Paris",
+    "AEST": "Australia/Sydney",
+    "AEDT": "Australia/Sydney",
+    "NZST": "Pacific/Auckland",
+    "NZDT": "Pacific/Auckland",
+    "KST": "Asia/Seoul",
+    "SGT": "Asia/Singapore",
+    "HKT": "Asia/Hong_Kong",
+    "PKT": "Asia/Karachi",
+}
 
 
 class MultipleAccountsError(Exception):
@@ -160,6 +187,21 @@ def _validate_provider_config(provider_config: Dict[str, Any], definition) -> No
             detail=f"Provider config did not match schema: {detail}",
             status=400,
         )
+
+    # Auto-correct timezone abbreviations to IANA names, then validate
+    if provider_config.get("timezone"):
+        tz_val = provider_config["timezone"].strip()
+        tz_val = TIMEZONE_ABBREVIATION_MAP.get(tz_val.upper(), tz_val)
+        provider_config["timezone"] = tz_val
+        try:
+            pytz.timezone(tz_val)
+        except pytz.exceptions.UnknownTimeZoneError:
+            _raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Invalid trigger configuration",
+                detail=f"Invalid timezone: '{provider_config['timezone']}'. Use IANA timezone names (e.g., America/Chicago, UTC)",
+                status=400,
+            )
 
 
 def _is_expression(value: Any) -> bool:

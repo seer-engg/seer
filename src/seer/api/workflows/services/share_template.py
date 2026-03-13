@@ -10,6 +10,7 @@ from seer.database.models import User
 from seer.database.profile_models import UserProfile
 from seer.database.template_models import TemplateCategory, TemplateSource, WorkflowTemplate
 from seer.database.workflow_models import Workflow, WorkflowVersion, WorkflowVersionStatus, parse_workflow_public_id
+from seer.database.organization_models import Organization, OrganizationMembership, MembershipStatus
 
 
 class ShareAsTemplateRequest(BaseModel):
@@ -18,17 +19,56 @@ class ShareAsTemplateRequest(BaseModel):
     category: TemplateCategory
     tags: list[str] = []
     icon: Optional[str] = None
+    is_published: bool = False
 
 
 class ShareAsTemplateResponse(BaseModel):
     slug: str
     name: str
     public_url: str
+    is_update: bool = False
+
+
+class WorkflowTemplateMetaResponse(BaseModel):
+    slug: str
+    name: str
+    description: str
+    category: str
+    tags: list[str]
+    icon: Optional[str]
+    is_published: bool
+    public_url: str
 
 
 def _slugify(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
     return slug[:80]
+
+
+async def get_workflow_template_meta(user: User, workflow_id: str) -> Optional[WorkflowTemplateMetaResponse]:
+    """Get existing template metadata for a workflow, if any."""
+    internal_id = parse_workflow_public_id(workflow_id)
+    workflow = await Workflow.filter(id=internal_id, user=user).first()
+    if not workflow:
+        return None
+
+    template = await WorkflowTemplate.filter(source_workflow_id=workflow.id, created_by=user).first()
+    if not template:
+        return None
+
+    profile = await UserProfile.filter(user=user).first()
+    username = profile.username if profile else "unknown"
+
+    return WorkflowTemplateMetaResponse(
+        slug=template.slug,
+        name=template.name,
+        description=template.description,
+        category=template.category.value if hasattr(template.category, "value") else template.category,
+        tags=template.tags or [],
+        icon=template.icon,
+        is_published=template.is_published,
+        public_url=f"https://getseer.dev/u/{username}/{template.slug}",
+    )
 
 
 async def share_workflow_as_template(user: User, workflow_id: str, payload: ShareAsTemplateRequest) -> ShareAsTemplateResponse:
@@ -53,44 +93,87 @@ async def share_workflow_as_template(user: User, workflow_id: str, payload: Shar
             status=404,
         )
 
-    # 3. Get RELEASED version
+    # 3. Get spec: prefer DRAFT (current canvas), fall back to RELEASED
+    draft_version = await WorkflowVersion.filter(
+        workflow=workflow, status=WorkflowVersionStatus.DRAFT
+    ).first()
     released_version = await WorkflowVersion.filter(
         workflow=workflow, status=WorkflowVersionStatus.RELEASED
     ).first()
-    if not released_version:
+    if not draft_version and not released_version:
         raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Workflow not published",
             detail="You must publish your workflow before sharing it as a template",
             status=400,
         )
+    spec_version = draft_version or released_version
 
-    # 4. Generate unique slug
-    base_slug = _slugify(payload.name)
-    slug = base_slug
-    counter = 1
-    while await WorkflowTemplate.filter(slug=slug).exists():
-        slug = f"{base_slug}-{counter}"
-        counter += 1
+    # 4. Auto-detect required integrations
+    # pylint: disable-next=import-outside-toplevel # circular import avoidance
+    from seer.api.templates.admin_services import _detect_required_integrations
+    required_integrations = _detect_required_integrations(spec_version.spec)
 
-    # 5. Create template
-    template = await WorkflowTemplate.create(
-        slug=slug,
-        name=payload.name,
-        description=payload.description,
-        category=payload.category,
-        tags=payload.tags,
-        icon=payload.icon,
-        source=TemplateSource.COMMUNITY,
-        created_by=user,
-        spec=released_version.spec,
-        is_published=True,
-        source_workflow_id=workflow.id,
-    )
+    # 5. Check for existing template from this workflow
+    existing = await WorkflowTemplate.filter(source_workflow_id=workflow.id, created_by=user).first()
 
-    # 6. Return response
+    if existing:
+        # UPDATE existing template
+        existing.name = payload.name
+        existing.description = payload.description
+        existing.category = payload.category
+        existing.tags = payload.tags
+        existing.icon = payload.icon
+        existing.visibility = "public" if payload.is_published else "private"
+        existing.spec = spec_version.spec
+        existing.required_integrations = required_integrations
+        existing.is_published = payload.is_published
+        await existing.save(update_fields=[
+            "name", "description", "category", "tags", "icon",
+            "visibility", "spec", "required_integrations", "is_published",
+        ])
+        template = existing
+        is_update = True
+    else:
+        # CREATE new template
+        base_slug = _slugify(payload.name)
+        slug = base_slug
+        counter = 1
+        while await WorkflowTemplate.filter(slug=slug).exists():
+            slug = f"{base_slug}-{counter}"
+            counter += 1
+
+        membership = await OrganizationMembership.filter(user=user, status=MembershipStatus.ACTIVE).first()
+        org = None
+        if membership:
+            org = await Organization.filter(id=membership.organization_id).first()
+
+        template = await WorkflowTemplate.create(
+            slug=slug,
+            name=payload.name,
+            description=payload.description,
+            category=payload.category,
+            tags=payload.tags,
+            icon=payload.icon,
+            source=TemplateSource.COMMUNITY,
+            created_by=user,
+            organization=org,
+            visibility="public" if payload.is_published else "private",
+            spec=spec_version.spec,
+            required_integrations=required_integrations,
+            is_published=payload.is_published,
+            source_workflow_id=workflow.id,
+        )
+        is_update = False
+
+    # Set Workflow.is_published flag
+    if not workflow.is_published:
+        workflow.is_published = True
+        await workflow.save(update_fields=["is_published"])
+
     return ShareAsTemplateResponse(
         slug=template.slug,
         name=template.name,
         public_url=f"https://getseer.dev/u/{profile.username}/{template.slug}",
+        is_update=is_update,
     )

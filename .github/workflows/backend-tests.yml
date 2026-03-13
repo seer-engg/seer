@@ -14,6 +14,21 @@ jobs:
   tests:
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: seer_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -30,31 +45,15 @@ jobs:
       - name: Lint migrations
         run: uv run python scripts/lint-migrations.py
 
+      - name: Enable pgvector extension
+        run: PGPASSWORD=test psql -h localhost -U test -d seer_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
       - name: Test migrations
-        run: |
-          # Start test database
-          docker run -d --name test-postgres \
-            -e POSTGRES_USER=test \
-            -e POSTGRES_PASSWORD=test \
-            -e POSTGRES_DB=seer_test \
-            -p 5432:5432 \
-            pgvector/pgvector:pg16
-
-          # Wait for postgres to be ready
-          sleep 5
-
-          # Enable pgvector extension
-          docker exec test-postgres psql -U test -d seer_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
-
-          # Run migrations
-          export DATABASE_URL="postgresql://test:test@localhost:5432/seer_test"
-          uv run aerich upgrade
-
-          # Cleanup
-          docker stop test-postgres
-          docker rm test-postgres
+        run: uv run aerich upgrade
+        env:
+          DATABASE_URL: "postgresql://test:test@localhost:5432/seer_test"
 
       - name: Run test suite
-        run: uv run pytest --ignore=tests/e2e
+        run: uv run pytest --ignore=tests/e2e -n auto --cov=src/seer --cov-report=xml
         env:
           DATABASE_URL: "postgresql://test:test@localhost:5432/seer_test"

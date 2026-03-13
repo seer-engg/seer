@@ -15,6 +15,10 @@ class TemplateCategory(str, Enum):
     CUSTOMER_SUPPORT = "customer_support"
     SALES = "sales"
     PRODUCTIVITY = "productivity"
+    ENGINEERING = "engineering"
+    OPERATIONS = "operations"
+    HR = "hr"
+    OTHER = "other"
 
 
 class TemplateSource(str, Enum):
@@ -36,6 +40,8 @@ class WorkflowTemplate(models.Model):
     tags = fields.JSONField(default=list)  # ["gmail", "slack"]
     source = fields.CharEnumField(TemplateSource, max_length=20, default=TemplateSource.SYSTEM)
     created_by = fields.ForeignKeyField("models.User", related_name="templates", null=True, on_delete=fields.SET_NULL)
+    organization = fields.ForeignKeyField("models.Organization", related_name="templates", null=True, on_delete=fields.SET_NULL)
+    visibility = fields.CharField(max_length=10, default="private")  # "private" | "public"
     spec = fields.JSONField()  # WorkflowSpec with ${config.xxx} placeholders
     required_integrations = fields.JSONField(default=list)
     # Format: [{"provider": "google", "integration_type": "gmail", "reason": "..."}]
@@ -44,7 +50,9 @@ class WorkflowTemplate(models.Model):
     is_published = fields.BooleanField(default=False)
     is_featured = fields.BooleanField(default=False)
     usage_count = fields.IntField(default=0)
-    source_workflow_id = fields.IntField(null=True)  # ID of workflow this template was created from
+    source_workflow = fields.ForeignKeyField(
+        "models.Workflow", related_name="templates", null=True, on_delete=fields.SET_NULL
+    )
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 
@@ -91,6 +99,7 @@ class WorkflowTemplatePublic(BaseModel):
     preview_image_url: str | None
     is_featured: bool
     usage_count: int
+    visibility: str
 
     @classmethod
     def from_orm(cls, obj: WorkflowTemplate) -> "WorkflowTemplatePublic":
@@ -107,4 +116,5 @@ class WorkflowTemplatePublic(BaseModel):
             preview_image_url=obj.preview_image_url,
             is_featured=obj.is_featured,
             usage_count=obj.usage_count,
+            visibility=obj.visibility,
         )

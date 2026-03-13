@@ -137,7 +137,7 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
 
 
 
-    default_llm_model: str = Field(default="openai/gpt-oss-120b", description="Default LLM model")
+    default_llm_model: str = Field(default="z-ai/glm-5", description="Default LLM model")
 
     # Taskiq / Valkey configuration
     redis_url: str = Field(
@@ -604,12 +604,12 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         description="Custom base URL for Mem0 LLM (auto-set for openrouter)"
     )
     mem0_embedder_provider: str = Field(
-        default="huggingface",
+        default="openai",
         description="Embedder provider for Mem0: 'openai', 'huggingface', or 'ollama'"
     )
     mem0_embedder_model: str = Field(
-        default="sentence-transformers/all-MiniLM-L6-v2",
-        description="Embedding model for Mem0 (default: free HuggingFace model)"
+        default="text-embedding-3-small",
+        description="Embedding model for Mem0 (default: OpenAI text-embedding-3-small)"
     )
 
     @classmethod

@@ -42,6 +42,7 @@ class TemplateSummary(BaseModel):
     icon: Optional[str] = None
     is_featured: bool
     usage_count: int
+    visibility: str = "public"  # "private" | "public"
     required_integrations: List[RequiredIntegration]
 
 
@@ -131,6 +132,7 @@ class TemplateCreateRequest(BaseModel):
     preview_image_url: Optional[str] = None
     is_published: bool = False
     is_featured: bool = False
+    visibility: str = "private"
 
 
 class TemplateUpdateRequest(BaseModel):

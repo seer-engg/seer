@@ -6,6 +6,7 @@ import copy
 import re
 from typing import Any, Dict, List, Optional
 
+import pytz
 from fastapi import HTTPException, status
 
 from seer.api.templates import models as api_models
@@ -13,7 +14,9 @@ from seer.api.workflows import models as workflow_models
 from seer.api.workflows.services.lifecycle import create_workflow as create_workflow_from_spec
 from seer.database import (
     OAuthConnection,
+    Organization,
     User,
+    UserSettings,
     WorkflowTemplate,
     TemplateCategory,
     make_template_public_id,
@@ -32,8 +35,19 @@ def _raise_not_found(slug: str) -> None:
     )
 
 
-async def list_templates(
+def _build_scope_query(scope: Optional[str], user: Optional[User]):
+    """Build base QuerySet filtered by scope and user."""
+    if scope == "mine" and user:
+        return WorkflowTemplate.filter(created_by=user)
+    if scope == "community" and user:
+        return WorkflowTemplate.filter(is_published=True, visibility="public").exclude(created_by=user)
+    return WorkflowTemplate.filter(is_published=True)
+
+
+async def list_templates(  # pylint: disable=too-many-arguments  # legitimate filter params
     *,
+    user: Optional[User] = None,
+    scope: Optional[str] = None,  # "mine" | "community" | None (all)
     category: Optional[str] = None,
     tags: Optional[List[str]] = None,
     search: Optional[str] = None,
@@ -41,11 +55,10 @@ async def list_templates(
     limit: int = 50,
     cursor: Optional[str] = None,
 ) -> api_models.TemplateListResponse:
-    """List published templates with optional filters."""
+    """List templates with visibility-aware filtering."""
     limit = max(1, min(limit, 100))
 
-    # Base query: only published templates
-    query = WorkflowTemplate.filter(is_published=True)
+    query = _build_scope_query(scope, user)
 
     # Apply filters
     if category:
@@ -55,7 +68,6 @@ async def list_templates(
         query = query.filter(is_featured=True)
 
     if search:
-        # Simple search on name and description
         query = query.filter(name__icontains=search) | query.filter(description__icontains=search)
 
     # Cursor-based pagination
@@ -77,8 +89,8 @@ async def list_templates(
     items = [_to_summary(t) for t in templates[:limit]]
     next_cursor = str(templates[-1].id) if len(templates) > limit else None
 
-    # Get total count
-    count_query = WorkflowTemplate.filter(is_published=True)
+    # Get total count for current scope
+    count_query = _build_scope_query(scope, user)
     if category:
         count_query = count_query.filter(category=category)
     if featured_only:
@@ -172,6 +184,7 @@ async def instantiate_template(
     user: User,
     slug: str,
     payload: api_models.TemplateInstantiateRequest,
+    organization: Optional[Organization] = None,
 ) -> api_models.TemplateInstantiateResponse:
     """Create a workflow from a template."""
     template = await WorkflowTemplate.filter(slug=slug, is_published=True).first()
@@ -183,6 +196,13 @@ async def instantiate_template(
 
     # Resolve config placeholders
     spec = _resolve_placeholders(spec, payload.config)
+
+    # Auto-populate timezone from user settings for cron triggers
+    user_tz = await _get_user_timezone(user)
+    spec = _apply_user_timezone(spec, user_tz)
+
+    # Validate resolved timezones in trigger configs
+    _validate_resolved_timezones(spec)
 
     # Map provider connections to triggers
     if payload.provider_connections:
@@ -197,7 +217,7 @@ async def instantiate_template(
         spec=spec,
     )
 
-    workflow_response = await create_workflow_from_spec(user, workflow_request)
+    workflow_response = await create_workflow_from_spec(user, workflow_request, organization=organization)
 
     # Increment usage count
     await WorkflowTemplate.filter(id=template.id).update(usage_count=template.usage_count + 1)
@@ -260,6 +280,7 @@ def _build_template_fields(template: WorkflowTemplate) -> Dict[str, Any]:
         "icon": template.icon,
         "is_featured": template.is_featured,
         "usage_count": template.usage_count,
+        "visibility": template.visibility,
         "required_integrations": [
             api_models.RequiredIntegration(
                 provider=r.get("provider", ""),
@@ -289,6 +310,7 @@ def _to_summary(template: WorkflowTemplate) -> api_models.TemplateSummary:
         icon=template.icon,
         is_featured=template.is_featured,
         usage_count=template.usage_count,
+        visibility=template.visibility,
         required_integrations=[
             api_models.RequiredIntegration(
                 provider=r.get("provider", ""),
@@ -303,6 +325,47 @@ def _to_summary(template: WorkflowTemplate) -> api_models.TemplateSummary:
 def _to_detail(template: WorkflowTemplate) -> api_models.TemplateDetailResponse:
     """Convert a template to a detail response."""
     return api_models.TemplateDetailResponse(**_build_template_fields(template))
+
+
+async def _get_user_timezone(user: User) -> str:
+    """Get user's timezone setting, defaulting to America/Chicago."""
+    settings = await UserSettings.filter(user=user).first()
+    return settings.timezone if settings and settings.timezone else "America/Chicago"
+
+
+def _apply_user_timezone(spec: Dict[str, Any], user_tz: str) -> Dict[str, Any]:
+    """Set timezone on cron triggers that are missing one or have unresolved placeholders."""
+    for trigger in spec.get("triggers", []):
+        trigger_key = trigger.get("trigger_key", "") or trigger.get("trigger", "")
+        if not trigger_key.startswith("schedule.cron"):
+            continue
+        provider_config = trigger.get("provider_config")
+        if provider_config is None:
+            trigger["provider_config"] = {"timezone": user_tz}
+            continue
+        tz = provider_config.get("timezone")
+        if not tz or CONFIG_PLACEHOLDER_PATTERN.search(str(tz)):
+            provider_config["timezone"] = user_tz
+    return spec
+
+
+def _validate_resolved_timezones(spec: Dict[str, Any]) -> None:
+    """Validate that timezone values in trigger provider_configs are valid IANA names."""
+    for trigger in spec.get("triggers", []):
+        provider_config = trigger.get("provider_config", {})
+        if not provider_config or "timezone" not in provider_config:
+            continue
+        tz_val = provider_config["timezone"]
+        if not isinstance(tz_val, str):
+            continue
+        tz_val = tz_val.strip()
+        try:
+            pytz.timezone(tz_val)
+        except pytz.exceptions.UnknownTimeZoneError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid timezone '{provider_config['timezone']}'. Use IANA timezone names (e.g., America/Chicago, UTC)",
+            ) from exc
 
 
 def _resolve_placeholders(spec: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
