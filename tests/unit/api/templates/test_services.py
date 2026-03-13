@@ -18,6 +18,7 @@ from seer.api.templates.services import (
     extract_config_fields,
     _resolve_placeholders,
     _apply_provider_connections,
+    _apply_user_timezone,
     _validate_resolved_timezones,
 )
 
@@ -516,3 +517,62 @@ def test_validate_resolved_timezones_no_triggers():
     """Spec with no triggers passes validation."""
     _validate_resolved_timezones({"triggers": []})
     _validate_resolved_timezones({})  # no triggers key at all
+
+
+# =============================================================================
+# _apply_user_timezone Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+def test_apply_user_timezone_fills_missing():
+    """Cron trigger with no timezone gets user_tz."""
+    spec = {
+        "triggers": [
+            {"trigger": "schedule.cron", "provider_config": {"cron": "0 9 * * *"}},
+        ]
+    }
+    result = _apply_user_timezone(spec, "Asia/Kolkata")
+    assert result["triggers"][0]["provider_config"]["timezone"] == "Asia/Kolkata"
+
+
+@pytest.mark.unit
+def test_apply_user_timezone_skips_non_cron():
+    """Non-cron trigger is unchanged."""
+    spec = {
+        "triggers": [
+            {"trigger": "gmail.new_email", "provider_config": {"label": "inbox"}},
+        ]
+    }
+    result = _apply_user_timezone(spec, "Asia/Kolkata")
+    assert "timezone" not in result["triggers"][0]["provider_config"]
+
+
+@pytest.mark.unit
+def test_apply_user_timezone_preserves_explicit():
+    """Trigger with explicit timezone is NOT overwritten."""
+    spec = {
+        "triggers": [
+            {
+                "trigger": "schedule.cron",
+                "provider_config": {"cron": "0 9 * * *", "timezone": "Europe/London"},
+            },
+        ]
+    }
+    result = _apply_user_timezone(spec, "Asia/Kolkata")
+    assert result["triggers"][0]["provider_config"]["timezone"] == "Europe/London"
+
+
+@pytest.mark.unit
+def test_apply_user_timezone_replaces_unresolved_placeholder():
+    """Trigger with ${config.timezone} placeholder gets replaced."""
+    spec = {
+        "triggers": [
+            {
+                "trigger": "schedule.cron",
+                "provider_config": {"cron": "0 9 * * *", "timezone": "${config.timezone}"},
+            },
+        ]
+    }
+    result = _apply_user_timezone(spec, "US/Eastern")
+    assert result["triggers"][0]["provider_config"]["timezone"] == "US/Eastern"

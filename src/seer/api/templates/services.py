@@ -16,6 +16,7 @@ from seer.database import (
     OAuthConnection,
     Organization,
     User,
+    UserSettings,
     WorkflowTemplate,
     TemplateCategory,
     make_template_public_id,
@@ -196,6 +197,10 @@ async def instantiate_template(
     # Resolve config placeholders
     spec = _resolve_placeholders(spec, payload.config)
 
+    # Auto-populate timezone from user settings for cron triggers
+    user_tz = await _get_user_timezone(user)
+    spec = _apply_user_timezone(spec, user_tz)
+
     # Validate resolved timezones in trigger configs
     _validate_resolved_timezones(spec)
 
@@ -320,6 +325,28 @@ def _to_summary(template: WorkflowTemplate) -> api_models.TemplateSummary:
 def _to_detail(template: WorkflowTemplate) -> api_models.TemplateDetailResponse:
     """Convert a template to a detail response."""
     return api_models.TemplateDetailResponse(**_build_template_fields(template))
+
+
+async def _get_user_timezone(user: User) -> str:
+    """Get user's timezone setting, defaulting to America/Chicago."""
+    settings = await UserSettings.filter(user=user).first()
+    return settings.timezone if settings and settings.timezone else "America/Chicago"
+
+
+def _apply_user_timezone(spec: Dict[str, Any], user_tz: str) -> Dict[str, Any]:
+    """Set timezone on cron triggers that are missing one or have unresolved placeholders."""
+    for trigger in spec.get("triggers", []):
+        trigger_key = trigger.get("trigger_key", "") or trigger.get("trigger", "")
+        if not trigger_key.startswith("schedule.cron"):
+            continue
+        provider_config = trigger.get("provider_config")
+        if provider_config is None:
+            trigger["provider_config"] = {"timezone": user_tz}
+            continue
+        tz = provider_config.get("timezone")
+        if not tz or CONFIG_PLACEHOLDER_PATTERN.search(str(tz)):
+            provider_config["timezone"] = user_tz
+    return spec
 
 
 def _validate_resolved_timezones(spec: Dict[str, Any]) -> None:

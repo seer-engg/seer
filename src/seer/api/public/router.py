@@ -70,6 +70,39 @@ class PublicTemplateDetail(BaseModel):
     creator: PublicCreatorSummary | None
 
 
+class PreviewNode(BaseModel):
+    id: str
+    type: str
+    label: str
+    position: dict | None = None
+
+
+class PreviewEdge(BaseModel):
+    source: str
+    target: str
+    type: str | None = None
+
+
+class PreviewTrigger(BaseModel):
+    id: str
+    key: str
+    mode: str
+    ui_meta: dict | None = None
+
+
+class PreviewMetadata(BaseModel):
+    name: str
+    description: str
+    icon: str | None = None
+
+
+class PublicWorkflowPreview(BaseModel):
+    nodes: list[PreviewNode]
+    edges: list[PreviewEdge]
+    triggers: list[PreviewTrigger]
+    metadata: PreviewMetadata
+
+
 class CreatorListResponse(BaseModel):
     creators: list[PublicCreatorSummary]
     total: int
@@ -248,3 +281,43 @@ async def get_template(slug: str) -> PublicTemplateDetail:
         required_integrations=t.required_integrations or [],
         creator=creator,
     )
+
+
+def _sanitize_spec(spec: dict, name: str, description: str, icon: str | None) -> PublicWorkflowPreview:
+    """Strip sensitive data from a workflow spec for public preview."""
+    nodes = []
+    for n in spec.get("nodes", []):
+        pos = n.get("ui", {}).get("position") if isinstance(n.get("ui"), dict) else None
+        label = n.get("id", "")
+        # Use tool name as label for tool nodes
+        if n.get("type") == "tool" and n.get("tool"):
+            label = n["tool"]
+        nodes.append(PreviewNode(id=n.get("id", ""), type=n.get("type", ""), label=label, position=pos))
+
+    edges = []
+    for e in spec.get("edges", []):
+        edges.append(PreviewEdge(source=e["source"], target=e["target"], type=e.get("type")))
+
+    triggers = []
+    for t in spec.get("triggers", []):
+        triggers.append(PreviewTrigger(
+            id=t.get("id", ""),
+            key=t.get("key", ""),
+            mode=t.get("mode", ""),
+            ui_meta={"position": t["ui_meta"]["position"]} if t.get("ui_meta", {}).get("position") else None,
+        ))
+
+    return PublicWorkflowPreview(
+        nodes=nodes,
+        edges=edges,
+        triggers=triggers,
+        metadata=PreviewMetadata(name=name, description=description, icon=icon),
+    )
+
+
+@router.get("/templates/{slug}/preview", response_model=PublicWorkflowPreview)
+async def get_template_preview(slug: str) -> PublicWorkflowPreview:
+    t = await WorkflowTemplate.filter(slug=slug, source=TemplateSource.COMMUNITY, is_published=True).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return _sanitize_spec(t.spec or {}, t.name, t.description, t.icon)
