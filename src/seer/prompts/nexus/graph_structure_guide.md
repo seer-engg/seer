@@ -411,7 +411,7 @@ After node_b: {"node_a": "result_a", "_trace_node_a": {...}, "node_b": "result_b
    - Loop body nodes automatically detected
    - Terminal nodes get implicit back-edge
 
-3. **Tool/LLM/MCP Nodes:**
+3. **Tool/Agent/MCP Nodes:**
    - Can only have default edges
    - Cannot have conditional edges
    - Can have zero or more outgoing edges (if zero, routes to END)
@@ -468,7 +468,7 @@ Before submitting a workflow, verify each item:
 ### Nodes
 - [ ] All node IDs are unique
 - [ ] Tool names match exactly from `search_tools()` results
-- [ ] LLM nodes have `model` and `prompt` in inputs
+- [ ] Agent nodes have `model` and `prompt` in inputs
 - [ ] ForEach `items` expression resolves to an array
 
 ### Edges
@@ -488,7 +488,7 @@ Before submitting a workflow, verify each item:
 - ❌ `"version": "1.0"` or `"version": "2.0"` → Use `"version": "2"`
 - ❌ `{"source": "loop", "target": "done", ...}` where "done" isn't a node → Add the missing node
 - ❌ `"range": "Sheet1!A${index + 2}"` → Arithmetic doesn't work in templates
-- ❌ `${item[0]}` in for_each loop → May fail due to type inference; use LLM to extract
+- ❌ `${item[0]}` in for_each loop → May fail due to type inference; use agent to extract
 
 ---
 
@@ -503,7 +503,7 @@ Before submitting a workflow, verify each item:
 **Fix:** Add both edge types
 
 ### Issue: "Multiple outgoing edges from tool node"
-**Cause:** Tool/LLM/MCP node has more than one outgoing edge
+**Cause:** Tool/Agent/MCP node has more than one outgoing edge
 **Fix:** Use If node for branching, not multiple edges from tool node
 
 ### Issue: "Circular reference detected"

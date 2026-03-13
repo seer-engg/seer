@@ -56,7 +56,7 @@ Each block is a node in the workflow graph, connected by edges that define execu
 
 ---
 
-## 3. MCP BLOCK (`type: "mcp"`)
+## 2. MCP BLOCK (`type: "mcp"`)
 
 **Purpose:** Execute tools from Model Context Protocol (MCP) servers (external tool providers)
 
@@ -91,7 +91,7 @@ Each block is a node in the workflow graph, connected by edges that define execu
 - `auth` (object): Authentication configuration
   - `headers` (object): HTTP headers (for http servers)
   - `env` (object): Environment variables (for stdio servers)
-- `expect_outputs` (object): Output validation schema (same as LLM outputs)
+- `expect_outputs` (object): Output validation schema (same as agent outputs)
 
 **Authentication:**
 - Use `${secrets.key_name}` for credential references
@@ -125,7 +125,7 @@ Each block is a node in the workflow graph, connected by edges that define execu
 
 ---
 
-## 4. IF BLOCK (`type: "if"`)
+## 3. IF BLOCK (`type: "if"`)
 
 **Purpose:** Conditional branching - execute different paths based on boolean conditions
 
@@ -200,7 +200,7 @@ If nodes **require** two edges:
 
 ---
 
-## 5. FOR_EACH BLOCK (`type: "for_each"`)
+## 4. FOR_EACH BLOCK (`type: "for_each"`)
 
 **Purpose:** Iterate over a list, executing the same operations for each item
 
@@ -301,7 +301,7 @@ ForEach nodes use two edge types:
 
 ---
 
-## 6. HITL BLOCK (`type: "hitl"`)
+## 5. HITL BLOCK (`type: "hitl"`)
 
 **Purpose:** Human-In-The-Loop - pause workflow execution to collect user input via web form or email
 
@@ -437,7 +437,7 @@ ForEach nodes use two edge types:
 
 ---
 
-## 7. IMAGE_GEN BLOCK (`type: "image_gen"`)
+## 6. IMAGE_GEN BLOCK (`type: "image_gen"`)
 
 **Purpose:** Generate images using AI models via OpenRouter API
 
@@ -496,7 +496,7 @@ ForEach nodes use two edge types:
 
 ---
 
-## 8. BROWSER BLOCK (`type: "browser"`)
+## 7. BROWSER BLOCK (`type: "browser"`)
 
 **Purpose:** Browser automation using natural language task descriptions powered by an LLM-driven agent.
 
@@ -804,7 +804,7 @@ Login and extract account data:
 
 ---
 
-## 9. AGENT BLOCK (`type: "agent"`)
+## 8. AGENT BLOCK (`type: "agent"`)
 
 **Purpose:** Multi-step autonomous task execution with tool access. The agent reasons, calls tools, and iterates until the task is complete.
 
@@ -841,7 +841,7 @@ Login and extract account data:
 - `temperature` (number): LLM temperature for agent reasoning (default: 0.2)
 
 **Output Configuration:**
-- `outputs` (object): Defines output format (same as LLM nodes)
+- `outputs` (object): Defines output format
   - `mode`: `"text"` (default) or `"json"`
   - `schema`: Required if `mode="json"`, contains JSON Schema
 
@@ -984,19 +984,6 @@ Tools can be specified in two formats:
 }
 ```
 
-**Agent vs LLM Node:**
-| Aspect | LLM Node | Agent Node |
-|--------|----------|------------|
-| Tool access | None | Yes (via `tools` list) |
-| Iterations | Single pass | Multiple (up to `max_iterations`) |
-| Use case | Classification, extraction, generation | Research, multi-step tasks, autonomous workflows |
-| Cost | Lower (single LLM call) | Higher (multiple LLM + tool calls) |
-| Complexity | Deterministic | Non-deterministic (agent decides) |
-
-**When to Use Agent vs LLM:**
-- Use **LLM** for: classification, data extraction, content generation, single-step decisions
-- Use **Agent** for: research tasks, multi-step data gathering, tasks requiring tool chaining, autonomous workflows
-
 **Common Use Cases:**
 - Research and information gathering
 - Multi-step data processing pipelines
@@ -1038,7 +1025,7 @@ All blocks support `${...}` expressions for dynamic data:
 
 **Template expressions and condition expressions have DIFFERENT capabilities.**
 
-### Template Expressions (in tool inputs, LLM prompts)
+### Template Expressions (in tool inputs, agent prompts)
 Template expressions perform simple substitution only - they resolve references and convert to strings.
 
 **✅ Supported:**
@@ -1062,7 +1049,7 @@ Template expressions perform simple substitution only - they resolve references 
 ```
 This will fail because arithmetic is not allowed in template expressions.
 
-**Example - CORRECT (workaround using LLM):**
+**Example - CORRECT (workaround using agent):**
 ```json
 {
   "id": "compute_row",
@@ -1101,7 +1088,7 @@ Arithmetic works in `if` conditions!
 
 ## Block Composition Patterns
 
-**Pattern 1: Tool → LLM (Process then Analyze)**
+**Pattern 1: Tool → Agent (Process then Analyze)**
 ```json
 {
   "nodes": [
@@ -1114,7 +1101,7 @@ Arithmetic works in `if` conditions!
 }
 ```
 
-**Pattern 2: LLM → If (Classify then Route)**
+**Pattern 2: Agent → If (Classify then Route)**
 ```json
 {
   "nodes": [
