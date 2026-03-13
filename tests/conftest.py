@@ -88,6 +88,37 @@ async def db_engine():
 # should explicitly request it via parameters
 
 
+@pytest.fixture(autouse=True)
+async def reset_checkpointer():
+    """
+    Reset checkpointer singleton between tests.
+
+    The checkpointer uses a global singleton bound to one event loop.
+    With asyncio_default_fixture_loop_scope="function", each test gets
+    a new loop, causing hangs if the checkpointer isn't reset.
+
+    This is autouse to ensure all tests get a fresh checkpointer state.
+    Without this, tests hang when run without pytest-xdist (-n flag).
+    """
+    # Clear before test
+    try:
+        import seer.api.agents.checkpointer as checkpointer_module
+        checkpointer_module._checkpointer = None
+        checkpointer_module._checkpointer_cm = None
+    except ImportError:
+        pass
+
+    yield
+
+    # Clear after test (for safety)
+    try:
+        import seer.api.agents.checkpointer as checkpointer_module
+        checkpointer_module._checkpointer = None
+        checkpointer_module._checkpointer_cm = None
+    except ImportError:
+        pass
+
+
 # =============================================================================
 # User Fixtures
 # =============================================================================
