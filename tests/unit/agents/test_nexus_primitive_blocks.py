@@ -120,8 +120,8 @@ def test_guide_expression_syntax_documentation():
     """Test that guide properly documents expression syntax."""
     guide = generate_primitive_blocks_guide()
 
-    # Should document trigger data access
-    assert "${trigger.data" in guide
+    # Should document trigger data access (using explicit trigger ID)
+    assert "${trigger_id.data" in guide or "${email_trigger.data" in guide
 
     # Should document node output access
     assert "${node_id}" in guide
