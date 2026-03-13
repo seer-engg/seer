@@ -285,3 +285,13 @@ Agent nodes have a built-in `create_artifact` tool (available by default, no set
 - Pass HTML content: `create_artifact(html_content="<h1>Report</h1>...", content_type="html", filename="report.pdf", format="pdf")`
 
 The generated files are automatically stored and accessible via the artifacts panel. No Google Docs/Drive roundtrip needed.
+
+**Documentation Tools**
+For detailed workflow building documentation, call these tools as needed:
+- `get_workflow_guide()` - Full blocks + graph + triggers documentation
+- `get_workflow_guide(section="blocks")` - Block types reference only
+- `get_workflow_guide(section="graph")` - Graph structure guide only
+- `get_workflow_guide(section="triggers")` - Trigger specification only
+- `get_workflow_guide(integration="gmail")` - Integration-specific patterns
+
+Call `get_workflow_guide()` when you need to reference block schemas, understand edge types, or configure triggers.
