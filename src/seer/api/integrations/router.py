@@ -712,7 +712,50 @@ async def auth_callback(request: Request, provider: str):
 
     # Authlib handles state validation, PKCE verification, and token exchange
     try:
-        token = await client.authorize_access_token(request)
+        # Special handling for LinkedIn - requires client credentials in POST body (not Basic Auth)
+        # See: https://learn.microsoft.com/en-us/linkedin/shared/authentication/authorization-code-flow
+        if oauth_provider == 'linkedin':
+            import httpx
+
+            code = request.query_params.get('code')
+            # Use the same redirect_uri builder as the authorization step for consistency
+            redirect_uri = _build_oauth_redirect_uri(request, oauth_provider)
+
+            logger.info(
+                "LinkedIn token exchange: code=%s..., redirect_uri=%s",
+                code[:20] if code else 'None',
+                redirect_uri,
+            )
+
+            # LinkedIn requires all parameters in the POST body (not Basic Auth)
+            async with httpx.AsyncClient() as http_client:
+                response = await http_client.post(
+                    'https://www.linkedin.com/oauth/v2/accessToken',
+                    headers={
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    data={
+                        'grant_type': 'authorization_code',
+                        'code': code,
+                        'client_id': config.linkedin_client_id,
+                        'client_secret': config.linkedin_client_secret,
+                        'redirect_uri': redirect_uri,
+                    },
+                )
+
+            if response.status_code != 200:
+                logger.error(
+                    "LinkedIn token exchange failed: status=%s, body=%s",
+                    response.status_code,
+                    response.text[:500] if response.text else 'empty',
+                )
+                raise OAuthError(description=f"LinkedIn token exchange failed: {response.text}")
+
+            token = response.json()
+            logger.info("LinkedIn token exchange successful")
+        else:
+            token = await client.authorize_access_token(request)
+
         logger.info("OAuth token exchange successful: provider=%s", oauth_provider)
     except OAuthError as exc:
         logger.error(
