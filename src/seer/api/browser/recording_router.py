@@ -39,6 +39,8 @@ class RecordingMetadata(BaseModel):
     completed_at: Optional[str]
     browser_profile_id: Optional[str]
     workflow_run_id: Optional[str]
+    is_chunked: bool = False
+    chunk_count: int = 0
 
 
 class RecordingListResponse(BaseModel):
@@ -89,6 +91,8 @@ async def list_recordings(
                 completed_at=r.completed_at.isoformat() if r.completed_at else None,
                 browser_profile_id=str(r.browser_profile_id) if r.browser_profile_id else None,
                 workflow_run_id=r.workflow_run_id,
+                is_chunked=r.is_chunked,
+                chunk_count=r.chunk_count,
             )
             for r in recordings
         ],
@@ -120,6 +124,8 @@ async def get_recording(
         completed_at=recording.completed_at.isoformat() if recording.completed_at else None,
         browser_profile_id=str(recording.browser_profile_id) if recording.browser_profile_id else None,
         workflow_run_id=recording.workflow_run_id,
+        is_chunked=recording.is_chunked,
+        chunk_count=recording.chunk_count,
     )
 
 
@@ -128,7 +134,11 @@ async def get_recording_events(
     request: Request,
     recording_id: UUID,
 ) -> dict:
-    """Get decompressed rrweb events for a recording."""
+    """Get decompressed rrweb events for a recording.
+
+    Handles both chunked and non-chunked recordings transparently.
+    For chunked recordings, reassembles events from all chunks in order.
+    """
     user: User = request.state.db_user
 
     recording = await SessionRecording.get_or_none(id=recording_id, user=user)
@@ -136,35 +146,44 @@ async def get_recording_events(
         raise HTTPException(status_code=404, detail="Recording not found")
 
     try:
-        events = RecordingService.decompress_events(recording.events_compressed)
+        # Use service method that handles both chunked and non-chunked
+        events = await RecordingService.get_recording_events(str(recording_id))
     except Exception as e:
-        logger.error("Failed to decompress recording %s: %s", recording_id, e)
-        raise HTTPException(status_code=500, detail="Failed to decompress recording data") from e
+        logger.error("Failed to get recording events %s: %s", recording_id, e)
+        raise HTTPException(status_code=500, detail="Failed to retrieve recording events") from e
 
     return {
         "recording_id": str(recording_id),
         "event_count": len(events),
         "events": events,
+        "is_chunked": recording.is_chunked,
+        "chunk_count": recording.chunk_count,
     }
 
 
 @router.get("/shared/{recording_id}/events")
 async def get_shared_recording_events(recording_id: UUID) -> dict:
-    """Get recording events for public sharing (no auth required)."""
+    """Get recording events for public sharing (no auth required).
+
+    Handles both chunked and non-chunked recordings transparently.
+    """
     recording = await SessionRecording.get_or_none(id=recording_id)
     if not recording:
         raise HTTPException(status_code=404, detail="Recording not found")
 
     try:
-        events = RecordingService.decompress_events(recording.events_compressed)
+        # Use service method that handles both chunked and non-chunked
+        events = await RecordingService.get_recording_events(str(recording_id))
     except Exception as e:
-        logger.error("Failed to decompress recording %s: %s", recording_id, e)
-        raise HTTPException(status_code=500, detail="Failed to decompress recording data") from e
+        logger.error("Failed to get recording events %s: %s", recording_id, e)
+        raise HTTPException(status_code=500, detail="Failed to retrieve recording events") from e
 
     return {
         "recording_id": str(recording_id),
         "event_count": len(events),
         "events": events,
+        "is_chunked": recording.is_chunked,
+        "chunk_count": recording.chunk_count,
     }
 
 

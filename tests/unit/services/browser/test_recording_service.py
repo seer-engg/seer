@@ -8,6 +8,7 @@ The recording service uses a JS storage + polling approach:
 The rrweb library is inlined (not loaded from CDN) to bypass CSP restrictions
 on enterprise apps like Gmail.
 """
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -427,3 +428,428 @@ class TestSaveRecordingCleanup:
         assert "session-cleanup" not in recorder._browser_sessions
         assert "session-cleanup" not in recorder._recording_ids
         assert "session-cleanup" not in recorder._start_times
+
+
+# ==============================================================================
+# CHUNKED RECORDING TESTS - Recording Durability Feature
+# ==============================================================================
+#
+# These tests verify the periodic flushing mechanism that prevents data loss
+# when CDP target detaches during long-running browser sessions.
+#
+# Architecture:
+# - Events stored in JS (window.__seer_events) are flushed every 45 seconds
+# - Each flush creates a SessionRecordingChunk in the database
+# - On finalization, remaining events become the final chunk
+# - get_recording_events() reassembles chunks in sequence order
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+class TestFlushLoop:
+    """Test the periodic event flushing mechanism."""
+
+    @patch("seer.services.browser.recording_service.SessionRecordingChunk")
+    @patch("seer.services.browser.recording_service.SessionRecording")
+    async def test_flush_creates_chunk_in_db(
+        self, mock_recording_model, mock_chunk_model, mock_browser_session, mock_user
+    ):
+        """Test that flushing events creates a chunk in the database."""
+        mock_recording_model.create = AsyncMock()
+        mock_recording_model.filter = MagicMock(return_value=MagicMock(update=AsyncMock()))
+        mock_chunk_model.create = AsyncMock()
+
+        # Configure mock to return events via flush function
+        events = [{"type": 1, "timestamp": 1000}, {"type": 2, "timestamp": 2000}]
+        mock_browser_session.cdp_client.send_raw = AsyncMock(return_value={
+            "result": {"value": json.dumps(events)}
+        })
+
+        recorder = RecordingService()
+        await recorder.start_recording(
+            "session-flush", mock_browser_session, user=mock_user
+        )
+
+        # Manually trigger a flush (simulate timer expiry)
+        result = await recorder._flush_events_to_chunk("session-flush")
+
+        assert result is True
+        # First flush creates parent recording
+        mock_recording_model.create.assert_called_once()
+        # Then creates the chunk
+        mock_chunk_model.create.assert_called_once()
+
+        # Verify chunk data
+        chunk_call = mock_chunk_model.create.call_args[1]
+        assert chunk_call["event_count"] == 2
+        assert chunk_call["sequence_number"] == 0
+
+        # Stop flush loop before test cleanup
+        active = recorder._active_recordings.get("session-flush")
+        if active:
+            active.stop_event.set()
+
+    @patch("seer.services.browser.recording_service.SessionRecordingChunk")
+    @patch("seer.services.browser.recording_service.SessionRecording")
+    async def test_flush_increments_sequence_number(
+        self, mock_recording_model, mock_chunk_model, mock_browser_session, mock_user
+    ):
+        """Test that successive flushes increment chunk sequence number."""
+        mock_recording_model.create = AsyncMock()
+        mock_recording_model.filter = MagicMock(return_value=MagicMock(update=AsyncMock()))
+        mock_chunk_model.create = AsyncMock()
+
+        events = [{"type": 1}]
+        mock_browser_session.cdp_client.send_raw = AsyncMock(return_value={
+            "result": {"value": json.dumps(events)}
+        })
+
+        recorder = RecordingService()
+        await recorder.start_recording(
+            "session-seq", mock_browser_session, user=mock_user
+        )
+
+        # Multiple flushes
+        await recorder._flush_events_to_chunk("session-seq")
+        await recorder._flush_events_to_chunk("session-seq")
+        await recorder._flush_events_to_chunk("session-seq")
+
+        # Check sequence numbers
+        calls = mock_chunk_model.create.call_args_list
+        assert calls[0][1]["sequence_number"] == 0
+        assert calls[1][1]["sequence_number"] == 1
+        assert calls[2][1]["sequence_number"] == 2
+
+        # Cleanup
+        active = recorder._active_recordings.get("session-seq")
+        if active:
+            active.stop_event.set()
+
+    async def test_flush_with_empty_events_returns_true(self, mock_browser_session, mock_user):
+        """Test that flushing with no events returns True (not an error)."""
+        # Configure mock to return empty events
+        mock_browser_session.cdp_client.send_raw = AsyncMock(return_value={
+            "result": {"value": "[]"}
+        })
+
+        recorder = RecordingService()
+        await recorder.start_recording(
+            "session-empty-flush", mock_browser_session, user=mock_user
+        )
+
+        result = await recorder._flush_events_to_chunk("session-empty-flush")
+
+        assert result is True  # Empty is not an error
+
+        # Cleanup
+        active = recorder._active_recordings.get("session-empty-flush")
+        if active:
+            active.stop_event.set()
+
+    async def test_flush_continues_on_cdp_error(self, mock_browser_session, mock_user):
+        """Test that flush handles CDP errors gracefully and doesn't crash.
+
+        When CDP collection fails, _collect_and_clear_events catches the exception
+        and returns an empty list. _flush_events_to_chunk then sees "no events"
+        and returns True (success - nothing to flush is fine). This is by design:
+        the flush loop should continue running and try again next interval.
+        """
+        # Simulate CDP error
+        mock_browser_session.cdp_client.send_raw = AsyncMock(
+            side_effect=RuntimeError("CDP connection lost")
+        )
+
+        recorder = RecordingService()
+        await recorder.start_recording(
+            "session-cdp-err", mock_browser_session, user=mock_user
+        )
+
+        # Should not raise - CDP errors are caught and treated as "no events"
+        result = await recorder._flush_events_to_chunk("session-cdp-err")
+
+        # Returns True because empty events = success (will retry next interval)
+        assert result is True
+
+        # Cleanup
+        active = recorder._active_recordings.get("session-cdp-err")
+        if active:
+            active.stop_event.set()
+
+    async def test_stop_event_terminates_flush_loop(self, mock_browser_session, mock_user):
+        """Test that setting stop_event terminates the flush loop."""
+        mock_browser_session.cdp_client.send_raw = AsyncMock(return_value={
+            "result": {"value": "[]"}
+        })
+
+        recorder = RecordingService()
+        await recorder.start_recording(
+            "session-stop-loop", mock_browser_session, user=mock_user
+        )
+
+        active = recorder._active_recordings.get("session-stop-loop")
+        assert active is not None
+        assert active.flush_task is not None
+        assert not active.stop_event.is_set()
+
+        # Set stop event
+        active.stop_event.set()
+
+        # Wait for task to complete
+        await asyncio.wait_for(active.flush_task, timeout=1.0)
+
+        assert active.flush_task.done()
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+class TestChunkedRecordingFinalization:
+    """Test finalization of chunked recordings."""
+
+    @patch("seer.services.browser.recording_service.SessionRecordingChunk")
+    @patch("seer.services.browser.recording_service.SessionRecording")
+    async def test_finalize_saves_remaining_events_as_final_chunk(
+        self, mock_recording_model, mock_chunk_model, mock_browser_session, mock_user
+    ):
+        """Test that finalization saves remaining events as a final chunk."""
+        mock_recording_model.create = AsyncMock()
+        mock_recording_model.filter = MagicMock(return_value=MagicMock(update=AsyncMock()))
+        mock_chunk_model.create = AsyncMock()
+        mock_chunk_model.filter = MagicMock(return_value=MagicMock(
+            annotate=MagicMock(return_value=MagicMock(
+                values=AsyncMock(return_value=[{"total": 1000}])
+            ))
+        ))
+
+        # Events for flush and final collection
+        events_batch1 = [{"type": 1}]
+        events_batch2 = [{"type": 2}, {"type": 3}]
+
+        # Track call count to return different values
+        call_count = 0
+
+        async def mock_send_raw(method, params, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            # Flush uses __seer_flush_events
+            if "__seer_flush_events" in params.get("expression", ""):
+                return {"result": {"value": json.dumps(events_batch1)}}
+            # URL check
+            if "location.href" in params.get("expression", ""):
+                return {"result": {"value": "https://example.com"}}
+            # rrweb loaded check
+            if "__seer_rrweb_loaded" in params.get("expression", ""):
+                return {"result": {"value": True}}
+            # Final event collection (uses __seer_events)
+            if "__seer_events" in params.get("expression", ""):
+                return {"result": {"value": json.dumps(events_batch2)}}
+            return {"result": {"value": "[]"}}
+
+        mock_browser_session.cdp_client.send_raw = mock_send_raw
+
+        recorder = RecordingService()
+        await recorder.start_recording(
+            "session-final", mock_browser_session, user=mock_user
+        )
+
+        # Flush once to create a chunk
+        await recorder._flush_events_to_chunk("session-final")
+
+        # Now finalize (save_recording)
+        result = await recorder.save_recording("session-final", mock_user)
+
+        assert result is not None
+        # Should have 2 chunks: initial flush + final
+        assert mock_chunk_model.create.call_count == 2
+
+    @patch("seer.services.browser.recording_service.SessionRecording")
+    async def test_short_session_creates_non_chunked_recording(
+        self, mock_recording_model, mock_browser_session, mock_user
+    ):
+        """Test that short sessions (no flushes) create traditional non-chunked recordings."""
+        mock_recording_model.create = AsyncMock()
+
+        # Only events at final collection (no prior flushes)
+        events = [{"type": 1, "timestamp": 1000}]
+
+        async def mock_send_raw(method, params, **kwargs):
+            # URL check
+            if "location.href" in params.get("expression", ""):
+                return {"result": {"value": "https://example.com"}}
+            # rrweb loaded check
+            if "__seer_rrweb_loaded" in params.get("expression", ""):
+                return {"result": {"value": True}}
+            # Event collection
+            if "__seer_events" in params.get("expression", ""):
+                return {"result": {"value": json.dumps(events)}}
+            return {"result": {"value": "[]"}}
+
+        mock_browser_session.cdp_client.send_raw = mock_send_raw
+
+        recorder = RecordingService()
+        await recorder.start_recording(
+            "session-short", mock_browser_session, user=mock_user
+        )
+
+        # Immediately finalize (no flush triggered)
+        result = await recorder.save_recording("session-short", mock_user)
+
+        assert result is not None
+        # Should create a single non-chunked recording
+        mock_recording_model.create.assert_called_once()
+        call_kwargs = mock_recording_model.create.call_args[1]
+        assert call_kwargs["is_chunked"] is False
+        assert call_kwargs["events_compressed"] is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+class TestGetRecordingEvents:
+    """Test the static get_recording_events method for reassembly."""
+
+    @patch("seer.services.browser.recording_service.SessionRecordingChunk")
+    @patch("seer.services.browser.recording_service.SessionRecording")
+    async def test_get_chunked_recording_reassembles_in_order(
+        self, mock_recording_model, mock_chunk_model
+    ):
+        """Test that chunked recordings are reassembled in sequence order."""
+        # Mock parent recording
+        mock_recording = MagicMock()
+        mock_recording.is_chunked = True
+        mock_recording_model.get_or_none = AsyncMock(return_value=mock_recording)
+
+        # Create mock chunks with events
+        events1 = [{"type": 1, "timestamp": 1000}]
+        events2 = [{"type": 2, "timestamp": 2000}]
+        events3 = [{"type": 3, "timestamp": 3000}]
+
+        chunk1 = MagicMock()
+        chunk1.events_compressed = RecordingService.compress_events(events1)
+        chunk2 = MagicMock()
+        chunk2.events_compressed = RecordingService.compress_events(events2)
+        chunk3 = MagicMock()
+        chunk3.events_compressed = RecordingService.compress_events(events3)
+
+        # Mock chunk query (already ordered by sequence_number)
+        mock_chunk_model.filter = MagicMock(return_value=MagicMock(
+            order_by=MagicMock(return_value=MagicMock(
+                all=AsyncMock(return_value=[chunk1, chunk2, chunk3])
+            ))
+        ))
+
+        events = await RecordingService.get_recording_events("recording-123")
+
+        assert len(events) == 3
+        assert events[0]["type"] == 1
+        assert events[1]["type"] == 2
+        assert events[2]["type"] == 3
+
+    @patch("seer.services.browser.recording_service.SessionRecording")
+    async def test_get_non_chunked_recording_returns_blob(
+        self, mock_recording_model
+    ):
+        """Test that non-chunked recordings return events from blob."""
+        events = [{"type": 1}, {"type": 2}]
+
+        mock_recording = MagicMock()
+        mock_recording.is_chunked = False
+        mock_recording.events_compressed = RecordingService.compress_events(events)
+        mock_recording_model.get_or_none = AsyncMock(return_value=mock_recording)
+
+        result = await RecordingService.get_recording_events("recording-456")
+
+        assert len(result) == 2
+        assert result == events
+
+    @patch("seer.services.browser.recording_service.SessionRecording")
+    async def test_get_missing_recording_returns_empty_list(
+        self, mock_recording_model
+    ):
+        """Test that missing recordings return empty list."""
+        mock_recording_model.get_or_none = AsyncMock(return_value=None)
+
+        result = await RecordingService.get_recording_events("nonexistent")
+
+        assert result == []
+
+    @patch("seer.services.browser.recording_service.SessionRecording")
+    async def test_get_non_chunked_with_no_blob_returns_empty(
+        self, mock_recording_model
+    ):
+        """Test non-chunked recording with null events_compressed."""
+        mock_recording = MagicMock()
+        mock_recording.is_chunked = False
+        mock_recording.events_compressed = None
+        mock_recording_model.get_or_none = AsyncMock(return_value=mock_recording)
+
+        result = await RecordingService.get_recording_events("recording-empty")
+
+        assert result == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+class TestActiveRecordingTracking:
+    """Test ActiveRecording dataclass and tracking."""
+
+    async def test_start_recording_with_user_creates_active_recording(
+        self, mock_browser_session, mock_user
+    ):
+        """Test that start_recording with user param creates ActiveRecording."""
+        recorder = RecordingService()
+
+        await recorder.start_recording(
+            "session-active",
+            mock_browser_session,
+            user=mock_user,
+            profile_id="profile-123",
+            workflow_run_id="run-456",
+        )
+
+        assert "session-active" in recorder._active_recordings
+        active = recorder._active_recordings["session-active"]
+        assert active.user is mock_user
+        assert active.profile_id == "profile-123"
+        assert active.workflow_run_id == "run-456"
+        assert active.flush_task is not None
+
+        # Cleanup
+        active.stop_event.set()
+
+    async def test_start_recording_without_user_uses_legacy_path(
+        self, mock_browser_session
+    ):
+        """Test that start_recording without user uses legacy tracking only."""
+        recorder = RecordingService()
+
+        await recorder.start_recording(
+            "session-legacy",
+            mock_browser_session,
+        )
+
+        # Should be in legacy tracking
+        assert "session-legacy" in recorder._browser_sessions
+        assert "session-legacy" in recorder._recording_ids
+        # But NOT in active recordings
+        assert "session-legacy" not in recorder._active_recordings
+
+    async def test_save_recording_removes_active_recording(
+        self, mock_browser_session, mock_user
+    ):
+        """Test that save_recording removes the ActiveRecording entry."""
+        mock_browser_session.cdp_client.send_raw = AsyncMock(return_value={
+            "result": {"value": "[]"}
+        })
+
+        recorder = RecordingService()
+        await recorder.start_recording(
+            "session-remove",
+            mock_browser_session,
+            user=mock_user,
+        )
+
+        assert "session-remove" in recorder._active_recordings
+
+        await recorder.save_recording("session-remove", mock_user)
+
+        # Should be removed after save
+        assert "session-remove" not in recorder._active_recordings

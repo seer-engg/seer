@@ -41,7 +41,7 @@ Each block is a node in the workflow graph, connected by edges that define execu
   "type": "tool",
   "tool": "gmail_send_email",
   "inputs": {
-    "to": ["${trigger.data.recipient}"],
+    "to": ["${email_trigger.data.recipient}"],
     "subject": "Re: ${previous_email.subject}",
     "body": "${draft_message}"
   }
@@ -56,7 +56,7 @@ Each block is a node in the workflow graph, connected by edges that define execu
 
 ---
 
-## 3. MCP BLOCK (`type: "mcp"`)
+## 2. MCP BLOCK (`type: "mcp"`)
 
 **Purpose:** Execute tools from Model Context Protocol (MCP) servers (external tool providers)
 
@@ -91,7 +91,7 @@ Each block is a node in the workflow graph, connected by edges that define execu
 - `auth` (object): Authentication configuration
   - `headers` (object): HTTP headers (for http servers)
   - `env` (object): Environment variables (for stdio servers)
-- `expect_outputs` (object): Output validation schema (same as LLM outputs)
+- `expect_outputs` (object): Output validation schema (same as agent outputs)
 
 **Authentication:**
 - Use `${secrets.key_name}` for credential references
@@ -125,7 +125,7 @@ Each block is a node in the workflow graph, connected by edges that define execu
 
 ---
 
-## 4. IF BLOCK (`type: "if"`)
+## 3. IF BLOCK (`type: "if"`)
 
 **Purpose:** Conditional branching - execute different paths based on boolean conditions
 
@@ -200,7 +200,7 @@ If nodes **require** two edges:
 
 ---
 
-## 5. FOR_EACH BLOCK (`type: "for_each"`)
+## 4. FOR_EACH BLOCK (`type: "for_each"`)
 
 **Purpose:** Iterate over a list, executing the same operations for each item
 
@@ -218,7 +218,7 @@ If nodes **require** two edges:
 **Required Fields:**
 - `id` (string): Unique identifier
 - `type`: Must be `"for_each"`
-- `items` (string): Expression that resolves to a list (e.g., `"${results}"`, `"${trigger.data.items}"`)
+- `items` (string): Expression that resolves to a list (e.g., `"${results}"`, `"${my_trigger.data.items}"`)
 
 **Optional Fields:**
 - `item_var` (string): Variable name for current item (default: `"item"`)
@@ -301,7 +301,7 @@ ForEach nodes use two edge types:
 
 ---
 
-## 6. HITL BLOCK (`type: "hitl"`)
+## 5. HITL BLOCK (`type: "hitl"`)
 
 **Purpose:** Human-In-The-Loop - pause workflow execution to collect user input via web form or email
 
@@ -437,7 +437,7 @@ ForEach nodes use two edge types:
 
 ---
 
-## 7. IMAGE_GEN BLOCK (`type: "image_gen"`)
+## 6. IMAGE_GEN BLOCK (`type: "image_gen"`)
 
 **Purpose:** Generate images using AI models via OpenRouter API
 
@@ -447,7 +447,7 @@ ForEach nodes use two edge types:
   "id": "unique_node_id",
   "type": "image_gen",
   "inputs": {
-    "model": "openai/dall-e-3",
+    "model": "sourceful/riverflow-v2-fast",
     "prompt": "A professional product photo of ${product.name}",
     "size": "1024x1024",
     "num_images": 1
@@ -466,10 +466,9 @@ ForEach nodes use two edge types:
 - `size` (string): Image dimensions (e.g., `"1024x1024"`, `"1792x1024"`)
 - `num_images` (number): Number of images to generate
 
-**Available Models (via OpenRouter):**
-- `openai/dall-e-3` - DALL-E 3
-- `openai/dall-e-2` - DALL-E 2
-- Other models supported by OpenRouter
+**Available Models:**
+- `sourceful/riverflow-v2-fast` - Fast image generation
+- `google/gemini-2.5-flash-image` - Gemini image generation
 
 **Important Notes:**
 - ✅ Output contains generated image URL(s)
@@ -482,7 +481,7 @@ ForEach nodes use two edge types:
   "id": "generate_thumbnail",
   "type": "image_gen",
   "inputs": {
-    "model": "openai/dall-e-3",
+    "model": "sourceful/riverflow-v2-fast",
     "prompt": "Create a minimalist thumbnail image for a blog post about: ${article.title}. Style: modern, clean, professional",
     "size": "1024x1024"
   }
@@ -497,7 +496,7 @@ ForEach nodes use two edge types:
 
 ---
 
-## 8. BROWSER BLOCK (`type: "browser"`)
+## 7. BROWSER BLOCK (`type: "browser"`)
 
 **Purpose:** Browser automation using natural language task descriptions powered by an LLM-driven agent.
 
@@ -538,6 +537,7 @@ ForEach nodes use two edge types:
 **Optional Fields:**
 - `inputs` (object): Additional context data passed to the browser agent
 - `browser_profile_id` (string): Reference to saved browser profile with login sessions
+- `model` (string): OpenRouter model ID for browser agent (default: `qwen/qwen3-vl-8b-thinking`)
 - `max_steps` (number): Maximum automation steps (default: 25, range: 1-100)
 - `timeout_seconds` (number): Execution timeout (default: 300, range: 30-1800)
 - `expect_outputs` (object): Output schema for structured data extraction
@@ -747,9 +747,9 @@ Login and extract account data:
   "task": "1. Navigate to ${inputs.form_url}\n2. Type '${inputs.name}' into the Name field\n3. Type '${inputs.email}' into the Email field\n4. Type '${inputs.message}' into the Message textarea\n5. Click the Submit button\n6. If the button cannot be clicked, use send_keys with 'Tab Enter'\n7. Wait for confirmation message\n8. Extract the confirmation text or reference number",
   "inputs": {
     "form_url": "https://example.com/contact",
-    "name": "${trigger.data.sender_name}",
-    "email": "${trigger.data.sender_email}",
-    "message": "${trigger.data.message}"
+    "name": "${form_trigger.data.sender_name}",
+    "email": "${form_trigger.data.sender_email}",
+    "message": "${form_trigger.data.message}"
   },
   "max_steps": 20,
   "timeout_seconds": 60
@@ -804,7 +804,7 @@ Login and extract account data:
 
 ---
 
-## 9. AGENT BLOCK (`type: "agent"`)
+## 8. AGENT BLOCK (`type: "agent"`)
 
 **Purpose:** Multi-step autonomous task execution with tool access. The agent reasons, calls tools, and iterates until the task is complete.
 
@@ -837,11 +837,11 @@ Login and extract account data:
 - `tools` (array): List of tools the agent can call autonomously
   - Simple format: `["tool_name", "another_tool"]`
   - With OAuth: `[{"name": "gmail_send_email", "connection_id": 42}]`
-- `max_iterations` (number): Maximum reasoning/tool-calling steps (default: 10)
+- `max_iterations` (number): Maximum reasoning/tool-calling steps (optional, unlimited if not set)
 - `temperature` (number): LLM temperature for agent reasoning (default: 0.2)
 
 **Output Configuration:**
-- `outputs` (object): Defines output format (same as LLM nodes)
+- `outputs` (object): Defines output format
   - `mode`: `"text"` (default) or `"json"`
   - `schema`: Required if `mode="json"`, contains JSON Schema
 
@@ -868,7 +868,7 @@ Tools can be specified in two formats:
 - ✅ If user has multiple OAuth accounts, include `connection_id` in the tool spec
 - ✅ Agent output is accessed via `${node_id}` or `${node_id.field}` (if JSON mode)
 - ⚠️ Agents can be expensive - each iteration involves LLM calls and potentially tool execution
-- ⚠️ Use `max_iterations` to prevent runaway execution (default: 10)
+- ⚠️ Use `max_iterations` to prevent runaway execution (recommended for production workflows)
 - ✉️ **Email body generation:** When tasking an agent to generate an email body, instruct it to produce the content as **formatted Markdown** (use headings, bullet points, bold text, etc.). Email tools convert Markdown to HTML for rendering in email clients.
 
 **Output Modes:**
@@ -912,7 +912,7 @@ Tools can be specified in two formats:
   "type": "agent",
   "inputs": {
     "model": "openai/gpt-oss-120b",
-    "prompt": "Research the company ${trigger.data.company_name}. Find their:\n1. Main products/services\n2. Recent news or announcements\n3. Key leadership\n\nCompile a brief executive summary.",
+    "prompt": "Research the company ${webhook_trigger.data.company_name}. Find their:\n1. Main products/services\n2. Recent news or announcements\n3. Key leadership\n\nCompile a brief executive summary.",
     "tools": ["web_search"],
     "max_iterations": 15
   },
@@ -984,19 +984,6 @@ Tools can be specified in two formats:
 }
 ```
 
-**Agent vs LLM Node:**
-| Aspect | LLM Node | Agent Node |
-|--------|----------|------------|
-| Tool access | None | Yes (via `tools` list) |
-| Iterations | Single pass | Multiple (up to `max_iterations`) |
-| Use case | Classification, extraction, generation | Research, multi-step tasks, autonomous workflows |
-| Cost | Lower (single LLM call) | Higher (multiple LLM + tool calls) |
-| Complexity | Deterministic | Non-deterministic (agent decides) |
-
-**When to Use Agent vs LLM:**
-- Use **LLM** for: classification, data extraction, content generation, single-step decisions
-- Use **Agent** for: research tasks, multi-step data gathering, tasks requiring tool chaining, autonomous workflows
-
 **Common Use Cases:**
 - Research and information gathering
 - Multi-step data processing pipelines
@@ -1038,7 +1025,7 @@ All blocks support `${...}` expressions for dynamic data:
 
 **Template expressions and condition expressions have DIFFERENT capabilities.**
 
-### Template Expressions (in tool inputs, LLM prompts)
+### Template Expressions (in tool inputs, agent prompts)
 Template expressions perform simple substitution only - they resolve references and convert to strings.
 
 **✅ Supported:**
@@ -1062,7 +1049,7 @@ Template expressions perform simple substitution only - they resolve references 
 ```
 This will fail because arithmetic is not allowed in template expressions.
 
-**Example - CORRECT (workaround using LLM):**
+**Example - CORRECT (workaround using agent):**
 ```json
 {
   "id": "compute_row",
@@ -1101,11 +1088,11 @@ Arithmetic works in `if` conditions!
 
 ## Block Composition Patterns
 
-**Pattern 1: Tool → LLM (Process then Analyze)**
+**Pattern 1: Tool → Agent (Process then Analyze)**
 ```json
 {
   "nodes": [
-    {"id": "fetch", "type": "tool", "tool": "gmail_get_message", "inputs": {"message_id": "${trigger.data.id}"}},
+    {"id": "fetch", "type": "tool", "tool": "gmail_get_message", "inputs": {"message_id": "${email_trigger.data.id}"}},
     {"id": "analyze", "type": "agent", "inputs": {"model": "openai/gpt-oss-120b", "prompt": "Analyze: ${fetch.body}"}, "outputs": {"mode": "json", ...}}
   ],
   "edges": [
@@ -1114,7 +1101,7 @@ Arithmetic works in `if` conditions!
 }
 ```
 
-**Pattern 2: LLM → If (Classify then Route)**
+**Pattern 2: Agent → If (Classify then Route)**
 ```json
 {
   "nodes": [
