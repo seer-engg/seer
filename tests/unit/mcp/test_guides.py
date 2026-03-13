@@ -1,12 +1,56 @@
 """
 Unit tests for MCP guide tools.
 
-Tests the get_workflow_guide MCP tool that provides on-demand
+Tests the get_workflow_guide and get_started MCP tools that provide on-demand
 access to workflow building documentation.
 """
 
 import pytest
 from unittest.mock import patch
+
+
+@pytest.mark.unit
+class TestGetStarted:
+    """Tests for get_started MCP tool."""
+
+    @pytest.mark.asyncio
+    @patch("seer.mcp.tools.guides.get_nexus_system_prompt")
+    async def test_returns_base_prompt(self, mock_prompt):
+        """Test that get_started returns the base system prompt."""
+        mock_prompt.return_value = "# Nexus Base\nCore principles..."
+
+        from seer.mcp.tools.guides import get_started
+        result = await get_started.fn()
+
+        assert "Nexus Base" in result
+        assert "Core principles" in result
+        mock_prompt.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("seer.mcp.tools.guides.get_nexus_system_prompt")
+    async def test_impl_is_synchronous(self, mock_prompt):
+        """Verify get_started_impl can be called synchronously from agent.py."""
+        mock_prompt.return_value = "# System Prompt\nWorkflow assistant instructions"
+
+        from seer.mcp.tools.guides import get_started_impl
+        result = get_started_impl()
+
+        assert isinstance(result, str)
+        assert "System Prompt" in result
+        mock_prompt.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("seer.mcp.tools.guides.get_nexus_system_prompt")
+    async def test_mcp_tool_uses_impl(self, mock_prompt):
+        """Verify MCP tool delegates to sync implementation."""
+        mock_prompt.return_value = "# Base Instructions"
+
+        from seer.mcp.tools.guides import get_started, get_started_impl
+
+        mcp_result = await get_started.fn()
+        impl_result = get_started_impl()
+
+        assert mcp_result == impl_result
 
 
 @pytest.mark.unit

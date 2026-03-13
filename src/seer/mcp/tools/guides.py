@@ -17,11 +17,51 @@ from seer.prompts import (
     get_graph_structure_guide,
     get_skill_guide,
     list_available_skills,
+    get_nexus_system_prompt,
 )
 from seer.agents.nexus.schema_context import generate_trigger_reference
 from seer.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def get_started_impl() -> str:
+    """
+    Get the base Nexus system prompt for workflow building.
+
+    This returns the foundational instructions without detailed block/graph/trigger
+    documentation. Call get_workflow_guide() separately for detailed references.
+
+    Returns:
+        Base system prompt with core principles, tool discovery, and validation checklist.
+    """
+    return get_nexus_system_prompt()
+
+
+@mcp.tool()
+@track_mcp_tool("get_started")
+async def get_started() -> str:
+    """
+    Get foundational instructions for building Seer workflows.
+
+    Returns the base system prompt with core principles for workflow building:
+    - Tool and trigger discovery patterns
+    - Clarification question best practices
+    - WorkflowSpec v2 schema overview
+    - OAuth account selection flow
+    - Validation checklist
+
+    For detailed documentation about specific topics, call get_workflow_guide():
+    - get_workflow_guide() - Full blocks + graph + triggers guide
+    - get_workflow_guide(section="blocks") - Block types reference
+    - get_workflow_guide(section="graph") - Graph structure and compilation
+    - get_workflow_guide(section="triggers") - Trigger specification
+    - get_workflow_guide(integration="gmail") - Integration-specific patterns
+
+    Returns:
+        Base workflow building instructions as Markdown.
+    """
+    return get_started_impl()
 
 
 def _get_integration_guide(integration: str) -> str:

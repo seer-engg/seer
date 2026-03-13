@@ -9,18 +9,9 @@ from seer.config import config
 from seer.logger import get_logger
 from seer.llm import get_llm
 from seer.agents.nexus.utils import get_workflow_tools
-from seer.agents.nexus.schema_context import (
-    get_workflow_spec_schema_text,
-    generate_primitive_blocks_guide,
-    generate_graph_structure_guide,
-    generate_trigger_reference,
-)
-from seer.prompts import get_nexus_system_prompt
 from seer.utilities.ml_flow import _ensure_mlflow_autologging
 
 logger = get_logger(__name__)
-
-WORKFLOW_SPEC_SCHEMA = get_workflow_spec_schema_text()
 
 if config.mlflow_enabled:
     _ensure_mlflow_autologging()
@@ -77,18 +68,10 @@ async def create_nexus_chat_agent(
 
     llm = get_llm(model=model, temperature=0)
 
-    # System prompt for the workflow assistant
-    # Load base system prompt from markdown file
-    base_system_prompt = get_nexus_system_prompt()
+    # Load base system prompt (modular - detailed guides available via get_workflow_guide())
+    from seer.mcp.tools.guides import get_started_impl  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
 
-    # Add dynamic content sections (schema always injected; templates/examples available via tools)
-    schema_section = f"\n\nWorkflowSpec schema excerpt (trimmed):\n{WORKFLOW_SPEC_SCHEMA}"
-    blocks_guide = f"\n\n{generate_primitive_blocks_guide()}"
-    graph_guide = f"\n\n{generate_graph_structure_guide()}"
-    trigger_guide = f"\n\n{generate_trigger_reference()}"
-
-    # Compose full system prompt from loaded base + dynamic content
-    system_prompt = base_system_prompt + blocks_guide + graph_guide + trigger_guide + schema_section
+    system_prompt = get_started_impl()
 
     # Inject user memory context if enabled
     if user_id and config.memory_enabled and config.memory_context_injection_enabled:
