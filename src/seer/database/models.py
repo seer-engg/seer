@@ -160,6 +160,7 @@ class UserSettings(models.Model):
     user = fields.OneToOneField("models.User", related_name="settings")
     max_agent_steps = fields.IntField(null=True)
     preferences = fields.JSONField(default=dict)
+    timezone = fields.CharField(max_length=64, null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 
@@ -174,4 +175,5 @@ class UserSettingsPublic(BaseModel):
 
     max_agent_steps: Optional[int] = None
     preferences: Dict[str, Any] = {}
+    timezone: Optional[str] = None
     updated_at: datetime

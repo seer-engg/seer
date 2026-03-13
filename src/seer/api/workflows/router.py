@@ -10,7 +10,12 @@ from tortoise.exceptions import IntegrityError
 from seer.api.core.middleware.organization import get_membership, get_organization
 from seer.api.workflows import models as api_models
 from seer.api.workflows import services
-from seer.api.workflows.services.share_template import ShareAsTemplateRequest, ShareAsTemplateResponse, share_workflow_as_template
+from seer.api.workflows.services.share_template import (
+    ShareAsTemplateRequest,
+    ShareAsTemplateResponse,
+    get_workflow_template_meta,
+    share_workflow_as_template,
+)
 from seer.database import Organization, OrganizationMembership, User
 from seer.database.workflow_models import GlobalVariable
 
@@ -130,12 +135,7 @@ async def get_subscription_event_count(
     request: Request,
     subscription_id: int,
 ):
-    """
-    Get the count of stored events for a trigger subscription.
-
-    Used by the frontend to determine if "Browse events" should be shown
-    for persisted triggers (webhooks, forms).
-    """
+    """Get the count of stored events for a trigger subscription."""
     user = _require_user(request)
     return await services.get_subscription_event_count(user, subscription_id)
 
@@ -149,14 +149,7 @@ async def generate_trigger_event(
     trigger_key: str,
     payload: api_models.TriggerEventGenerateRequest,
 ):
-    """
-    Generate a synthetic trigger event for immediate workflow execution.
-
-    Currently supports:
-    - schedule.cron: Generate a synthetic cron event for manual triggering
-
-    Returns an event envelope that can be used with the run workflow endpoint.
-    """
+    """Generate a synthetic trigger event for immediate workflow execution."""
     _require_user(request)
 
     if trigger_key != "schedule.cron":
@@ -413,11 +406,7 @@ async def get_run_history(request: Request, run_id: str):
 
 @router.get("/runs/{run_id}/interrupt", response_model=api_models.HITLInterruptResponse)
 async def get_run_interrupt(request: Request, run_id: str):
-    """
-    Get pending HITL interrupt data for a workflow run.
-
-    Returns 404 if run is not found or not in INTERRUPTED state.
-    """
+    """Get pending HITL interrupt data for a workflow run."""
     user = _require_user(request)
     interrupt_data = await services.get_workflow_run_interrupt(user, run_id)
     if interrupt_data is None:
@@ -450,18 +439,10 @@ async def get_run_interrupt(request: Request, run_id: str):
 
 @router.post("/runs/{run_id}/resume", response_model=api_models.RunResponse)
 async def resume_run(request: Request, run_id: str, payload: api_models.HITLResumeRequest):
-    """
-    Resume a workflow run that is paused at an HITL interrupt.
-
-    Provides user responses to continue workflow execution.
-    """
+    """Resume a workflow run that is paused at an HITL interrupt."""
     user = _require_user(request)
     return await services.resume_workflow_run(user, run_id, payload.responses)
 
-
-# ============================================================================
-# Workflow File Endpoints
-# ============================================================================
 
 
 @router.get("/runs/{run_id}/files", response_model=api_models.WorkflowFileListResponse)
@@ -496,10 +477,19 @@ async def delete_run_file(request: Request, run_id: str, file_id: str):
     return await services.delete_run_file(user, run_id, file_id, membership=membership)
 
 
+@router.get("/workflows/{workflow_id}/template")
+async def get_workflow_template(request: Request, workflow_id: str):
+    """Get the template published from this workflow, if any."""
+    user = _require_user(request)
+    result = await get_workflow_template_meta(user, workflow_id)
+    if not result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No template found for this workflow")
+    return result
+
+
 @router.post(
     "/workflows/{workflow_id}/share-as-template",
     response_model=ShareAsTemplateResponse,
-    status_code=status.HTTP_201_CREATED,
 )
 async def share_as_template(request: Request, workflow_id: str, payload: ShareAsTemplateRequest):
     user = _require_user(request)

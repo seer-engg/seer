@@ -1,6 +1,7 @@
 """User settings API endpoints."""
 from typing import Any, Dict, Optional
 
+import pytz
 from fastapi import APIRouter, Body, Request
 from pydantic import BaseModel
 
@@ -14,6 +15,7 @@ router = APIRouter(prefix="/users/me", tags=["user-settings"])
 class UserSettingsUpdate(BaseModel):
     """Request model for updating user settings."""
     max_agent_steps: Optional[int] = None
+    timezone: Optional[str] = None
     preferences: Optional[Dict[str, Any]] = None
     per_run_cost_cap_usd: Optional[float] = None
 
@@ -66,6 +68,18 @@ async def update_user_settings(
                 status=400,
             )
         settings.preferences["per_run_cost_cap_usd"] = update_data.per_run_cost_cap_usd
+
+    if update_data.timezone is not None:
+        try:
+            pytz.timezone(update_data.timezone)
+        except pytz.exceptions.UnknownTimeZoneError:
+            raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Invalid timezone",
+                detail=f"Unknown timezone: {update_data.timezone}",
+                status=400,
+            )
+        settings.timezone = update_data.timezone
 
     if update_data.preferences:
         settings.preferences.update(update_data.preferences)

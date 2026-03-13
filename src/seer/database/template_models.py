@@ -50,7 +50,9 @@ class WorkflowTemplate(models.Model):
     is_published = fields.BooleanField(default=False)
     is_featured = fields.BooleanField(default=False)
     usage_count = fields.IntField(default=0)
-    source_workflow_id = fields.IntField(null=True)  # ID of workflow this template was created from
+    source_workflow = fields.ForeignKeyField(
+        "models.Workflow", related_name="templates", null=True, on_delete=fields.SET_NULL
+    )
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 
