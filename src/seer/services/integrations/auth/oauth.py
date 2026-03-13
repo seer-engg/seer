@@ -61,7 +61,8 @@ if config.discord_client_id and config.discord_client_secret:
     )
 
 # LinkedIn OAuth
-# Scopes are controlled by frontend - minimal default for identity only
+# Note: LinkedIn requires client credentials in POST body (not Basic Auth)
+# Token exchange is handled manually in the router due to this requirement
 if config.linkedin_client_id and config.linkedin_client_secret:
     oauth.register(
         name='linkedin',
