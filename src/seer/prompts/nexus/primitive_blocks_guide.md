@@ -41,7 +41,7 @@ Each block is a node in the workflow graph, connected by edges that define execu
   "type": "tool",
   "tool": "gmail_send_email",
   "inputs": {
-    "to": ["${trigger.data.recipient}"],
+    "to": ["${email_trigger.data.recipient}"],
     "subject": "Re: ${previous_email.subject}",
     "body": "${draft_message}"
   }
@@ -218,7 +218,7 @@ If nodes **require** two edges:
 **Required Fields:**
 - `id` (string): Unique identifier
 - `type`: Must be `"for_each"`
-- `items` (string): Expression that resolves to a list (e.g., `"${results}"`, `"${trigger.data.items}"`)
+- `items` (string): Expression that resolves to a list (e.g., `"${results}"`, `"${my_trigger.data.items}"`)
 
 **Optional Fields:**
 - `item_var` (string): Variable name for current item (default: `"item"`)
@@ -447,7 +447,7 @@ ForEach nodes use two edge types:
   "id": "unique_node_id",
   "type": "image_gen",
   "inputs": {
-    "model": "openai/dall-e-3",
+    "model": "sourceful/riverflow-v2-fast",
     "prompt": "A professional product photo of ${product.name}",
     "size": "1024x1024",
     "num_images": 1
@@ -466,10 +466,9 @@ ForEach nodes use two edge types:
 - `size` (string): Image dimensions (e.g., `"1024x1024"`, `"1792x1024"`)
 - `num_images` (number): Number of images to generate
 
-**Available Models (via OpenRouter):**
-- `openai/dall-e-3` - DALL-E 3
-- `openai/dall-e-2` - DALL-E 2
-- Other models supported by OpenRouter
+**Available Models:**
+- `sourceful/riverflow-v2-fast` - Fast image generation
+- `google/gemini-2.5-flash-image` - Gemini image generation
 
 **Important Notes:**
 - ✅ Output contains generated image URL(s)
@@ -482,7 +481,7 @@ ForEach nodes use two edge types:
   "id": "generate_thumbnail",
   "type": "image_gen",
   "inputs": {
-    "model": "openai/dall-e-3",
+    "model": "sourceful/riverflow-v2-fast",
     "prompt": "Create a minimalist thumbnail image for a blog post about: ${article.title}. Style: modern, clean, professional",
     "size": "1024x1024"
   }
@@ -538,6 +537,7 @@ ForEach nodes use two edge types:
 **Optional Fields:**
 - `inputs` (object): Additional context data passed to the browser agent
 - `browser_profile_id` (string): Reference to saved browser profile with login sessions
+- `model` (string): OpenRouter model ID for browser agent (default: `qwen/qwen3-vl-8b-thinking`)
 - `max_steps` (number): Maximum automation steps (default: 25, range: 1-100)
 - `timeout_seconds` (number): Execution timeout (default: 300, range: 30-1800)
 - `expect_outputs` (object): Output schema for structured data extraction
@@ -747,9 +747,9 @@ Login and extract account data:
   "task": "1. Navigate to ${inputs.form_url}\n2. Type '${inputs.name}' into the Name field\n3. Type '${inputs.email}' into the Email field\n4. Type '${inputs.message}' into the Message textarea\n5. Click the Submit button\n6. If the button cannot be clicked, use send_keys with 'Tab Enter'\n7. Wait for confirmation message\n8. Extract the confirmation text or reference number",
   "inputs": {
     "form_url": "https://example.com/contact",
-    "name": "${trigger.data.sender_name}",
-    "email": "${trigger.data.sender_email}",
-    "message": "${trigger.data.message}"
+    "name": "${form_trigger.data.sender_name}",
+    "email": "${form_trigger.data.sender_email}",
+    "message": "${form_trigger.data.message}"
   },
   "max_steps": 20,
   "timeout_seconds": 60
@@ -837,7 +837,7 @@ Login and extract account data:
 - `tools` (array): List of tools the agent can call autonomously
   - Simple format: `["tool_name", "another_tool"]`
   - With OAuth: `[{"name": "gmail_send_email", "connection_id": 42}]`
-- `max_iterations` (number): Maximum reasoning/tool-calling steps (default: 10)
+- `max_iterations` (number): Maximum reasoning/tool-calling steps (optional, unlimited if not set)
 - `temperature` (number): LLM temperature for agent reasoning (default: 0.2)
 
 **Output Configuration:**
@@ -868,7 +868,7 @@ Tools can be specified in two formats:
 - ✅ If user has multiple OAuth accounts, include `connection_id` in the tool spec
 - ✅ Agent output is accessed via `${node_id}` or `${node_id.field}` (if JSON mode)
 - ⚠️ Agents can be expensive - each iteration involves LLM calls and potentially tool execution
-- ⚠️ Use `max_iterations` to prevent runaway execution (default: 10)
+- ⚠️ Use `max_iterations` to prevent runaway execution (recommended for production workflows)
 - ✉️ **Email body generation:** When tasking an agent to generate an email body, instruct it to produce the content as **formatted Markdown** (use headings, bullet points, bold text, etc.). Email tools convert Markdown to HTML for rendering in email clients.
 
 **Output Modes:**
@@ -912,7 +912,7 @@ Tools can be specified in two formats:
   "type": "agent",
   "inputs": {
     "model": "openai/gpt-oss-120b",
-    "prompt": "Research the company ${trigger.data.company_name}. Find their:\n1. Main products/services\n2. Recent news or announcements\n3. Key leadership\n\nCompile a brief executive summary.",
+    "prompt": "Research the company ${webhook_trigger.data.company_name}. Find their:\n1. Main products/services\n2. Recent news or announcements\n3. Key leadership\n\nCompile a brief executive summary.",
     "tools": ["web_search"],
     "max_iterations": 15
   },
@@ -1105,7 +1105,7 @@ Arithmetic works in `if` conditions!
 ```json
 {
   "nodes": [
-    {"id": "fetch", "type": "tool", "tool": "gmail_get_message", "inputs": {"message_id": "${trigger.data.id}"}},
+    {"id": "fetch", "type": "tool", "tool": "gmail_get_message", "inputs": {"message_id": "${email_trigger.data.id}"}},
     {"id": "analyze", "type": "agent", "inputs": {"model": "openai/gpt-oss-120b", "prompt": "Analyze: ${fetch.body}"}, "outputs": {"mode": "json", ...}}
   ],
   "edges": [
