@@ -111,13 +111,15 @@ class TestGetRecording:
 class TestGetEvents:
     """Test GET /api/browser/recordings/{id}/events."""
 
+    @patch("seer.api.browser.recording_router.RecordingService")
     @patch("seer.api.browser.recording_router.SessionRecording")
-    async def test_get_events_decompresses(self, mock_model):
+    async def test_get_events_decompresses(self, mock_model, mock_service):
         user = _make_db_user()
         rec_id = uuid4()
         events = [{"type": 1, "data": "test"}, {"type": 2, "data": "test2"}]
         rec = _make_recording(recording_id=rec_id, user=user, events=events)
         mock_model.get_or_none = AsyncMock(return_value=rec)
+        mock_service.get_recording_events = AsyncMock(return_value=events)
 
         test_app = _make_test_app(user)
         transport = ASGITransport(app=test_app)
