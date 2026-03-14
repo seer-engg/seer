@@ -43,7 +43,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 # Add src/ to path so we can import seer modules (AwsSsmSettingsSource, etc.)
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +140,7 @@ def resolve_local_db_url() -> str:
     except ImportError as exc:
         raise ImportError("python-dotenv not installed. Run: uv add python-dotenv") from exc
 
-    env_file = Path(__file__).parent.parent / ".env"
+    env_file = Path(__file__).parent.parent.parent / ".env"
     vals = dotenv_values(str(env_file))
     url = vals.get("DATABASE_URL")
     if not url:
