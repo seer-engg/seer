@@ -236,6 +236,15 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         description="Automatically open frontend in browser on server startup (self-hosted mode only)"
     )
 
+    enable_user_emulation: bool = Field(
+        default=False,
+        description=(
+            "Allow X-Emulate-User-Id header to bypass Clerk JWT verification and load "
+            "an existing DB user by their Clerk user_id. "
+            "MUST only be enabled in local/dev environments. Never enable in production."
+        ),
+    )
+
     nexus_max_agent_steps: int = Field(
         default=75,
         description="Default maximum agent steps for Nexus chat (LangGraph recursion_limit)"

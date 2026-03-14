@@ -24,6 +24,7 @@ from .organizations.router import router as organizations_router
 from .overage.router import router as overage_router
 from .chat.router import router as chat_router
 from .public.router import router as public_router
+from .dev.router import router as dev_router
 
 router = APIRouter(prefix="/api")
 router.include_router(agents_traces_router)
@@ -49,3 +50,4 @@ router.include_router(organizations_router)
 router.include_router(overage_router)
 router.include_router(chat_router)
 router.include_router(public_router)
+router.include_router(dev_router)

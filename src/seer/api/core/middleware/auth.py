@@ -9,6 +9,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from seer.api.core.middleware.path_allowlist import is_public_path, is_payment_exempt_path
+from seer.config import config
 from seer.auth.clerk_verifier import ClerkJWTVerifier, VerifiedClerkToken
 from seer.database import User
 from seer.database.models import UserSettings
@@ -69,31 +70,35 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
         request.state.user = None
         request.state.db_user = None
         if self._should_skip(request):
-            return await call_next(request)
+            response = await call_next(request)
+        elif await self._try_emulate_user(request):
+            response = await call_next(request)
+        else:
+            token = self._extract_token(request)
+            if not token:
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Missing or invalid Authorization header"},
+                )
 
-        token = self._extract_token(request)
-        if not token:
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Missing or invalid Authorization header"},
-            )
+            verified_token = self._verify_token(token)
+            if isinstance(verified_token, JSONResponse):
+                return verified_token
 
-        verified_token = self._verify_token(token)
-        if isinstance(verified_token, JSONResponse):
-            return verified_token
+            auth_user = self._create_auth_user(verified_token)
+            db_user = await self._get_or_create_db_user(request, auth_user)
+            if isinstance(db_user, JSONResponse):
+                return db_user
 
-        auth_user = self._create_auth_user(verified_token)
-        db_user = await self._get_or_create_db_user(request, auth_user)
-        if isinstance(db_user, JSONResponse):
-            return db_user
+            gate_response = await self._check_access_gates(request, db_user)
+            if gate_response:
+                return gate_response
 
-        gate_response = await self._check_access_gates(request, db_user)
-        if gate_response:
-            return gate_response
+            request.state.user = auth_user
+            request.state.db_user = db_user
+            response = await call_next(request)
 
-        request.state.user = auth_user
-        request.state.db_user = db_user
-        return await call_next(request)
+        return response
 
     def _verify_token(self, token: str) -> VerifiedClerkToken | JSONResponse:
         """Verify JWT token and return verified token or error response."""
@@ -192,6 +197,39 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
         ).first()
 
         return team_membership is not None
+
+    async def _try_emulate_user(self, request: Request) -> bool:
+        """Local-only user emulation via X-Emulate-User-Id header.
+        Returns True if emulation succeeded and request.state populated.
+        Returns False if disabled, header absent, or user not found.
+        """
+        if not config.enable_user_emulation:
+            return False
+
+        emulate_user_id = request.headers.get("X-Emulate-User-Id")
+        if not emulate_user_id:
+            return False
+
+        logger.warning(
+            "User emulation active: loading user_id=%s (NEVER enable in production)",
+            emulate_user_id,
+        )
+
+        db_user = await User.get_or_none(user_id=emulate_user_id)
+        if db_user is None:
+            logger.warning("Emulation failed: no user found with user_id=%s", emulate_user_id)
+            return False
+
+        auth_user = AuthenticatedUser(
+            user_id=db_user.user_id,
+            email=db_user.email,
+            first_name=db_user.first_name,
+            last_name=db_user.last_name,
+            claims=db_user.claims or {},
+        )
+        request.state.user = auth_user
+        request.state.db_user = db_user
+        return True
 
     def _extract_token(self, request: Request) -> Optional[str]:
         """Extract JWT token from Authorization header or query parameter."""
