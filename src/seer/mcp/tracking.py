@@ -100,7 +100,6 @@ def _track_tool_call(
         "tool_name": tool_name,
         "latency_ms": round(latency_ms, 2),
         "success": success,
-        "seer_mode": config.seer_mode,
     }
 
     if error_message:

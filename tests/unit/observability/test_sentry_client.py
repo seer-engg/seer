@@ -451,9 +451,7 @@ class TestSentryMiddleware:
         """Should set correlation_id tag from request state."""
         with patch("seer.api.core.middleware.sentry_middleware.set_tag") as mock_set_tag, \
              patch("seer.api.core.middleware.sentry_middleware.set_user_context"), \
-             patch("seer.api.core.middleware.sentry_middleware.set_context"), \
-             patch("seer.api.core.middleware.sentry_middleware.config") as mock_config:
-            mock_config.seer_mode = "cloud"
+             patch("seer.api.core.middleware.sentry_middleware.set_context"):
 
             from seer.api.core.middleware.sentry_middleware import SentryContextMiddleware
 

@@ -23,13 +23,9 @@ async def full_app():
     This is slower than mock_app but provides complete integration testing.
     Use sparingly and prefer integration tests when possible.
     """
-    import os  # pylint: disable=import-outside-toplevel  # Reason: set env before app import
     import sys  # pylint: disable=import-outside-toplevel  # Reason: need to clear module cache
 
-    # CRITICAL: Set test environment BEFORE importing app
-    os.environ["SEER_MODE"] = "self-hosted"
-
-    # Clear modules from cache to force re-import with new env
+    # Clear modules from cache to force re-import
     modules_to_clear = [
         "seer.api.main",
         "seer.config",
@@ -39,7 +35,7 @@ async def full_app():
         if module in sys.modules:
             del sys.modules[module]
 
-    # Now import the app with correct environment
+    # Now import the app
     from seer.api.main import app  # pylint: disable=import-outside-toplevel  # Reason: avoid circular imports in test fixtures
 
     # Temporarily disable lifespan events for testing
@@ -75,29 +71,35 @@ async def authenticated_e2e_client(  # pylint: disable=redefined-outer-name  # R
     full_app, test_user
 ) -> AsyncGenerator[AsyncClient, None]:
     """
-    Authenticated E2E client with test user injected via JWT token.
+    Authenticated E2E client with test user injected via mocked Clerk verification.
 
-    Creates a JWT token containing the test user's information that will
-    be decoded by the TokenDecodeWithoutValidationMiddleware in non-cloud mode.
+    Mocks ClerkJWTVerifier to return the test user's information for any token.
     """
-    import jwt  # pylint: disable=import-outside-toplevel  # Reason: avoid circular imports
+    from unittest.mock import MagicMock, patch  # pylint: disable=import-outside-toplevel  # Reason: avoid circular imports
 
-    # Create a mock JWT token with test user info
-    token_payload = {
+    # Create mock verified token result matching test user
+    mock_verified = MagicMock()
+    mock_verified.user_id = test_user.user_id
+    mock_verified.email = test_user.email
+    mock_verified.first_name = test_user.first_name
+    mock_verified.last_name = test_user.last_name
+    mock_verified.claims = {
         "sub": test_user.user_id,
         "email": test_user.email,
         "first_name": test_user.first_name,
         "last_name": test_user.last_name,
     }
 
-    # Encode without signature (middleware decodes without verification)
-    token = jwt.encode(token_payload, "test_secret", algorithm="HS256")
+    with patch("seer.api.core.middleware.auth.ClerkJWTVerifier") as mock_verifier_cls:
+        mock_verifier = MagicMock()
+        mock_verifier.verify_token.return_value = mock_verified
+        mock_verifier_cls.return_value = mock_verifier
 
-    transport = ASGITransport(app=full_app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # Add Authorization header with bearer token
-        client.headers["Authorization"] = f"Bearer {token}"
-        yield client
+        transport = ASGITransport(app=full_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            # Add Authorization header with test bearer token
+            client.headers["Authorization"] = "Bearer test-e2e-token"
+            yield client
 
 
 # =============================================================================

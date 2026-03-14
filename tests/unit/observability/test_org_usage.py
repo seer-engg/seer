@@ -543,11 +543,6 @@ class TestGetSubscriptionForOrg:
             return_value=(mock_subscription, True),  # Created new subscription
         )
 
-        # Mock config
-        mock_config = MagicMock()
-        mock_config.is_self_hosted = False
-        mocker.patch("seer.observability.service.config", mock_config)
-
         subscription = await get_subscription_for_org(org)
 
         assert subscription == mock_subscription
@@ -578,29 +573,10 @@ class TestGetSubscriptionForOrg:
             return_value=(mock_subscription, False),  # Already existed
         )
 
-        mock_config = MagicMock()
-        mock_config.is_self_hosted = False
-        mocker.patch("seer.observability.service.config", mock_config)
-
         subscription = await get_subscription_for_org(org)
 
         assert subscription == mock_subscription
         assert subscription.tier == SubscriptionTier.PRO
-
-    async def test_returns_none_for_self_hosted(self, mocker):
-        """get_subscription_for_org returns None in self-hosted mode."""
-        from seer.observability.service import get_subscription_for_org
-
-        org = MagicMock(spec=Organization)
-        org.id = 123
-
-        mock_config = MagicMock()
-        mock_config.is_self_hosted = True
-        mocker.patch("seer.observability.service.config", mock_config)
-
-        subscription = await get_subscription_for_org(org)
-
-        assert subscription is None
 
 
 # =============================================================================

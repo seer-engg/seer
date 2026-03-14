@@ -468,16 +468,16 @@ class TestCheckAccessGates:
     async def test_check_access_gates_no_trial_expired(self, mock_request, mock_db_user):
         """Test that valid trial returns None."""
         with patch("seer.auth.clerk_verifier.PyJWKClient"), \
-             patch("seer.api.core.middleware.auth.is_trial_expired") as mock_trial, \
-             patch("seer.api.core.middleware.auth.config") as mock_config:
+             patch("seer.api.core.middleware.auth.is_trial_expired") as mock_trial:
             mock_trial.return_value = False
-            mock_config.is_self_hosted = True  # Skip payment method gate
 
             middleware = ClerkAuthMiddleware(
                 app=MagicMock(),
                 jwks_url="https://clerk.example.com/.well-known/jwks.json",
                 issuer="https://clerk.example.com",
             )
+            # Mock payment method gate to skip it
+            middleware._check_payment_method_gate = AsyncMock(return_value=None)
 
             result = await middleware._check_access_gates(mock_request, mock_db_user)
 
@@ -521,10 +521,8 @@ class TestCheckAccessGates:
 
         with patch("seer.auth.clerk_verifier.PyJWKClient"), \
              patch("seer.api.core.middleware.auth.is_trial_expired") as mock_trial, \
-             patch("seer.api.core.middleware.auth.config") as mock_config, \
              patch("seer.database.organization_models.Organization.get_or_none") as mock_billing:
             mock_trial.return_value = False
-            mock_config.is_self_hosted = False
             # User has no payment method
             mock_billing.return_value = None
 
@@ -536,9 +534,9 @@ class TestCheckAccessGates:
 
             result = await middleware._check_access_gates(request, mock_db_user)
 
-            # Should return None (no gate applied)
+            # Should return None (no gate applied) because this is a payment-exempt path
             assert result is None
-            # Payment method check should not even be called
+            # Payment method check should not even be called for exempt paths
             mock_billing.assert_not_called()
 
     @pytest.mark.asyncio
@@ -656,13 +654,11 @@ class TestDispatch:
         with patch("seer.auth.clerk_verifier.PyJWKClient"), \
              patch("seer.api.core.middleware.auth.is_public_path") as mock_is_public, \
              patch("seer.api.core.middleware.auth.User") as MockUser, \
-             patch("seer.api.core.middleware.auth.is_trial_expired") as mock_trial, \
-             patch("seer.api.core.middleware.auth.config") as mock_config:
+             patch("seer.api.core.middleware.auth.is_trial_expired") as mock_trial:
 
             mock_is_public.return_value = False
             MockUser.get_or_create_from_auth = AsyncMock(return_value=mock_db_user)
             mock_trial.return_value = False
-            mock_config.is_self_hosted = True
 
             middleware = ClerkAuthMiddleware(
                 app=MagicMock(),
@@ -674,6 +670,8 @@ class TestDispatch:
             middleware._verifier.verify_token_with_error = MagicMock(
                 return_value=(verified_token, None)
             )
+            # Mock payment method gate to skip it
+            middleware._check_payment_method_gate = AsyncMock(return_value=None)
 
             await middleware.dispatch(mock_request, call_next)
 

@@ -3,7 +3,7 @@
 Numerical constants for usage limits across subscription tiers.
 
 These values define the hard limits for each feature dimension across
-Self-Hosted, Cloud Free, Cloud Pro, and Cloud Pro+ tiers.
+Free, Pro, and Pro+ tiers.
 
 Convention:
   - -1 means unlimited
@@ -24,7 +24,6 @@ class TieredUsageLimits(BaseSettings):
     # Workflow Limits
     # ============================================================================
 
-    WORKFLOWS_SELF_HOSTED: int = Field(default=-1)
     WORKFLOWS_FREE: int = Field(default=3)
     WORKFLOWS_PRO: int = Field(default=-1)  # Unlimited
     WORKFLOWS_PRO_PLUS: int = Field(default=-1)  # Unlimited
@@ -32,7 +31,6 @@ class TieredUsageLimits(BaseSettings):
     # Workflow Run Limits (Monthly)
     # ============================================================================
 
-    RUNS_MONTHLY_SELF_HOSTED: int = Field(default=-1)  # Unlimited
     RUNS_MONTHLY_FREE: int = Field(default=100)
     RUNS_MONTHLY_PRO: int = Field(default=1_000_000)
     RUNS_MONTHLY_PRO_PLUS: int = Field(default=5_000_000)
@@ -41,7 +39,6 @@ class TieredUsageLimits(BaseSettings):
     # Account Day Limits
     # ============================================================================
 
-    ACCOUNT_DAY_LIMIT_SELF_HOSTED: int = Field(default=-1)  # Unlimited
     ACCOUNT_DAY_LIMIT_FREE: int = Field(default=14)  # 14-day trial
     ACCOUNT_DAY_LIMIT_PRO: int = Field(default=-1)  # No limit
     ACCOUNT_DAY_LIMIT_PRO_PLUS: int = Field(default=-1)  # No limit
@@ -50,7 +47,6 @@ class TieredUsageLimits(BaseSettings):
     # Polling Frequency Limits (Minimum Interval in Seconds)
     # ============================================================================
 
-    POLL_MIN_INTERVAL_SELF_HOSTED: int = Field(default=1)  # 1 second minimum
     POLL_MIN_INTERVAL_FREE: int = Field(default=900)  # 15 minutes
     POLL_MIN_INTERVAL_PRO: int = Field(default=60)  # 1 minute
     POLL_MIN_INTERVAL_PRO_PLUS: int = Field(default=30)  # 30 seconds
@@ -59,7 +55,6 @@ class TieredUsageLimits(BaseSettings):
     # LLM Credit Limits (Monthly, in USD)
     # ============================================================================
 
-    LLM_CREDITS_SELF_HOSTED: int = Field(default=-1)  # BYOK (Bring Your Own Key), unlimited
     LLM_CREDITS_FREE: float = Field(default=5.00)
     LLM_CREDITS_PRO: float = Field(default=20.00)
     LLM_CREDITS_PRO_PLUS: float = Field(default=50.00)
@@ -68,7 +63,6 @@ class TieredUsageLimits(BaseSettings):
     # LLM Credit Limits (5-Hour Rolling Window, in USD)
     # ============================================================================
 
-    LLM_CREDITS_5H_SELF_HOSTED: int = Field(default=-1)  # Unlimited
     LLM_CREDITS_5H_FREE: float = Field(default=1.00)
     LLM_CREDITS_5H_PRO: float = Field(default=5.00)
     LLM_CREDITS_5H_PRO_PLUS: float = Field(default=15.00)
@@ -77,7 +71,6 @@ class TieredUsageLimits(BaseSettings):
     # LLM Credit Limits (Weekly Rolling Window, in USD)
     # ============================================================================
 
-    LLM_CREDITS_WEEKLY_SELF_HOSTED: int = Field(default=-1)  # Unlimited
     LLM_CREDITS_WEEKLY_FREE: float = Field(default=3.00)
     LLM_CREDITS_WEEKLY_PRO: float = Field(default=12.00)
     LLM_CREDITS_WEEKLY_PRO_PLUS: float = Field(default=35.00)

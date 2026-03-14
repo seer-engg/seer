@@ -3,7 +3,7 @@ Usage limit service for resolving and retrieving tier-based limits.
 
 This module provides functions to:
 - Get limits for a specific subscription tier
-- Get limits for a user (handles self-hosted vs cloud, subscription lookup)
+- Get limits for a user (subscription lookup)
 - Resolve subscription tier for a user
 - Compute billing periods for anniversary-based usage windows
 """
@@ -12,7 +12,6 @@ from calendar import monthrange
 from datetime import datetime, timezone
 from typing import Optional
 
-from seer.config import config
 from seer.database.models import User
 from seer.database.organization_models import Organization, OrganizationType
 from seer.database.subscription_models import (
@@ -21,7 +20,6 @@ from seer.database.subscription_models import (
     SubscriptionTier,
 )
 from seer.observability.models import (
-    SELF_HOSTED_LIMITS,
     TIER_LIMITS_REGISTRY,
     TierLimits,
 )
@@ -74,17 +72,16 @@ async def get_billing_period_for_user(
     now = reference_now or datetime.now(timezone.utc)
 
     # Paid/Stripe-backed subscriptions: use Stripe period dates when valid.
-    if not config.is_self_hosted:
-        # Get user's personal org subscription
-        if not subscription:
-            personal_org = await Organization.get_or_none(owner=user, type=OrganizationType.PERSONAL)
-            if personal_org:
-                subscription = await BillingSubscription.get_or_none(organization=personal_org)
-        if subscription:
-            start = _ensure_aware(subscription.current_period_start)
-            end = _ensure_aware(subscription.current_period_end)
-            if start and end and start <= now < end:
-                return start, end
+    # Get user's personal org subscription
+    if not subscription:
+        personal_org = await Organization.get_or_none(owner=user, type=OrganizationType.PERSONAL)
+        if personal_org:
+            subscription = await BillingSubscription.get_or_none(organization=personal_org)
+    if subscription:
+        start = _ensure_aware(subscription.current_period_start)
+        end = _ensure_aware(subscription.current_period_end)
+        if start and end and start <= now < end:
+            return start, end
 
     # Free or missing Stripe period: align to signup anniversary month.
     created_at = _ensure_aware(user.created_at)
@@ -110,10 +107,8 @@ async def get_limits_for_user(user: User) -> TierLimits:
     """
     Get effective usage limits for a user.
 
-    Handles:
-    - Self-hosted mode: Returns unlimited/BYOK limits
-    - Cloud mode: Looks up user's subscription tier and returns appropriate limits
-    - Defaults to FREE tier if no subscription exists
+    Looks up user's subscription tier and returns appropriate limits.
+    Defaults to FREE tier if no subscription exists.
 
     Args:
         user: The user to get limits for
@@ -121,11 +116,6 @@ async def get_limits_for_user(user: User) -> TierLimits:
     Returns:
         TierLimits object with effective limits for this user
     """
-    # Self-hosted mode: return unlimited limits
-    if config.is_self_hosted:
-        return SELF_HOSTED_LIMITS
-
-    # Cloud mode: resolve subscription tier
     tier = await resolve_user_tier(user)
     return get_limits_for_tier(tier)
 
@@ -207,8 +197,7 @@ async def is_trial_expired(user: User) -> bool:
     """
     Check if a user's trial period has expired.
 
-    Only applies to Cloud FREE tier users. Returns False for:
-    - Self-hosted mode
+    Only applies to FREE tier users. Returns False for:
     - Paid tier users
     - Users within trial period
 
@@ -218,10 +207,6 @@ async def is_trial_expired(user: User) -> bool:
     Returns:
         True if trial is expired, False otherwise
     """
-    # Self-hosted: no trial limits
-    if config.is_self_hosted:
-        return False
-
     # Check user's tier
     tier = await resolve_user_tier(user)
 
@@ -241,7 +226,6 @@ async def get_subscription_for_user(user: User) -> Optional[BillingSubscription]
     Get the active billing subscription for a user via their personal org.
 
     Returns None if:
-    - Self-hosted mode
     - No personal organization exists
     - No subscription exists
 
@@ -251,9 +235,6 @@ async def get_subscription_for_user(user: User) -> Optional[BillingSubscription]
     Returns:
         BillingSubscription if found, None otherwise
     """
-    if config.is_self_hosted:
-        return None
-
     try:
         # Find user's personal organization
         personal_org = await Organization.get_or_none(
@@ -321,10 +302,8 @@ async def get_limits_for_org(organization: Organization) -> TierLimits:
     """
     Get effective usage limits for an organization.
 
-    Handles:
-    - Self-hosted mode: Returns unlimited/BYOK limits
-    - Cloud mode: Looks up organization's subscription tier and returns appropriate limits
-    - Defaults to FREE tier if no subscription exists
+    Looks up organization's subscription tier and returns appropriate limits.
+    Defaults to FREE tier if no subscription exists.
 
     Args:
         organization: The organization to get limits for
@@ -332,11 +311,6 @@ async def get_limits_for_org(organization: Organization) -> TierLimits:
     Returns:
         TierLimits object with effective limits for this organization
     """
-    # Self-hosted mode: return unlimited limits
-    if config.is_self_hosted:
-        return SELF_HOSTED_LIMITS
-
-    # Cloud mode: resolve organization's subscription tier
     tier = await resolve_org_tier(organization)
     return get_limits_for_tier(tier)
 
@@ -365,13 +339,12 @@ async def get_billing_period_for_org(
     now = reference_now or datetime.now(timezone.utc)
 
     # Paid/Stripe-backed subscriptions: use Stripe period dates when valid.
-    if not config.is_self_hosted:
-        subscription = subscription or await get_subscription_for_org(organization)
-        if subscription:
-            start = _ensure_aware(subscription.current_period_start)
-            end = _ensure_aware(subscription.current_period_end)
-            if start and end and start <= now < end:
-                return start, end
+    subscription = subscription or await get_subscription_for_org(organization)
+    if subscription:
+        start = _ensure_aware(subscription.current_period_start)
+        end = _ensure_aware(subscription.current_period_end)
+        if start and end and start <= now < end:
+            return start, end
 
     # Free or missing Stripe period: align to org creation anniversary month.
     created_at = _ensure_aware(organization.created_at)
@@ -400,18 +373,12 @@ async def get_subscription_for_org(organization: Organization) -> Optional[Billi
     Creates a default FREE tier subscription if none exists (lazy initialization).
     Uses the organization's direct billing_subscription FK.
 
-    Returns None only if:
-    - Self-hosted mode
-
     Args:
         organization: The organization to get subscription for
 
     Returns:
-        BillingSubscription (existing or newly created), None for self-hosted
+        BillingSubscription (existing or newly created)
     """
-    if config.is_self_hosted:
-        return None
-
     try:
         # Get or create subscription directly via organization FK
         subscription, created = await BillingSubscription.get_or_create(
@@ -586,11 +553,8 @@ async def get_subscription_for_org_v2(organization: Organization) -> Optional[Bi
         organization: The organization to get subscription for
 
     Returns:
-        BillingSubscription (existing or newly created), None for self-hosted
+        BillingSubscription (existing or newly created)
     """
-    if config.is_self_hosted:
-        return None
-
     try:
         # Get or create subscription directly via organization FK
         subscription, created = await BillingSubscription.get_or_create(
@@ -625,9 +589,6 @@ async def get_effective_tier_v2(organization: Organization) -> SubscriptionTier:
     Returns:
         SubscriptionTier enum value
     """
-    if config.is_self_hosted:
-        return SubscriptionTier.PRO_PLUS  # Self-hosted gets highest tier
-
     return await resolve_org_tier_v2(organization)
 
 
@@ -643,8 +604,5 @@ async def get_effective_limits_v2(organization: Organization) -> TierLimits:
     Returns:
         TierLimits object with effective limits
     """
-    if config.is_self_hosted:
-        return SELF_HOSTED_LIMITS
-
     tier = await resolve_org_tier_v2(organization)
     return get_limits_for_tier(tier)

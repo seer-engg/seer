@@ -5,7 +5,6 @@ Enriches Sentry error context with:
 - Correlation ID for request tracing
 - User information (when authenticated)
 - Request metadata (path, method, etc.)
-- Seer mode tag for environment filtering
 
 All operations are non-blocking and fail silently.
 """
@@ -14,7 +13,6 @@ from typing import Callable
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from seer.config import config
 from seer.logger import get_logger
 from seer.observability.sentry_client import (
     set_context,
@@ -33,7 +31,7 @@ class SentryContextMiddleware(BaseHTTPMiddleware):
     All operations are non-blocking and fail silently to avoid impacting requests.
 
     Context added:
-    - Tags: correlation_id, seer_mode, request_method, request_path
+    - Tags: correlation_id, request_method, request_path
     - User: user_id, email (if authenticated)
     - Context: full request metadata dict
     """
@@ -43,9 +41,6 @@ class SentryContextMiddleware(BaseHTTPMiddleware):
         correlation_id = getattr(request.state, "correlation_id", None)
         if correlation_id:
             set_tag("correlation_id", correlation_id)
-
-        # Set seer_mode tag for filtering in Sentry
-        set_tag("seer_mode", config.seer_mode)
 
         # Set basic request tags
         set_tag("request_method", request.method)

@@ -31,7 +31,7 @@ async def capture_workflow_event(
     """
     Capture a PostHog event from non-HTTP contexts (workflow nodes, Nexus tools).
 
-    Adds seer_mode and timestamp to every event automatically.
+    Adds timestamp to every event automatically.
     No-ops if PostHog is not configured or user_email is empty.
 
     Args:
@@ -48,7 +48,6 @@ async def capture_workflow_event(
 
     enriched = {
         **properties,
-        "seer_mode": config.seer_mode,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 

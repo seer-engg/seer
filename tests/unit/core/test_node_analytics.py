@@ -125,7 +125,6 @@ async def test_run_node_fires_posthog_on_success(mock_tool_node_impl):
     ):
         mock_registry.get.return_value = mock_tool_node_impl
         mock_cfg.is_posthog_configured = True
-        mock_cfg.seer_mode = "cloud"
 
         result = await runtime._run_node_async(
             node,
@@ -172,7 +171,6 @@ async def test_run_node_fires_posthog_on_failure(mock_failing_node_impl):
     ):
         mock_registry.get.return_value = mock_failing_node_impl
         mock_cfg.is_posthog_configured = True
-        mock_cfg.seer_mode = "cloud"
 
         with pytest.raises(RuntimeError, match="boom"):
             await runtime._run_node_async(

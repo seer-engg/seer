@@ -12,6 +12,7 @@ import asyncio
 import os
 import webbrowser
 from contextlib import asynccontextmanager
+from typing import cast
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, Request
@@ -20,6 +21,10 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 
 from seer.api.agents.checkpointer import checkpointer_lifespan
+from seer.api.core.middleware.auth import ClerkAuthMiddleware
+from seer.api.core.middleware.correlation import CorrelationMiddleware
+from seer.api.core.middleware.organization import OrganizationContextMiddleware
+from seer.api.core.middleware.usage_limit import UsageLimitMiddleware
 from seer.api.router import router
 from seer.api.tools.router import router as tools_router
 from seer.config import config
@@ -45,9 +50,17 @@ if config.mcp_enabled:
 logger = get_logger("api.main")
 
 
+def _get_clerk_audience() -> list[str] | None:
+    """Normalize optional Clerk audience config into a list."""
+    audience = cast(str | None, getattr(config, "clerk_audience", None))
+    if not audience:
+        return None
+    return [value.strip() for value in audience.split(",") if value.strip()]
+
+
 async def open_frontend_after_startup() -> None:
     """Launch frontend pointing at local backend."""
-    if config.is_cloud_mode or not config.auto_open_browser:
+    if not config.auto_open_browser:
         return
 
     frontend_url = config.frontend_url
@@ -151,8 +164,6 @@ if config.mcp_enabled:
     app.state.mcp_lifespan = mcp_lifespan
     logger.info("📡 MCP app created (will be mounted after routes)")
 
-# Correlation middleware - add correlation IDs to all requests
-from seer.api.core.middleware.correlation import CorrelationMiddleware  # pylint: disable=wrong-import-position,ungrouped-imports # Reason: Import after app creation
 app.add_middleware(CorrelationMiddleware)
 
 # Sentry context middleware - enrich errors with request context (must be after CorrelationMiddleware)
@@ -169,34 +180,23 @@ if config.is_posthog_configured:
 
 # Usage limit middleware - enforce subscription limits centrally
 # must be AFTER auth middleware to have user info
-from seer.api.core.middleware.usage_limit import UsageLimitMiddleware  # pylint: disable=ungrouped-imports,wrong-import-position # Reason: Import after auth middleware setup
 app.add_middleware(UsageLimitMiddleware)
 logger.info("🔒 Usage limit middleware enabled")
 
 # Organization context middleware - extracts org from JWT claims
 # must be AFTER auth middleware to have db_user set
-from seer.api.core.middleware.organization import OrganizationContextMiddleware  # pylint: disable=ungrouped-imports,wrong-import-position # Reason: Must be after auth middleware setup
 app.add_middleware(OrganizationContextMiddleware)
 logger.info("🏢 Organization context middleware enabled")
 
 # Authentication middleware - register BEFORE CORS to ensure user is set
-if config.is_cloud_mode:
-    if not config.is_clerk_configured:
-        raise ValueError("Cloud mode requires Clerk configuration. Set CLERK_JWKS_URL and CLERK_ISSUER environment variables.")
-    logger.info("🔐 Cloud mode: Using Clerk authentication")
-    from seer.api.core.middleware.auth import ClerkAuthMiddleware  # pylint: disable=ungrouped-imports # Reason: Conditional import after cloud mode check
+logger.info("🔐 Using Clerk authentication")
 
-    # pylint: disable=no-member # Reason: Pydantic resolves Optional[str] at runtime, not FieldInfo
-    app.add_middleware(
-        ClerkAuthMiddleware,
-        jwks_url=config.clerk_jwks_url,
-        issuer=config.clerk_issuer,
-        audience=config.clerk_audience.split(",") if config.clerk_audience else None,
-    )
-else:
-    from seer.api.core.middleware.auth import TokenDecodeWithoutValidationMiddleware
-    app.add_middleware(TokenDecodeWithoutValidationMiddleware)
-    logger.info("🔧 Self-hosted mode: Authentication disabled")
+app.add_middleware(
+    ClerkAuthMiddleware,
+    jwks_url=config.clerk_jwks_url,  # type: ignore[arg-type]  # Reason: Clerk credentials are required
+    issuer=config.clerk_issuer,  # type: ignore[arg-type]  # Reason: Clerk credentials are required
+    audience=_get_clerk_audience(),
+)
 
 
 # CORS middleware for development - must be AFTER auth middleware
