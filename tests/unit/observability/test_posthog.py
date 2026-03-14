@@ -240,9 +240,7 @@ class TestPostHogMiddleware:
     def test_track_request_captures_event(self, mock_request, mock_response):
         """Should capture event with correct properties."""
         with patch("seer.api.core.middleware.posthog_middleware.capture_event") as mock_capture, \
-             patch("seer.api.core.middleware.posthog_middleware.identify_user") as mock_identify, \
-             patch("seer.api.core.middleware.posthog_middleware.config") as mock_config:
-            mock_config.seer_mode = "cloud"
+             patch("seer.api.core.middleware.posthog_middleware.identify_user") as mock_identify:
 
             from seer.api.core.middleware.posthog_middleware import PostHogMiddleware
 
@@ -262,15 +260,12 @@ class TestPostHogMiddleware:
             assert properties["status_code"] == 200
             assert properties["latency_ms"] == 50.5
             assert properties["authenticated"] is True
-            assert properties["seer_mode"] == "cloud"
 
     def test_track_request_anonymous_when_no_user(self, mock_request, mock_response):
         """Should use 'anonymous' distinct_id when user not authenticated."""
         mock_request.state.user = None
 
-        with patch("seer.api.core.middleware.posthog_middleware.capture_event") as mock_capture, \
-             patch("seer.api.core.middleware.posthog_middleware.config") as mock_config:
-            mock_config.seer_mode = "self-hosted"
+        with patch("seer.api.core.middleware.posthog_middleware.capture_event") as mock_capture:
 
             from seer.api.core.middleware.posthog_middleware import PostHogMiddleware
 
@@ -309,7 +304,6 @@ class TestMCPTrackingDecorator:
              patch("seer.mcp.tracking.capture_event") as mock_capture, \
              patch("seer.mcp.tracking.get_mcp_authenticated_user") as mock_get_user:
             mock_config.is_posthog_configured = True
-            mock_config.seer_mode = "cloud"
             mock_get_user.return_value = None  # Anonymous
 
             from seer.mcp.tracking import track_mcp_tool
@@ -335,7 +329,6 @@ class TestMCPTrackingDecorator:
              patch("seer.mcp.tracking.capture_event") as mock_capture, \
              patch("seer.mcp.tracking.get_mcp_authenticated_user") as mock_get_user:
             mock_config.is_posthog_configured = True
-            mock_config.seer_mode = "cloud"
             mock_get_user.return_value = None
 
             from seer.mcp.tracking import track_mcp_tool
@@ -359,7 +352,6 @@ class TestMCPTrackingDecorator:
              patch("seer.mcp.tracking.capture_event") as mock_capture, \
              patch("seer.mcp.tracking.get_mcp_authenticated_user") as mock_get_user:
             mock_config.is_posthog_configured = True
-            mock_config.seer_mode = "cloud"
             mock_get_user.return_value = None
 
             from seer.mcp.tracking import track_mcp_tool
@@ -387,7 +379,6 @@ class TestMCPTrackingDecorator:
              patch("seer.mcp.tracking.identify_user") as mock_identify, \
              patch("seer.mcp.tracking.get_mcp_authenticated_user") as mock_get_user:
             mock_config.is_posthog_configured = True
-            mock_config.seer_mode = "cloud"
 
             # Mock authenticated user
             mock_user = MagicMock()

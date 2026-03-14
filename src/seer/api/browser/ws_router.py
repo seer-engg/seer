@@ -14,7 +14,6 @@ import time
 from typing import Optional
 from uuid import UUID
 
-import jwt
 from fastapi import APIRouter, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
@@ -297,9 +296,7 @@ async def complete_session(
 # WebSocket Auth Helper
 # ------------------------------------------------------------------
 async def _verify_ws_token(token: str) -> Optional[str]:
-    """Verify JWT token for WebSocket connection.
-
-    Cloud mode uses ClerkJWTVerifier; self-hosted decodes without validation.
+    """Verify JWT token for WebSocket connection using ClerkJWTVerifier.
 
     Returns:
         User ID string, or None if verification fails
@@ -307,26 +304,13 @@ async def _verify_ws_token(token: str) -> Optional[str]:
     if not token:
         return None
 
-    if config.is_cloud_mode and config.is_clerk_configured:
-        verifier = ClerkJWTVerifier(
-            jwks_url=config.clerk_jwks_url,
-            issuer=config.clerk_issuer,
-            audience=config.clerk_audience,
-        )
-        verified = verifier.verify_token(token)
-        if verified:
-            return verified.user_id
-        return None
-
-    # Self-hosted: decode without signature verification
-    try:
-        claims = jwt.decode(token, options={"verify_signature": False})
-        for key in ("sub", "user_id", "sid"):
-            if claims.get(key):
-                return str(claims[key])
-    except Exception:
-        pass
-    return None
+    verifier = ClerkJWTVerifier(
+        jwks_url=config.clerk_jwks_url,
+        issuer=config.clerk_issuer,
+        audience=config.clerk_audience,
+    )
+    verified = verifier.verify_token(token)
+    return verified.user_id if verified else None
 
 
 # ------------------------------------------------------------------

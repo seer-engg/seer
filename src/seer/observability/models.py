@@ -77,18 +77,7 @@ class TierLimits(BaseModel):
 # Tier Limits Registry
 # ============================================================================
 
-# Special tier for self-hosted deployments
-SELF_HOSTED_LIMITS = TierLimits(
-    workflows=constants.WORKFLOWS_SELF_HOSTED,
-    runs_monthly=constants.RUNS_MONTHLY_SELF_HOSTED,
-    account_day_limit=constants.ACCOUNT_DAY_LIMIT_SELF_HOSTED,
-    poll_min_interval_seconds=constants.POLL_MIN_INTERVAL_SELF_HOSTED,
-    llm_credits_monthly=constants.LLM_CREDITS_SELF_HOSTED,
-    llm_credits_5h=constants.LLM_CREDITS_5H_SELF_HOSTED,
-    llm_credits_weekly=constants.LLM_CREDITS_WEEKLY_SELF_HOSTED,
-)
-
-# Cloud tier limits mapped to SubscriptionTier enum
+# Tier limits mapped to SubscriptionTier enum
 TIER_LIMITS_REGISTRY: dict[SubscriptionTier, TierLimits] = {
     SubscriptionTier.FREE: TierLimits(
         workflows=constants.WORKFLOWS_FREE,

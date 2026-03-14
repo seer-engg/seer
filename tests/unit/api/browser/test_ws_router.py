@@ -623,10 +623,8 @@ class TestVerifyWsToken:
         assert result is None
 
     @patch("seer.api.browser.ws_router.config")
-    async def test_cloud_mode_uses_clerk_verifier(self, mock_config):
-        """Test that cloud mode uses ClerkJWTVerifier."""
-        mock_config.is_cloud_mode = True
-        mock_config.is_clerk_configured = True
+    async def test_uses_clerk_verifier(self, mock_config):
+        """Test that ClerkJWTVerifier is used for token verification."""
         mock_config.clerk_jwks_url = "https://clerk.example.com/.well-known/jwks.json"
         mock_config.clerk_issuer = "https://clerk.example.com"
         mock_config.clerk_audience = "test-audience"
@@ -649,10 +647,8 @@ class TestVerifyWsToken:
             mock_verifier.verify_token.assert_called_once_with("valid-clerk-token")
 
     @patch("seer.api.browser.ws_router.config")
-    async def test_cloud_mode_invalid_token_returns_none(self, mock_config):
-        """Test that cloud mode with invalid token returns None."""
-        mock_config.is_cloud_mode = True
-        mock_config.is_clerk_configured = True
+    async def test_invalid_token_returns_none(self, mock_config):
+        """Test that invalid token returns None."""
         mock_config.clerk_jwks_url = "https://clerk.example.com/.well-known/jwks.json"
         mock_config.clerk_issuer = "https://clerk.example.com"
         mock_config.clerk_audience = "test-audience"
@@ -665,55 +661,3 @@ class TestVerifyWsToken:
             result = await _verify_ws_token("invalid-token")
 
             assert result is None
-
-    @patch("seer.api.browser.ws_router.config")
-    @patch("seer.api.browser.ws_router.jwt")
-    async def test_self_hosted_decodes_without_verification(self, mock_jwt, mock_config):
-        """Test that self-hosted mode decodes JWT without signature verification."""
-        mock_config.is_cloud_mode = False
-
-        mock_jwt.decode.return_value = {"sub": "user-from-sub"}
-
-        result = await _verify_ws_token("self-hosted-token")
-
-        assert result == "user-from-sub"
-        mock_jwt.decode.assert_called_once_with(
-            "self-hosted-token",
-            options={"verify_signature": False}
-        )
-
-    @patch("seer.api.browser.ws_router.config")
-    @patch("seer.api.browser.ws_router.jwt")
-    async def test_self_hosted_uses_user_id_claim(self, mock_jwt, mock_config):
-        """Test that self-hosted mode falls back to user_id claim."""
-        mock_config.is_cloud_mode = False
-
-        mock_jwt.decode.return_value = {"user_id": "user-from-user_id"}
-
-        result = await _verify_ws_token("token-with-user_id")
-
-        assert result == "user-from-user_id"
-
-    @patch("seer.api.browser.ws_router.config")
-    @patch("seer.api.browser.ws_router.jwt")
-    async def test_self_hosted_uses_sid_claim(self, mock_jwt, mock_config):
-        """Test that self-hosted mode falls back to sid claim."""
-        mock_config.is_cloud_mode = False
-
-        mock_jwt.decode.return_value = {"sid": "session-id-123"}
-
-        result = await _verify_ws_token("token-with-sid")
-
-        assert result == "session-id-123"
-
-    @patch("seer.api.browser.ws_router.config")
-    @patch("seer.api.browser.ws_router.jwt")
-    async def test_self_hosted_decode_error_returns_none(self, mock_jwt, mock_config):
-        """Test that self-hosted mode handles decode errors gracefully."""
-        mock_config.is_cloud_mode = False
-
-        mock_jwt.decode.side_effect = Exception("Invalid JWT")
-
-        result = await _verify_ws_token("malformed-token")
-
-        assert result is None

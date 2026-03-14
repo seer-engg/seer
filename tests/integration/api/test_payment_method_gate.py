@@ -133,12 +133,9 @@ class TestPaymentMethodGate:
         """Test that users with payment method can access the app."""
         user, organization, settings = user_with_payment_method
 
-        with patch("seer.api.core.middleware.auth.config") as mock_config:
-            mock_config.is_self_hosted = False
-
-            # User should be able to access endpoints
-            # This test verifies the payment method gate allows them through
-            assert organization.has_payment_method is True
+        # User should be able to access endpoints
+        # This test verifies the payment method gate allows them through
+        assert organization.has_payment_method is True
 
     async def test_allows_subscription_endpoints_without_payment_method(self, mock_app: FastAPI, user_without_payment_method):
         """Test that subscription endpoints are accessible even without payment method."""
@@ -160,17 +157,6 @@ class TestPaymentMethodGate:
         assert organization.has_payment_method is False
         assert settings.preferences.get("onboarding", {}).get("completed", False) is False
 
-    async def test_self_hosted_mode_bypass(self, mock_app: FastAPI, user_without_payment_method):
-        """Test that payment method gate is bypassed in self-hosted mode."""
-        user, organization, settings = user_without_payment_method
-
-        with patch("seer.api.core.middleware.auth.config") as mock_config:
-            mock_config.is_self_hosted = True
-
-            # Self-hosted users should not be subject to payment method gate
-            # even if they don't have a payment method
-            assert organization.has_payment_method is False
-
     async def test_user_without_organization(self, db_engine):  # pylint: disable=unused-argument # Reason: db_engine needed for database initialization
         """Test handling of user without billing profile."""
         user = await User.create(
@@ -188,15 +174,12 @@ class TestPaymentMethodGate:
 
         try:
             # User with no billing profile should be blocked
-            with patch("seer.api.core.middleware.auth.config") as mock_config:
-                mock_config.is_self_hosted = False
+            organization = await Organization.get_or_none(owner=user, type=OrganizationType.PERSONAL)
+            assert organization is None
 
-                organization = await Organization.get_or_none(owner=user, type=OrganizationType.PERSONAL)
-                assert organization is None
-
-                # Should be blocked since no organization means no payment method
-                onboarding_complete = settings.preferences.get("onboarding", {}).get("completed", False)
-                assert onboarding_complete is True
+            # Should be blocked since no organization means no payment method
+            onboarding_complete = settings.preferences.get("onboarding", {}).get("completed", False)
+            assert onboarding_complete is True
         finally:
             await settings.delete()
             await user.delete()

@@ -37,7 +37,6 @@ async def test_track_nexus_tool_fires_on_success():
         mock_thread_var.get.return_value = "thread_abc"
         mock_get_user.return_value = mock_user
         mock_cfg.is_posthog_configured = True
-        mock_cfg.seer_mode = "cloud"
         mock_tracking_cfg.is_posthog_configured = True
 
         result = await my_tool()
@@ -75,7 +74,6 @@ async def test_track_nexus_tool_fires_on_failure():
         mock_thread_var.get.return_value = "thread_abc"
         mock_get_user.return_value = mock_user
         mock_cfg.is_posthog_configured = True
-        mock_cfg.seer_mode = "cloud"
         mock_tracking_cfg.is_posthog_configured = True
 
         with pytest.raises(ValueError, match="something went wrong"):

@@ -15,7 +15,6 @@ from typing import Callable, Set
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from seer.config import config
 from seer.logger import get_logger
 from seer.observability.posthog_client import capture_event, identify_user
 
@@ -103,7 +102,6 @@ class PostHogMiddleware(BaseHTTPMiddleware):
             "status_code": response.status_code,
             "latency_ms": round(latency_ms, 2),
             "$current_url": str(request.url),
-            "seer_mode": config.seer_mode,
         }
 
         if correlation_id:

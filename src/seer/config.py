@@ -127,16 +127,6 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         default=128, description="OpenAI embedding batch size"
     )
 
-    # ============================================================================
-    # Deployment Mode Configuration
-    # ============================================================================
-
-    seer_mode: str = Field(
-        default="self-hosted", description="Deployment mode: 'self-hosted' or 'cloud'"
-    )
-
-
-
     default_llm_model: str = Field(default="z-ai/glm-5", description="Default LLM model")
 
     # Taskiq / Valkey configuration
