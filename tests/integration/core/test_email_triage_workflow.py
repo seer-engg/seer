@@ -97,7 +97,7 @@ EMAIL_TRIAGE_WORKFLOW_SPEC: Dict[str, Any] = {
             "id": "analyze_and_generate_response",
             "type": "agent",
             "inputs": {
-                "model": "test-model",
+                "model": "openai/gpt-oss-120b",
                 "prompt": """You are an AI assistant helping to triage incoming emails.
 
 Product Specification:
@@ -513,7 +513,7 @@ async def test_email_triage_workflow_full_execution() -> None:
 
     # Create mock model for agent node
     model_def = ModelDefinition(
-        model_id="test-model",
+        model_id="openai/gpt-oss-120b",
         chat_model_factory=lambda: MagicMock(),
     )
 
@@ -614,7 +614,7 @@ async def test_email_triage_workflow_no_reply_branch() -> None:
 
     # Create mock model for agent node that returns should_reply=False
     model_def = ModelDefinition(
-        model_id="test-model",
+        model_id="openai/gpt-oss-120b",
         chat_model_factory=lambda: MagicMock(),
     )
 
@@ -675,7 +675,7 @@ async def test_email_triage_parallel_tool_execution() -> None:
     gmail_send_tool = create_gmail_send_email_tool(call_tracker)
 
     model_def = ModelDefinition(
-        model_id="test-model",
+        model_id="openai/gpt-oss-120b",
         chat_model_factory=lambda: MagicMock(),
     )
 
@@ -728,7 +728,7 @@ async def test_email_triage_trigger_data_access() -> None:
     gmail_send_tool = create_gmail_send_email_tool(call_tracker)
 
     model_def = ModelDefinition(
-        model_id="test-model",
+        model_id="openai/gpt-oss-120b",
         chat_model_factory=lambda: MagicMock(),
     )
 
@@ -780,7 +780,7 @@ async def test_email_triage_state_accumulation() -> None:
     gmail_send_tool = create_gmail_send_email_tool(call_tracker)
 
     model_def = ModelDefinition(
-        model_id="test-model",
+        model_id="openai/gpt-oss-120b",
         chat_model_factory=lambda: MagicMock(),
     )
 
@@ -842,7 +842,7 @@ async def test_email_triage_llm_receives_tool_outputs() -> None:
     gmail_send_tool = create_gmail_send_email_tool(call_tracker)
 
     model_def = ModelDefinition(
-        model_id="test-model",
+        model_id="openai/gpt-oss-120b",
         chat_model_factory=lambda: MagicMock(),
     )
 

@@ -127,16 +127,6 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         default=128, description="OpenAI embedding batch size"
     )
 
-    # ============================================================================
-    # Deployment Mode Configuration
-    # ============================================================================
-
-    seer_mode: str = Field(
-        default="self-hosted", description="Deployment mode: 'self-hosted' or 'cloud'"
-    )
-
-
-
     default_llm_model: str = Field(default="z-ai/glm-5", description="Default LLM model")
 
     # Taskiq / Valkey configuration
@@ -244,6 +234,15 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     auto_open_browser: bool = Field(
         default=True,
         description="Automatically open frontend in browser on server startup (self-hosted mode only)"
+    )
+
+    enable_user_emulation: bool = Field(
+        default=False,
+        description=(
+            "Allow X-Emulate-User-Id header to bypass Clerk JWT verification and load "
+            "an existing DB user by their Clerk user_id. "
+            "MUST only be enabled in local/dev environments. Never enable in production."
+        ),
     )
 
     nexus_max_agent_steps: int = Field(

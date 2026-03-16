@@ -14,7 +14,6 @@ from typing import Optional, Union
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from seer.config import config
 from seer.database import User
 from seer.database.organization_models import Organization, OrganizationType
 from seer.observability import (
@@ -67,7 +66,6 @@ class UsageBreakdown(BaseModel):
 class UsageResponse(BaseModel):
     """Response model for usage summary."""
 
-    is_self_hosted: bool
     limits: dict[str, Union[int, float]]
     usage: UsageBreakdown
 
@@ -220,7 +218,6 @@ async def get_usage_summary(request: Request) -> UsageResponse:
     )
 
     return UsageResponse(
-        is_self_hosted=config.is_self_hosted,
         limits={
             "poll_min_interval_seconds": limits.poll_min_interval_seconds,
         },

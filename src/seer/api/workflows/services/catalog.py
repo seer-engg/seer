@@ -17,6 +17,7 @@ from seer.config import config as shared_config
 from seer.database import User
 from seer.tools.base import list_tools as registry_list_tools
 from seer.core.errors import WorkflowCompilerError
+from seer.core.registry.default_models import DEFAULT_AGENT_MODELS
 from seer.core.registry.trigger_registry import trigger_registry
 from seer.core.runtime.global_compiler import WorkflowCompilerSingleton
 from seer.core.schema.models import (
@@ -97,11 +98,12 @@ DEFAULT_BROWSER_MODEL_REGISTRY = [
 ]
 
 DEFAULT_MODEL_REGISTRY = [
-    # OpenAI models
-    api_models.ModelDescriptor(id="openai/gpt-oss-120b", title="GPT OSS 120B", supports_json_schema=True),
-    api_models.ModelDescriptor(id="z-ai/glm-5", title="GLM 5", supports_json_schema=True),
-    api_models.ModelDescriptor(id="moonshotai/kimi-k2.5", title="Kimi K2.5", supports_json_schema=True),
-    api_models.ModelDescriptor(id="minimax/minimax-m2.5", title="MiniMax M2.5", supports_json_schema=True),
+    api_models.ModelDescriptor(
+        id=model.id,
+        title=model.title,
+        supports_json_schema=model.supports_json_schema,
+    )
+    for model in DEFAULT_AGENT_MODELS
 ]
 
 

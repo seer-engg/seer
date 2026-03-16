@@ -14,21 +14,6 @@ class SeerConfigPropertiesMixin:
     """
 
     @property
-    def is_cloud_mode(self) -> bool:
-        """Check if running in cloud mode."""
-        return self.seer_mode == "cloud"  # type: ignore[attr-defined]
-
-    @property
-    def is_self_hosted(self) -> bool:
-        """Check if running in self-hosted mode."""
-        return self.seer_mode == "self-hosted"  # type: ignore[attr-defined]
-
-    @property
-    def is_clerk_configured(self) -> bool:
-        """Check if Clerk authentication is configured."""
-        return self.clerk_jwks_url is not None and self.clerk_issuer is not None  # type: ignore[attr-defined]
-
-    @property
     def is_stripe_configured(self) -> bool:
         """Check if Stripe is configured for subscription billing."""
         return self.stripe_secret_key is not None and self.stripe_webhook_secret is not None  # type: ignore[attr-defined]

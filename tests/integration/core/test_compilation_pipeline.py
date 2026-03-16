@@ -532,7 +532,7 @@ async def test_compile_workflow_with_agent_node() -> None:
     tracking_tool = create_tracking_tool(call_tracker)
 
     model_def = ModelDefinition(
-        model_id="test-model",
+        model_id="openai/gpt-oss-120b",
         text_handler=create_mock_text_llm_handler("response"),
         json_handler=create_mock_json_llm_handler({"result": "ok"}),
     )
@@ -546,7 +546,7 @@ async def test_compile_workflow_with_agent_node() -> None:
                 "id": "generate",
                 "type": "agent",
                 "inputs": {
-                    "model": "test-model",
+                    "model": "openai/gpt-oss-120b",
                     "prompt": "Process: ${test_trigger.message}",
                 },
                 "outputs": {"mode": "text"},

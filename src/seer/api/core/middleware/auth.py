@@ -3,15 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Optional, Sequence
 
-import jwt
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from seer.api.core.middleware.path_allowlist import is_public_path, is_payment_exempt_path
-from seer.auth.clerk_verifier import ClerkJWTVerifier, VerifiedClerkToken
 from seer.config import config
+from seer.auth.clerk_verifier import ClerkJWTVerifier, VerifiedClerkToken
 from seer.database import User
 from seer.database.models import UserSettings
 from seer.database.organization_models import OrganizationType
@@ -71,31 +70,35 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
         request.state.user = None
         request.state.db_user = None
         if self._should_skip(request):
-            return await call_next(request)
+            response = await call_next(request)
+        elif await self._try_emulate_user(request):
+            response = await call_next(request)
+        else:
+            token = self._extract_token(request)
+            if not token:
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Missing or invalid Authorization header"},
+                )
 
-        token = self._extract_token(request)
-        if not token:
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Missing or invalid Authorization header"},
-            )
+            verified_token = self._verify_token(token)
+            if isinstance(verified_token, JSONResponse):
+                return verified_token
 
-        verified_token = self._verify_token(token)
-        if isinstance(verified_token, JSONResponse):
-            return verified_token
+            auth_user = self._create_auth_user(verified_token)
+            db_user = await self._get_or_create_db_user(request, auth_user)
+            if isinstance(db_user, JSONResponse):
+                return db_user
 
-        auth_user = self._create_auth_user(verified_token)
-        db_user = await self._get_or_create_db_user(request, auth_user)
-        if isinstance(db_user, JSONResponse):
-            return db_user
+            gate_response = await self._check_access_gates(request, db_user)
+            if gate_response:
+                return gate_response
 
-        gate_response = await self._check_access_gates(request, db_user)
-        if gate_response:
-            return gate_response
+            request.state.user = auth_user
+            request.state.db_user = db_user
+            response = await call_next(request)
 
-        request.state.user = auth_user
-        request.state.db_user = db_user
-        return await call_next(request)
+        return response
 
     def _verify_token(self, token: str) -> VerifiedClerkToken | JSONResponse:
         """Verify JWT token and return verified token or error response."""
@@ -137,11 +140,10 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
                 content=error.to_dict(),
             )
 
-        # Phase 3: Payment Method Gate (Cloud only)
-        if not config.is_self_hosted:
-            payment_gate_response = await self._check_payment_method_gate(db_user)
-            if payment_gate_response:
-                return payment_gate_response
+        # Phase 3: Payment Method Gate
+        payment_gate_response = await self._check_payment_method_gate(db_user)
+        if payment_gate_response:
+            return payment_gate_response
 
         return None
 
@@ -196,6 +198,39 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
 
         return team_membership is not None
 
+    async def _try_emulate_user(self, request: Request) -> bool:
+        """Local-only user emulation via X-Emulate-User-Id header.
+        Returns True if emulation succeeded and request.state populated.
+        Returns False if disabled, header absent, or user not found.
+        """
+        if not config.enable_user_emulation:
+            return False
+
+        emulate_user_id = request.headers.get("X-Emulate-User-Id")
+        if not emulate_user_id:
+            return False
+
+        logger.warning(
+            "User emulation active: loading user_id=%s (NEVER enable in production)",
+            emulate_user_id,
+        )
+
+        db_user = await User.get_or_none(user_id=emulate_user_id)
+        if db_user is None:
+            logger.warning("Emulation failed: no user found with user_id=%s", emulate_user_id)
+            return False
+
+        auth_user = AuthenticatedUser(
+            user_id=db_user.user_id,
+            email=db_user.email,
+            first_name=db_user.first_name,
+            last_name=db_user.last_name,
+            claims=db_user.claims or {},
+        )
+        request.state.user = auth_user
+        request.state.db_user = db_user
+        return True
+
     def _extract_token(self, request: Request) -> Optional[str]:
         """Extract JWT token from Authorization header or query parameter."""
         # Check Authorization header first
@@ -218,93 +253,3 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
 
         path = request.scope.get("path") or request.url.path
         return is_public_path(path, self._extra_allowed_paths)
-
-
-class TokenDecodeWithoutValidationMiddleware(BaseHTTPMiddleware):
-    """Decodes a JWT token without validating signature. Useful for development/testing."""
-
-    async def dispatch(self, request: Request, call_next):
-        request.state.user = None
-        request.state.db_user = None
-
-        # Skip auth for OPTIONS requests and OAuth callbacks
-        if self._should_skip(request):
-            return await call_next(request)
-
-        # Try Authorization header first, then fall back to query param (for OAuth redirects)
-        token = self._extract_token(request)
-        if not token:
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Missing or invalid Authorization header"},
-            )
-
-        try:
-            # Decode without signature verification
-            claims = jwt.decode(token, options={"verify_signature": False})
-        except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: Defensive catch for malformed JWT tokens in development mode
-            return JSONResponse(
-                status_code=401,
-                content={"detail": f"Failed to decode User: {exc}"},
-            )
-
-        user_id = self._extract_user_id(claims)
-        if not user_id:
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Token missing subject identifier"},
-            )
-
-        auth_user = AuthenticatedUser(
-            user_id=user_id,
-            email=claims.get("email"),
-            first_name=claims.get("first_name"),
-            last_name=claims.get("last_name"),
-            claims=claims,
-        )
-
-        try:
-            # Capture signup_source from query params (for new user signups)
-            signup_source = request.query_params.get("signup_source")
-            db_user = await User.get_or_create_from_auth(auth_user, signup_source=signup_source)
-        except Exception:  # pylint: disable=broad-exception-caught # Reason: Defensive catch for database errors during user creation in development mode
-            logger.exception("Failed to persist user from decoded token")
-            return JSONResponse(
-                status_code=500,
-                content={"detail": "Failed to persist user from decoded token"},
-            )
-
-        request.state.user = auth_user
-        request.state.db_user = db_user
-        return await call_next(request)
-
-    def _should_skip(self, request: Request) -> bool:
-        """Skip auth for OPTIONS requests, health checks, and OAuth callbacks."""
-        if request.method == "OPTIONS":
-            return True
-
-        path = request.scope.get("path") or request.url.path
-        return is_public_path(path, include_docs=True)
-
-    def _extract_token(self, request: Request) -> Optional[str]:
-        """Extract JWT token from Authorization header or query parameter."""
-        # Check Authorization header first
-        authorization = request.headers.get("Authorization")
-        if authorization and authorization.startswith("Bearer "):
-            token = authorization.removeprefix("Bearer ").strip()
-            if token:
-                return token
-
-        # Fall back to query parameter (for OAuth redirect flows)
-        token = request.query_params.get("token")
-        if token:
-            return token
-
-        return None
-
-    @staticmethod
-    def _extract_user_id(claims: Dict[str, Any]) -> Optional[str]:
-        for key in ("sub", "user_id", "sid"):
-            if claims.get(key):
-                return str(claims[key])
-        return None

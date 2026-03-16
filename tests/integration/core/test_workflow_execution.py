@@ -373,7 +373,7 @@ async def test_execute_workflow_with_agent_text_output() -> None:
     tracking_tool = create_tracking_tool(call_tracker)
 
     model_def = ModelDefinition(
-        model_id="test-model",
+        model_id="openai/gpt-oss-120b",
         chat_model_factory=lambda: MagicMock(),
     )
 
@@ -386,7 +386,7 @@ async def test_execute_workflow_with_agent_text_output() -> None:
                 "id": "generate",
                 "type": "agent",
                 "inputs": {
-                    "model": "test-model",
+                    "model": "openai/gpt-oss-120b",
                     "prompt": "Generate something for: ${test_trigger.message}",
                 },
                 "outputs": {"mode": "text"},
@@ -435,7 +435,7 @@ async def test_execute_workflow_with_agent_json_output() -> None:
     tracking_tool = create_tracking_tool(call_tracker)
 
     model_def = ModelDefinition(
-        model_id="test-model",
+        model_id="openai/gpt-oss-120b",
         chat_model_factory=lambda: MagicMock(),
     )
 
@@ -448,7 +448,7 @@ async def test_execute_workflow_with_agent_json_output() -> None:
                 "id": "generate",
                 "type": "agent",
                 "inputs": {
-                    "model": "test-model",
+                    "model": "openai/gpt-oss-120b",
                     "prompt": "Extract data from: ${test_trigger.message}",
                 },
                 "outputs": {

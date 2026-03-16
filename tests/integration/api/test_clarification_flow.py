@@ -193,11 +193,27 @@ class TestClarificationFlow:
 
         # Create chat session in database for the thread
         thread_id = "test-thread-123"
+        interrupt_payload = {
+            "type": "clarification_questions",
+            "questions": [
+                {
+                    "question_id": "q_test123",
+                    "options": [
+                        {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                        {"value": "outlook", "label": "Outlook", "is_wildcard": False},
+                    ]
+                }
+            ]
+        }
+
         session = await WorkflowChatSession.create(
             workflow=workflow,
             user=workflow.user,
             thread_id=thread_id,
-            title="Test Session"
+            title="Test Session",
+            current_execution_status=ChatExecutionStatus.INTERRUPTED,
+            pending_interrupt_type="clarification_questions",
+            pending_interrupt_data=interrupt_payload,
         )
 
         # Mock checkpointer to return stored interrupt (used for validation)
@@ -206,18 +222,7 @@ class TestClarificationFlow:
             checkpoint={
                 "channel_values": {
                     "__interrupt__": [
-                        {
-                            "type": "clarification_questions",
-                            "questions": [
-                                {
-                                    "question_id": "q_test123",
-                                    "options": [
-                                        {"value": "gmail", "label": "Gmail", "is_wildcard": False},
-                                        {"value": "outlook", "label": "Outlook", "is_wildcard": False},
-                                    ]
-                                }
-                            ]
-                        }
+                        interrupt_payload
                     ]
                 }
             }
@@ -294,22 +299,203 @@ class TestClarificationFlow:
         await session.refresh_from_db()
         assert session.current_execution_status == ChatExecutionStatus.COMPLETED
 
+    async def test_resume_with_free_text_message(
+        self,
+        workflow_client,
+        mock_task_result,
+    ):
+        """Free-text replies during an interrupt must resume the same thread."""
+        from seer.database.workflow_models import WorkflowChatSession, ChatExecutionStatus  # pylint: disable=import-outside-toplevel  # Dynamic import for test
+
+        client, workflow = workflow_client
+
+        thread_id = "test-thread-free-text"
+        session = await WorkflowChatSession.create(
+            workflow=workflow,
+            user=workflow.user,
+            thread_id=thread_id,
+            title="Free Text Session",
+            current_execution_status=ChatExecutionStatus.INTERRUPTED,
+            pending_interrupt_type="clarification_questions",
+            pending_interrupt_data={
+                "type": "clarification_questions",
+                "questions": [
+                    {
+                        "question_id": "q_test123",
+                        "question": "Which email provider should we use?",
+                        "question_type": "single_choice",
+                        "options": [
+                            {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                            {"value": "other", "label": "Other", "is_wildcard": True},
+                        ],
+                    }
+                ],
+            },
+        )
+
+        captured_task_args = {}
+
+        async def capture_kiq(**kwargs):
+            captured_task_args.update(kwargs)
+            return mock_task_result
+
+        with patch('seer.api.agents.workflow.router.get_checkpointer', return_value=AsyncMock()), \
+             patch('seer.worker.tasks.chat.chat_resume_task') as mock_resume_task, \
+             patch('seer.api.agents.workflow.router.get_stream_watermark', new_callable=AsyncMock, return_value="0"), \
+             patch('seer.agents.nexus.stream_publisher.StreamPublisher') as mock_publisher_cls, \
+             patch('seer.api.agents.workflow.router.stream_events_sse', new=_empty_sse):
+
+            mock_publisher_cls.return_value = AsyncMock()
+            mock_resume_task.kiq = AsyncMock(side_effect=capture_kiq)
+
+            response = await client.post(
+                f"/nexus/{workflow.workflow_id}/chat/resume",
+                json={
+                    "thread_id": thread_id,
+                    "message": "Use Gmail, but only for invoices from finance@example.com.",
+                }
+            )
+
+            assert response.status_code == 200
+
+        assert captured_task_args["thread_id"] == thread_id
+        assert captured_task_args["resume_command_data"] == {
+            "type": "free_text_response",
+            "message": "Use Gmail, but only for invoices from finance@example.com.",
+            "source": "chat_resume_message",
+        }
+
+        await session.refresh_from_db()
+        assert session.current_execution_status == ChatExecutionStatus.QUEUED
+
+    async def test_rejects_fresh_chat_for_interrupted_session(
+        self,
+        workflow_client,
+    ):
+        """Fresh /chat must be rejected when the session is already interrupted."""
+        from seer.database.workflow_models import ChatExecutionStatus, WorkflowChatSession  # pylint: disable=import-outside-toplevel
+
+        client, workflow = workflow_client
+
+        session = await WorkflowChatSession.create(
+            workflow=workflow,
+            user=workflow.user,
+            thread_id="interrupted-thread-409",
+            title="Interrupted Session",
+            current_execution_status=ChatExecutionStatus.INTERRUPTED,
+            pending_interrupt_type="clarification_questions",
+            pending_interrupt_data={
+                "type": "clarification_questions",
+                "questions": [{"question_id": "q_1", "question": "Pick one", "question_type": "single_choice", "options": []}],
+            },
+        )
+
+        response = await client.post(
+            f"/nexus/{workflow.workflow_id}/chat",
+            json={
+                "message": "Try sending again",
+                "session_id": session.id,
+            },
+        )
+
+        assert response.status_code == 409
+        assert "/chat/resume" in response.text
+
+    async def test_rejects_resume_without_pending_interrupt(
+        self,
+        workflow_client,
+    ):
+        """Resume must be rejected when the session is not waiting for clarification."""
+        from seer.database.workflow_models import ChatExecutionStatus, WorkflowChatSession  # pylint: disable=import-outside-toplevel
+
+        client, workflow = workflow_client
+
+        await WorkflowChatSession.create(
+            workflow=workflow,
+            user=workflow.user,
+            thread_id="completed-thread-409",
+            title="Completed Session",
+            current_execution_status=ChatExecutionStatus.COMPLETED,
+            pending_interrupt_type=None,
+            pending_interrupt_data=None,
+        )
+
+        response = await client.post(
+            f"/nexus/{workflow.workflow_id}/chat/resume",
+            json={
+                "thread_id": "completed-thread-409",
+                "answers": {
+                    "answers": [
+                        {
+                            "question_id": "q_test123",
+                            "selected_values": ["gmail"],
+                        }
+                    ]
+                },
+            },
+        )
+
+        assert response.status_code == 409
+        assert "Start a new /chat request" in response.text
+
+    async def test_rejects_resume_with_multiple_payload_types(
+        self,
+        workflow_client,
+    ):
+        """Resume payload must contain exactly one of answers, message, or command."""
+        client, workflow = workflow_client
+
+        response = await client.post(
+            f"/nexus/{workflow.workflow_id}/chat/resume",
+            json={
+                "thread_id": "completed-thread-409",
+                "message": "Use Gmail",
+                "answers": {
+                    "answers": [
+                        {
+                            "question_id": "q_test123",
+                            "selected_values": ["gmail"],
+                        }
+                    ]
+                },
+            },
+        )
+
+        assert response.status_code == 422
+        assert "Exactly one of answers, message, or command must be provided" in response.text
+
     async def test_resume_with_invalid_selection(
         self,
         workflow_client
     ):
         """Test that invalid selections are rejected (validation happens before async task)."""
-        from seer.database.workflow_models import WorkflowChatSession  # pylint: disable=import-outside-toplevel  # Dynamic import for test
+        from seer.database.workflow_models import WorkflowChatSession, ChatExecutionStatus  # pylint: disable=import-outside-toplevel  # Dynamic import for test
 
         client, workflow = workflow_client
 
         # Create chat session in database for the thread
         thread_id = "test-thread-invalid"
+        interrupt_payload = {
+            "type": "clarification_questions",
+            "questions": [
+                {
+                    "question_id": "q_test123",
+                    "options": [
+                        {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                        {"value": "outlook", "label": "Outlook", "is_wildcard": False},
+                    ]
+                }
+            ]
+        }
+
         await WorkflowChatSession.create(
             workflow=workflow,
             user=workflow.user,
             thread_id=thread_id,
-            title="Test Session"
+            title="Test Session",
+            current_execution_status=ChatExecutionStatus.INTERRUPTED,
+            pending_interrupt_type="clarification_questions",
+            pending_interrupt_data=interrupt_payload,
         )
 
         # Mock checkpointer to return stored interrupt (used for validation)
@@ -318,18 +504,7 @@ class TestClarificationFlow:
             checkpoint={
                 "channel_values": {
                     "__interrupt__": [
-                        {
-                            "type": "clarification_questions",
-                            "questions": [
-                                {
-                                    "question_id": "q_test123",
-                                    "options": [
-                                        {"value": "gmail", "label": "Gmail", "is_wildcard": False},
-                                        {"value": "outlook", "label": "Outlook", "is_wildcard": False},
-                                    ]
-                                }
-                            ]
-                        }
+                        interrupt_payload
                     ]
                 }
             }
@@ -365,7 +540,7 @@ class TestClarificationFlow:
         workflow_client
     ):
         """Test that wildcard selection requires custom input (validation happens before async task)."""
-        from seer.database.workflow_models import WorkflowChatSession  # pylint: disable=import-outside-toplevel  # Dynamic import for test
+        from seer.database.workflow_models import WorkflowChatSession, ChatExecutionStatus  # pylint: disable=import-outside-toplevel  # Dynamic import for test
 
         client, workflow = workflow_client
 
@@ -375,7 +550,21 @@ class TestClarificationFlow:
             workflow=workflow,
             user=workflow.user,
             thread_id=thread_id,
-            title="Test Session"
+            title="Test Session",
+            current_execution_status=ChatExecutionStatus.INTERRUPTED,
+            pending_interrupt_type="clarification_questions",
+            pending_interrupt_data={
+                "type": "clarification_questions",
+                "questions": [
+                    {
+                        "question_id": "q_test123",
+                        "options": [
+                            {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                            {"value": "other", "label": "Other", "is_wildcard": True},
+                        ],
+                    }
+                ],
+            },
         )
 
         # Mock checkpointer to return stored interrupt with wildcard (used for validation)
@@ -442,7 +631,21 @@ class TestClarificationFlow:
             workflow=workflow,
             user=workflow.user,
             thread_id=thread_id,
-            title="Test Session"
+            title="Test Session",
+            current_execution_status=ChatExecutionStatus.INTERRUPTED,
+            pending_interrupt_type="clarification_questions",
+            pending_interrupt_data={
+                "type": "clarification_questions",
+                "questions": [
+                    {
+                        "question_id": "q_test123",
+                        "options": [
+                            {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                            {"value": "other", "label": "Other", "is_wildcard": True},
+                        ],
+                    }
+                ],
+            },
         )
 
         # Mock checkpointer (used for validation)

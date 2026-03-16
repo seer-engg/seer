@@ -253,7 +253,7 @@ def set_tag(key: str, value: str) -> None:
     Tags are indexed and can be used for filtering in the Sentry UI.
 
     Args:
-        key: Tag name (e.g., "correlation_id", "seer_mode")
+        key: Tag name (e.g., "correlation_id", "request_method")
         value: Tag value
     """
     if not SENTRY_INITIALIZED:

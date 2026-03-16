@@ -62,11 +62,11 @@ class TestAgentNodeAnalyticsProperties:
     def test_returns_model_as_agent_type(self):
         node = AgentNode(
             id="n1",
-            inputs={"model": "claude-sonnet-4-6", "prompt": "Do something", "tools": []},
+            inputs={"model": "openai/gpt-oss-120b", "prompt": "Do something", "tools": []},
         )
         ctx = _make_ctx()
         props = AgentNodeType().get_analytics_properties(node, ctx)
-        assert props["agent_type"] == "claude-sonnet-4-6"
+        assert props["agent_type"] == "openai/gpt-oss-120b"
 
     def test_falls_back_when_model_key_absent_from_inputs(self):
         """get_analytics_properties returns 'unknown' when inputs.get('model') is None."""
@@ -125,7 +125,6 @@ async def test_run_node_fires_posthog_on_success(mock_tool_node_impl):
     ):
         mock_registry.get.return_value = mock_tool_node_impl
         mock_cfg.is_posthog_configured = True
-        mock_cfg.seer_mode = "cloud"
 
         result = await runtime._run_node_async(
             node,
@@ -172,7 +171,6 @@ async def test_run_node_fires_posthog_on_failure(mock_failing_node_impl):
     ):
         mock_registry.get.return_value = mock_failing_node_impl
         mock_cfg.is_posthog_configured = True
-        mock_cfg.seer_mode = "cloud"
 
         with pytest.raises(RuntimeError, match="boom"):
             await runtime._run_node_async(

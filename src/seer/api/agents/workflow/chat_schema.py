@@ -62,6 +62,7 @@ class ChatRequest(BaseModel):
     session_id: Optional[int] = Field(default=None, description="Chat session ID to resume conversation")
     thread_id: Optional[str] = Field(default=None, description="LangGraph thread ID to resume conversation")
     resume_thread: bool = Field(default=True, description="Whether to resume existing thread if thread_id provided")
+    request_id: Optional[str] = Field(default=None, description="Client-generated request identifier for tracing and idempotency")
 
 
 class ChatResponse(BaseModel):
@@ -95,6 +96,10 @@ class ChatSession(BaseModel):
     title: Optional[str]
     created_at: datetime
     updated_at: datetime
+    current_execution_status: Optional[str] = None
+    current_execution_task_id: Optional[str] = None
+    pending_interrupt_type: Optional[str] = None
+    pending_interrupt_data: Optional[Dict[str, Any]] = None
 
 
 class ChatMessage(BaseModel):
@@ -194,13 +199,25 @@ class ChatResumeRequest(BaseModel):
     """Request model for resuming chat after interrupt."""
     thread_id: str = Field(..., description="Thread ID to resume")
     answers: Optional[ClarificationAnswers] = Field(default=None, description="Answers to clarification questions")
+    message: Optional[str] = Field(default=None, description="Free-text clarification reply from the user")
     command: Optional[Dict[str, Any]] = Field(default=None, description="Raw Command data for other interrupt types")
+    request_id: Optional[str] = Field(default=None, description="Client-generated request identifier for tracing and idempotency")
 
     @model_validator(mode="after")
     def validate_answers_or_command(self) -> "ChatResumeRequest":
-        """Ensure either answers or command is provided."""
-        if not self.answers and not self.command:
-            raise ValueError("Either answers or command must be provided")
+        """Ensure exactly one resume payload is provided."""
+        provided_payloads = [
+            self.answers is not None,
+            bool(self.message and self.message.strip()),
+            self.command is not None,
+        ]
+
+        if sum(provided_payloads) != 1:
+            raise ValueError("Exactly one of answers, message, or command must be provided")
+
+        if self.message is not None:
+            self.message = self.message.strip()
+
         return self
 
 

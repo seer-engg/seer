@@ -20,7 +20,7 @@ from seer.database.subscription_models import SubscriptionTier
 from seer.observability import get_limits_for_tier
 from seer.observability.constants import tiered_usage_limits
 from seer.observability.exceptions import CreditLimitExceeded, LimitPeriod
-from seer.observability.models import SELF_HOSTED_LIMITS, TIER_LIMITS_REGISTRY, TierLimits
+from seer.observability.models import TIER_LIMITS_REGISTRY, TierLimits
 
 
 pytestmark = pytest.mark.unit
@@ -36,22 +36,15 @@ class TestShortTermLimitConstants:
 
     def test_5h_constants_exist_for_all_tiers(self):
         """Test that 5-hour constants exist for all tiers."""
-        assert hasattr(tiered_usage_limits, "LLM_CREDITS_5H_SELF_HOSTED")
         assert hasattr(tiered_usage_limits, "LLM_CREDITS_5H_FREE")
         assert hasattr(tiered_usage_limits, "LLM_CREDITS_5H_PRO")
         assert hasattr(tiered_usage_limits, "LLM_CREDITS_5H_PRO_PLUS")
 
     def test_weekly_constants_exist_for_all_tiers(self):
         """Test that weekly constants exist for all tiers."""
-        assert hasattr(tiered_usage_limits, "LLM_CREDITS_WEEKLY_SELF_HOSTED")
         assert hasattr(tiered_usage_limits, "LLM_CREDITS_WEEKLY_FREE")
         assert hasattr(tiered_usage_limits, "LLM_CREDITS_WEEKLY_PRO")
         assert hasattr(tiered_usage_limits, "LLM_CREDITS_WEEKLY_PRO_PLUS")
-
-    def test_self_hosted_limits_are_unlimited(self):
-        """Test that self-hosted 5h and weekly limits are unlimited (-1)."""
-        assert tiered_usage_limits.LLM_CREDITS_5H_SELF_HOSTED == -1
-        assert tiered_usage_limits.LLM_CREDITS_WEEKLY_SELF_HOSTED == -1
 
     def test_5h_limits_are_reasonable_fraction_of_monthly(self):
         """Test that 5h limits are ~25% of monthly (burst protection)."""
@@ -167,13 +160,6 @@ class TestTierRegistry:
             assert limits is not None
             assert hasattr(limits, "llm_credits_5h")
             assert hasattr(limits, "llm_credits_weekly")
-
-    def test_self_hosted_limits_include_short_term(self):
-        """Test that SELF_HOSTED_LIMITS includes 5h and weekly limits."""
-        assert hasattr(SELF_HOSTED_LIMITS, "llm_credits_5h")
-        assert hasattr(SELF_HOSTED_LIMITS, "llm_credits_weekly")
-        assert SELF_HOSTED_LIMITS.llm_credits_5h == -1
-        assert SELF_HOSTED_LIMITS.llm_credits_weekly == -1
 
     def test_tier_registry_uses_correct_constants(self):
         """Test that tier registry uses the correct constant values."""

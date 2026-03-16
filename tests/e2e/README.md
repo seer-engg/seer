@@ -57,10 +57,9 @@ open htmlcov/index.html
 ## Key Features
 
 ### Authentication Setup
-- Tests run in **self-hosted mode** (no Clerk authentication)
-- JWT tokens are created for test users
-- `TokenDecodeWithoutValidationMiddleware` decodes tokens without verification
-- Module cache is cleared to ensure correct mode
+- `ClerkJWTVerifier` is mocked in e2e test fixtures
+- Test users are injected via mocked token verification
+- Module cache is cleared to ensure clean app state
 
 ### Database Setup
 - SQLite in-memory database (via `db_engine` fixture)
