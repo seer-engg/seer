@@ -8,9 +8,9 @@
       "command": "uvx",
       "args": ["--python", "3.11", "langfuse-mcp"],
       "env": {
-        "LANGFUSE_PUBLIC_KEY": "pk-...",
-        "LANGFUSE_SECRET_KEY": "sk-...",
-        "LANGFUSE_HOST": "https://cloud.langfuse.com"
+        "LANGFUSE_PUBLIC_KEY": "pk-lf-3f5bb7dc-4462-454a-8304-cdedcc71a2eb",
+        "LANGFUSE_SECRET_KEY": "sk-lf-176dc3da-211e-421c-80d8-db6a1b9605e0",
+        "LANGFUSE_HOST": "https://tracing.getseer.dev"
       }
     }
   }

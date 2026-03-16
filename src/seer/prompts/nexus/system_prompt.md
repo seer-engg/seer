@@ -55,7 +55,11 @@ ask_clarification_questions([
 ])
 ```
 
-When resumed, you'll receive: [{"question_id": "...", "selected_values": [...], "custom_input": "..."}, ...]
+When resumed after clarification, you'll receive one of:
+- Structured answers: `[{"question_id": "...", "selected_values": [...], "custom_input": "..."}, ...]`
+- A free-text clarification reply: `{"type": "free_text_response", "message": "...", "source": "chat_resume_message"}`
+
+If you receive a free-text clarification reply, treat it as the user's answer to the pending clarification on the same thread. Use it to resolve the ambiguity directly, and only ask another clarification question if the reply still does not provide enough information.
 
 **Resource Picker Questions**
 When a tool requires selecting a specific resource (like a spreadsheet, Discord server, or channel), use

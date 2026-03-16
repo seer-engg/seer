@@ -216,8 +216,11 @@ def ask_clarification_questions(
             - Returns connection_id of selected account in selected_values
 
     Returns:
-        JSON string containing list of answers, one per question in the same order.
-        Each answer has: {"question_id": "...", "selected_values": [...], "custom_input": "..."}
+        JSON string containing either:
+        - A list of answers, one per question in the same order.
+          Each answer has: {"question_id": "...", "selected_values": [...], "custom_input": "..."}
+        - A free-text clarification reply object:
+          {"type": "free_text_response", "message": "...", "source": "chat_resume_message"}
 
     Example for choice questions:
         ask_clarification_questions([
@@ -340,8 +343,12 @@ def ask_clarification_questions(
     # Trigger LangGraph interrupt - execution pauses here until resumed
     answers = interrupt(interrupt_payload)
 
-    logger.info("Clarification questions answered: %d answers received", len(answers) if answers else 0)
+    answer_count = len(answers) if isinstance(answers, list) else 1 if answers else 0
+    logger.info(
+        "Clarification questions answered: %d payload item(s) received",
+        answer_count,
+    )
 
-    # When resumed, answers contains list of user responses
-    # Format: [{"question_id": "...", "selected_values": [...], "custom_input": "..."}, ...]
+    # When resumed, answers contains either a structured answers list or a
+    # free-text clarification reply object from the chat composer resume path.
     return json.dumps(answers)

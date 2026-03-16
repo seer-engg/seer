@@ -12,7 +12,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from seer.core.errors import ExecutionError
+from seer.core.compiler.parse import parse_workflow_spec
+from seer.core.errors import ExecutionError, ValidationPhaseError
 from seer.core.runtime.global_compiler import WorkflowCompilerSingleton
 
 pytestmark = pytest.mark.unit
@@ -233,3 +234,52 @@ class TestJsonHandlerErrorDetection:
         # Assert
         assert result == {"name": "Alice", "age": 30}
         assert "input_tokens" in usage_metadata
+
+
+class TestAgentModelValidation:
+    """Tests for parse-time validation of allowed agent models."""
+
+    def test_allowed_agent_model_passes_dependency_validation(self):
+        spec = parse_workflow_spec(
+            {
+                "version": "2",
+                "nodes": [
+                    {
+                        "id": "agent1",
+                        "type": "agent",
+                        "inputs": {
+                            "model": "openai/gpt-oss-120b",
+                            "prompt": "Summarize this",
+                        },
+                    }
+                ],
+                "edges": [],
+                "triggers": [],
+            }
+        )
+
+        compiler = WorkflowCompilerSingleton()
+        compiler._ensure_dependencies(spec)  # pylint: disable=protected-access
+
+    def test_disallowed_agent_model_raises_validation_phase_error_on_parse(self):
+        with pytest.raises(ValidationPhaseError) as exc_info:
+            parse_workflow_spec(
+                {
+                    "version": "2",
+                    "nodes": [
+                        {
+                            "id": "agent1",
+                            "type": "agent",
+                            "inputs": {
+                                "model": "openai/gpt-4o",
+                                "prompt": "Summarize this",
+                            },
+                        }
+                    ],
+                    "edges": [],
+                    "triggers": [],
+                }
+            )
+
+        assert "not allowed" in str(exc_info.value)
+        assert "openai/gpt-4o" in str(exc_info.value)

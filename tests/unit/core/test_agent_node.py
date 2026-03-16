@@ -27,6 +27,9 @@ from seer.core.schema.schema_registry import SchemaRegistry
 
 pytestmark = pytest.mark.unit
 
+TEST_AGENT_MODEL = "openai/gpt-oss-120b"
+INVALID_AGENT_MODEL = "openai/gpt-4o"
+
 
 # =============================================================================
 # Schema Validation Tests
@@ -38,7 +41,7 @@ def test_agent_node_valid_basic():
     node = AgentNode(
         id="research_agent",
         inputs={
-            "model": "gpt-4",
+            "model": TEST_AGENT_MODEL,
             "prompt": "Research the topic: ${topic}",
             "tools": ["web_search"],
             "max_iterations": 5,
@@ -47,7 +50,7 @@ def test_agent_node_valid_basic():
 
     assert node.id == "research_agent"
     assert node.type == "agent"
-    assert node.inputs["model"] == "gpt-4"
+    assert node.inputs["model"] == TEST_AGENT_MODEL
     assert node.inputs["tools"] == ["web_search"]
 
 
@@ -56,7 +59,7 @@ def test_agent_node_valid_with_tool_objects():
     node = AgentNode(
         id="email_agent",
         inputs={
-            "model": "gpt-4",
+            "model": TEST_AGENT_MODEL,
             "prompt": "Send an email to ${recipient}",
             "tools": [
                 "extract_email",
@@ -90,7 +93,7 @@ def test_agent_node_missing_prompt_raises():
         AgentNode(
             id="invalid_agent",
             inputs={
-                "model": "gpt-4",
+                "model": TEST_AGENT_MODEL,
             },
         )
 
@@ -101,7 +104,7 @@ def test_agent_node_invalid_tool_format_raises():
         AgentNode(
             id="invalid_agent",
             inputs={
-                "model": "gpt-4",
+                "model": TEST_AGENT_MODEL,
                 "prompt": "Do something",
                 "tools": [123],  # Invalid: not string or dict
             },
@@ -114,7 +117,7 @@ def test_agent_node_tool_object_missing_name_raises():
         AgentNode(
             id="invalid_agent",
             inputs={
-                "model": "gpt-4",
+                "model": TEST_AGENT_MODEL,
                 "prompt": "Do something",
                 "tools": [{"connection_id": 42}],  # Missing 'name'
             },
@@ -127,7 +130,7 @@ def test_agent_node_invalid_max_iterations_raises():
         AgentNode(
             id="invalid_agent",
             inputs={
-                "model": "gpt-4",
+                "model": TEST_AGENT_MODEL,
                 "prompt": "Do something",
                 "max_iterations": -1,
             },
@@ -140,9 +143,21 @@ def test_agent_node_tools_not_list_raises():
         AgentNode(
             id="invalid_agent",
             inputs={
-                "model": "gpt-4",
+                "model": TEST_AGENT_MODEL,
                 "prompt": "Do something",
                 "tools": "web_search",  # Should be a list
+            },
+        )
+
+
+def test_agent_node_invalid_model_raises():
+    """Test that AgentNode rejects models outside the default allowlist."""
+    with pytest.raises(ValueError, match="not allowed"):
+        AgentNode(
+            id="invalid_agent",
+            inputs={
+                "model": INVALID_AGENT_MODEL,
+                "prompt": "Do something",
             },
         )
 
@@ -169,7 +184,7 @@ def test_agent_node_type_environment_registration():
                 "id": "agent1",
                 "type": "agent",
                 "inputs": {
-                    "model": "gpt-4",
+                    "model": TEST_AGENT_MODEL,
                     "prompt": "Research ${test_trigger}",
                     "tools": [],
                 },
@@ -212,7 +227,7 @@ def test_agent_node_json_output_registration():
                 "id": "agent1",
                 "type": "agent",
                 "inputs": {
-                    "model": "gpt-4",
+                    "model": TEST_AGENT_MODEL,
                     "prompt": "Extract data",
                     "tools": [],
                 },
@@ -332,7 +347,7 @@ async def test_agent_node_basic_execution():
         return "Mock response", {}
 
     model_def = ModelDefinition(
-        model_id="test-model",
+        model_id=TEST_AGENT_MODEL,
         text_handler=mock_text_handler,
         chat_model_factory=lambda: mock_chat_model,
     )
@@ -352,7 +367,7 @@ async def test_agent_node_basic_execution():
                 "id": "agent1",
                 "type": "agent",
                 "inputs": {
-                    "model": "test-model",
+                    "model": TEST_AGENT_MODEL,
                     "prompt": "Research something",
                     "tools": [],
                     "max_iterations": 3,
@@ -402,7 +417,7 @@ async def test_agent_node_with_tool_calls():
         return "Mock response", {}
 
     model_def = ModelDefinition(
-        model_id="test-model",
+        model_id=TEST_AGENT_MODEL,
         text_handler=mock_text_handler,
         chat_model_factory=lambda: mock_chat_model,
     )
@@ -422,7 +437,7 @@ async def test_agent_node_with_tool_calls():
                 "id": "tool_agent",
                 "type": "agent",
                 "inputs": {
-                    "model": "test-model",
+                    "model": TEST_AGENT_MODEL,
                     "prompt": "Use tools to find data",
                     "tools": [],  # Empty for this test - we mock the agent directly
                     "max_iterations": 5,
@@ -484,7 +499,7 @@ async def test_agent_node_with_prompt_template():
         return "Mock response", {}
 
     model_def = ModelDefinition(
-        model_id="test-model",
+        model_id=TEST_AGENT_MODEL,
         text_handler=mock_text_handler,
         chat_model_factory=lambda: mock_chat_model,
     )
@@ -514,7 +529,7 @@ async def test_agent_node_with_prompt_template():
                 "id": "research",
                 "type": "agent",
                 "inputs": {
-                    "model": "test-model",
+                    "model": TEST_AGENT_MODEL,
                     "prompt": "Research the following topic: ${data_trigger.data.topic}",
                     "tools": [],
                 },
@@ -560,7 +575,7 @@ async def test_agent_node_json_output_mode():
         return {"name": "test", "value": 42}, {}
 
     model_def = ModelDefinition(
-        model_id="test-model",
+        model_id=TEST_AGENT_MODEL,
         json_handler=mock_json_handler,
         chat_model_factory=lambda: mock_chat_model,
     )
@@ -580,7 +595,7 @@ async def test_agent_node_json_output_mode():
                 "id": "json_agent",
                 "type": "agent",
                 "inputs": {
-                    "model": "test-model",
+                    "model": TEST_AGENT_MODEL,
                     "prompt": "Extract structured data",
                     "tools": [],
                 },
@@ -634,7 +649,7 @@ async def test_agent_node_after_other_node():
         return "Mock response", {}
 
     model_def = ModelDefinition(
-        model_id="test-model",
+        model_id=TEST_AGENT_MODEL,
         text_handler=mock_text_handler,
         chat_model_factory=lambda: mock_chat_model,
     )
@@ -662,7 +677,7 @@ async def test_agent_node_after_other_node():
                 "id": "process_agent",
                 "type": "agent",
                 "inputs": {
-                    "model": "test-model",
+                    "model": TEST_AGENT_MODEL,
                     "prompt": "Process this data: ${prepare}",
                     "tools": [],
                 },
@@ -708,7 +723,7 @@ async def test_agent_node_json_output_with_structured_response():
         return {"email_1": "email 1 summary", "email_2": "email 2 summary"}, {}
 
     model_def = ModelDefinition(
-        model_id="test-model",
+        model_id=TEST_AGENT_MODEL,
         json_handler=mock_json_handler,
         chat_model_factory=lambda: mock_chat_model,
     )
@@ -728,7 +743,7 @@ async def test_agent_node_json_output_with_structured_response():
                 "id": "structured_agent",
                 "type": "agent",
                 "inputs": {
-                    "model": "test-model",
+                    "model": TEST_AGENT_MODEL,
                     "prompt": "Summarize my last 2 emails",
                     "tools": [],
                 },
@@ -805,7 +820,7 @@ async def test_agent_node_json_validation_failure_includes_trace():
         return {"website": None}, {}
 
     model_def = ModelDefinition(
-        model_id="test-model",
+        model_id=TEST_AGENT_MODEL,
         json_handler=mock_json_handler,
         chat_model_factory=lambda: mock_chat_model,
     )
@@ -825,7 +840,7 @@ async def test_agent_node_json_validation_failure_includes_trace():
                 "id": "analyze_leads_llm",
                 "type": "agent",
                 "inputs": {
-                    "model": "test-model",
+                    "model": TEST_AGENT_MODEL,
                     "prompt": "Analyze leads",
                     "tools": [],
                 },
@@ -1007,7 +1022,7 @@ class TestAgentNodeFileInputResolution:
 
         mock_chat_model = MagicMock()
         model_def = ModelDefinition(
-            model_id="test-model",
+            model_id=TEST_AGENT_MODEL,
             text_handler=lambda inv: ("result", {}),
             chat_model_factory=lambda: mock_chat_model,
         )
@@ -1027,7 +1042,7 @@ class TestAgentNodeFileInputResolution:
                     "id": "file_agent",
                     "type": "agent",
                     "inputs": {
-                        "model": "test-model",
+                        "model": TEST_AGENT_MODEL,
                         "prompt": "Analyze the document",
                         "tools": [],
                     },
@@ -1353,7 +1368,7 @@ def _build_agent_spec_with_outputs(output_schema: dict) -> dict:
             {
                 "id": "agent1",
                 "type": "agent",
-                "inputs": {"model": "claude-sonnet-4-6", "prompt": "Do something."},
+                "inputs": {"model": TEST_AGENT_MODEL, "prompt": "Do something."},
                 "outputs": {
                     "mode": "json",
                     "schema": {"json_schema": output_schema},
@@ -1525,7 +1540,7 @@ class TestAgentNodeUsageTracking:
 
         mock_chat_model = MagicMock()
         model_def = ModelDefinition(
-            model_id="test-model",
+            model_id=TEST_AGENT_MODEL,
             text_handler=lambda inv: ("result", {}),
             chat_model_factory=lambda: mock_chat_model,
         )
@@ -1537,7 +1552,7 @@ class TestAgentNodeUsageTracking:
                     "id": "tracking_agent",
                     "type": "agent",
                     "inputs": {
-                        "model": "test-model",
+                        "model": TEST_AGENT_MODEL,
                         "prompt": "Test prompt",
                         "tools": [],
                     },
@@ -1588,7 +1603,7 @@ class TestAgentNodeUsageTracking:
 
         mock_chat_model = MagicMock()
         model_def = ModelDefinition(
-            model_id="test-model",
+            model_id=TEST_AGENT_MODEL,
             text_handler=lambda inv: ("result", {}),
             chat_model_factory=lambda: mock_chat_model,
         )
@@ -1600,7 +1615,7 @@ class TestAgentNodeUsageTracking:
                     "id": "error_agent",
                     "type": "agent",
                     "inputs": {
-                        "model": "test-model",
+                        "model": TEST_AGENT_MODEL,
                         "prompt": "Test prompt",
                         "tools": [],
                     },
@@ -1630,7 +1645,7 @@ class TestAgentNodeUsageTracking:
 
         mock_chat_model = MagicMock()
         model_def = ModelDefinition(
-            model_id="test-model",
+            model_id=TEST_AGENT_MODEL,
             text_handler=lambda inv: ("result", {}),
             chat_model_factory=lambda: mock_chat_model,
         )
@@ -1642,7 +1657,7 @@ class TestAgentNodeUsageTracking:
                     "id": "no_context_agent",
                     "type": "agent",
                     "inputs": {
-                        "model": "test-model",
+                        "model": TEST_AGENT_MODEL,
                         "prompt": "Test prompt",
                         "tools": [],
                     },
