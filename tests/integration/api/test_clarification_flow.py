@@ -469,7 +469,7 @@ class TestClarificationFlow:
         workflow_client
     ):
         """Test that invalid selections are rejected (validation happens before async task)."""
-        from seer.database.workflow_models import WorkflowChatSession  # pylint: disable=import-outside-toplevel  # Dynamic import for test
+        from seer.database.workflow_models import WorkflowChatSession, ChatExecutionStatus  # pylint: disable=import-outside-toplevel  # Dynamic import for test
 
         client, workflow = workflow_client
 
@@ -540,7 +540,7 @@ class TestClarificationFlow:
         workflow_client
     ):
         """Test that wildcard selection requires custom input (validation happens before async task)."""
-        from seer.database.workflow_models import WorkflowChatSession  # pylint: disable=import-outside-toplevel  # Dynamic import for test
+        from seer.database.workflow_models import WorkflowChatSession, ChatExecutionStatus  # pylint: disable=import-outside-toplevel  # Dynamic import for test
 
         client, workflow = workflow_client
 
@@ -550,7 +550,21 @@ class TestClarificationFlow:
             workflow=workflow,
             user=workflow.user,
             thread_id=thread_id,
-            title="Test Session"
+            title="Test Session",
+            current_execution_status=ChatExecutionStatus.INTERRUPTED,
+            pending_interrupt_type="clarification_questions",
+            pending_interrupt_data={
+                "type": "clarification_questions",
+                "questions": [
+                    {
+                        "question_id": "q_test123",
+                        "options": [
+                            {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                            {"value": "other", "label": "Other", "is_wildcard": True},
+                        ],
+                    }
+                ],
+            },
         )
 
         # Mock checkpointer to return stored interrupt with wildcard (used for validation)
@@ -617,7 +631,21 @@ class TestClarificationFlow:
             workflow=workflow,
             user=workflow.user,
             thread_id=thread_id,
-            title="Test Session"
+            title="Test Session",
+            current_execution_status=ChatExecutionStatus.INTERRUPTED,
+            pending_interrupt_type="clarification_questions",
+            pending_interrupt_data={
+                "type": "clarification_questions",
+                "questions": [
+                    {
+                        "question_id": "q_test123",
+                        "options": [
+                            {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                            {"value": "other", "label": "Other", "is_wildcard": True},
+                        ],
+                    }
+                ],
+            },
         )
 
         # Mock checkpointer (used for validation)
